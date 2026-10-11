@@ -280,13 +280,56 @@ fn applied_delete(p: &mut Timed) {
         poll(p);
     }
     assert!(p.host.pages["a.md"].buf.is_none());
+    // RENAME-COST L1: no explosion follows the installation.
+    assert!(p.host.worker.is_none());
+}
+
+/// A crash leaves an applied deletion's operation vehicle; launch explodes
+/// it, a representation worker over a.md. Polled to its first copy.
+fn launch_exploding(p: &mut Timed) {
+    applied_delete(p);
+    p.with_host(|h| {
+        h.stop();
+        h.fs.crash();
+        assert_eq!(h.launch(), Disposition::Pending);
+    });
     assert!(p.host.worker.as_ref().unwrap().retry_copy);
+}
+
+/// RENAME-COST L2: an applied group operation (a.md → c.md, b.md a
+/// referrer) whose page b.md is edited: the refresh retires the operation
+/// vehicle after durable copies of a's and c's records. Polled to the first
+/// copy, a representation phase of the refresh's effect on b.md.
+fn absorbing(p: &mut Timed) {
+    p.with_host(|h| {
+        assert_eq!(
+            h.rename_with(
+                "a.md",
+                "c.md",
+                &BTreeSet::from(["b.md".into()]),
+                |bytes, _, _| Ok(bytes.clone())
+            ),
+            Disposition::Pending
+        )
+    });
+    for _ in 0..4 {
+        poll(p);
+    }
+    assert!(p.host.worker.is_none(), "L1: no explosion");
+    p.with_host(|h| edit(h, "b.md", "edited b"));
+    for _ in 0..16 {
+        if p.host.worker.as_ref().is_some_and(|w| w.retry_copy) {
+            return;
+        }
+        poll(p);
+    }
+    panic!("the refresh never reached its copies");
 }
 
 #[test]
 fn review_f1_explosion_error_survives_logical_match_until_physical_completion() {
     let mut p = timed();
-    applied_delete(&mut p);
+    absorbing(&mut p);
     p.host.fs.inject(Phase::DraftSync, [Fault::Before; 3]);
     for _ in 0..5 {
         poll(&mut p);
@@ -298,39 +341,38 @@ fn review_f1_explosion_error_survives_logical_match_until_physical_completion() 
         .iter()
         .any(|e| matches!(e, Event::DraftError { .. })));
     assert!(
-        p.notice("a.md").draft_error,
+        p.notice("b.md").draft_error,
         "pending physical failure remains visible"
     );
     p.with_host(|_| ());
-    assert!(p.notice("a.md").draft_error);
+    assert!(p.notice("b.md").draft_error);
     time(&p, 100_000);
     pump(&mut p);
     assert!(p.host.worker.is_none());
-    assert!(!p.notice("a.md").draft_error);
+    assert!(!p.notice("b.md").draft_error);
 }
 
 #[test]
 fn review_f1_replaced_explosion_vehicles_accumulate_failures() {
     let mut p = timed();
-    applied_delete(&mut p);
+    absorbing(&mut p);
     p.host.fs.inject(Phase::DraftTemp, [Fault::Before; 30]);
     for n in 1..=30 {
         time(&p, n * 30_000);
         poll(&mut p);
     }
     assert!(p.host.worker.is_some());
-    assert!(p.host.allocator_busy());
     assert!(p
         .host
         .events
         .iter()
         .any(|e| matches!(e, Event::DraftError { .. })));
-    assert!(p.notice("a.md").draft_error);
+    assert!(p.notice("b.md").draft_error);
     p.host.fs.faults.clear();
     time(&p, 1_000_000);
     pump(&mut p);
     assert!(p.host.worker.is_none());
-    assert!(!p.notice("a.md").draft_error);
+    assert!(!p.notice("b.md").draft_error);
 }
 
 #[test]
@@ -411,12 +453,15 @@ fn review_f3_every_retained_effect_uses_backoff_and_missing_sync_only() {
             Phase::DraftSync
         };
         match effect {
-            "representation" => applied_delete(&mut p),
+            "representation" => launch_exploding(&mut p),
             "op-retirement" => {
+                // RENAME-COST L1: retired whole once its page publishes.
                 applied_delete(&mut p);
                 for _ in 0..32 {
-                    let w = p.host.worker.as_ref().unwrap();
-                    if w.task.name.starts_with("op-") && w.task.stage == Stage::UnlinkSync {
+                    let w = p.host.worker.as_ref();
+                    if w.is_some_and(|w| {
+                        w.task.name.starts_with("op-") && w.task.stage == Stage::UnlinkSync
+                    }) {
                         break;
                     }
                     poll(&mut p);
@@ -940,7 +985,7 @@ fn pending_move_keeps_custody_and_answers_after_disk_recovery() {
 }
 
 #[test]
-fn applied_group_operation_retries_explosion_and_retires_every_vehicle() {
+fn applied_group_operation_retires_its_vehicle_whole_after_publication() {
     let mut p = timed();
     p.with_host(|h| {
         assert_eq!(
@@ -957,24 +1002,20 @@ fn applied_group_operation_retries_explosion_and_retires_every_vehicle() {
         poll(&mut p);
     }
     assert_eq!(p.host.pages["c.md"].buf, text("A"));
-    assert!(p.host.worker.is_some());
-    p.host.fs.inject(Phase::DraftTemp, [Fault::Before]);
-    pump(&mut p);
-    assert!(p.host.worker.is_some());
-    time(&p, p.draft_retry_at().unwrap());
-    // Observed when the explosion ends: the operation's pages save at once
-    // after it (caller urgency), retiring these copies.
-    explode(&mut p);
+    // RENAME-COST L1: no explosion; the operation's pages save at once
+    // (caller urgency) while the vehicle alone holds their records.
+    assert!(p.host.worker.is_none());
     assert!(!p.host.allocator_busy());
-    let scan = drafts::scan(p.host.fs.draft_files(true));
-    assert_eq!(scan.logical.len(), 3);
-    assert!(scan.files.keys().all(|name| name.starts_with("p-")));
-    assert_eq!(scan.files.len(), 3);
+    let files = p.host.fs.draft_files(true);
+    assert!(files.len() == 1 && files[0].0.starts_with("op-"));
     pump(&mut p);
     assert!(
         p.host.fs.draft_files(true).is_empty(),
-        "every vehicle retires"
+        "the vehicle retires whole"
     );
+    let calls = |phase| p.host.fs.calls.iter().filter(|&&c| c == phase).count();
+    assert_eq!(calls(Phase::DraftTemp), 1, "one draft file: the vehicle");
+    assert_eq!(calls(Phase::DraftUnlink), 1, "retired by one unlink");
 }
 
 #[test]
@@ -1166,8 +1207,13 @@ fn r2_unknown_custody_is_retried_on_the_backoff_until_listed() {
     h.stop();
     h.fs.crash();
     h.fs.inject(Phase::CustodyList, [Fault::Before; 3]);
-    assert_eq!(h.launch(), Disposition::Applied);
+    // Pending: launch explodes the deletion's surviving operation vehicle.
+    assert!(matches!(
+        h.launch(),
+        Disposition::Applied | Disposition::Pending
+    ));
     let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    explode(&mut p);
     assert!(p.custody_unknown().unwrap().contains("trash-custody"));
     assert!(p.host.custody.is_empty());
     let mut lists = vec![];

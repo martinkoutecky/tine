@@ -627,17 +627,19 @@ draft errors E (checked per visited page), and a released retained writer's
 handover keys, rechecked per step until each is observed (follow-up F1). The frontend matches touched paths against loaded
 pages once; it still reloads only clean rewritten pages and discards moved pages.
 
-Unit cost (step 3b P2b, a single page's rename through the page host, Q-P2b-2):
-the 1-/60-block referrer fixtures write 7 files and 552/6,928 bytes with 25–26
-syncs: the operation draft, three page draft records, the referrer, the
-destination page and the source's custody marker. The referrer's old and new
-payloads are each written into the operation draft and into its draft record,
-and the new one into the page (about five payload copies); each extra referrer
-adds two files (its page and its
-draft record). Measured by `rename_cost.rs` with every host write, byte and
-sync counted at the `HostIo` seam (`page_host/production.rs`, `cost_counters`);
-the draft worker may batch two draft-directory syncs, hence the range. No
-transport bytes.
+Unit cost (step 3b P2b, a single page's rename through the page host, Q-P2b-2;
+re-measured after RENAME-COST 2026-10-11): the 1-/60-block referrer fixtures
+write 4 files and 300/4,137 bytes with 17 syncs: the operation draft, the
+referrer, the destination page and the source's custody marker. The
+referrer's old and new payloads are each written once into the operation
+draft, and the new one into the page (three payload copies). Each extra page
+of an operation adds one file (its page) and two syncs (the file and its
+directory). The operation draft retires whole after the operation's last
+publication: one unlink and one draft-directory sync, with no per-page draft
+copy, unless a page of the operation changes its draft state alone first
+(then the remaining records are copied out before that change). Measured by
+`rename_cost.rs` with every host write, byte and sync counted at the `HostIo`
+seam (`page_host/production.rs`, `cost_counters`). No transport bytes.
 
 ### Rename reads (GH #623, QF3b)
 

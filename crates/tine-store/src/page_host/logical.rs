@@ -3,6 +3,12 @@
 //! from `mod.rs` along that seam.
 use super::*;
 
+/// RENAME-COST L1: whether a page held as `page` still owes the publication
+/// of an operation record at `version`.
+pub(super) fn owes(page: Option<&Page>, version: u64) -> bool {
+    page.is_some_and(|p| p.risk && !p.conflict && p.version == version)
+}
+
 impl<F: HostIo> Host<F> {
     /// Apply the adapter's durable census changes to the draft index.
     pub(super) fn sync_drafts(&mut self) {
@@ -56,6 +62,71 @@ impl<F: HostIo> Host<F> {
         for page in stale {
             self.reindex(&page);
         }
+        self.index_op(&name);
+    }
+
+    /// RENAME-COST L1: recompute operation vehicle `name`'s entry in
+    /// `live_ops` from `drafts` and `pages` (dropped once it is gone).
+    pub(super) fn index_op(&mut self, name: &str) {
+        let records = self.drafts.get(name).filter(|_| name.starts_with("op-"));
+        let Some(records) = records else {
+            self.live_ops.remove(name);
+            return;
+        };
+        let versions: BTreeMap<PageKey, u64> = records
+            .iter()
+            .inspect(|_| work(Work::DraftRecords, 1))
+            .map(|r| (r.page.clone(), r.version))
+            .collect();
+        let owed = versions
+            .iter()
+            .filter(|(key, version)| owes(self.pages.get(*key), **version))
+            .map(|(key, _)| key.clone())
+            .collect();
+        self.live_ops.insert(name.into(), LiveOp { versions, owed });
+    }
+
+    /// RENAME-COST L1: keep the owed sets of `key`'s operation vehicles in
+    /// step with its page. A vehicle whose owed set empties or fills marks
+    /// all its pages: their draft candidacy depends on it (`op_waits`).
+    pub(super) fn reindex_owed(&mut self, key: &str) {
+        let ops = self.vehicles_of.get(key).into_iter().flatten();
+        let ops: Vec<String> = ops.filter(|n| n.starts_with("op-")).cloned().collect();
+        for name in ops {
+            let Some(op) = self.live_ops.get_mut(&name) else {
+                continue;
+            };
+            let settled = op.owed.is_empty();
+            if owes(self.pages.get(key), op.versions[key]) {
+                op.owed.insert(key.into());
+            } else {
+                op.owed.remove(key);
+            }
+            if settled != op.owed.is_empty() {
+                let pages: Vec<PageKey> = op.versions.keys().cloned().collect();
+                for page in pages {
+                    self.mark(&page);
+                }
+            }
+        }
+    }
+
+    /// RENAME-COST L1: the operation vehicle holding a record of `key`.
+    /// L2 keeps it to one: an effect on a page of a live vehicle explodes
+    /// it first (launch explodes all of them).
+    pub(super) fn live_op(&self, key: &str) -> Option<String> {
+        let names = self.vehicles_of.get(key).into_iter().flatten();
+        names.filter(|n| n.starts_with("op-")).next().cloned()
+    }
+
+    /// RENAME-COST L1: a page whose desired draft is none keeps its record
+    /// in its operation vehicle, rather than retiring it alone, while the
+    /// vehicle still owes another page's publication.
+    pub(super) fn op_waits(&self, key: &str) -> bool {
+        let names = self.vehicles_of.get(key).into_iter().flatten();
+        names
+            .filter_map(|n| self.live_ops.get(n))
+            .any(|op| !op.owed.is_empty())
     }
 
     /// Recompute `page`'s highest-sequence record from its vehicles.
@@ -91,6 +162,16 @@ impl<F: HostIo> Host<F> {
             }
         }
         self.durable = drafts::logical(self.drafts.values());
+        self.live_ops.clear();
+        let ops: Vec<String> = self
+            .drafts
+            .keys()
+            .filter(|n| n.starts_with("op-"))
+            .cloned()
+            .collect();
+        for name in ops {
+            self.index_op(&name);
+        }
         let after: Vec<_> = self.durable.keys().cloned().collect();
         for key in after {
             self.mark(&key);

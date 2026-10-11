@@ -12,10 +12,8 @@ impl Driver {
 
     fn tick_draft(&mut self) {
         let worker = self.host.worker.as_ref().unwrap();
-        let application = worker.application.is_some()
-            && !matches!(worker.application, Some(Application::Representation))
-            && matches!(worker.task.stage, Stage::Present | Stage::Absent)
-            && (worker.task.bytes.is_some() || worker.remaining.is_empty());
+        let application = !matches!(worker.application, Some(Application::Representation))
+            && super::applies_next(worker);
         let present = worker.task.stage == Stage::Present;
         let removal = matches!(worker.application, Some(Application::Removal(_)));
         let inc = self.host.incarnation;
@@ -352,6 +350,8 @@ fn restart_redoes_custody_before_marker_retires_and_before_recreation() {
         d.host.fs.calls.clear();
         run(&mut d, &[("launch", json!([]))]);
         let launch = d.host.fs.calls.clone();
+        // Launch explodes the deletion's surviving operation vehicle.
+        d.settle();
         assert_eq!(
             launch[..2],
             [Phase::CustodyList, Phase::TrashSync],
@@ -399,7 +399,10 @@ fn failing_custody_fails_saves_until_the_three_failure_escape() {
     delete_through_move(&mut d);
     d.fault(false, false);
     d.host.fs.inject(Phase::TrashSync, [Fault::Before]);
-    run(&mut d, &[("launch", json!([])), ("observe", json!([0]))]);
+    run(&mut d, &[("launch", json!([]))]);
+    // Launch explodes the deletion's surviving operation vehicle.
+    d.settle();
+    run(&mut d, &[("observe", json!([0]))]);
     d.settle();
     open(&mut d, 0);
     edit(&mut d, 0, 2);
@@ -800,7 +803,20 @@ fn one_post_unlink_sync_failure_completes_cleanup_retirement_removal_and_op_reti
                 );
             }
             _ => {
+                // RENAME-COST L2: a refresh that supersedes the operation
+                // vehicle's record retires the vehicle.
                 assert!(d.step("opDelete", &[json!(0)]));
+                d.settle();
+                run(&mut d, &[("wRecv", json!([0]))]);
+                edit(&mut d, 0, 2);
+                assert!(d.step("draftSync", &[json!(0)]));
+                for _ in 0..80 {
+                    let w = d.host.worker.as_ref().unwrap();
+                    if w.task.name.starts_with("op-") {
+                        break;
+                    }
+                    d.tick_draft();
+                }
             }
         }
         for _ in 0..80 {

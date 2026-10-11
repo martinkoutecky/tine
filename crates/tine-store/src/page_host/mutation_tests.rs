@@ -430,9 +430,16 @@ fn switch_checks_job_representation_worker_and_reservation_after_confirmation() 
     for _ in 0..4 {
         h.advance_draft();
     }
+    // RENAME-COST L2: an edit's refresh retires the operation vehicle; its
+    // copy of a's record is a representation phase.
+    edit(&mut h, "c.md", "edited");
+    assert_eq!(h.begin_draft("c.md"), Disposition::Pending);
+    for _ in 0..4 {
+        h.advance_draft();
+    }
     assert!(h.worker.is_some());
     assert!(h.worker.as_ref().unwrap().application.is_none());
-    assert_eq!(h.switch_ready(0), Disposition::Applied);
+    assert_eq!(h.switch_ready(h.last_admitted), Disposition::Applied);
     assert_eq!(h.switch_finish(), Disposition::Waiting);
 
     let mut h = host();

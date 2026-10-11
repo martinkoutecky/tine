@@ -47,7 +47,15 @@ impl<F: HostIo> Host<F> {
         logical
     }
 
+    /// One page's draft step, the model's `draftSync`.
     pub(super) fn begin_draft(&mut self, key: &str) -> Disposition {
+        self.begin_draft_with(key, false)
+    }
+
+    /// `begin_draft`; `whole` lets a removal retire its page's operation
+    /// vehicle whole instead (RENAME-COST L1, the scheduler's choice): each
+    /// of its pages' removal steps at one terminal.
+    pub(super) fn begin_draft_with(&mut self, key: &str, whole: bool) -> Disposition {
         if !self.alive || self.worker.is_some() || self.retained.contains(key) {
             return Disposition::Waiting;
         }
@@ -75,6 +83,9 @@ impl<F: HostIo> Host<F> {
                 }
                 let record = host.record(key, page);
                 let task = Vehicle::write(drafts::page_name(key), std::slice::from_ref(&record));
+                // L2 (RENAME-COST): the new record supersedes this page's
+                // record in its operation vehicle, which then retires.
+                let absorb = host.live_op(key).map(|op| host.absorb(&op, &keys));
                 host.worker = Some(DraftWorker {
                     effect: task.name.clone(),
                     refresh: Some(key.into()),
@@ -82,7 +93,7 @@ impl<F: HostIo> Host<F> {
                     before: durable.clone(),
                     task,
                     application: Some(Application::Refresh(record.clone())),
-                    remaining: VecDeque::new(),
+                    remaining: absorb.unwrap_or_default(),
                     allocator: false,
                     retry_copy: false,
                     records: vec![record],
@@ -95,11 +106,20 @@ impl<F: HostIo> Host<F> {
                 if previous.is_none() {
                     return Disposition::Disabled;
                 }
-                let mut tasks: VecDeque<_> = host
-                    .older_vehicles(key, None)
-                    .into_iter()
-                    .map(Vehicle::remove)
-                    .collect();
+                let op = host.live_op(key);
+                if let Some(op) = op.as_ref().filter(|_| whole) {
+                    if host.retire_whole(op) {
+                        return Disposition::Pending;
+                    }
+                }
+                // L2 (RENAME-COST): this page's record leaves with its
+                // operation vehicle, after the other pages' copies.
+                let mut tasks = op.map(|op| host.absorb(&op, &keys)).unwrap_or_default();
+                tasks.extend(
+                    host.older_vehicles(key, None)
+                        .into_iter()
+                        .map(Vehicle::remove),
+                );
                 let Some(task) = tasks.pop_front() else {
                     return Disposition::Waiting;
                 };
@@ -122,6 +142,63 @@ impl<F: HostIo> Host<F> {
             }
             Disposition::Pending
         })
+    }
+
+    /// RENAME-COST L1: retire operation vehicle `op` whole when none of its
+    /// pages owes its publication and each wants its record gone (not at
+    /// risk, the record its winner, not retained). False, with nothing
+    /// done, otherwise.
+    fn retire_whole(&mut self, op: &str) -> bool {
+        let live = &self.live_ops[op];
+        let records = &self.drafts[op];
+        let whole = live.owed.is_empty()
+            && records.iter().all(|r| {
+                !self.retained.contains(&r.page)
+                    && !self.pages.get(&r.page).is_some_and(|p| p.risk)
+                    && self.durable.get(&r.page).is_some_and(|w| w.wseq == r.wseq)
+            });
+        if !whole {
+            return false;
+        }
+        let pages: BTreeSet<PageKey> = live.versions.keys().cloned().collect();
+        let records = records.clone();
+        let mut tasks: VecDeque<_> = records
+            .iter()
+            .flat_map(|r| self.older_vehicles(&r.page, Some(r.wseq)))
+            .map(Vehicle::remove)
+            .collect();
+        tasks.push_back(Vehicle::remove(op.into()));
+        let task = tasks.pop_front().unwrap();
+        self.worker = Some(DraftWorker {
+            effect: op.into(),
+            refresh: None,
+            pages,
+            before: records.into_iter().map(|r| (r.page.clone(), r)).collect(),
+            task,
+            application: Some(Application::Retire),
+            remaining: tasks,
+            allocator: false,
+            retry_copy: false,
+            records: vec![],
+            tidied: false,
+            failures: 0,
+            recover_notice: true,
+            rename: false,
+        });
+        true
+    }
+
+    /// L2 (RENAME-COST): the vehicles that retire live operation vehicle
+    /// `op` once an effect supersedes or removes its records of `except`:
+    /// a durable copy of each other page's record, then its unlink. For
+    /// those pages a representation stutter (§2a rule 3).
+    pub(super) fn absorb(&self, op: &str, except: &BTreeSet<PageKey>) -> VecDeque<Vehicle> {
+        let records = self.drafts[op].iter().filter(|r| !except.contains(&r.page));
+        let mut tasks: VecDeque<_> = records
+            .map(|r| Vehicle::write(drafts::page_name(&r.page), std::slice::from_ref(r)))
+            .collect();
+        tasks.push_back(Vehicle::remove(op.into()));
+        tasks
     }
 
     pub(super) fn install_operation(
@@ -212,7 +289,9 @@ impl<F: HostIo> Host<F> {
             // the third failure; their physical obligation is still pending.
             if worker.task.failures != failures
                 && (worker.failures >= 3
-                    || (worker.task.stage == Stage::Absent && worker.refresh.is_some()))
+                    || (worker.task.stage == Stage::Absent
+                        && worker.refresh.is_some()
+                        && worker.application.is_some()))
             {
                 self.events.push(Event::DraftError {
                     effect: worker.effect.clone(),
@@ -224,15 +303,28 @@ impl<F: HostIo> Host<F> {
             self.worker = Some(worker);
             return Disposition::Pending;
         }
-        // Removal becomes abstractly effective only after its last unlink.
-        if worker.task.bytes.is_none() && !worker.remaining.is_empty() {
-            worker.task = worker.remaining.pop_front().unwrap();
-            self.worker = Some(worker);
-            return Disposition::Pending;
-        }
         if worker.retry_copy && worker.task.stage == Stage::Absent && worker.task.bytes.is_some() {
             worker.task =
                 Vehicle::write(drafts::page_name(&worker.records[0].page), &worker.records);
+            self.worker = Some(worker);
+            return Disposition::Pending;
+        }
+        // Removal becomes abstractly effective only after its last vehicle
+        // step: its unlinks, and the copies an operation vehicle it retires
+        // owes its other pages (RENAME-COST L2).
+        let removal = matches!(
+            worker.application,
+            Some(Application::Removal(_) | Application::Retire)
+        );
+        if (removal || worker.task.bytes.is_none()) && !worker.remaining.is_empty() {
+            let task = worker.remaining.pop_front().unwrap();
+            worker.records = task
+                .bytes
+                .as_ref()
+                .and_then(|b| drafts::decode(b).ok())
+                .unwrap_or_default();
+            worker.retry_copy = task.bytes.is_some();
+            worker.task = task;
             self.worker = Some(worker);
             return Disposition::Pending;
         }
@@ -297,6 +389,11 @@ impl<F: HostIo> Host<F> {
                 );
             }
             Application::Removal(key) => self.events.push(Event::DraftRemoved(key)),
+            Application::Retire => {
+                for key in &worker.pages {
+                    self.events.push(Event::DraftRemoved(key.clone()));
+                }
+            }
             Application::Operation {
                 pages,
                 records,
@@ -318,16 +415,19 @@ impl<F: HostIo> Host<F> {
                     }
                     self.events
                         .extend(records.iter().cloned().map(Event::Draft));
-                    if worker.task.name.starts_with("op-") {
-                        for record in &records {
-                            worker.remaining.push_back(Vehicle::write(
-                                drafts::page_name(&record.page),
-                                std::slice::from_ref(record),
-                            ));
-                        }
-                        worker
-                            .remaining
-                            .push_back(Vehicle::remove(worker.task.name.clone()));
+                    // L2 (RENAME-COST): an older operation vehicle naming a
+                    // page this one writes retires now, after copies of its
+                    // other pages' records.
+                    let written: BTreeSet<PageKey> =
+                        records.iter().map(|r| r.page.clone()).collect();
+                    let older: BTreeSet<String> = written
+                        .iter()
+                        .flat_map(|key| self.vehicles_of.get(key).into_iter().flatten())
+                        .filter(|name| name.starts_with("op-") && **name != worker.task.name)
+                        .cloned()
+                        .collect();
+                    for op in older {
+                        worker.remaining.extend(self.absorb(&op, &written));
                     }
                     for record in &records {
                         worker.remaining.extend(
@@ -369,10 +469,15 @@ impl<F: HostIo> Host<F> {
                     }
                     self.finish_request(&request);
                 }
-                // Keep the allocator through explosion (§4), never acquire
+                // Keep the allocator until the worker ends; never acquire
                 // another page or wait for a version allocator while holding it.
             }
-            Application::Refresh(_) => worker.recover_notice = false,
+            Application::Refresh(_) => {
+                worker.recover_notice = false;
+                // The operation vehicle this refresh would have retired
+                // still holds the page's newest record (RENAME-COST L2).
+                worker.remaining.clear();
+            }
             Application::Representation => {}
         }
     }

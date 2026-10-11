@@ -373,6 +373,9 @@ enum Application {
         gates: Option<Gates>,
     },
     Representation,
+    /// RENAME-COST L1: an operation vehicle retired whole, removing each of
+    /// the worker's pages' drafts.
+    Retire,
 }
 
 #[cfg_attr(test, derive(Clone))]
@@ -396,6 +399,17 @@ struct DraftWorker {
     /// A caller's rename, full or references-only (a deletion writes no
     /// page): a retained writer waits for it at most `OPERATION_WAIT` (M6).
     rename: bool,
+}
+
+/// RENAME-COST L1: a durable operation vehicle retires whole once none of
+/// its pages still owes the publication of its record.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct LiveOp {
+    /// Each page the vehicle names, at its record's version.
+    versions: BTreeMap<PageKey, u64>,
+    /// Pages held at risk, without a conflict, at their record's version:
+    /// the operation's saves still to publish.
+    owed: BTreeSet<PageKey>,
 }
 
 /// A key's logical state (`Host::logical`).
@@ -455,6 +469,9 @@ struct Host<F: HostIo> {
     /// `drafts` by `index_vehicle`, never rebuilt per call (D-10).
     vehicles_of: BTreeMap<PageKey, BTreeSet<String>>,
     durable: BTreeMap<PageKey, Record>,
+    /// RENAME-COST L1: every operation vehicle in `drafts`, kept in step with
+    /// `drafts` and `pages` by `index_vehicle` and `set_page`.
+    live_ops: BTreeMap<String, LiveOp>,
     /// M4: keys whose page or live logical draft changed since `Progress`
     /// last reconciled, `true` for a page an operation's caller applied (its
     /// saves skip the edit debounce). Drained by `Progress::reconcile` only.
@@ -514,6 +531,7 @@ impl<F: HostIo> Host<F> {
             drafts,
             vehicles_of: BTreeMap::new(),
             durable: BTreeMap::new(),
+            live_ops: BTreeMap::new(),
             changed: BTreeMap::new(),
             vehicle_debt: BTreeSet::new(),
             pages: BTreeMap::new(),
@@ -617,6 +635,7 @@ impl<F: HostIo> Host<F> {
         } else {
             self.pages.remove(key);
         }
+        self.reindex_owed(key);
         let current = self.pages.get(key).cloned();
         if let Some(obs) = current.as_ref().and_then(|p| p.obs.clone()) {
             if previous.as_ref().and_then(|p| p.obs.as_ref()) != Some(&obs) {
@@ -1316,6 +1335,10 @@ impl<F: HostIo> Host<F> {
         // Liveness changes: Progress rebuilds its sets from what it knew (M4).
         self.alive = false;
         self.pages.clear();
+        // No page is held, so none owes an operation's publication.
+        for op in self.live_ops.values_mut() {
+            op.owed.clear();
+        }
         self.custody.clear();
         self.retire.clear();
         self.custody_errors.clear();

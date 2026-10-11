@@ -499,6 +499,12 @@ fn syncs() -> u64 {
     crate::atomic_file::FILE_SYNCS.with(std::cell::Cell::get)
 }
 
+thread_local! {
+    /// File syncs `relaunch` saw up to the end of `launch`, before it drains
+    /// the representation worker (an operation vehicle's explosion).
+    static LAUNCH_SYNCS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 fn reset_syncs() {
     crate::atomic_file::FILE_SYNCS.with(|count| count.set(0));
 }
@@ -548,6 +554,7 @@ fn relaunch(f: &mut Fixture) -> Vec<PathBuf> {
         f.host.launch(),
         Disposition::Applied | Disposition::Pending
     ));
+    LAUNCH_SYNCS.with(|count| count.set(syncs()));
     #[cfg(feature = "test-faults")]
     let synced = crate::directory_durability::take_synced_directories();
     #[cfg(not(feature = "test-faults"))]
@@ -650,7 +657,11 @@ fn launch_redoes_payload_and_ancestor_custody_before_retiring_the_marker() {
         }
         reset_syncs();
         let synced = relaunch(&mut f);
-        assert_eq!(syncs(), 1, "launch redoes the payload data sync");
+        assert_eq!(
+            LAUNCH_SYNCS.with(std::cell::Cell::get),
+            1,
+            "launch redoes the payload data sync"
+        );
         #[cfg(feature = "test-faults")]
         {
             let chain = chain(&f);
@@ -1536,7 +1547,11 @@ fn r2_listing_failure_opens_the_graph_until_a_retry_settles_the_debt() {
         .fs
         .faults
         .insert(Phase::CustodyList, [io::ErrorKind::Other; 2].into());
-    assert_eq!(f.host.launch(), Disposition::Applied);
+    // Pending: launch explodes the deletion's surviving operation vehicle.
+    assert!(matches!(
+        f.host.launch(),
+        Disposition::Applied | Disposition::Pending
+    ));
     f.drain();
     let unknown = f.host.custody_unknown.clone().unwrap();
     assert!(unknown.contains("trash-custody"), "{unknown}");

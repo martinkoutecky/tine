@@ -96,12 +96,22 @@ fn rename_cost_is_linear_in_referrers_and_flat_in_graph_size() {
         "I-13: a rename must not re-read unrelated pages"
     );
     // Re-measured on the host's instrumented I/O (Q-P2b-2): the page's
-    // temporary file and its record in the operation's draft explosion
-    // (STEP3 §4); the transaction path wrote the page alone.
+    // temporary file only. Its draft record stays in the operation's one
+    // draft file, which retires whole after the last publication
+    // (RENAME-COST L1); exploding it into a draft file per page doubled the
+    // writes and cost three more syncs per page.
     assert_eq!(
         many.files_written - few.files_written,
-        2 * 28,
-        "I-25: each extra referrer costs exactly two file writes (its page and its draft record)"
+        28,
+        "I-25 (RENAME-COST): each extra referrer costs exactly one file write, its page; \
+         its draft record travels in the operation's draft file (exemplar \
+         page_host/draft_worker.rs retire_whole): {few:?} vs {many:?}"
+    );
+    assert!(
+        many.fsyncs - few.fsyncs <= 2 * 28,
+        "I-25 (RENAME-COST): each extra referrer costs at most two syncs, its page file \
+         and the graph directory; no per-page draft copy or draft removal is synced \
+         (exemplar page_host/draft_worker.rs retire_whole): {few:?} vs {many:?}"
     );
     // Three guarded reads per rewritten referrer, each a base-revision or
     // publication check on the audited save path: preflight stage, the check
@@ -158,7 +168,7 @@ fn rename_publication_parses_only_changed_documents() {
 #[test]
 fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-    for (blocks, bytes) in [(1, 552), (60, 6928)] {
+    for (blocks, bytes) in [(1, 300), (60, 4137)] {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("pages")).unwrap();
         fs::write(root.path().join("pages/Target.md"), "- target\n").unwrap();
@@ -176,16 +186,14 @@ fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
         .unwrap();
         let cost = cost_counters::snapshot();
         // Measured on the host's instrumented I/O (Q-P2b-2), every write
-        // counted where it is made: the operation draft, three page draft
-        // records, the referrer and the destination page, and the source's
-        // custody marker. The referrer's bytes travel in the operation draft
-        // and in its draft record as base and payload.
-        assert_eq!(cost.files_written, 7);
+        // counted where it is made: the operation draft, the referrer and the
+        // destination page, and the source's custody marker. The referrer's
+        // bytes travel in the operation draft as base and payload; its draft
+        // record retires with that file, uncopied (RENAME-COST L1).
+        assert_eq!(cost.files_written, 4);
         assert_eq!(cost.bytes_written, bytes);
-        // The draft worker may sync two retirements of the draft directory
-        // together, so the count is 25 or 26.
-        assert!(
-            (25..=26).contains(&cost.fsyncs),
+        assert_eq!(
+            cost.fsyncs, 17,
             "file, directory and draft syncs of one rename: {cost:?}"
         );
         assert_eq!(
@@ -194,7 +202,7 @@ fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
         );
         // The documented unit-cost values are pinned to this actual write path.
         let contract = include_str!("../../../docs/storage-contract.md");
-        assert!(contract.contains("552/6,928 bytes"));
+        assert!(contract.contains("300/4,137 bytes"));
         store.close();
     }
 }

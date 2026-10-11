@@ -219,6 +219,7 @@ impl<F: ConformanceIo> Driver<F> {
                 drafts: h.drafts.clone(),
                 vehicles_of: h.vehicles_of.clone(),
                 durable: h.durable.clone(),
+                live_ops: h.live_ops.clone(),
                 changed: h.changed.clone(),
                 pages: h.pages.clone(),
                 queue: h.queue.clone(),
@@ -642,9 +643,7 @@ impl<F: ConformanceIo> Driver<F> {
                 assert!(applied);
                 return;
             };
-            let application = worker.application.is_some()
-                && matches!(worker.task.stage, Stage::Present | Stage::Absent)
-                && (worker.task.bytes.is_some() || worker.remaining.is_empty());
+            let application = applies_next(worker);
             self.host.advance_draft();
             if application {
                 assert!(!applied);
@@ -1450,4 +1449,18 @@ fn promise(pr: &mut Value, bytes: i64, ver: i64, saved: bool, ep: u64) {
     if ver > old || (ver == old && pr["on"] == true && saved && pr["saved"] == false) {
         *pr = json!({"on":true,"bytes":bytes,"ver":ver,"saved":saved,"ep":ep});
     }
+}
+
+/// Whether the worker's next advance applies its effect: a removal only at
+/// its last vehicle step, after the copies an operation vehicle it retires
+/// owes its other pages (RENAME-COST L2); anything else at its first
+/// vehicle's terminal.
+pub(super) fn applies_next(worker: &DraftWorker) -> bool {
+    let removal = matches!(
+        worker.application,
+        Some(Application::Removal(_) | Application::Retire)
+    );
+    worker.application.is_some()
+        && matches!(worker.task.stage, Stage::Present | Stage::Absent)
+        && (worker.remaining.is_empty() || !removal && worker.task.bytes.is_some())
 }

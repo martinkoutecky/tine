@@ -63,7 +63,11 @@ fn review_f8_production_rename_rebinds_title_with_durable_custody_and_recovery()
         let records = h.logical_drafts();
         assert_eq!(records["c.md"].bytes, h.pages["c.md"].buf);
         assert_eq!(records["b.md"].bytes, h.pages["b.md"].buf);
-        assert_eq!(h.start_save("c.md"), Disposition::Waiting);
+        // RENAME-COST L1: no explosion; the operation vehicle alone holds
+        // every page's record, and recovery reads it.
+        let files = h.fs.draft_files(true);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].0.starts_with("op-"));
         restart(&mut h, power, false);
         drain(&mut h);
         assert_eq!(h.pages["c.md"].buf, text("title:: C\n- body\n"));
@@ -549,10 +553,12 @@ fn completed_trash_move_error_keeps_observed_removal_and_reports_uncertain() {
 fn repeated_launch_explosion_retains_one_identical_copy_per_page() {
     let mut h = host();
     h.delete("a.md");
-    for _ in 0..4 {
-        h.advance_draft();
-    }
-    // Cut after the explosion copy is durable, before op retirement.
+    drain(&mut h);
+    // A crash leaves the operation vehicle; launch explodes it. Cut after
+    // the explosion copy is durable, before op retirement.
+    h.stop();
+    h.fs.crash();
+    assert_eq!(h.launch(), Disposition::Pending);
     for _ in 0..3 {
         h.advance_draft();
     }
@@ -564,32 +570,55 @@ fn repeated_launch_explosion_retains_one_identical_copy_per_page() {
 }
 
 #[test]
-fn operation_explodes_before_save_and_retries_failed_copy() {
-    let mut h = host();
-    h.fs.external("b.md", text("[[A]] unrelated"), true);
-    open(&mut h, "b.md");
-    assert_eq!(
-        h.rename(
-            "a.md",
-            "c.md",
-            &BTreeSet::new(),
-            "A",
-            "C",
-            tine_core::config::FileNameFormat::TripleLowbar
-        ),
-        Disposition::Pending
-    );
-    for _ in 0..5 {
-        h.advance_draft();
+/// RENAME-COST L1/L2: an applied operation is not exploded, so its pages
+/// save at once; a refresh that supersedes one page's record retires the
+/// vehicle after durable copies of the others' (a failed copy is retried).
+/// A refresh that fails keeps the vehicle whole.
+#[test]
+fn operation_vehicle_retires_through_a_refresh_and_retries_failed_copy() {
+    for refresh_fails in [false, true] {
+        let mut h = host();
+        h.fs.external("b.md", text("[[A]] unrelated"), true);
+        open(&mut h, "b.md");
+        assert_eq!(
+            h.rename(
+                "a.md",
+                "c.md",
+                &BTreeSet::new(),
+                "A",
+                "C",
+                tine_core::config::FileNameFormat::TripleLowbar
+            ),
+            Disposition::Pending
+        );
+        drain(&mut h);
+        assert_eq!(h.pages["b.md"].buf, text("[[C]] unrelated"));
+        let files = h.fs.draft_files(true);
+        assert!(files.len() == 1 && files[0].0.starts_with("op-"));
+        edit(&mut h, "b.md", "[[C]] edited");
+        assert_eq!(h.begin_draft("b.md"), Disposition::Pending);
+        if refresh_fails {
+            h.fs.inject(Phase::DraftTemp, [Fault::Before]);
+            drain(&mut h);
+            let scan = drafts::scan(h.fs.draft_files(true));
+            assert_eq!(scan.files.len(), 1, "the vehicle stays whole");
+            assert!(scan.files.keys().all(|name| name.starts_with("op-")));
+            assert_eq!(scan.logical["b.md"].bytes, text("[[C]] unrelated"));
+            continue;
+        }
+        // The refresh is durable and applied; the first copy fails once.
+        for _ in 0..4 {
+            h.advance_draft();
+        }
+        h.fs.inject(Phase::DraftTemp, [Fault::Before]);
+        drain(&mut h);
+        let scan = drafts::scan(h.fs.draft_files(true));
+        assert_eq!(scan.logical.len(), 3);
+        assert_eq!(scan.files.len(), 3);
+        assert!(scan.files.keys().all(|name| name.starts_with("p-")));
+        assert_eq!(scan.logical["b.md"].bytes, text("[[C]] edited"));
+        saved(&mut h, "c.md");
     }
-    assert_eq!(h.pages["b.md"].buf, text("[[C]] unrelated"));
-    assert_eq!(h.start_save("c.md"), Disposition::Waiting);
-    h.fs.inject(Phase::DraftTemp, [Fault::Before]);
-    drain(&mut h);
-    let scan = drafts::scan(h.fs.draft_files(true));
-    assert_eq!(scan.logical.len(), 3);
-    assert!(scan.files.keys().all(|name| name.starts_with("p-")));
-    saved(&mut h, "c.md");
 }
 
 #[test]

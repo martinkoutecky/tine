@@ -594,7 +594,8 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         let draft = host.draft_of(key);
         let differs = match host.pages.get(key).filter(|page| page.risk) {
             Some(page) => !draft.is_some_and(|r| r.holds(page)),
-            None => draft.is_some(),
+            // RENAME-COST L1: its record retires with its operation vehicle.
+            None => draft.is_some() && !host.op_waits(key),
         };
         if differs {
             drafted.insert(key.into());
@@ -683,7 +684,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                     .is_none_or(|last| now >= last.checked_add(500).expect("clock exhausted"))
             });
             if due && !desired.is_some_and(|page| self.held_back(&key, page)) {
-                let result = self.host.begin_draft(&key);
+                let result = self.host.begin_draft_with(&key, true);
                 if self.host.lock_request.is_some() {
                     return Disposition::Waiting;
                 }
@@ -881,11 +882,35 @@ impl Reference {
             "M4 reference: save candidates"
         );
         assert_eq!(p.clean, keys(&mut { clean }), "M4 reference: clean pages");
+        // RENAME-COST L1, rebuilt from the census and the pages: a page
+        // waits while an operation vehicle naming it owes a publication.
+        let mut live_ops = BTreeMap::new();
+        for (name, records) in host.drafts.iter().filter(|(n, _)| n.starts_with("op-")) {
+            let versions: BTreeMap<PageKey, u64> = records
+                .iter()
+                .map(|r| (r.page.clone(), r.version))
+                .collect();
+            let owed = versions
+                .iter()
+                .filter(|(key, version)| logical::owes(host.pages.get(*key), **version))
+                .map(|(key, _)| key.clone())
+                .collect();
+            live_ops.insert(name.clone(), LiveOp { versions, owed });
+        }
+        assert_eq!(
+            host.live_ops, live_ops,
+            "RENAME-COST reference: live operation vehicles"
+        );
+        let op_waits = |key: &PageKey| {
+            live_ops
+                .values()
+                .any(|op| op.versions.contains_key(key) && !op.owed.is_empty())
+        };
         let drafted: BTreeSet<_> = if host.alive {
             let candidates = self.pages.keys().chain(self.logical.keys());
             let differs = |key: &&PageKey| match self.pages.get(*key).filter(|page| page.risk) {
                 Some(page) => !self.logical.get(*key).is_some_and(|r| r.holds(page)),
-                None => self.logical.contains_key(*key),
+                None => self.logical.contains_key(*key) && !op_waits(key),
             };
             candidates.filter(differs).cloned().collect()
         } else {

@@ -2,7 +2,8 @@
 //! and `Book` follow the host by its change feed, so every production write
 //! of a state they read happens in a function that keeps the feed: held
 //! pages (`set_page` and `stop` mark), the draft census and its per-key
-//! index (`index_vehicle`, `index_drafts`), the worker overlay (`worker`,
+//! index (`index_vehicle`, `index_drafts`), the operation vehicles a page's
+//! removal waits for (`live_ops`), the worker overlay (`worker`,
 //! `application`, `before`), liveness and incarnation (a rebuild), the feed
 //! itself, and the publication consumer's ownership (`owned` with
 //! `orphans`). Parsed Rust, by token: a field access is a read, a write (an
@@ -61,6 +62,18 @@ const WRITERS: &[(&str, &[&str], &str)] = &[
         "the reverse vehicle index, kept with `durable`",
     ),
     (
+        "live_ops",
+        &[
+            "logical.rs::index_op",
+            "logical.rs::reindex_owed",
+            "logical.rs::index_drafts",
+            "mod.rs::stop",
+        ],
+        "RENAME-COST L1's operation vehicles: index_op follows index_vehicle (which marks every \
+         page either version names), reindex_owed marks every page of a vehicle whose owed set \
+         empties or fills, index_drafts rebuilds with launch, stop ends liveness",
+    ),
+    (
         "changed",
         &[
             "mod.rs::mark",
@@ -74,7 +87,8 @@ const WRITERS: &[(&str, &[&str], &str)] = &[
     (
         "worker",
         &[
-            "draft_worker.rs::begin_draft",
+            "draft_worker.rs::begin_draft_with",
+            "draft_worker.rs::retire_whole",
             "draft_worker.rs::install_operation",
             "draft_worker.rs::advance_draft",
             "mod.rs::stop",
