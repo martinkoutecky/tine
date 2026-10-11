@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Launch backups are now one `.zip` per snapshot instead of a folder of about a thousand files, and a launch where nothing changed writes nothing (on a 1,075-page graph: 1 file and 2 syncs instead of 1,076 files and 1,083 syncs). Any archive tool opens a snapshot without Tine; Settings → **Backups & recovery** marks a damaged snapshot, or one from a newer Tine, and offers no restore for it. Older snapshot folders stay listed and restorable.
 - Saving moved into one background page host per graph: every edit is saved as you type, from any window, and keeps saving after the page closes. If a file changes on disk while you have unsaved text on that page, the page shows a comparison where you keep your edits or take the disk version, block by block. Unsaved text survives a crash: the next start puts it back on its page, saves it, and names each recovered page; it is never written over a file that changed meanwhile. Closing the last window while a page still cannot be saved reopens the graph and names those pages instead of quitting. Switching graphs waits until a running rename finishes.
 - A conflict over a page whose file was deleted on disk offers **Use disk version** (accept the deletion) and **Keep mine** (recreate the file) directly in the conflict bar (GH #541).
 

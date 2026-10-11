@@ -82,8 +82,10 @@ export const PERSISTED_FORMATS = Object.freeze([
   "backup-graph-text-copy",
   "launch-checkpoint",
   "graph-link-identity",
+  // ADR 0073 (Martin 2026-10-11, "for now do full zips"; ADR acceptance pending).
+  "backup-zip-snapshot",
 ]);
-export const PINNED_FORMAT_COUNT = 29;
+export const PINNED_FORMAT_COUNT = 30;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({

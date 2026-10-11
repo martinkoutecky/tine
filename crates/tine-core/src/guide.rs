@@ -348,6 +348,22 @@ mod journal_guide_tests {
         // og-B (ADR 0062): snapshots cover text outside pages/ and journals/.
         assert!(files.contains("pages kept in other folders or at the graph root"));
         assert!(files.contains("moved into the restore's recovery folder"));
+        // og-backup-zip (ADR 0073): a snapshot is one zip a user can open
+        // without Tine, found per platform; unrestorable ones are labelled.
+        for control in [
+            "## Where your backups are",
+            "Each snapshot is one ordinary `.zip` file",
+            "without Tine",
+            "`backups/<graph folder name>-<code>.zips/`",
+            "~/Library/Application Support/page.tine.TineBeta/backups/",
+            "%APPDATA%\\page.tine.TineBeta\\backups\\",
+            "a file manager cannot open",
+            "**Damaged**",
+            "A launch where nothing changed since the newest snapshot writes no new one",
+            "Tine has no button that opens this folder",
+        ] {
+            assert!(files.contains(control), "missing backup Guide control: {control}");
+        }
         // og-J2 (master d017d1afc): assets refresh in place after an outside change.
         assert!(files.contains("Files in `assets/` are watched too"));
         assert!(files.contains("An open PDF, audio, or video is not swapped while you use it"));

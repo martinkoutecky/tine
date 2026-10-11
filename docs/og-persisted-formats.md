@@ -1,6 +1,6 @@
 # og persisted-format census (batch 5b)
 
-The pinned count is **29 durable layouts** in `scripts/lib/og-enforcement.mjs`.
+The pinned count is **30 durable layouts** in `scripts/lib/og-enforcement.mjs`.
 Several rows share a low-level writer. A format means a byte layout or durable
 directory convention, not each JSON key or filename. Temporary files used for
 atomic publication have the same payload as their final name.
@@ -19,11 +19,12 @@ atomic publication have the same payload as their final name.
 | Device settings JSON | app data `tine-settings.json` | `src-tauri/src/settings.rs:18`, `:84`; `src-tauri/src/device_io.rs:149` |
 | Graph session JSON | app data `sessions/<graph-id>.json` (legacy `tine-session.json`) | `src-tauri/src/settings.rs:329`, `:347`, `:526`, `:544` |
 | Workspace registry JSON | app data `sessions/<graph-id>-workspaces.json` | `src-tauri/src/settings.rs:361`, `:425`, `:442`, `:479` |
-| Backup page copy | schema-2 snapshot `journals/`, `pages/` (configured roots only), original Markdown/Org bytes; no longer written since og-B, still listed and restored | `src-tauri/src/backup/restore.rs` `open_verified_restore_files` (read) |
-| Backup configuration copy | snapshot `logseq/config.edn` | `src-tauri/src/backup.rs` `write_snapshot` → `write_payload` |
-| Backup asset copy | snapshot assets `*.edn` sidecars, original bytes | `src-tauri/src/backup.rs` `copy_store_area(Area::Assets)` → `write_payload` |
-| Backup manifest JSON | snapshot `snapshot.json`: schema 3 with `graph_text_policy` {version 2, `hidden`, `hidden_parse_failed_closed`} and `writer: "og"` (master's wire format; schema 2 still read) (ADR 0062) | `src-tauri/src/backup.rs` `write_manifest`, `read_manifest` |
-| Backup graph-text copy | schema-3 snapshot `graph/<graph-relative path>`: every file in the graph-text scope (`Area::Graph`), original Markdown/Org bytes (ADR 0062) | `src-tauri/src/backup.rs` `copy_store_area(Area::Graph)` → `write_payload` |
+| Backup page copy | schema-2 snapshot `journals/`, `pages/` (configured roots only), original Markdown/Org bytes; no longer written since og-B, still listed and restored | `src-tauri/src/backup/restore.rs` `read_verified_dir_files` (read) |
+| Backup configuration copy | snapshot `logseq/config.edn`: a schema-2/3 directory file (no longer written since og-backup-zip, still listed and restored) or a schema-5 zip entry | `src-tauri/src/backup.rs` `capture` → `archive::write_archive` |
+| Backup asset copy | snapshot assets `*.edn` sidecars, original bytes, in a schema-2/3 directory (read only) or a schema-5 zip entry | `src-tauri/src/backup.rs` `read_store_area(Area::Assets)` → `archive::write_archive` |
+| Backup manifest JSON | schema 5: the zip's last entry `tine-backup.json`, with `files: [{path, len, sha256}]` and a canonical-JSON SHA-256 `checksum` (ADR 0073); schemas 2/3: `snapshot.json` with `graph_text_policy` {version 2, `hidden`, `hidden_parse_failed_closed`} and `writer: "og"` (master's wire format, ADR 0062), still read, no longer written | `src-tauri/src/backup/archive.rs` `encode_manifest`, `parse_manifest`; `src-tauri/src/backup.rs` `read_manifest` (schemas 2/3) |
+| Backup graph-text copy | every file in the graph-text scope (`Area::Graph`), original Markdown/Org bytes: a schema-5 zip entry at its graph-relative path, or a schema-3 directory's `graph/<graph-relative path>` (read only) (ADR 0062) | `src-tauri/src/backup.rs` `read_store_area(Area::Graph)` → `archive::write_archive` |
+| Backup zip snapshot | app data `backups/<graph-id>.zips/<name>.zip` (schema 5): stored or raw-Deflate entries, UTF-8 name flag for non-ASCII names, ZIP64 only where needed, manifest last; `.partial-<name>.zip` while written; the namespace's 0-byte `lock` file (ADR 0073, Martin 2026-10-11 "for now do full zips") | `src-tauri/src/backup/archive.rs` `write_archive`; `src-tauri/src/backup.rs` `publish_zip`; `src-tauri/src/file_lock.rs` |
 | PDF highlights EDN | PDF `*.edn` sidecar and generated `hls__` notes page | `crates/tine-graph-features/src/pdf.rs:299`, `:340`, `:378`, `:398`; `src-tauri/src/commands.rs:2498` |
 | Published site | export HTML/CSS/assets under publish destination | `crates/tine-store/src/publish.rs:329`, `:337`; `crates/tine-graph-features/src/publish.rs:38` |
 | Restore recovery | retired files under `logseq/.tine-trash/<id>` (schema-3 whole-graph text under `<id>/graph/<graph-relative path>`) and `assets/.tine-restore-recovery/<id>` | `crates/tine-store/src/restore.rs:97`, `:565` (`reserve`), `:672` (retirement rename), `:691` (copy fallback), `:752` (`retire_extras`) |

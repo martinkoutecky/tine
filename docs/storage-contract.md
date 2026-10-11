@@ -355,6 +355,143 @@ failure alike. Proof `src-tauri/src/backup/restore.rs`
 `a_restore_holds_the_host_gate_until_one_fresh_host_runs`,
 `a_retirement_waits_for_the_restore_it_raced`.
 
+## Graph backups (og-backup-zip, ADR 0073)
+
+Tine snapshots a graph at launch and before a rewrite the user asked for
+(`pre-restore`, `pre-journal-rename`) into app data, outside every graph
+(`src-tauri/src/backup.rs`). The backups directory is private to the device:
+only Tine writes it and no sync tool delivers into it. A hand edit there is
+outside the threat model; verification still detects damage it causes.
+
+**Format (schema 5).** Each snapshot is one zip,
+`<app data>/backups/<graph-id>.zips/<name>.zip`. Every entry sits at its
+graph-relative path: graph text at its path, asset `.edn` sidecars at
+`<assets dir>/<rel>`, `logseq/config.edn`. The last entry is
+`tine-backup.json`: schema 5, root, pages/journals/assets directories, the
+graph-text policy (ADR 0062), `writer: "og"`, `complete: true`, every file's
+`{path, len, sha256}`, and `checksum`, the SHA-256 of the other fields as
+compact JSON with keys sorted recursively. Entries are stored or raw Deflate
+(pure Rust `flate2`/`miniz_oxide`, no C codec), with no encryption, symlinks or
+data descriptors; ZIP64 only where the entry count or an offset needs it.
+Limits, applied by the writer and the reader alike so that anything Tine
+writes Tine can restore: 128 MiB per entry, 512 MiB decompressed in total,
+64 MiB manifest, 600 MiB archive, 200,000 entries, 4,096-byte names; a graph
+over a limit fails its snapshot (`backup-failed:archive:FileTooLarge`).
+Entry paths are relative, `/`-separated, with no empty, `.` or `..`
+component, NUL or backslash; on Windows also no drive, stream or reserved
+device name and no trailing dot or space. Any zip tool opens a snapshot.
+Proof `src-tauri/src/backup/tests.rs`
+`a_launch_backup_is_one_zip_an_independent_reader_opens` (Python's
+`zipfile`), `src-tauri/src/backup/archive/tests.rs`.
+
+**Legacy.** Schema-2/3 snapshot directories in `<graph-id>/` stay listed,
+restorable and counted by the keep-count. Tine no longer writes them and
+never migrates them.
+
+**Names.** `<UTC YYYY-MM-DD_HH-MM-SS>[-<word>]*[-<k>]`, one grammar for both
+namespaces (`backup/naming.rs`); anything else is unknown: never counted,
+listed or deleted. Order is (stamp, numeric counter). A new name takes
+`max(now, newest stamp)` and one above every counter of that second, of any
+suffix, partial or namespace, so a same-second snapshot never collides
+(base 02f4d9135 failed it with `AlreadyExists`) and a clock that moved back
+never sorts a new snapshot first.
+
+**Lock.** Writing, pruning and restore's read hold one OS file lock on
+`<graph-id>.zips/lock` (`src-tauri/src/file_lock.rs`: `flock` on Linux,
+Android, macOS and iOS, `LockFileEx` on Windows), waiting at most 30 s.
+Scenario: a concurrent honest instance backs up or prunes the same graph.
+A launch snapshot that cannot take the lock within the wait is skipped (diag
+`backup-busy`); a Settings prune that cannot is left for the next launch; any
+other lock error fails the snapshot. Listing takes no lock.
+
+**Publication.** Under the lock: remove `.partial-*` files, write
+`.partial-<name>.zip` (`create_new`), sync it, rename it to `<name>.zip`
+without replacing, then sync `<graph-id>.zips/`, and on that namespace's first
+zip also `backups/` and the app-data directory. A crash leaves either a
+partial (removed by the next writer, never listed) or a complete zip. A
+failure before the rename removes the partial; after it, the zip stays and
+the snapshot reports `publish-sync`. Nothing is deleted on a failure.
+Proof `publication_is_durable_before_visible_and_an_unchanged_launch_writes_nothing`,
+`a_crash_leaves_a_partial_or_a_complete_zip`,
+`publication_failures_name_their_phase_and_delete_nothing`.
+
+| Target | Zip file | No-replace rename | Directory sync |
+|---|---|---|---|
+| Linux | `fsync` | `renameat2(RENAME_NOREPLACE)`; where the flag is refused, an absence check then rename | `fsync` on the directory |
+| Android | `fsync` | as Linux | as Linux |
+| macOS | `F_FULLFSYNC` (std `sync_all`) | `renameatx_np(RENAME_EXCL)`; fallback as Linux | `F_FULLFSYNC` on the directory |
+| iOS | as macOS | as macOS | as macOS |
+| Windows | `FILE_FLAG_WRITE_THROUGH` + `FlushFileBuffers` | `MoveFileExW(MOVEFILE_WRITE_THROUGH)`, no `REPLACE_EXISTING` | none |
+
+The rename is the shared `no_replace` primitive (GH #538): storage that
+refuses the flag (NFS, Android shared-storage FUSE) gets an absence check
+and a plain rename, which the namespace lock keeps race-free among Tine
+writers. On Windows there is no directory flush: the write-through file and the
+write-through move on NTFS's metadata journal are the accepted substitute
+(the same recipe as page saves). A directory sync the filesystem does not
+offer (the shared tolerated set, `directory_durability::sync_directory_witness`
+`Unsupported`) makes the snapshot weakly durable: it is published and
+restorable, logged `backup-weak-durability`, and prunes nothing. A real sync
+error fails the snapshot.
+
+**Unchanged launch.** A launch snapshot whose capture (every file's path,
+length and SHA-256, the scope and directories) equals the manifest of the
+newest snapshot of any suffix writes nothing, but only when that newest
+snapshot is a zip that fully verifies. A damaged, unreadable or legacy
+baseline gets a fresh zip. Suffixed snapshots are always written. Proof
+`the_skip_compares_with_the_newest_snapshot_of_any_suffix`,
+`a_damaged_baseline_is_never_the_reason_to_skip`.
+
+**Prune.** The keep-count counts legacy directories (not `pre-restore`, not
+another writer's) and healthy zips written by og (not `pre-restore`). Before
+deleting anything, a prune (after a launch or from Settings) certifies a
+keeper under the lock: the newest healthy zip, fully verified and strongly
+synced through app data. No keeper, no deletion. Damaged zips count toward
+nothing and are deleted only once older than the oldest retained counted
+snapshot; unknown entries, `pre-restore` snapshots and another writer's zips
+are never deleted. Proof `deletion_needs_a_verified_strongly_synced_keeper`,
+`keep_n_prunes_both_namespaces_with_the_exemptions`.
+
+**Listing.** Both namespaces, newest first, as `zip:<name>` or `dir:<name>`
+with a status: `ok`, `damaged` (its manifest is missing or fails its checksum)
+or `unsupported` (a valid manifest of a schema this build does not know).
+Listing reads the central directory and the manifest entry, never payloads,
+so a listed snapshot can still fail restore's verification. Proof
+`listing_shows_both_namespaces_with_ids_and_status`,
+`listing_never_reads_snapshot_payloads`.
+
+**Restore.** Under the lock, read the zip (bounded) and verify every entry
+against the manifest; then refuse a zip of another graph, another assets
+directory setting, or names that differ only in letter case on a
+case-folding platform (Windows, macOS, iOS, Android: shared storage
+folds case). The verified bytes go to
+`Store::restore` as `RestoreFile { area, rel, bytes }`; nothing is reread
+from the backup after verification. A legacy directory is read under the
+same lock and its files are bounded and hash-checked as they are read. The
+pre-restore safety snapshot runs next. D5: any failure of it refuses the
+restore, and so does an empty one when the live graph holds text, sidecars
+or `config.edn`. Proof `src-tauri/src/backup/restore.rs`
+`damaged_zips_are_refused_before_anything_is_written`,
+`a_config_only_graph_needs_a_nonempty_safety_snapshot`,
+`any_safety_snapshot_failure_refuses_the_restore`.
+
+**Unit cost:** 0 bytes, 0 files and 0 transport bytes per edit on a 1-block
+or a 60-block page: snapshots are taken at launch and before a rewrite the
+user asked for, never per edit. Per launch on a copy of the anonymized graph
+(1,075 text files, 1,300,622 bytes; measured 2026-10-11 with
+`launch_backup_cost_on_corpus`, release build, ext4 NVMe):
+
+| Launch | Before (schema 3 directory) | After (schema 5 zip) |
+|---|---|---|
+| First | 1,076 files, 1,455,488 B, 1,083 syncs, ~650 ms | 1 zip (+ the 0-byte lock), 918,588 B, 4 syncs, ~85 ms |
+| Unchanged | 1,076 files, 1,455,488 B, 1,083 syncs, ~650 ms | 0 files, 0 B, 0 syncs, ~54 ms (of which ~8 ms full verification) |
+| 3 pages edited | 1,076 files, 1,455,566 B, 1,083 syncs, ~650 ms | 1 zip, 918,638 B, 2 syncs, ~90 ms |
+| Repair (newest zip damaged) | n/a | 1 zip, 918,638 B, 2 syncs, ~88 ms |
+| Prune (keep 1, 3 deleted) | n/a | 1 zip, 918,661 B, 4 syncs, ~100 ms |
+
+Counts are files created and deleted under `backups/`, their bytes, and
+file and directory sync calls; not full I/O accounting.
+
 ## I-8 refusal scenarios
 
 Each row below is keyed by the source file, owning function and refusal family.
@@ -427,7 +564,12 @@ by I-9's typed failure paths.
 | `tine-graph-features::journals` migration and trash | A journal disappears or changes after selection; refuse that item and leave other journals intact. |
 | `tine-graph-features::pdf` highlight and sidecar | Sidecar or notes bytes change concurrently, a malformed imported sidecar appears, or Org notes cannot round-trip; retain the source and refuse or retry within the bounded loop. |
 | `tine-graph-features::config` and `assets` | Config or an asset changes repeatedly while applying a user update; stop before overwriting the external winner. |
-| `src-tauri::backup` restore selection | A backup is incomplete, belongs to another graph, fails its manifest hash, loses a source file or a whole snapshot area (`graph/` for schema 3; `journals/`, `pages/` for schema 2; assets), or changes during verification; refuse restore before touching live content. A failed pre-restore safety snapshot also refuses publication. A schema-2 snapshot made under different `:pages-directory`/`:journals-directory` settings still refuses (it names roots, not paths); schema 3 places text at its recorded graph-relative path and ignores them (ADR 0062). |
+| `src-tauri::backup::restore` legacy selection (schema 2/3 `dir:` ids) | A backup is incomplete, belongs to another graph, fails its manifest hash, loses a source file or a whole snapshot area (`graph/` for schema 3; `journals/`, `pages/` for schema 2; assets), or changes while it is read (its bytes are hash-checked as read, under the namespace lock); refuse restore before touching live content ("this backup is damaged; pick another" for damage). A schema-2 snapshot made under different `:pages-directory`/`:journals-directory` settings still refuses (it names roots, not paths); schema 3 places text at its recorded graph-relative path and ignores them (ADR 0062). |
+| `src-tauri::backup::restore::verified_zip` (schema 5 `zip:` ids, ADR 0073) | Power loss, a disk error or a hand edit truncates, flips or rewrites a zip: a failed checksum, CRC, length, hash, header agreement, bound or entry-to-manifest match refuses with "this backup is damaged; pick another" before anything is written. A valid manifest of a schema or field set this build does not know (a newer Tine sharing app data) refuses as made by a newer Tine. A zip of another graph root, or made under another assets directory setting (its sidecars would land in the wrong folder), refuses. On a case-folding platform, two entries whose paths differ only in letter case (a backup made on a case-sensitive volume) refuse: one would overwrite the other. |
+| `src-tauri::backup::restore::require_safety_snapshot` (D5) | The pre-restore safety snapshot fails (disk error, a held lock that does not clear in 30 s), or comes out empty while the live graph holds text, sidecars or `config.edn`: refuse the restore, since nothing would bring the replaced files back. |
+| `src-tauri::backup::restore` namespace lock (BUSY) | A concurrent honest Tine instance holds the graph's backup lock past 30 s (a long snapshot or prune): refuse the restore with "backups are busy in another Tine window or process; try the restore again in a moment"; nothing changed. |
+| `src-tauri::backup::write_snapshot` busy namespace | A concurrent honest Tine instance holds the graph's backup lock for more than 30 s: a launch snapshot is skipped (diag `backup-busy`), since that instance is backing up this graph now; a suffixed snapshot fails (`backup-failed:busy:WouldBlock`), and the rewrite that asked for it does not run. |
+| `src-tauri::backup::prune_locked` keeper | No healthy zip verifies, or its directory sync is weak or fails (disk error, a filesystem without directory sync): delete nothing. Old snapshots stay until a keeper is certified; a disk error never turns into losing the last good snapshot. |
 | `src-tauri::backup::restore_hosted` restore stop (STEP3 §7, R7) | Only with a running page host. A drained edit whose save fails (disk error) or conflicts (external-editor race), an unretired draft, or a known draft copy whose census could not be synced (power loss, M2), at the restore stop: restore nothing, keep the host, and name the pages (today's restore aborts when its flush fails). The binding's host lock is held throughout (S8), so a writer, a retirement or another restore waits for this outcome. A fresh host that cannot start after the restore (an app-data disk error) is reported, and writers then run as with no host. Proof `src-tauri/src/backup/restore.rs` `a_restore_holds_the_host_gate_until_one_fresh_host_runs`. |
 | `src-tauri::data_home::ensure_usable` app-data home (og I1a, master 8e1ea0bfd) | A disk error or a filesystem the user cannot write (a root-owned `~/.local/share`, a read-only mount): the app-data home is relocated for this launch to the first writable fallback (`~/.tine-data`, `$XDG_RUNTIME_DIR/tine-data`, `$TMPDIR/tine-data-<uid>`) and the frontend says where, once, stickily. Only when none is writable does the launch refuse: one sentence naming the `ErrorKind`, exit 1, instead of Tauri's setup panic. |
 | `src-tauri::state` graph binding | Two windows try to own overlapping roots, or a queued command carries an old binding generation, or a queued worker holds a binding a reopen has since adopted (`review_p1_late_old_slot_writer_cannot_bypass_adopted_reservation`, `review_p1_a_queued_restore_cannot_enter_after_slot_adoption`); refuse a wrong-graph write. A graph whose page host is still retiring (saving after its window closed) owns its root too: an open of an overlapping root first waits for it outside the registry lock, up to 10 s, telling the window it waits (`graph-open-waiting`), and is refused only past that bound, naming the graph still saving (`host_retirement` `a_stuck_retirement_refuses_an_overlapping_open_naming_the_saving_graph`). The same root is adopted, never waited for. |

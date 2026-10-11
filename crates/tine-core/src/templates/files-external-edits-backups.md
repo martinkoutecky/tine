@@ -30,6 +30,16 @@ icon:: 🗄️
 	- Settings → **Backups & recovery** → **Snapshots to keep** (default 12) controls how many survive; the oldest beyond the count are pruned.
 	- 1. Pick a snapshot under **Available snapshots** and choose **Restore**, then confirm.
 	- 2. What you should see: Tine saves pending edits, snapshots your current state first, restores backed-up graph text to its original paths, restores config and sidecars, and reloads the graph — a mistaken restore is itself reversible. Pages created after the snapshot are moved into the restore's recovery folder under `logseq/.tine-trash/`, not deleted. A snapshot from an older Tine covers only the pages and journals folders; one made under a different pages or journals folder setting is refused rather than restored into the wrong place.
+	- A launch where nothing changed since the newest snapshot writes no new one. A snapshot marked **Damaged** in the list failed its check and cannot be restored; pick another. One marked **Made by a newer Tine** can be restored only by that newer version.
+- ## Where your backups are
+	- Each snapshot is one ordinary `.zip` file. You can open it with your system's archive tool, without Tine: inside, every file sits at its path in your graph (`pages/…`, `journals/…`, `logseq/config.edn`), next to `tine-backup.json`, the list Tine checks the zip against. To get back a single page by hand, copy it out of the zip into your graph; Tine picks it up like any external change.
+	- The zips are in Tine's app data folder, under `backups/<graph folder name>-<code>.zips/`, one folder per graph. Tine Beta's folder is named `page.tine.TineBeta`; stable Tine's is `page.tine.Tine`.
+		- Linux: `~/.local/share/page.tine.TineBeta/backups/` (Flatpak: `~/.var/app/page.tine.TineBeta/data/page.tine.TineBeta/backups/`)
+		- macOS: `~/Library/Application Support/page.tine.TineBeta/backups/`
+		- Windows: `%APPDATA%\page.tine.TineBeta\backups\`
+		- Android and iOS: the folder is in the app's private storage, which a file manager cannot open; restore from Settings.
+	- Snapshots made by an older Tine are folders rather than zips, in `backups/<graph folder name>-<code>/`. They stay listed, restorable, and counted toward **Snapshots to keep**.
+	- Tine has no button that opens this folder; use your file manager.
 - ## Trash
 	- Deleting a page or journal moves the file to `logseq/.tine-trash/pages/` or `logseq/.tine-trash/journals/`, not permanent deletion. Its name gains a timestamp followed by `__`.
 	- Duplicate journal files you trash and unused media from an orphan scan land there too, and discarded sync-conflict copies and a file's pre-resolution version go to `logseq/.tine-trash/conflicts/`.
