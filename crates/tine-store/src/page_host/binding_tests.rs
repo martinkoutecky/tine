@@ -1231,6 +1231,34 @@ fn v3_an_external_return_to_the_pre_save_observation_updates_the_index() {
     live.host.stop();
 }
 
+/// N3 (REVIEW-3b-P2b-2, Codex's plant): a watcher blocked on the store
+/// writer with an external change pending is as quiet as an idle one, so
+/// quiet counters cannot be a measurement boundary. The acknowledged drain
+/// is not declared while the reconcile is blocked, and once declared the
+/// pending change is in the index.
+#[test]
+fn n3_a_watcher_blocked_on_the_writer_is_not_drained() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let key = "pages/a.md";
+    let drained = |seconds| live.host.quiesce_for_tests(Duration::from_secs(seconds));
+    assert!(drained(20), "the fresh host settles");
+    let writer = live.store.writer.lock().unwrap();
+    fs::write(live.root.join(key), "- external\n").unwrap();
+    assert!(
+        !drained(5),
+        "N3: drained while the watcher's reconcile waited on the writer"
+    );
+    assert_eq!(live.indexed(key), Some(content_rev("- a\n")), "plant held");
+    drop(writer);
+    assert!(drained(20), "the released watcher drains");
+    assert_eq!(
+        live.indexed(key),
+        Some(content_rev("- external\n")),
+        "N3: drained before the pending change was reconciled"
+    );
+    live.host.stop();
+}
+
 /// A3 (REVIEW-3a): page mail's DTO (`page_dto_for_bytes`, its only
 /// conversion) names the page from the buffer it carries, not from a fresh
 /// read of the file: disk says `title:: Disk` while a conflicted or

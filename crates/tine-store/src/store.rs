@@ -1307,6 +1307,14 @@ impl Store {
         }
     }
 
+    /// Tests (REVIEW-3b-P2b-2 N3): true once the watcher has reconciled
+    /// every notification of a write made before the call and no racy
+    /// follow-up is due (`watch/test_drain.rs`); false at `timeout`.
+    #[cfg(feature = "test-faults")]
+    pub fn watcher_drained_for_tests(&self, timeout: std::time::Duration) -> bool {
+        self.watch.drained_for_tests(timeout)
+    }
+
     /// Stop observation, wait for an in-flight writer, end the subscription,
     /// release load waiters, and refuse later I/O. Idempotent; no timeout.
     pub fn close(&self) {

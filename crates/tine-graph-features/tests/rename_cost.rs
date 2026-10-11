@@ -20,47 +20,15 @@ fn hosted<T>(
     let app_data = tempfile::tempdir().unwrap();
     let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
     let result = run(&host);
-    quiesce(&host);
+    // The measurement boundary (contract §5.4, REVIEW-3b-P2b-2 N3).
+    assert!(
+        host.quiesce_for_tests(Duration::from_secs(60)),
+        "the watcher or the host never settled"
+    );
     result
 }
 
-/// Wait until the host owes nothing and the watcher's and the host's
-/// observation reads have been quiet for `WATCHER_QUIET` (O5): every echo
-/// of the operation's own writes is then observed before the host stops,
-/// by the watcher (`watcher_reads`) or, for a page the host still held, by
-/// the host (`observation_reads`), so the split does not depend on timing.
-fn quiesce(host: &tine_store::PageHost) {
-    let echoes = || {
-        let c = cost_counters::snapshot();
-        (
-            c.watcher_reads,
-            c.watcher_stamps_by_path,
-            c.observation_reads,
-        )
-    };
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    let mut last = echoes();
-    let mut quiet_since = std::time::Instant::now();
-    while quiet_since.elapsed() < WATCHER_QUIET || !host.quiescent_for_tests() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the host never quiesced"
-        );
-        std::thread::sleep(Duration::from_millis(100));
-        let now = echoes();
-        if now != last {
-            last = now;
-            quiet_since = std::time::Instant::now();
-        }
-    }
-}
-
 static CASE_LOCK: Mutex<()> = Mutex::new(());
-
-/// The watcher's re-reads of what an operation wrote land after it returns:
-/// the path-scoped diff after its debounce and the racy follow-up about 2 s
-/// later (contract §5.4). Quiet for longer than that means settled.
-const WATCHER_QUIET: Duration = Duration::from_secs(4);
 
 /// `pages` unrelated pages spread over three folders, `referrers` pages that
 /// link `[[Target]]`, and the target itself.

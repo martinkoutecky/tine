@@ -52,6 +52,36 @@ impl PageHost {
             && state.book.owned().is_empty()
     }
 
+    /// A cost test's measurement boundary (REVIEW-3b-P2b-2 N3): the watcher
+    /// drained (every notification of a write so far reconciled,
+    /// `watch/test_drain.rs`), then the host quiescent, every forwarded
+    /// observation processed; repeated until a whole round leaves the
+    /// driver's wake sequence unchanged (nothing forwarded, submitted or
+    /// delivered meanwhile; per host, so other tests' work cannot hold it
+    /// open). False at `timeout`.
+    #[cfg(feature = "test-faults")]
+    pub fn quiesce_for_tests(&self, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        let left = || deadline.saturating_duration_since(std::time::Instant::now());
+        let mut last = None;
+        loop {
+            if !self.store.watcher_drained_for_tests(left()) {
+                return false;
+            }
+            while !self.quiescent_for_tests() {
+                if left().is_zero() {
+                    return false;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            let now = self.driver.shared.state.lock().unwrap().wake_seq();
+            if last == Some(now) {
+                return true;
+            }
+            last = Some(now);
+        }
+    }
+
     pub(super) fn launch(launch: Launch) -> Result<Self, String> {
         let Launch {
             store,

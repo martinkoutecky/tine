@@ -105,6 +105,10 @@ pub(super) fn run(
                 *pending.lock().unwrap() = Pending::default();
                 continue;
             }
+            // Taken before the drain: every notification ahead of the
+            // sentinel is drained with it (N3).
+            #[cfg(feature = "test-faults")]
+            let barrier = pending.lock().unwrap().barrier.take();
             let (paths, full, config, css, first_event_at, assets) = {
                 let mut pending = pending.lock().unwrap();
                 let config = std::mem::take(&mut pending.config);
@@ -146,10 +150,16 @@ pub(super) fn run(
             if full || assets.1 || assets_polled || !assets.0.is_empty() {
                 core.observe_assets(&assets.0, full || assets.1 || assets_polled);
             }
+            #[cfg(feature = "test-faults")]
+            if let Some(asked) = barrier {
+                core.barrier.ack(asked);
+            }
         } else {
             // Poll mode has no event paths: every cycle re-checks the config
             // (one stat and one hash of a small file beside the full stat scan).
             let _ = rx.recv_timeout(core.follow_up_wait(CYCLE));
+            #[cfg(feature = "test-faults")]
+            let asked = core.barrier.asked();
             if core.ready() && !core.closed.load(Ordering::Acquire) {
                 // This cycle's full diff is the racy follow-up (§5.4).
                 core.follow_up.lock().unwrap().take();
@@ -163,6 +173,8 @@ pub(super) fn run(
                 let _ = core.reconcile_batch(None, true, batch);
                 core.observe_custom_css();
                 core.observe_assets(&HashSet::new(), true);
+                #[cfg(feature = "test-faults")]
+                core.barrier.ack(asked);
             }
         }
     }

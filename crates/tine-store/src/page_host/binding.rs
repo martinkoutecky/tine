@@ -1118,13 +1118,8 @@ impl PageHost {
     }
 
     fn register(&self, key: &str, spelling: &PageId) {
-        let graph = &self.store.graph;
-        let lock = graph.page_lock(&graph.root.join(spelling.as_str()));
-        self.driver.shared.with_state(|state| {
-            state
-                .progress
-                .with_host(|host| host.register(key.into(), spelling.as_str(), lock))
-        });
+        self.try_register(key, spelling)
+            .expect("page host state poisoned");
     }
 
     /// Admit `request` under `session`'s window generation; on admission

@@ -564,7 +564,287 @@ fn the_writer_bound_covers_full_and_references_only_renames_not_a_deletion() {
         "references only"
     );
     let deleted = |host: &PageHost, _: &Store| {
-        drop(host.delete(host.session(), &PageId::from(OLD), b"- old\n"));
+        let _ = host.delete(host.session(), &PageId::from(OLD), b"- old\n");
     };
     assert!(!observe(&[(OLD, "- old\n")], &deleted), "a deletion");
+}
+
+/// REVIEW-3b-P2b-2 N1: the flush shares the writer's deadline. A flush-first
+/// writer finds Old's edit unsaved and waits for its save holding nothing;
+/// the edit saves, and a rename over Old is admitted whose draft keeps
+/// failing. Old is now that rename's input, so the writer is refused Busy
+/// once `OPERATION_WAIT` has passed since it started, nothing reserved.
+#[test]
+fn a_flush_handed_to_a_rename_is_told_busy_after_the_bound() {
+    let live = graph();
+    let (key, page) = live.open(OLD);
+    live.faults(Phase::PageTemp, 10_000);
+    let id = live.submit(&key, "- edited\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    let pause: crate::store::TestPause = Default::default();
+    *live.host.driver.shared.flush_pause.lock().unwrap() = Some(Arc::clone(&pause));
+    let worker = || {
+        live.host
+            .driver
+            .shared
+            .with_state(|state| state.progress.host.worker.is_some())
+    };
+    std::thread::scope(|scope| {
+        let (sender, refused) = mpsc::channel();
+        let started = Instant::now();
+        let host = &live.host;
+        scope.spawn(move || {
+            let reserved = host.reserve(|| vec![PageId::from(OLD)], Input::Flush);
+            let _ = sender.send(reserved.err());
+        });
+        until("the writer waits in its flush", || {
+            pause.0.lock().unwrap().0
+        });
+        clear_faults(&live);
+        live.until_disk(OLD, "- edited\n");
+        until("the edit is saved", || {
+            live.host.driver.shared.with_state(|state| {
+                matches!(state.progress.host.logical(&key), Logical::Settled(page) if page.clean())
+            })
+        });
+        live.faults(Phase::DraftSync, 10_000);
+        let renamed = scope.spawn(|| rename(&live.host, &live.store));
+        until("the rename is admitted", worker);
+        pause.0.lock().unwrap().1 = true;
+        pause.1.notify_all();
+        let outcome = refused.recv_timeout(OPERATION_WAIT + Duration::from_secs(3));
+        if outcome.is_err() {
+            // Unblock a flush that still waits (before N1).
+            clear_faults(&live);
+        }
+        assert_eq!(
+            outcome,
+            Ok(Some(ReserveRefusal::Busy)),
+            "N1: a flush over an admitted rename's page is refused Busy within the bound"
+        );
+        assert!(started.elapsed() >= OPERATION_WAIT);
+        live.host.driver.shared.with_state(|state| {
+            assert!(
+                state.progress.host.retained.is_empty(),
+                "nothing is reserved"
+            );
+        });
+        clear_faults(&live);
+        let _ = renamed.join().unwrap();
+    });
+    until("the operation ends", || !worker());
+    live.host.stop();
+}
+
+/// REVIEW-3b-P2b-2 N1: a writer entering a poisoned host (one that
+/// panicked under its lock) is refused Busy, never a panic.
+#[test]
+fn a_writer_entering_a_poisoned_host_is_told_busy() {
+    let poisoned = graph();
+    let shared = Arc::clone(&poisoned.host.driver.shared);
+    let poisoner = std::thread::spawn(move || {
+        let _state = shared.state.lock().unwrap();
+        panic!("N1 test: poison the host state");
+    });
+    assert!(poisoner.join().is_err());
+    let reserved = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        poisoned
+            .host
+            .reserve(|| vec![PageId::from(OLD)], Input::Flush)
+            .err()
+    }));
+    drop_failed(poisoned);
+    assert_eq!(
+        reserved.ok(),
+        Some(Some(ReserveRefusal::Busy)),
+        "a poisoned host is a refused writer, not a panic"
+    );
+}
+
+/// REVIEW-3b-P2b-2 N1: a writer entering a host whose driver ended (nothing
+/// will answer it) is refused Busy with nothing reserved.
+#[test]
+fn a_writer_entering_an_ended_driver_is_told_busy() {
+    let mut ended = graph();
+    ended.host.driver.join();
+    assert!(ended.host.driver.shared.ended());
+    let reserved = ended
+        .host
+        .reserve(|| vec![PageId::from(OLD)], Input::Flush)
+        .err();
+    assert_eq!(
+        reserved,
+        Some(ReserveRefusal::Busy),
+        "an ended driver admits no writer"
+    );
+    ended.host.driver.shared.with_state(|state| {
+        assert!(
+            state.progress.host.retained.is_empty(),
+            "nothing is reserved"
+        );
+    });
+}
+
+/// REVIEW-3b-P2b-2 N1: a host that goes down between the writer's fence
+/// and its input check refuses Busy, and the fenced pages are released.
+#[test]
+fn a_host_down_after_the_fence_refuses_busy_and_releases_the_pages() {
+    let live = graph();
+    let discovered = std::cell::Cell::new(0);
+    let reserved = live
+        .host
+        .reserve(
+            || {
+                discovered.set(discovered.get() + 1);
+                if discovered.get() == 2 {
+                    live.host
+                        .driver
+                        .shared
+                        .with_state(|state| state.progress.host.stop());
+                }
+                vec![PageId::from(OLD)]
+            },
+            Input::Flush,
+        )
+        .err();
+    assert_eq!(discovered.get(), 2, "the fence ran, then the rediscovery");
+    assert_eq!(
+        reserved,
+        Some(ReserveRefusal::Busy),
+        "a down host admits no writer"
+    );
+    live.host.driver.shared.with_state(|state| {
+        assert!(
+            state.progress.host.retained.is_empty(),
+            "the fenced pages are released"
+        );
+    });
+    live.host.stop();
+}
+
+/// `PageHost`'s production methods, by name, as token text: every `impl
+/// PageHost` in the binding's production files.
+fn page_host_methods() -> BTreeMap<String, String> {
+    use quote::ToTokens;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/page_host");
+    let mut methods = BTreeMap::new();
+    for entry in fs::read_dir(&dir).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        if !name.starts_with("binding") || name.contains("test") || !name.ends_with(".rs") {
+            continue;
+        }
+        let source = fs::read_to_string(dir.join(&name)).unwrap();
+        for item in syn::parse_file(&source)
+            .expect("Rust source must parse")
+            .items
+        {
+            let syn::Item::Impl(block) = item else {
+                continue;
+            };
+            if block.self_ty.to_token_stream().to_string() != "PageHost" {
+                continue;
+            }
+            for item in block.items {
+                if let syn::ImplItem::Fn(function) = item {
+                    let body = function.block.to_token_stream().to_string();
+                    methods.insert(function.sig.ident.to_string(), body);
+                }
+            }
+        }
+    }
+    methods
+}
+
+/// The forms the reserve path must not use, and why.
+const UNCHECKED: &[(&str, &str)] = &[
+    (
+        "unwrap ()",
+        "a lock or result unwrapped: a poisoned host panics the writer",
+    ),
+    (
+        "expect (",
+        "a lock or result expected: a poisoned host panics the writer",
+    ),
+    (
+        ". with_state (",
+        "with_state panics on a poisoned host; use try_with_state",
+    ),
+    (". locked_step (", "locked_step locks unchecked"),
+    (
+        ". wait (",
+        "a bare condition wait: no deadline, no ended or poison check",
+    ),
+];
+
+/// Every function `reserve` reaches through `self.` calls, and each
+/// unchecked form one of them uses.
+fn reserve_path_violations(methods: &BTreeMap<String, String>) -> (BTreeSet<String>, Vec<String>) {
+    let mut path = BTreeSet::new();
+    let mut todo = vec!["reserve".to_string()];
+    while let Some(name) = todo.pop() {
+        if !path.insert(name.clone()) {
+            continue;
+        }
+        let body = &methods[&name];
+        todo.extend(
+            methods
+                .keys()
+                .filter(|callee| body.contains(&format!("self . {callee} (")))
+                .cloned(),
+        );
+    }
+    let mut violations = Vec::new();
+    for name in &path {
+        for (form, why) in UNCHECKED {
+            if methods[name].contains(form) {
+                violations.push(format!("{name} uses `{form}`: {why}"));
+            }
+        }
+    }
+    (path, violations)
+}
+
+/// REVIEW-3b-P2b-2 N1, shape: every lock and wait on a retained writer's
+/// reservation path is checked and goes through `bounded`, which carries the
+/// writer's deadline. Exemplar: `binding_retained.rs` `PageHost::flush`.
+#[test]
+fn the_reserve_path_has_no_unchecked_lock_or_bare_wait() {
+    let methods = page_host_methods();
+    let (path, violations) = reserve_path_violations(&methods);
+    for reached in [
+        "bounded",
+        "flush",
+        "register_all",
+        "try_identify",
+        "try_register",
+    ] {
+        assert!(
+            path.contains(reached),
+            "the reserve path reaches {reached}: {path:?}"
+        );
+    }
+    assert!(
+        violations.is_empty(),
+        "M6/N1: the reserve path waits only through `bounded` (checked locks, the writer's \
+         deadline, ended/down/poison refuse Busy); exemplar binding_retained.rs flush:\n{}",
+        violations.join("\n")
+    );
+    // The guard's own necessity: each unchecked form is caught.
+    let mutants = [
+        (
+            "flush",
+            "{ let _ = self . driver . shared . state . lock () . unwrap () ; }",
+        ),
+        ("bounded", "{ shared . wait (state , pause) }"),
+        ("reserve", "{ self . identify (page) }"),
+        ("register_all", "{ self . register (key , spelling) }"),
+    ];
+    for (function, added) in mutants {
+        let mut planted = methods.clone();
+        planted.get_mut(function).unwrap().push_str(added);
+        assert!(
+            !reserve_path_violations(&planted).1.is_empty(),
+            "the guard misses {added} in {function}"
+        );
+    }
 }

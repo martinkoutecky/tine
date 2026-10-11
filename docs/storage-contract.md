@@ -199,8 +199,18 @@ once the write succeeds. The order is memory only:
   installs (its draft still being made durable) and, for a
   references-only rename (the source has no file), through its operation
   until its pages are handed back. A deletion and every other busy page are
-  waited for, unbounded. A host that stops answering during the wait also
-  answers `Busy`.
+  waited for, unbounded. Every wait and check of the reservation (the
+  fence, the input check after a rediscovery, and the flush, which a rename
+  admitted meanwhile can take over) carries that deadline (REVIEW-3b-P2b-2
+  N1). A host that cannot answer, at entry or during any wait (its driver
+  ended, its state is poisoned, or it is down), also answers `Busy`, never
+  a panic, with every page it had fenced released (a poisoned host keeps
+  no state to release them from or to serve them; proof
+  `binding_order_tests.rs` `a_flush_handed_to_a_rename_is_told_busy_after_the_bound`,
+  `a_writer_entering_a_poisoned_host_is_told_busy`,
+  `a_writer_entering_an_ended_driver_is_told_busy`,
+  `a_host_down_after_the_fence_refuses_busy_and_releases_the_pages`; shape
+  guard `the_reserve_path_has_no_unchecked_lock_or_bare_wait`).
   Scenario: the destination's save keeps failing (disk error), the
   operation's draft keeps failing (app-data disk error), or a referrer is
   conflicted (an external editor or sync delivery changed it).
@@ -656,8 +666,17 @@ Windows). They are linear in the files written and do not grow with the
 graph (D-10). An echo of a page the host still holds is forwarded to the
 host, which re-reads it as an owed observation (§5); that read has the same
 cause and the same bound, whatever thread makes it. The rename cost tests
-quiesce the host and the watcher before measuring, bill publication only for
-the operation's own reads, and bound the settled re-reads separately: the
+measure through an acknowledged drain (`PageHost::quiesce_for_tests`,
+`watch/test_drain.rs`; REVIEW-3b-P2b-2 N3), not through quiet counters: a
+sentinel written after the operation's writes reaches the watcher behind their
+notifications (one watch delivers in order; checked on Linux and hosted
+Windows), and the watcher acknowledges it only after the cycle that drained
+them has reconciled, store writer included; a due racy follow-up runs first,
+and then the host has no owed observation, page, job or request left. A lost
+sentinel fails the test; a watcher blocked on the writer is never declared
+drained (`n3_a_watcher_blocked_on_the_writer_is_not_drained`). The tests bill
+publication only for the operation's own reads, and bound the settled re-reads
+separately: the
 watcher's (`watcher_reads`, `watcher_stamps_by_path`) and the host's
 re-reads of forwarded echoes (`observation_reads`, at most the files written
 plus a small constant).

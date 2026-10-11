@@ -18,6 +18,8 @@ mod rebuild;
 mod reconcile;
 mod restore;
 mod runtime;
+#[cfg(feature = "test-faults")]
+mod test_drain;
 use runtime::run;
 pub(crate) use runtime::RACY_FOLLOW_UP;
 mod stamp;
@@ -335,6 +337,9 @@ struct Pending {
     custom_css: bool,
     /// Asset-lane events (metadata-only external asset observation).
     assets: AssetPending,
+    /// A test drain's sentinel arrived: the request it answers (N3).
+    #[cfg(feature = "test-faults")]
+    barrier: Option<u64>,
 }
 
 /// Whether `path` is the graph's `logseq/<name>` (`config.edn` or `custom.css`),
@@ -491,6 +496,9 @@ pub(crate) struct Core {
     /// (a network or FUSE mount a sync service writes to).
     #[cfg(test)]
     pub(crate) deaf: AtomicBool,
+    /// The tests' acknowledged drain (`test_drain.rs`, REVIEW-3b-P2b-2 N3).
+    #[cfg(feature = "test-faults")]
+    barrier: Arc<test_drain::Barrier>,
 }
 
 impl Core {
@@ -835,6 +843,8 @@ impl WatchHandle {
             event_full_diffs: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             deaf: AtomicBool::new(false),
+            #[cfg(feature = "test-faults")]
+            barrier: Default::default(),
         });
         let mode = Arc::new(Mutex::new(watch));
         let (wake, rx) = mpsc::channel();
@@ -1067,7 +1077,15 @@ fn install_watch(
     let callback_dirs = dirs.clone();
     let callback_graph = Arc::clone(&core.graph);
     let callback_assets = core.assets.scope().clone();
+    #[cfg(feature = "test-faults")]
+    let barrier = Arc::clone(&core.barrier);
     let mut created = notify::recommended_watcher(move |event| {
+        #[cfg(feature = "test-faults")]
+        if test_drain::Barrier::sentinel(&event) {
+            pending.lock().unwrap().barrier = Some(barrier.asked());
+            let _ = wake.send(());
+            return;
+        }
         let admitted = pending.lock().unwrap().add_event(
             event,
             &callback_dirs,

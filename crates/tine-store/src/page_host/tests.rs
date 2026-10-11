@@ -865,7 +865,7 @@ fn barrier_queries_read_the_logical_state() {
         ),
         (
             "binding_retained.rs",
-            "identify",
+            "try_identify",
             "whether `open` still runs its create checks; not a barrier answer",
         ),
     ];

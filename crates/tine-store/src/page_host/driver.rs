@@ -76,6 +76,12 @@ impl<F: HostIo, C: Clock> State<F, C> {
         self.wake_seq = self.wake_seq.wrapping_add(1);
     }
 
+    /// Tests' quiescence rounds (`PageHost::quiesce_for_tests`).
+    #[cfg(feature = "test-faults")]
+    pub fn wake_seq(&self) -> u64 {
+        self.wake_seq
+    }
+
     /// One driver step. A key whose path lock another thread holds is not
     /// waited for until its retry: its step waits and other work runs (A4).
     fn step(&mut self) -> Disposition {
@@ -197,6 +203,9 @@ pub(super) struct Shared<F: HostIo, C: Clock> {
     condition: Condvar,
     /// The driver thread returned or unwound: nothing will answer a caller.
     ended: AtomicBool,
+    /// Pauses a retained writer's flush before its first check (tests, N1).
+    #[cfg(test)]
+    pub flush_pause: Mutex<Option<crate::store::TestPause>>,
 }
 
 impl<F: HostIo, C: Clock> Shared<F, C> {
@@ -293,6 +302,8 @@ where
             }),
             condition: Condvar::new(),
             ended: AtomicBool::new(false),
+            #[cfg(test)]
+            flush_pause: Mutex::new(None),
         });
         let thread = {
             let shared = shared.clone();
