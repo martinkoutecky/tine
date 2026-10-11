@@ -252,9 +252,8 @@ impl<F: HostIo> Host<F> {
     }
 
     fn take_disk(&mut self, key: &str, page: Page, bytes: Text) {
-        let drafts = self.logical_drafts();
         let hold = page.risk
-            && (page.buf == bytes || drafts.get(key).is_some_and(|draft| draft.bytes == bytes));
+            && (page.buf == bytes || self.draft_of(key).is_some_and(|draft| draft.bytes == bytes));
         self.version = self.next_version();
         let mut page = Self::initial_page(bytes, self.version);
         page.risk = hold;

@@ -56,7 +56,14 @@ impl<F: HostIo> Host<F> {
             return Disposition::Waiting;
         }
         self.with_locks(&keys, |host| {
-            let durable = drafts::logical(host.drafts.values());
+            // No worker runs, so the live logical draft is the durable one;
+            // `before` keeps only this worker's page (M4).
+            let durable: BTreeMap<_, _> = host
+                .durable
+                .get(key)
+                .map(|record| (key.to_owned(), record.clone()))
+                .into_iter()
+                .collect();
             let previous = durable.get(key);
             let page = host.pages.get(key).cloned();
             let desired = page.as_ref().filter(|p| p.risk);
@@ -87,7 +94,8 @@ impl<F: HostIo> Host<F> {
                 if previous.is_none() {
                     return Disposition::Disabled;
                 }
-                let mut tasks: VecDeque<_> = drafts::older_vehicles(&host.drafts, key, None)
+                let mut tasks: VecDeque<_> = host
+                    .older_vehicles(key, None)
                     .into_iter()
                     .map(Vehicle::remove)
                     .collect();
@@ -123,7 +131,13 @@ impl<F: HostIo> Host<F> {
         reads: BTreeMap<PageKey, Base>,
         gates: Option<Gates>,
     ) {
-        let keys = pages.keys().cloned().collect();
+        let keys: BTreeSet<PageKey> = pages.keys().cloned().collect();
+        // M4: the live logical drafts of this worker's pages only; a pending
+        // install exposes nothing else (`logical_drafts`).
+        let before = keys
+            .iter()
+            .filter_map(|key| Some((key.clone(), self.draft_of(key)?.clone())))
+            .collect();
         let name = match reply {
             Reply::Window(_) => drafts::page_name(&records[0].page),
             Reply::Caller(_) => drafts::op_name(),
@@ -132,7 +146,7 @@ impl<F: HostIo> Host<F> {
             effect: name.clone(),
             refresh: None,
             pages: keys,
-            before: self.logical_drafts(),
+            before,
             task: Vehicle::write(name, &records),
             remaining: VecDeque::new(),
             application: Some(Application::Operation {
@@ -154,18 +168,30 @@ impl<F: HostIo> Host<F> {
 
     /// Advance exactly one draft I/O phase, or its terminal application.
     pub(super) fn advance_draft(&mut self) -> Disposition {
-        let Some(keys) = self.worker.as_ref().map(|w| w.pages.clone()) else {
+        let Some(worker) = &self.worker else {
             return Disposition::Disabled;
         };
         #[cfg(test)]
         if self.paused {
             return Disposition::Waiting;
         }
+        // M4 (REVIEW-progress-plan B3): a physical phase locks only the pages
+        // its vehicle names (an operation's write: all of them; a copy: its
+        // page; an unlink: none), and the terminal application locks the
+        // whole set it applies at once. The worker's custody of its other
+        // pages stays logical (`busy`), so no phase copies or relocks the
+        // whole operation.
+        let terminal = matches!(worker.task.stage, Stage::Present | Stage::Absent);
+        let keys: BTreeSet<PageKey> = match (terminal, &worker.application) {
+            (true, Some(_)) => worker.pages.clone(),
+            (true, None) => BTreeSet::new(),
+            (false, _) => worker.records.iter().map(|r| r.page.clone()).collect(),
+        };
+        work(Work::WorkerKeys, keys.len());
         if self.lacks_locks(&keys) {
             return Disposition::Waiting;
         }
         let mut worker = self.worker.take().unwrap();
-        let terminal = matches!(worker.task.stage, Stage::Present | Stage::Absent);
         if !terminal {
             let failures = worker.task.failures;
             self.with_locks(&keys, |host| {
@@ -210,6 +236,11 @@ impl<F: HostIo> Host<F> {
             self.with_locks(&keys, |host| {
                 host.apply_draft_terminal(&mut worker, application, present);
             });
+            // The pending install's overlay ends: its pages' live logical
+            // drafts are the durable ones from here on (M4).
+            for key in &worker.pages {
+                self.mark(key);
+            }
         }
         if worker.remaining.is_empty() && !worker.tidied {
             worker.tidied = true;
@@ -217,13 +248,7 @@ impl<F: HostIo> Host<F> {
             // crash during explosion. Retain one, so repeated crashes cannot
             // accumulate recovery vehicles without bound.
             for key in &worker.pages {
-                let mut vehicles: Vec<_> = self
-                    .drafts
-                    .iter()
-                    .filter(|(name, records)| name.starts_with("p-") && records[0].page == *key)
-                    .map(|(name, records)| (records[0].wseq, name.clone()))
-                    .collect();
-                vehicles.sort();
+                let mut vehicles = self.page_vehicles(key);
                 vehicles.pop();
                 worker
                     .remaining
@@ -261,7 +286,7 @@ impl<F: HostIo> Host<F> {
             Application::Refresh(record) if present => {
                 self.events.push(Event::Draft(record.clone()));
                 worker.remaining.extend(
-                    drafts::older_vehicles(&self.drafts, &record.page, Some(record.wseq))
+                    self.older_vehicles(&record.page, Some(record.wseq))
                         .into_iter()
                         .map(Vehicle::remove),
                 );
@@ -301,7 +326,7 @@ impl<F: HostIo> Host<F> {
                     }
                     for record in &records {
                         worker.remaining.extend(
-                            drafts::older_vehicles(&self.drafts, &record.page, Some(record.wseq))
+                            self.older_vehicles(&record.page, Some(record.wseq))
                                 .into_iter()
                                 .map(Vehicle::remove),
                         );

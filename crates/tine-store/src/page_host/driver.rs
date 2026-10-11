@@ -126,6 +126,7 @@ impl<F: HostIo, C: Clock> State<F, C> {
         let owed = self
             .observe
             .iter()
+            .inspect(|_| work(Work::Candidates, 1))
             .find(|(key, o)| o.due <= now && self.observable(key))
             .map(|(key, _)| key.clone());
         if let Some(key) = owed {
@@ -352,6 +353,7 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
     let mut result = step(&mut state);
     while let Some(keys) = state.progress.host.lock_request.take() {
         let host = &state.progress.host;
+        work(Work::WorkerKeys, keys.len());
         let mut handles: Vec<_> = keys
             .iter()
             .map(|key| (host.fs.spelling(key), host.locks[key].clone(), key.clone()))
@@ -390,9 +392,11 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
         }
         state.contended.retain(|key, _| !keys.contains(key));
         let host = &state.progress.host;
-        let current = keys.iter().all(|key| {
-            let lock = &host.locks[key];
-            handles.iter().any(|(_, held, _)| Arc::ptr_eq(held, lock))
+        // One handle per key: each is current when it is still its own
+        // key's lock (M4: linear in the key set).
+        let current = handles.iter().all(|(_, held, key)| {
+            work(Work::WorkerKeys, 1);
+            Arc::ptr_eq(held, &host.locks[key])
         });
         if current {
             state.progress.host.held = Some(keys);

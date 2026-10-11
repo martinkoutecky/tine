@@ -144,6 +144,7 @@ pub(super) fn logical<'a>(
 ) -> BTreeMap<String, Record> {
     let mut logical = BTreeMap::<String, Record>::new();
     for record in files.into_iter().flatten() {
+        super::work(super::Work::DraftRecords, 1);
         let current = logical
             .entry(record.page.clone())
             .or_insert_with(|| record.clone());
@@ -262,6 +263,7 @@ pub(super) fn older_vehicles(
     let mut files: Vec<_> = files
         .iter()
         .filter(|(name, records)| {
+            super::work(super::Work::DraftRecords, 1);
             name.starts_with("p-")
                 && records[0].page == page
                 && keep.is_none_or(|wseq| records[0].wseq < wseq)

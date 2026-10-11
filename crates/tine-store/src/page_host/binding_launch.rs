@@ -34,6 +34,23 @@ impl PageHost {
         Self::start(store, app_data, "test-graph", |_| {})
     }
 
+    /// The host holds nothing and owes nothing: no page, job, draft worker,
+    /// durable draft, queued request or index ownership. A cost test waits
+    /// for it so it measures an operation through its cleanup (M4).
+    #[cfg(feature = "test-faults")]
+    pub fn quiescent_for_tests(&self) -> bool {
+        // Read without waking the driver, so polling adds no host work.
+        let state = self.driver.shared.state.lock().unwrap();
+        let host = &state.progress.host;
+        host.pages.is_empty()
+            && host.job.is_none()
+            && host.worker.is_none()
+            && host.drafts.is_empty()
+            && host.queue.is_empty()
+            && host.applying.is_none()
+            && state.book.owned().is_empty()
+    }
+
     pub(super) fn launch(launch: Launch) -> Result<Self, String> {
         let Launch {
             store,
@@ -106,10 +123,8 @@ impl PageHost {
             }
             store.publish_retired();
             this.driver.shared.with_state(|state| {
-                state
-                    .book
-                    .owned
-                    .extend(recovered.into_iter().map(|(k, _)| k))
+                let keys = recovered.into_iter().map(|(k, _)| k);
+                state.book.own(keys, &state.progress.host)
             });
         }
         // Draft I/O failures never stop a launch (§4, B-Q1): they leave it

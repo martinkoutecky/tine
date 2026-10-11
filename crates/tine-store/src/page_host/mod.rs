@@ -31,6 +31,8 @@ mod production_tests;
 mod progress;
 mod save;
 #[cfg(test)]
+mod state_census_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod writer_census_tests;
@@ -45,6 +47,17 @@ use std::sync::{Arc, Mutex};
 
 type Text = Option<Arc<[u8]>>;
 type PageKey = String;
+
+use crate::cost_counters::HostWork as Work;
+
+/// Count `count` elements of host-step work of `kind` (M4,
+/// REVIEW-progress-plan R5); free without `test-faults`.
+#[inline]
+#[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
+fn work(kind: Work, count: usize) {
+    #[cfg(feature = "test-faults")]
+    crate::cost_counters::host_work(kind, count);
+}
 
 /// The registered keys (STEP3 §2). Every visit goes through `iter`, which a
 /// cost test counts: an operation visits no registered key it does not touch
@@ -414,6 +427,15 @@ struct Host<F: HostIo> {
     /// D-10: decoded durable draft vehicles, kept in step with the adapter's
     /// durable census through `draft_changes`, never rescanned per call.
     drafts: BTreeMap<String, Vec<Record>>,
+    /// M4: each page's vehicles in `drafts`, and its highest-sequence
+    /// record among them (`drafts::logical` of `drafts`), kept in step with
+    /// `drafts` by `index_vehicle`, never rebuilt per call (D-10).
+    vehicles_of: BTreeMap<PageKey, BTreeSet<String>>,
+    durable: BTreeMap<PageKey, Record>,
+    /// M4: keys whose page or live logical draft changed since `Progress`
+    /// last reconciled, `true` for a page an operation's caller applied (its
+    /// saves skip the edit debounce). Drained by `Progress::reconcile` only.
+    changed: BTreeMap<PageKey, bool>,
     /// REVIEW-3b-P1 R2: pages named by draft vehicles on disk whose census
     /// launch could not make durable (M2). Cleanup debt, never recovery
     /// evidence: no stop finishes and no key is evicted over it until a
@@ -458,7 +480,7 @@ impl<F: HostIo> Host<F> {
     fn new(mut fs: F, locks: BTreeMap<PageKey, Arc<Mutex<()>>>) -> Self {
         let drafts = drafts::scan(fs.draft_files(true)).files;
         fs.draft_changes();
-        Self {
+        let mut host = Self {
             keys: Keys(locks.keys().cloned().collect()),
             fs,
             locks,
@@ -467,6 +489,9 @@ impl<F: HostIo> Host<F> {
             lock_request: None,
             contended: BTreeSet::new(),
             drafts,
+            vehicles_of: BTreeMap::new(),
+            durable: BTreeMap::new(),
+            changed: BTreeMap::new(),
             vehicle_debt: BTreeSet::new(),
             pages: BTreeMap::new(),
             custody: BTreeMap::new(),
@@ -493,13 +518,16 @@ impl<F: HostIo> Host<F> {
             alive: true,
             #[cfg(test)]
             paused: false,
-        }
+        };
+        host.index_drafts();
+        host
     }
 
     /// Plan step: true when the caller does not hold `keys`. The set is
     /// recorded for the driver, which takes those path locks (writer → paths
     /// → state) and polls again; the caller returns before any side effect.
     fn lacks_locks(&mut self, keys: &BTreeSet<PageKey>) -> bool {
+        work(Work::WorkerKeys, keys.len());
         match &self.held {
             Some(held) if !keys.is_subset(held) => {
                 let contended = keys
@@ -529,6 +557,7 @@ impl<F: HostIo> Host<F> {
             None => panic!("the page host runs only under its driver"),
         };
         let guards: Vec<_> = handles.iter().map(|lock| lock.lock().unwrap()).collect();
+        work(Work::WorkerKeys, 2 * keys.len());
         self.lock_ownership = keys.clone();
         self.sync_drafts();
         let result = apply(self);
@@ -540,10 +569,137 @@ impl<F: HostIo> Host<F> {
     /// Apply the adapter's durable census changes to the draft index.
     fn sync_drafts(&mut self) {
         for (name, bytes) in self.fs.draft_changes() {
-            match bytes.and_then(|bytes| drafts::vehicle(&name, &bytes)) {
-                Some(records) => self.drafts.insert(name, records),
-                None => self.drafts.remove(&name),
-            };
+            let records = bytes.and_then(|bytes| drafts::vehicle(&name, &bytes));
+            self.index_vehicle(name, records);
+        }
+    }
+
+    /// `key` changed for `Progress` (M4): its page, or its live logical draft.
+    fn mark(&mut self, key: &str) {
+        if !self.changed.contains_key(key) {
+            self.changed.insert(key.into(), false);
+        }
+    }
+
+    /// Install or remove vehicle `name` in `drafts`, keeping the per-page
+    /// index exact: a removed winning record is recomputed from the page's
+    /// remaining vehicles. Every page either version names is marked.
+    fn index_vehicle(&mut self, name: String, records: Option<Vec<Record>>) {
+        let old = match records {
+            Some(records) => self.drafts.insert(name.clone(), records),
+            None => self.drafts.remove(&name),
+        };
+        let mut stale = BTreeSet::new();
+        for record in old.iter().flatten() {
+            work(Work::DraftRecords, 1);
+            self.mark(&record.page);
+            if let Some(names) = self.vehicles_of.get_mut(&record.page) {
+                names.remove(&name);
+                if names.is_empty() {
+                    self.vehicles_of.remove(&record.page);
+                }
+            }
+            if self
+                .durable
+                .get(&record.page)
+                .is_some_and(|winner| winner.wseq == record.wseq)
+            {
+                stale.insert(record.page.clone());
+            }
+        }
+        let new = self.drafts.get(&name).cloned().unwrap_or_default();
+        for record in new {
+            work(Work::DraftRecords, 1);
+            self.mark(&record.page);
+            let names = self.vehicles_of.entry(record.page.clone()).or_default();
+            names.insert(name.clone());
+            if !stale.contains(&record.page)
+                && self
+                    .durable
+                    .get(&record.page)
+                    .is_none_or(|winner| record.wseq > winner.wseq)
+            {
+                self.durable.insert(record.page.clone(), record);
+            }
+        }
+        for page in stale {
+            self.reindex(&page);
+        }
+    }
+
+    /// Recompute `page`'s highest-sequence record from its vehicles.
+    fn reindex(&mut self, page: &str) {
+        let mut best: Option<&Record> = None;
+        for name in self.vehicles_of.get(page).into_iter().flatten() {
+            for record in &self.drafts[name] {
+                work(Work::DraftRecords, 1);
+                if record.page == page && best.is_none_or(|b| record.wseq > b.wseq) {
+                    best = Some(record);
+                }
+            }
+        }
+        match best.cloned() {
+            Some(record) => self.durable.insert(page.into(), record),
+            None => self.durable.remove(page),
+        };
+    }
+
+    /// Rebuild the per-page index from the whole of `drafts` (a host's
+    /// construction, launch's census rebuild), marking every page it names
+    /// before and after.
+    fn index_drafts(&mut self) {
+        let before: Vec<_> = self.durable.keys().cloned().collect();
+        for key in before {
+            self.mark(&key);
+        }
+        self.vehicles_of.clear();
+        for (name, records) in &self.drafts {
+            for record in records {
+                let names = self.vehicles_of.entry(record.page.clone()).or_default();
+                names.insert(name.clone());
+            }
+        }
+        self.durable = drafts::logical(self.drafts.values());
+        let after: Vec<_> = self.durable.keys().cloned().collect();
+        for key in after {
+            self.mark(&key);
+        }
+    }
+
+    /// `page`'s page vehicles (`p-`), by the index: (write sequence, name).
+    fn page_vehicles(&self, page: &str) -> Vec<(u64, String)> {
+        let names = self.vehicles_of.get(page).into_iter().flatten();
+        let mut vehicles: Vec<_> = names
+            .filter(|name| name.starts_with("p-"))
+            .inspect(|_| work(Work::DraftRecords, 1))
+            .map(|name| (self.drafts[name][0].wseq, name.clone()))
+            .collect();
+        vehicles.sort();
+        vehicles
+    }
+
+    /// `page`'s page vehicles below write sequence `keep` (all with None),
+    /// oldest first.
+    fn older_vehicles(&self, page: &str, keep: Option<u64>) -> Vec<String> {
+        let vehicles = self.page_vehicles(page).into_iter();
+        vehicles
+            .filter(|(wseq, _)| keep.is_none_or(|keep| *wseq < keep))
+            .map(|(_, name)| name)
+            .collect()
+    }
+
+    /// `key`'s live logical draft (M4): what `logical_drafts` holds for it
+    /// while the host runs, by lookup. A pending install exposes the worker's
+    /// `before` for its pages; a stopped host has no live projection.
+    fn draft_of(&self, key: &str) -> Option<&Record> {
+        debug_assert!(
+            self.alive,
+            "a stopped host's drafts are its readable directory"
+        );
+        let worker = self.worker.as_ref().filter(|w| w.application.is_some());
+        match worker {
+            Some(worker) if worker.pages.contains(key) => worker.before.get(key),
+            _ => self.durable.get(key),
         }
     }
 
@@ -552,7 +708,17 @@ impl<F: HostIo> Host<F> {
             self.lock_ownership.contains(key),
             "buffer application without page lock"
         );
+        self.mark(key);
         let previous = self.pages.get(key).cloned();
+        // Progress keeps only the version (M4): a new buffer has a new one.
+        #[cfg(test)]
+        if let (Some(previous), Some(page)) = (&previous, &page) {
+            assert!(
+                previous.buf == page.buf || previous.version != page.version,
+                "{key}: the buffer changed at version {}",
+                page.version
+            );
+        }
         if let Some(page) = page {
             self.pages.insert(key.into(), page);
         } else {
@@ -1317,6 +1483,7 @@ impl<F: HostIo> Host<F> {
 
     fn stop(&mut self) {
         // Fault teardown ends an incarnation; it does not apply page mutations.
+        // Liveness changes: Progress rebuilds its sets from what it knew (M4).
         self.alive = false;
         self.pages.clear();
         self.custody.clear();
@@ -1397,6 +1564,7 @@ impl<F: HostIo> Host<F> {
             self.fs.drafts_unsynced();
         }
         self.drafts = drafts::scan(self.fs.draft_files(true)).files;
+        self.index_drafts();
         self.vehicle_debt = if synced {
             BTreeSet::new()
         } else {

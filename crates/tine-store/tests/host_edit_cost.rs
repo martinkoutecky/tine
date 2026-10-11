@@ -36,11 +36,14 @@ fn answer_version(mail: &Mail, id: u64) -> u64 {
 struct Graph {
     unrelated: usize,
     aged: bool,
+    /// How many of the unrelated pages the window holds open beside it.
+    held: usize,
 }
 
 const ALONE: Graph = Graph {
     unrelated: 0,
     aged: false,
+    held: 0,
 };
 
 /// `edits` submits of the page's first block, each answered before the next,
@@ -82,6 +85,13 @@ fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
         .unwrap()
         .to_string();
     let mut version = answer_version(&mail, id);
+    for index in 0..graph.held {
+        id += 1;
+        let other = PageId::from(format!("pages/Other{index:04}.md").as_str());
+        host.open(session, id, &other, &format!("Other{index:04}"))
+            .unwrap();
+        answer_version(&mail, id);
+    }
     let mut doc = store.page(&page).unwrap().doc;
     cost_counters::reset();
     for n in 0..edits {
@@ -175,7 +185,11 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
     // the watcher rehashes them; that is its own thread's work, §5.4).
     for aged in [true, false] {
         let [small, large] = [60, 600].map(|unrelated| {
-            let graph = Graph { unrelated, aged };
+            let graph = Graph {
+                unrelated,
+                aged,
+                held: 0,
+            };
             let (counts, _) = edit(1, 1, graph);
             eprintln!("R4(a) aged={aged} unrelated={unrelated}: {counts:?}");
             counts
@@ -197,5 +211,59 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
              (aged={aged}); exemplar page_host/binding.rs index()"
         );
         assert_eq!(large.files_written, 1, "the edit's one save");
+    }
+}
+
+#[test]
+fn an_edit_among_many_held_pages_visits_what_changed() {
+    let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // M4 (REVIEW-progress-plan R5): one edit while the window holds many
+    // other pages open. Reconcile, draft-index and worker-key work follows
+    // what changed; the subscribed pages are walked only by the retirement
+    // candidates and the quiet notices, once per poll and per collection.
+    let measured = [20u64, 100, 400].map(|held| {
+        let graph = Graph {
+            unrelated: held as usize,
+            aged: true,
+            held: held as usize,
+        };
+        let (counts, _) = edit(1, 1, graph);
+        eprintln!("M4 held={held}: {counts:?}");
+        (held, counts)
+    });
+    let changed = |c: &Counts| {
+        [
+            ("host_reconcile_visits", c.host_reconcile_visits),
+            ("host_draft_record_visits", c.host_draft_record_visits),
+            ("host_worker_key_visits", c.host_worker_key_visits),
+        ]
+    };
+    let (_, fewest) = &measured[0];
+    for (held, c) in &measured {
+        assert!(
+            c.host_reconcile_visits > 0,
+            "reconcile is instrumented: {c:?}"
+        );
+        assert_eq!(
+            changed(c),
+            changed(fewest),
+            "M4/I-14/D-10: an edit's reconcile, draft-index and worker work must not grow with \
+             the {held} pages the window holds; a reconcile visits what changed (exemplar \
+             page_host/progress.rs reconcile)"
+        );
+        // The named remaining dimension S (contract §9): per poll, the clean
+        // subscribed pages as retirement candidates; per collection, the
+        // subscribed pages' quiet notices. Fixed from the reviewed
+        // measurement (6 and 19 per held page), about 2x headroom.
+        for (name, count, per_held) in [
+            ("host_candidate_visits", c.host_candidate_visits, 12),
+            ("host_book_visits", c.host_book_visits, 40),
+        ] {
+            assert!(
+                count <= per_held * held + 100,
+                "M4: an edit's {name} is at most {per_held} per held page plus 100; got {count} \
+                 with {held} held: {c:?}"
+            );
+        }
     }
 }

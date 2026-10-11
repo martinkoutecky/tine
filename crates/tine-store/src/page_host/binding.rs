@@ -441,8 +441,12 @@ pub(super) struct Book {
     /// The notice each subscribed page's window last received.
     notices: BTreeMap<PageKey, (Notice, BindingNotice)>,
     /// Keys whose index the publication consumer owns (§5): from Open (or
-    /// the host taking the key on) until actual eviction (Q6).
-    pub owned: BTreeSet<PageKey>,
+    /// the host taking the key on) until actual eviction (Q6). Written only
+    /// by `own`, `collect` and eviction, which keep `orphans` with it.
+    owned: BTreeSet<PageKey>,
+    /// Owned keys the host did not hold when last seen (B2): the eviction
+    /// candidates. A blocked one stays until it is evicted or held again.
+    orphans: BTreeSet<PageKey>,
     /// Each owned key's last indexed bytes and index watermark: the newest
     /// own save version the index has applied (§4.4).
     index: BTreeMap<PageKey, (Text, u64)>,
@@ -478,6 +482,23 @@ impl Book {
         }
     }
 
+    /// The keys whose index the publication consumer owns.
+    pub fn owned(&self) -> &BTreeSet<PageKey> {
+        &self.owned
+    }
+
+    /// Take `keys`' index ownership ahead of the host holding them (an
+    /// Open's admission, launch's recovered pages); one never held is an
+    /// orphan from the start (B2: a failed Open still ends in eviction).
+    pub fn own<F: HostIo>(&mut self, keys: impl IntoIterator<Item = PageKey>, host: &Host<F>) {
+        for key in keys {
+            if !host.pages.contains_key(&key) {
+                self.orphans.insert(key.clone());
+            }
+            self.owned.insert(key);
+        }
+    }
+
     /// Take this step's results: events (drained once progress has read
     /// them), handoffs routed to answers and publications, and every mail.
     pub fn collect<F: HostIo, C: Clock>(&mut self, progress: &mut Progress<F, C>) -> Delivery {
@@ -485,15 +506,30 @@ impl Book {
         let now = progress.clock.now_ms();
         let events = progress.take_events();
         let mut delivery = Delivery::default();
+        // Ownership follows the keys whose holding changed (M4, B2): a newly
+        // held page, or the save job's page, is claimed; an owned key the
+        // host no longer holds becomes an orphan.
+        let moved = progress.take_moved();
         let host = &progress.host;
-        let taken = host
-            .pages
-            .keys()
+        for key in &moved {
+            work(Work::Book, 1);
+            if host.pages.contains_key(key) {
+                self.orphans.remove(key);
+            } else if self.owned.contains(key) {
+                self.orphans.insert(key.clone());
+            }
+        }
+        let held = moved.iter().filter(|key| host.pages.contains_key(*key));
+        let taken = held
             .chain(host.job.as_ref().map(|job| &job.page))
+            .inspect(|_| work(Work::Book, 1))
             .filter(|key| !self.owned.contains(*key))
             .cloned()
             .collect::<Vec<_>>();
         for key in taken {
+            if !host.pages.contains_key(&key) {
+                self.orphans.insert(key.clone());
+            }
             self.owned.insert(key.clone());
             delivery.claimed.push((key.clone(), host.fs.spelling(&key)));
         }
@@ -578,11 +614,13 @@ impl Book {
         let due = self
             .retry
             .iter()
+            .inspect(|_| work(Work::Book, 1))
             .filter(|(key, retry)| retry.due <= now && !self.reserved(key, host))
             .map(|(_, retry)| retry.publication.clone());
         delivery.publications.splice(0..0, due.collect::<Vec<_>>());
         for key in self.evictable(&progress.host, &delivery.publications) {
             self.owned.remove(&key);
+            self.orphans.remove(&key);
             self.index.remove(&key);
             self.twins.remove(&key);
             self.observe_errors.remove(&key);
@@ -594,17 +632,22 @@ impl Book {
         // A request answered for an earlier window generation has no answer
         // event; once applied, nothing names its handoff.
         let applied = host.last_applied;
-        self.pending.retain(|(_, id), _| *id > applied);
+        self.pending.retain(|(_, id), _| {
+            work(Work::Book, 1);
+            *id > applied
+        });
         let pages = &host.pages;
         let job = host.job.as_ref().map(|job| (&job.page, job.version));
         self.versions.retain(|page, versions| {
             versions.retain(|version, _| {
+                work(Work::Book, 1);
                 pages.get(page).is_some_and(|p| p.version == *version)
                     || job == Some((page, *version))
             });
             !versions.is_empty()
         });
         let keys: Vec<_> = host.outbox.keys().cloned().collect();
+        work(Work::Book, keys.len());
         for page in keys {
             let Some(mail) = host.receive(&page) else {
                 continue;
@@ -645,6 +688,7 @@ impl Book {
         let quiet: Vec<_> = host
             .subscriptions
             .iter()
+            .inspect(|_| work(Work::Book, 1))
             .filter(|page| !mailed.contains(*page) && host.pages.contains_key(*page))
             .cloned()
             .collect();
@@ -681,7 +725,10 @@ impl Book {
                 .insert(page.clone(), (facts.notice.clone(), facts.binding.clone()));
         }
         let subscribed = &progress.host.subscriptions;
-        self.notices.retain(|page, _| subscribed.contains(page));
+        self.notices.retain(|page, _| {
+            work(Work::Book, 1);
+            subscribed.contains(page)
+        });
         delivery.events = events;
         self.delivering |= !delivery.publications.is_empty();
         delivery
@@ -692,9 +739,10 @@ impl Book {
     /// vehicle debt (R2), retry or `pending` publication (Q6: a dirty page closed by the window stays held until
     /// its save and cleanup finish).
     fn evictable<F: HostIo>(&self, host: &Host<F>, pending: &[Publication]) -> Vec<PageKey> {
-        self.owned
+        self.orphans
             .iter()
             .filter(|key| {
+                work(Work::Book, 1 + host.queue.len() + pending.len());
                 !host.pages.contains_key(*key)
                     && !host.busy(key)
                     && !host.vehicle_debt.contains(*key)
@@ -1101,7 +1149,7 @@ impl PageHost {
                     for (page, handoff) in handoffs {
                         state.book.pending.insert((page, id), handoff);
                     }
-                    state.book.owned.extend(open);
+                    state.book.own(open, &state.progress.host);
                     Ok(())
                 }
                 _ => Err(PageRefusal::NotAdmitted),
@@ -1144,7 +1192,7 @@ impl PageHost {
             && !self
                 .driver
                 .shared
-                .with_state(|s| s.book.owned.contains(&key))
+                .with_state(|s| s.book.owned().contains(&key))
         {
             store.watch.release_hold(&key);
         }

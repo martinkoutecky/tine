@@ -1,7 +1,8 @@
 //! The graph binding (STEP3 §3): its bookkeeping beside a model host, and
 //! its command path against a real Store with the driver thread running.
 use super::*;
-use crate::page_host::model_fs::ModelFs;
+use crate::page_host::io::Phase;
+use crate::page_host::model_fs::{Fault, ModelFs};
 use crate::page_host::tests::{edit, open as open_page, risk, saved, send, text};
 use std::fs;
 use std::path::PathBuf;
@@ -2047,7 +2048,7 @@ fn i1c_a_removal_back_at_the_baseline_lifts_the_conflict_and_the_edit_saves() {
 fn review_p1_m2_a_key_with_vehicle_debt_is_not_evicted() {
     let mut host = super::super::tests::host();
     let mut book = Book::default();
-    book.owned.insert("b.md".into());
+    book.own(["b.md".to_string()], &host);
     assert_eq!(book.evictable(&host, &[]), ["b.md"]);
     host.vehicle_debt.insert("b.md".into());
     assert!(book.evictable(&host, &[]).is_empty());
@@ -2071,4 +2072,93 @@ fn review_p1_m2_a_restore_aborts_on_vehicle_debt_alone() {
         stop_state(&u.progress, &u.book),
         StopState::Aborted(BTreeSet::from(["a.md".into()]))
     );
+}
+
+fn evicted(delivery: &Delivery) -> Vec<&str> {
+    delivery
+        .evicted
+        .iter()
+        .map(|(key, _)| key.as_str())
+        .collect()
+}
+
+/// M4 B2: an Open whose read fails leaves its key owned but never held: an
+/// orphan from admission, evicted once nothing else holds its index.
+#[test]
+fn m4_b2_a_failed_open_is_evicted() {
+    let mut u = Unit::new();
+    u.progress.host.fs.inject(Phase::Read, [Fault::Before]);
+    u.progress.with_host(|h| {
+        let request = Request {
+            id: h.last_admitted + 1,
+            generation: h.generation,
+            page: "b.md".into(),
+            kind: RequestKind::Open,
+        };
+        assert_eq!(h.admit(request), Disposition::Applied);
+    });
+    // `PageHost::admit` takes the key's ownership at admission.
+    u.book.own(["b.md".to_string()], &u.progress.host);
+    assert!(
+        evicted(&u.collect()).is_empty(),
+        "a queued Open keeps its index"
+    );
+    u.progress.with_host(|h| {
+        assert_eq!(h.dequeue(), Disposition::Pending);
+        h.apply_request();
+    });
+    assert!(!u.progress.host.pages.contains_key("b.md"));
+    assert_eq!(evicted(&u.collect()), ["b.md"]);
+    assert!(!u.book.owned().contains("b.md"));
+}
+
+/// M4 B2: an admitted Open a window reload overtakes is still applied (it
+/// keeps custody), then released unsubscribed: its key is held, becomes an
+/// orphan and is evicted.
+#[test]
+fn m4_b2_an_open_overtaken_by_a_reload_is_evicted_after_release() {
+    let mut u = Unit::new();
+    u.progress.with_host(|h| {
+        let request = Request {
+            id: h.last_admitted + 1,
+            generation: h.generation,
+            page: "b.md".into(),
+            kind: RequestKind::Open,
+        };
+        assert_eq!(h.admit(request), Disposition::Applied);
+    });
+    u.book.own(["b.md".to_string()], &u.progress.host);
+    u.progress.with_host(|h| {
+        h.window_crash();
+        assert_eq!(h.dequeue(), Disposition::Pending);
+        h.apply_request();
+    });
+    assert!(u.progress.host.pages.contains_key("b.md"));
+    assert!(
+        evicted(&u.collect()).is_empty(),
+        "held again: not an orphan"
+    );
+    for _ in 0..8 {
+        u.progress.poll(0);
+        u.progress.host.held = None;
+    }
+    assert!(!u.progress.host.pages.contains_key("b.md"), "released");
+    assert!(evicted(&u.collect()).contains(&"b.md"));
+    assert!(!u.book.owned().contains("b.md"));
+}
+
+/// M4 B2: an orphan whose eviction is blocked (vehicle debt, an unobserved
+/// release) stays a candidate: it is evicted once the obligation ends,
+/// though nothing about the key changes on the host.
+#[test]
+fn m4_b2_a_blocked_orphan_is_evicted_when_its_obligation_ends() {
+    let mut u = Unit::new();
+    u.book.own(["b.md".to_string()], &u.progress.host);
+    u.progress.host.vehicle_debt.insert("b.md".into());
+    u.book.handover.insert("b.md".into());
+    assert!(evicted(&u.collect()).is_empty());
+    u.progress.host.vehicle_debt.clear();
+    assert!(evicted(&u.collect()).is_empty(), "still handed over");
+    u.book.handover.clear();
+    assert_eq!(evicted(&u.collect()), ["b.md"]);
 }

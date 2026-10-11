@@ -571,9 +571,23 @@ publication, one probe; and per wake of the caller waiting for the operation's
 witnesses, a count comparison plus the host's stuck pages (conflicted, or past
 their third failed save, kept by `Progress::reconcile`), never a rescan of every
 answered page. `rename_cost.rs` bounds these `host_publication_probes` at
-12 per written page for 8 and 64 referrers (measured about 5). The host's own
-per-step scheduling (`Progress::reconcile`) still walks every held page per
-step; that is measured, not yet bounded (RECEIPT, P2b review round). The frontend matches touched paths against loaded
+12 per written page for 8 and 64 referrers (measured about 5). A host step's own
+scheduling follows what changed (M4): `Progress::reconcile` visits the pages
+whose buffer or live logical draft changed since the last step and the pages
+its new events name; the draft index is kept per page; the operation worker
+locks only the pages its current draft file names. Proved envelope: a
+rename's host work through its cleanup is linear in its pages for each counted
+primitive (reconcile visits, draft records, save, draft and retirement
+candidates, worker keys, Book) at 100, 200 and 400 referrers against fixed
+per-page constants, and an edit's reconcile, draft-index and worker work does
+not grow with the pages the window holds (`rename_cost.rs`
+`rename_host_work_is_linear`, `host_edit_cost.rs`
+`an_edit_among_many_held_pages_visits_what_changed`). Named remaining
+dimensions, walked per step and not bounded by these proofs: the window's
+subscribed pages S (retirement candidates per poll, quiet notices per
+collection), queued requests Q (checked per retirement candidate), surfaced
+draft errors E (checked per visited page), and a released retained writer's
+handover keys, rechecked per step until each is observed (follow-up F1). The frontend matches touched paths against loaded
 pages once; it still reloads only clean rewritten pages and discards moved pages.
 
 Unit cost (step 3b P2b, a single page's rename through the page host, Q-P2b-2):

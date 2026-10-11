@@ -182,3 +182,162 @@ fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
         store.close();
     }
 }
+
+/// One rename of `referrers` referrers among `pages_count` unrelated pages on
+/// a host already started, measured from the call through the host's cleanup
+/// (every draft retired, every page released): the counters are reset after
+/// host startup, and the snapshot is taken once the host is quiescent. Checks
+/// every referrer's bytes and the source's deletion.
+fn rename_through_cleanup(pages_count: usize, referrers: usize) -> Counts {
+    let temp = tempfile::Builder::new()
+        .prefix("rename-work-")
+        .tempdir()
+        .unwrap();
+    let root = temp.path().join("graph");
+    for dir in ["pages/a", "pages/b", "pages/c"] {
+        fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    for index in 0..pages_count {
+        let folder = ["a", "b", "c"][index % 3];
+        fs::write(
+            root.join(format!("pages/{folder}/Other{index:05}.md")),
+            format!("- unrelated {index}\n"),
+        )
+        .unwrap();
+    }
+    for index in 0..referrers {
+        fs::write(
+            root.join(format!("pages/Ref{index:05}.md")),
+            format!("- links [[Target]] {index}\n"),
+        )
+        .unwrap();
+    }
+    fs::write(root.join("pages/Target.md"), "- the target\n").unwrap();
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, &temp.path().join("app")).unwrap();
+    let started = std::time::Instant::now();
+    while !host.quiescent_for_tests() {
+        assert!(
+            started.elapsed().as_secs() < 30,
+            "the host never settled after launch"
+        );
+        std::thread::yield_now();
+    }
+    cost_counters::reset();
+    pages::rename_page_expected(&store, &host, "Target", "Renamed", None).unwrap();
+    let renamed = std::time::Instant::now();
+    while !host.quiescent_for_tests() {
+        assert!(
+            renamed.elapsed().as_secs() < 60,
+            "the host never finished the rename's cleanup"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let counts = cost_counters::snapshot();
+    assert!(
+        !root.join("pages/Target.md").exists(),
+        "the source is deleted"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("pages/Renamed.md")).unwrap(),
+        "- the target\n"
+    );
+    for index in 0..referrers {
+        assert_eq!(
+            fs::read_to_string(root.join(format!("pages/Ref{index:05}.md"))).unwrap(),
+            format!("- links [[Renamed]] {index}\n"),
+            "referrer {index} is rewritten"
+        );
+    }
+    drop(host);
+    store.close();
+    counts
+}
+
+/// M4 (STEP3-DESIGN "Manager decisions on the P2b-fix report", REVIEW-progress-
+/// plan B3/R5): a host step does work proportional to what changed, so a
+/// rename's host work through its cleanup is linear in its referrers, per
+/// primitive, at three sizes, against fixed per-referrer constants measured
+/// on the reviewed implementation. Before M4 every reconcile walked every held
+/// page and rebuilt the whole logical draft map, the operation worker copied
+/// and relocked its whole page set on every phase, and its tidy scanned every
+/// vehicle per page: O(referrers²).
+#[test]
+fn rename_host_work_is_linear() {
+    let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    // Every size is measured before any is judged, so a failure shows the growth.
+    let measured = [100u64, 200, 400].map(|referrers| {
+        let c = rename_through_cleanup(80, referrers as usize);
+        eprintln!("M4 rename host work, {referrers} referrers: {c:?}");
+        (referrers, c)
+    });
+    for (referrers, c) in measured {
+        let primitives = [
+            (
+                "host_reconcile_visits",
+                c.host_reconcile_visits,
+                RECONCILE_PER_REFERRER,
+            ),
+            (
+                "host_draft_record_visits",
+                c.host_draft_record_visits,
+                DRAFT_RECORDS_PER_REFERRER,
+            ),
+            (
+                "host_candidate_visits",
+                c.host_candidate_visits,
+                CANDIDATES_PER_REFERRER,
+            ),
+            (
+                "host_worker_key_visits",
+                c.host_worker_key_visits,
+                WORKER_KEYS_PER_REFERRER,
+            ),
+            ("host_book_visits", c.host_book_visits, BOOK_PER_REFERRER),
+        ];
+        for (name, count, per_referrer) in primitives {
+            assert!(
+                count > 0,
+                "{name} is instrumented on a rename's path: {c:?}"
+            );
+            assert!(
+                count <= per_referrer * (referrers + 2) + HOST_WORK_FLOOR,
+                "M4/I-14/D-10: a rename's {name} must be linear in its pages, at most \
+                 {per_referrer} per page plus {HOST_WORK_FLOOR}; got {count} at {referrers} \
+                 referrers. A host step visits what changed since the last step, never every \
+                 held page or draft (exemplar page_host/progress.rs reconcile): {c:?}"
+            );
+        }
+    }
+}
+
+/// M4 (REVIEW-progress-plan R5): the availability half of the proof, kept
+/// apart from the structural counts above. A 1000-referrer rename completes
+/// inside its caller's bound (`OPERATION_WAIT`, 10 s): `rename_page_expected`
+/// returns `TimedOut` past it. Release build only, so a loaded debug suite
+/// cannot decide it; the executable gate is `scripts/rename-thousand-referrers.sh`.
+#[test]
+#[ignore = "release availability gate: scripts/rename-thousand-referrers.sh"]
+fn a_thousand_referrer_rename_completes_inside_the_caller_bound() {
+    let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    assert!(
+        !cfg!(debug_assertions),
+        "a release gate: run scripts/rename-thousand-referrers.sh"
+    );
+    let started = std::time::Instant::now();
+    let c = rename_through_cleanup(80, 1000);
+    eprintln!(
+        "M4 1000 referrers: {:?} through cleanup: {c:?}",
+        started.elapsed()
+    );
+}
+
+// Fixed from the reviewed measurement (RECEIPT "M4": 27, 7, 8, 106 and 24
+// per page at 100, 200 and 400 referrers), about 2x headroom.
+const RECONCILE_PER_REFERRER: u64 = 60;
+const DRAFT_RECORDS_PER_REFERRER: u64 = 16;
+const CANDIDATES_PER_REFERRER: u64 = 20;
+const WORKER_KEYS_PER_REFERRER: u64 = 220;
+const BOOK_PER_REFERRER: u64 = 50;
+const HOST_WORK_FLOOR: u64 = 500;

@@ -31,6 +31,11 @@ static TRANSACTION_REWRITES: AtomicU64 = AtomicU64::new(0);
 static WATCHER_READS: AtomicU64 = AtomicU64::new(0);
 static WATCHER_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 static HOST_PUBLICATION_PROBES: AtomicU64 = AtomicU64::new(0);
+static HOST_RECONCILE_VISITS: AtomicU64 = AtomicU64::new(0);
+static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
+static HOST_CANDIDATE_VISITS: AtomicU64 = AtomicU64::new(0);
+static HOST_WORKER_KEY_VISITS: AtomicU64 = AtomicU64::new(0);
+static HOST_BOOK_VISITS: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     /// Set on the watcher thread, whose re-reads of just-written files are
@@ -137,6 +142,24 @@ pub struct Counts {
     /// (`Order::published`), answered pages examined while a caller waits for
     /// their witness (`settle`), and index publications (`Bridge::deliver`).
     pub host_publication_probes: u64,
+    /// Page-host step work by primitive (M4, REVIEW-progress-plan R5), one
+    /// count per element examined, rejected filter elements included:
+    /// keys `Progress::reconcile` visits.
+    pub host_reconcile_visits: u64,
+    /// Draft records and vehicles examined to build or look up a logical
+    /// draft, list a page's vehicles or tidy a worker's copies.
+    pub host_draft_record_visits: u64,
+    /// Save, draft, retire and deadline candidates examined by `poll` and
+    /// `next_deadline`, queued requests examined per candidate, and owed
+    /// observations examined by the driver.
+    pub host_candidate_visits: u64,
+    /// Keys copied, checked or locked for the draft worker's phases and the
+    /// driver's lock acquisition and revalidation.
+    pub host_worker_key_visits: u64,
+    /// Keys the binding's `Book::collect` examines: claims, eviction
+    /// candidates (with their queued requests and pending publications) and
+    /// subscribed pages' notices.
+    pub host_book_visits: u64,
 }
 
 /// Zero process-global counters. Concurrent activity contaminates measurements.
@@ -173,6 +196,11 @@ pub fn reset() {
         &WATCHER_READS,
         &WATCHER_STAMPS_BY_PATH,
         &HOST_PUBLICATION_PROBES,
+        &HOST_RECONCILE_VISITS,
+        &HOST_DRAFT_RECORD_VISITS,
+        &HOST_CANDIDATE_VISITS,
+        &HOST_WORKER_KEY_VISITS,
+        &HOST_BOOK_VISITS,
     ] {
         counter.store(0, Ordering::Relaxed);
     }
@@ -212,11 +240,38 @@ pub fn snapshot() -> Counts {
         watcher_reads: WATCHER_READS.load(Ordering::Relaxed),
         watcher_stamps_by_path: WATCHER_STAMPS_BY_PATH.load(Ordering::Relaxed),
         host_publication_probes: HOST_PUBLICATION_PROBES.load(Ordering::Relaxed),
+        host_reconcile_visits: HOST_RECONCILE_VISITS.load(Ordering::Relaxed),
+        host_draft_record_visits: HOST_DRAFT_RECORD_VISITS.load(Ordering::Relaxed),
+        host_candidate_visits: HOST_CANDIDATE_VISITS.load(Ordering::Relaxed),
+        host_worker_key_visits: HOST_WORKER_KEY_VISITS.load(Ordering::Relaxed),
+        host_book_visits: HOST_BOOK_VISITS.load(Ordering::Relaxed),
     }
 }
 
 pub(crate) fn host_publication_probes(count: usize) {
     HOST_PUBLICATION_PROBES.fetch_add(count as u64, Ordering::Relaxed);
+}
+
+/// The page-host step primitives `Counts` splits its work into.
+#[derive(Clone, Copy)]
+pub(crate) enum HostWork {
+    Reconcile,
+    DraftRecords,
+    Candidates,
+    WorkerKeys,
+    Book,
+}
+
+#[cfg_attr(not(feature = "test-faults"), allow(dead_code))]
+pub(crate) fn host_work(kind: HostWork, count: usize) {
+    let counter = match kind {
+        HostWork::Reconcile => &HOST_RECONCILE_VISITS,
+        HostWork::DraftRecords => &HOST_DRAFT_RECORD_VISITS,
+        HostWork::Candidates => &HOST_CANDIDATE_VISITS,
+        HostWork::WorkerKeys => &HOST_WORKER_KEY_VISITS,
+        HostWork::Book => &HOST_BOOK_VISITS,
+    };
+    counter.fetch_add(count as u64, Ordering::Relaxed);
 }
 pub(crate) fn name_inventory_entries(count: usize) {
     NAME_INVENTORY_ENTRIES.fetch_add(count as u64, Ordering::Relaxed);

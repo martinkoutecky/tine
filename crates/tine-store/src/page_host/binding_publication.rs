@@ -47,7 +47,7 @@ impl PageHost {
             for (key, version, witness) in pages {
                 let page = match host.logical(key) {
                     Logical::Admitted { .. } => return false,
-                    Logical::Absent if witness.is_some() || state.book.owned.contains(key) => {
+                    Logical::Absent if witness.is_some() || state.book.owned().contains(key) => {
                         return false;
                     }
                     Logical::Absent => continue,
@@ -174,7 +174,7 @@ impl PageHost {
             Logical::Absent => None,
         });
         let released = book
-            .owned
+            .owned()
             .iter()
             .filter(|key| !logical.contains(*key))
             .map(|key| (key.clone(), 0));

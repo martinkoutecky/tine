@@ -26,8 +26,11 @@ pub(super) struct Notice {
     pub custody_error: BTreeSet<String>,
 }
 
+/// A held page's save policy. The page itself is the host's; Timing keeps
+/// only the version it last saw, for "the buffer changed" (M4).
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct Timing {
-    page: Page,
+    version: u64,
     first: Option<u64>,
     last: u64,
     /// `save_now` asked for this page's save at once (a barrier or a block
@@ -39,6 +42,7 @@ struct Timing {
     notice: Notice,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct DraftFailure {
     pages: BTreeSet<PageKey>,
     refresh: Option<PageKey>,
@@ -60,6 +64,18 @@ pub(super) fn backoff(failures: u32) -> u64 {
 }
 
 impl Timing {
+    fn new(page: &Page, now: u64) -> Self {
+        Self {
+            version: page.version,
+            first: None,
+            last: now,
+            urgent: false,
+            retry: None,
+            last_draft: None,
+            notice: Notice::default(),
+        }
+    }
+
     fn deadline(&self) -> Option<u64> {
         self.retry.or_else(|| {
             self.first.map(|first| {
@@ -71,14 +87,205 @@ impl Timing {
             })
         })
     }
+
+    /// A held page's policy update at a reconcile visit: dirty onset stamps
+    /// first and last, a changed buffer advances last, clean ends the save's
+    /// timing and its diagnosis.
+    fn visit(&mut self, page: &Page, changed: bool, now: u64) {
+        if page.clean() {
+            self.first = None;
+            self.urgent = false;
+            self.retry = None;
+            // An unapplied operation can fail while its old pages remain
+            // clean. Keep its surfaced draft error across unrelated calls.
+            self.notice = Notice {
+                draft_error: self.notice.draft_error,
+                dropped: self.notice.dropped,
+                ..Notice::default()
+            };
+        } else if self.first.is_none() {
+            self.first = Some(now);
+            self.last = now;
+        } else if changed {
+            self.last = now;
+        }
+        if !page.conflict {
+            self.notice.conflict_reported = false;
+        }
+    }
+
+    /// The draft error notice and conflict progress, after events; whether
+    /// the page is stuck (in conflict, or past its third failed save).
+    fn conclude(
+        &mut self,
+        key: &str,
+        page: &Page,
+        draft_errors: &BTreeMap<String, DraftFailure>,
+        draft: Option<&Record>,
+    ) -> bool {
+        self.notice.draft_error = draft_errors.values().any(|f| f.pages.contains(key));
+        // The core's model-mandated conflict mailbox push stays immediate.
+        // This separate persistent progress indicator waits for a draft
+        // application or a surfaced failure of that draft.
+        if page.conflict && (draft.is_some_and(|r| r.holds(page)) || self.notice.draft_error) {
+            self.notice.conflict_reported = true;
+        }
+        page.conflict || self.notice.save_error
+    }
+}
+
+impl Record {
+    /// This draft is exactly the page's buffer at its version.
+    fn holds(&self, page: &Page) -> bool {
+        self.bytes == page.buf && self.base == page.base && self.version == page.version
+    }
+}
+
+/// Apply this reconcile's events to the save policy and the surfaced draft
+/// failures, in order; returns every page whose Timing or failure
+/// membership they touched.
+fn apply_events(
+    events: &[Event],
+    times: &mut BTreeMap<PageKey, Timing>,
+    pages: &BTreeMap<PageKey, Page>,
+    draft_errors: &mut BTreeMap<String, DraftFailure>,
+    mut failed: Option<&mut BTreeSet<PageKey>>,
+    now: u64,
+) -> BTreeSet<PageKey> {
+    let mut touched = BTreeSet::new();
+    for event in events {
+        match event {
+            Event::SaveOutcome {
+                page,
+                outcome: Outcome::Published,
+                ..
+            } => {
+                touched.insert(page.clone());
+                let t = times.get_mut(page).unwrap();
+                t.notice = Notice::default();
+                t.retry = None;
+                t.first = (!pages[page].clean()).then_some(now);
+                t.last = now;
+            }
+            Event::SaveOutcome {
+                page,
+                outcome: Outcome::Failed | Outcome::Uncertain,
+                cause,
+            } => {
+                touched.insert(page.clone());
+                let t = times.get_mut(page).unwrap();
+                t.notice.operation = cause.and_then(|cause| cause.operation);
+                t.notice.os_error = cause.and_then(|cause| cause.os_error);
+                t.notice.failures = t
+                    .notice
+                    .failures
+                    .checked_add(1)
+                    .expect("failure count exhausted");
+                let delay = backoff(t.notice.failures);
+                t.retry = Some(now.checked_add(delay).expect("clock exhausted"));
+                t.notice.save_error = t.notice.failures >= 3;
+                if let Some(failed) = failed.as_deref_mut() {
+                    failed.insert(page.clone());
+                }
+            }
+            Event::OperationDropped(dropped) => {
+                for page in dropped {
+                    touched.insert(page.clone());
+                    if let Some(t) = times.get_mut(page) {
+                        t.notice.dropped = true;
+                    }
+                }
+            }
+            Event::DraftError {
+                effect,
+                pages,
+                refresh,
+                ..
+            } => {
+                touched.extend(pages.iter().cloned());
+                let failure = DraftFailure {
+                    pages: pages.clone(),
+                    refresh: refresh.clone(),
+                    terminal: false,
+                };
+                if let Some(old) = draft_errors.insert(effect.clone(), failure) {
+                    touched.extend(old.pages);
+                }
+            }
+            Event::DraftFinished {
+                effect,
+                pages,
+                refresh,
+                recovered,
+            } => {
+                touched.extend(pages.iter().cloned());
+                if let Some(old) = draft_errors.remove(effect) {
+                    touched.extend(old.pages);
+                }
+                if let Some(key) = refresh {
+                    // A completed refresh replaces earlier terminal failed
+                    // attempts at that desired record. Pending physical
+                    // obligations, and unrelated operations, remain distinct.
+                    draft_errors.retain(|_, failure| {
+                        let keep = !failure.terminal || failure.refresh.as_ref() != Some(key);
+                        if !keep {
+                            touched.extend(failure.pages.iter().cloned());
+                        }
+                        keep
+                    });
+                    if !recovered {
+                        draft_errors.insert(
+                            effect.clone(),
+                            DraftFailure {
+                                pages: pages.clone(),
+                                refresh: refresh.clone(),
+                                terminal: true,
+                            },
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // Discard/resolution can abandon a failed refresh's desired record.
+    // Only terminal work can disappear here; logical equality alone never
+    // recovers a physical failure (in particular, explosion/retirement).
+    draft_errors.retain(|_, failure| {
+        let keep = !failure.terminal
+            || failure
+                .refresh
+                .as_ref()
+                .is_none_or(|key| pages.get(key).is_some_and(|page| page.risk));
+        if !keep {
+            touched.extend(failure.pages.iter().cloned());
+        }
+        keep
+    });
+    touched
 }
 
 pub(super) struct Progress<F: HostIo, C: Clock> {
     pub host: Host<F>,
     pub clock: C,
+    /// Every held page's save policy (M4: kept per visited key).
     times: BTreeMap<PageKey, Timing>,
+    /// Held pages that are dirty and not in conflict: the save candidates,
+    /// whatever currently blocks them (busy, gated, reserved, not due).
+    saves: BTreeSet<PageKey>,
+    /// Keys, held or not, whose desired draft (a page at risk, else none)
+    /// differs from the live logical draft: the draft candidates, whatever
+    /// currently blocks them. Empty while the host is stopped.
+    drafted: BTreeSet<PageKey>,
+    /// Held clean pages: the retirement candidates.
+    clean: BTreeSet<PageKey>,
+    /// Every key a reconcile visited since Book last took them: ownership
+    /// changes for the publication consumer (B1, B2).
+    moved: BTreeSet<PageKey>,
+    /// The host incarnation and liveness the sets were built for; a change
+    /// rebuilds them.
+    seen: Option<(u64, bool)>,
     events_seen: usize,
-    incarnation: u64,
     draft_retry: Option<u64>,
     draft_retries: u32,
     draft_errors: BTreeMap<String, DraftFailure>,
@@ -95,18 +302,32 @@ pub(super) struct Progress<F: HostIo, C: Clock> {
     /// waiting for an operation's witnesses reads it per wake instead of
     /// rescanning every answered page (REVIEW-3b-P2b R5).
     stuck: BTreeSet<PageKey>,
+    /// The full-pass reconcile this one replaced, run beside it and
+    /// compared field by field (M4, REVIEW-progress-plan R3).
+    #[cfg(test)]
+    reference: Reference,
+}
+
+/// The key after `after` in `set` (the first with None).
+fn next_after(set: &BTreeSet<PageKey>, after: Option<&PageKey>) -> Option<PageKey> {
+    use std::ops::Bound::{Excluded, Unbounded};
+    let from = after.map_or(Unbounded, Excluded);
+    set.range::<PageKey, _>((from, Unbounded)).next().cloned()
 }
 
 impl<F: HostIo, C: Clock> Progress<F, C> {
     pub fn new(host: Host<F>, clock: C) -> Self {
-        let incarnation = host.incarnation;
         let events_seen = host.events.len();
         let mut result = Self {
             host,
             clock,
             times: BTreeMap::new(),
+            saves: BTreeSet::new(),
+            drafted: BTreeSet::new(),
+            clean: BTreeSet::new(),
+            moved: BTreeSet::new(),
+            seen: None,
             events_seen,
-            incarnation,
             draft_retry: None,
             draft_retries: 0,
             draft_errors: BTreeMap::new(),
@@ -115,6 +336,8 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             save_cursor: None,
             stopping: None,
             stuck: BTreeSet::new(),
+            #[cfg(test)]
+            reference: Reference::default(),
         };
         result.reconcile();
         result
@@ -146,13 +369,16 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
     }
 
     /// Make these pages' saves due now (`page_save_now`): only the debounce
-    /// is skipped. A clean page has nothing to hurry: the next reconcile
-    /// ends its urgency.
+    /// is skipped. A clean page has nothing to hurry, so it is left as it
+    /// is: urgency lasts while the page stays dirty (R1).
     pub fn save_now(&mut self, keys: &[PageKey]) {
         for key in keys {
-            if let Some(t) = self.times.get_mut(key) {
+            let dirty = self.host.pages.get(key).is_some_and(|page| !page.clean());
+            if let Some(t) = self.times.get_mut(key).filter(|_| dirty) {
                 t.urgent = true;
             }
+            #[cfg(test)]
+            self.reference.save_now(key);
         }
     }
 
@@ -162,6 +388,12 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             .values()
             .flat_map(|failure| failure.pages.iter().cloned())
             .collect()
+    }
+
+    /// Keys whose holding changed, or that a reconcile visited otherwise,
+    /// since the last call: for the publication consumer's ownership (B2).
+    pub fn take_moved(&mut self) -> BTreeSet<PageKey> {
+        std::mem::take(&mut self.moved)
     }
 
     /// Graph-level sticky error while trash custody cannot be listed (V1).
@@ -179,26 +411,30 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
     /// refresh deadline, or a retry. A page whose save or draft is blocked
     /// (conflict, reservation, a busy worker or job) contributes nothing:
     /// whatever unblocks it wakes the driver, so an expired deadline is
-    /// never spun on (STEP3 §1).
+    /// never spun on (STEP3 §1). Walks the save and draft candidates only.
     pub fn next_deadline(&self) -> Option<u64> {
-        let drafts = self.host.logical_drafts();
-        let pages = self.times.iter().filter(|(key, _)| !self.host.busy(key));
-        let saves = pages
-            .clone()
-            .filter(|(key, _)| !self.host.order.gated(key))
-            .filter_map(|(_, t)| t.deadline().filter(|_| !t.page.clean() && !t.page.conflict));
-        let refreshes = pages.filter_map(|(key, t)| {
-            let differs = t.page.risk
-                && !drafts.get(key).is_some_and(|r| {
-                    r.bytes == t.page.buf && r.base == t.page.base && r.version == t.page.version
-                });
-            t.last_draft
-                .filter(|_| differs && self.host.worker.is_none() && !self.held_back(key, &t.page))
-                .map(|last| last.checked_add(500).expect("clock exhausted"))
-        });
+        let host = &self.host;
+        let saves = self
+            .saves
+            .iter()
+            .inspect(|_| work(Work::Candidates, 1))
+            .filter(|key| !host.busy(key) && !host.order.gated(key))
+            .filter_map(|key| self.times[key].deadline());
+        let refreshes = self
+            .drafted
+            .iter()
+            .filter(|_| host.worker.is_none())
+            .inspect(|_| work(Work::Candidates, 1))
+            .filter_map(|key| {
+                let page = host.pages.get(key).filter(|page| page.risk)?;
+                let t = &self.times[key];
+                t.last_draft
+                    .filter(|_| !host.busy(key) && !self.held_back(key, page))
+                    .map(|last| last.checked_add(500).expect("clock exhausted"))
+            });
         saves
             .chain(refreshes)
-            .chain(self.draft_retry.filter(|_| self.host.worker.is_some()))
+            .chain(self.draft_retry.filter(|_| host.worker.is_some()))
             .chain(self.custody_retry)
             .min()
     }
@@ -239,167 +475,127 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         std::mem::take(&mut self.host.events)
     }
 
+    /// Bring the policy up to date with what changed since the last call
+    /// (M4): the host's changed keys and the pages events name. A page's
+    /// policy changes only when it does (a save's outcome comes with its
+    /// page's change; nothing changes a page while its job runs), so the
+    /// reference tracker's full pass agrees. Work is proportional to those, plus
+    /// the surfaced draft failures (E) per visited key; a new incarnation
+    /// or a liveness change rebuilds from every held page and draft.
     fn reconcile(&mut self) {
         self.host.sync_drafts();
         let now = self.clock.now_ms();
-        if self.incarnation != self.host.incarnation {
-            self.times.clear();
-            self.incarnation = self.host.incarnation;
-            self.draft_retry = None;
-            self.draft_retries = 0;
-            self.draft_errors.clear();
-            self.custody_retry = None;
-            self.custody_retries = 0;
+        let mut visit = std::mem::take(&mut self.host.changed);
+        let current = (self.host.incarnation, self.host.alive);
+        if self.seen != Some(current) {
+            if self
+                .seen
+                .is_some_and(|(incarnation, _)| incarnation != current.0)
+            {
+                self.times.clear();
+                self.draft_retry = None;
+                self.draft_retries = 0;
+                self.draft_errors.clear();
+                self.custody_retry = None;
+                self.custody_retries = 0;
+            }
+            self.seen = Some(current);
+            let host = &self.host;
+            let known = self.saves.iter().chain(&self.clean).chain(&self.drafted);
+            let known = known.chain(&self.stuck).chain(self.times.keys());
+            let working = host.worker.iter().flat_map(|w| w.pages.iter());
+            let keys = host.pages.keys().chain(host.durable.keys()).chain(working);
+            for key in known.chain(keys).cloned().collect::<Vec<_>>() {
+                visit.entry(key).or_insert(false);
+            }
+            self.drafted.clear();
         }
         if self.host.switch_confirmation.is_none() {
             self.stopping = None;
         }
-        self.times
-            .retain(|key, _| self.host.pages.contains_key(key));
-        for (key, page) in &self.host.pages {
-            let t = self.times.entry(key.clone()).or_insert_with(|| Timing {
-                page: page.clone(),
-                first: None,
-                last: now,
-                urgent: false,
-                retry: None,
-                last_draft: None,
-                notice: Notice::default(),
-            });
-            let changed = t.page.buf != page.buf || t.page.version != page.version;
-            if page.clean() {
-                t.first = None;
-                t.urgent = false;
-                t.retry = None;
-                // An unapplied operation can fail while its old pages remain
-                // clean. Keep its surfaced draft error across unrelated calls.
-                t.notice = Notice {
-                    draft_error: t.notice.draft_error,
-                    dropped: t.notice.dropped,
-                    ..Notice::default()
-                };
-            } else if t.first.is_none() {
-                t.first = Some(now);
-                t.last = now;
-            } else if changed {
-                t.last = now;
-            }
-            if !page.conflict {
-                t.notice.conflict_reported = false;
-            }
-            t.page = page.clone();
-        }
-        for event in &self.host.events[self.events_seen..] {
-            match event {
-                Event::SaveOutcome {
-                    page,
-                    outcome: Outcome::Published,
-                    ..
-                } => {
-                    let t = self.times.get_mut(page).unwrap();
-                    t.notice = Notice::default();
-                    t.retry = None;
-                    t.first = (!t.page.clean()).then_some(now);
-                    t.last = now;
+        for key in visit.keys() {
+            work(Work::Reconcile, 1);
+            self.moved.insert(key.clone());
+            let Some(page) = self.host.pages.get(key) else {
+                self.times.remove(key);
+                self.saves.remove(key);
+                self.clean.remove(key);
+                continue;
+            };
+            let t = self
+                .times
+                .entry(key.clone())
+                .or_insert_with(|| Timing::new(page, now));
+            let changed = t.version != page.version;
+            t.visit(page, changed, now);
+            t.version = page.version;
+            let (dirty, clean) = (!page.clean() && !page.conflict, page.clean());
+            for (set, member) in [(&mut self.saves, dirty), (&mut self.clean, clean)] {
+                if member {
+                    set.insert(key.clone());
+                } else {
+                    set.remove(key);
                 }
-                Event::SaveOutcome {
-                    page,
-                    outcome: Outcome::Failed | Outcome::Uncertain,
-                    cause,
-                } => {
-                    let t = self.times.get_mut(page).unwrap();
-                    t.notice.operation = cause.and_then(|cause| cause.operation);
-                    t.notice.os_error = cause.and_then(|cause| cause.os_error);
-                    t.notice.failures = t
-                        .notice
-                        .failures
-                        .checked_add(1)
-                        .expect("failure count exhausted");
-                    let delay = backoff(t.notice.failures);
-                    t.retry = Some(now.checked_add(delay).expect("clock exhausted"));
-                    t.notice.save_error = t.notice.failures >= 3;
-                    if let Some(stopping) = &mut self.stopping {
-                        stopping.failed.insert(page.clone());
-                    }
-                }
-                Event::OperationDropped(pages) => {
-                    for page in pages {
-                        if let Some(t) = self.times.get_mut(page) {
-                            t.notice.dropped = true;
-                        }
-                    }
-                }
-                Event::DraftError {
-                    effect,
-                    pages,
-                    refresh,
-                    ..
-                } => {
-                    self.draft_errors.insert(
-                        effect.clone(),
-                        DraftFailure {
-                            pages: pages.clone(),
-                            refresh: refresh.clone(),
-                            terminal: false,
-                        },
-                    );
-                }
-                Event::DraftFinished {
-                    effect,
-                    pages,
-                    refresh,
-                    recovered,
-                } => {
-                    self.draft_errors.remove(effect);
-                    if let Some(key) = refresh {
-                        // A completed refresh replaces earlier terminal failed
-                        // attempts at that desired record. Pending physical
-                        // obligations, and unrelated operations, remain distinct.
-                        self.draft_errors.retain(|_, failure| {
-                            !failure.terminal || failure.refresh.as_ref() != Some(key)
-                        });
-                        if !recovered {
-                            self.draft_errors.insert(
-                                effect.clone(),
-                                DraftFailure {
-                                    pages: pages.clone(),
-                                    refresh: refresh.clone(),
-                                    terminal: true,
-                                },
-                            );
-                        }
-                    }
-                }
-                _ => {}
             }
         }
+        let events = &self.host.events[self.events_seen..];
+        let failed = self.stopping.as_mut().map(|s| &mut s.failed);
+        let touched = apply_events(
+            events,
+            &mut self.times,
+            &self.host.pages,
+            &mut self.draft_errors,
+            failed,
+            now,
+        );
+        #[cfg(test)]
+        self.reference.reconcile(&self.host, events, &visit, now);
         self.events_seen = self.host.events.len();
-        // Discard/resolution can abandon a failed refresh's desired record.
-        // Only terminal work can disappear here; logical equality alone never
-        // recovers a physical failure (in particular, explosion/retirement).
-        self.draft_errors.retain(|_, failure| {
-            !failure.terminal
-                || failure
-                    .refresh
-                    .as_ref()
-                    .is_none_or(|key| self.host.pages.get(key).is_some_and(|page| page.risk))
-        });
-        let drafts = self.host.logical_drafts();
-        self.stuck.clear();
-        for (key, t) in &mut self.times {
-            if t.page.conflict || t.notice.save_error {
+        // The stopped host's drafts are its readable directory (R2): read
+        // once, only if a held page needs them.
+        let mut stopped = None;
+        for key in visit.keys().chain(&touched) {
+            work(Work::Reconcile, 1 + self.draft_errors.len());
+            let Some(t) = self.times.get_mut(key) else {
+                self.stuck.remove(key);
+                if self.host.alive {
+                    Self::draft_membership(&mut self.drafted, &self.host, key);
+                }
+                continue;
+            };
+            let page = &self.host.pages[key];
+            let draft = if self.host.alive {
+                self.host.draft_of(key)
+            } else {
+                stopped
+                    .get_or_insert_with(|| self.host.logical_drafts())
+                    .get(key)
+            };
+            if t.conclude(key, page, &self.draft_errors, draft) {
                 self.stuck.insert(key.clone());
+            } else {
+                self.stuck.remove(key);
             }
-            t.notice.draft_error = self.draft_errors.values().any(|f| f.pages.contains(key));
-            let applied = drafts.get(key).is_some_and(|r| {
-                r.bytes == t.page.buf && r.base == t.page.base && r.version == t.page.version
-            });
-            // The core's model-mandated conflict mailbox push stays immediate.
-            // This separate persistent progress indicator waits for a draft
-            // application or a surfaced failure of that draft.
-            if t.page.conflict && (applied || t.notice.draft_error) {
-                t.notice.conflict_reported = true;
+            if self.host.alive {
+                Self::draft_membership(&mut self.drafted, &self.host, key);
             }
+        }
+        #[cfg(test)]
+        self.reference.compare(self);
+    }
+
+    /// `key` is a draft candidate iff its desired draft (the page at risk,
+    /// else none) differs from its live logical draft (B1: absent keys too).
+    fn draft_membership(drafted: &mut BTreeSet<PageKey>, host: &Host<F>, key: &str) {
+        let draft = host.draft_of(key);
+        let differs = match host.pages.get(key).filter(|page| page.risk) {
+            Some(page) => !draft.is_some_and(|r| r.holds(page)),
+            None => draft.is_some(),
+        };
+        if differs {
+            drafted.insert(key.into());
+        } else {
+            drafted.remove(key);
         }
     }
 
@@ -418,7 +614,8 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             let stage = w.task.stage;
             let refreshing = w.task.stage == Stage::Temp
                 && matches!(w.application, Some(Application::Refresh(_)));
-            let keys = w.pages.clone();
+            // A refresh's one page; an operation's set is not copied (B3).
+            let refreshed = w.refresh.clone().filter(|_| refreshing);
             let result = self.host.advance_draft();
             if self.host.lock_request.is_some() {
                 return Disposition::Waiting;
@@ -437,13 +634,13 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             } else {
                 self.draft_retries = 0;
             }
-            if refreshing {
+            if let Some(key) = refreshed {
                 let written_at = self.clock.now_ms();
-                for key in &keys {
-                    if let Some(t) = self.times.get_mut(key) {
-                        t.last_draft = Some(written_at);
-                    }
+                if let Some(t) = self.times.get_mut(&key) {
+                    t.last_draft = Some(written_at);
                 }
+                #[cfg(test)]
+                self.reference.drafted_at(&key, written_at);
             }
             self.reconcile();
             return result;
@@ -470,70 +667,79 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             self.custody_retry = Some(now.checked_add(delay).expect("clock exhausted"));
         }
         let now = self.clock.now_ms();
-        let drafts = self.host.logical_drafts();
-        // Held pages and pages with draft vehicles only (D-10), in key order.
-        let keys: BTreeSet<_> = self.times.keys().chain(drafts.keys()).cloned().collect();
-        for key in &keys {
-            let t = self.times.get(key);
-            let desired = t.filter(|t| t.page.risk);
-            let differs = match desired {
-                Some(t) => !drafts.get(key).is_some_and(|r| {
-                    r.bytes == t.page.buf && r.base == t.page.base && r.version == t.page.version
-                }),
-                None => drafts.contains_key(key),
-            };
-            let due = desired.is_none_or(|t| {
-                t.last_draft
+        // Draft candidates, held or with draft vehicles only (D-10), in key
+        // order.
+        let mut next = next_after(&self.drafted, None);
+        while let Some(key) = next {
+            work(Work::Candidates, 1);
+            let desired = self.host.pages.get(&key).filter(|page| page.risk);
+            let due = desired.is_none_or(|_| {
+                self.times[&key]
+                    .last_draft
                     .is_none_or(|last| now >= last.checked_add(500).expect("clock exhausted"))
             });
-            if differs && due && !desired.is_some_and(|t| self.held_back(key, &t.page)) {
-                let result = self.host.begin_draft(key);
+            if due && !desired.is_some_and(|page| self.held_back(&key, page)) {
+                let result = self.host.begin_draft(&key);
                 if self.host.lock_request.is_some() {
                     return Disposition::Waiting;
                 }
                 if result == Disposition::Pending {
-                    if let Some(t) = self.times.get_mut(key) {
+                    if let Some(t) = self.times.get_mut(&key) {
                         t.last_draft = Some(now);
                     }
+                    #[cfg(test)]
+                    self.reference.drafted_at(&key, now);
                     return Disposition::Pending;
                 }
             }
+            next = next_after(&self.drafted, Some(&key));
         }
         // Due saves are served round-robin, from the page after the one
         // started last, so a page that is due again cannot starve another.
-        let due: Vec<_> = self
-            .times
-            .iter()
-            .filter(|(key, t)| {
-                let due = self.save_first(key, &t.page)
-                    || t.deadline().is_some_and(|deadline| now >= deadline);
-                due && !t.page.clean() && !t.page.conflict
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
-        let after = self.save_cursor.as_ref();
-        let (later, earlier): (Vec<_>, Vec<_>) = due
-            .into_iter()
-            .partition(|key| after.is_none_or(|c| key > c));
-        for key in later.into_iter().chain(earlier) {
-            if self.host.start_save(&key) == Disposition::Pending {
+        let cursor = self.save_cursor.clone();
+        let mut next = next_after(&self.saves, cursor.as_ref());
+        // Without a cursor, one pass from the first key.
+        let mut wrapped = cursor.is_none();
+        loop {
+            let key = match next {
+                Some(key) => key,
+                None if !wrapped => {
+                    wrapped = true;
+                    let Some(key) = next_after(&self.saves, None) else {
+                        break;
+                    };
+                    key
+                }
+                None => break,
+            };
+            if wrapped && cursor.as_ref().is_some_and(|c| key > *c) {
+                break;
+            }
+            work(Work::Candidates, 1);
+            let t = &self.times[&key];
+            let due = self.save_first(&key, &self.host.pages[&key])
+                || t.deadline().is_some_and(|deadline| now >= deadline);
+            if due && self.host.start_save(&key) == Disposition::Pending {
                 self.save_cursor = Some(key);
                 return Disposition::Pending;
             }
+            next = next_after(&self.saves, Some(&key));
         }
         // Model close: retire clean operation/recovery slots once their draft
         // cleanup completes, keeping window and admitted-request custody.
-        let retire = self
-            .host
-            .pages
-            .iter()
-            .find(|(key, page)| {
-                page.clean() && !drafts.contains_key(*key) && !self.host.busy(key)
-                && !self.host.subscriptions.contains(*key)
-                && !self.host.abstract_queue().iter().any(|r| r.page == **key
+        let host = &self.host;
+        let requests = || host.applying.iter().chain(&host.queue);
+        let retire =
+            self.clean
+                .iter()
+                .find(|key| {
+                    work(Work::Candidates, 1 + host.queue.len());
+                    host.draft_of(key).is_none() && !host.busy(key)
+                && !host.subscriptions.contains(*key)
+                && !requests().any(|r| r.page == **key
                     || matches!(&r.kind, RequestKind::Move { receiver, .. } if receiver == *key))
-            })
-            .map(|(key, _)| key.clone());
+                })
+                .cloned();
         if let Some(key) = retire {
             let keys = BTreeSet::from([key.clone()]);
             if self.host.lacks_locks(&keys) {
@@ -561,5 +767,138 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             return self.host.dequeue();
         }
         Disposition::Disabled
+    }
+}
+
+/// The full-pass reconcile M4 replaced (REVIEW-progress-plan R3), kept as
+/// the oracle: its own Timing, page snapshots, surfaced failures and stuck
+/// set, rebuilt over every held page with the logical drafts rebuilt from
+/// the whole census (`logical_drafts`, the stopped host's readable
+/// directory) at each reconcile. `compare` asserts the delta reconcile's
+/// policy, candidate sets and per-key draft index agree with it.
+#[cfg(test)]
+#[derive(Default)]
+struct Reference {
+    times: BTreeMap<PageKey, Timing>,
+    pages: BTreeMap<PageKey, Page>,
+    draft_errors: BTreeMap<String, DraftFailure>,
+    stuck: BTreeSet<PageKey>,
+    logical: BTreeMap<PageKey, Record>,
+    incarnation: Option<u64>,
+}
+
+#[cfg(test)]
+impl Reference {
+    /// R1: only a dirty held page is hurried.
+    fn save_now(&mut self, key: &str) {
+        let dirty = self.pages.get(key).is_some_and(|page| !page.clean());
+        if let Some(t) = self.times.get_mut(key).filter(|_| dirty) {
+            t.urgent = true;
+        }
+    }
+
+    fn drafted_at(&mut self, key: &str, at: u64) {
+        if let Some(t) = self.times.get_mut(key) {
+            t.last_draft = Some(at);
+        }
+    }
+
+    fn reconcile<F: HostIo>(
+        &mut self,
+        host: &Host<F>,
+        events: &[Event],
+        _visit: &BTreeMap<PageKey, bool>,
+        now: u64,
+    ) {
+        if self.incarnation != Some(host.incarnation) {
+            if self.incarnation.is_some() {
+                self.times.clear();
+                self.pages.clear();
+                self.draft_errors.clear();
+            }
+            self.incarnation = Some(host.incarnation);
+        }
+        self.times.retain(|key, _| host.pages.contains_key(key));
+        self.pages.retain(|key, _| host.pages.contains_key(key));
+        for (key, page) in &host.pages {
+            let t = self
+                .times
+                .entry(key.clone())
+                .or_insert_with(|| Timing::new(page, now));
+            let old = self.pages.insert(key.clone(), page.clone());
+            let changed = old.is_some_and(|old| old.buf != page.buf || old.version != page.version);
+            t.visit(page, changed, now);
+            t.version = page.version;
+        }
+        apply_events(
+            events,
+            &mut self.times,
+            &host.pages,
+            &mut self.draft_errors,
+            None,
+            now,
+        );
+        self.logical = host.logical_drafts();
+        self.stuck.clear();
+        for (key, t) in &mut self.times {
+            if t.conclude(
+                key,
+                &self.pages[key],
+                &self.draft_errors,
+                self.logical.get(key),
+            ) {
+                self.stuck.insert(key.clone());
+            }
+        }
+    }
+
+    fn compare<F: HostIo, C: Clock>(&self, p: &Progress<F, C>) {
+        let host = &p.host;
+        assert_eq!(p.times, self.times, "M4 reference: Timing");
+        assert_eq!(
+            p.draft_errors, self.draft_errors,
+            "M4 reference: draft errors"
+        );
+        assert_eq!(p.stuck, self.stuck, "M4 reference: stuck");
+        let pages = self.pages.iter();
+        let saves = pages
+            .clone()
+            .filter(|(_, page)| !page.clean() && !page.conflict);
+        let clean = pages.filter(|(_, page)| page.clean());
+        let keys = |pages: &mut dyn Iterator<Item = (&PageKey, &Page)>| {
+            pages.map(|(key, _)| key.clone()).collect::<BTreeSet<_>>()
+        };
+        assert_eq!(
+            p.saves,
+            keys(&mut { saves }),
+            "M4 reference: save candidates"
+        );
+        assert_eq!(p.clean, keys(&mut { clean }), "M4 reference: clean pages");
+        let drafted: BTreeSet<_> = if host.alive {
+            let candidates = self.pages.keys().chain(self.logical.keys());
+            let differs = |key: &&PageKey| match self.pages.get(*key).filter(|page| page.risk) {
+                Some(page) => !self.logical.get(*key).is_some_and(|r| r.holds(page)),
+                None => self.logical.contains_key(*key),
+            };
+            candidates.filter(differs).cloned().collect()
+        } else {
+            BTreeSet::new()
+        };
+        assert_eq!(p.drafted, drafted, "M4 reference: draft candidates");
+        assert_eq!(
+            host.durable,
+            drafts::logical(host.drafts.values()),
+            "M4 reference: per-key draft index"
+        );
+        let mut vehicles_of: BTreeMap<PageKey, BTreeSet<String>> = BTreeMap::new();
+        for (name, records) in &host.drafts {
+            for record in records {
+                vehicles_of
+                    .entry(record.page.clone())
+                    .or_default()
+                    .insert(name.clone());
+            }
+        }
+        assert_eq!(host.vehicles_of, vehicles_of, "M4 reference: vehicle index");
     }
 }

@@ -1473,3 +1473,75 @@ fn save_now_skips_the_debounce_but_not_a_failed_saves_backoff() {
         "the next edit debounces again"
     );
 }
+
+/// M4 B1: a key the host no longer holds whose durable draft remains is
+/// still a draft candidate, though nothing about it changes again:
+/// progress retires its vehicles. A failing unlink keeps the obligation,
+/// surfaces the failure and retries until the vehicle is gone.
+#[test]
+fn m4_b1_an_absent_page_with_a_durable_draft_is_retired() {
+    for failing in [false, true] {
+        let mut h = host();
+        open(&mut h, "a.md");
+        edit(&mut h, "a.md", "mine");
+        risk(&mut h, "a.md");
+        draft(&mut h, "a.md");
+        h.with_locks(&BTreeSet::from(["a.md".into()]), |h| {
+            h.set_page("a.md", None)
+        });
+        assert!(h.logical_drafts().contains_key("a.md"));
+        let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+        if failing {
+            p.host.fs.inject(Phase::DraftUnlink, [Fault::Before; 4]);
+        }
+        let mut now = 0;
+        while p.host.logical_drafts().contains_key("a.md") {
+            assert!(now < 600_000, "the obsolete draft is never retired");
+            pump(&mut p);
+            if failing && p.draft_error_pages().contains("a.md") {
+                assert!(
+                    p.host.logical_drafts().contains_key("a.md"),
+                    "a failed unlink keeps its vehicle"
+                );
+            }
+            now += 30_000;
+            time(&p, now);
+        }
+        assert!(p.host.fs.draft_files(true).is_empty(), "failing={failing}");
+        assert!(p.draft_error_pages().is_empty(), "failing={failing}");
+    }
+}
+
+/// M4 R2: a stopped host's drafts are its readable directory. A vehicle
+/// renamed but not yet synced is outside the durable index, yet a stop
+/// still reads it, and launch recovers it after a process crash; the
+/// candidate sets are rebuilt at the stop and at launch (the reference
+/// tracker compares every reconcile).
+#[test]
+fn m4_r2_a_stop_and_launch_rebuild_from_the_readable_directory() {
+    let mut p = timed();
+    begin_edit(&mut p);
+    p.with_host(|h| {
+        h.fs.external("a.md", text("theirs"), true);
+        h.observe("a.md");
+    });
+    for _ in 0..3 {
+        poll(&mut p);
+    } // start, temp, rename
+    p.host.fs.inject(Phase::DraftSync, [Fault::Before; 100]);
+    poll(&mut p);
+    assert!(!p.host.durable.contains_key("a.md"), "not durable yet");
+    p.with_host(|h| h.stop());
+    assert_eq!(p.host.logical_drafts()["a.md"].bytes, text("first"));
+    p.with_host(|h| {
+        h.fs.crash();
+        assert!(matches!(
+            h.launch(),
+            Disposition::Applied | Disposition::Pending
+        ));
+    });
+    assert_eq!(p.host.pages["a.md"].buf, text("first"));
+    assert!(p.host.pages["a.md"].risk);
+    pump(&mut p);
+    assert_eq!(p.host.logical_drafts()["a.md"].bytes, text("first"));
+}
