@@ -26,6 +26,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Journals: Logseq's default NOW query from `config.edn` runs, ordered by priority with unprioritised tasks last, instead of showing a "query not run" notice; its `:result-transform` is the one Tine recognises. Default journal queries with no results now show nothing, as in Logseq (REG-OG-DEFAULT-NOW-QUERY).
 - Block text stays visible immediately after applying a deadline or scheduled date; open editors resize after programmatic content changes (GH #668).
 - Query results keep an edited block in place until editing finishes, so replacing TODO with CANCELED can complete and save normally (GH #659).
 - Linked and Unlinked References, block reference panels, embeds and routed query results refresh membership after settled edits through one shared lifecycle (GH #660).

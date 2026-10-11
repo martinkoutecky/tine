@@ -294,12 +294,24 @@ mod journal_guide_tests {
             "Priority A tasks",
             "Config edits apply live",
             "Graph code is never executed",
+            "a query with no results shows nothing",
         ] {
             assert!(
                 text.contains(required),
                 "missing journal config guidance: {required}"
             );
         }
+    }
+
+    /// Martin 2026-10-11: Logseq's default NOW priority sort is the one
+    /// `:result-transform` Tine runs; every other one still refuses whole.
+    #[test]
+    fn the_one_supported_result_transform_is_documented() {
+        let model = include_str!("templates/query-model.md");
+        assert!(model.contains(r#"(sort-by (fn [h] (get h :block/priority "Z")) result)"#));
+        assert!(model.contains("missing one last"));
+        assert!(include_str!("templates/queries.md")
+            .contains("other than Logseq's default priority sort"));
     }
 
     #[test]

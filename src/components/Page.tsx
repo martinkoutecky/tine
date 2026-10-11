@@ -644,7 +644,7 @@ export function PageView(): JSX.Element {
                     <For each={graphMeta()?.default_journal_queries ?? []}>
                       {(query) => <div class="default-journal-query">
                         <Show when={!query.error} fallback={<div class="query-error" role="alert">{query.title ?? "Query"}: {query.error}</div>}>
-                          <QueryMacro body={query.body} title={query.title ?? undefined} currentPage={p.name} />
+                          <QueryMacro body={query.body} title={query.title ?? undefined} currentPage={p.name} hideWhenEmpty />
                         </Show>
                       </div>}
                     </For>
