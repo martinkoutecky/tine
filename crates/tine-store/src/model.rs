@@ -367,7 +367,8 @@ pub(crate) struct Graph {
     pub(crate) fail_sync_read_once: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     pub(crate) fail_sync_parse_once: std::sync::atomic::AtomicBool,
-    /// The installed derived page state; written only by `derived.rs` ((G)).
+    /// The installed derived page state; written only by `derived.rs` and its
+    /// `derived_owners.rs` child ((G)).
     derived: derived::Derived,
     /// Pages a page host holds, and what their owner last published.
     pub(crate) held: derived::HeldPages,

@@ -14,6 +14,10 @@
 //! - held and unindexed, indexed absent, `Unknown` or `Outside`: no row, and
 //!   any current row is retired.
 //!
+//! A page open's hold of an unchanged file starts indexed with the file's
+//! bytes, the bytes its Open read reads, so the row stays and nothing is
+//! published ((G) as amended 2026-10-11, [`Graph::hold_current`]).
+//!
 //! **Critical section.** Every install takes the cache lock (write for
 //! rows; at least read for error collections) and then reads the held map:
 //! lock order cache → held → collection, authority decided inside it. A
@@ -45,7 +49,9 @@ use std::sync::Mutex;
 
 /// What a held key's owner last published since the hold began: `None`
 /// until the first publication, `Some(None)` for no file. The bytes are the
-/// owner's buffer, shared, not copied.
+/// owner's buffer, shared, not copied. An open's hold starts with the file's
+/// bytes when they are the installed row's ([`Graph::hold_current`]): the
+/// bytes the owner's Open read reads.
 pub(crate) type Indexed = Option<Option<Arc<[u8]>>>;
 
 /// The held pages, by host key (B1): a key is the page's identity, and its
@@ -1197,276 +1203,6 @@ impl Graph {
         }
     }
 
-    // ---- owners ---------------------------------------------------------------
-
-    /// The running host's spelling table becomes the held keys' (one table,
-    /// owned by the host, B1). The caller holds the writer.
-    pub(crate) fn attach_spellings(&self, spellings: Arc<Spellings>) {
-        let _cache = self.derived.cache.write().unwrap();
-        *self.held.spellings.write().unwrap() = spellings;
-        self.held.bump();
-    }
-
-    /// The one ownership transition (module doc, REVIEW-3a4): in one cache
-    /// critical section `change` moves the held map (false: it changed
-    /// nothing), then every path whose authority that can move is settled:
-    /// `spelled`, the keys' spellings before and after, and every installed
-    /// row or error whose leaf collides with one of theirs. The caller holds
-    /// the writer and publishes the settled paths
-    /// ([`crate::Store::publish_retired`]).
-    fn transition(&self, spelled: &[PathBuf], change: impl FnOnce() -> bool) {
-        let mut guard = self.derived.cache.write().unwrap();
-        if !change() {
-            return;
-        }
-        self.held.bump();
-        let affected = self.affected(guard.as_deref(), spelled);
-        let mut pages = guard.as_mut().map(Arc::make_mut);
-        let mut memo = Memo::default();
-        let mut settled = false;
-        for path in affected {
-            settled |= self.settle(pages.as_deref_mut(), &mut memo, &path);
-        }
-        // The generation-keyed listings named settled pages as before.
-        if settled {
-            self.cache_gen.fetch_add(1, Ordering::Release);
-        }
-        drop(guard);
-    }
-
-    /// `spelled` and every cached row or recorded error whose leaf folds as
-    /// one of theirs: the identity candidates a transition can move.
-    fn affected(&self, pages: Option<&Pages>, spelled: &[PathBuf]) -> BTreeSet<PathBuf> {
-        let folds: HashSet<String> = spelled
-            .iter()
-            .filter_map(|path| path.file_name())
-            .map(fold_leaf)
-            .collect();
-        let mut paths: BTreeSet<PathBuf> = spelled.iter().cloned().collect();
-        if let Some(pages) = pages {
-            let mut index = self.derived.cache_index.write().unwrap();
-            let index = index.get_or_insert_with(|| build_page_cache_index(pages));
-            for fold in &folds {
-                paths.extend(index.folded(fold).iter().cloned());
-            }
-        }
-        let mut errors: Vec<String> = self.derived.page_index_failures.read().unwrap().clone();
-        errors.extend(
-            (self.derived.unreadable_pages.read().unwrap().iter())
-                .map(|(id, _)| id.as_str().to_owned()),
-        );
-        errors.extend(
-            (self.derived.discovery_errors.read().unwrap().iter())
-                .map(|(id, _)| id.as_str().to_owned()),
-        );
-        paths.extend(
-            errors
-                .into_iter()
-                .map(|rel| self.root.join(rel))
-                .filter(|path| {
-                    path.file_name()
-                        .is_some_and(|leaf| folds.contains(&fold_leaf(leaf)))
-                }),
-        );
-        paths
-    }
-
-    /// Bring `path`'s installed state to its authority now ((G)): a disk
-    /// row stays; an owner's row comes from its indexed bytes at the key's
-    /// spelling (another spelling of it has none); a withheld path has no
-    /// row and no errors. True when the path was not disk-sourced: the next
-    /// capture renames it from what it names now.
-    fn settle(&self, pages: Option<&mut Pages>, memo: &mut Memo, path: &Path) -> bool {
-        match self.authority_in(memo, path) {
-            Authority::Disk => return false,
-            Authority::Owner(key, bytes) => {
-                let at = self.root.join(self.held.spellings().spelling(&key));
-                if at != path {
-                    self.retire_row(pages, path, true);
-                } else if let Some(pages) = pages {
-                    let rev = std::str::from_utf8(&bytes).ok().map(content_rev);
-                    if self.derived.disk_revs.read().unwrap().get(path) != rev.as_ref() {
-                        match self.owned_row(&key, &bytes, None) {
-                            Some(row) => self.put_row(pages, row),
-                            None => {
-                                self.retire_row(Some(pages), path, true);
-                            }
-                        }
-                    }
-                }
-            }
-            Authority::Withheld => {
-                self.retire_row(pages, path, true);
-            }
-        }
-        self.held.retired.lock().unwrap().insert(path.to_path_buf());
-        true
-    }
-
-    /// Hand `key`'s index to its owner. A new hold settles the page and its
-    /// colliding entries (R1, REVIEW-3a4 #3): until its owner publishes,
-    /// nothing about them is installed. Holding it again keeps what that
-    /// owner already indexed. The caller holds the writer.
-    pub(crate) fn hold(&self, key: String) {
-        let path = self.root.join(self.held.spellings().spelling(&key));
-        let row = self.with_cached(&path, |row| row.cloned()).flatten();
-        let disk = self.cached_rev(&path).map(|rev| DiskObs {
-            rev,
-            anchored: self.derived.vcs_anchored.read().unwrap().contains(&path),
-        });
-        self.transition(&[path], || {
-            let mut keys = self.held.keys.write().unwrap();
-            if keys.contains_key(&key) {
-                return false;
-            }
-            if let (Some((entry, doc)), Some(disk)) = (row, disk) {
-                let claim = (entry, doc, disk);
-                self.held.claims.lock().unwrap().insert(key.clone(), claim);
-            }
-            keys.insert(key, None).is_none()
-        });
-    }
-
-    /// Hold `key` at its own spelling with no host running (test stores).
-    #[cfg(any(test, feature = "test-faults"))]
-    pub(crate) fn hold_unhosted(&self, key: &str) {
-        self.held.spellings().spell(key, key);
-        self.hold(key.into());
-    }
-
-    /// Return `key` to the watcher (a transition): the paths its watcher
-    /// reconcile rereads, its page file and the entries withheld as
-    /// colliding with it, when it was held. Its rows stay the owner's until
-    /// then. The caller holds the writer.
-    pub(crate) fn release(&self, key: &str) -> Vec<PathBuf> {
-        let path = self.root.join(self.held.spellings().spelling(key));
-        let mut reread = Vec::new();
-        self.transition(std::slice::from_ref(&path), || {
-            if self.held.keys.write().unwrap().remove(key).is_none() {
-                return false;
-            }
-            self.held.claims.lock().unwrap().remove(key);
-            let withheld = self.held.withheld.lock().unwrap().remove(key);
-            reread.push(path.clone());
-            reread.extend(withheld.into_iter().flatten());
-            true
-        });
-        reread
-    }
-
-    /// Return every held key to the watcher and detach the host's spelling
-    /// table (a transition): the paths the watcher rereads. The caller
-    /// holds the writer.
-    pub(crate) fn release_all(&self) -> Vec<PathBuf> {
-        let mut reread = Vec::new();
-        self.transition(&[], || {
-            let keys: Vec<String> = (self.held.keys.write().unwrap().drain())
-                .map(|(key, _)| key)
-                .collect();
-            self.held.claims.lock().unwrap().clear();
-            let spellings = std::mem::take(&mut *self.held.spellings.write().unwrap());
-            reread.extend(
-                keys.iter()
-                    .map(|key| self.root.join(spellings.spelling(key))),
-            );
-            reread.extend(
-                self.held
-                    .withheld
-                    .lock()
-                    .unwrap()
-                    .drain()
-                    .flat_map(|(_, paths)| paths),
-            );
-            true
-        });
-        reread
-    }
-
-    /// The alias spelling move gave held `key` a new spelling (Q4), a
-    /// transition: the rows at `from` go and the owner's bytes are
-    /// installed at the new spelling. The caller holds the writer.
-    pub(crate) fn respelled(&self, key: &str, from: &Path) {
-        let to = self.root.join(self.held.spellings().spelling(key));
-        self.transition(&[from.to_path_buf(), to], || {
-            self.held.indexed_of(key).is_some()
-        });
-    }
-
-    /// The owner's publication of held `key` (R1): its bytes (None: no
-    /// file) become the page's index, and its row is derived from them, in
-    /// one critical section. `doc` is the Document the bytes were
-    /// serialized from, when the owner has it (R8, E104). Returns the entry
-    /// named from the bytes, None when the page has no row. `Err` when no
-    /// host holds `key`: the caller publishes as for disk.
-    #[allow(clippy::result_unit_err)]
-    pub(crate) fn publish_owned(
-        &self,
-        key: &str,
-        bytes: Option<Arc<[u8]>>,
-        doc: Option<&Document>,
-    ) -> Result<Option<PageEntry>, ()> {
-        let path = self.root.join(self.held.spellings().spelling(key));
-        let rev = bytes
-            .as_deref()
-            .and_then(|bytes| std::str::from_utf8(bytes).ok())
-            .map(content_rev);
-        // Bytes the installed row was already derived from change nothing
-        // but the index (an owner's observation of its own save).
-        let mut row = None;
-        let mut claim = self.held.claims.lock().unwrap().remove(key);
-        if self.cache_built() && self.cached_rev(&path) != rev {
-            row = bytes
-                .as_deref()
-                .and_then(|bytes| self.claimed_row(key, bytes, doc, claim.take()));
-        }
-        let mut guard = self.derived.cache.write().unwrap();
-        {
-            let mut keys = self.held.keys.write().unwrap();
-            let Some(indexed) = keys.get_mut(key) else {
-                return Err(());
-            };
-            *indexed = Some(bytes.clone());
-        }
-        let unchanged = self.derived.disk_revs.read().unwrap().get(&path).cloned() == rev;
-        if !unchanged || guard.is_none() {
-            let before = self.cache_gen.load(Ordering::Acquire);
-            let mut renamed = true;
-            if let Some(pages) = guard.as_mut().map(Arc::make_mut) {
-                // Derived before the lock unless the installed row changed
-                // since (the writer excludes that; this keeps it exact).
-                if row.is_none() {
-                    row = bytes
-                        .as_deref()
-                        .and_then(|bytes| self.claimed_row(key, bytes, doc, claim.take()));
-                }
-                match row.take() {
-                    Some(row) => {
-                        let slot = self.cached_page_index_for_path(pages, &path);
-                        renamed = !slot
-                            .and_then(|slot| pages.get(slot))
-                            .is_some_and(|(old, _)| {
-                                old.kind == row.0.kind && old.name == row.0.name
-                            });
-                        self.put_row(pages, row);
-                    }
-                    // The owner's absence: settled like a transition.
-                    None => {
-                        self.settle(Some(pages), &mut Memo::default(), &path);
-                    }
-                }
-            }
-            self.cache_gen.fetch_add(1, Ordering::Release);
-            // The memos list the page's earlier name: still valid only when
-            // this publication named it as before.
-            if !renamed {
-                self.retag_name_memos(before, before + 1);
-            }
-        }
-        drop(guard);
-        self.recent_writes.lock().unwrap().remove(&path);
-        Ok(bytes.and_then(|bytes| self.owned_entry(key, &bytes)))
-    }
-
     /// Install `pages` as a test graph's cache and listing.
     #[cfg(test)]
     pub(crate) fn install_test_pages(&self, pages: Pages, entries: Vec<PageEntry>) {
@@ -1480,6 +1216,9 @@ impl Graph {
 /// What [`Graph::checkpoint_rows`] returns: failures, sorted revisions and
 /// sorted anchored paths.
 pub(super) type CheckpointRows = (Vec<String>, Vec<(PathBuf, String)>, Vec<PathBuf>);
+
+#[path = "derived_owners.rs"]
+mod owners;
 
 #[cfg(test)]
 #[path = "derived_tests.rs"]

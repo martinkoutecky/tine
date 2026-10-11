@@ -975,6 +975,12 @@ impl WatchHandle {
         self.core.graph.hold(key);
     }
 
+    /// [`Self::hold`] for a page open: the index keeps the page's row when
+    /// its file is unchanged ([`crate::model::Graph::hold_current`]).
+    pub(crate) fn hold_current(&self, key: String) {
+        self.core.graph.hold_current(key);
+    }
+
     /// Hand `key`'s index back to the watcher, which reconciles its file
     /// against the owner's last publication at once. The caller holds the
     /// writer.

@@ -735,7 +735,8 @@ impl Book {
     }
 
     /// Owned keys the host no longer holds, with nothing left to publish:
-    /// no page, job, reservation or unobserved release, queued request,
+    /// no page, job, reservation or unobserved release, queued or applying
+    /// request (an Open waiting for its lock: its admission owned the key),
     /// vehicle debt (R2), retry or `pending` publication (Q6: a dirty page closed by the window stays held until
     /// its save and cleanup finish).
     fn evictable<F: HostIo>(&self, host: &Host<F>, pending: &[Publication]) -> Vec<PageKey> {
@@ -746,7 +747,8 @@ impl Book {
                 !host.pages.contains_key(*key)
                     && !host.busy(key)
                     && !host.vehicle_debt.contains(*key)
-                    && !host.queue.iter().any(|request| &request.page == *key)
+                    && !(host.applying.iter().chain(&host.queue))
+                        .any(|request| &request.page == *key)
                     && !self.retry.contains_key(*key)
                     && !self.handover.contains(*key)
                     && !pending.iter().any(|p| &p.key == *key)
@@ -1158,7 +1160,9 @@ impl PageHost {
     /// names that key's entry (the window's baseline, S5).
     /// The page's index moves to the publication consumer here (§5), under
     /// the writer: a watcher reconcile already running for it finishes
-    /// first, and the consumer publishes the Open read.
+    /// first, and the consumer publishes the Open read. An unchanged file
+    /// keeps its row through the hold, so an open publishes nothing
+    /// (PERF-FIXES D4).
     pub fn open(
         &self,
         session: u64,
@@ -1181,7 +1185,7 @@ impl PageHost {
             kind: RequestKind::Open,
         };
         let _writer = store.writer.lock().unwrap();
-        store.watch.hold(key.clone());
+        store.watch.hold_current(key.clone());
         let admitted = self.admit(session, request, vec![]);
         if admitted.is_err()
             && !self

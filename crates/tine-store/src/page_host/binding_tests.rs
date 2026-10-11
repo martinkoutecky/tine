@@ -1101,12 +1101,14 @@ fn a_reservation_dropped_on_a_poisoned_host_does_not_panic() {
     );
 }
 
-/// REVIEW-3a4 #2: a hold whose owner's first publication fails retires
-/// the page's disk-derived name: a view acquired after the open never
-/// names it from the file.
+/// REVIEW-3a4 #2 under (G) as amended 2026-10-11: what a failed first
+/// publication leaves current comes from the bytes the owner read. An
+/// unchanged file keeps its row, the Open read's own bytes; a file changed
+/// behind the index is withheld (`an_opens_hold_of_a_changed_file_installs_no_row`).
 #[test]
-fn a_failed_first_publication_leaves_no_disk_name_current() {
-    let live = Live::new(&[("pages/a.md", "title:: Disk\n- a\n")]);
+fn a_failed_first_publication_serves_only_the_owners_bytes() {
+    let body = "title:: Disk\n- a\n";
+    let live = Live::new(&[("pages/a.md", body)]);
     let named = || {
         matches!(
             live.store.whole_graph().unwrap().resolve("Disk", false),
@@ -1116,11 +1118,17 @@ fn a_failed_first_publication_leaves_no_disk_name_current() {
     assert!(named());
     live.index_faults(u32::MAX);
     let (key, _page) = live.open("pages/a.md");
-    assert_eq!(live.indexed(&key), None);
-    assert!(
-        !named(),
-        "REVIEW-3a4 #2: a view acquired after the hold names the page from its file"
-    );
+    let failed = || (live.host.driver.shared).with_state(|s| s.book.retry.contains_key(&key));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !failed() {
+        assert!(
+            Instant::now() < deadline,
+            "the Open read was never published"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(live.indexed(&key), Some(content_rev(body)));
+    assert!(named(), "the Open read's own bytes name the page");
     live.index_faults(0);
     live.host.stop();
 }
@@ -2219,6 +2227,25 @@ fn review_p1_m2_a_key_with_vehicle_debt_is_not_evicted() {
     assert!(book.evictable(&host, &[]).is_empty());
 }
 
+/// PERF-FIXES D4: an Open applying (waiting for its page's lock) keeps its
+/// key owned: admission owned it so that no collection evicts it before the
+/// host holds the page.
+#[test]
+fn an_applying_open_keeps_its_key_owned() {
+    let mut host = super::super::tests::host();
+    let mut book = Book::default();
+    book.own(["b.md".to_string()], &host);
+    host.applying = Some(Request {
+        id: 1,
+        generation: host.generation,
+        page: "b.md".into(),
+        kind: RequestKind::Open,
+    });
+    assert!(book.evictable(&host, &[]).is_empty());
+    host.applying = None;
+    assert_eq!(book.evictable(&host, &[]), ["b.md"]);
+}
+
 /// R2: a restore over a key with vehicle debt aborts naming it at once,
 /// even with every page saved and no surfaced draft failure, so it never
 /// waits under the restore lock for draft I/O to come back.
@@ -2334,17 +2361,38 @@ fn m4_b2_a_blocked_orphan_is_evicted_when_its_obligation_ends() {
 /// checkpoint's quiet window, so an editing session never wrote one and the
 /// next launch was cold (ab1: 0 of 7 typing/custody/drafts trials).
 #[test]
-#[ignore = "PERF-FIXES D4: the hold publishes the page withheld (contract (G)), so the open re-adds its name; awaiting Martin on the publication timing"]
 fn opening_an_unchanged_page_leaves_the_launch_checkpoint_clean() {
-    let live = Live::with(&[("pages/a.md", "- a\n"), ("pages/b.md", "- b [[a]]\n")], true);
+    let live = Live::with(
+        &[("pages/a.md", "- a\n"), ("pages/b.md", "- b [[a]]\n")],
+        true,
+    );
     assert!(matches!(
         live.store.write_checkpoint_now(),
         Some(crate::CheckpointWrite::Written { .. })
     ));
     let dirty = || live.store.changes.checkpoint.get().unwrap().dirty();
     assert!(!dirty());
-    live.open("pages/a.md");
-    live.open("pages/b.md");
+    let rev = live.store.whole_graph().unwrap().rev();
+    let (a, _) = live.open("pages/a.md");
+    let (b, _) = live.open("pages/b.md");
+    // Past the owner's Open read publications.
+    let read = || {
+        (live.host.driver.shared)
+            .with_state(|s| s.book.index.contains_key(&a) && s.book.index.contains_key(&b))
+    };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !read() {
+        assert!(
+            Instant::now() < deadline,
+            "the Open reads were never published"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        live.store.whole_graph().unwrap().rev(),
+        rev,
+        "an open published"
+    );
     assert!(
         !dirty(),
         "an open whose bytes the index holds must not mark the launch checkpoint dirty"
