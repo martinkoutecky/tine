@@ -111,10 +111,13 @@ a Document the owner supplies contributes its runtime identities alone, and
 only when its content is exactly that parse (R8). One held but not yet
 published, published absent, or whose identity is unknown (B1) has no row,
 with one exception (amended 2026-10-11, PERF-FIXES D4): a page open's hold
-of a file that still holds the bytes its installed row was derived from
-starts with those bytes indexed as the owner's, since they are what its
-Open read reads. The row stays and the open publishes nothing. A file that
-changed behind the index is held unindexed until the owner publishes.
+of a file that holds the bytes its installed row was derived from starts
+with those bytes indexed as the owner's. The row stays and the open
+publishes nothing. The host's Open read comes later: if the file changed in
+between, that read's publication replaces the row, and until it applies the
+row shows the file's previous state, as for any external change not yet
+reconciled. A file that changed behind the index before the hold is held
+unindexed until the owner publishes.
 Every ownership change (hold, release, respelling, owner absence, a first
 publication that fails) is one transition under the cache lock: it settles
 every row whose authority it changes, the key's spellings and the colliding

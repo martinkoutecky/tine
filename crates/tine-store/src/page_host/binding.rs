@@ -743,7 +743,7 @@ impl Book {
         self.orphans
             .iter()
             .filter(|key| {
-                work(Work::Book, 1 + host.queue.len() + pending.len());
+                work(Work::Book, 2 + host.queue.len() + pending.len());
                 !host.pages.contains_key(*key)
                     && !host.busy(key)
                     && !host.vehicle_debt.contains(*key)

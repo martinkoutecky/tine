@@ -1101,12 +1101,12 @@ fn a_reservation_dropped_on_a_poisoned_host_does_not_panic() {
     );
 }
 
-/// REVIEW-3a4 #2 under (G) as amended 2026-10-11: what a failed first
-/// publication leaves current comes from the bytes the owner read. An
-/// unchanged file keeps its row, the Open read's own bytes; a file changed
-/// behind the index is withheld (`an_opens_hold_of_a_changed_file_installs_no_row`).
+/// REVIEW-3a4 #2 under (G) as amended 2026-10-11: a failed first
+/// publication of an unchanged file leaves its row, derived from the bytes
+/// the Open read read; a file changed behind the index is withheld
+/// (`an_opens_hold_of_a_changed_file_installs_no_row`).
 #[test]
-fn a_failed_first_publication_serves_only_the_owners_bytes() {
+fn a_failed_first_publication_of_an_unchanged_file_keeps_its_row() {
     let body = "title:: Disk\n- a\n";
     let live = Live::new(&[("pages/a.md", body)]);
     let named = || {
@@ -1130,6 +1130,47 @@ fn a_failed_first_publication_serves_only_the_owners_bytes() {
     assert_eq!(live.indexed(&key), Some(content_rev(body)));
     assert!(named(), "the Open read's own bytes name the page");
     live.index_faults(0);
+    live.host.stop();
+}
+
+/// REVIEW-G F1: a file written after an open's hold kept its row and before
+/// the host's Open read: the Open read's publication replaces the kept row,
+/// so the old name does not outlive it.
+#[test]
+fn an_external_write_after_the_hold_is_published_by_the_open_read() {
+    let (old, new) = ("title:: Disk\n- a\n", "title:: Edited\n- e\n");
+    let live = Live::new(&[("pages/a.md", old)]);
+    let names = |name: &str| {
+        matches!(
+            live.store.whole_graph().unwrap().resolve(name, false),
+            crate::Resolved::Existing { .. }
+        )
+    };
+    live.pause(true);
+    let id = live.id();
+    let opened = live
+        .host
+        .open(live.host.session(), id, &PageId::from("pages/a.md"), "a")
+        .unwrap();
+    assert_eq!(
+        live.indexed(&opened.key),
+        Some(content_rev(old)),
+        "the hold kept the row"
+    );
+    fs::write(live.root.join("pages/a.md"), new).unwrap();
+    live.pause(false);
+    let page = live.answer(&opened.key, id).page.unwrap();
+    assert_eq!(
+        page.disk,
+        Some(token(new)),
+        "the Open read read the new bytes"
+    );
+    live.until_indexed(&opened.key, new);
+    assert!(names("Edited"));
+    assert!(
+        !names("Disk"),
+        "the kept row outlived the Open read's publication"
+    );
     live.host.stop();
 }
 
