@@ -404,8 +404,9 @@ pub(super) struct Delivery {
     pub events: Vec<Event>,
     /// Keys the host took on without an Open (launch-recovered drafts, an
     /// operation): their index moves to the consumer before anything is
-    /// published (§5). (key, spelling).
-    pub claimed: Vec<(PageKey, String)>,
+    /// published (§5). (key, spelling, the bytes the host observed for it
+    /// when it has read the file: its owner's observation, (G) as amended).
+    pub claimed: Vec<(PageKey, String, Option<Arc<[u8]>>)>,
     /// Index publications, in host order (§5).
     pub publications: Vec<Publication>,
     /// Edit kinds taken since each published page's last publication.
@@ -531,7 +532,12 @@ impl Book {
                 self.orphans.insert(key.clone());
             }
             self.owned.insert(key.clone());
-            delivery.claimed.push((key.clone(), host.fs.spelling(&key)));
+            let observed = (host.pages.get(&key))
+                .and_then(|page| page.obs.clone())
+                .flatten();
+            delivery
+                .claimed
+                .push((key.clone(), host.fs.spelling(&key), observed));
         }
         let mut answered = BTreeMap::new();
         let mut refused = BTreeMap::new();
@@ -871,18 +877,22 @@ impl Sink for Bridge {
             || !delivery.evicted.is_empty()
         {
             let _writer = store.writer.lock().unwrap();
-            for (key, _) in delivery.claimed {
-                store.watch.hold(key);
+            for (key, _, observed) in delivery.claimed {
+                store.watch.hold_observed(key, observed);
             }
             for publication in delivery.publications {
                 #[cfg(feature = "test-faults")]
                 crate::cost_counters::host_publication_probes(1);
+                let started = crate::bench_events::enabled().then(std::time::Instant::now);
                 let indexing = match owner(&publication.key) {
                     Owner::Reservation => Indexing::Reserved,
                     _ if self.fault() => Indexing::Failed,
                     _ if index(store, &publication) => Indexing::Indexed,
                     _ => Indexing::Failed,
                 };
+                if let Some(started) = started {
+                    crate::bench_events::mark("index_us", started.elapsed().as_micros() as u64);
+                }
                 results.push((publication, indexing));
             }
             for (key, _) in delivery.evicted {

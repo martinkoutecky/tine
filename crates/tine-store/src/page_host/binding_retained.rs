@@ -339,6 +339,7 @@ impl PageHost {
         view: &crate::WholeGraph,
         prepared: &PreparedRewrite<'_>,
     ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
+        crate::bench_events::mark("rename_enter", referrers.len() as u64);
         let (src, src_spelling, ..) = self.identify(source);
         let (dst, dst_spelling, ..) = self.identify(target);
         if src == dst {
@@ -349,6 +350,7 @@ impl PageHost {
         let mut refs = self
             .register_all(referrers.to_vec())
             .expect("page host state poisoned");
+        crate::bench_events::mark("rename_registered", refs.len() as u64);
         refs.remove(&src);
         refs.remove(&dst);
         let root = self.store.graph.root.clone();
@@ -473,7 +475,10 @@ impl PageHost {
                 }
             }
         };
-        match self.settle(&slot, None, deadline) {
+        crate::bench_events::mark("rename_admitted", seen.changed.len() as u64);
+        let settled = self.settle(&slot, None, deadline);
+        crate::bench_events::mark("rename_settled", 0);
+        match settled {
             Settled::Applied => {
                 let pages = |set: BTreeSet<String>| set.into_iter().map(PageId::from).collect();
                 Ok((pages(seen.changed), pages(seen.skipped)))

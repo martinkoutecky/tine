@@ -981,6 +981,13 @@ impl WatchHandle {
         self.core.graph.hold_current(key);
     }
 
+    /// [`Self::hold`] for a claim (an operation's or a recovered draft's
+    /// page): the index keeps the page's row when the bytes its owner observed
+    /// are the row's ([`crate::model::Graph::hold_observed`]).
+    pub(crate) fn hold_observed(&self, key: String, observed: Option<std::sync::Arc<[u8]>>) {
+        self.core.graph.hold_observed(key, observed);
+    }
+
     /// Hand `key`'s index back to the watcher, which reconciles its file
     /// against the owner's last publication at once. The caller holds the
     /// writer.

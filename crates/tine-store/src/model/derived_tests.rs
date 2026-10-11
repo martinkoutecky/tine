@@ -270,6 +270,58 @@ fn an_opens_hold_of_a_changed_file_installs_no_row() {
     store.close();
 }
 
+/// Claim `key` (an operation's page) whose owner observed `observed`.
+fn hold_claimed(store: &Store, key: &str, observed: Option<&str>) {
+    let _writer = store.writer.lock().unwrap();
+    store.graph.held.spellings().spell(key, key);
+    let observed = observed.map(|bytes| Arc::from(bytes.as_bytes()));
+    store.graph.hold_observed(key.into(), observed);
+    store.publish_retired();
+}
+
+/// A claim (an operation's page) whose owner observed the installed row's
+/// bytes keeps the row, as an unchanged open does ((G) as amended, extended to
+/// claims): nothing is published at the hold, and the owner's first
+/// publication of those bytes changes nothing. Before, every page a rename or
+/// delete took on was published as removed and then re-added: one snapshot and
+/// one inventory change each, and a Concord record for a page being deleted.
+#[test]
+fn a_claim_of_the_rows_bytes_keeps_its_row() {
+    let body = "title:: Disk\n- a\n";
+    let (_temp, store) = graph(&[("pages/a.md", body.as_bytes())]);
+    let path = store.graph.root.join("pages/a.md");
+    let rev = store.whole_graph().unwrap().rev();
+    hold_claimed(&store, "pages/a.md", Some(body));
+    assert_eq!(page(&store, "Disk").as_deref(), Some("pages/a.md"));
+    assert_eq!(
+        store.whole_graph().unwrap().rev(),
+        rev,
+        "an unchanged claim published a snapshot"
+    );
+    publish(&store, "pages/a.md", Some(body));
+    assert_eq!(store.whole_graph().unwrap().rev(), rev);
+    assert_eq!(store.graph.cached_rev(&path), Some(content_rev(body)));
+    store.close();
+}
+
+/// A claim whose owner observed other bytes than the row's, or nothing,
+/// withholds the page until the owner publishes (REVIEW-3a4 #2): no view names
+/// it from the stale row.
+#[test]
+fn a_claim_of_other_bytes_installs_no_row() {
+    for observed in [Some("title:: Edited\n- e\n"), None] {
+        let (_temp, store) = graph(&[("pages/a.md", b"title:: Disk\n- a\n")]);
+        let path = store.graph.root.join("pages/a.md");
+        hold_claimed(&store, "pages/a.md", observed);
+        assert_eq!(store.graph.cached_rev(&path), None);
+        assert_eq!(page(&store, "Disk"), None, "the stale row stayed current");
+        let published = observed.unwrap_or("title:: Disk\n- a\n");
+        publish(&store, "pages/a.md", Some(published));
+        assert_eq!(store.graph.cached_rev(&path), Some(content_rev(published)));
+        store.close();
+    }
+}
+
 /// R1: an owner's absent publication removes every row about the page,
 /// although its file is still on disk.
 #[test]

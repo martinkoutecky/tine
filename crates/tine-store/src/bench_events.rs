@@ -59,6 +59,9 @@ pub(crate) enum Ev {
     LaunchRecovered { drafts: usize },
     /// The window unfroze after a planned multi-page sequence.
     Unfreeze,
+    /// A named point in an operation, with a count or a duration (µs) where
+    /// the site has one: the A/B's breakdown of a rename or delete.
+    Mark { name: &'static str, n: u64 },
 }
 
 impl Ev {
@@ -98,6 +101,7 @@ impl Ev {
                 json!({"ev": "launch_recovered", "t": t, "drafts": drafts})
             }
             Ev::Unfreeze => json!({"ev": "unfreeze", "t": t}),
+            Ev::Mark { name, n } => json!({"ev": "mark", "t": t, "name": name, "n": n}),
         }
     }
 }
@@ -361,4 +365,9 @@ mod tests {
             .iter()
             .all(|l| l["text"].as_str().unwrap().len() == 40_000));
     }
+}
+
+/// Emit a [`Ev::Mark`]; nothing is built when events are off.
+pub(crate) fn mark(name: &'static str, n: u64) {
+    emit(|| Ev::Mark { name, n });
 }

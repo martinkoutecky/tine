@@ -150,6 +150,23 @@ impl Graph {
         self.hold_indexed(key, current);
     }
 
+    /// [`Self::hold`] for a claim, the page an operation or a recovered draft
+    /// takes on ((G) as amended 2026-10-11, extended from opens to claims):
+    /// `observed` is the bytes the host read for the page, which its first
+    /// publication carries. When they are the bytes the installed row was
+    /// derived from, the hold starts with them indexed as the owner's, so the
+    /// row stays and that publication changes nothing. Bytes that differ, no
+    /// observation, or a page not installed hold as by [`Self::hold`]. No file
+    /// read: the owner's own observation is the comparison.
+    pub(crate) fn hold_observed(&self, key: String, observed: Option<Arc<[u8]>>) {
+        let path = self.root.join(self.held.spellings().spelling(&key));
+        let current = observed.filter(|bytes| {
+            let rev = self.cached_rev(&path);
+            rev.is_some() && std::str::from_utf8(bytes).ok().map(content_rev) == rev
+        });
+        self.hold_indexed(key, current);
+    }
+
     fn hold_indexed(&self, key: String, current: Option<Arc<[u8]>>) {
         let path = self.root.join(self.held.spellings().spelling(&key));
         let row = self.with_cached(&path, |row| row.cloned()).flatten();
