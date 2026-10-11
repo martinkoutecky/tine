@@ -501,10 +501,9 @@ struct Host<F: HostIo> {
     admission_open: bool,
     switch_confirmation: Option<u64>,
     alive: bool,
-    /// Test pause (Q-P2b-4's deterministic schedules): no admitted request
-    /// applies and the draft worker does not advance while set.
+    /// Test schedules (`logical::TestKnobs`); none exists in production.
     #[cfg(test)]
-    paused: bool,
+    test: logical::TestKnobs,
 }
 
 impl<F: HostIo> Host<F> {
@@ -549,7 +548,7 @@ impl<F: HostIo> Host<F> {
             switch_confirmation: None,
             alive: true,
             #[cfg(test)]
-            paused: false,
+            test: Default::default(),
         };
         host.index_drafts();
         host
@@ -987,7 +986,7 @@ impl<F: HostIo> Host<F> {
             return Disposition::Disabled;
         };
         #[cfg(test)]
-        if self.paused {
+        if self.test.paused {
             return Disposition::Waiting;
         }
         if self.busy(&request.page) || self.allocator_busy() {

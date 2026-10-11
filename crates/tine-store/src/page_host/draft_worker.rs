@@ -256,7 +256,7 @@ impl<F: HostIo> Host<F> {
             return Disposition::Disabled;
         };
         #[cfg(test)]
-        if self.paused {
+        if self.test.paused {
             return Disposition::Waiting;
         }
         // M4 (REVIEW-progress-plan B3): a physical phase locks only the pages

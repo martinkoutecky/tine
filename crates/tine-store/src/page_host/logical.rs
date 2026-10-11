@@ -20,12 +20,29 @@ pub(super) struct LiveOp {
     pub(super) owed: BTreeSet<PageKey>,
 }
 
+/// A host's test-only schedule knobs.
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub(super) struct TestKnobs {
+    /// Q-P2b-4's deterministic schedules: no admitted request applies and the
+    /// draft worker does not advance while set.
+    pub(super) paused: bool,
+    /// A window Submit keeps the edit debounce, as before PERF-FIXES D1, for
+    /// a test whose scenario needs a submitted page to stay dirty (unsaved,
+    /// closed or reserved before its save). Production submits save at once.
+    pub(super) submits_wait: bool,
+}
+
 impl<F: HostIo> Host<F> {
     /// A window Submit's page (PERF-FIXES D1): the window already waited for
     /// the end of the typing burst (400 ms, 1 s at most), so its save skips
     /// the host's edit debounce. One owner of "when to save" per edit kind.
     pub(super) fn set_submitted(&mut self, key: &str, page: Page) {
         self.set_page(key, Some(page));
+        #[cfg(test)]
+        if self.test.submits_wait {
+            return;
+        }
         self.changed.insert(key.into(), true);
     }
 

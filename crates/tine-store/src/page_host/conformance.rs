@@ -241,7 +241,7 @@ impl<F: ConformanceIo> Driver<F> {
                 switch_confirmation: h.switch_confirmation,
                 alive: h.alive,
                 #[cfg(test)]
-                paused: false,
+                test: Default::default(),
             },
             oracle: self.oracle.clone(),
             windows: self.windows.clone(),

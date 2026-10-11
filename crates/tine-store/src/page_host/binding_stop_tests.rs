@@ -47,6 +47,7 @@ fn a_restore_stop_relaunches_one_host_on_the_restored_tree() {
 #[test]
 fn a_restore_stop_that_cannot_save_hands_the_host_back() {
     let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/a.md");
     let id = live.submit(&key, "- mine\n", page.version, None).unwrap();
     live.answer(&key, id);

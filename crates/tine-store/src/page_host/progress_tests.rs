@@ -713,6 +713,7 @@ fn overdue_save_starts_before_queued_requests_can_starve_it() {
 #[test]
 fn a_publication_followed_by_new_input_in_one_boundary_resets_unsaved_age() {
     let mut p = timed();
+    p.host.test.submits_wait = true;
     begin_edit(&mut p);
     time(&p, 2000);
     p.with_host(|h| {
@@ -751,6 +752,7 @@ fn continuous_edits_publish_at_the_one_second_cap() {
 fn failed_and_uncertain_saves_retry_on_every_backoff_and_surface_persistent_error() {
     for phase in [Phase::PageTemp, Phase::PageSync] {
         let mut p = timed();
+        p.host.test.submits_wait = true;
         begin_edit(&mut p);
         let mut due = 400;
         for (index, delay) in [100, 300, 1000, 3000, 10000, 30000, 30000]
@@ -1055,6 +1057,7 @@ fn applied_group_operation_retires_its_vehicle_whole_after_publication() {
 #[test]
 fn queued_requests_dequeue_apply_answer_and_then_save_on_the_clock() {
     let mut p = timed();
+    p.host.test.submits_wait = true;
     p.with_host(|h| {
         assert_eq!(
             h.admit(Request {
@@ -1525,6 +1528,7 @@ fn v1_a_restore_never_closes_over_a_recoverable_draft() {
 #[test]
 fn save_now_skips_the_debounce_but_not_a_failed_saves_backoff() {
     let mut p = timed();
+    p.host.test.submits_wait = true;
     p.with_host(|h| open(h, "a.md"));
     p.save_now(&["a.md".into()]);
     p.with_host(|h| edit(h, "a.md", "first"));

@@ -333,11 +333,16 @@ impl Live {
     }
 
     /// Pause or resume request application and the draft worker (Q-P2b-4).
+    /// Window Submits keep the edit debounce (`TestKnobs::submits_wait`).
+    fn submits_wait(&self) {
+        (self.host.driver.shared).with_state(|state| state.progress.host.test.submits_wait = true);
+    }
+
     fn pause(&self, paused: bool) {
         self.host
             .driver
             .shared
-            .with_state(|state| state.progress.host.paused = paused);
+            .with_state(|state| state.progress.host.test.paused = paused);
     }
 
     fn disk(&self, key: &str) -> String {
@@ -688,6 +693,7 @@ fn r13_a_held_page_is_indexed_by_the_consumer_alone_and_a_failed_publication_ret
 #[test]
 fn q6_a_dirty_page_closed_before_its_save_stays_held_until_retired() {
     let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/a.md");
     let id = live
         .submit(&key, "- one\n- two\n", page.version, None)
@@ -916,6 +922,7 @@ fn a_restore_stop_saves_every_edit_and_a_fresh_host_reads_the_restored_tree() {
 #[test]
 fn a_restore_stop_aborts_on_a_conflict_and_reopens_admission() {
     let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/a.md");
     let id = live.submit(&key, "- mine\n", page.version, None).unwrap();
     live.answer(&key, id);
@@ -937,6 +944,7 @@ fn a_restore_stop_aborts_on_a_conflict_and_reopens_admission() {
 #[test]
 fn a_switch_aborts_when_neither_the_save_nor_the_draft_can_be_written() {
     let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/a.md");
     let id = live.submit(&key, "- two\n", page.version, None).unwrap();
     live.answer(&key, id);
@@ -972,6 +980,7 @@ impl Live {
 #[test]
 fn q3_input_applied_before_the_reservation_is_found_under_it() {
     let live = Live::new(&[("pages/r.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/r.md");
     let id = live.submit(&key, "- v2\n", page.version, None).unwrap();
     let v2 = live.answer(&key, id).answer.unwrap().version;
@@ -1002,6 +1011,7 @@ fn q3_input_applied_before_the_reservation_is_found_under_it() {
 #[test]
 fn q3_a_page_discovered_under_the_reservation_is_checked_too() {
     let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/r.md", "- r\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/r.md");
     let id = live.submit(&key, "- typed\n", page.version, None).unwrap();
     live.answer(&key, id);
@@ -1826,6 +1836,7 @@ fn owed_lists_unpublished_held_pages_and_released_index_debt() {
 #[test]
 fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/a.md");
     let id = live.submit(&key, "- two\n", page.version, None).unwrap();
     let version = live.answer(&key, id).answer.unwrap().version;
@@ -2091,6 +2102,7 @@ fn b_q1_a_restore_relaunches_into_unavailable_drafts_and_retry_restores_them() {
 fn s9_draft_status_names_recovered_and_unsaved_pages() {
     use crate::page_host::io::{Phase, UnsavedPage};
     let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- b\n")]);
+    live.submits_wait();
     live.open("pages/b.md");
     let (key, page) = live.open("pages/a.md");
     let id = live.submit(&key, "- two\n", page.version, None).unwrap();

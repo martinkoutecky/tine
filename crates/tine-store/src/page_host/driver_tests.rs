@@ -473,6 +473,7 @@ fn the_draft_index_follows_the_durable_census_without_rescans() {
 #[test]
 fn a_retained_writer_and_a_saving_driver_never_deadlock() {
     let mut h = host();
+    h.test.submits_wait = true;
     open(&mut h, "a.md");
     let lock_a = h.locks["a.md"].clone();
     let (mut d, clock, _receive) = spawn(h);

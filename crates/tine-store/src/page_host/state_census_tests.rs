@@ -81,9 +81,11 @@ const WRITERS: &[(&str, &[&str], &str)] = &[
             "progress.rs::reconcile",
             "binding_retained.rs::rename",
             "draft_worker.rs::apply_draft_terminal",
+            "logical.rs::set_submitted",
         ],
         "the feed: mark adds, reconcile drains, an operation's caller marks its applied pages \
-         urgent; binding_retained's is a rename record's own set",
+         urgent, a window Submit marks its page urgent (PERF-FIXES D1); binding_retained's is a \
+         rename record's own set",
     ),
     (
         "worker",

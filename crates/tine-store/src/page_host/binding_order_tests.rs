@@ -599,6 +599,7 @@ fn the_writer_bound_covers_full_and_references_only_renames_not_a_deletion() {
 #[test]
 fn a_flush_handed_to_a_rename_is_told_busy_after_the_bound() {
     let live = graph();
+    live.submits_wait();
     let (key, page) = live.open(OLD);
     live.faults(Phase::PageTemp, 10_000);
     let id = live.submit(&key, "- edited\n", page.version, None).unwrap();
@@ -677,6 +678,7 @@ fn a_flush_over_a_mixed_set_is_told_busy_when_a_rename_holds_its_clean_page() {
         (REF, "- see [[Old]]\n"),
         (OTHER, "- other\n"),
     ]);
+    live.submits_wait();
     let (other, page) = live.open(OTHER);
     let id = live
         .submit(&other, "- edited\n", page.version, None)
