@@ -11,8 +11,14 @@
 //! cannot classify, `ref mut`, a `Host`/`Book` pattern, a `&mut` of an
 //! expression that is not a place), and the last fails closed. A
 //! parenthesized place keeps its context, and only a `cfg` predicate that
-//! implies `test` makes an item test-only (REVIEW-3b-P2b-2 N2). Which functions mark correctly is the reference tracker's
-//! (`progress.rs` `Reference`); this census pins who may write at all.
+//! implies `test` makes an item test-only (REVIEW-3b-P2b-2 N2). Which
+//! functions mark correctly is the reference tracker's (`progress.rs`
+//! `Reference`); this census pins who may write at all.
+//!
+//! Scope: the census catches honest mistakes written in the house style, not
+//! adversarial spellings. Known limit (REVIEW-3b-P2b-3 N2): a `Self` pattern
+//! that binds a watched field (`let Self { pages, .. } = self`) escapes it.
+//! The page-table privacy of the next storage step retires the limit.
 
 use crate::test_cfg::is_test;
 use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};

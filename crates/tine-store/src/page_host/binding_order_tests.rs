@@ -876,6 +876,12 @@ fn reserve_path_violations(methods: &BTreeMap<String, String>) -> (BTreeSet<Stri
 /// REVIEW-3b-P2b-2 N1, shape: every lock and wait on a retained writer's
 /// reservation path is checked and goes through `bounded`, which carries the
 /// writer's deadline. Exemplar: `binding_retained.rs` `PageHost::flush`.
+/// Scope: it catches honest mistakes written in the house style, not
+/// adversarial spellings. Known limit (REVIEW-3b-P2b-3 N1): it follows only
+/// `self.method(..)` calls among the binding files' `PageHost` methods, so a
+/// helper reached another way (`Self::f(self)`, a `Shared` or `Graph`
+/// helper) is not checked. Retired with `reserve` itself in the next storage
+/// step, when the page host becomes the only page writer.
 #[test]
 fn the_reserve_path_has_no_unchecked_lock_or_bare_wait() {
     let methods = page_host_methods();

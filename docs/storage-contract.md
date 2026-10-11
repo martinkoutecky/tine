@@ -205,9 +205,13 @@ once the write succeeds. The order is memory only:
   N1), and a rename holding any page of the writer's set bounds it, even
   while the flush waits on another page of the set (REVIEW-3b-P2b-3;
   `a_flush_over_a_mixed_set_is_told_busy_when_a_rename_holds_its_clean_page`).
-  Not yet bounded: the time to acquire the host's state mutex itself, at
-  entry or after a condition wait (REVIEW-3b-P2b-3, open with Martin). A
-  host that cannot answer, at entry or during any wait (its driver
+  A retained writer waiting on a rename gets an answer within
+  `OPERATION_WAIT`, except while the host is inside a disk operation; a
+  stuck disk call delays it until that call returns. Data safety is
+  unaffected. Accepted residual: REVIEW-3b-P2b-3 N1-entry (acquiring the
+  host's state mutex, at entry or after a condition wait, is not bounded;
+  `reserve` and the retained writers retire in the next storage step, when
+  the page host becomes the only page writer). A host that cannot answer, at entry or during any wait (its driver
   ended, its state is poisoned, or it is down), also answers `Busy`, never
   a panic, with every page it had fenced released (a poisoned host keeps
   no state to release them from or to serve them; proof
