@@ -207,33 +207,48 @@ fn windows_part_is_safe(part: &str) -> bool {
     !reserved
 }
 
-/// Whether the platform's graph volumes usually fold case: two paths equal
+/// Which names a destination volume treats as one file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Fold {
+    /// Byte-exact names (the archive's own uniqueness).
+    Exact,
+    /// Names equal after lowercasing (NTFS, Android shared storage).
+    Case,
+    /// Lowercased, then NFC: Apple volumes also treat canonically
+    /// equivalent spellings (precomposed `é` and `e` + combining accent) as
+    /// one name.
+    CaseAndNormalization,
+}
+
+/// How the platform's graph volumes usually fold names: two paths equal
 /// after folding would be one file there. Only restore applies it (a
 /// case-sensitive volume on these platforms can hold both names, and its
 /// backup must not fail); Store's no-replace publication still refuses a
 /// residual collision the folding does not model.
-pub(super) const FOLDS_CASE: bool = cfg!(any(
-    target_os = "windows",
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "android"
-));
+pub(super) const DESTINATION_FOLD: Fold = if cfg!(any(target_os = "macos", target_os = "ios")) {
+    Fold::CaseAndNormalization
+} else if cfg!(any(target_os = "windows", target_os = "android")) {
+    Fold::Case
+} else {
+    Fold::Exact
+};
 
-/// Every path safe and unique (after case folding where `fold`).
+/// Every path safe and unique after `fold`.
 pub(super) fn paths_are_safe<'a>(
     paths: impl IntoIterator<Item = &'a str>,
     windows: bool,
-    fold: bool,
+    fold: Fold,
 ) -> bool {
+    use unicode_normalization::UnicodeNormalization;
     let mut seen = std::collections::HashSet::new();
     for path in paths {
         if !path_is_safe(path, windows) {
             return false;
         }
-        let key = if fold {
-            path.to_lowercase()
-        } else {
-            path.to_owned()
+        let key = match fold {
+            Fold::Exact => path.to_owned(),
+            Fold::Case => path.to_lowercase(),
+            Fold::CaseAndNormalization => path.to_lowercase().nfc().collect(),
         };
         if !seen.insert(key) {
             return false;
@@ -337,7 +352,7 @@ pub(super) fn write_archive(
     if !paths_are_safe(
         files.iter().map(|(path, _)| path.as_str()),
         cfg!(windows),
-        false,
+        Fold::Exact,
     ) {
         return Err(Problem::Damaged("unsafe or duplicate path"));
     }
@@ -771,7 +786,7 @@ fn check_listing(directory: &Directory, manifest: &ZipManifest) -> Result<(), Pr
     if !paths_are_safe(
         manifest.files.iter().map(|file| file.path.as_str()),
         cfg!(windows),
-        false,
+        Fold::Exact,
     ) {
         return Err(Problem::Damaged("unsafe or duplicate path"));
     }

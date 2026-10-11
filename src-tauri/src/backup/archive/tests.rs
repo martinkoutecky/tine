@@ -699,10 +699,40 @@ fn the_path_policy_refuses_escapes_and_platform_aliases() {
     }
     assert!(path_is_safe("pages/console.md", true));
     assert!(path_is_safe("pages/com10.md", true));
-    assert!(paths_are_safe(["pages/A.md", "pages/a.md"], false, false));
-    assert!(!paths_are_safe(["pages/A.md", "pages/a.md"], false, true));
-    assert!(!paths_are_safe(["pages/Č.md", "pages/č.md"], false, true));
-    assert!(!paths_are_safe(["pages/a.md", "pages/a.md"], false, false));
+    assert!(paths_are_safe(
+        ["pages/A.md", "pages/a.md"],
+        false,
+        Fold::Exact
+    ));
+    assert!(!paths_are_safe(
+        ["pages/A.md", "pages/a.md"],
+        false,
+        Fold::Case
+    ));
+    assert!(!paths_are_safe(
+        ["pages/Č.md", "pages/č.md"],
+        false,
+        Fold::Case
+    ));
+    assert!(!paths_are_safe(
+        ["pages/a.md", "pages/a.md"],
+        false,
+        Fold::Exact
+    ));
+    // Precomposed vs decomposed: distinct names on NTFS and ext4, one on APFS.
+    let (nfc, nfd) = ("pages/caf\u{e9}.md", "pages/cafe\u{301}.md");
+    assert!(paths_are_safe([nfc, nfd], false, Fold::Exact));
+    assert!(paths_are_safe([nfc, nfd], false, Fold::Case));
+    assert!(!paths_are_safe(
+        [nfc, nfd],
+        false,
+        Fold::CaseAndNormalization
+    ));
+    assert!(!paths_are_safe(
+        ["pages/CAFE\u{301}.md", nfc],
+        false,
+        Fold::CaseAndNormalization
+    ));
 }
 
 #[test]

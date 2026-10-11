@@ -229,11 +229,12 @@ fn verified_zip(
     } else {
         policy.hidden.clone()
     };
-    // Names that differ only in case would be one file on a folding volume.
+    // Names that differ only in case (or, on Apple, in Unicode normalization)
+    // would be one file on a folding volume.
     if !archive::paths_are_safe(
         manifest.files.iter().map(|file| file.path.as_str()),
         cfg!(windows),
-        archive::FOLDS_CASE,
+        archive::DESTINATION_FOLD,
     ) {
         return Err(
             "this backup holds names that differ only in letter case; restore it by hand".into(),

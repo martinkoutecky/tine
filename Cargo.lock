@@ -5105,6 +5105,7 @@ dependencies = [
  "tine-graph-features",
  "tine-ios-folder-picker-native",
  "tine-store",
+ "unicode-normalization",
  "webkit2gtk",
  "windows-sys 0.61.2",
  "x11",

@@ -234,6 +234,26 @@ fn the_skip_compares_with_the_newest_snapshot_of_any_suffix() {
     g.close();
 }
 
+/// Gate 3: the baseline must be this graph's. A verified zip of another
+/// graph root with identical file bytes, newest in this namespace (a copied
+/// app-data folder), is no reason to skip.
+#[test]
+fn another_roots_identical_zip_is_never_the_baseline() {
+    let mine = Graph::new("backup-zip-root-mine");
+    let other = Graph::new("backup-zip-root-other");
+    assert!(other.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
+    std::fs::create_dir_all(mine.zips()).unwrap();
+    std::fs::copy(
+        other.newest_zip(),
+        mine.zips().join("2099-01-01_00-00-00.zip"),
+    )
+    .unwrap();
+    assert!(mine.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
+    assert_eq!(mine.zip_names().len(), 2, "{:?}", mine.zip_names());
+    mine.close();
+    other.close();
+}
+
 /// B3: an unchanged launch skips only after fully verifying the baseline;
 /// a baseline whose payload is damaged (its listing still reads ok) gets a
 /// fresh zip.
@@ -305,6 +325,225 @@ fn a_crash_leaves_a_partial_or_a_complete_zip() {
     let files = verified(&newest).files;
     assert!(files.iter().any(|bytes| bytes == b"- crash after rename\n"));
     g.close();
+}
+
+/// Gate 1 (REVIEW-backup-zip): a failure, a crash or a weak directory
+/// witness at each publication step of a namespace's first zip. The prior
+/// snapshot (here a legacy directory) survives every unsettled or failed
+/// replacement; recovery (a Settings prune, then a restore's safety
+/// snapshot) retires it only after certifying a keeper through app data.
+#[test]
+fn every_publication_boundary_keeps_the_fallback_until_a_keeper_settles() {
+    let ours = format!(r#""writer":"{SNAPSHOT_WRITER}","#);
+    let steps = [
+        "partial_create",
+        "zip_sync",
+        "zip_rename",
+        "zips_dir_sync",
+        "backups_dir_sync",
+        "app_data_dir_sync",
+    ];
+    for (at, step) in steps.into_iter().enumerate() {
+        let renamed = at > 2;
+        for mode in ["fail", "crash", "weak"] {
+            if mode == "weak" && !renamed {
+                continue; // only directory syncs have a witness
+            }
+            let case = format!("{step}/{mode}");
+            let g = Graph::new(&format!("backup-zip-boundary-{step}-{mode}"));
+            legacy_dir(&g.base, "2026-09-01_00-00-00", SNAPSHOT_SCHEMA, &ours);
+            let fallback = g.base.join("2026-09-01_00-00-00");
+            hook(
+                step,
+                match mode {
+                    "fail" => Hook::Fail(ErrorKind::Other),
+                    "crash" => Hook::Run(Box::new(|| panic!("crash"))),
+                    _ => Hook::Weak,
+                },
+            );
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| g.snap("", 1)));
+            match mode {
+                "crash" => assert!(outcome.is_err(), "{case}"),
+                "fail" => {
+                    let phase = if renamed { "publish-sync" } else { "publish" };
+                    assert_eq!(outcome.unwrap().failure.unwrap().phase, phase, "{case}");
+                }
+                _ => assert!(outcome.unwrap().failure.is_none(), "{case}"),
+            }
+            assert!(fallback.is_dir(), "{case}: the fallback survives");
+            ops();
+            prune_now(&g.base, 1, std::time::Duration::from_secs(30));
+            if renamed {
+                assert_eq!(
+                    ops(),
+                    [
+                        "keeper_sync",
+                        "zips_dir_sync",
+                        "backups_dir_sync",
+                        "app_data_dir_sync",
+                        "prune_delete"
+                    ],
+                    "{case}: the keeper settles through app data before any deletion"
+                );
+                assert!(!fallback.exists(), "{case}");
+            } else {
+                assert_eq!(ops(), Vec::<&str>::new(), "{case}: no keeper, no deletion");
+                assert!(fallback.is_dir(), "{case}");
+            }
+            assert!(g.snap("pre-restore", 1).failure.is_none(), "{case}");
+            assert!(
+                g.zip_names()
+                    .iter()
+                    .all(|name| !name.starts_with(naming::PARTIAL_PREFIX)),
+                "{case}: {:?}",
+                g.zip_names()
+            );
+            assert_eq!(fallback.is_dir(), !renamed, "{case}");
+            assert!(list_backups_from_base(&g.base, &g.graph)
+                .iter()
+                .all(|info| info.status == "ok"));
+            g.close();
+        }
+    }
+}
+
+/// Gate 2 helper: another Tine process's launch backup, spawned by
+/// `two_processes_exclude_each_other_and_a_dead_writer_is_recovered`. It
+/// pauses holding the namespace lock, its partial synced, just before the
+/// rename, until a line arrives on stdin.
+#[test]
+fn backup_writer_child() {
+    let Some(graph) = std::env::var_os("TINE_BACKUP_CHILD_GRAPH").map(PathBuf::from) else {
+        return;
+    };
+    let base = PathBuf::from(std::env::var_os("TINE_BACKUP_CHILD_BASE").unwrap());
+    let refuse = std::env::var_os("TINE_BACKUP_CHILD_REFUSE_NOREPLACE").is_some();
+    crate::device_io::REFUSE_NOREPLACE_FLAG.with(|flag| flag.set(refuse));
+    let store = Store::open(&graph, Default::default()).unwrap().0;
+    let source = BackupSource::from_store(&store, &graph).unwrap();
+    hook(
+        "zip_rename",
+        Hook::Run(Box::new(|| {
+            use std::io::{BufRead, Write};
+            println!("CHILD:paused");
+            std::io::stdout().flush().unwrap();
+            let mut line = String::new();
+            let _ = std::io::stdin().lock().read_line(&mut line);
+        })),
+    );
+    let outcome = write_snapshot(
+        &base,
+        &store,
+        source,
+        "",
+        &|| false,
+        1,
+        std::time::Duration::from_secs(30),
+    );
+    println!(
+        "CHILD:done {:?}",
+        outcome.failure.map(|failure| failure.phase)
+    );
+    store.close();
+}
+
+/// Gate 2 (REVIEW-backup-zip): two OS processes. While one holds the
+/// namespace lock mid-publication, the other's launch is busy, its Settings
+/// prune deletes nothing and its restore safety snapshot is busy; the live
+/// partial is left alone. Released, the holder publishes (also through the
+/// no-replace fallback) and prunes, and the other's identical capture is
+/// unchanged. Killed, its lock passes on and the next holder removes the
+/// dead partial and publishes.
+#[test]
+fn two_processes_exclude_each_other_and_a_dead_writer_is_recovered() {
+    use std::io::{BufRead, Write};
+    for (refuse, kill) in [(false, false), (true, false), (false, true)] {
+        let case = format!("refuse={refuse} kill={kill}");
+        let g = Graph::new(&format!("backup-zip-two-process-{refuse}-{kill}"));
+        for text in ["- 1\n", "- 2\n"] {
+            write(&g.graph.join("pages/A.md"), text);
+            assert!(g.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
+        }
+        let before = g.zip_names();
+        write(&g.graph.join("pages/A.md"), "- 3\n");
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "backup::tests::backup_writer_child",
+                "--exact",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("TINE_BACKUP_CHILD_GRAPH", &g.graph)
+            .env("TINE_BACKUP_CHILD_BASE", &g.base)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped());
+        if refuse {
+            command.env("TINE_BACKUP_CHILD_REFUSE_NOREPLACE", "1");
+        }
+        let mut child = command.spawn().unwrap();
+        let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut until = |marker: &str| {
+            let mut line = String::new();
+            while !line.contains(marker) {
+                line.clear();
+                assert_ne!(out.read_line(&mut line).unwrap(), 0, "{case}: child exited");
+            }
+            line
+        };
+        until("CHILD:paused");
+        let partials: Vec<String> = g
+            .zip_names()
+            .into_iter()
+            .filter(|name| name.starts_with(naming::PARTIAL_PREFIX))
+            .collect();
+        assert_eq!(partials.len(), 1, "{case}");
+        let short = std::time::Duration::from_millis(200);
+        let busy = g.snap_waiting("", 1, short).failure.map(|f| f.phase);
+        assert_eq!(busy, Some("busy"), "{case}");
+        prune_now(&g.base, 1, short);
+        let safety = g
+            .snap_waiting("pre-restore", 1, short)
+            .failure
+            .map(|f| f.phase);
+        assert_eq!(safety, Some("busy"), "{case}");
+        let mut held = before.clone();
+        held.extend(partials.iter().cloned());
+        held.sort();
+        assert_eq!(g.zip_names(), held, "{case}: nothing deleted while held");
+        if kill {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            assert!(g.zips().join(&partials[0]).exists(), "{case}");
+            assert!(g.snap("", 1).failure.is_none(), "{case}");
+        } else {
+            writeln!(child.stdin.take().unwrap()).unwrap();
+            assert!(until("CHILD:done").contains("CHILD:done None"), "{case}");
+            child.wait().unwrap();
+            ops();
+            assert!(g.snap("", 1).failure.is_none(), "{case}");
+            assert_eq!(
+                ops(),
+                Vec::<&str>::new(),
+                "{case}: the identical capture is unchanged"
+            );
+        }
+        let names = g.zip_names();
+        assert_eq!(
+            names.len(),
+            1,
+            "{case}: keep=1 after a settled keeper: {names:?}"
+        );
+        assert!(!before.contains(&names[0]), "{case}");
+        assert!(
+            verified(&g.newest_zip())
+                .files
+                .iter()
+                .any(|bytes| bytes == b"- 3\n"),
+            "{case}"
+        );
+        g.close();
+    }
 }
 
 /// I/O failures: before the rename the partial is removed and the backup
