@@ -1228,3 +1228,112 @@ fn v3_a_save_mismatch_back_to_the_old_observation_publishes_it() {
     );
     assert_eq!(observed_since(&h, from), vec![text("A")], "V3");
 }
+
+/// RENAME-COST review (2026-10-11): an operation's draft file holding a
+/// rename's three records, b.md's the operation's newest bytes.
+pub(super) fn lazy_operation_group() -> Host<ModelFs> {
+    let mut h = host();
+    h.fs.external("b.md", text("valuable original b"), true);
+    open(&mut h, "b.md");
+    assert_eq!(
+        h.rename_with(
+            "a.md",
+            "c.md",
+            &BTreeSet::from(["b.md".into()]),
+            |bytes, key, _| Ok(if key == "b.md" {
+                text("valuable operation b")
+            } else {
+                bytes.clone()
+            })
+        ),
+        Disposition::Pending
+    );
+    drain(&mut h);
+    assert_eq!(h.fs.draft_files(true).len(), 1);
+    h
+}
+
+#[test]
+fn rename_cost_removal_first_copy_failure_preserves_sibling_after_crash() {
+    for phase in [Phase::DraftTemp, Phase::DraftRename] {
+        for power in [false, true] {
+            let mut h = lazy_operation_group();
+            saved(&mut h, "c.md");
+            h.fs.external("b.md", text("foreign b"), true);
+            assert_eq!(h.observe("b.md"), Disposition::Applied);
+            assert!(h.pages["b.md"].conflict);
+            let version = h.pages["a.md"].version;
+            assert_eq!(
+                send(&mut h, "a.md", RequestKind::Discard { version }),
+                Disposition::Applied
+            );
+            h.receive("a.md");
+            assert!(!h.op_waits("a.md"));
+            assert_eq!(h.begin_draft_with("a.md", true), Disposition::Pending);
+            let w = h.worker.as_ref().unwrap();
+            assert!(matches!(w.application, Some(Application::Removal(_))));
+            assert_eq!(
+                drafts::decode(w.task.bytes.as_ref().unwrap()).unwrap()[0].page,
+                "b.md"
+            );
+            h.fs.inject(phase, [Fault::Before]);
+            drain(&mut h);
+            restart(&mut h, power, false);
+            assert_eq!(h.pages.get("b.md").map(|p| p.buf.clone()), Some(text("valuable operation b")),
+                "{phase:?}, power={power}: an acknowledged operation's newest sibling bytes must recover");
+        }
+    }
+}
+
+#[test]
+fn rename_cost_removal_first_copy_requires_sibling_path_lock() {
+    let mut h = lazy_operation_group();
+    saved(&mut h, "c.md");
+    let version = h.pages["a.md"].version;
+    assert_eq!(
+        send(&mut h, "a.md", RequestKind::Discard { version }),
+        Disposition::Applied
+    );
+    h.held = Some(BTreeSet::from(["a.md".into()]));
+    assert_eq!(h.begin_draft_with("a.md", true), Disposition::Pending);
+    h.held = Some(BTreeSet::new());
+    h.lock_request = None;
+    let calls = h.fs.calls.len();
+    assert_eq!(
+        h.advance_draft(),
+        Disposition::Waiting,
+        "the first sibling copy must request b.md's path lock before I/O"
+    );
+    assert_eq!(h.fs.calls.len(), calls);
+}
+
+#[test]
+fn rename_cost_retire_keeps_its_pages_busy_and_relaunch_preserves_owed() {
+    let mut h = lazy_operation_group();
+    assert!(h.op_waits("c.md"));
+    restart(&mut h, true, false);
+    assert_eq!(h.pages["b.md"].buf, text("valuable operation b"));
+    saved(&mut h, "c.md");
+    saved(&mut h, "b.md");
+    saved(&mut h, "a.md");
+    // Launch has exploded; use a fresh group to exercise actual L1.
+    let mut h = lazy_operation_group();
+    saved(&mut h, "c.md");
+    saved(&mut h, "b.md");
+    saved(&mut h, "a.md");
+    assert_eq!(h.begin_draft_with("a.md", true), Disposition::Pending);
+    assert!(matches!(
+        h.worker.as_ref().unwrap().application,
+        Some(Application::Retire)
+    ));
+    for key in ["a.md", "b.md", "c.md"] {
+        assert!(h.busy(key));
+        assert_eq!(h.observe(key), Disposition::Waiting);
+        assert_eq!(
+            h.reserve(&BTreeSet::from([key.into()])),
+            Disposition::Waiting
+        );
+    }
+    drain(&mut h);
+    assert!(h.fs.draft_files(true).is_empty());
+}

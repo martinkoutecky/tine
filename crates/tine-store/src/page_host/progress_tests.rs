@@ -1704,3 +1704,38 @@ fn a_window_move_and_a_submit_keep_the_debounce() {
     time(&p, 1_400);
     assert_eq!(poll(&mut p), Disposition::Pending);
 }
+
+#[test]
+fn rename_cost_removal_copy_failure_keeps_the_sibling_through_progress() {
+    let mut h = super::lazy_operation_group();
+    saved(&mut h, "c.md");
+    h.fs.external("b.md", text("foreign b"), true);
+    assert_eq!(h.observe("b.md"), Disposition::Applied);
+    let version = h.pages["a.md"].version;
+    assert_eq!(
+        send(&mut h, "a.md", RequestKind::Discard { version }),
+        Disposition::Applied
+    );
+    h.receive("a.md");
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    assert_eq!(poll(&mut p), Disposition::Pending);
+    assert!(matches!(
+        p.host.worker.as_ref().unwrap().application,
+        Some(Application::Removal(_))
+    ));
+    p.host.fs.inject(Phase::DraftTemp, [Fault::Before]);
+    for n in 1..=30 {
+        time(&p, n * 30_000);
+        poll(&mut p);
+        if p.host.worker.is_none() {
+            break;
+        }
+    }
+    assert!(p.host.worker.is_none());
+    p.with_host(|h| restart(h, true, false));
+    assert_eq!(
+        p.host.pages.get("b.md").map(|p| p.buf.clone()),
+        Some(text("valuable operation b")),
+        "RENAME-COST L2: a removal's failed sibling copy retries before the operation file goes"
+    );
+}

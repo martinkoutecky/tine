@@ -123,17 +123,19 @@ impl<F: HostIo> Host<F> {
                 let Some(task) = tasks.pop_front() else {
                     return Disposition::Waiting;
                 };
+                // A first copy locks and retries like every later one.
+                let records = vehicle_records(&task);
                 host.worker = Some(DraftWorker {
                     effect: task.name.clone(),
                     refresh: None,
                     pages: keys.clone(),
                     before: durable.clone(),
+                    retry_copy: task.bytes.is_some(),
                     task,
                     application: Some(Application::Removal(key.into())),
                     remaining: tasks,
                     allocator: false,
-                    retry_copy: false,
-                    records: vec![],
+                    records,
                     tidied: false,
                     failures: 0,
                     recover_notice: true,
@@ -318,11 +320,7 @@ impl<F: HostIo> Host<F> {
         );
         if (removal || worker.task.bytes.is_none()) && !worker.remaining.is_empty() {
             let task = worker.remaining.pop_front().unwrap();
-            worker.records = task
-                .bytes
-                .as_ref()
-                .and_then(|b| drafts::decode(b).ok())
-                .unwrap_or_default();
+            worker.records = vehicle_records(&task);
             worker.retry_copy = task.bytes.is_some();
             worker.task = task;
             self.worker = Some(worker);
@@ -481,4 +479,13 @@ impl<F: HostIo> Host<F> {
             Application::Representation => {}
         }
     }
+}
+
+/// The records a queued vehicle writes (none for an unlink): a copy's phases
+/// lock their pages and a failed copy is rewritten from them.
+fn vehicle_records(task: &Vehicle) -> Vec<Record> {
+    task.bytes
+        .as_ref()
+        .and_then(|b| drafts::decode(b).ok())
+        .unwrap_or_default()
 }

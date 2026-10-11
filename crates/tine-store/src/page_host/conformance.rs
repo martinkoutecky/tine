@@ -1454,13 +1454,15 @@ fn promise(pr: &mut Value, bytes: i64, ver: i64, saved: bool, ep: u64) {
 /// Whether the worker's next advance applies its effect: a removal only at
 /// its last vehicle step, after the copies an operation vehicle it retires
 /// owes its other pages (RENAME-COST L2); anything else at its first
-/// vehicle's terminal.
+/// vehicle's terminal. A failed copy is rewritten first (`advance_draft`).
 pub(super) fn applies_next(worker: &DraftWorker) -> bool {
     let removal = matches!(
         worker.application,
         Some(Application::Removal(_) | Application::Retire)
     );
+    let retry = worker.retry_copy && worker.task.stage == Stage::Absent;
     worker.application.is_some()
         && matches!(worker.task.stage, Stage::Present | Stage::Absent)
+        && !(retry && worker.task.bytes.is_some())
         && (worker.remaining.is_empty() || !removal && worker.task.bytes.is_some())
 }

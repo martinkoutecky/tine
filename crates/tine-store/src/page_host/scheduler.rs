@@ -57,7 +57,13 @@ impl Driver {
                     .contains_key(p),
                 _ => false,
             };
-            let new_state = worker.task.bytes.is_some() && present;
+            // A removal's copies are not its effect: it takes effect only
+            // when its page's record is gone (RENAME-COST L2).
+            let removing = matches!(
+                worker.application,
+                Some(Application::Removal(_) | Application::Retire)
+            );
+            let new_state = !removing && worker.task.bytes.is_some() && present;
             if new_state || removal {
                 // The abstraction linearizes a surviving pending effect just
                 // before the fault. No real phase is advanced or I/O retried.
@@ -1218,4 +1224,31 @@ fn r1_every_constituent_cut_of_a_deletion_refines_the_oracle() {
             }
         }
     }
+}
+
+/// RENAME-COST review (2026-10-11): a crash while a removal copies its
+/// operation siblings leaves the removal unapplied; the harness drops its
+/// pending effect, and the next draft effect checks against the model.
+#[test]
+fn a_crash_during_a_removal_copy_leaves_the_removal_unapplied() {
+    let mut d = Driver::stepped("base");
+    run(&mut d, &[("opRename", json!([0, 2, [1], [[1, 3]]]))]);
+    d.settle();
+    assert!(d.attempt("flush", &[json!(2)]));
+    while d.host.job.as_ref().unwrap().phase == SavePhase::Temp {
+        assert!(d.attempt("check", &[]));
+    }
+    assert!(d.attempt("check", &[]));
+    assert!(d.attempt("rename", &[]));
+    assert!(d.attempt("dirSync", &[json!(true)]));
+    run(&mut d, &[("draftSync", json!([2]))]);
+    for _ in 0..3 {
+        d.tick_draft();
+    }
+    assert_eq!(d.host.worker.as_ref().unwrap().task.stage, Stage::Present);
+    d.fault(true, false);
+    run(&mut d, &[("launch", json!([]))]);
+    d.settle();
+    run(&mut d, &[("draftSync", json!([0]))]);
+    d.settle();
 }
