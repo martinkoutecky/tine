@@ -344,6 +344,21 @@ impl Live {
     }
 }
 
+/// Tear down a host failed by construction (its state poisoned) without
+/// aborting the test binary. Its own teardown panics, and so may its
+/// store's: a driver that panicked inside a delivery poisoned the store's
+/// writer lock. Dropped together, the store's panic would land during the
+/// host's unwind, which aborts; apart, each panic is caught.
+fn drop_failed(live: Live) {
+    let store = Arc::clone(&live.store);
+    drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || drop(live),
+    )));
+    drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || drop(store),
+    )));
+}
+
 impl Live {
     /// The index's revision of `key`'s page.
     fn indexed(&self, key: &str) -> Option<String> {
@@ -1057,15 +1072,14 @@ fn a_reservation_dropped_on_a_poisoned_host_does_not_panic() {
         }))
     });
     let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(reservation)));
+    // Torn down before the assertion: a failure's unwind would meet the
+    // failed host's panicking teardown and abort the binary.
+    drop_failed(live);
     assert!(
         dropped.is_ok(),
         "E90: dropping a reservation on a poisoned host panicked; exemplar binding_retained.rs \
          Reservation::drop (try_with_state)"
     );
-    // The host is failed by construction; its own teardown panics.
-    drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-        || drop(live),
-    )));
 }
 
 /// REVIEW-3a4 #2: a hold whose owner's first publication fails retires
@@ -1766,15 +1780,14 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     let answer = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         poisoned.host.wait_published(session, &needs, bound)
     }));
+    // Torn down before the assertion: a failure's unwind would meet the
+    // failed host's panicking teardown and abort the binary.
+    drop_failed(poisoned);
     assert_eq!(
         answer.ok(),
         Some(PageOperation::Refused),
         "a poisoned host is a failed wait, not a panic"
     );
-    // The host is failed by construction; its own teardown panics.
-    drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-        || drop(poisoned),
-    )));
 }
 
 /// Q-P2b-4 (STEP3-DESIGN, P2b checkpoint decisions): a barrier reads the

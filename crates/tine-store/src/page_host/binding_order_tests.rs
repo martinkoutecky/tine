@@ -258,38 +258,46 @@ fn a_deletion_wait_ends_uncertain_when_the_session_changes() {
 
 /// R2: a caller waiting on a poisoned host hears Uncertain, and removing
 /// its slot on the way out does not panic (an unwind would abort the app).
+/// The poison lands under the same lock that first sees the slot: the
+/// operation's saves skip the debounce (Caller urgency), so a poison that
+/// came later could meet a caller already told `Pending` by its third
+/// failed trash move (100 + 300 ms of backoff after the first). The failed
+/// host is torn down before any assertion (`drop_failed`): a failure's
+/// unwind through its panicking teardown would abort the test binary.
 #[test]
 fn a_caller_on_a_poisoned_host_hears_uncertain_and_leaves_cleanly() {
     let live = Live::new(&[("pages/gone.md", "- gone\n")]);
     live.faults(Phase::TrashMove, 10_000);
     let session = live.host.session();
     let shared = Arc::clone(&live.host.driver.shared);
-    let deleted = std::thread::scope(|scope| {
+    let (deleted, poisoned) = std::thread::scope(|scope| {
         let caller = scope.spawn(|| {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 live.host
                     .delete(session, &PageId::from("pages/gone.md"), b"- gone\n")
             }))
         });
-        until("the deletion is admitted", || {
-            shared.with_state(|state| state.progress.host.order.slots() == 1)
-        });
         let poisoner = std::thread::spawn(move || {
-            let _state = shared.state.lock().unwrap();
-            panic!("R2 test: poison the host state");
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while Instant::now() < deadline {
+                let state = shared.state.lock().unwrap();
+                if state.progress.host.order.slots() == 1 {
+                    panic!("R2 test: poison the host state once the deletion is admitted");
+                }
+                drop(state);
+                std::thread::yield_now();
+            }
         });
-        assert!(poisoner.join().is_err());
-        caller.join().unwrap()
+        let poisoned = poisoner.join().is_err();
+        (caller.join().unwrap(), poisoned)
     });
+    drop_failed(live);
+    assert!(poisoned, "never: the deletion is admitted");
     assert_eq!(
         deleted.ok(),
         Some(PageOperation::Uncertain),
         "R2: a poisoned wait is Uncertain and its slot's drop does not panic"
     );
-    // The host is failed by construction; its own teardown panics.
-    drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-        || drop(live),
-    )));
 }
 
 /// R1: an operation whose draft cannot be written changes nothing and says
