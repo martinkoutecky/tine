@@ -245,7 +245,7 @@ impl Snapshot {
             })
             .map(|(id, _, _)| id.as_str().to_owned())
             .collect();
-        let mut folds_only = false;
+        let mut derived_unchanged = false;
         let evaluator = if let Some(old) = old
             .filter(|old| old.cache_generation == cache_generation && !config_changed && !rebuild)
         {
@@ -261,8 +261,8 @@ impl Snapshot {
             );
             if !name_set_changed {
                 if let Some(old) = old {
-                    let folds = evaluator.carry_from(&old.graph, &changed_paths);
-                    folds_only = folds
+                    let unchanged = evaluator.carry_from(&old.graph, &changed_paths);
+                    derived_unchanged = unchanged
                         && files
                             .iter()
                             .all(|(_, kind, _)| *kind == ChangeKind::Modified);
@@ -281,7 +281,7 @@ impl Snapshot {
             name_by_path,
             unreadable: graph.unreadable_pages(),
             answers: Default::default(),
-            folds_only,
+            derived_unchanged,
         };
         snapshot.answers = snapshot.answer_changes(old, &changed_paths, name_set_changed);
         snapshot

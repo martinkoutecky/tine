@@ -397,7 +397,7 @@ impl ChangeFeed {
             name_by_path,
             unreadable: Arc::new(Vec::new()),
             answers: Default::default(),
-            folds_only: false,
+            derived_unchanged: false,
         };
         // The first publication carries every answer, as a cold one does.
         snapshot.answers = snapshot.answer_changes(None, &[], true);
