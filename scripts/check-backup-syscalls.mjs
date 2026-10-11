@@ -6,8 +6,9 @@
 //   - a zip partial is fsynced before its rename;
 //   - after the rename, `<id>.zips/`, `backups/` and app data are fsynced,
 //     in that order;
-//   - before a snapshot is unlinked, a keeper is settled: a publication's
-//     chain, or a zip's fsync followed by the same chain;
+//   - before a snapshot is unlinked, a keeper in the same `<id>.zips/` is
+//     settled (a publication's chain, or a zip's fsync followed by the same
+//     chain) and has not itself been unlinked since;
 //   - the unchanged launch publishes nothing (no rename, no unlink) and
 //     settles its baseline (its fsync, then the chain).
 // The in-process op record (`record_backup_op`) cannot see a removed
@@ -130,8 +131,14 @@ function checkSegment(segment, expected) {
   if (expected.settles && settled.length === 0) problems.push("the unchanged launch did not settle its baseline");
   segment.forEach((event, at) => {
     if (!unlinks.includes(event)) return;
-    const keeper = settled.find((k) => k.from <= at && k.path !== event.path);
-    if (!keeper) problems.push(`${path.posix.basename(event.path)} unlinked before a keeper was settled`);
+    const zips = path.posix.dirname(event.path);
+    const present = (k) => !segment.slice(k.from, at).some((e) => e.kind === "unlink" && e.path === k.path);
+    const keeper = settled.find(
+      (k) => k.from <= at && k.path !== event.path && path.posix.dirname(k.path) === zips && present(k),
+    );
+    if (!keeper) {
+      problems.push(`${path.posix.basename(event.path)} unlinked without a settled keeper still present in its own namespace`);
+    }
   });
   return problems;
 }
