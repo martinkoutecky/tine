@@ -1033,7 +1033,7 @@ function BackupsTab(): JSX.Element {
   };
 
   const restore = (b: BackupInfo) => {
-    if (!ready() || busy()) return;
+    if (!ready() || busy() || b.status !== "ok") return;
     void restoreBackupFromSettings(b, fmtStamp(b.stamp), setBusy, () => { void refresh(); });
   };
 
@@ -1097,8 +1097,10 @@ function BackupsTab(): JSX.Element {
             {(b) => (
               <div class="settings-backup-row">
                 <span class="settings-backup-when">{fmtStamp(b.stamp)}</span>
-                <span class="settings-backup-files mono">{b.files} files</span>
-                <button class="settings-btn" disabled={!ready() || busy()} onClick={() => void restore(b)}>
+                <span class="settings-backup-files mono">
+                  {b.files} files{b.status === "ok" ? "" : ` · ${BACKUP_STATUS_LABEL[b.status]}`}
+                </span>
+                <button class="settings-btn" disabled={!ready() || busy() || b.status !== "ok"} onClick={() => void restore(b)}>
                   Restore
                 </button>
               </div>
@@ -1565,6 +1567,12 @@ function buildStamp(): string {
 }
 
 // "2026-06-17_14-30-05" (UTC) → a readable local timestamp.
+/** Why a listed backup cannot be restored (the native restore refuses it too). */
+const BACKUP_STATUS_LABEL: Record<Exclude<BackupInfo["status"], "ok">, string> = {
+  damaged: "Damaged",
+  unsupported: "Made by a newer Tine",
+};
+
 function fmtStamp(s: string): string {
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})$/);
   if (!m) return s;

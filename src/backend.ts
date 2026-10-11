@@ -581,7 +581,7 @@ export interface Backend {
    *  host relaunched after the restore, on success and on a partial failure
    *  alike (the window rebinds either way, S8); null when the stop refused (the
    *  host keeps running) or without a host. `error` says why it failed. */
-  restoreBackup(stamp: string, kind: "replace-page", consumedLastId: number):
+  restoreBackup(id: string, kind: "replace-page", consumedLastId: number):
     Promise<{ error: string | null; reloaded: { session: number; nextId: number } | null }>;
   /** Load the persisted UI session JSON (open tabs / active tab / zoom), or null.
    *  Stored atomically in a backend file so structured session state is independent
@@ -1391,9 +1391,9 @@ class TauriBackend implements Backend {
   listBackups() {
     return this.call<BackupInfo[]>("list_backups");
   }
-  restoreBackup(stamp: string, _kind: "replace-page", consumedLastId: number) {
+  restoreBackup(id: string, _kind: "replace-page", consumedLastId: number) {
     return this.call<{ error: string | null; reloaded: { session: number; nextId: number } | null }>(
-      "restore_backup", { stamp, consumedLastId });
+      "restore_backup", { id, consumedLastId });
   }
   loadSession() {
     return this.call<string | null>("load_session");
