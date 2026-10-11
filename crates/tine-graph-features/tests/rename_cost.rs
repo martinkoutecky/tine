@@ -33,6 +33,12 @@ static CASE_LOCK: Mutex<()> = Mutex::new(());
 /// `pages` unrelated pages spread over three folders, `referrers` pages that
 /// link `[[Target]]`, and the target itself.
 fn rename(pages_count: usize, referrers: usize) -> Counts {
+    rename_timed(pages_count, referrers).0
+}
+
+/// [`rename`], plus the wall time of the rename call alone (no fixture
+/// setup, no host start or quiesce).
+fn rename_timed(pages_count: usize, referrers: usize) -> (Counts, Duration) {
     // Self-deleting: dropped after `store` (declared later), and on a panic too.
     let temp = tempfile::Builder::new()
         .prefix("rename-cost-")
@@ -61,10 +67,11 @@ fn rename(pages_count: usize, referrers: usize) -> Counts {
     let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     cost_counters::reset();
-    hosted(&store, |host| {
-        pages::rename_page_expected(&store, host, "Target", "Renamed", None)
-    })
-    .unwrap();
+    let elapsed = hosted(&store, |host| {
+        let start = std::time::Instant::now();
+        pages::rename_page_expected(&store, host, "Target", "Renamed", None).unwrap();
+        start.elapsed()
+    });
     let counts = cost_counters::snapshot();
     assert!(root.join("pages/Renamed.md").exists());
     assert_eq!(
@@ -72,7 +79,7 @@ fn rename(pages_count: usize, referrers: usize) -> Counts {
         "- links [[Renamed]] 0\n"
     );
     store.close();
-    counts
+    (counts, elapsed)
 }
 
 #[test]
@@ -437,4 +444,22 @@ fn walk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
         }
     }
     files
+}
+
+/// G1 timing probe, not a gate: a rename's wall time on this platform's
+/// filesystem (hosted Windows decides card B's priority, Martin 2026-10-11).
+#[test]
+#[ignore = "timing probe: cargo test -p tine-graph-features --test rename_cost probe_rename_wall_time -- --ignored --nocapture"]
+fn probe_rename_wall_time() {
+    let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for (pages_count, referrers) in [(60, 2), (60, 30), (600, 30)] {
+        let mut times: Vec<_> = (0..5)
+            .map(|_| rename_timed(pages_count, referrers).1.as_secs_f64() * 1000.0)
+            .collect();
+        times.sort_by(f64::total_cmp);
+        eprintln!(
+            "G1 rename {pages_count}p/{referrers}r: median {:.1} ms, min {:.1}, max {:.1}",
+            times[2], times[0], times[4]
+        );
+    }
 }

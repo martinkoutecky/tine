@@ -2166,3 +2166,69 @@ fn review_p1_m2_an_operation_vehicle_keeps_each_page_it_names_as_debt() {
     assert_eq!(f.host.switch_ready(last), Disposition::Applied);
     assert!(f.host.can_switch());
 }
+
+/// G1 timing probe, not a gate: the wall time of each step of a page deletion
+/// on this platform's filesystem, next to a plain save of the same page. Run on
+/// hosted Windows (`ci.yml` scope `windows`) to see whether the custody
+/// marker's file flush is a material part of a deletion there (RO3 (b) is
+/// decided by it, Martin 2026-10-11).
+#[test]
+#[ignore = "timing probe: cargo test -p tine-store --lib probe_deletion_step_timing -- --ignored --nocapture"]
+fn probe_deletion_step_timing() {
+    use std::collections::BTreeMap;
+    use std::time::{Duration, Instant};
+    const PAGES: usize = 30;
+    let mut f = Fixture::new();
+    let keys: Vec<String> = (0..PAGES).map(|i| format!("p{i:02}.md")).collect();
+    for key in &keys {
+        fs::write(f.graph.join(key), b"- seed\n").unwrap();
+    }
+    let locks = keys
+        .iter()
+        .map(|key| (key.clone(), Arc::new(Mutex::new(()))))
+        .collect();
+    let io = ProductionIo::attach(&f.graph, &f.app, "test-graph", &f.trash);
+    f.host = Host::new(io, locks);
+    let mut steps: BTreeMap<String, Vec<Duration>> = BTreeMap::new();
+    let mut time = |label: &str, start: Instant| {
+        steps.entry(label.into()).or_default().push(start.elapsed());
+    };
+    for key in &keys {
+        f.edit(key, "- saved by Tine\n");
+        let start = Instant::now();
+        f.drain();
+        time("save: draft", start);
+        let start = Instant::now();
+        assert_eq!(f.save(key), Outcome::Published);
+        time("save: total", start);
+
+        let deletion = Instant::now();
+        assert_eq!(f.host.delete(key), Disposition::Pending);
+        let start = Instant::now();
+        f.drain();
+        time("delete: draft", start);
+        assert_eq!(f.host.start_save(key), Disposition::Pending);
+        while let Some(job) = f.host.job.as_ref() {
+            let label = format!("delete: {:?}", job.phase);
+            let start = Instant::now();
+            f.host.advance_save(0);
+            time(&label, start);
+        }
+        let start = Instant::now();
+        f.drain();
+        time("delete: draft retire", start);
+        time("delete: total", deletion);
+        assert!(!f.graph.join(key).exists());
+    }
+    eprintln!("G1 deletion timing, {PAGES} pages, median / max in ms:");
+    for (label, mut times) in steps {
+        times.sort();
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        eprintln!(
+            "  {label:<24} {:>8.3} / {:>8.3}  (n={})",
+            ms(times[times.len() / 2]),
+            ms(*times.last().unwrap()),
+            times.len()
+        );
+    }
+}
