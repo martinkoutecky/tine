@@ -29,6 +29,7 @@ on:
           - android
           - performance
           - multiwindow
+          - windows-arm64-build
 
 permissions:
   contents: read
@@ -228,6 +229,41 @@ jobs:
         run: cargo test --release -p tine-graph-features --test rename_cost -- --ignored --exact --nocapture a_250_referrer_rename_completes_inside_the_caller_bound a_thousand_referrer_rename_completes_inside_the_caller_bound
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
+
+  # Throwaway test-build lane (branch og-storage-winarm-test only, never merged):
+  # the og storage candidate as a bare ARM64 exe for hands-on testing on a Surface.
+  # Cross-compiled like release.yml's windows-arm64 lane; nothing is published.
+  windows-arm64-build:
+    name: Test build / Windows ARM64 exe
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'windows-arm64-build'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm run build
+      - name: Build the ARM64 exe
+        run: cargo build --release --target aarch64-pc-windows-msvc --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - name: Name it by commit
+        shell: pwsh
+        run: |
+          $sha = "${{ github.sha }}".Substring(0, 9)
+          Copy-Item target/aarch64-pc-windows-msvc/release/tine.exe "tine-beta-storage-arm64-$sha.exe"
+          Get-FileHash "tine-beta-storage-arm64-$sha.exe" -Algorithm SHA256 | Format-List
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tine-beta-storage-arm64
+          path: tine-beta-storage-arm64-*.exe
+          retention-days: 14
 
   android-core-compile:
     name: Full CI / Android core compile
