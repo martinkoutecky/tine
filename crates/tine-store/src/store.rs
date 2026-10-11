@@ -340,9 +340,8 @@ struct Snapshot {
     name_by_path: Arc<SharedMap<PathBuf, (PageKind, String)>>,
     unreadable: Arc<Vec<(FileId, String)>>,
     answers: (bool, BTreeMap<String, usize>),
-    /// This publication changed no derived answer: it only folded or unfolded
-    /// blocks (GH #623 item 3) or republished pages unchanged (PERF-FIXES D4).
-    derived_unchanged: bool,
+    /// This publication only folded or unfolded blocks (GH #623 item 3).
+    folds_only: bool,
 }
 
 mod answer_changes;
@@ -539,10 +538,7 @@ impl ChangeFeed {
         // A fold leaves the launch checkpoint's derived state true; its file
         // stamp is stale, so the next launch diff rereads that one file
         // (ADR 0070) instead of the whole checkpoint being rewritten for it.
-        // An unchanged republication (a page open re-deriving the row its hold
-        // retired, PERF-FIXES D4) leaves both true.
-        if (old.is_none() || config_changed || rebuild || !files.is_empty())
-            && !snapshot.derived_unchanged
+        if (old.is_none() || config_changed || rebuild || !files.is_empty()) && !snapshot.folds_only
         {
             self.checkpoint.get().inspect(|signal| signal.published());
         }

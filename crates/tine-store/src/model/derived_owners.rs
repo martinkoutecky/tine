@@ -123,13 +123,19 @@ impl Graph {
     }
 
     /// [`Self::hold`] for a page open (STEP3 §5, (G) as amended 2026-10-11):
-    /// the owner's first bytes are its Open read of the file, so when the
-    /// file still holds the bytes the installed row was derived from, the
-    /// hold starts with them indexed. The row stays, nothing is published,
-    /// and the Open read's equal bytes change nothing. A file that changed
-    /// since, or a page not installed, is held as by [`Self::hold`]. One
-    /// read of the page file, under the writer.
+    /// when the file holds the bytes the installed row was derived from, the
+    /// hold starts with them indexed as the owner's. The row stays, nothing
+    /// is published, and an Open read of the same bytes changes nothing. The
+    /// Open read runs later, outside the writer: a file changed in between is
+    /// published by that read, which replaces the kept row; until then the
+    /// row is the file's previous state, as for any change not yet
+    /// reconciled. A file that changed before the hold, or a page not
+    /// installed, is held as by [`Self::hold`]. One read of the page file,
+    /// under the writer, and none for a key already held.
     pub(crate) fn hold_current(&self, key: String) {
+        if self.held.indexed_of(&key).is_some() {
+            return; // held already: holding again keeps what it has
+        }
         let path = self.root.join(self.held.spellings().spelling(&key));
         let current = self.cached_rev(&path).and_then(|rev| {
             let bytes = std::fs::read(&path).ok()?;

@@ -708,11 +708,9 @@ impl ReadSnapshot {
 
     /// Carry what `old` derived into this generation for an edit of
     /// `changed_paths` that moved no page name (the caller checks): the alias
-    /// list and the memos. Returns whether the edit changed no derived answer:
-    /// it only folded or unfolded blocks ([`collapse_only::collapse_only`]) or
-    /// republished a page unchanged (a page open re-deriving a held row,
-    /// PERF-FIXES D4). The edited pages are looked up once (I-13: only the
-    /// edited page is inspected).
+    /// list and the memos. Returns whether the edit only folded or unfolded
+    /// blocks ([`collapse_only::collapse_only`]). The edited pages are looked
+    /// up once (I-13: only the edited page is inspected).
     pub(crate) fn carry_from(&self, old: &Self, changed_paths: &[String]) -> bool {
         if changed_paths.is_empty() {
             return false;
@@ -727,13 +725,11 @@ impl ReadSnapshot {
             return false;
         }
         self.carry_alias_list_from(old);
-        let unchanged = edits.iter().all(|(_, previous, current)| {
-            Arc::ptr_eq(previous, current)
-                || previous == current
-                || collapse_only::collapse_only(previous, current)
-        });
+        let folds_only = edits
+            .iter()
+            .all(|(_, previous, current)| collapse_only::collapse_only(previous, current));
         self.carry_memos_from(old, edits);
-        unchanged
+        folds_only
     }
 
     fn carry_memos_from(
