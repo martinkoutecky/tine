@@ -661,7 +661,7 @@ fn the_manifest_checksum_matches_python() {
     let encoded = encode_manifest(&manifest_for(&files));
     let script = r#"
 import hashlib, json, sys
-m = json.loads(sys.stdin.read())
+m = json.loads(sys.stdin.buffer.read().decode("utf-8"))
 c = m.pop("checksum")
 s = json.dumps(m, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 assert hashlib.sha256(s.encode("utf-8")).hexdigest() == c, "checksum differs"
