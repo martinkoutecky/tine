@@ -1065,6 +1065,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
         // Built under the `test-faults` feature only, but scanned as runtime.
         ("faults.rs", include_str!("faults.rs")),
         ("io.rs", include_str!("io.rs")),
+        ("logical.rs", include_str!("logical.rs")),
         ("operations.rs", include_str!("operations.rs")),
         ("order.rs", include_str!("order.rs")),
         ("progress.rs", include_str!("progress.rs")),

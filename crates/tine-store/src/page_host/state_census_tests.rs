@@ -32,15 +32,15 @@ const WRITERS: &[(&str, &[&str], &str)] = &[
     ),
     (
         "drafts",
-        &["mod.rs::index_vehicle", "mod.rs::launch"],
+        &["logical.rs::index_vehicle", "mod.rs::launch"],
         "the draft census: index_vehicle indexes and marks; launch replaces it, then index_drafts",
     ),
     (
         "durable",
         &[
-            "mod.rs::index_vehicle",
-            "mod.rs::reindex",
-            "mod.rs::index_drafts",
+            "logical.rs::index_vehicle",
+            "logical.rs::reindex",
+            "logical.rs::index_drafts",
             "production.rs::draft_sync",
             "production.rs::quarantine",
         ],
@@ -48,7 +48,7 @@ const WRITERS: &[(&str, &[&str], &str)] = &[
     ),
     (
         "vehicles_of",
-        &["mod.rs::index_vehicle", "mod.rs::index_drafts"],
+        &["logical.rs::index_vehicle", "logical.rs::index_drafts"],
         "the reverse vehicle index, kept with `durable`",
     ),
     (
@@ -435,7 +435,7 @@ fn violations(found: &Census, calls: &BTreeMap<String, String>) -> Vec<String> {
     }
     // Every durable index change marks its pages itself, so Progress never
     // depends on an overlay end or an event happening to cover it.
-    if body("mod.rs::index_vehicle")
+    if body("logical.rs::index_vehicle")
         .matches("self . mark (")
         .count()
         < 2
@@ -492,8 +492,8 @@ fn the_page_state_census_catches_its_bypass_mutants() {
         ("mod.rs", "self.mark(key);\n        let previous", "let previous"),
         ("mod.rs", "self.index_drafts();\n        self.vehicle_debt", "self.vehicle_debt"),
         ("mod.rs", "self.alive = false;\n        self.pages.clear();", "self.pages.clear();"),
-        ("mod.rs", "self.mark(&record.page);\n            if let Some(names)", "if let Some(names)"),
-        ("mod.rs", "self.mark(&record.page);\n            let names", "let names"),
+        ("logical.rs", "self.mark(&record.page);\n            if let Some(names)", "if let Some(names)"),
+        ("logical.rs", "self.mark(&record.page);\n            let names", "let names"),
     ];
     for (file, from, to) in mutants {
         let mut files = files.clone();
