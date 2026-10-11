@@ -9,12 +9,9 @@ struct Mutations {
     hits: BTreeSet<(String, String)>,
 }
 
-fn test_only(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        attr.path().is_ident("test")
-            || (attr.path().is_ident("cfg") && quote::quote!(#attr).to_string().contains("test"))
-    })
-}
+#[path = "../src/test_cfg.rs"]
+mod test_cfg;
+use test_cfg::is_test as test_only;
 
 impl<'ast> Visit<'ast> for Mutations {
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
@@ -143,6 +140,15 @@ fn every_content_mutation_has_a_reviewed_owner() {
         ("crates/tine-store/src/restore.rs", "copy_new"),
         ("crates/tine-store/src/restore.rs", "move_if_present"),
         ("crates/tine-store/src/restore.rs", "publish_temp"),
+        // `cfg(feature = "test-faults")` only (a dev-dependency feature, never
+        // in a shipped build), censused since the cfg parser (N2) stopped
+        // reading "test-faults" as test: writes the `.tine-restore-test-paused`
+        // handshake marker in a test graph's root, never graph content. Crash
+        // matrix: a crash leaves a stray marker in a temporary test directory.
+        (
+            "crates/tine-store/src/restore.rs",
+            "pause_after_binding_for_test",
+        ),
         ("crates/tine-store/src/store.rs", "purge_asset_trash"),
         (
             "crates/tine-store/src/store.rs",
@@ -190,5 +196,21 @@ fn census_detects_an_unreviewed_direct_write() {
     assert!(
         visitor.hits.contains(&("rogue".into(), "fs::write".into())),
         "I-1: a new direct write must trigger owner review; exemplar model.rs atomic_write_new"
+    );
+}
+
+/// N2 family (REVIEW-3b-P2b-2): a `cfg(not(test))` write is production and
+/// needs a reviewed owner like any other.
+#[test]
+fn census_detects_a_not_test_direct_write() {
+    let planted = syn::parse_file(
+        "#[cfg(not(test))] fn rogue() { std::fs::write(\"page.md\", b\"lost\").unwrap(); }",
+    )
+    .unwrap();
+    let mut visitor = Mutations::default();
+    visitor.visit_file(&planted);
+    assert!(
+        visitor.hits.contains(&("rogue".into(), "fs::write".into())),
+        "cfg(not(test)) is production"
     );
 }

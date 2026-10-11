@@ -10,6 +10,7 @@
 //! (a callback, an alias, a turbofish call) is rejected as unsupported. A new
 //! writer call site fails here, naming the rule and an exemplar.
 
+use crate::test_cfg::is_test;
 use quote::ToTokens;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -141,17 +142,6 @@ fn calls(tokens: proc_macro2::TokenStream, routed: bool, out: &mut Function) {
         }
         i += 1;
     }
-}
-
-fn is_test(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        attr.path()
-            .segments
-            .last()
-            .is_some_and(|s| s.ident == "test")
-            || (attr.path().is_ident("cfg")
-                && attr.meta.to_token_stream().to_string().contains("test"))
-    })
 }
 
 struct Scan<'a> {
@@ -570,4 +560,16 @@ fn a_planted_host_operation_without_its_kind_fails_the_census() {
         undeclared(&BTreeMap::new(), &new_operation),
         ["operation truncate has no edit kind"]
     );
+}
+
+/// N2 family (REVIEW-3b-P2b-2): a `cfg(not(test))` writer is production and
+/// must run under a reservation like any other.
+#[test]
+fn a_not_test_writer_is_censused() {
+    let planted = r#"
+        #[cfg(not(test))] pub fn bare(store: &Store) { let tx = store.transaction(None); }
+    "#;
+    let mut functions = BTreeMap::new();
+    scan("planted.rs", planted, &mut functions);
+    assert_eq!(unrouted(&functions, &[]), ["planted.rs::bare"]);
 }

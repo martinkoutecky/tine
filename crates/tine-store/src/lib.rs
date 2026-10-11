@@ -113,6 +113,8 @@ pub mod restore;
 mod search_edit_tests;
 pub mod store;
 #[cfg(test)]
+mod test_cfg;
+#[cfg(test)]
 mod test_config_client;
 #[cfg(test)]
 mod test_fixture_io;

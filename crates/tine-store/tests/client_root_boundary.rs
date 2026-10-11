@@ -4,11 +4,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use syn::visit::{self, Visit};
 
-fn cfg_test(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        attr.path().is_ident("cfg") && attr.meta.to_token_stream().to_string().contains("test")
-    })
-}
+#[path = "../src/test_cfg.rs"]
+mod test_cfg;
+use test_cfg::cfg_test;
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -224,4 +222,15 @@ fn planted_handoff_path_write_is_detected() {
         !scan(trash).is_empty(),
         "display paths must never become graph write paths"
     );
+}
+
+/// N2 family (REVIEW-3b-P2b-2): a `cfg(not(test))` function is production
+/// and is scanned.
+#[test]
+fn a_not_test_graph_root_read_is_detected() {
+    let planted = r#"#[cfg(not(test))] fn bad(slot: &GraphSlot) {
+        let graph_file = slot.root_key.join("pages/Secret.md");
+        let _ = std::fs::read(graph_file);
+    }"#;
+    assert!(!scan(planted).is_empty(), "cfg(not(test)) is production");
 }

@@ -14,6 +14,7 @@
 //! implies `test` makes an item test-only (REVIEW-3b-P2b-2 N2). Which functions mark correctly is the reference tracker's
 //! (`progress.rs` `Reference`); this census pins who may write at all.
 
+use crate::test_cfg::is_test;
 use proc_macro2::{Delimiter, Spacing, TokenStream, TokenTree};
 use quote::ToTokens;
 use std::collections::{BTreeMap, BTreeSet};
@@ -399,43 +400,6 @@ fn named(tokens: &[TokenTree], watched: &BTreeSet<&str>) -> BTreeSet<String> {
         }
     }
     out
-}
-
-/// Test-only code: `#[test]`, or a `cfg` whose predicate implies `test`
-/// (`test`, `all(.., test, ..)`, `any` of such). `not(test)` and every
-/// other predicate are production, as is a predicate that does not parse
-/// (fail closed, N2).
-fn is_test(attrs: &[syn::Attribute]) -> bool {
-    fn implies_test(predicate: &syn::Meta) -> bool {
-        let args = |list: &syn::MetaList| {
-            list.parse_args_with(
-                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-            )
-            .map(|args| args.into_iter().collect::<Vec<_>>())
-            .unwrap_or_default()
-        };
-        match predicate {
-            syn::Meta::Path(path) => path.is_ident("test"),
-            syn::Meta::List(list) if list.path.is_ident("all") => {
-                args(list).iter().any(implies_test)
-            }
-            syn::Meta::List(list) if list.path.is_ident("any") => {
-                let args = args(list);
-                !args.is_empty() && args.iter().all(implies_test)
-            }
-            _ => false,
-        }
-    }
-    attrs.iter().any(|attr| {
-        attr.path()
-            .segments
-            .last()
-            .is_some_and(|s| s.ident == "test")
-            || (attr.path().is_ident("cfg")
-                && attr
-                    .parse_args::<syn::Meta>()
-                    .is_ok_and(|predicate| implies_test(&predicate)))
-    })
 }
 
 struct Scan<'a> {

@@ -2,6 +2,9 @@
 use quote::ToTokens;
 use std::path::{Path, PathBuf};
 use syn::visit::{self, Visit};
+#[path = "../src/test_cfg.rs"]
+mod test_cfg;
+use test_cfg::cfg_test;
 
 // Device ingress and devtools own local OS data, not graph transport.
 const DEVICE_COMMAND_EXEMPTIONS: &[(&str, &str)] = &[
@@ -197,9 +200,7 @@ struct ErrorTextScan(Vec<String>);
 
 impl<'ast> Visit<'ast> for ErrorTextScan {
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
-        if !item.attrs.iter().any(|attr| {
-            attr.path().is_ident("cfg") && attr.meta.to_token_stream().to_string().contains("test")
-        }) {
+        if !cfg_test(&item.attrs) {
             visit::visit_item_mod(self, item);
         }
     }
@@ -263,6 +264,20 @@ fn planted_feature_error_text_match_is_detected() {
     let source = r#"fn bad(error: StoreError) {
         if let StoreError::InvalidTarget(reason) = error {
             let _ = reason.starts_with("symlink:");
+        }
+    }"#;
+    assert_eq!(feature_error_text_matches(source).len(), 1);
+}
+
+/// N2 family (REVIEW-3b-P2b-2): a `cfg(not(test))` module is production and
+/// is scanned.
+#[test]
+fn a_not_test_module_error_text_match_is_detected() {
+    let source = r#"#[cfg(not(test))] mod live {
+        fn bad(error: StoreError) {
+            if let StoreError::InvalidTarget(reason) = error {
+                let _ = reason.starts_with("symlink:");
+            }
         }
     }"#;
     assert_eq!(feature_error_text_matches(source).len(), 1);
