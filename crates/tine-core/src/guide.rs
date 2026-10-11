@@ -355,14 +355,17 @@ mod journal_guide_tests {
             "Each snapshot is one ordinary `.zip` file",
             "without Tine",
             "`backups/<graph folder name>-<code>.zips/`",
-            "~/Library/Application Support/page.tine.TineBeta/backups/",
-            "%APPDATA%\\page.tine.TineBeta\\backups\\",
+            "~/Library/Application Support/<app id>/backups/",
+            "%APPDATA%\\<app id>\\backups\\",
             "a file manager cannot open",
             "**Damaged**",
             "A launch where nothing changed since the newest snapshot writes no new one",
             "Tine has no button that opens this folder",
         ] {
-            assert!(files.contains(control), "missing backup Guide control: {control}");
+            assert!(
+                files.contains(control),
+                "missing backup Guide control: {control}"
+            );
         }
         // og-J2 (master d017d1afc): assets refresh in place after an outside change.
         assert!(files.contains("Files in `assets/` are watched too"));
