@@ -31,11 +31,11 @@ static TRANSACTION_REWRITES: AtomicU64 = AtomicU64::new(0);
 static WATCHER_READS: AtomicU64 = AtomicU64::new(0);
 static WATCHER_STAMPS_BY_PATH: AtomicU64 = AtomicU64::new(0);
 static HOST_PUBLICATION_PROBES: AtomicU64 = AtomicU64::new(0);
-static HOST_RECONCILE_VISITS: AtomicU64 = AtomicU64::new(0);
-static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
-static HOST_CANDIDATE_VISITS: AtomicU64 = AtomicU64::new(0);
-static HOST_WORKER_KEY_VISITS: AtomicU64 = AtomicU64::new(0);
-static HOST_BOOK_VISITS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static HOST_RECONCILE_VISITS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static HOST_DRAFT_RECORD_VISITS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static HOST_CANDIDATE_VISITS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static HOST_WORKER_KEY_VISITS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static HOST_BOOK_VISITS: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     /// Set on the watcher thread, whose re-reads of just-written files are
@@ -252,27 +252,6 @@ pub(crate) fn host_publication_probes(count: usize) {
     HOST_PUBLICATION_PROBES.fetch_add(count as u64, Ordering::Relaxed);
 }
 
-/// The page-host step primitives `Counts` splits its work into.
-#[derive(Clone, Copy)]
-pub(crate) enum HostWork {
-    Reconcile,
-    DraftRecords,
-    Candidates,
-    WorkerKeys,
-    Book,
-}
-
-#[cfg_attr(not(feature = "test-faults"), allow(dead_code))]
-pub(crate) fn host_work(kind: HostWork, count: usize) {
-    let counter = match kind {
-        HostWork::Reconcile => &HOST_RECONCILE_VISITS,
-        HostWork::DraftRecords => &HOST_DRAFT_RECORD_VISITS,
-        HostWork::Candidates => &HOST_CANDIDATE_VISITS,
-        HostWork::WorkerKeys => &HOST_WORKER_KEY_VISITS,
-        HostWork::Book => &HOST_BOOK_VISITS,
-    };
-    counter.fetch_add(count as u64, Ordering::Relaxed);
-}
 pub(crate) fn name_inventory_entries(count: usize) {
     NAME_INVENTORY_ENTRIES.fetch_add(count as u64, Ordering::Relaxed);
 }

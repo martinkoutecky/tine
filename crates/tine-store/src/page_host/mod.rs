@@ -49,7 +49,16 @@ use std::sync::{Arc, Mutex};
 type Text = Option<Arc<[u8]>>;
 type PageKey = String;
 
-use crate::cost_counters::HostWork as Work;
+/// The page-host step primitives the cost counters split host work into
+/// (M4, REVIEW-progress-plan R5).
+#[derive(Clone, Copy)]
+pub(crate) enum Work {
+    Reconcile,
+    DraftRecords,
+    Candidates,
+    WorkerKeys,
+    Book,
+}
 
 /// Count `count` elements of host-step work of `kind` (M4,
 /// REVIEW-progress-plan R5); free without `test-faults`.
@@ -57,7 +66,17 @@ use crate::cost_counters::HostWork as Work;
 #[cfg_attr(not(feature = "test-faults"), allow(unused_variables))]
 fn work(kind: Work, count: usize) {
     #[cfg(feature = "test-faults")]
-    crate::cost_counters::host_work(kind, count);
+    {
+        use crate::cost_counters as c;
+        let counter = match kind {
+            Work::Reconcile => &c::HOST_RECONCILE_VISITS,
+            Work::DraftRecords => &c::HOST_DRAFT_RECORD_VISITS,
+            Work::Candidates => &c::HOST_CANDIDATE_VISITS,
+            Work::WorkerKeys => &c::HOST_WORKER_KEY_VISITS,
+            Work::Book => &c::HOST_BOOK_VISITS,
+        };
+        counter.fetch_add(count as u64, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// The registered keys (STEP3 §2). Every visit goes through `iter`, which a
