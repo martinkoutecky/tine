@@ -636,6 +636,75 @@ fn a_flush_handed_to_a_rename_is_told_busy_after_the_bound() {
     live.host.stop();
 }
 
+/// REVIEW-3b-P2b-3 (Codex's mixed-set plant): a writer over clean Old and
+/// dirty Other flushes Other, whose save waits on its path lock held by
+/// another honest writer; meanwhile a rename over Old is admitted whose
+/// drafts keep failing. The rename holds a page of the writer's set, so the
+/// writer is refused Busy by its deadline though the page it waits to see
+/// saved is not the rename's: the dependency is the whole set, not the
+/// unsaved part.
+#[test]
+fn a_flush_over_a_mixed_set_is_told_busy_when_a_rename_holds_its_clean_page() {
+    let live = Live::new(&[
+        (OLD, "- old\n"),
+        (REF, "- see [[Old]]\n"),
+        (OTHER, "- other\n"),
+    ]);
+    let (other, page) = live.open(OTHER);
+    let id = live
+        .submit(&other, "- edited\n", page.version, None)
+        .unwrap();
+    live.answer(&other, id);
+    // Inside the edit debounce: the save finds the path lock held.
+    let lock = live.store.graph.page_lock(&live.root.join(&other));
+    let held = lock.lock().unwrap();
+    assert_eq!(live.disk(&other), "- other\n", "held before Other's save");
+    let pause: crate::store::TestPause = Default::default();
+    *live.host.driver.shared.flush_pause.lock().unwrap() = Some(Arc::clone(&pause));
+    let worker = || {
+        live.host
+            .driver
+            .shared
+            .with_state(|state| state.progress.host.worker.is_some())
+    };
+    std::thread::scope(|scope| {
+        let (sender, refused) = mpsc::channel();
+        let started = Instant::now();
+        let host = &live.host;
+        scope.spawn(move || {
+            let pages = || vec![PageId::from(OLD), PageId::from(OTHER)];
+            let _ = sender.send(host.reserve(pages, Input::Flush).err());
+        });
+        until("the writer waits in its flush", || {
+            pause.0.lock().unwrap().0
+        });
+        live.faults(Phase::DraftSync, 10_000);
+        let renamed = scope.spawn(|| rename(&live.host, &live.store));
+        until("the rename is admitted", worker);
+        pause.0.lock().unwrap().1 = true;
+        pause.1.notify_all();
+        let outcome = refused.recv_timeout(OPERATION_WAIT + Duration::from_secs(3));
+        let retained = live
+            .host
+            .driver
+            .shared
+            .with_state(|state| state.progress.host.retained.is_empty());
+        drop(held);
+        clear_faults(&live);
+        assert_eq!(
+            outcome,
+            Ok(Some(ReserveRefusal::Busy)),
+            "a flush waiting on an unrelated page is refused Busy by its deadline \
+             while a rename holds a page of its set"
+        );
+        assert!(started.elapsed() >= OPERATION_WAIT);
+        assert!(retained, "nothing is reserved");
+        let _ = renamed.join().unwrap();
+    });
+    until("the operation ends", || !worker());
+    live.host.stop();
+}
+
 /// REVIEW-3b-P2b-2 N1: a writer entering a poisoned host (one that
 /// panicked under its lock) is refused Busy, never a panic.
 #[test]

@@ -254,7 +254,7 @@ impl PageHost {
             if input == Input::Refuse {
                 return Err(ReserveRefusal::Unsaved(unsaved.into_values().collect()));
             }
-            self.flush(&unsaved.into_keys().collect(), deadline)?;
+            self.flush(&unsaved.into_keys().collect(), &keys, deadline)?;
         }
     }
 
@@ -655,10 +655,14 @@ impl PageHost {
 
     /// Wait, holding nothing, until no page in `pages` has unsaved input,
     /// within the writer's `deadline` (N1); a page in conflict or with a
-    /// persistent save error refuses the writer, by its spelling.
+    /// persistent save error refuses the writer, by its spelling. The rename
+    /// dependency is classified over the writer's whole set, `reserving`, not
+    /// only the pages it waits to see saved (REVIEW-3b-P2b-3): a rename
+    /// holding a clean page of the set bounds the wait too.
     fn flush(
         &self,
         pages: &BTreeSet<PageKey>,
+        reserving: &BTreeSet<PageKey>,
         deadline: std::time::Instant,
     ) -> Result<(), ReserveRefusal> {
         #[cfg(test)]
@@ -678,7 +682,7 @@ impl PageHost {
                 return Step::Done(Ok(()));
             }
             Step::Wait {
-                renaming: host.renaming(pages),
+                renaming: host.renaming(reserving),
             }
         })?
     }

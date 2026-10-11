@@ -202,7 +202,12 @@ once the write succeeds. The order is memory only:
   waited for, unbounded. Every wait and check of the reservation (the
   fence, the input check after a rediscovery, and the flush, which a rename
   admitted meanwhile can take over) carries that deadline (REVIEW-3b-P2b-2
-  N1). A host that cannot answer, at entry or during any wait (its driver
+  N1), and a rename holding any page of the writer's set bounds it, even
+  while the flush waits on another page of the set (REVIEW-3b-P2b-3;
+  `a_flush_over_a_mixed_set_is_told_busy_when_a_rename_holds_its_clean_page`).
+  Not yet bounded: the time to acquire the host's state mutex itself, at
+  entry or after a condition wait (REVIEW-3b-P2b-3, open with Martin). A
+  host that cannot answer, at entry or during any wait (its driver
   ended, its state is poisoned, or it is down), also answers `Busy`, never
   a panic, with every page it had fenced released (a poisoned host keeps
   no state to release them from or to serve them; proof
