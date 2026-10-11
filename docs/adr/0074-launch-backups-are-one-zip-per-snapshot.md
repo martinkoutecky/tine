@@ -65,8 +65,8 @@ We will write each snapshot as one zip, `<app data>/backups/<graph-id>.zips/<nam
   another process's newer one is still unsynced.
 - **Retention.** Every locked path runs one retention pass. Only verified snapshots hold a slot of the
   keep-count; deletion requires a keeper, the newest zip that fully verifies, settled strongly. Damaged
-  zips are deleted only once older than the oldest retained snapshot. `pre-restore` snapshots (damaged
-  or not), another writer's zips and unknown names are never deleted.
+  snapshots are deleted only once older than the oldest retained healthy counted zip. `pre-restore`
+  snapshots (damaged or not), another writer's zips and folders, and unknown names are never deleted.
 - **Restore.** Restore reads the whole zip under the lock and verifies it after, then hands
   `Store::restore` the verified bytes rather than rereading files. It refuses a damaged zip, an
   unsupported schema or ZIP version, and another graph. Names that would be one file at their

@@ -500,10 +500,12 @@ Proof `the_skip_compares_with_the_newest_snapshot_of_any_suffix`,
 snapshot, a Settings prune) runs one retention pass (`maintain_locked`). The
 keep-count N keeps the last N successive distinct states among the counted
 snapshots: legacy directories and zips written by og, neither `pre-restore`
-nor another writer's. Walking newest first, a counted snapshot holds a slot
-only once it fully verifies (verification stops once N are retained); a damaged
-one holds none and is deleted only once older than the oldest retained
-counted snapshot. The keeper is the newest zip that fully verifies; before
+nor another writer's (a schema-3 directory another writer made, or one of an
+unknown schema, is neither counted nor pruned). Walking newest first, a
+counted snapshot holds a slot only once it fully verifies (verification stops
+once N are retained); a damaged one holds none and is deleted only once older
+than the oldest retained healthy counted zip. A retained legacy directory is
+not that boundary, and with no retained zip nothing damaged is deleted. The keeper is the newest zip that fully verifies; before
 anything is deleted it is settled strongly (its own publication's chain, or
 its file sync plus the chain). No keeper, or a weak or failed settle: no
 deletion. `pre-restore` snapshots (damaged or not), unknown entries and
