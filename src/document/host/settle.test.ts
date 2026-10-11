@@ -33,6 +33,25 @@ describe("settle (S1: final synchronous quiescence proof)", () => {
     expect(ctx.client.busy("P")).toBe(false);
   });
 
+  it("a witness barrier holds its page: the window's own publication answer cannot close it first (§4.4, B-Q2)", async () => {
+    const ctx = await healthy();
+    // The host proves a witness only for a page it holds: one whose last open
+    // was not followed by a close.
+    const held = (key: string) => {
+      const last = ctx.host.calls.filter((call) => (call.cmd === "open" && ctx.host.keyOf(call.name) === key)
+        || (call.cmd === "close" && call.key === key)).at(-1);
+      return last?.cmd === "open";
+    };
+    ctx.host.onWait = (needs) => needs.every((need) => !need.witness || held(need.key));
+    // A block-ref target nobody edits: only the stamp's edit opens it.
+    edit(ctx, "P", "a id:: id-1");
+    expect(await settle(ctx.client, ["P"], { witness: "id-1" })).toBe(true);
+    expect(ctx.host.last("wait").needs).toEqual([{ key: "pages/P.md", version: 102, witness: "id-1" }]);
+    // Once the barrier is done the page is let go as usual.
+    await tick();
+    expect(ctx.host.last("close").key).toBe("pages/P.md");
+  });
+
   it("an edit during the fourth wait returns false (the bound is not success)", async () => {
     const ctx = await healthy();
     // An editor holds P, so the window's own publication wait before a close (J6) stays out of these counts.
