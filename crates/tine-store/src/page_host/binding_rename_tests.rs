@@ -1,6 +1,6 @@
 //! The single-page host rename and the alias respell (STEP3 §2, §7, F10,
 //! Q4), against a real Store.
-use super::super::retained::RenameRefusal;
+use super::super::retained::{RenameRefusal, ReserveRefusal};
 use super::*;
 use crate::RenameMap;
 
@@ -592,7 +592,9 @@ fn a_reservation_refusal_names_the_page_by_its_spelling() {
     typed_fresh_entry(&live, "- typed\n");
     let refused = |input| -> Vec<String> {
         let b = || vec![PageId::from("pages/b.md")];
-        let pages = live.host.reserve(b, input).unwrap_err();
+        let ReserveRefusal::Unsaved(pages) = live.host.reserve(b, input).unwrap_err() else {
+            panic!("refused for unsaved input")
+        };
         pages.iter().map(|page| page.as_str().to_owned()).collect()
     };
     assert_eq!(

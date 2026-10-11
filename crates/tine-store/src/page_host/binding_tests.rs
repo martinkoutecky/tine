@@ -4,6 +4,7 @@ use super::*;
 use crate::page_host::io::Phase;
 use crate::page_host::model_fs::{Fault, ModelFs};
 use crate::page_host::tests::{edit, open as open_page, risk, saved, send, text};
+use crate::page_host::ReserveRefusal;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -956,7 +957,7 @@ fn q3_input_applied_before_the_reservation_is_found_under_it() {
     let discover = || vec![PageId::from("pages/r.md")];
     assert_eq!(
         live.host.reserve(discover, Input::Refuse).unwrap_err(),
-        BTreeSet::from([PageId::from(key.clone())]),
+        ReserveRefusal::Unsaved(BTreeSet::from([PageId::from(key.clone())])),
         "Q3: a typed page that is not at risk still has unsaved input"
     );
     let reservation = live.host.reserve(discover, Input::Flush).unwrap();
@@ -991,7 +992,7 @@ fn q3_a_page_discovered_under_the_reservation_is_checked_too() {
     };
     assert_eq!(
         live.host.reserve(discover, Input::Refuse).unwrap_err(),
-        BTreeSet::from([PageId::from(key.clone())])
+        ReserveRefusal::Unsaved(BTreeSet::from([PageId::from(key.clone())]))
     );
     assert!(
         live.host

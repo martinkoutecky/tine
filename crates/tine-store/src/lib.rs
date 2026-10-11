@@ -98,7 +98,7 @@ mod page_host;
 pub use page_host::faults as host_faults;
 pub use page_host::{
     DiskToken, DraftStatus, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
-    Reloaded, RenameRefusal, Reservation, StopMode, StopState, Stopped,
+    Reloaded, RenameRefusal, Reservation, ReserveRefusal, StopMode, StopState, Stopped,
 };
 mod page_state;
 mod path_identity;

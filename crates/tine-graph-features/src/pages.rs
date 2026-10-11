@@ -131,6 +131,17 @@ fn error(kind: io::ErrorKind, message: &str) -> io::Error {
     io::Error::new(kind, message)
 }
 
+/// A rename still finishing holds these pages: the host rename's `Busy`,
+/// and a retained writer's past its bound (M6). In-scope scenario: a disk
+/// error keeps failing the rename's writes, or an external editor or a sync
+/// service conflicted a referrer (`docs/storage-contract.md`, I-8).
+pub(crate) fn rename_busy() -> io::Error {
+    error(
+        io::ErrorKind::WouldBlock,
+        "Another rename of these pages is still finishing; try again in a moment.",
+    )
+}
+
 fn view(store: &Store) -> io::Result<tine_store::WholeGraph> {
     store.whole_graph().map_err(|failure| match failure {
         tine_store::LoadError::Failed { reason } => error(io::ErrorKind::Other, &reason),
@@ -959,12 +970,7 @@ fn host_rename(
                 "Couldn't confirm the rename yet; Tine keeps trying to finish it.",
             ))
         }
-        Err(RenameRefusal::Busy) => {
-            return Err(error(
-                io::ErrorKind::WouldBlock,
-                "Another rename of these pages is still finishing; try again in a moment.",
-            ))
-        }
+        Err(RenameRefusal::Busy) => return Err(rename_busy()),
     };
     skipped.extend(first.skipped.iter().cloned());
     skipped.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));

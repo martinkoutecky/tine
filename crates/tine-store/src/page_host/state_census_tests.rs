@@ -126,6 +126,7 @@ const READS: &[&str] = &[
     "is_some_and",
     "is_none_or",
     "is_subset",
+    "is_disjoint",
     "clean",
     "union",
     "difference",

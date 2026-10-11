@@ -4,7 +4,7 @@
 //! deletion while Tine runs; every caller exit removes its slot (Finding B,
 //! R2); a stop carries gated pages by their drafts (R3); a Discard of the
 //! unwitnessed destination cancels in memory; D4 never chains.
-use super::super::retained::{RenameRefusal, OPERATION_WAIT};
+use super::super::retained::{RenameRefusal, ReserveRefusal, OPERATION_WAIT};
 use super::*;
 use crate::page_host::io::Phase;
 use crate::RenameMap;
@@ -335,7 +335,8 @@ const OTHER: &str = "pages/other.md";
 /// even over its clean, witnessed destination; unrelated pages stay
 /// available. Here the referrer conflicts, so the order outlives the
 /// destination's publication; the window taking disk for the referrer lets
-/// the source's deletion finish, the order ends and the reservation is made.
+/// the source's deletion finish, the order ends and the reservation is made
+/// (inside `OPERATION_WAIT`; past it the writer is refused, M6).
 #[test]
 fn a_retained_writer_over_a_running_order_waits_until_it_completes() {
     let live = Live::new(&[
@@ -434,4 +435,128 @@ fn a_retained_writer_over_a_running_order_waits_until_it_is_cancelled() {
         "a cancelled rename never trashes src"
     );
     live.host.stop();
+}
+
+/// M6 (STEP3-DESIGN "Manager decisions on REVIEW-progress-plan", R4
+/// interpretation 2): the bound also covers a rename admitted but not yet
+/// applied. Its operation draft cannot be made durable (an app-data disk
+/// error), so its worker keeps retrying with no order installed and its
+/// pages busy. A writer over one of them is refused `Busy` once
+/// `OPERATION_WAIT` has passed since its start, with nothing reserved; an
+/// unrelated writer is not held up. Once the disk recovers the operation
+/// ends (nothing changed) and the same writer reserves. A references-only
+/// rename runs as the same caller operation worker.
+#[test]
+fn a_retained_writer_over_an_unapplied_rename_is_told_busy_after_the_bound() {
+    let live = Live::new(&[
+        (OLD, "- old\n"),
+        (REF, "- see [[Old]]\n"),
+        (OTHER, "- other\n"),
+    ]);
+    live.faults(Phase::DraftSync, 10_000);
+    let worker = || {
+        live.host
+            .driver
+            .shared
+            .with_state(|state| state.progress.host.worker.is_some())
+    };
+    std::thread::scope(|scope| {
+        let renamed = scope.spawn(|| rename(&live.host, &live.store));
+        until("the rename is admitted", worker);
+        let (sender, refused) = mpsc::channel();
+        let started = Instant::now();
+        let host = &live.host;
+        scope.spawn(move || {
+            let reserved = host.reserve(|| vec![PageId::from(REF)], Input::Refuse);
+            let _ = sender.send(reserved.err());
+        });
+        let unrelated = live
+            .host
+            .reserve(|| vec![PageId::from(OTHER)], Input::Refuse);
+        assert!(unrelated.is_ok(), "an unrelated writer stays available");
+        drop(unrelated);
+        let outcome = refused.recv_timeout(OPERATION_WAIT + Duration::from_secs(3));
+        if outcome.is_err() {
+            // Unblock a writer that still waits (the pre-M6 fence).
+            clear_faults(&live);
+        }
+        assert_eq!(
+            outcome,
+            Ok(Some(ReserveRefusal::Busy)),
+            "M6: a writer over an admitted rename's pages is refused Busy within its bound"
+        );
+        assert!(started.elapsed() >= OPERATION_WAIT);
+        live.host.driver.shared.with_state(|state| {
+            assert!(
+                state.progress.host.retained.is_empty(),
+                "nothing is reserved"
+            );
+            assert!(
+                state.progress.host.worker.is_some(),
+                "the rename still runs"
+            );
+        });
+        assert_eq!(census(&live.host).0, 0, "no order is installed yet");
+        clear_faults(&live);
+        assert!(
+            renamed.join().unwrap().is_err(),
+            "the caller hears no success"
+        );
+    });
+    until("the operation ends", || !worker());
+    assert_eq!(live.disk(OLD), "- old\n");
+    assert_eq!(live.disk(REF), "- see [[Old]]\n");
+    let reservation = live.host.reserve(|| vec![PageId::from(REF)], Input::Refuse);
+    assert!(
+        reservation.is_ok(),
+        "the writer reserves once the operation ended"
+    );
+    drop(reservation);
+    live.host.stop();
+}
+
+/// M6: the operations the retained writer's bound covers. A full rename and
+/// a references-only rename (the source has no file) are renames while
+/// their operation worker runs; a deletion writes no page and is not, so a
+/// writer over it still waits for it.
+#[test]
+fn the_writer_bound_covers_full_and_references_only_renames_not_a_deletion() {
+    let observe = |pages: &[(&str, &str)], run: &(dyn Fn(&PageHost, &Store) + Sync)| -> bool {
+        let live = Live::new(pages);
+        live.faults(Phase::DraftSync, 10_000);
+        let flag = || {
+            live.host.driver.shared.with_state(|state| {
+                state
+                    .progress
+                    .host
+                    .worker
+                    .as_ref()
+                    .map(|worker| worker.rename)
+            })
+        };
+        let rename = std::thread::scope(|scope| {
+            let (host, store) = (&live.host, &*live.store);
+            let running = scope.spawn(move || run(host, store));
+            until("the operation is admitted", || flag().is_some());
+            let rename = flag().unwrap();
+            clear_faults(&live);
+            running.join().unwrap();
+            rename
+        });
+        live.host.stop();
+        rename
+    };
+    let renamed = |host: &PageHost, store: &Store| drop(rename(host, store));
+    assert!(observe(
+        &[(OLD, "- old\n"), (REF, "- see [[Old]]\n")],
+        &renamed
+    ));
+    assert!(
+        observe(&[(REF, "- see [[Old]]\n")], &renamed),
+        "references only"
+    );
+    let deleted = |host: &PageHost, _: &Store| {
+        drop(host.delete(host.session(), &PageId::from(OLD), b"- old\n"));
+    };
+    assert!(!observe(&[(OLD, "- old\n")], &deleted), "a deletion");
 }

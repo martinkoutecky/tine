@@ -9,7 +9,7 @@
 //! `tine-graph-features::retained`.
 
 use std::io;
-use tine_store::{Input, PageHost, PageId};
+use tine_store::{Input, PageHost, PageId, ReserveRefusal};
 
 /// Run `write` as a retained writer of the pages `discover` names.
 /// `discover` runs again under the reservation (a grown set starts over);
@@ -35,7 +35,12 @@ pub(crate) fn reserved<T>(
             },
             input,
         )
-        .map_err(|pages| refused(pages.iter().next().map_or("", PageId::as_str)))?;
+        .map_err(|refusal| match refusal {
+            ReserveRefusal::Unsaved(pages) => {
+                refused(pages.iter().next().map_or("", PageId::as_str))
+            }
+            ReserveRefusal::Busy => crate::pages::rename_busy(),
+        })?;
     // Released when it drops, on a panic's unwind too (A-R1).
     let _reservation = reservation;
     found.and_then(|pages| write(Some(&pages)))

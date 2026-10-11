@@ -40,6 +40,17 @@ pub enum RenameRefusal {
     Busy,
 }
 
+/// Why a retained writer was given no reservation (§7).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReserveRefusal {
+    /// These pages have unsaved input (`Input::Refuse`), or their save
+    /// cannot complete (`Input::Flush`), named by current spelling.
+    Unsaved(BTreeSet<PageId>),
+    /// A rename still finishing held one of the pages for `OPERATION_WAIT`
+    /// from the writer's start (M6); nothing is reserved.
+    Busy,
+}
+
 /// The planner's rewrite of a referrer, when it was computed from exactly
 /// these bytes under this file-name format (GH #623).
 pub type PreparedRewrite<'a> =
@@ -173,15 +184,18 @@ impl PageHost {
     /// returning the pages whose save cannot complete. A returned page is
     /// named by its current spelling, never by its opaque key. The reservation
     /// exists from the fence on, so an unwind out of the rediscovery or the
-    /// check withdraws it (A-R1).
+    /// check withdraws it (A-R1). Every fence shares one deadline,
+    /// `OPERATION_WAIT` from entry: past it a rename still finishing over
+    /// the set refuses `Busy`, with nothing reserved (M6).
     pub fn reserve(
         &self,
         mut discover: impl FnMut() -> Vec<PageId>,
         input: Input,
-    ) -> Result<Reservation, BTreeSet<PageId>> {
+    ) -> Result<Reservation, ReserveRefusal> {
+        let deadline = std::time::Instant::now() + OPERATION_WAIT;
         let mut keys = self.register_all(discover());
         loop {
-            self.fence(&keys);
+            self.fence(&keys, deadline)?;
             let mut reservation = Reservation {
                 keys: keys.clone(),
                 shared: Arc::clone(&self.driver.shared),
@@ -200,10 +214,10 @@ impl PageHost {
             }
             drop(reservation);
             if input == Input::Refuse {
-                return Err(self.spellings(&unsaved));
+                return Err(ReserveRefusal::Unsaved(self.spellings(&unsaved)));
             }
             self.flush(&unsaved)
-                .map_err(|stuck| self.spellings(&stuck))?;
+                .map_err(|stuck| ReserveRefusal::Unsaved(self.spellings(&stuck)))?;
         }
     }
 
@@ -219,13 +233,34 @@ impl PageHost {
     }
 
     /// Reserve `keys` under the state mutex only, waiting on the host
-    /// condition while any is busy (§7 step 3).
-    fn fence(&self, keys: &BTreeSet<PageKey>) {
+    /// condition while any is busy (§7 step 3). Past `deadline`, a rename
+    /// still finishing over them refuses `Busy` (M6): in-scope scenario, a
+    /// disk error keeps failing its drafts or writes, or a sync service or
+    /// external editor conflicted one of its pages. Any other busy page is
+    /// waited for. A host that stopped answering is `Busy` too.
+    fn fence(
+        &self,
+        keys: &BTreeSet<PageKey>,
+        deadline: std::time::Instant,
+    ) -> Result<(), ReserveRefusal> {
         let shared = &self.driver.shared;
         let mut state = shared.state.lock().unwrap();
         while state.progress.host.reserve(keys) == Disposition::Waiting {
-            state = shared.wait(state, std::time::Duration::from_secs(1));
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() && state.progress.host.renaming(keys) {
+                return Err(ReserveRefusal::Busy);
+            }
+            let second = std::time::Duration::from_secs(1);
+            let pause = if left.is_zero() {
+                second
+            } else {
+                left.min(second)
+            };
+            state = shared
+                .wait_checked(state, pause)
+                .ok_or(ReserveRefusal::Busy)?;
         }
+        Ok(())
     }
 
     /// `page_rename` (§7, F10): rename `source`'s page to the absent

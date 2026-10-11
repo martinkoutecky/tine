@@ -4,7 +4,7 @@
 mod binding;
 pub use binding::{
     DiskToken, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal, Reloaded,
-    RenameRefusal, Reservation, StopMode, StopState, Stopped,
+    RenameRefusal, Reservation, ReserveRefusal, StopMode, StopState, Stopped,
 };
 pub use io::DraftStatus;
 #[cfg(test)]
@@ -374,6 +374,9 @@ struct DraftWorker {
     /// Pending-effect failures outlive replacement representation vehicles.
     failures: u32,
     recover_notice: bool,
+    /// A caller's rename, full or references-only (a deletion writes no
+    /// page): a retained writer waits for it at most `OPERATION_WAIT` (M6).
+    rename: bool,
 }
 
 /// A key's logical state (`Host::logical`).
@@ -1160,8 +1163,19 @@ impl<F: HostIo> Host<F> {
             .collect()
     }
 
+    /// A rename still finishing over any of `keys` (M6): its running
+    /// order, or its operation worker, which holds the pages from admission
+    /// until its order installs and through a references-only rename's
+    /// explosion.
+    fn renaming(&self, keys: &BTreeSet<PageKey>) -> bool {
+        self.order.touches(keys)
+            || (self.worker.as_ref())
+                .is_some_and(|worker| worker.rename && !worker.pages.is_disjoint(keys))
+    }
+
     /// D4 with no chaining (REVIEW-3b-P2b R2): a retained writer over a
-    /// page of a running order waits, like a host operation, until it ends.
+    /// page of a running order waits, like a host operation, until it ends
+    /// (its caller bounds the wait, M6).
     fn reserve(&mut self, keys: &BTreeSet<PageKey>) -> Disposition {
         if !self.keys.includes(keys) {
             return Disposition::Refused;
@@ -1448,6 +1462,7 @@ impl<F: HostIo> Host<F> {
             tidied: false,
             failures: 0,
             recover_notice: true,
+            rename: false,
         });
         Disposition::Pending
     }

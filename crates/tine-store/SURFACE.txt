@@ -281,7 +281,7 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 37)
+## Page host (ceiling: 38)
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
 # for its retained-writer callers (census writers in tine-graph-features, backup restore in
 # src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
@@ -292,6 +292,10 @@ fn store::WholeGraph::templates
 # file I/O. Step 3b P2b (36 -> 37): `start`, the production constructor src-tauri's graph
 # binding calls (graph.rs load_graph_for_label); no existing item starts a host outside
 # tests (`start_for_tests` is test-faults gated and picks a fixed graph id).
+# M6 (37 -> 38): `ReserveRefusal`, `reserve`'s refusal: unsaved pages, or `Busy` once a
+# rename still finishing held them for OPERATION_WAIT. The previous error type (the set
+# of unsaved pages) cannot say Busy, and `RenameRefusal` is a rename's outcome, not a
+# writer's reservation (STEP3-DESIGN manager decisions on REVIEW-progress-plan, R4).
 struct page_host::PageHost
 fn page_host::PageHost::start
 fn page_host::PageHost::reserve
@@ -327,11 +331,12 @@ fn page_host::PageHost::start_for_tests
 struct page_host::Reservation
 enum page_host::Input
 enum page_host::RenameRefusal
+enum page_host::ReserveRefusal
 enum page_host::StopMode
 struct page_host::Stopped
 fn page_host::Stopped::relaunch
 ## Re-exports (ceiling: 9)
-use crate::page_host::{DiskToken,DraftStatus,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,StopMode,StopState,Stopped,}
+use crate::page_host::{DiskToken,DraftStatus,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}

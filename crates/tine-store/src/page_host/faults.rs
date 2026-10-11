@@ -4,6 +4,10 @@
 //! syncs are counted at the same seam (`cost_counters`).
 pub use super::io::Phase;
 
+/// The bound a host operation's caller and a retained writer wait for
+/// (Finding B, M6), for tests that time it.
+pub use super::binding::OPERATION_WAIT;
+
 /// The next host started on this thread fails `phase` `times` times with
 /// `kind` (one failure per call), then succeeds.
 pub fn fail(phase: Phase, kind: super::production::FaultKind, times: usize) {

@@ -1487,7 +1487,7 @@ mod publication;
 
 #[path = "binding_launch.rs"]
 mod launch;
-pub use retained::{RenameRefusal, Reservation};
+pub use retained::{RenameRefusal, Reservation, ReserveRefusal, OPERATION_WAIT};
 #[cfg(test)]
 #[path = "binding_tests.rs"]
 mod tests;

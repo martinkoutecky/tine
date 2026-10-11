@@ -89,6 +89,7 @@ impl<F: HostIo> Host<F> {
                     tidied: false,
                     failures: 0,
                     recover_notice: true,
+                    rename: false,
                 });
             } else {
                 if previous.is_none() {
@@ -116,6 +117,7 @@ impl<F: HostIo> Host<F> {
                     tidied: false,
                     failures: 0,
                     recover_notice: true,
+                    rename: false,
                 });
             }
             Disposition::Pending
@@ -142,6 +144,8 @@ impl<F: HostIo> Host<F> {
             Reply::Window(_) => drafts::page_name(&records[0].page),
             Reply::Caller(_) => drafts::op_name(),
         };
+        // Every rename writes a page; a deletion's one record has no bytes.
+        let rename = matches!(reply, Reply::Caller(_)) && records.iter().any(|r| r.bytes.is_some());
         self.worker = Some(DraftWorker {
             effect: name.clone(),
             refresh: None,
@@ -163,6 +167,7 @@ impl<F: HostIo> Host<F> {
             tidied: false,
             failures: 0,
             recover_notice: true,
+            rename,
         });
     }
 
