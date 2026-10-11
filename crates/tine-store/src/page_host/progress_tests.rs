@@ -1739,3 +1739,39 @@ fn rename_cost_removal_copy_failure_keeps_the_sibling_through_progress() {
         "RENAME-COST L2: a removal's failed sibling copy retries before the operation file goes"
     );
 }
+
+/// REVIEW-rename-cost F1: a page of a rename whose save keeps failing must
+/// not keep its published siblings' records in the operation file through a
+/// stop. The stop drafts the failing page (its exact record) and explodes the
+/// operation file, as before RENAME-COST (`a_switch_drafts_a_page_only_after_its_save_fails`),
+/// so a close, switch or exit completes instead of waiting forever.
+#[test]
+fn rename_cost_a_failing_operation_page_does_not_block_a_stop() {
+    let mut h = super::lazy_operation_group();
+    saved(&mut h, "c.md");
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    p.host.fs.inject(Phase::PageTemp, [Fault::Before; 200]);
+    pump(&mut p);
+    assert!(p.host.pages["b.md"].risk && !p.host.pages["b.md"].conflict);
+    assert!(
+        p.host.op_waits("c.md"),
+        "precondition: c's record waits for b"
+    );
+    begin_stop(&mut p, false);
+    for n in 1..=20 {
+        time(&p, n * 60_000);
+        pump(&mut p);
+    }
+    assert_eq!(state(&p), StopState::Ready);
+    let logical = drafts::scan(p.host.fs.draft_files(true)).logical;
+    assert!(
+        !logical.contains_key("c.md"),
+        "the published page's record is gone"
+    );
+    let (b, record) = (&p.host.pages["b.md"], &logical["b.md"]);
+    assert_eq!(
+        (&record.bytes, &record.base, record.version),
+        (&b.buf, &b.base, b.version),
+        "the failing page keeps its exact draft"
+    );
+}

@@ -282,9 +282,9 @@ pub(super) struct Progress<F: HostIo, C: Clock> {
     /// Every key a reconcile visited since Book last took them: ownership
     /// changes for the publication consumer (B1, B2).
     moved: BTreeSet<PageKey>,
-    /// The host incarnation and liveness the sets were built for; a change
-    /// rebuilds them.
-    seen: Option<(u64, bool)>,
+    /// The host incarnation and liveness, and whether a stop ran, that the
+    /// sets were built for; a change rebuilds them.
+    seen: Option<(u64, bool, bool)>,
     events_seen: usize,
     draft_retry: Option<u64>,
     draft_retries: u32,
@@ -486,11 +486,17 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         self.host.sync_drafts();
         let now = self.clock.now_ms();
         let mut visit = std::mem::take(&mut self.host.changed);
-        let current = (self.host.incarnation, self.host.alive);
+        if self.host.switch_confirmation.is_none() {
+            self.stopping = None;
+        }
+        // A stop starting or ending moves every operation page's draft
+        // candidacy (`draft_membership`).
+        let stopping = self.stopping.is_some();
+        let current = (self.host.incarnation, self.host.alive, stopping);
         if self.seen != Some(current) {
             if self
                 .seen
-                .is_some_and(|(incarnation, _)| incarnation != current.0)
+                .is_some_and(|(incarnation, _, _)| incarnation != current.0)
             {
                 self.times.clear();
                 self.draft_retry = None;
@@ -509,9 +515,6 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 visit.entry(key).or_insert(false);
             }
             self.drafted.clear();
-        }
-        if self.host.switch_confirmation.is_none() {
-            self.stopping = None;
         }
         for (key, urgent) in &visit {
             work(Work::Reconcile, 1);
@@ -563,7 +566,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             let Some(t) = self.times.get_mut(key) else {
                 self.stuck.remove(key);
                 if self.host.alive {
-                    Self::draft_membership(&mut self.drafted, &self.host, key);
+                    Self::draft_membership(&mut self.drafted, &self.host, stopping, key);
                 }
                 continue;
             };
@@ -581,7 +584,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 self.stuck.remove(key);
             }
             if self.host.alive {
-                Self::draft_membership(&mut self.drafted, &self.host, key);
+                Self::draft_membership(&mut self.drafted, &self.host, stopping, key);
             }
         }
         #[cfg(test)]
@@ -590,12 +593,22 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
 
     /// `key` is a draft candidate iff its desired draft (the page at risk,
     /// else none) differs from its live logical draft (B1: absent keys too).
-    fn draft_membership(drafted: &mut BTreeSet<PageKey>, host: &Host<F>, key: &str) {
+    /// RENAME-COST L1: a page with no desired draft keeps its record in its
+    /// operation vehicle while that still owes a publication, except during
+    /// a stop: the stop saves what it can and drafts the rest, so no owe is
+    /// paid in this incarnation, and the vehicle explodes as before the
+    /// change (REVIEW-rename-cost F1: a failing or gated page's owe otherwise
+    /// kept a published page's record, and the stop waited forever).
+    fn draft_membership(
+        drafted: &mut BTreeSet<PageKey>,
+        host: &Host<F>,
+        stopping: bool,
+        key: &str,
+    ) {
         let draft = host.draft_of(key);
         let differs = match host.pages.get(key).filter(|page| page.risk) {
             Some(page) => !draft.is_some_and(|r| r.holds(page)),
-            // RENAME-COST L1: its record retires with its operation vehicle.
-            None => draft.is_some() && !host.op_waits(key),
+            None => draft.is_some() && (stopping || !host.op_waits(key)),
         };
         if differs {
             drafted.insert(key.into());
@@ -910,7 +923,7 @@ impl Reference {
             let candidates = self.pages.keys().chain(self.logical.keys());
             let differs = |key: &&PageKey| match self.pages.get(*key).filter(|page| page.risk) {
                 Some(page) => !self.logical.get(*key).is_some_and(|r| r.holds(page)),
-                None => self.logical.contains_key(*key) && !op_waits(key),
+                None => self.logical.contains_key(*key) && (p.stopping.is_some() || !op_waits(key)),
             };
             candidates.filter(differs).cloned().collect()
         } else {

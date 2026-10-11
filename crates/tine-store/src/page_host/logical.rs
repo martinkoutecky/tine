@@ -131,8 +131,10 @@ impl<F: HostIo> Host<F> {
     }
 
     /// RENAME-COST L1: the operation vehicle holding a record of `key`.
-    /// L2 keeps it to one: an effect on a page of a live vehicle explodes
-    /// it first (launch explodes all of them).
+    /// Outside a running worker there is at most one: an operation install
+    /// absorbs its pages' older vehicle before it finishes, and launch
+    /// explodes every vehicle (pinned by
+    /// `rename_cost_an_op_absorbing_an_older_op_keeps_published_bytes_at_every_cut`).
     pub(super) fn live_op(&self, key: &str) -> Option<String> {
         let names = self.vehicles_of.get(key).into_iter().flatten();
         names.filter(|n| n.starts_with("op-")).next().cloned()

@@ -569,7 +569,6 @@ fn repeated_launch_explosion_retains_one_identical_copy_per_page() {
     assert_eq!(h.fs.draft_files(true).len(), 1);
 }
 
-#[test]
 /// RENAME-COST L1/L2: an applied operation is not exploded, so its pages
 /// save at once; a refresh that supersedes one page's record retires the
 /// vehicle after durable copies of the others' (a failed copy is retried).
@@ -1336,4 +1335,117 @@ fn rename_cost_retire_keeps_its_pages_busy_and_relaunch_preserves_owed() {
     }
     drain(&mut h);
     assert!(h.fs.draft_files(true).is_empty());
+}
+
+/// RENAME-COST L1 crash cuts (REVIEW-rename-cost F2): a published operation
+/// retired whole, cut after every step, by crash and by power loss. A page
+/// recovers nothing but what it published, and no cut raises a conflict.
+#[test]
+fn rename_cost_retire_every_cut_recovers_only_published_bytes() {
+    for power in [false, true] {
+        let mut completed = false;
+        for k in 0..12 {
+            let mut h = lazy_operation_group();
+            for key in ["c.md", "b.md", "a.md"] {
+                saved(&mut h, key);
+            }
+            let published: BTreeMap<PageKey, Text> = ["a.md", "b.md", "c.md"]
+                .iter()
+                .map(|key| (key.to_string(), h.pages[*key].buf.clone()))
+                .collect();
+            assert_eq!(h.begin_draft_with("a.md", true), Disposition::Pending);
+            assert!(matches!(
+                h.worker.as_ref().unwrap().application,
+                Some(Application::Retire)
+            ));
+            for _ in 0..k {
+                if h.worker.is_none() {
+                    break;
+                }
+                h.advance_draft();
+            }
+            completed |= h.worker.is_none();
+            restart(&mut h, power, false);
+            for (key, bytes) in &published {
+                if let Some(page) = h.pages.get(key) {
+                    assert_eq!(&page.buf, bytes, "cut {k} power {power}: {key}");
+                    assert!(!page.conflict, "cut {k} power {power}: {key} conflict");
+                }
+            }
+        }
+        assert!(completed, "the cuts reach the retirement's end");
+    }
+}
+
+/// RENAME-COST L2 crash cuts (REVIEW-rename-cost F2): op1 (a.md → c.md, b.md
+/// a referrer) published but its vehicle live; op2 renames c.md → d.md and
+/// absorbs op1 at its terminal. Cut after every step, by crash and by power
+/// loss: b.md recovers only its published bytes and nothing conflicts.
+#[test]
+fn rename_cost_an_op_absorbing_an_older_op_keeps_published_bytes_at_every_cut() {
+    for power in [false, true] {
+        let mut completed = false;
+        for k in 0..40 {
+            let mut h = lazy_group_with_d();
+            for key in ["c.md", "b.md", "a.md"] {
+                saved(&mut h, key);
+            }
+            let published_b = h.pages["b.md"].buf.clone();
+            let renamed = h.rename_with("c.md", "d.md", &BTreeSet::new(), |bytes, _, _| {
+                Ok(bytes.clone())
+            });
+            assert_eq!(renamed, Disposition::Pending, "op2 admitted");
+            for _ in 0..k {
+                if h.worker.is_none() {
+                    break;
+                }
+                h.advance_draft();
+            }
+            completed |= h.worker.is_none();
+            if h.worker.is_none() {
+                // `live_op`: outside a running worker a page has at most one
+                // operation vehicle (op2 absorbed op1 before it finished).
+                for (page, names) in &h.vehicles_of {
+                    let ops = names.iter().filter(|n| n.starts_with("op-")).count();
+                    assert!(ops <= 1, "{page} in {ops} operation vehicles");
+                }
+            }
+            restart(&mut h, power, false);
+            if let Some(b) = h.pages.get("b.md") {
+                assert_eq!(b.buf, published_b, "cut {k} power {power}: b.md");
+                assert!(!b.conflict, "cut {k} power {power}: b.md conflict");
+            }
+            let a_conflict = h.pages.get("a.md").is_some_and(|a| a.conflict);
+            assert!(!a_conflict, "cut {k} power {power}: a.md conflict");
+        }
+        assert!(completed, "the cuts reach op2's end");
+    }
+}
+
+fn lazy_group_with_d() -> Host<ModelFs> {
+    let mut fs = ModelFs::default();
+    fs.external("a.md", text("A"), true);
+    fs.external("b.md", text("valuable original b"), true);
+    let locks = ["a.md", "b.md", "c.md", "d.md"]
+        .into_iter()
+        .map(|key| (key.into(), Arc::new(Mutex::new(()))))
+        .collect();
+    let mut h = Host::new(fs, locks);
+    open(&mut h, "b.md");
+    let renamed = h.rename_with(
+        "a.md",
+        "c.md",
+        &BTreeSet::from(["b.md".into()]),
+        |bytes, key, _| {
+            Ok(if key == "b.md" {
+                text("valuable operation b")
+            } else {
+                bytes.clone()
+            })
+        },
+    );
+    assert_eq!(renamed, Disposition::Pending);
+    drain(&mut h);
+    assert_eq!(h.fs.draft_files(true).len(), 1);
+    h
 }
