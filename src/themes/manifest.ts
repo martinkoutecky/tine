@@ -72,7 +72,8 @@ export class ThemeManifestError extends Error {
   }
 }
 
-const COLOR_RE = /^(?:#[0-9A-Fa-f]{3,8}|transparent|(?:rgb|rgba|hsl|hsla)\([0-9.,%+\- /]+\))$/;
+/** The literal-colour grammar every user-supplied colour must match (theme tokens, style knobs). */
+export const COLOR_RE = /^(?:#[0-9A-Fa-f]{3,8}|transparent|(?:rgb|rgba|hsl|hsla)\([0-9.,%+\- /]+\))$/;
 
 const { record, knownKeys, text } = schemaGuards(ThemeManifestError, {
   object: (where) => `${where} must be an object`,

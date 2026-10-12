@@ -10,6 +10,7 @@ import {
 } from "../favorites";
 import { type FavRow, isWithin, itemKind, resolveDrop, visibleRows } from "../favoritesLayout";
 import { SidebarTitle } from "./SidebarTitle";
+import { pageIcon } from "../pageIconBatch";
 import type { PageKind } from "../types";
 import { beginRowReorderDrag, rowReorderClickSuppressed, type RowDropTarget } from "./rowReorder";
 import "../styles/favorites.css";
@@ -104,7 +105,7 @@ export function SidebarFavorites(props: {
               {toggle}
               {/* ⭐ via EmojiText: WebKitGTK's Skia COLRv1 path crashes painting a
                   raw color-emoji glyph on hardened libstdc++ (#29). */}
-              <SidebarTitle text={`⭐ ${name}`} fullTitle={name} />
+              <SidebarTitle text={`${pageIcon(name) || "⭐"} ${name}`} fullTitle={name} />
             </div>
           );
         }}

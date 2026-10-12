@@ -5,8 +5,10 @@ icon:: 🎨
 - ## 1. Start from a color scheme
   - 1. Open Settings (**t s**) → **Appearance** and look at **Color scheme**. Default, Nord, Solarized, Gruvbox, and **Soft** are built in. Soft is a gentler, medium-brightness take on Tine's own look: a warm medium-light in light mode and a neutral medium-dark in dark mode.
   - 2. Pick one. It applies at once and is remembered on this device.
-  - 3. Precedence, lowest to highest: Tine's stock palette, then the color scheme you picked, then your graph's `logseq/custom.css`. Your CSS always has the last word, and an installed theme package never edits it. A **Style** preset such as editorial reading type keeps its own look, but the font and size tokens below still override its fonts and text size.
-  - What you should see: the whole window recolors together. Anything you then set in `custom.css` overrides only what you set.
+  - 3. Precedence, lowest to highest: Tine's stock palette, then the color scheme you picked, then the **Fine-tuning** choices below, then your graph's `logseq/custom.css`. Your CSS always has the last word, and an installed theme package never edits it. A **Style** preset such as editorial reading type keeps its own look, but the font and size tokens below still override its fonts and text size.
+  - 4. Below the gallery, **Fine-tuning** holds a few visual details that are not worth a theme of their own. **Embedded blocks** shows embeds as a shaded box (the default) or with only the accent line and dot. **Links to the web or a file** is a solid underline (the default), a dotted one, or none; links to pages never have one, so the two kinds read differently. **Links to pages that do not exist yet** is the dimmed link color (the default), a stronger one, or the same color as other links. Every choice starts at Tine's default look, takes effect at once, and has its own **Reset**.
+  - Fine-tuning choices are saved on this device (under `style.knobs.v1` in Tine's device settings), never in your graph, so they do not follow the graph to another computer. **Disable custom CSS** switches them off for the session along with your stylesheet, and your `custom.css` outranks them.
+  - What you should see: the whole window recolors together. Anything you then set in `custom.css` overrides only what you set. A Fine-tuning choice changes its one detail at once and **Reset** puts it back.
 - ## 2. Open your custom.css
   - 1. Settings → **Appearance** → **Custom CSS** → **Edit custom.css**. Tine creates `logseq/custom.css` in your graph folder with a short commented starter if the graph has none, then asks your system to open it with its default app for `.css` files. That app is not always a text editor (on some systems it is a browser or a viewer): choose a text editor as the default for `.css` files, or open the file yourself from your graph folder. Tine never overwrites a file that already exists. On a synced graph, let `logseq/custom.css` finish arriving on this device before you press the button: creating it first can make your sync tool keep the starter and set your real file aside as a conflict copy.
   - 2. Save the file. Tine notices the change on disk and re-applies it in the open window: no restart and no reopening the graph.
@@ -14,7 +16,7 @@ icon:: 🎨
   - What you should see: a rule such as `:root { --tine-bullet-color: orange; }` recolors every bullet as soon as you save.
   - Something went wrong? **Settings → Appearance → Custom CSS → Disable custom CSS** ignores the file for this session only. It is never saved, so restarting Tine always brings custom CSS back; fix the file, then switch it back on. If the stylesheet hides Settings itself, open the command palette (**Mod+Shift+P**) and run **Toggle custom CSS (safe mode, this session)**.
 - ## 3. The supported names: `--tine-*` tokens
-  - A token is a named setting. Each starts unset, which means "do what Tine always did", so nothing changes until you set one. Set tokens on `:root` or `html`, like the recipes below; any selector you write wins over Tine's own, because Tine declares them with no specificity. These thirteen names are the ones Tine promises to keep: if one is ever removed or renamed, the changelog says so.
+  - A token is a named setting. Each starts unset, which means "do what Tine always did", so nothing changes until you set one. Set tokens on `:root` or `html`, like the recipes below; any selector you write wins over Tine's own, because Tine declares them with no specificity. These fifteen names are the ones Tine promises to keep: if one is ever removed or renamed, the changelog says so.
   - | Token | Controls | Default |
     | --- | --- | --- |
     | `--tine-embed-bg` | Background of an embedded block or page | The theme's secondary background |
@@ -23,6 +25,8 @@ icon:: 🎨
     | `--tine-bullet-size` | Diameter of the block bullet dot | 6px |
     | `--tine-tag-color` | Color of `#tags` and tag chips | The theme's tag color |
     | `--tine-highlight-bg` | Background of `^^highlighted^^` text | The theme's highlight color |
+    | `--tine-missing-page-color` | Color of a link to a page that does not exist yet | A dimmed tint of the link color |
+    | `--tine-external-link-underline` | The line under a link to a web address or file | `1px solid` (use `none` to remove it) |
     | `--tine-content-width` | Maximum width of the page column | 810px |
     | `--tine-content-width-wide` | Maximum width of the column in Wide mode | 100% |
     | `--tine-page-title-size` | Font size of a page title | 28px |
