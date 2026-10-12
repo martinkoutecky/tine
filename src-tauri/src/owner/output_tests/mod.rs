@@ -66,7 +66,20 @@ impl Fixture {
         );
         write(
             "pages/b.md",
-            &format!("- see [[a]]\n- and (({UUID}))\n- TODO see [[a]] again\n"),
+            &format!("- see [[a]]\n  author:: erin\n- and (({UUID}))\n- TODO see [[a]] again\n"),
+        );
+        // Literal `author::` text inside a code fence is content, not attribution.
+        write(
+            "pages/fence.md",
+            "- Example\n  ```\n  author:: Bob\n  ```\n- Real\n  author:: Alice\n  note:: x\n  ```\n  author:: Bob\n  ```\n",
+        );
+        write(
+            "pages/org1.org",
+            "* Heading\n:PROPERTIES:\n:author: carol\n:END:\nbody\n",
+        );
+        write(
+            "pages/lookalike.md",
+            "- text\n  Author::   Dave  \n- authors:: x\n- plain\n  authors:: y\n",
         );
         write("pages/props.md", "foo:: bar\n\n- x\n");
         write("pages/ns___child.md", "- in a namespace\n");
@@ -1005,23 +1018,66 @@ fn author_sits_beside_the_address_not_on_a_later_line() {
 }
 
 #[test]
-fn author_is_read_by_the_property_grammar_not_by_a_look_alike() {
-    let outline = |raw: &str| {
-        text_of(&json!({
-            "kind": "block",
-            "block": { "group": { "page": "p", "blocks": [{ "raw": raw, "children": [] }] }, "truncated": 0 },
-        }))
-    };
-    // A first line that merely says "author::" is text, not attribution.
-    assert!(outline("author:: is how I start\nsecond").contains("1 author:: is how I start"));
-    // The value is the property's, spacing trimmed; a nested block gets its own.
-    assert!(outline("text\nAuthor::   Bob  ").contains("1 [author:: Bob] text"));
-    // Org drawers.
-    let org = outline("text\n:PROPERTIES:\n:author: carol\n:END:");
-    assert!(org.contains("1 [author:: carol] text"), "{org}");
+fn author_attribution_is_the_projections_not_a_scan_of_the_lines() {
+    let fixture = Fixture::new();
+    let outline = |name: &str| text_of(&fixture.ok("page.show", json!({ "name": name })));
+
+    // Code fence content (CODE-2 F6): a block whose only `author::` is inside a
+    // fence has no author; the literal line stays where it is.
+    let fence = outline("fence");
+    let lines: Vec<&str> = fence.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| *l == "1 Example")
+        .unwrap_or_else(|| panic!("{fence}"));
+    assert_eq!(
+        &lines[at..at + 4],
+        ["1 Example", "  ```", "  author:: Bob", "  ```"],
+        "{fence}"
+    );
+    // A block with a real property AND a fenced line: the property is the
+    // attribution (and is not repeated); the fenced line stays.
+    let at = lines
+        .iter()
+        .position(|l| *l == "2 [author:: Alice] Real")
+        .unwrap_or_else(|| panic!("{fence}"));
+    assert_eq!(
+        &lines[at..],
+        [
+            "2 [author:: Alice] Real",
+            "  note:: x",
+            "  ```",
+            "  author:: Bob",
+            "  ```"
+        ],
+        "{fence}"
+    );
+
+    // Org drawer.
+    let org = outline("org1");
+    assert!(org.contains("1 [author:: carol] Heading"), "{org}");
     assert!(!org.contains(":author:"), "{org}");
-    // A different property is not attribution.
-    assert!(!outline("text\nauthors:: x").contains("[author::"));
+
+    // Key spelling and look-alikes: the value is trimmed; `authors::` is another key.
+    let look = outline("lookalike");
+    assert!(look.contains("1 [author:: Dave] text"), "{look}");
+    assert!(!look.contains("Dave  "), "{look}");
+    assert!(
+        look.contains("2 authors:: x"),
+        "the first line is text: {look}"
+    );
+    assert!(
+        look.contains("3 plain") && look.contains("authors:: y"),
+        "{look}"
+    );
+    assert!(
+        !look.contains("[author:: x]") && !look.contains("[author:: y]"),
+        "{look}"
+    );
+
+    // The same block reached through another verb.
+    let query = text_of(&fixture.ok("query", json!({ "text": "[[a]]" })));
+    assert!(query.contains("[author:: claude] one"), "{query}");
 }
 
 #[test]
@@ -1050,4 +1106,91 @@ fn a_preview_cut_at_the_node_bound_says_how_many_nodes_it_left_out() {
         "{}",
         text_of(&two)
     );
+}
+
+// ---------------------------------------------------------------------------
+// Value semantics the producers back (CODE-2 F7)
+
+#[test]
+fn a_page_the_parser_refuses_has_no_payload_and_text_is_never_lossy() {
+    let fixture = Fixture::new();
+    // The contract: invalid UTF-8 is refused before any `text` exists.
+    std::fs::write(fixture.root.join("journals/2026_10_13.md"), b"- \xff\n").unwrap();
+    let refusal = fixture
+        .ask("journal", json!({ "date": "2026-10-13" }))
+        .expect_err("a journal holding invalid UTF-8 has no payload");
+    assert_eq!(refusal.code, "internal");
+    assert_eq!(refusal.message, "cli-store-failed: Undecodable");
+    assert_eq!(refusal.detail.as_ref().unwrap()["diag"], "cli-store-failed");
+    assert_eq!(exit_code(&refusal.code), 1);
+    assert!(
+        DOC.contains("cli-store-failed: Undecodable") && DOC.contains("\\xff"),
+        "the contract states this refusal"
+    );
+    // So `text` is the file's text, byte for byte.
+    let payload = fixture.ok("page.show", json!({ "name": "a" }));
+    let file = std::fs::read_to_string(fixture.root.join("pages/a.md")).unwrap();
+    assert_eq!(payload["text"], file);
+}
+
+#[test]
+fn has_more_is_false_for_a_category_that_was_switched_off() {
+    let fixture = Fixture::new();
+    let search = |args: Value| fixture.ok("search", args);
+    let hit_kinds = |payload: &Value| -> BTreeSet<String> {
+        payload["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["entity"].as_str().unwrap().to_string())
+            .collect()
+    };
+    // `x` matches two pages by name and many blocks ("child N" holds no `x`,
+    // so use text that both categories can match).
+    let full = search(json!({ "text": "x" }));
+    assert!(hit_kinds(&full).contains("page"), "{full}");
+    assert_eq!(
+        full["cancelled"], false,
+        "tine search names no cancellation lane"
+    );
+
+    // A limit that cuts the list says so.
+    let cut = search(json!({ "text": "x", "pages": 1 }));
+    assert_eq!(cut["has_more"]["pages"], true, "{cut}");
+    let cut = search(json!({ "text": "child", "blocks": 1 }));
+    assert_eq!(cut["has_more"]["blocks"], true, "{cut}");
+
+    // A category switched off with 0 is not searched: nothing of it is returned
+    // and its flag is false, which means "not checked", not "complete".
+    let off = search(json!({ "text": "x", "pages": 0, "blocks": 0 }));
+    assert!(off["hits"].as_array().unwrap().is_empty(), "{off}");
+    assert_eq!(off["has_more"], json!({ "pages": false, "blocks": false }));
+    let no_pages = search(json!({ "text": "x", "pages": 0 }));
+    assert!(!hit_kinds(&no_pages).contains("page"), "{no_pages}");
+    assert_eq!(no_pages["has_more"]["pages"], false);
+    let no_blocks = search(json!({ "text": "child", "blocks": 0 }));
+    assert!(!hit_kinds(&no_blocks).contains("block"), "{no_blocks}");
+    assert_eq!(no_blocks["has_more"]["blocks"], false);
+    // The contract says both halves of this.
+    assert!(
+        DOC.contains("switched off") && DOC.contains("not checked"),
+        "the contract states what false means for a switched-off category"
+    );
+}
+
+#[test]
+fn query_total_counts_the_returned_matches_unless_exceeded() {
+    let fixture = Fixture::new();
+    for text in ["[[a]]", "(task TODO)", ADVANCED_RUNS] {
+        let payload = fixture.ok("query", json!({ "text": text }));
+        assert_eq!(payload["exceeded"], false, "{text}");
+        let returned: usize = values_at(&payload, "groups[].blocks")
+            .iter()
+            .map(|blocks| blocks.as_array().unwrap().len())
+            .sum();
+        assert!(returned > 0, "{text}: the fixture must match something");
+        assert_eq!(payload["total"], returned, "{text}: {payload}");
+    }
+    let pages = fixture.ok("query", json!({ "text": "(page-property foo bar)" }));
+    assert_eq!(pages["total"], pages["pages"].as_array().unwrap().len());
 }
