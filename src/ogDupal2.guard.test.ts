@@ -16,12 +16,12 @@ it("I-12: imported outline construction is blocks.ts createOutline; deletion is 
   const blocks = read("src/document/edits/blocks.ts");
   expect(blocks.match(/const create =/g)).toHaveLength(1);
   expect(blocks.match(/createOutline\((?:s|state), nodes/g)).toHaveLength(3);
-  // One block's deletion is the kernel's verb (outline-kernel M1); selection
-  // deletion keeps the TS primitive until its family migrates (M3).
-  expect(blocks).toContain('outlineChange({ verb: "delete", key: id }');
+  // Block and selection deletion are the kernel's verb (outline-kernel M1).
+  expect(blocks).toContain('outlineChange({ verb: "delete", keys: [id] }');
   expect(blocks).not.toMatch(/removeSubtree|delete s\.byId/);
   const selection = read("src/document/edits/selection.ts");
-  expect(selection).toContain("removeSubtree(s, id)");
+  expect(selection).toContain('outlineChange({ verb: "delete", keys: ids }');
+  expect(selection).not.toMatch(/removeSubtree|delete s\.byId/);
   for (const name of ["blocks", "selection"]) expect(read(`src/document/edits/${name}.ts`)).not.toContain("const rm =");
   const moves = read("src/document/edits/moves.ts");
   expect(moves).not.toContain("const reassign =");

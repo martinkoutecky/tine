@@ -49,6 +49,8 @@ import { doc, setDoc } from "../model";
 import { nextVisible } from "../tree";
 import { loadFeed, resetStore } from "../workingSet";
 import { deleteBlock, indentBlock, insertEmptyChildBlock, mergeWithNext, outdentBlock, splitBlock } from "./blocks";
+import { moveBlock, moveBlocksRelative, moveItem, moveSelectionItems } from "./moves";
+import { clearSelection, deleteSelection, extendSelectionTo, indentSelection, outdentSelection, selectBlock, topSelected } from "./selection";
 
 interface TreeNode { key: string; raw: string; children?: TreeNode[]; collapsed?: boolean }
 interface FixturePage { name: string; format: "md" | "org"; roots: TreeNode[]; header_root?: string; read_only?: boolean; frozen?: boolean }
@@ -57,7 +59,9 @@ interface Case { name: string; page: FixturePage; verb: Record<string, any>; exp
 
 const FIXTURE = new URL("../../../crates/tine-outline/tests/fixtures/ops/m1.json", import.meta.url);
 const fixture = JSON.parse(readFileSync(FIXTURE, "utf8")) as { _comment: string; cases: Case[] };
-const RECORD = process.env.TINE_RECORD_KERNEL_FIXTURES === "1";
+// "1" records every case; "missing" records only cases without `expect`.
+const RECORD_MODE = process.env.TINE_RECORD_KERNEL_FIXTURES;
+const RECORD = RECORD_MODE === "1" || RECORD_MODE === "missing";
 
 /** The view collapse the fixtures assume: everything shown, except a split's
  * block with children whose `children_visible` is false. Mirrored by the Rust
@@ -80,7 +84,15 @@ function snapshot(name: string): FixturePage {
 
 const utf16 = (raw: string, bytes: number) => new TextDecoder().decode(new TextEncoder().encode(raw).subarray(0, bytes)).length;
 
-function run(c: Case): Expect {
+/** Select `keys` as the window does: a visible range whose top-level blocks
+ *  are exactly `keys`. */
+function selectKeys(c: Case, keys: string[]): void {
+  selectBlock(keys[0]);
+  extendSelectionTo(keys[keys.length - 1]);
+  if (JSON.stringify(topSelected()) !== JSON.stringify(keys)) throw new Error(`${c.name}: the selection's top-level blocks are not ${keys}`);
+}
+
+async function run(c: Case): Promise<Expect> {
   const v = c.verb;
   const collapsedKey = v.verb === "split" && !v.children_visible ? v.key : null;
   loadFeed([{ name: c.page.name, kind: "page", title: c.page.name, pre_block: null, format: c.page.format, read_only: c.page.read_only ?? false, blocks: c.page.roots.map((r) => toDto(r, collapsedKey)) }]);
@@ -104,15 +116,50 @@ function run(c: Case): Expect {
       mergeWithNext(v.survivor, null, null);
       break;
     case "indent":
-      depthRefusal = indentBlock(v.key, KEEP as never, null) === false;
+      if (v.keys.length > 1) {
+        selectKeys(c, v.keys);
+        indentSelection();
+      } else {
+        depthRefusal = indentBlock(v.keys[0], KEEP as never, null) === false;
+      }
       break;
     case "outdent":
       logical = v.logical ?? false;
-      outdentBlock(v.key, KEEP as never, null);
+      if (v.keys.length > 1) {
+        if (!logical) throw new Error(`${c.name}: a selection outdents logically`);
+        selectKeys(c, v.keys);
+        outdentSelection();
+      } else {
+        outdentBlock(v.keys[0], KEEP as never, null);
+      }
       break;
     case "delete":
-      deleteBlock(v.key);
+      if (v.keys.length > 1) {
+        selectKeys(c, v.keys);
+        deleteSelection();
+      } else {
+        deleteBlock(v.keys[0]);
+      }
       break;
+    case "move_up_down":
+      if (v.within_siblings) {
+        selectKeys(c, v.keys);
+        await moveSelectionItems(v.up ? -1 : 1);
+      } else {
+        moveItem(v.keys[0], v.up ? -1 : 1);
+      }
+      break;
+    case "move_to": {
+      const to = v.to;
+      if (to.at === "slot") {
+        if (v.keys.length !== 1 || (v.inherit_from ?? null) !== to.parent) throw new Error(`${c.name}: a slot move is moveBlock's: one key, inheriting from the parent`);
+        await moveBlock(v.keys[0], to.parent, to.index, to.page);
+      } else {
+        if (v.inherit_from !== to.key) throw new Error(`${c.name}: a relative move inherits from its target`);
+        await moveBlocksRelative(v.keys, to.key, to.at === "last_child" ? "child" : to.at);
+      }
+      break;
+    }
     case "insert_empty_child": {
       const made = insertEmptyChildBlock(v.parent, v.at);
       if (made) focus = { key: made, editor_offset: 0 };
@@ -132,12 +179,16 @@ beforeAll(async () => {
   actualWiring = await vi.importActual("../host/wiring");
   await initParser();
 });
-afterEach(() => resetStore());
+afterEach(() => {
+  clearSelection();
+  resetStore();
+});
 
 describe("outline kernel fixtures through the window's TS edits", () => {
   for (const c of fixture.cases) {
-    it(c.name, () => {
-      const got = run(c);
+    it(c.name, async () => {
+      if (RECORD_MODE === "missing" && c.expect) return;
+      const got = await run(c);
       if (RECORD) {
         c.expect = { ...got, ...(c.expect?.reason && got.refused ? { reason: c.expect.reason } : {}) };
         return;

@@ -6,9 +6,10 @@
 // (no undo entry), pushUndo, apply, markDirty, startEditing.
 import { produce } from "solid-js/store";
 import type { EditKind, EditKinds } from "../editKind";
+import type { PageDto } from "../types";
 import { outlineApply } from "../render/parse";
 import { graphRewriteFrozen } from "./graphRewriteState";
-import { markDirty, pageFrozen } from "./host/wiring";
+import { capturePages, markDirty, pageFrozen, persistTransfer } from "./host/wiring";
 import { doc, keySource, keysUsed, pageByName, setDoc } from "./model";
 
 /** Why a verb did nothing (`outline::Reason`). */
@@ -20,10 +21,18 @@ export type OutlineRefusal =
 export type OutlineVerb =
   | { verb: "split"; key: string; raw_offset: number; force_child: boolean; children_visible: boolean; keep_start_in_scope: boolean }
   | { verb: "merge"; survivor: string; absorbed: string; absorbed_referenced: boolean }
-  | { verb: "indent"; key: string }
-  | { verb: "outdent"; key: string; logical: boolean }
-  | { verb: "delete"; key: string }
-  | { verb: "insert_empty_child"; parent: string; at: number };
+  | { verb: "indent"; keys: string[] }
+  | { verb: "outdent"; keys: string[]; logical: boolean }
+  | { verb: "delete"; keys: string[] }
+  | { verb: "insert_empty_child"; parent: string; at: number }
+  | { verb: "move_to"; keys: readonly string[]; to: OutlinePlace; inherit_from?: string | null }
+  | { verb: "move_up_down"; keys: string[]; up: boolean; within_siblings?: boolean };
+
+/** Where `move_to` puts the moved blocks (`outline::Place`). A slot's `index`
+ *  counts the list before the move. */
+export type OutlinePlace =
+  | { at: "before" | "after" | "last_child"; key: string }
+  | { at: "slot"; parent: string | null; page: string; index: number };
 
 interface Upsert { key: string; raw: string; children: string[]; collapsed?: boolean }
 interface PagePatch { name: string; roots?: string[]; upserts: Upsert[]; deleted: string[]; kinds: EditKind[] }
@@ -37,6 +46,8 @@ export interface OutlineChange {
   focus: { key: string; editorOffset: number | null } | null;
   notices: OutlineNotice[];
   keysUsed: number;
+  /** `[source, destination]` pages blocks moved between: the host transfers. */
+  transfers: [string, string][];
 }
 
 /** The kernel's view of one loaded page: an arena keyed by block id. The
@@ -49,7 +60,9 @@ function outlinePage(name: string) {
   while (pending.length) {
     const id = pending.pop()!;
     const node = doc.byId[id];
-    if (!node) continue;
+    // A block listed twice is sent once; the kernel sees the second listing
+    // and refuses the page as malformed.
+    if (!node || blocks[id]) continue;
     blocks[id] = { raw: node.raw, children: [...node.children] };
     pending.push(...node.children);
   }
@@ -71,33 +84,52 @@ export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): 
   const pages = [...new Set(pageNames)].map(outlinePage).filter((p) => p !== null);
   const answer = JSON.parse(outlineApply(JSON.stringify({ pages, verb, keys: keySource() })));
   if (answer.refused) return { refused: answer.refused as OutlineRefusal };
-  const change = answer.ok as { pages: PagePatch[]; focus: { key: string; raw_offset: number | null } | null; notices: OutlineNotice[]; keys_used: number };
+  const change = answer.ok as { pages: PagePatch[]; focus: { key: string; raw_offset: number | null } | null; notices: OutlineNotice[]; keys_used: number; transfers?: [string, string][] };
   return {
     pages: change.pages,
     focus: change.focus && { key: change.focus.key, editorOffset: change.focus.raw_offset === null ? null : answer.editor_offset },
     notices: change.notices,
     keysUsed: change.keys_used,
+    transfers: change.transfers ?? [],
   };
 }
 
+/** The pages a change edits, for undo snapshots and conflict checks. */
+export function outlineChangePages(change: OutlineChange): string[] {
+  return change.pages.filter((p) => p.kinds.length).map((p) => p.name);
+}
+
+// The pre-change texts of a transfer's pages, captured by `applyOutlineChange`
+// for `markOutlineDirty`.
+const transferBefore = new WeakMap<OutlineChange, Map<string, PageDto>>();
+
 /** Apply a computed change to the store in one mutation. A block's `parent`
- *  follows from the children lists and roots it was patched with; `collapsed`
- *  changes only where the kernel decided it (the cache rule, DESIGN §3). */
+ *  follows from the children lists and roots it was patched with, its `page`
+ *  from the patch that lists it (a moved block is deleted from its source
+ *  page's patch and upserted in its destination's); `collapsed` changes only
+ *  where the kernel decided it (the cache rule, DESIGN §3). */
 export function applyOutlineChange(change: OutlineChange): void {
+  if (change.transfers.length) transferBefore.set(change, capturePages(outlineChangePages(change)));
   keysUsed(change.keysUsed);
+  const upserted = new Set(change.pages.flatMap((p) => p.upserts.map((u) => u.key)));
   setDoc(produce((s) => {
     for (const patch of change.pages) {
-      for (const key of patch.deleted) delete s.byId[key];
+      for (const key of patch.deleted) if (!upserted.has(key)) delete s.byId[key];
+    }
+    for (const patch of change.pages) {
       for (const u of patch.upserts) {
         const node = s.byId[u.key];
         if (node) {
           if (node.raw !== u.raw) node.raw = u.raw;
           node.children = u.children;
+          if (node.page !== patch.name) node.page = patch.name;
           if (u.collapsed !== undefined) node.collapsed = u.collapsed;
         } else {
           s.byId[u.key] = { id: u.key, raw: u.raw, collapsed: u.collapsed ?? false, parent: null, page: patch.name, children: u.children };
         }
       }
+    }
+    for (const patch of change.pages) {
       for (const u of patch.upserts) for (const child of u.children) s.byId[child].parent = u.key;
       if (patch.roots) {
         const page = s.pages.find((p) => p.name === patch.name)!;
@@ -108,11 +140,17 @@ export function applyOutlineChange(change: OutlineChange): void {
   }));
 }
 
-/** Mark the changed page dirty with the kernel's kinds (DESIGN §6 step 6).
- *  Every M1 verb changes one page; a multi-page change also needs its
- *  `persistTransfer` (I-3), which arrives with the cross-page verbs (M3). */
+/** Save an applied change (DESIGN §6 step 6): each changed page is marked
+ *  dirty with its kinds, and blocks that moved between pages go through one
+ *  `persistTransfer` (I-3, STEP3 §8), which also marks the other pages. */
 export function markOutlineDirty(change: OutlineChange): void {
   const changed = change.pages.filter((p) => p.kinds.length);
-  if (changed.length > 1) throw new Error("Outline change spans pages without a transfer");
-  if (changed.length) markDirty(changed[0].name, changed[0].kinds as unknown as EditKinds);
+  if (!change.transfers.length) {
+    for (const p of changed) markDirty(p.name, p.kinds as unknown as EditKinds);
+    return;
+  }
+  const before = transferBefore.get(change);
+  if (!before) throw new Error("Outline transfer saved without its applied change");
+  const kinds = [...new Set(changed.flatMap((p) => p.kinds))] as unknown as EditKinds;
+  void persistTransfer(before, kinds, change.transfers);
 }

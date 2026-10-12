@@ -237,7 +237,7 @@ export function indentBlock(id: string, caretOffset: number | EditorSelection, e
   const pageName = doc.byId[id].page;
   // The kernel refuses the first sibling, a page-header parent (GH #638) and
   // the outline cap; only the cap is reported to the caller.
-  const change = outlineChange({ verb: "indent", key: id }, [pageName]);
+  const change = outlineChange({ verb: "indent", keys: [id] }, [pageName]);
   if ("refused" in change) return change.refused === "depth_cap" ? false : undefined;
   pushUndo("indent", [pageName]);
   // Reparenting remounts the editor. Publish its selection and ownership in the
@@ -252,7 +252,7 @@ export function indentBlock(id: string, caretOffset: number | EditorSelection, e
  *  (DESIGN §5.4), so a preflight never restates the rule. O(page blocks). */
 export function canIndentBlock(id: string): boolean {
   const node = doc.byId[id];
-  return !!node && blockWritable(id) && !("refused" in outlineChange({ verb: "indent", key: id }, [node.page]));
+  return !!node && blockWritable(id) && !("refused" in outlineChange({ verb: "indent", keys: [id] }, [node.page]));
 }
 
 /** Run a reparenting tree update and the editor handoff in one reactive batch,
@@ -277,7 +277,7 @@ export function outdentBlock(id: string, caretOffset: number | EditorSelection, 
   if (!node || !blockWritable(id)) return;
   // Logical outdenting (OG `outliner/core.cljs:835-852` at `6e7afa8eb`) is a
   // setting, passed so keyboard, mobile and any future caller share the verb.
-  const change = outlineChange({ verb: "outdent", key: id, logical: logicalOutdenting() }, [node.page]);
+  const change = outlineChange({ verb: "outdent", keys: [id], logical: logicalOutdenting() }, [node.page]);
   if ("refused" in change) return;
   pushUndo("outdent", [node.page]);
   reparentEditingBlock(change, () => {
@@ -423,7 +423,7 @@ export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): 
 export function deleteBlock(id: string) {
   if (!blockWritable(id)) return;
   const pageName = doc.byId[id].page;
-  const change = outlineChange({ verb: "delete", key: id }, [pageName]);
+  const change = outlineChange({ verb: "delete", keys: [id] }, [pageName]);
   if ("refused" in change) return;
   const notice = prepareReferenceChangeNotice([id], true);
   pushUndo(notice.tag, [pageName]);

@@ -164,6 +164,34 @@ pub struct Change {
     pub notices: Vec<Notice>,
     /// Keys taken from the [`KeySource`].
     pub keys_used: u64,
+    /// `(source, destination)` pages between which blocks moved: the page
+    /// host's move transfers (STEP3 §8).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transfers: Vec<(String, String)>,
+}
+
+/// Where [`Verb::MoveTo`] puts the moved blocks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "at", rename_all = "snake_case")]
+pub enum Place {
+    Before {
+        key: Key,
+    },
+    After {
+        key: Key,
+    },
+    /// After `key`'s last child (OG's nested drop).
+    LastChild {
+        key: Key,
+    },
+    /// Position `index` of `parent`'s children, or of `page`'s roots when
+    /// `parent` is `None`. `index` counts the list as it stands before the move.
+    Slot {
+        #[serde(default)]
+        parent: Option<Key>,
+        page: String,
+        index: usize,
+    },
 }
 
 /// The verbs. Offsets are raw UTF-8 bytes in the block's current text.
@@ -191,23 +219,37 @@ pub enum Verb {
         #[serde(default)]
         absorbed_referenced: bool,
     },
-    Indent {
-        key: Key,
-    },
+    /// Tab on one block or a selection: `keys` (top-level, document order)
+    /// become the last children of the first key's previous sibling.
+    Indent { keys: Vec<Key> },
+    /// Shift+Tab: `keys` land after the first key's parent. Traditional
+    /// outdenting (one key, `logical` false) takes the following siblings along.
     Outdent {
-        key: Key,
+        keys: Vec<Key>,
         #[serde(default)]
         logical: bool,
     },
-    /// Remove a block with its subtree.
-    Delete {
-        key: Key,
+    /// Remove blocks with their subtrees, on any of the pages given.
+    Delete { keys: Vec<Key> },
+    /// Move blocks with their subtrees to `to`, across pages too. A moved block
+    /// without its own list type takes `inherit_from`'s (the drop target).
+    MoveTo {
+        keys: Vec<Key>,
+        to: Place,
+        #[serde(default)]
+        inherit_from: Option<Key>,
+    },
+    /// Mod+Up/Down. One key takes one OG outline step, crossing a child-list
+    /// edge into the adjacent parent sibling; `within_siblings` moves each key
+    /// one slot in its own sibling list instead (a selection).
+    MoveUpDown {
+        keys: Vec<Key>,
+        up: bool,
+        #[serde(default)]
+        within_siblings: bool,
     },
     /// A new empty block at child position `at` of `parent`.
-    InsertEmptyChild {
-        parent: Key,
-        at: usize,
-    },
+    InsertEmptyChild { parent: Key, at: usize },
 }
 
 /// Run one verb over the pages that hold every block it names.
@@ -219,6 +261,7 @@ pub fn apply(pages: &[OutlinePage], verb: &Verb, keys: &KeySource) -> Result<Cha
         used: 0,
         focus: None,
         notices: Vec::new(),
+        transfers: Vec::new(),
     };
     match verb {
         Verb::Split {
@@ -238,9 +281,19 @@ pub fn apply(pages: &[OutlinePage], verb: &Verb, keys: &KeySource) -> Result<Cha
         Verb::Merge {
             survivor, absorbed, ..
         } => merge(&mut cx, survivor, absorbed)?,
-        Verb::Indent { key } => indent(&mut cx, key)?,
-        Verb::Outdent { key, logical } => outdent(&mut cx, key, *logical)?,
-        Verb::Delete { key } => delete(&mut cx, key)?,
+        Verb::Indent { keys } => indent(&mut cx, keys)?,
+        Verb::Outdent { keys, logical } => outdent(&mut cx, keys, *logical)?,
+        Verb::Delete { keys } => delete(&mut cx, keys)?,
+        Verb::MoveTo {
+            keys,
+            to,
+            inherit_from,
+        } => move_to(&mut cx, keys, to, inherit_from.as_deref())?,
+        Verb::MoveUpDown {
+            keys,
+            up,
+            within_siblings,
+        } => move_up_down(&mut cx, keys, *up, *within_siblings)?,
         Verb::InsertEmptyChild { parent, at } => insert_empty_child(&mut cx, parent, *at)?,
     }
     Ok(cx.finish())
@@ -258,17 +311,21 @@ struct PageTx<'a> {
     roots: Option<Vec<Key>>,
     collapsed: HashMap<Key, bool>,
     kinds: Vec<EditKind>,
+    /// A key listed twice (as a root or a child): the arena is not a tree, and
+    /// every verb on the page refuses with [`Reason::Incomplete`].
+    malformed: bool,
 }
 
 impl<'a> PageTx<'a> {
     fn new(base: &'a OutlinePage) -> Self {
         let mut parent = HashMap::with_capacity(base.blocks.len());
+        let mut malformed = false;
         for root in &base.roots {
-            parent.insert(root.as_str(), None);
+            malformed |= parent.insert(root.as_str(), None).is_some();
         }
         for (key, block) in &base.blocks {
             for child in &block.children {
-                parent.insert(child.as_str(), Some(key.as_str()));
+                malformed |= parent.insert(child.as_str(), Some(key.as_str())).is_some();
             }
         }
         PageTx {
@@ -278,7 +335,24 @@ impl<'a> PageTx<'a> {
             roots: None,
             collapsed: HashMap::new(),
             kinds: Vec::new(),
+            malformed,
         }
+    }
+
+    /// `key`'s base ancestors, nearest first. A parent cycle outside the roots
+    /// ends the walk after one lap and yields `None`, so callers fail closed.
+    fn ancestors(&self, key: &str) -> Vec<Option<&'a str>> {
+        let mut out = Vec::new();
+        let mut at = self.parent_of(key);
+        while let Some(p) = at {
+            if out.len() > self.base.blocks.len() {
+                out.push(None);
+                break;
+            }
+            out.push(Some(p));
+            at = self.parent_of(p);
+        }
+        out
     }
 
     fn block(&self, key: &str) -> Option<&Block> {
@@ -334,20 +408,24 @@ impl<'a> PageTx<'a> {
         }
     }
 
+    /// `key`'s depth (a root is 0); a parent cycle reads as too deep.
     fn depth_of(&self, key: &str) -> usize {
-        let mut depth = 0;
-        let mut at = self.parent_of(key);
-        while let Some(p) = at {
-            depth += 1;
-            at = self.parent_of(p);
+        let up = self.ancestors(key);
+        if up.last() == Some(&None) {
+            OUTLINE_MAX_DEPTH
+        } else {
+            up.len()
         }
-        depth
     }
 
     /// The window's `existingSubtreeFits` (`tree.ts:146`): `key`'s subtree
     /// fits once reparented under `new_parent`. O(subtree).
     fn subtree_fits(&self, key: &str, new_parent: Option<&str>) -> bool {
-        let first = new_parent.map_or(0, |p| self.depth_of(p) + 1);
+        self.fits_from(key, new_parent.map_or(0, |p| self.depth_of(p) + 1))
+    }
+
+    /// `key`'s subtree fits with `key` itself at depth `first`.
+    fn fits_from(&self, key: &str, first: usize) -> bool {
         let mut pending = vec![(key, first)];
         while let Some((k, depth)) = pending.pop() {
             if depth >= OUTLINE_MAX_DEPTH {
@@ -360,15 +438,38 @@ impl<'a> PageTx<'a> {
         true
     }
 
+    /// `key` is `root` or inside its subtree; a parent cycle reads as inside.
     fn in_subtree(&self, root: &str, key: &str) -> bool {
-        let mut at = Some(key);
-        while let Some(k) = at {
-            if k == root {
-                return true;
+        key == root
+            || self
+                .ancestors(key)
+                .iter()
+                .any(|a| a.is_none_or(|a| a == root))
+    }
+
+    /// `key` and its descendants, in the transaction's current state.
+    fn subtree(&self, key: &str) -> Vec<Key> {
+        let mut out = Vec::new();
+        let mut pending = vec![key.to_string()];
+        while let Some(k) = pending.pop() {
+            if let Some(b) = self.block(&k) {
+                pending.extend(b.children.iter().cloned());
             }
-            at = self.parent_of(k);
+            out.push(k);
         }
-        false
+        out
+    }
+
+    /// Remove `key` from its base parent's sibling list.
+    fn detach(&mut self, key: &str) -> Result<(), Reason> {
+        let parent = self.parent_of(key);
+        let sibs = self.siblings_mut(parent);
+        let at = sibs
+            .iter()
+            .position(|k| k == key)
+            .ok_or(Reason::Incomplete)?;
+        sibs.remove(at);
+        Ok(())
     }
 
     fn kind(&mut self, kinds: &[EditKind]) {
@@ -411,6 +512,7 @@ struct Cx<'a> {
     used: u64,
     focus: Option<Focus>,
     notices: Vec<Notice>,
+    transfers: Vec<(String, String)>,
 }
 
 impl<'a> Cx<'a> {
@@ -427,8 +529,37 @@ impl<'a> Cx<'a> {
         if let Some(i) = self.txs.iter().position(|t| std::ptr::eq(t.base, page)) {
             return Ok(i);
         }
-        self.txs.push(PageTx::new(page));
+        self.open(page)
+    }
+
+    fn open(&mut self, page: &'a OutlinePage) -> Result<usize, Reason> {
+        let tx = PageTx::new(page);
+        if tx.malformed {
+            return Err(Reason::Incomplete);
+        }
+        self.txs.push(tx);
         Ok(self.txs.len() - 1)
+    }
+
+    /// The transaction of the page named `name`.
+    fn tx_of_page(&mut self, name: &str) -> Result<usize, Reason> {
+        if let Some(i) = self.txs.iter().position(|t| t.base.name == name) {
+            return Ok(i);
+        }
+        let page = self
+            .pages
+            .iter()
+            .find(|p| p.name == name)
+            .ok_or(Reason::Incomplete)?;
+        self.open(page)
+    }
+
+    /// The transaction of each key, all resolved before anything changes.
+    fn txs_of(&mut self, keys: &[Key]) -> Result<Vec<usize>, Reason> {
+        if keys.is_empty() {
+            return Err(Reason::Incomplete);
+        }
+        keys.iter().map(|k| self.tx_of(k)).collect()
     }
 
     /// The window's `pageWritable` (`edits/properties.ts:58`).
@@ -460,6 +591,7 @@ impl<'a> Cx<'a> {
             focus: self.focus,
             notices: self.notices,
             keys_used: self.used,
+            transfers: self.transfers,
         }
     }
 }
@@ -484,6 +616,23 @@ fn own_properties(raw: &str, format: Format) -> Vec<(String, String)> {
         .flatten()
         .map(|p| (p.0, p.1))
         .collect()
+}
+
+/// The value of the block's own property `key`, trimmed: the window's
+/// `orderListTypeFromRaw` (`edits/properties.ts:281`, `norm`: keys compared by
+/// `propertyKeyNorm`) and `blockProperty` (`:37`, keys compared lower-case).
+fn own_property(raw: &str, format: Format, key: &str, norm: bool) -> Option<String> {
+    let same = |k: &str| {
+        if norm {
+            editor_text::property_key_norm(k) == editor_text::property_key_norm(key)
+        } else {
+            k.to_lowercase() == key.to_lowercase()
+        }
+    };
+    own_properties(raw, format)
+        .into_iter()
+        .find(|(k, _)| same(k))
+        .map(|(_, v)| js_trim(&v).to_string())
 }
 
 /// The window's `isOrdered` (`edits/properties.ts:270`): the block's list type
@@ -771,19 +920,21 @@ fn merge(cx: &mut Cx, survivor: &str, absorbed: &str) -> Result<(), Reason> {
     Ok(())
 }
 
-/// Tab: the window's `indentBlock` (`edits/blocks.ts:312`); OG
-/// `indent-outdent-blocks` (`outliner/core.cljs:802`). The block becomes the
-/// last child of its previous sibling, which is expanded, in the file too.
-fn indent(cx: &mut Cx, key: &str) -> Result<(), Reason> {
-    let t = cx.tx_of(key)?;
+/// Tab: the window's `indentBlock` (`edits/blocks.ts:312`) and
+/// `indentSelection` (`edits/selection.ts:345`); OG `indent-outdent-blocks`
+/// (`outliner/core.cljs:802`). `keys` (all on one page) become the last
+/// children of the first key's previous sibling, which is expanded, in the
+/// file too.
+fn indent(cx: &mut Cx, keys: &[Key]) -> Result<(), Reason> {
+    let t = one_page(cx, keys)?;
     cx.writable(t)?;
     let format = cx.txs[t].base.format;
     let tx = &mut cx.txs[t];
-    let parent = tx.parent_of(key);
-    let sibs = tx.siblings(parent);
+    let first = &keys[0];
+    let sibs = tx.siblings(tx.parent_of(first));
     let i = sibs
         .iter()
-        .position(|k| k == key)
+        .position(|k| k == first)
         .ok_or(Reason::Incomplete)?;
     if i == 0 {
         return Err(Reason::NoOutlineStep);
@@ -792,76 +943,356 @@ fn indent(cx: &mut Cx, key: &str) -> Result<(), Reason> {
     if tx.base.header_root.as_deref() == Some(new_parent.as_str()) {
         return Err(Reason::HeaderRoot);
     }
-    if !tx.subtree_fits(key, Some(&new_parent)) {
+    if keys.iter().any(|k| tx.in_subtree(k, &new_parent)) {
+        return Err(Reason::Cycle);
+    }
+    if !keys.iter().all(|k| tx.subtree_fits(k, Some(&new_parent))) {
         return Err(Reason::DepthCap);
     }
     let expanded = raw_expanded(
         &tx.block(&new_parent).ok_or(Reason::Incomplete)?.raw,
         format,
     )?;
-    tx.siblings_mut(parent).remove(i);
+    for k in keys {
+        tx.detach(k)?;
+    }
     let np = tx.block_mut(&new_parent);
-    np.children.push(key.to_string());
+    np.children.extend(keys.iter().cloned());
     np.raw = expanded;
     tx.collapsed.insert(new_parent, false);
     tx.kind(&[EditKind::MoveBlocks, EditKind::SaveBlock]);
-    cx.focus = Some(Focus {
-        key: key.to_string(),
-        raw_offset: None,
-    });
+    cx.focus = keep_editing(keys);
     Ok(())
 }
 
-/// Shift+Tab: the window's `outdentBlock` (`edits/blocks.ts:363`); OG
-/// `indent-outdent-blocks` (`outliner/core.cljs:835-852`). The block becomes
-/// the next sibling of its parent. Traditional outdenting takes the following
-/// siblings along as its last children; logical outdenting moves the block
-/// alone.
-fn outdent(cx: &mut Cx, key: &str, logical: bool) -> Result<(), Reason> {
-    let t = cx.tx_of(key)?;
+/// Shift+Tab: the window's `outdentBlock` (`edits/blocks.ts:363`) and
+/// `outdentSelection` (`edits/selection.ts:372`); OG `indent-outdent-blocks`
+/// (`outliner/core.cljs:835-852`). `keys` (all on one page) land after the
+/// first key's parent, in order. Traditional outdenting of one block takes its
+/// following siblings along as its last children; logical outdenting and a
+/// selection move the blocks alone.
+fn outdent(cx: &mut Cx, keys: &[Key], logical: bool) -> Result<(), Reason> {
+    let t = one_page(cx, keys)?;
     cx.writable(t)?;
     let tx = &mut cx.txs[t];
-    let parent = tx.parent_of(key).ok_or(Reason::NoOutlineStep)?;
+    let first = &keys[0];
+    let parent = tx.parent_of(first).ok_or(Reason::NoOutlineStep)?;
     let grand = tx.parent_of(parent);
-    let children = &mut tx.block_mut(parent).children;
-    let idx = children
-        .iter()
-        .position(|k| k == key)
-        .ok_or(Reason::Incomplete)?;
-    let following = if logical {
-        children.remove(idx);
-        Vec::new()
+    if keys.iter().any(|k| tx.in_subtree(k, parent)) {
+        return Err(Reason::Cycle);
+    }
+    if !keys.iter().all(|k| tx.subtree_fits(k, grand)) {
+        return Err(Reason::DepthCap);
+    }
+    if let ([key], false) = (keys, logical) {
+        let children = &mut tx.block_mut(parent).children;
+        let idx = children
+            .iter()
+            .position(|k| k == key)
+            .ok_or(Reason::Incomplete)?;
+        let following = children.split_off(idx + 1);
+        children.pop();
+        tx.block_mut(key).children.extend(following);
     } else {
-        let mut following = children.split_off(idx);
-        following.remove(0);
-        following
-    };
-    tx.block_mut(key).children.extend(following);
+        for k in keys {
+            tx.detach(k)?;
+        }
+    }
     let g = tx.siblings_mut(grand);
     let at = g
         .iter()
         .position(|k| k == parent)
         .ok_or(Reason::Incomplete)?;
-    g.insert(at + 1, key.to_string());
+    g.splice(at + 1..at + 1, keys.iter().cloned());
     tx.kind(&[EditKind::MoveBlocks]);
-    cx.focus = Some(Focus {
-        key: key.to_string(),
-        raw_offset: None,
+    cx.focus = keep_editing(keys);
+    Ok(())
+}
+
+/// The window's `deleteBlock` (`edits/blocks.ts:597`) and `deleteSelection`
+/// (`edits/selection.ts:393`); OG `delete-blocks` (`outliner/core.cljs:654`):
+/// each block is removed with its subtree.
+fn delete(cx: &mut Cx, keys: &[Key]) -> Result<(), Reason> {
+    let ts = cx.txs_of(keys)?;
+    for &t in &ts {
+        cx.writable(t)?;
+    }
+    for (k, &t) in keys.iter().zip(&ts) {
+        let tx = &mut cx.txs[t];
+        // A key inside an earlier key's subtree, or listed twice.
+        if tx.block(k).is_none() {
+            return Err(Reason::Incomplete);
+        }
+        tx.detach(k)?;
+        tx.remove_subtree(k);
+        tx.kind(&[EditKind::DeleteBlocks]);
+    }
+    Ok(())
+}
+
+/// Drag and drop, and a journal-feed move across days: the window's
+/// `moveBlocksRelative` + `relativeMovePlan` (`edits/moves.ts:101`, `:172`),
+/// `moveBlock` (`:16`) and `crossMoveBlocks` (`:372`); OG `move-blocks`
+/// (`outliner/core.cljs:717`). Keys are deduplicated and a key inside another
+/// key's subtree goes with it. The moved blocks keep their order and land
+/// together at `to`; a block that changes page takes its subtree along, and
+/// the pages it left are transfer sources. A moved block without its own list
+/// type takes `inherit_from`'s, written in the destination page's syntax.
+/// Refusals: a target inside a moved subtree is a `Cycle`, and the depth cap
+/// is checked last, so a no-op drop into its own subtree stays silent.
+fn move_to(
+    cx: &mut Cx,
+    keys: &[Key],
+    to: &Place,
+    inherit_from: Option<&str>,
+) -> Result<(), Reason> {
+    let mut unique: Vec<Key> = Vec::with_capacity(keys.len());
+    let mut seen = std::collections::HashSet::new();
+    for k in keys {
+        if seen.insert(k.as_str()) {
+            unique.push(k.clone());
+        }
+    }
+    let ts = cx.txs_of(&unique)?;
+    let mut roots: Vec<(Key, usize)> = Vec::new();
+    for (k, &t) in unique.iter().zip(&ts) {
+        let ancestors = cx.txs[t].ancestors(k);
+        if ancestors.contains(&None) {
+            return Err(Reason::Incomplete);
+        }
+        if !ancestors.iter().flatten().any(|a| seen.contains(a)) {
+            roots.push((k.clone(), t));
+        }
+    }
+    let (d, parent, anchor) = match to {
+        Place::Before { key } | Place::After { key } => {
+            let d = cx.tx_of(key)?;
+            (
+                d,
+                cx.txs[d].parent_of(key).map(str::to_string),
+                key.as_str(),
+            )
+        }
+        Place::LastChild { key } => (cx.tx_of(key)?, Some(key.clone()), key.as_str()),
+        Place::Slot {
+            parent: Some(p), ..
+        } => (cx.tx_of(p)?, Some(p.clone()), p.as_str()),
+        Place::Slot {
+            parent: None, page, ..
+        } => (cx.tx_of_page(page)?, None, ""),
+    };
+    if !anchor.is_empty()
+        && roots
+            .iter()
+            .any(|(k, t)| *t == d && cx.txs[d].in_subtree(k, anchor))
+    {
+        return Err(Reason::Cycle);
+    }
+    cx.writable(d)?;
+    for (_, t) in &roots {
+        cx.writable(*t)?;
+    }
+    let first = parent.as_deref().map_or(0, |p| cx.txs[d].depth_of(p) + 1);
+    if !roots.iter().all(|(k, t)| cx.txs[*t].fits_from(k, first)) {
+        return Err(Reason::DepthCap);
+    }
+    let format = cx.txs[d].base.format;
+    let inherited = match inherit_from {
+        Some(k) => {
+            let i = cx.tx_of(k)?;
+            let raw = &cx.txs[i].block(k).ok_or(Reason::Incomplete)?.raw;
+            own_property(raw, cx.txs[i].base.format, ORDER_LIST_KEY, false)
+        }
+        None => None,
+    };
+    let mut raws = Vec::with_capacity(roots.len());
+    for (k, t) in &roots {
+        let tx = &cx.txs[*t];
+        let raw = &tx.block(k).ok_or(Reason::Incomplete)?.raw;
+        raws.push(match &inherited {
+            Some(v) if own_property(raw, tx.base.format, ORDER_LIST_KEY, true).is_none() => {
+                Some(raw_with_order_list_type(raw, Some(v), format)?)
+            }
+            _ => None,
+        });
+    }
+    // A slot counts the list before the move: moved blocks above it shift it.
+    let slot = match to {
+        Place::Slot { index, .. } => {
+            let list = cx.txs[d].siblings(parent.as_deref());
+            let above = list[..(*index).min(list.len())]
+                .iter()
+                .filter(|k| roots.iter().any(|(r, t)| *t == d && r == *k))
+                .count();
+            Some(index - above)
+        }
+        _ => None,
+    };
+    for (k, t) in &roots {
+        cx.txs[*t].detach(k)?;
+        cx.txs[*t].kind(&[EditKind::MoveBlocks]);
+        if *t != d {
+            for key in cx.txs[*t].subtree(k) {
+                let block = cx.txs[*t].block(&key).ok_or(Reason::Incomplete)?.clone();
+                cx.txs[*t].blocks.insert(key.clone(), None);
+                cx.txs[d].insert(key, block);
+            }
+            let edge = (cx.txs[*t].base.name.clone(), cx.txs[d].base.name.clone());
+            if !cx.transfers.contains(&edge) {
+                cx.transfers.push(edge);
+            }
+        }
+    }
+    let tx = &mut cx.txs[d];
+    for ((k, _), raw) in roots.iter().zip(raws) {
+        if let Some(raw) = raw.filter(|r| *r != tx.block(k).map_or("", |b| &b.raw)) {
+            tx.block_mut(k).raw = raw;
+        }
+    }
+    let list = tx.siblings_mut(parent.as_deref());
+    let at = match to {
+        Place::Before { key } | Place::After { key } => {
+            let i = list
+                .iter()
+                .position(|k| k == key)
+                .ok_or(Reason::Incomplete)?;
+            if matches!(to, Place::After { .. }) {
+                i + 1
+            } else {
+                i
+            }
+        }
+        Place::LastChild { .. } => list.len(),
+        Place::Slot { .. } => slot.unwrap_or(0).min(list.len()),
+    };
+    list.splice(at..at, roots.iter().map(|(k, _)| k.clone()));
+    // A drop (one with a list-type source) is a block save too, as the
+    // window's drag has always reported it.
+    tx.kind(if inherit_from.is_some() {
+        &[EditKind::MoveBlocks, EditKind::SaveBlock]
+    } else {
+        &[EditKind::MoveBlocks]
     });
     Ok(())
 }
 
-/// The window's `deleteBlock` (`edits/blocks.ts:597`): the block and its
-/// subtree are removed.
-fn delete(cx: &mut Cx, key: &str) -> Result<(), Reason> {
-    let t = cx.tx_of(key)?;
-    cx.writable(t)?;
-    let tx = &mut cx.txs[t];
+/// Mod+Up/Down: the window's `moveItem` + `outlineStepPlan`
+/// (`edits/moves.ts:273`, `:300`) and `moveSelectionItems` (`:477`); OG
+/// `move-blocks-up-down` (`outliner/core.cljs:760`). One key takes one outline
+/// step: a sibling swap, or at a child-list edge into the adjacent parent
+/// sibling (down: its first child; up: its last), inheriting the new parent's
+/// list type (a block save only when that rewrote its text). `within_siblings` moves every key one slot in its own sibling
+/// list, the edge-most key first, skipping a key already at its edge; the lead
+/// key (topmost going up, bottommost going down) must be able to move.
+/// `NoOutlineStep` lets the window try the journal feed's cross-day move.
+fn move_up_down(cx: &mut Cx, keys: &[Key], up: bool, within_siblings: bool) -> Result<(), Reason> {
+    let ts = cx.txs_of(keys)?;
+    for &t in &ts {
+        cx.writable(t)?;
+    }
+    let step = |list: &[Key], key: &str| -> Option<(usize, usize)> {
+        let i = list.iter().position(|k| k == key)?;
+        let j = if up { i.checked_sub(1)? } else { i + 1 };
+        (j < list.len()).then_some((i, j))
+    };
+    if within_siblings {
+        let lead = if up { 0 } else { keys.len() - 1 };
+        let tx = &cx.txs[ts[lead]];
+        if step(tx.siblings(tx.parent_of(&keys[lead])), &keys[lead]).is_none() {
+            return Err(Reason::NoOutlineStep);
+        }
+        let order: Vec<usize> = if up {
+            (0..keys.len()).collect()
+        } else {
+            (0..keys.len()).rev().collect()
+        };
+        for i in order {
+            let tx = &mut cx.txs[ts[i]];
+            let list = tx.siblings_mut(tx.parent_of(&keys[i]));
+            if let Some((from, to)) = step(list, &keys[i]) {
+                let k = list.remove(from);
+                list.insert(to, k);
+                tx.kind(&[EditKind::MoveBlocks]);
+            }
+        }
+        return Ok(());
+    }
+    let [key] = keys else {
+        return Err(Reason::Incomplete);
+    };
+    let tx = &mut cx.txs[ts[0]];
+    let format = tx.base.format;
     let parent = tx.parent_of(key);
-    tx.siblings_mut(parent).retain(|k| k != key);
-    tx.remove_subtree(key);
-    tx.kind(&[EditKind::DeleteBlocks]);
+    let (new_parent, index) = match step(tx.siblings(parent), key) {
+        Some((_, j)) => (parent.map(str::to_string), j),
+        None => {
+            let p = parent.ok_or(Reason::NoOutlineStep)?;
+            let outer = tx.siblings(tx.parent_of(p));
+            let i = outer
+                .iter()
+                .position(|k| k == p)
+                .ok_or(Reason::Incomplete)?;
+            let adjacent = if up { i.checked_sub(1) } else { Some(i + 1) }
+                .and_then(|j| outer.get(j))
+                .ok_or(Reason::NoOutlineStep)?
+                .clone();
+            let at = if up {
+                tx.block(&adjacent)
+                    .ok_or(Reason::Incomplete)?
+                    .children
+                    .len()
+            } else {
+                0
+            };
+            (Some(adjacent), at)
+        }
+    };
+    let reparented = new_parent.as_deref() != parent;
+    let raw = tx.block(key).ok_or(Reason::Incomplete)?.raw.clone();
+    let inherited = new_parent
+        .as_deref()
+        .filter(|_| reparented && own_property(&raw, format, ORDER_LIST_KEY, true).is_none())
+        .and_then(|p| tx.block(p))
+        .and_then(|b| own_property(&b.raw, format, ORDER_LIST_KEY, false));
+    tx.detach(key)?;
+    let list = tx.siblings_mut(new_parent.as_deref());
+    let at = index.min(list.len());
+    list.insert(at, key.clone());
+    let rewritten = match inherited {
+        Some(v) => Some(raw_with_order_list_type(&raw, Some(&v), format)?).filter(|r| *r != raw),
+        None => None,
+    };
+    let saved = rewritten.is_some();
+    if let Some(r) = rewritten {
+        tx.block_mut(key).raw = r;
+    }
+    tx.kind(if saved {
+        &[EditKind::MoveBlocks, EditKind::SaveBlock]
+    } else {
+        &[EditKind::MoveBlocks]
+    });
     Ok(())
+}
+
+/// A block edited through Tab or Shift+Tab keeps its editor and caret; a
+/// selection command moves no caret.
+fn keep_editing(keys: &[Key]) -> Option<Focus> {
+    match keys {
+        [key] => Some(Focus {
+            key: key.clone(),
+            raw_offset: None,
+        }),
+        _ => None,
+    }
+}
+
+/// All `keys` on one page; the page's transaction.
+fn one_page(cx: &mut Cx, keys: &[Key]) -> Result<usize, Reason> {
+    let ts = cx.txs_of(keys)?;
+    if ts.iter().any(|&t| t != ts[0]) {
+        return Err(Reason::Incomplete);
+    }
+    Ok(ts[0])
 }
 
 /// The window's `insertEmptyChildBlock` (`edits/blocks.ts:118`).
@@ -1008,7 +1439,12 @@ mod tests {
         );
         p.roots = vec!["x".into(), "d0".into()];
         assert_eq!(
-            run(&[p.clone()], Verb::Indent { key: "d0".into() }),
+            run(
+                &[p.clone()],
+                Verb::Indent {
+                    keys: vec!["d0".into()]
+                }
+            ),
             Err(Reason::DepthCap)
         );
         // Merging d0 into x adopts d1's 126-level subtree at depth 1: it fits.
@@ -1071,12 +1507,22 @@ mod tests {
         let mut p = page("P", &[("a", "one", &[]), ("b", "two", &[])], &["a", "b"]);
         p.frozen = true;
         assert_eq!(
-            run(&[p.clone()], Verb::Delete { key: "a".into() }),
+            run(
+                &[p.clone()],
+                Verb::Delete {
+                    keys: vec!["a".into()]
+                }
+            ),
             Err(Reason::Frozen)
         );
         p.read_only = true;
         assert_eq!(
-            run(&[p], Verb::Indent { key: "b".into() }),
+            run(
+                &[p],
+                Verb::Indent {
+                    keys: vec!["b".into()]
+                }
+            ),
             Err(Reason::ReadOnly)
         );
     }
@@ -1088,7 +1534,13 @@ mod tests {
             &[("a", "one", &[]), ("b", "two", &[]), ("c", "three", &[])],
             &["a", "b", "c"],
         );
-        let change = run(&[p], Verb::Indent { key: "b".into() }).unwrap();
+        let change = run(
+            &[p],
+            Verb::Indent {
+                keys: vec!["b".into()],
+            },
+        )
+        .unwrap();
         let patch = &change.pages[0];
         assert_eq!(
             patch.roots.as_deref(),
@@ -1104,5 +1556,203 @@ mod tests {
         );
         assert!(patch.deleted.is_empty());
         assert_eq!(change.keys_used, 0);
+    }
+
+    fn move_to(keys: &[&str], to: Place, inherit_from: Option<&str>) -> Verb {
+        Verb::MoveTo {
+            keys: keys.iter().map(|k| k.to_string()).collect(),
+            to,
+            inherit_from: inherit_from.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_move_between_pages_carries_the_subtree_and_names_the_transfer() {
+        let a = page(
+            "A",
+            &[("x", "x", &["x1"]), ("x1", "kid", &[]), ("y", "y", &[])],
+            &["x", "y"],
+        );
+        let b = page(
+            "B",
+            &[("t", "t\nlogseq.order-list-type:: number", &[])],
+            &["t"],
+        );
+        let change = run(
+            &[a.clone(), b.clone()],
+            move_to(&["x"], Place::After { key: "t".into() }, Some("t")),
+        )
+        .unwrap();
+        assert_eq!(change.transfers, vec![("A".to_string(), "B".to_string())]);
+        let (mut a2, mut b2) = (a, b);
+        for patch in &change.pages {
+            let target = if patch.name == "A" { &mut a2 } else { &mut b2 };
+            patch.apply_to(target);
+        }
+        assert_eq!(a2.roots, ["y"]);
+        assert!(!a2.blocks.contains_key("x") && !a2.blocks.contains_key("x1"));
+        assert_eq!(b2.roots, ["t", "x"]);
+        assert_eq!(b2.blocks["x"].children, ["x1"]);
+        assert_eq!(b2.blocks["x"].raw, "x\nlogseq.order-list-type:: number");
+        assert_eq!(b2.blocks["x1"].raw, "kid");
+        let kinds = |name: &str| {
+            change
+                .pages
+                .iter()
+                .find(|p| p.name == name)
+                .unwrap()
+                .kinds
+                .clone()
+        };
+        assert_eq!(kinds("A"), [EditKind::MoveBlocks]);
+        assert_eq!(kinds("B"), [EditKind::MoveBlocks, EditKind::SaveBlock]);
+    }
+
+    #[test]
+    fn a_feed_move_lands_at_a_root_slot_of_the_other_day() {
+        let a = page("Mon", &[("m", "m", &[]), ("n", "n", &[])], &["m", "n"]);
+        let b = page("Sun", &[("s", "s", &[])], &["s"]);
+        let slot = |index| Place::Slot {
+            parent: None,
+            page: "Sun".into(),
+            index,
+        };
+        for (index, roots) in [(0, vec!["m", "n", "s"]), (1, vec!["s", "m", "n"])] {
+            let change = run(
+                &[a.clone(), b.clone()],
+                move_to(&["m", "n"], slot(index), None),
+            )
+            .unwrap();
+            let sun = change.pages.iter().find(|p| p.name == "Sun").unwrap();
+            assert_eq!(sun.roots.as_deref().unwrap(), roots);
+            assert_eq!(sun.kinds, [EditKind::MoveBlocks]);
+            let mon = change.pages.iter().find(|p| p.name == "Mon").unwrap();
+            assert_eq!(mon.roots.as_deref().unwrap(), Vec::<String>::new());
+            assert_eq!(mon.deleted.len(), 2);
+        }
+        // A page not given is incomplete, never "empty".
+        assert_eq!(
+            run(&[a], move_to(&["m"], slot(0), None)),
+            Err(Reason::Incomplete)
+        );
+    }
+
+    #[test]
+    fn a_move_checks_every_page_it_touches() {
+        let a = page("A", &[("x", "x", &[])], &["x"]);
+        let mut b = page("B", &[("t", "t", &[])], &["t"]);
+        b.frozen = true;
+        let after_t = || move_to(&["x"], Place::After { key: "t".into() }, Some("t"));
+        assert_eq!(run(&[a.clone(), b.clone()], after_t()), Err(Reason::Frozen));
+        b.frozen = false;
+        let mut ro = a.clone();
+        ro.read_only = true;
+        assert_eq!(run(&[ro, b.clone()], after_t()), Err(Reason::ReadOnly));
+        assert!(run(&[a, b], after_t()).is_ok());
+    }
+
+    #[test]
+    fn moves_and_selections_check_the_depth_cap() {
+        // x beside a 127-level chain: nesting the chain under x overflows.
+        let mut p = chain(OUTLINE_MAX_DEPTH);
+        p.blocks.insert(
+            "x".into(),
+            Block {
+                raw: "x".into(),
+                children: vec![],
+            },
+        );
+        p.blocks.insert(
+            "y".into(),
+            Block {
+                raw: "y".into(),
+                children: vec![],
+            },
+        );
+        p.roots = vec!["x".into(), "d0".into(), "y".into()];
+        assert_eq!(
+            run(
+                &[p.clone()],
+                move_to(&["d0"], Place::LastChild { key: "x".into() }, Some("x"))
+            ),
+            Err(Reason::DepthCap)
+        );
+        assert_eq!(
+            run(
+                &[p.clone()],
+                Verb::Indent {
+                    keys: vec!["d0".into(), "y".into()]
+                }
+            ),
+            Err(Reason::DepthCap)
+        );
+        assert!(run(
+            &[p],
+            move_to(&["d0"], Place::After { key: "y".into() }, Some("y"))
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn a_malformed_arena_refuses_instead_of_looping() {
+        // b listed under a and as a root.
+        let twice = page("P", &[("a", "a", &["b"]), ("b", "b", &[])], &["a", "b"]);
+        assert_eq!(
+            run(
+                &[twice],
+                Verb::Delete {
+                    keys: vec!["a".into()]
+                }
+            ),
+            Err(Reason::Incomplete)
+        );
+        // A parent cycle no root reaches: walks stop after one lap.
+        let mut lap = page(
+            "P",
+            &[("r", "r", &[]), ("c", "c", &["d"]), ("d", "d", &["c"])],
+            &["r"],
+        );
+        lap.blocks.get_mut("r").unwrap().children = vec![];
+        assert_eq!(
+            run(
+                &[lap.clone()],
+                move_to(&["r"], Place::LastChild { key: "c".into() }, None)
+            ),
+            Err(Reason::Cycle)
+        );
+        assert_eq!(
+            run(
+                &[lap],
+                move_to(&["c"], Place::After { key: "r".into() }, None)
+            ),
+            Err(Reason::Incomplete)
+        );
+    }
+
+    #[test]
+    fn a_step_and_a_selection_differ_at_a_child_list_edge() {
+        let p = page(
+            "P",
+            &[
+                ("a", "a", &["a1"]),
+                ("a1", "a1", &[]),
+                ("b", "b", &["b1"]),
+                ("b1", "b1", &[]),
+            ],
+            &["a", "b"],
+        );
+        let step = |within| Verb::MoveUpDown {
+            keys: vec!["a1".into()],
+            up: false,
+            within_siblings: within,
+        };
+        let change = run(&[p.clone()], step(false)).unwrap();
+        let b = change.pages[0]
+            .upserts
+            .iter()
+            .find(|u| u.key == "b")
+            .unwrap();
+        assert_eq!(b.children, ["a1", "b1"]);
+        assert_eq!(run(&[p], step(true)), Err(Reason::NoOutlineStep));
     }
 }
