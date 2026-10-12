@@ -1146,9 +1146,9 @@ pub enum RenameOutcome {
 
 /// Rescue a stray page or journal file into a uniquely named normal page.
 /// Its bytes are unchanged and inbound references are not rewritten, matching
-/// v0.6.5 model.rs 1779. A retained writer (STEP3 §7) of the source and the
-/// target: their unsaved input is saved first. Cost O(P + source bytes) per
-/// try; four tries maximum.
+/// v0.6.5 model.rs 1779. With a host, one host operation of the source and
+/// the target (DESIGN §3.1): their unsaved input is saved first. Cost O(P +
+/// source bytes) per try; four tries maximum.
 pub fn rename_file_to_page(
     store: &Store,
     host: Option<&PageHost>,
@@ -1167,34 +1167,77 @@ pub fn rename_file_to_page(
         ext
     );
     let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
-    let discover = || Ok(crate::retained::pages(store, [&src, &to]));
-    crate::retained::reserved(
-        host,
+    // A retained non-portable legacy filename (`pages/A:B.md`) is not a view
+    // claimant but OG loads it as that page: refuse like a live claimant
+    // (external-editor / multi-device graph; master 46a0e8c27).
+    let unclaimed = || {
+        if !existing(refreshed_view(store)?.resolve(name, false)).is_empty()
+            || retained_legacy_page_identity_exists(store, name)?
+        {
+            return Err(error(
+                io::ErrorKind::AlreadyExists,
+                "a page with that name already exists",
+            ));
+        }
+        Ok(())
+    };
+    let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
+    let (Some(running), Some(from), Some(page)) = (host, store.as_page(&src), store.as_page(&to))
+    else {
+        // No host: the transaction under the retained-writer route, as before P3.
+        let discover = || Ok(crate::retained::pages(store, [&src, &to]));
+        return crate::retained::reserved(
+            host,
+            Input::Flush,
+            discover,
+            crate::retained::unsaved,
+            |_| {
+                crate::retry_on_conflict("page changed repeatedly during rescue", || {
+                    unclaimed()?;
+                    let (_, rev) = store.read(&src, max).map_err(store_error)?;
+                    let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+                    tx.move_file(&src, rev, &to, None);
+                    Ok(crate::commit_retry(tx.commit())?.then_some(()))
+                })
+            },
+        );
+    };
+    let plan = || {
+        unclaimed()?;
+        let (bytes, _) = store.read(&src, max).map_err(store_error)?;
+        Ok(Some(moved_unchanged(&from, &page, bytes)))
+    };
+    crate::retained::operation(
+        running,
         Input::Flush,
-        discover,
+        &[from.clone(), page.clone()],
+        "renaming the file",
+        "page changed repeatedly during rescue",
         crate::retained::unsaved,
-        |_| {
-            crate::retry_on_conflict("page changed repeatedly during rescue", || {
-                // A retained non-portable legacy filename (`pages/A:B.md`) is not a view
-                // claimant but OG loads it as that page: refuse like a live claimant
-                // (external-editor / multi-device graph; master 46a0e8c27).
-                if !existing(refreshed_view(store)?.resolve(name, false)).is_empty()
-                    || retained_legacy_page_identity_exists(store, name)?
-                {
-                    return Err(error(
-                        io::ErrorKind::AlreadyExists,
-                        "a page with that name already exists",
-                    ));
-                }
-                let (_, rev) = store
-                    .read(&src, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-                    .map_err(store_error)?;
-                let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-                tx.move_file(&src, rev, &to, None);
-                Ok(crate::commit_retry(tx.commit())?.then_some(()))
-            })
-        },
+        plan,
     )
+}
+
+/// A move of `from`'s file to the absent `to`, its `bytes` unchanged and no
+/// reference rewritten, as one host operation (DESIGN §3.1): `to` written
+/// over no file, then `from` deleted from the bytes the move was planned
+/// from, in a rename's order, so a crash between them completes the
+/// deletion at relaunch.
+pub(crate) fn moved_unchanged(from: &PageId, to: &PageId, bytes: Vec<u8>) -> HostOp {
+    let bytes: std::sync::Arc<[u8]> = bytes.into();
+    HostOp {
+        pages: vec![
+            (
+                to.clone(),
+                HostEffect::Write(bytes.clone()),
+                HostExpected::Absent,
+            ),
+            (from.clone(), HostEffect::Delete, HostExpected::Bytes(bytes)),
+        ],
+        kinds: vec![tine_store::EditKind::RenamePage],
+        policy: Input::Flush,
+        moved: Some((to.clone(), from.clone())),
+    }
 }
 
 /// Merge one source into a survivor, as [`rename_or_merge_page`] merges pages

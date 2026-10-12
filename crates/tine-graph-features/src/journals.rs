@@ -463,12 +463,12 @@ pub fn journal_filename_migrations(store: &Store) -> io::Result<Vec<JournalFilen
 /// only when `migration_plan` still gives the same `to` for its `from`;
 /// otherwise it is reported as skipped with the reason. A file not in
 /// `confirmed` is never renamed. References are not rewritten (the name stays
-/// the journal's title). Caller takes the pre-migration backup. Each
-/// still-eligible proposal is its own retained writer (STEP3 §7, A-R3) of
-/// its source and target: their unsaved input is saved first, and a
-/// proposal whose page cannot be saved is skipped with that reason, never
-/// blocking the others. Cost O(J log J + confirmed × J + migrated file
-/// bytes).
+/// the journal's title). Caller takes the pre-migration backup. With a
+/// host, each still-eligible proposal is its own host operation (DESIGN
+/// §3.1, A-R3) of its source and target: their unsaved input is saved
+/// first, and a proposal whose page cannot be saved is skipped with that
+/// reason, never blocking the others. Cost O(J log J + confirmed × J +
+/// migrated file bytes).
 pub fn migrate_journal_filenames(
     store: &Store,
     host: Option<&PageHost>,
@@ -509,15 +509,24 @@ pub fn migrate_journal_filenames(
         let Ok(to) = store.file_id(Area::Journals, &target) else {
             continue; // `migration_plan` already refused an invalid name.
         };
-        let pages = crate::retained::pages(store, [&entry, &to]);
-        let moved = crate::retained::reserved(
-            host,
-            Input::Flush,
-            || Ok(pages.clone()),
-            crate::retained::unsaved,
-            |_| Ok(migrate_one(store, &entry, &to)),
-        );
-        match moved.and_then(|moved| moved) {
+        let moved = match (host, store.as_page(&entry), store.as_page(&to)) {
+            (Some(running), Some(from), Some(page)) => {
+                migrate_hosted(store, running, (&entry, from), (&to, page), &target)
+            }
+            // No host: the transaction under the retained-writer route, as before P3.
+            _ => {
+                let pages = crate::retained::pages(store, [&entry, &to]);
+                crate::retained::reserved(
+                    host,
+                    Input::Flush,
+                    || Ok(pages.clone()),
+                    crate::retained::unsaved,
+                    |_| Ok(migrate_one(store, &entry, &to)),
+                )
+                .and_then(|moved| moved)
+            }
+        };
+        match moved {
             Ok(()) => {
                 // The day count is unchanged: the moved file keeps its day.
                 listing.rels.remove(&proposal.from);
@@ -533,14 +542,7 @@ pub fn migrate_journal_filenames(
 /// Move one eligible journal file to `to` as its own transaction; the
 /// error is the reason the proposal is skipped.
 fn migrate_one(store: &Store, entry: &FileId, to: &FileId) -> io::Result<()> {
-    let rev = match store.read(entry, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
-        Ok((_, rev)) => rev,
-        Err(error) => {
-            return Err(io::Error::other(format!(
-                "source could not be read: {error:?}"
-            )))
-        }
-    };
+    let (_, rev) = migration_source(store, entry)?;
     let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
     tx.move_file(entry, rev, to, None);
     tx_error(tx.commit()).map(drop).map_err(|error| {
@@ -550,6 +552,49 @@ fn migrate_one(store: &Store, entry: &FileId, to: &FileId) -> io::Result<()> {
             io::Error::other(format!("move refused: {error}"))
         }
     })
+}
+
+/// One eligible journal file's move to `to` as one host operation (DESIGN
+/// §3.1): its bytes unchanged, `to` written over no file, then the source
+/// deleted from the bytes the move was planned from. A target that appeared
+/// since the listing refuses, never overwritten; the error is the reason
+/// the proposal is skipped.
+fn migrate_hosted(
+    store: &Store,
+    host: &PageHost,
+    (entry, from): (&FileId, PageId),
+    (to, page): (&FileId, PageId),
+    target: &str,
+) -> io::Result<()> {
+    let plan = || {
+        let (bytes, _) = migration_source(store, entry)?;
+        match store.read(to, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
+            Err(StoreError::NotFound) => {}
+            Err(error @ StoreError::Io(_)) => {
+                return Err(io::Error::other(format!(
+                    "target could not be read: {error:?}"
+                )))
+            }
+            _ => return Err(io::Error::other(format!("target {target} already exists"))),
+        }
+        Ok(Some(crate::pages::moved_unchanged(&from, &page, bytes)))
+    };
+    crate::retained::operation(
+        host,
+        Input::Flush,
+        &[from.clone(), page.clone()],
+        "renaming the journal file",
+        "journal changed repeatedly during migration",
+        crate::retained::unsaved,
+        plan,
+    )
+}
+
+/// A migrating journal's bytes and revision, or the reason it is skipped.
+fn migration_source(store: &Store, entry: &FileId) -> io::Result<(Vec<u8>, tine_store::FileRev)> {
+    store
+        .read(entry, Some(tine_store::PARSE_INPUT_MAX_BYTES))
+        .map_err(|error| io::Error::other(format!("source could not be read: {error:?}")))
 }
 
 /// Duplicate-day files with first-line previews, canonical first. A file whose
