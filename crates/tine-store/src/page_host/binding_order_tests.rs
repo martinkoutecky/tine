@@ -17,18 +17,41 @@ fn graph() -> Live {
     Live::new(&[(OLD, "- old\n"), (REF, "- see [[Old]]\n")])
 }
 
-/// The rename `pages.rs` runs, on a fresh view (one attempt: nothing else
-/// publishes in these tests).
+/// The rename `pages.rs` runs: Old to New over the referrer.
 fn rename(host: &PageHost, store: &Store) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
-    let view = store.whole_graph().unwrap();
-    host.rename(
-        &PageId::from(OLD),
-        &PageId::from(NEW),
-        &[PageId::from(REF)],
-        &RenameMap(vec![("Old".into(), "New".into())]),
-        &view,
-        &|_, _, _| None,
-    )
+    replanned(host, store, OLD, NEW, &[REF], ("Old", "New"))
+}
+
+/// A host rename as `pages.rs` drives it: planned in a fresh view, and
+/// replanned in a new one when a publication made it stale (B2: `Refused`
+/// is `pages.rs`'s replan). A save's publication bumps the graph revision
+/// after the host already shows the page saved, so a view taken right
+/// after a save can be stale by the time the host checks it.
+fn replanned(
+    host: &PageHost,
+    store: &Store,
+    source: &str,
+    target: &str,
+    referrers: &[&str],
+    (old, new): (&str, &str),
+) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
+    let referrers: Vec<PageId> = referrers.iter().map(|page| PageId::from(*page)).collect();
+    let map = RenameMap(vec![(old.into(), new.into())]);
+    for _ in 0..20 {
+        let view = store.whole_graph().unwrap();
+        match host.rename(
+            &PageId::from(source),
+            &PageId::from(target),
+            &referrers,
+            &map,
+            &view,
+            &|_, _, _| None,
+        ) {
+            Err(RenameRefusal::Refused) => continue,
+            done => return done,
+        }
+    }
+    Err(RenameRefusal::Refused)
 }
 
 fn clear_faults(live: &Live) {
@@ -217,14 +240,13 @@ fn an_operation_over_a_running_order_is_busy_until_the_order_ends() {
         PageOperation::Waiting
     );
     let started = Instant::now();
-    let view = live.store.whole_graph().unwrap();
-    let again = live.host.rename(
-        &PageId::from(NEW),
-        &PageId::from("pages/Newer.md"),
+    let again = replanned(
+        &live.host,
+        &live.store,
+        NEW,
+        "pages/Newer.md",
         &[],
-        &RenameMap(vec![("New".into(), "Newer".into())]),
-        &view,
-        &|_, _, _| None,
+        ("New", "Newer"),
     );
     assert_eq!(again, Err(RenameRefusal::Busy));
     assert!(started.elapsed() >= OPERATION_WAIT);
