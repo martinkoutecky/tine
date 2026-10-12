@@ -661,7 +661,9 @@ pub(crate) fn open_graph_window_blocking(
         .initialization_script(format!(
             "window.__GRAPH_PATH__ = {};",
             serde_json::to_string(&meta.root).unwrap_or_else(|_| "\"\"".to_string())
-        ));
+        ))
+        // Its boot card in the language current now, not at process start (tine#107).
+        .initialization_script(crate::i18n_shell::window_boot_text_script(app));
         #[cfg(target_os = "macos")]
         let builder = builder
             .decorations(true)

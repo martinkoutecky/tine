@@ -20,6 +20,7 @@ import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw
 import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
+import { startUiLanguage } from "./i18n/preference";
 import { reportUiFailure } from "./uiFailure";
 import { latestOwner, readOwned } from "./owned";
 import { installBackendClock } from "./journal";
@@ -640,4 +641,6 @@ function Capture() {
 // flips (typically tens of ms, well before you finish typing the first block).
 void initParser().catch(() => console.error("lsdoc-wasm init failed"));
 installBackendClock(() => backend().localClock());
-render(() => <Capture />, document.getElementById("capture-root")!);
+// The UI language is the one wait: a local settings read (bounded) and, for a
+// non-English locale, its catalog chunk, so the first frame is not English (G3).
+void startUiLanguage().finally(() => render(() => <Capture />, document.getElementById("capture-root")!));

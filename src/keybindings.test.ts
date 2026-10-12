@@ -763,12 +763,12 @@ describe("pane-select Esc cascade", () => {
   });
 
   it("declares current-page block search as a remappable Mod-Shift-K command", () => {
-    expect(commandDefaults()).toContainEqual({
+    expect(commandDefaults()).toContainEqual(expect.objectContaining({
       id: "go/search-current-page",
       label: "Search blocks in current page",
       binding: "mod+shift+k",
       scope: "global",
-    });
+    }));
   });
 
   it("typing on a selected edge materializes an embryo pane that Escape unsplits", () => {

@@ -99,7 +99,9 @@ export function HelpPopup(): JSX.Element {
 
 export interface ShortcutSettingRow {
   id: string;
+  /** In the active UI language; `english` also matches a search (tine#107). */
   label: string;
+  english?: string;
   binding: string;
   /** A second built-in chord that runs the same command. Shown beside the
    *  binding so it is discoverable, but not remappable and not its own row: it
@@ -146,7 +148,7 @@ export function buildShortcutPaneData(shortcuts: ShortcutSettingRow[], search = 
   };
   return SHORTCUT_GROUPS.map((group) => ({
     ...group,
-    commands: shortcuts.filter((s) => s.scope === group.scope && matches(s.label, s.id, s.effective, s.binding)),
+    commands: shortcuts.filter((s) => s.scope === group.scope && matches(s.label, s.english, s.id, s.effective, s.binding)),
     builtins: BUILTIN_KEYS.filter((s) => s.scope === group.scope && matches(s.label, s.id, s.binding, s.details)),
   }));
 }
