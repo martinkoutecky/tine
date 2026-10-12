@@ -45,7 +45,8 @@ import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
-import { setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode } from "../document";
+import { SourceTaskCheckbox } from "../components/SourceTaskCheckbox";
+import { blockRef, setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane, openPdf } from "../panes";
 import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
@@ -1348,6 +1349,13 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
     const raw = targetRaw();
     return raw ? leadingMarker(raw) : null;
   };
+  // Where the checkbox writes: the same exact owner the click navigates to.
+  const checkboxTarget = () => {
+    const g = grp();
+    if (g) return blockRefTarget(props.id, g);
+    // Still resolving, but painted from the loaded node: that node's owner.
+    return liveTarget() ? blockRef(props.id) : null;
+  };
   // Parse the referenced block's text with ITS page's format (org refs render org).
   const fmt = () => liveTarget() ? formatForBlock(props.id) : formatForPage(grp()?.page);
   const annotation = () => {
@@ -1441,7 +1449,13 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         <Show when={lines() !== undefined} fallback={<>(({props.id}))</>}>
           <LinkDepthContext.Provider value={linkDepth + 1}>
             <Show when={marker()}>
-              {(m) => <><span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}</>}
+              {(m) => <>
+                {/* GH #518: OG's block-checkbox inside a reference ticks the
+                    referenced block (block.cljs build-block-title). No text node
+                    before the chip, so the reference's text stays the source's. */}
+                <SourceTaskCheckbox marker={m()} target={checkboxTarget} style={{ "margin-right": "0.3em" }} />
+                <span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}
+              </>}
             </Show>
             <For each={lines()!}>
               {(line, index) => (
