@@ -1,6 +1,10 @@
-//! The page host: the only page writer while Tine runs (storage s3), started
-//! per graph binding by `src-tauri/src/graph.rs` `start_host`. Runtime code is
-//! independent of the page_state oracle.
+//! The page host (storage s3), started per graph binding by
+//! `src-tauri/src/graph.rs` `start_host`: it owns open pages and writes their
+//! saves, renames and deletions. Retained feature transactions
+//! (`tine-graph-features` `pages.rs` and the other reserving writers) still
+//! write page files themselves under a `Reservation` (`binding_retained.rs`)
+//! until the host-only-writer campaign moves them onto the host. Runtime code
+//! is independent of the page_state oracle.
 
 mod binding;
 pub use binding::{
