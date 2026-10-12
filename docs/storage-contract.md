@@ -235,7 +235,13 @@ once the write succeeds. The order is memory only:
   memory: the source takes its disk bytes again and is never trashed, and
   newer input typed into it stays. The caller hears `Superseded`.
 - A caller's wait ends `Uncertain`, never success, when its window session
-  changes or the host fails; the operation still completes once it can.
+  changes or the host fails, or when the operation makes no progress for
+  `OPERATION_WAIT` (no answer, then no further page published); the
+  operation still completes once it can. The bound is on a stall, not on
+  the operation: a rename that keeps publishing its referrers is waited for
+  however many it has (a thousand on hosted Windows outlast 10 s; Beta had
+  no bound). Proof `binding_rename_tests.rs`
+  `a_long_rename_that_keeps_publishing_is_waited_for`.
   Every caller exit removes its reply slot.
 - The pages an operation applies for its caller (a single page's rename or
   a deletion) save without the edit debounce (400 ms, 1 s at most): the

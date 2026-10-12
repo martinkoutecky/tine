@@ -785,3 +785,57 @@ fn a_rename_planned_before_a_config_change_is_refused_unwritten() {
     );
     live.host.stop();
 }
+
+/// The caller's bound is on a stall, not the operation (storage contract,
+/// page host binding, the caller's wait): a rename whose pages save one by
+/// one over more than `OPERATION_WAIT` in all, each well within it of the
+/// last, is waited for and answered Applied (hosted Windows: a thousand
+/// referrers outlast 10 s).
+#[test]
+fn a_long_rename_that_keeps_publishing_is_waited_for() {
+    use super::super::retained::OPERATION_WAIT;
+    let referrers: Vec<String> = (0..3).map(|i| format!("pages/r{i}.md")).collect();
+    let mut files = vec![("pages/Old.md", "- old\n")];
+    files.extend(
+        referrers
+            .iter()
+            .map(|key| (key.as_str(), "- see [[Old]]\n")),
+    );
+    let live = Live::new(&files);
+    let ids: Vec<PageId> = referrers
+        .iter()
+        .map(|key| PageId::from(key.as_str()))
+        .collect();
+    // Four page saves (the destination, three referrers), each a third of
+    // the bound: the whole outlasts it, no gap between saves comes near it.
+    live.host.driver.shared.with_state(|state| {
+        state
+            .progress
+            .host
+            .fs
+            .delays
+            .insert(super::io::Phase::PageTemp, OPERATION_WAIT / 3);
+    });
+    let started = Instant::now();
+    let renamed = rename(
+        &live,
+        &PageId::from("pages/Old.md"),
+        &PageId::from("pages/New.md"),
+        &ids,
+        &map("Old", "New"),
+    );
+    assert!(
+        started.elapsed() > OPERATION_WAIT,
+        "the rename outlasted the bound"
+    );
+    assert_eq!(
+        renamed,
+        Ok((ids, vec![])),
+        "a rename that keeps publishing is waited for"
+    );
+    for key in &referrers {
+        assert_eq!(live.disk(key), "- see [[New]]\n");
+    }
+    assert!(!live.root.join("pages/Old.md").exists());
+    live.host.stop();
+}

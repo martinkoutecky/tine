@@ -495,17 +495,22 @@ impl PageHost {
     /// Never success without both; Uncertain at `deadline`, once the driver
     /// ended or the state is poisoned, once the host stopped or relaunched,
     /// or once window `session` is not current (F1: a result never vouches
-    /// for another session's pages).
+    /// for another session's pages). The deadline bounds a stall, not the
+    /// operation: the answer and each newly published page move it to
+    /// `OPERATION_WAIT` from then, so a long operation that keeps publishing
+    /// (a rename with a thousand referrers on Windows) is waited for.
     pub(super) fn settle(
         &self,
         slot: &ReplySlot,
         session: Option<u64>,
-        deadline: std::time::Instant,
+        mut deadline: std::time::Instant,
     ) -> Settled {
         let shared = &self.driver.shared;
         let Ok(mut state) = shared.state.lock() else {
             return Settled::Uncertain;
         };
+        // (answered, pages witnessed) at the last wake.
+        let mut progress = (false, 0);
         loop {
             let host = &state.progress.host;
             let Some(reply) = host.order.slot(slot.id) else {
@@ -519,6 +524,11 @@ impl PageHost {
                 Some(OperationReply::Applied(pages)) => {
                     if let Some(page) = &reply.superseded {
                         return Settled::Superseded(page.clone());
+                    }
+                    let now = (true, reply.witnessed.len());
+                    if now != progress {
+                        progress = now;
+                        deadline = deadline.max(std::time::Instant::now() + OPERATION_WAIT);
                     }
                     // `witnessed` holds answered pages only (`Order::published`).
                     if reply.witnessed.len() == pages.len() {
