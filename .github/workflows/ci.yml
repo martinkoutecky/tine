@@ -227,6 +227,7 @@ jobs:
       - name: Windows release rename availability (250 and 1000 referrers)
         run: cargo test --release -p tine-graph-features --test rename_cost -- --ignored --exact --nocapture a_250_referrer_rename_completes_inside_the_caller_bound a_thousand_referrer_rename_completes_inside_the_caller_bound
       - name: Windows storage timing probes (informational, G1)
+        if: ${{ !cancelled() }}
         run: |
           cargo test --release -p tine-store --lib probe_deletion_step_timing -- --ignored --nocapture
           cargo test --release -p tine-graph-features --test rename_cost probe_rename_wall_time -- --ignored --exact --nocapture

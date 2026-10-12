@@ -174,12 +174,15 @@ fn rename_publication_reopens_no_referrer() {
     );
     // Linear in the files the operation wrote (`files_written`: each page
     // and its draft record), never in the graph. Measured on 31 written
-    // pages: Linux re-reads each once (the racy follow-up), Windows twice
-    // (the echo event's path-scoped diff, then the racy follow-up).
+    // pages: Linux re-reads each once (the racy follow-up), Windows up to
+    // twice (the echo event's path-scoped diff, then the racy follow-up;
+    // FOLLOWUPS K5). The per-request drain acknowledgement (8f2183c6d)
+    // waits for that second read, so the bound counts it.
+    let per_file = if cfg!(windows) { 2 } else { 1 };
     for counts in [few, many] {
+        let bound = per_file * counts.files_written + 4;
         assert!(
-            counts.watcher_reads <= counts.files_written + 4
-                && counts.watcher_stamps_by_path <= counts.files_written + 4,
+            counts.watcher_reads <= bound && counts.watcher_stamps_by_path <= bound,
             "contract §5.4: once settled, the watcher's re-reads and re-stamps of what an \
              operation wrote are at most the files it wrote plus a small constant; a \
              re-read that grows with the graph is not the accepted cost \
