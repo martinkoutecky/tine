@@ -918,10 +918,15 @@ mod tests {
         assert_eq!(SHOW_KEY, "tray_show");
         assert_eq!(MINIMIZE_KEY, "tray_minimize");
         assert_eq!(START_MINIMIZED_KEY, "tray_start_minimized");
-        let source = include_str!("tray.rs");
-        for label in ["\"Open Tine\"", "\"Quick Capture\"", "\"Quit\""] {
-            assert!(
-                source.contains(label),
+        // The English labels are the contract; other locales translate them.
+        for (id, label) in [
+            ("shell-tray-open", "Open Tine"),
+            ("shell-tray-capture", "Quick Capture"),
+            ("shell-tray-quit", "Quit"),
+        ] {
+            assert_eq!(
+                crate::i18n_shell::shell_text("en", id),
+                label,
                 "tray menu item {label} is part of the contract"
             );
         }
