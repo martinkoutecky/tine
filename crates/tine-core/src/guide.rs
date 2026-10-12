@@ -851,6 +851,16 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn relative_file_link_guide_names_its_base_and_the_graph_boundary() {
+        // GH #457: a relative link resolves from the page's folder and never
+        // opens a path outside the graph.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("is read from the folder of the page that contains it"));
+        assert!(search
+            .contains("points outside the graph folder is shown struck through and never opened"));
+    }
+
+    #[test]
     fn empty_html_export_names_the_public_page_rule_in_the_guide() {
         // GH #560 (master 350efef1f): a zero-page export is explained, not silent.
         let files = include_str!("templates/files-external-edits-backups.md");

@@ -349,6 +349,53 @@ pub(crate) fn file_url_to_path(url: &str) -> Option<std::path::PathBuf> {
     (path.as_os_str().len() > 0).then_some(path)
 }
 
+/// The OS path of `relative` (a `/`-separated graph-relative path that a
+/// relative link resolved to, GH #457) inside the graph at `root`. Refusal
+/// scenario (in scope: malformed or imported Markdown, a synced note): a link
+/// in a note is untrusted content, so a path that leaves the graph folder,
+/// lexically (`..` above the root, an absolute or drive component) or through
+/// a symlink, is refused rather than handed to the OS opener; a missing target
+/// is reported instead of opening an unrelated window. Read-only; Cost
+/// O(path components) plus two canonicalizations.
+pub(crate) fn graph_relative_target(
+    root: &std::path::Path,
+    relative: &str,
+) -> Result<std::path::PathBuf, String> {
+    const OUTSIDE: &str = "that link points outside the graph folder";
+    if relative.starts_with(['/', '\\']) {
+        return Err(OUTSIDE.into());
+    }
+    let mut clean = std::path::PathBuf::new();
+    for part in relative.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if !clean.pop() {
+                    return Err(OUTSIDE.into());
+                }
+            }
+            part => {
+                let component = std::path::Path::new(part);
+                if part.contains(':') || component.has_root() {
+                    return Err(OUTSIDE.into());
+                }
+                clean.push(component);
+            }
+        }
+    }
+    let graph = root
+        .canonicalize()
+        .map_err(|error| format!("the graph folder could not be read: {error}"))?;
+    let target = root
+        .join(&clean)
+        .canonicalize()
+        .map_err(|_| format!("{} could not be found", clean.display()))?;
+    if !target.starts_with(&graph) {
+        return Err(OUTSIDE.into());
+    }
+    Ok(target)
+}
+
 /// Where a clicked link is headed, decided before anything is spawned so the
 /// routing decision is testable on its own — the spawn that follows is not.
 #[derive(Debug, PartialEq, Eq)]
@@ -1258,5 +1305,59 @@ mod reveal_platform_arms {
             command.contains("#[cfg(not(desktop))]"),
             "I-16: iOS/Android must get reveal_known_graph's explicit refusal"
         );
+    }
+}
+
+#[cfg(test)]
+mod graph_relative_target_tests {
+    use super::graph_relative_target;
+
+    /// GH #457: a resolved relative link opens the file inside the graph, and a
+    /// path that leaves the graph folder, lexically or through a symlink, is
+    /// refused (a note's link is untrusted content).
+    #[test]
+    fn opens_inside_the_graph_and_refuses_what_leaves_it() {
+        let base = std::env::temp_dir().join(format!("tine-457-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let graph = base.join("graph");
+        std::fs::create_dir_all(graph.join("files")).unwrap();
+        std::fs::create_dir_all(base.join("outside")).unwrap();
+        std::fs::write(graph.join("files/a b.txt"), "x").unwrap();
+        std::fs::write(base.join("outside/secret.txt"), "x").unwrap();
+
+        let opened = graph_relative_target(&graph, "files/a b.txt").expect("inside");
+        assert_eq!(opened, graph.join("files/a b.txt").canonicalize().unwrap());
+        assert_eq!(
+            graph_relative_target(&graph, "pages/../files/a b.txt").unwrap(),
+            opened
+        );
+        assert_eq!(
+            graph_relative_target(&graph, "").unwrap(),
+            graph.canonicalize().unwrap()
+        );
+        for escaping in [
+            "../outside/secret.txt",
+            "files/../../outside/secret.txt",
+            "/etc/passwd",
+            "C:/Windows/win.ini",
+        ] {
+            assert!(
+                graph_relative_target(&graph, escaping)
+                    .unwrap_err()
+                    .contains("outside the graph folder"),
+                "{escaping} must be refused"
+            );
+        }
+        assert!(graph_relative_target(&graph, "files/missing.txt")
+            .unwrap_err()
+            .contains("could not be found"));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(base.join("outside"), graph.join("link")).unwrap();
+            assert!(graph_relative_target(&graph, "link/secret.txt")
+                .unwrap_err()
+                .contains("outside the graph folder"));
+        }
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

@@ -289,6 +289,11 @@ export interface Backend {
    * In-area symlinks may resolve; invalid/escaped paths, missing files, I/O, and
    * unsupported mobile handoff reject. Cost O(path components). */
   openAsset(name: string, bindingGeneration: number): Promise<void>;
+  /** Open an existing graph-relative file or folder (a resolved relative link,
+   * GH #457) in the desktop OS default app. A path that leaves the graph folder,
+   * including through a symlink, a missing target, and mobile reject. Read-only
+   * OS handoff. Cost O(path components). */
+  openGraphFile(path: string, bindingGeneration: number): Promise<void>;
   openPageFile(name: string, kind: "page" | "journal", path: string | undefined, reveal: boolean): Promise<void>;
   /** Launch a desktop editor for an existing assets-relative file. Blank command
    * uses the OS opener; otherwise argv is parsed without a shell, replacing `{}`
@@ -1062,6 +1067,9 @@ class TauriBackend implements Backend {
   }
   openAsset(name: string, bindingGeneration: number) {
     return this.assetCall<void>("open_asset", { name }, bindingGeneration);
+  }
+  openGraphFile(path: string, bindingGeneration: number) {
+    return this.assetCall<void>("open_graph_file", { path }, bindingGeneration);
   }
   openPageFile(name: string, kind: "page" | "journal", path: string | undefined, reveal: boolean) {
     return this.call<void>("open_page_file", { name, kind, path: path || null, reveal });

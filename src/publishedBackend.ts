@@ -1073,6 +1073,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "setDefaultJournalTemplate",
   "setStartOfWeek",
   "openPageFile",
+  "openGraphFile",
   "editCustomCss",
   "editAssetExternal",
   "trashAsset",

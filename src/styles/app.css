@@ -4340,6 +4340,13 @@ html[data-system-insets="native-viewport"] {
   text-decoration: underline;
 }
 
+/* GH #457: a relative file link that leaves the graph folder is never opened. */
+.external-link[data-broken-file-link] {
+  color: var(--ls-secondary-text-color, inherit);
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
 .inline-code {
   font-family: var(--tine-mono-font, var(--ls-font-mono));
   font-size: 0.88em;
