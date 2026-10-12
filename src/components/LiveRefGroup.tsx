@@ -1,7 +1,8 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { blockProperty, blockRef, collapseEpochOf, ensurePageLoaded, pageByName, setBlockProperty, node as docNode } from "../document";
+import { beginPageHeaderEdit, blockProperty, blockRef, collapseEpochOf, ensurePageLoaded, pageByName, setBlockProperty, node as docNode } from "../document";
+import { loadSourcePage } from "../sourcePage";
 import { Block, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
@@ -12,7 +13,7 @@ import { startEditing } from "../editorController";
 import { visibleBody } from "../render/block";
 import { LinkDepthContext } from "./linkDepth";
 import { readOr } from "../resourceRead";
-import { openBlockInSidebar } from "../ui";
+import { openBlockInSidebar, openPageProps } from "../ui";
 import "./LiveRefGroup.css";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
@@ -125,8 +126,30 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
     if (ready() && docNode(id)) return `p:${docNode(id).parent ?? ""}`;
     return `c:${(dtoById(id)?.breadcrumb ?? []).join("\u0001")}`;
   };
+  // GH #486: the page-property row (a synthetic backend id) becomes the source
+  // page's own header block while that header is materialized for editing, so
+  // the edit happens in place, live, exactly as on the source page.
+  const headerBlockId = (): string | null => {
+    if (!ready()) return null;
+    const page = pageByName(props.page);
+    const first = page && page.kind === props.kind ? docNode(page.roots[0] ?? "") : undefined;
+    return first?.originatedFromPageHeader ? first.id : null;
+  };
+  const liveIdOf = (b: BlockDto): string => (b.page_property && headerBlockId()) || b.id;
+  // OG edits the referencing page's properties block in place (og-1.0.0
+  // block.cljs block-content/properties-cp on a pre-block). Tine's edit path for
+  // it is the source page's header editor (Page.tsx editPageHeader); an org page
+  // or a non-header preamble has none there either and opens the properties panel.
+  const editPageProperties = async (event: MouseEvent): Promise<void> => {
+    const x = event.clientX;
+    const y = event.clientY;
+    if (!(await loadSourcePage({ page: props.page, pageKind: props.kind, path: props.path }, "Its properties were not opened."))) return;
+    const id = beginPageHeaderEdit(props.page);
+    if (id) startEditing(id, docNode(id).raw.length, null, surface);
+    else openPageProps(props.page, x, y);
+  };
   const grouping = createMemo(() => {
-    const ids = props.blocks.map((b) => b.id);
+    const ids = props.blocks.map(liveIdOf);
     if (!props.showBreadcrumb) return { ids, starts: new Set<string>(ids) };
     const groups = new Map<string, string[]>();
     for (const id of ids) {
@@ -393,7 +416,8 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                     <Show when={dtoById(id)}>
                       {(d) => props.excerpt
                         ? <ReferenceExcerptBlocks blocks={[d()]} evidence={evidenceById().has(id) ? [evidenceById().get(id)!] : []} page={props.page} kind={props.kind} path={props.path} />
-                        : <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} path={props.path} />}
+                        : <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} path={props.path}
+                            onEditPageProperties={(event) => { void editPageProperties(event); }} />}
                     </Show>
                   }
                 >
