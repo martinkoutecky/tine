@@ -21,8 +21,8 @@ const RULE: &str =
 const EXEMPLAR: &str = "crates/tine-graph-features/src/conflicts.rs fold_pair";
 /// Store calls that write graph files.
 const WRITES: &[&str] = &["transaction", "restore"];
-/// Calls that route a writer through the host.
-const ROUTES: &[&str] = &["reserved", "applied", "restore_hosted"];
+/// Calls that route a writer through the host (`retained::operation` is a host operation).
+const ROUTES: &[&str] = &["reserved", "operation", "restore_hosted"];
 
 /// Writers of no page file, by `file::fn`, each with its reason.
 const EXEMPT: &[(&str, &str)] = &[
