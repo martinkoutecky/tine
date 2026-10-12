@@ -523,6 +523,14 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
     })
 }
 
+/// The blocks an outline verb reads (`Verb::reads`), as `[{key, subtree}]`, so
+/// the window can send only those (DESIGN §5.3, §8).
+#[wasm_bindgen]
+pub fn outline_reads_json(verb: &str) -> Result<String, JsValue> {
+    let verb: outline::Verb = serde_json::from_str(verb).map_err(|e| JsValue::from_str(&format!("Invalid outline verb: {e}")))?;
+    serde_json::to_string(&verb.reads()).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 /// Shared comparison form; O(text bytes), no graph access.
 #[wasm_bindgen]
 pub fn search_fold(text: &str, remove_accents: bool) -> String {

@@ -7,7 +7,7 @@
 import { produce, unwrap } from "solid-js/store";
 import type { EditKind, EditKinds } from "../editKind";
 import type { PageDto } from "../types";
-import { outlineApply } from "../render/parse";
+import { outlineApply, outlineReads } from "../render/parse";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { capturePages, markDirty, pageFrozen, persistTransfer } from "./host/wiring";
 import { doc, keySource, keysUsed, pageByName, setDoc } from "./model";
@@ -50,30 +50,69 @@ export interface OutlineChange {
   transfers: [string, string][];
 }
 
+/** A block a verb reads, and whether it reads its subtree (`outline::Read`). */
+interface OutlineRead { key: string; subtree: boolean }
+type Arena = Record<string, { raw: string; children: readonly string[] }>;
+
+/** How `outlineChange` marshals pages. `whole` sends every block (the oracle
+ *  the read-set marshal is tested against); `fallbacks` counts asks the kernel
+ *  found incomplete, which were asked again with whole pages. */
+export const outlineMarshal = { whole: false, fallbacks: 0 };
+
 /** The kernel's view of one loaded page: an arena keyed by block id. The
- *  parent links are not sent; the kernel derives them. O(page blocks), read
- *  from the unwrapped store: a structural edit runs in an event handler, and
- *  reading 600 blocks through the store's proxies cost more than the kernel
- *  (outline-kernel gate 2). The arrays are serialized before anything else
- *  runs, so they are not copied. */
-function outlinePage(name: string) {
+ *  parent links are not sent; the kernel derives them. With `reads`, only the
+ *  verb's read set (DESIGN §5.3, `outline::Verb::reads`): each read block, its
+ *  ancestors, the siblings beside it and each ancestor, and a whole subtree
+ *  where asked, so a structural edit costs O(depth + siblings + subtree), not
+ *  O(page). Read from the unwrapped store: a structural edit runs in an event
+ *  handler, and reading blocks through the store's proxies cost more than the
+ *  kernel (outline-kernel gate 2). The arrays are serialized before anything
+ *  else runs, so they are not copied. */
+function outlinePage(name: string, reads: readonly OutlineRead[] | null) {
   const page = unwrap(pageByName(name));
   if (!page) return null;
   const byId = unwrap(doc.byId);
-  const blocks: Record<string, { raw: string; children: readonly string[] }> = {};
+  const blocks: Arena = {};
   // The block made from the page's header properties, wherever it now sits:
-  // nothing may nest under it (M1 review F3).
+  // nothing may nest under it (M1 review F3). The kernel compares it only with
+  // blocks it reads, so a partial page names it only when it holds it.
   let headerRoot: string | null = null;
-  const pending = [...page.roots];
-  while (pending.length) {
-    const id = pending.pop()!;
+  const add = (id: string): boolean => {
+    if (blocks[id]) return true;
     const node = byId[id];
-    // A block listed twice is sent once; the kernel sees the second listing
-    // and refuses the page as malformed.
-    if (!node || blocks[id]) continue;
+    if (!node || node.page !== name) return false;
     blocks[id] = { raw: node.raw, children: node.children };
     if (node.originatedFromPageHeader && headerRoot === null) headerRoot = id;
-    pending.push(...node.children);
+    return true;
+  };
+  const pending: string[] = [];
+  if (reads) {
+    for (const { key, subtree } of reads) {
+      // The block, its ancestors, and the siblings beside each. A parent link
+      // that disagrees with the children lists leaves a block without its
+      // parent; the kernel refuses that page as incomplete.
+      const walked = new Set<string>();
+      for (let at: string | null = key; at !== null && !walked.has(at) && add(at); at = byId[at].parent) {
+        walked.add(at);
+        const parent = byId[at].parent;
+        const list = parent === null ? page.roots : byId[parent]?.children ?? [];
+        const i = list.indexOf(at);
+        if (i > 0) add(list[i - 1]);
+        if (i >= 0 && i + 1 < list.length) add(list[i + 1]);
+      }
+      if (subtree && blocks[key]) pending.push(...blocks[key].children);
+    }
+  } else {
+    pending.push(...page.roots);
+  }
+  // A block listed twice is walked once; the kernel sees the second listing
+  // and refuses the page as malformed.
+  const walked = new Set<string>();
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (walked.has(id) || !add(id)) continue;
+    walked.add(id);
+    pending.push(...byId[id].children);
   }
   return {
     name,
@@ -87,10 +126,22 @@ function outlinePage(name: string) {
   };
 }
 
-/** Ask the kernel for `verb` over the named pages. Pure: nothing is applied. */
+/** Ask the kernel for `verb` over the named pages. Pure: nothing is applied.
+ *  The pages go as the verb's read set; a kernel that finds it incomplete
+ *  (a store whose parent links disagree with its children lists, or a read
+ *  set that missed a block) is asked again with whole pages. */
 export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): OutlineChange | { refused: OutlineRefusal } {
-  const pages = [...new Set(pageNames)].map(outlinePage).filter((p) => p !== null);
-  const answer = JSON.parse(outlineApply(JSON.stringify({ pages, verb, keys: keySource() })));
+  const names = [...new Set(pageNames)];
+  const ask = (reads: readonly OutlineRead[] | null) => {
+    const pages = names.map((name) => outlinePage(name, reads)).filter((p) => p !== null);
+    return JSON.parse(outlineApply(JSON.stringify({ pages, verb, keys: keySource() })));
+  };
+  const reads = outlineMarshal.whole ? null : (JSON.parse(outlineReads(JSON.stringify(verb))) as OutlineRead[]);
+  let answer = ask(reads);
+  if (reads && answer.refused === "incomplete") {
+    outlineMarshal.fallbacks++;
+    answer = ask(null);
+  }
   if (answer.refused) return { refused: answer.refused as OutlineRefusal };
   const change = answer.ok as { pages: PagePatch[]; focus: { key: string; raw_offset: number | null } | null; notices: OutlineNotice[]; keys_used: number; transfers?: [string, string][] };
   return {

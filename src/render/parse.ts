@@ -14,7 +14,7 @@
 // initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, hide_policy_hides, outline_apply_json, outline_max_depth, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block, MacroInline, Inline } from "./ast";
 
@@ -235,10 +235,15 @@ export function editorTextJoin(visible: string, hidden: string, format: "md" | "
 export function hidePolicyHides(policy: string, key: string): boolean {
   return hide_policy_hides(policy, key);
 }
-/** One outline-kernel verb over whole pages (`outline::apply`); see `document/kernel.ts`. */
+/** One outline-kernel verb (`outline::apply`); see `document/kernel.ts`. */
 export function outlineApply(request: string): string {
   if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
   return outline_apply_json(request);
+}
+/** The blocks an outline verb (JSON) reads (`outline::Verb::reads`). */
+export function outlineReads(verb: string): string {
+  if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
+  return outline_reads_json(verb);
 }
 /** The kernel's outline depth cap (twin 4); null before the parser is ready. */
 export function outlineMaxDepth(): number | null {

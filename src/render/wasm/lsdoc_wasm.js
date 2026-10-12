@@ -492,6 +492,33 @@ function __tine_raw_outline_max_depth() {
 }
 
 /**
+ * The blocks an outline verb reads (`Verb::reads`), as `[{key, subtree}]`, so
+ * the window can send only those (DESIGN §5.3, §8).
+ * @param {string} verb
+ * @returns {string}
+ */
+function __tine_raw_outline_reads_json(verb) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(verb, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.outline_reads_json(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Markdown page header (leading accepted properties, see `block_regions::page_header`).
  * O(preamble bytes); no I/O.
  * @param {string} raw
@@ -1366,6 +1393,7 @@ export const nested_reference_names = __tineGuard("nested_reference_names", __ti
 export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_ordered_list_glyph);
 export const outline_apply_json = __tineGuard("outline_apply_json", __tine_raw_outline_apply_json);
 export const outline_max_depth = __tineGuard("outline_max_depth", __tine_raw_outline_max_depth);
+export const outline_reads_json = __tineGuard("outline_reads_json", __tine_raw_outline_reads_json);
 export const page_header_json = __tineGuard("page_header_json", __tine_raw_page_header_json);
 export const page_identity_key = __tineGuard("page_identity_key", __tine_raw_page_identity_key);
 export const page_regions_json = __tineGuard("page_regions_json", __tine_raw_page_regions_json);

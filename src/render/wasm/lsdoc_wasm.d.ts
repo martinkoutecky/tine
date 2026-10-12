@@ -120,6 +120,12 @@ export function outline_apply_json(request: string): string;
 export function outline_max_depth(): number;
 
 /**
+ * The blocks an outline verb reads (`Verb::reads`), as `[{key, subtree}]`, so
+ * the window can send only those (DESIGN §5.3, §8).
+ */
+export function outline_reads_json(verb: string): string;
+
+/**
  * Markdown page header (leading accepted properties, see `block_regions::page_header`).
  * O(preamble bytes); no I/O.
  */
@@ -288,6 +294,7 @@ export interface InitOutput {
     readonly ordered_list_glyph: (a: number, b: number) => [number, number];
     readonly outline_apply_json: (a: number, b: number) => [number, number, number, number];
     readonly outline_max_depth: () => number;
+    readonly outline_reads_json: (a: number, b: number) => [number, number, number, number];
     readonly page_header_json: (a: number, b: number) => [number, number];
     readonly page_identity_key: (a: number, b: number) => [number, number];
     readonly page_regions_json: (a: number, b: number, c: number) => [number, number];
