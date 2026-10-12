@@ -205,6 +205,87 @@ impl<F: HostIo> Host<F> {
     }
 }
 
+impl<F: HostIo> Host<F> {
+    /// The s3.3 model's `opApply` (host-only-writer P2, DESIGN §3.1): one
+    /// operation writing a feature's planned bytes to `effects`' pages,
+    /// each `(new, expected)`: `new` None deletes the page; `expected` is
+    /// the bytes the feature planned from (None: no file), checked against
+    /// the host's current bytes under the path locks. `moved` `(dst, src)`
+    /// orders the writes as a rename's (dst, then the others, then src's
+    /// deletion). Drafted, versioned and published like a rename; the host
+    /// never computes the bytes. Refused when a page is dirty or its bytes
+    /// moved since the plan (in-scope scenario: the window edited it, or an
+    /// external editor or sync service changed the file); the caller
+    /// replans.
+    pub(super) fn apply(
+        &mut self,
+        effects: &BTreeMap<PageKey, (Text, Text)>,
+        moved: Option<(&str, &str)>,
+    ) -> Disposition {
+        let keys: BTreeSet<PageKey> = effects.keys().cloned().collect();
+        let shape = moved.is_none_or(|(dst, src)| {
+            dst != src
+                && effects
+                    .get(src)
+                    .is_some_and(|(new, old)| new.is_none() && old.is_some())
+                && effects.get(dst).is_some_and(|(new, _)| new.is_some())
+        });
+        if !self.alive || keys.is_empty() || !self.keys.includes(&keys) || !shape {
+            return Disposition::Refused;
+        }
+        if self.worker.is_some() || self.allocator_busy() {
+            return Disposition::Waiting;
+        }
+        // A known dirty page already disproves the operation guard; refuse
+        // before loading any other path.
+        if keys
+            .iter()
+            .any(|key| self.pages.get(key).is_some_and(|p| !p.clean()))
+        {
+            return Disposition::Refused;
+        }
+        // D4 with no chaining: a running order's or reservation's pages wait
+        // for its end.
+        if keys.iter().any(|key| self.retained.contains(key)) || self.order.touches(&keys) {
+            return Disposition::Waiting;
+        }
+        if self.lacks_locks(&keys) {
+            return Disposition::Waiting;
+        }
+        self.with_locks(&keys, |host| {
+            if keys.iter().any(|key| host.busy(key)) {
+                return Disposition::Waiting;
+            }
+            let mut pages = BTreeMap::new();
+            for (key, (new, expected)) in effects {
+                let Ok(mut page) = host.operation_page(key) else {
+                    return Disposition::Refused;
+                };
+                if !page.clean() || page.buf != *expected {
+                    return Disposition::Refused;
+                }
+                page.buf = new.clone();
+                pages.insert(key.clone(), page);
+            }
+            // Dense versions in key order, as a rename's (A-R5).
+            let mut last_version = host.version;
+            let mut records = vec![];
+            for (key, page) in &mut pages {
+                last_version = last_version.checked_add(1).expect("host version exhausted");
+                page.version = last_version;
+                page.typed = true;
+                page.risk = true;
+                records.push(host.record(key, page));
+            }
+            let versions = pages.iter().map(|(k, p)| (k.clone(), p.version)).collect();
+            let gates = moved.map(|(dst, src)| Gates::new(dst, src, versions));
+            let reply = Reply::Caller(host.order.allocate(host.incarnation));
+            host.install_operation(pages, records, reply, last_version, gates);
+            Disposition::Pending
+        })
+    }
+}
+
 /// The model scheduler's rename policy: rewrite references, rebind the
 /// moved page's title. Production supplies its own (`PageHost::rename`).
 #[cfg(test)]

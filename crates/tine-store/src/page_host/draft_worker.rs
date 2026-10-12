@@ -238,7 +238,8 @@ impl<F: HostIo> Host<F> {
             Reply::Window(_) => drafts::page_name(&records[0].page),
             Reply::Caller(_) => drafts::op_name(),
         };
-        // Every rename writes a page; a deletion's one record has no bytes.
+        // Every rename writes a page, and so does an apply that is not only
+        // deletions; a deletion's records have no bytes (M6 `renaming`).
         let rename = matches!(reply, Reply::Caller(_)) && records.iter().any(|r| r.bytes.is_some());
         self.worker = Some(DraftWorker {
             effect: name.clone(),

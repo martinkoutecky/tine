@@ -9,7 +9,7 @@
 //! `tine-graph-features::retained`.
 
 use std::io;
-use tine_store::{Input, PageHost, PageId, ReserveRefusal};
+use tine_store::{ApplyRefusal, HostOp, Input, PageHost, PageId, ReserveRefusal};
 
 /// Run `write` as a retained writer of the pages `discover` names.
 /// `discover` runs again under the reservation (a grown set starts over);
@@ -63,6 +63,66 @@ pub(crate) fn unsaved(page: &str) -> io::Error {
         io::ErrorKind::WouldBlock,
         format!("“{page}” has changes Tine could not save. Save or discard them, then try again."),
     )
+}
+
+/// Run `op` as one host operation (host-only-writer P2, DESIGN §3.1): None
+/// when a page changed since the plan (the caller replans, as for a store
+/// conflict). `what` names the change in messages; `refused(page)` is the
+/// writer's unsaved-input error. Finding B: no message claims more than its
+/// evidence.
+pub(crate) fn applied(
+    host: &PageHost,
+    op: HostOp,
+    what: &str,
+    refused: impl FnOnce(&str) -> io::Error,
+) -> io::Result<Option<()>> {
+    let error = |kind, message: String| io::Error::new(kind, message);
+    match host.apply(op) {
+        Ok(()) => Ok(Some(())),
+        Err(ApplyRefusal::Changed) => Ok(None),
+        Err(ApplyRefusal::Unsaved(page)) => Err(refused(page.as_str())),
+        Err(ApplyRefusal::Busy) => Err(error(
+            io::ErrorKind::WouldBlock,
+            "Another change to these pages is still finishing; try again in a moment.".into(),
+        )),
+        Err(ApplyRefusal::Refused) => Err(error(
+            io::ErrorKind::Other,
+            format!("Tine could not run {what}; nothing changed."),
+        )),
+        Err(ApplyRefusal::DraftFailed) => Err(error(
+            io::ErrorKind::Other,
+            format!(
+                "{} could not be recorded; nothing changed.",
+                capitalized(what)
+            ),
+        )),
+        Err(ApplyRefusal::Unwritten(page)) => Err(error(
+            io::ErrorKind::WouldBlock,
+            format!(
+                "“{}” could not be written; {what} finishes once it can be.",
+                page.as_str()
+            ),
+        )),
+        Err(ApplyRefusal::Superseded(page)) => Err(error(
+            io::ErrorKind::Other,
+            format!(
+                "“{}” changed before {what} finished; your later edit stands.",
+                page.as_str()
+            ),
+        )),
+        Err(ApplyRefusal::Uncertain) => Err(error(
+            io::ErrorKind::TimedOut,
+            format!("Couldn't confirm {what} yet; Tine keeps trying to finish it."),
+        )),
+    }
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

@@ -12,8 +12,9 @@ use tine_core::refs;
 #[cfg(any(test, feature = "test-faults"))]
 use tine_store::SaveOutcome;
 use tine_store::{
-    Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageOperation, PageRead, RenameMap,
-    RenameRefusal, Resolved, RewriteEffect, SaveBase, Store, StoreError, TitleRebind,
+    Area, FileId, FileRev, HostEffect, HostExpected, HostOp, Input, LoadError, PageHost, PageId,
+    PageOperation, PageRead, RenameMap, RenameRefusal, Resolved, RewriteEffect, SaveBase, Store,
+    StoreError, TitleRebind,
 };
 
 /// A page read or OS source selection failed at the load, identity, or file step.
@@ -1200,8 +1201,8 @@ pub fn rename_file_to_page(
 /// but without renaming anything (aliases united, Org directives kept, through
 /// the same `merged_survivor`), then recoverably trash the source in the same
 /// commit. Org pairs must round-trip; formats must match. v0.6.5 never
-/// rewrites inbound refs in this operation. A retained writer (STEP3 §7) of
-/// both pages: their unsaved input is saved first. Cost O(source + survivor
+/// rewrites inbound refs in this operation. With a host, one host operation
+/// of both pages (DESIGN §3.1): their unsaved input is saved first. Cost O(source + survivor
 /// bytes and blocks) per try; four complete attempts maximum.
 pub fn merge_pages(
     store: &Store,
@@ -1223,30 +1224,56 @@ pub fn merge_pages(
     let dst_id = store
         .as_page(&dst)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
-    let discover = || Ok(vec![src_id.clone(), dst_id.clone()]);
-    crate::retained::reserved(
-        host,
-        Input::Flush,
-        discover,
-        crate::retained::unsaved,
-        |_| {
-            crate::retry_on_conflict("pages changed repeatedly during merge", || {
-                let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
-                let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
-                tx.save_page(
-                    &[
-                        tine_store::EditKind::InsertBlocks,
-                        tine_store::EditKind::DeletePage,
-                    ],
-                    &dst_id,
-                    SaveBase::Existing(survivor.dst_rev),
-                    &survivor.doc,
-                );
-                tx.trash(&src, survivor.src_rev, tine_store::TrashIf::Any);
-                Ok(crate::commit_retry(tx.commit())?.then_some(()))
-            })
-        },
-    )
+    let Some(host) = host else {
+        return crate::retry_on_conflict("pages changed repeatedly during merge", || {
+            let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
+            let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
+            tx.save_page(
+                &[
+                    tine_store::EditKind::InsertBlocks,
+                    tine_store::EditKind::DeletePage,
+                ],
+                &dst_id,
+                SaveBase::Existing(survivor.dst_rev),
+                &survivor.doc,
+            );
+            tx.trash(&src, survivor.src_rev, tine_store::TrashIf::Any);
+            Ok(crate::commit_retry(tx.commit())?.then_some(()))
+        });
+    };
+    // One host operation (DESIGN §3.1): the survivor's write, then the
+    // source's deletion, a move's order (the survivor holds the source's
+    // blocks), from one draft, so a crash between them completes the
+    // deletion at relaunch rather than appending the blocks twice.
+    crate::retry_on_conflict("pages changed repeatedly during merge", || {
+        let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
+        let old = survivor.dst_text.as_bytes();
+        let bytes = store
+            .page_bytes(&dst_id, &survivor.doc, Some(old))
+            .map_err(crate::why_error)?;
+        let expected = |text: String| HostExpected::Bytes(text.into_bytes().into());
+        let op = HostOp {
+            pages: vec![
+                (
+                    dst_id.clone(),
+                    HostEffect::Write(bytes.into()),
+                    expected(survivor.dst_text),
+                ),
+                (
+                    src_id.clone(),
+                    HostEffect::Delete,
+                    expected(survivor.src_text),
+                ),
+            ],
+            kinds: vec![
+                tine_store::EditKind::InsertBlocks,
+                tine_store::EditKind::DeletePage,
+            ],
+            policy: Input::Flush,
+            moved: Some((dst_id.clone(), src_id.clone())),
+        };
+        crate::retained::applied(host, op, "the merge", crate::retained::unsaved)
+    })
 }
 
 fn lines<'a>(mut parts: impl Iterator<Item = &'a str>) -> String {
@@ -1258,6 +1285,9 @@ struct Survivor {
     doc: PageDto,
     src_rev: FileRev,
     dst_rev: FileRev,
+    /// The bytes each revision names, which the survivor was computed from.
+    src_text: String,
+    dst_text: String,
 }
 
 /// The survivor page after appending `src`, with `renames` applied to both.
@@ -1316,6 +1346,8 @@ fn merged_survivor(
         doc,
         src_rev,
         dst_rev,
+        src_text,
+        dst_text,
     })
 }
 

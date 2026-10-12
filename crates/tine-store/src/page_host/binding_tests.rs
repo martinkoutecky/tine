@@ -1648,6 +1648,9 @@ mod stop_saved;
 #[path = "binding_rename_tests.rs"]
 mod rename;
 
+#[path = "binding_apply_tests.rs"]
+mod apply_tests;
+
 #[path = "binding_order_tests.rs"]
 mod order;
 

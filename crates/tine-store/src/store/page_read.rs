@@ -112,6 +112,25 @@ impl Store {
         self.page_read(id, doc)
     }
 
+    /// The bytes a save of `doc` over page `id`'s file holding `old` (None:
+    /// no file) writes, after every check that save runs (Guide
+    /// ephemerality, page target, nesting depth, VCS conflict markers, the
+    /// page-header and Org round-trip firewalls): for a feature planning a
+    /// host operation (`HostOp`) from bytes it read. Writes nothing. Cost
+    /// O(bytes + blocks).
+    pub fn page_bytes(
+        &self,
+        id: &PageId,
+        doc: &PageDto,
+        old: Option<&[u8]>,
+    ) -> Result<Vec<u8>, crate::Why> {
+        let file = id.file();
+        let tx = self.transaction(None);
+        tx.page_save_target(&file, doc)?;
+        let (bytes, _) = tx.serialize_page(&file, doc, old, false)?;
+        Ok(bytes)
+    }
+
     /// Hold page `id` as a page host does, with no host running: its index
     /// and reads answer the bytes on disk now until the store closes
     /// (A-V4). The caller's later disk edits stay unindexed.

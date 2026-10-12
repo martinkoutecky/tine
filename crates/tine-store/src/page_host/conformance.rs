@@ -89,8 +89,33 @@ fn named(name: &str, args: &[Value]) -> Vec<usize> {
             .into_iter()
             .chain((0..3).filter(|&i| flag(2 + i)))
             .collect(),
+        "opApply" | "opApplyPacked" => apply_args(name, args).0.into_keys().collect(),
         _ => vec![],
     }
+}
+
+/// An `opApply`'s arguments, in either encoding: the changed pages' new
+/// texts, the planned (expected) text of every page, then (dst, src).
+type ApplyArgs = (BTreeMap<usize, i64>, BTreeMap<usize, i64>, i64, i64);
+
+fn apply_args(name: &str, args: &[Value]) -> ApplyArgs {
+    let v = |i: usize| args[i].as_i64().unwrap();
+    if name == "opApplyPacked" {
+        let b = |i: usize| args[i].as_bool().unwrap_or_else(|| v(i) == 1);
+        let eff = (0..3).filter(|&i| b(i)).map(|i| (i, v(3 + i))).collect();
+        return (eff, (0..3).map(|i| (i, v(6 + i))).collect(), v(9), v(10));
+    }
+    let map = |i: usize| -> BTreeMap<usize, i64> {
+        (args[i].as_array().unwrap().iter())
+            .map(|pair| {
+                (
+                    pair[0].as_u64().unwrap() as usize,
+                    pair[1].as_i64().unwrap(),
+                )
+            })
+            .collect()
+    };
+    (map(0), map(1), v(2), v(3))
 }
 
 /// The model page a harness key names.
@@ -666,6 +691,14 @@ impl<F: ConformanceIo> Driver<F> {
     }
 
     fn step(&mut self, name: &str, args: &[Value]) -> bool {
+        if self.prepare_operations && self.host.alive && matches!(name, "opApply" | "opApplyPacked")
+        {
+            for p in apply_args(name, args).0.into_keys() {
+                if !self.host.pages.contains_key(&key(p)) {
+                    assert!(self.step("load", &[json!(p)]));
+                }
+            }
+        }
         if self.prepare_operations
             && self.host.alive
             && matches!(
@@ -929,6 +962,20 @@ impl<F: ConformanceIo> Driver<F> {
                 self.drain(name, args, old_inc, old_version);
                 return true;
             }
+            // The feature's planned bytes, applied as one operation; the
+            // plan is each page's expected text (host-only-writer P2).
+            "opApply" | "opApplyPacked" => {
+                let (eff, plan, dst, src) = apply_args(name, args);
+                let effects = (eff.iter())
+                    .map(|(&p, &t)| (key(p), (text(t), text(plan[&p]))))
+                    .collect();
+                let ends = (dst != NONE).then(|| (key(dst as usize), key(src as usize)));
+                let moved = ends.as_ref().map(|(d, s)| (d.as_str(), s.as_str()));
+                assert_eq!(self.host.apply(&effects, moved), Disposition::Pending);
+                self.compare("apply pending");
+                self.drain(name, args, old_inc, old_version);
+                return true;
+            }
             "switchReq" => {
                 assert_eq!(self.host.switch_request(), Disposition::Applied);
             }
@@ -1126,27 +1173,36 @@ impl<F: ConformanceIo> Driver<F> {
                     _ => panic!("unknown request"),
                 }
             }
-            "opDelete" | "opRename" | "opRenamePacked" | "opRenameRaw" => {
+            "opDelete" | "opRename" | "opRenamePacked" | "opRenameRaw" | "opApply"
+            | "opApplyPacked" => {
                 for i in 0..self.windows.len() {
                     if before["s"]["pages"][i] != actual["pages"][i] {
                         mine.insert(i);
                     }
                 }
-                let ends = if name == "opDelete" {
-                    vec![p]
-                } else {
-                    vec![p, args[1].as_u64().unwrap() as usize]
+                // The pages whose rename history the step ends, and the
+                // (src, dst) of the order it may install: an apply's are its
+                // effect pages (the model's `unrename(ps)`) and its move.
+                let (ends, moved) = match name {
+                    "opDelete" => (vec![p], None),
+                    "opApply" | "opApplyPacked" => {
+                        let (eff, _, dst, src) = apply_args(name, args);
+                        let moved = (dst != NONE).then_some((src as usize, dst as usize));
+                        (eff.into_keys().collect(), moved)
+                    }
+                    _ => {
+                        let q = args[1].as_u64().unwrap() as usize;
+                        (vec![p, q], Some((p, q)))
+                    }
                 };
                 renamed.retain(|r| !(ends.contains(&r.0) || ends.contains(&r.1)));
-                // A full rename installed its order: the obligations follow
-                // the host's own gate, so a missing or misversioned gate
-                // diverges from the model's ghost.
+                // A full rename or a moving apply installed its order: the
+                // obligations follow the host's own gate, so a missing or
+                // misversioned gate diverges from the model's ghost.
                 let gates = actual["gates"].as_array().unwrap();
-                if name != "opDelete"
-                    && gates.len() > before["s"]["gates"].as_array().unwrap().len()
-                {
+                let grew = gates.len() > before["s"]["gates"].as_array().unwrap().len();
+                if let Some((src, dst)) = moved.filter(|_| grew) {
                     let gt = gates.last().unwrap();
-                    let (src, dst) = (p, ends[1]);
                     assert_eq!(
                         (gt["src"].as_u64(), gt["dst"].as_u64()),
                         (Some(src as u64), Some(dst as u64))

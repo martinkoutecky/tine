@@ -1,9 +1,14 @@
-# s3.2 executable storage model
+# s3.3 executable storage model
 
-This private, unwired module transcribes `storage-s3.qnt` s3.2, SHA-256
-`1e6ec36c29ec8fd1b7a1ebdce099e82509c0ff59fa6c137cf6f0ef3d1e0d2bd4`.
-The scenario source is `scenarios-s3.inc` s3.2, SHA-256
-`92a75904b2da9b43a7bb9c80a0f2fc41b462cef5a60ec41f4d613b67d58ff1c3`.
+This private, unwired module transcribes `storage-s33.qnt` s3.3, SHA-256
+`353162e99b1e87603cfd2d58deadc0abc3351cb8627d0115d41333014ed40a07`.
+The scenario source is `scenarios-s33.inc` s3.3, SHA-256
+`033fc5b7aac419a70421c795cced1d9e0e7d8021a6f053632131fff7cefe43b8`.
+s3.3 adds `opApply` (host-only-writer P2): one host operation applying caller
+bytes to a page set, each page's expected bytes checked against the host's
+current bytes (`opCur`), with an optional move whose gates order the writes as
+a rename's do. Its mutants MEX/MAC/MAN/MAM drop the stale-base check, the clean
+check, the drafts and the move gates.
 s3.2 adds a rename's in-run write order (`order.rs`, STEP3-DESIGN "rename
 ordering = option 2"): a full rename installs gates over the pages it changes,
 a gated page's save does not start, a page's witness is its `dirSync(ok)` at the

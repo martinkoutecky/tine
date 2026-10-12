@@ -1,9 +1,9 @@
 //! Executable, unwired transcription of storage-s3.qnt. See README.md.
 #![allow(dead_code)]
 
+use operations::{flush_del, load, op_apply, op_delete, op_rename};
 #[cfg(test)]
-use operations::op_clean;
-use operations::{flush_del, load, op_delete, op_rename};
+use operations::{op_clean, op_cur};
 use order::{
     discarded, discharge, gated, obl_discarded, obl_published, order_holds, partner,
     rename_resolves, revert_partner, started, unrename, Obligations,
@@ -16,7 +16,7 @@ mod order;
 const ABSENT: i64 = -1;
 const NONE: i64 = -2;
 const UNKNOWN: i64 = -3;
-const MODEL_SHA: &str = "1e6ec36c29ec8fd1b7a1ebdce099e82509c0ff59fa6c137cf6f0ef3d1e0d2bd4";
+const MODEL_SHA: &str = "353162e99b1e87603cfd2d58deadc0abc3351cb8627d0115d41333014ed40a07";
 type Text = i64; // Opaque equality labels, never arithmetic operands.
 type Pairs = BTreeSet<(usize, Text)>;
 
@@ -1332,6 +1332,12 @@ enum Action {
         std::collections::BTreeMap<usize, Text>,
     ),
     OpDelete(usize),
+    OpApply(
+        std::collections::BTreeMap<usize, Text>,
+        std::collections::BTreeMap<usize, Text>,
+        i64,
+        i64,
+    ),
     Load(usize),
     FlushDel(usize),
     PowerK(BTreeSet<usize>),
@@ -1369,6 +1375,14 @@ fn step(x: &State, a: Action) -> Option<State> {
                     .all(|r| *r < n && rt.get(r).is_some_and(|t| real(*t)))
         }
         Action::PowerK(keep) => keep.iter().all(|p| *p < n),
+        Action::OpApply(eff, plan, dst, src) => {
+            let page = |p: i64| p == NONE || (0..n as i64).contains(&p);
+            eff.iter()
+                .all(|(p, t)| *p < n && (real(*t) || *t == ABSENT))
+                && plan.keys().all(|p| *p < n)
+                && page(*dst)
+                && page(*src)
+        }
         Action::OpDelete(p)
         | Action::Load(p)
         | Action::FlushDel(p)
@@ -1395,6 +1409,7 @@ fn step(x: &State, a: Action) -> Option<State> {
         Action::WOpTo(p, q, a, b) => w_op_to(x, p, q, a, b),
         Action::OpRename(p, q, refs, rt) => op_rename(x, p, q, &refs, &rt),
         Action::OpDelete(p) => op_delete(x, p),
+        Action::OpApply(eff, plan, dst, src) => op_apply(x, &eff, &plan, dst, src),
         Action::Load(p) => load(x, p),
         Action::FlushDel(p) => flush_del(x, p),
         Action::PowerK(keep) => power_k(x, &keep),
