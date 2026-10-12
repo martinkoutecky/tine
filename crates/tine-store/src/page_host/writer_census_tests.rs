@@ -317,6 +317,9 @@ fn every_production_page_writer_runs_under_a_host_reservation() {
         "crates/tine-graph-features/src/journals.rs::migrate_journal_filenames",
         "crates/tine-graph-features/src/journals.rs::trash_journal_file",
         "crates/tine-graph-features/src/pdf.rs::write_highlights",
+        // W4: a page with a host is one host operation; an asset, and any
+        // file with no host, is a transaction under `reserved`.
+        "crates/tine-graph-features/src/guide.rs::create_if_absent",
         "src-tauri/src/backup/restore.rs::restore_backup",
     ] {
         assert!(
