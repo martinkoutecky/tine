@@ -21,7 +21,7 @@ impl<F: HostIo> Host<F> {
 
     #[cfg(test)]
     pub(super) fn delete(&mut self, key: &str) -> Disposition {
-        self.delete_with_load(key, true, None)
+        self.delete_with(key, None)
     }
 
     /// `delete`, bound to the bytes the caller's identity check read
@@ -29,15 +29,20 @@ impl<F: HostIo> Host<F> {
     /// gap separates the check from the deletion. In-scope scenario: an
     /// external editor or sync service changed the file after the check.
     pub(super) fn delete_checked(&mut self, key: &str, checked: &[u8]) -> Disposition {
-        self.delete_with_load(key, true, Some(checked))
+        self.delete_with(key, Some(checked))
     }
 
+    /// The s2 model's `opDelete`: a page the host does not hold is refused,
+    /// not loaded.
     #[cfg(test)]
     pub(super) fn delete_loaded(&mut self, key: &str) -> Disposition {
-        self.delete_with_load(key, false, None)
+        self.test.loaded_deletes = true;
+        let result = self.delete_with(key, None);
+        self.test.loaded_deletes = false;
+        result
     }
 
-    fn delete_with_load(&mut self, key: &str, load: bool, checked: Option<&[u8]>) -> Disposition {
+    fn delete_with(&mut self, key: &str, checked: Option<&[u8]>) -> Disposition {
         if !self.alive || !self.keys.contains(key) {
             return Disposition::Disabled;
         }
@@ -55,7 +60,8 @@ impl<F: HostIo> Host<F> {
             return Disposition::Waiting;
         }
         self.with_locks(&keys, |host| {
-            if !load && !host.pages.contains_key(key) {
+            #[cfg(test)]
+            if host.test.loaded_deletes && !host.pages.contains_key(key) {
                 return Disposition::Refused;
             }
             let Ok(mut page) = host.operation_page(key) else {

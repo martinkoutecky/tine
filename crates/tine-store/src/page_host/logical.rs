@@ -31,6 +31,12 @@ pub(super) struct TestKnobs {
     /// a test whose scenario needs a submitted page to stay dirty (unsaved,
     /// closed or reserved before its save). Production submits save at once.
     pub(super) submits_wait: bool,
+    /// `begin_draft`: the model's single-page `draftSync`, which never
+    /// retires an operation vehicle whole.
+    pub(super) single_page_drafts: bool,
+    /// `delete_loaded`: the s2 model's `opDelete`, which refuses a page the
+    /// host does not hold instead of loading it.
+    pub(super) loaded_deletes: bool,
 }
 
 impl<F: HostIo> Host<F> {

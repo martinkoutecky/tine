@@ -703,7 +703,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             });
             let later = desired.is_none() && deferring && self.host.op_waits(&key);
             if due && !later && !desired.is_some_and(|page| self.held_back(&key, page)) {
-                let result = self.host.begin_draft_with(&key, true);
+                let result = self.host.begin_draft_retiring(&key);
                 if self.host.lock_request.is_some() {
                     return Disposition::Waiting;
                 }

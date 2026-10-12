@@ -1269,7 +1269,7 @@ fn rename_cost_removal_first_copy_failure_preserves_sibling_after_crash() {
             );
             h.receive("a.md");
             assert!(!h.op_waits("a.md"));
-            assert_eq!(h.begin_draft_with("a.md", true), Disposition::Pending);
+            assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Pending);
             let w = h.worker.as_ref().unwrap();
             assert!(matches!(w.application, Some(Application::Removal(_))));
             assert_eq!(
@@ -1295,7 +1295,7 @@ fn rename_cost_removal_first_copy_requires_sibling_path_lock() {
         Disposition::Applied
     );
     h.held = Some(BTreeSet::from(["a.md".into()]));
-    assert_eq!(h.begin_draft_with("a.md", true), Disposition::Pending);
+    assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Pending);
     h.held = Some(BTreeSet::new());
     h.lock_request = None;
     let calls = h.fs.calls.len();
@@ -1321,7 +1321,7 @@ fn rename_cost_retire_keeps_its_pages_busy_and_relaunch_preserves_owed() {
     saved(&mut h, "c.md");
     saved(&mut h, "b.md");
     saved(&mut h, "a.md");
-    assert_eq!(h.begin_draft_with("a.md", true), Disposition::Pending);
+    assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Pending);
     assert!(matches!(
         h.worker.as_ref().unwrap().application,
         Some(Application::Retire)
@@ -1354,7 +1354,7 @@ fn rename_cost_retire_every_cut_recovers_only_published_bytes() {
                 .iter()
                 .map(|key| (key.to_string(), h.pages[*key].buf.clone()))
                 .collect();
-            assert_eq!(h.begin_draft_with("a.md", true), Disposition::Pending);
+            assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Pending);
             assert!(matches!(
                 h.worker.as_ref().unwrap().application,
                 Some(Application::Retire)

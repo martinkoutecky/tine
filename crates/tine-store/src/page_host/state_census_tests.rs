@@ -90,7 +90,7 @@ const WRITERS: &[(&str, &[&str], &str)] = &[
     (
         "worker",
         &[
-            "draft_worker.rs::begin_draft_with",
+            "draft_worker.rs::begin_draft_retiring",
             "draft_worker.rs::retire_whole",
             "draft_worker.rs::install_operation",
             "draft_worker.rs::advance_draft",
@@ -642,7 +642,7 @@ fn the_page_state_census_catches_its_bypass_mutants() {
         ("order.rs", "fn take_disk", "fn ref_mutant (& mut self) { if let Some (ref mut x) = self . job { } } fn take_disk"),
         ("order.rs", "fn take_disk", "fn pattern_mutant (h : & mut Host < F >) { let Host { pages , .. } = h ; } fn take_disk"),
         ("binding.rs", "fn record", "fn owned_mutant (& mut self) { self . owned . insert (String :: new ()) ; } fn record"),
-        ("draft_worker.rs", "fn begin_draft_with", "fn overlay_mutant (& mut self) { self . worker . as_mut () ; } fn begin_draft_with"),
+        ("draft_worker.rs", "fn begin_draft_retiring", "fn overlay_mutant (& mut self) { self . worker . as_mut () ; } fn begin_draft_retiring"),
         ("mod.rs", "self.mark(key);\n        let previous", "let previous"),
         ("mod.rs", "self.index_drafts();\n        self.vehicle_debt", "self.vehicle_debt"),
         ("mod.rs", "self.alive = false;\n        self.pages.clear();", "self.pages.clear();"),

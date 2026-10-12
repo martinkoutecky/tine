@@ -47,16 +47,20 @@ impl<F: HostIo> Host<F> {
         logical
     }
 
-    /// One page's draft step, the model's `draftSync`.
+    /// One page's draft step, the model's single-page `draftSync`: never
+    /// retires an operation vehicle whole.
     #[cfg(test)]
     pub(super) fn begin_draft(&mut self, key: &str) -> Disposition {
-        self.begin_draft_with(key, false)
+        self.test.single_page_drafts = true;
+        let result = self.begin_draft_retiring(key);
+        self.test.single_page_drafts = false;
+        result
     }
 
-    /// `begin_draft`; `whole` lets a removal retire its page's operation
-    /// vehicle whole instead (RENAME-COST L1, the scheduler's choice): each
-    /// of its pages' removal steps at one terminal.
-    pub(super) fn begin_draft_with(&mut self, key: &str, whole: bool) -> Disposition {
+    /// One page's draft step; a removal retires its page's operation vehicle
+    /// whole when it can (RENAME-COST L1): each of its pages' removal steps
+    /// at one terminal.
+    pub(super) fn begin_draft_retiring(&mut self, key: &str) -> Disposition {
         if !self.alive || self.worker.is_some() || self.retained.contains(key) {
             return Disposition::Waiting;
         }
@@ -106,7 +110,7 @@ impl<F: HostIo> Host<F> {
                     return Disposition::Disabled;
                 }
                 let op = host.live_op(key);
-                if let Some(op) = op.as_ref().filter(|_| whole) {
+                if let Some(op) = &op {
                     if host.retire_whole(op) {
                         return Disposition::Pending;
                     }
@@ -150,6 +154,10 @@ impl<F: HostIo> Host<F> {
     /// risk, the record its winner, not retained). False, with nothing
     /// done, otherwise.
     fn retire_whole(&mut self, op: &str) -> bool {
+        #[cfg(test)]
+        if self.test.single_page_drafts {
+            return false;
+        }
         let live = &self.live_ops[op];
         let records = &self.drafts[op];
         let whole = live.owed.is_empty()

@@ -1879,7 +1879,7 @@ fn rename_cost_failing_draft_writes_do_not_abort_a_saving_stop() {
     assert_eq!(state(&p), StopState::Ready);
 }
 
-/// P5 (I-12): draft refresh suppression (`begin_draft_with`), the switch
+/// P5 (I-12): draft refresh suppression (`begin_draft_retiring`), the switch
 /// barrier (`can_switch`) and Progress ask one question through
 /// `Record::holds`: bytes, base and version all equal. Each field differing
 /// alone, absent bytes and an UNKNOWN base included, makes it false.
