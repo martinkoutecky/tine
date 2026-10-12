@@ -7,6 +7,7 @@ icon:: 🧪
 - This page exercises every Logseq page-level feature Tine knows about, so you can see **exactly how each one renders** — and where we're still rough. It's ordinary Logseq Markdown; the same file opens unchanged in Logseq.
 - # 1 — Inline text formatting
 - **Bold**, *italic*, _also italic_, ~~strikethrough~~, `inline code`, ==highlight==, and ^^also highlight^^.
+- Colored text, as in Logseq, with Hiccup: [:span {:style "color: #d97706"} "amber text"], [:span {:style "background-color: #fde68a; color: #1f2937"} "marker"], and [:u {:style "text-decoration-color: #dc2626"} "a red underline"]. In the app only color, background-color and text-decoration-color are read from `style`.
 - A mix in one line: a **bold `code` span**, an *italic [[link]]*, and a ~~struck ==highlight==~~.
 - Raw inline HTML renders (sanitized to a safe allowlist): <ins>inserted</ins>, <del>deleted</del>, <kbd>Ctrl</kbd> + <kbd>C</kbd>, <mark>marked</mark>, and <sup>superscript</sup> / <sub>subscript</sub>. Scripts and event handlers (`onerror=`, `<script>`) are stripped.
 - *Parity note:* a tag glued to a word — `H<sub>2</sub>O`, `mc<sup>2</sup>` — stays **literal in Logseq too** (mldoc only starts inline HTML at a word boundary), and so do the Markdown carets `x^2^` / `H~2~O`. For a glued subscript, use math: $E = mc^2$, $H_2O$.

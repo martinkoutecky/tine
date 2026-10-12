@@ -13,6 +13,7 @@ import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revi
 import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
+import { PageEmbedHeader } from "./PageEmbedHeader";
 import { QueryGroups } from "./QueryGroup";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { CrossingNotice } from "./CrossingNotice";
@@ -1484,7 +1485,11 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
 
   const embedded = () => readOr(data, undefined, "embed");
   return (
-    <div class="embed-block">
+    <div class="embed-block" classList={{ "embed-page": !!pageTarget() }}>
+      {/* GH #439: a page embed names its page (OG block.cljs `page-embed` header). */}
+      <Show when={pageTarget() && (selfPageEmbed() || embedded())}>
+        <PageEmbedHeader name={embedded()?.page ?? pageTarget()!} blockId={props.blockId} />
+      </Show>
       <Show when={!selfPageEmbed()}>
         <Show when={embedded()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
           <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
