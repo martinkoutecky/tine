@@ -58,7 +58,7 @@ Kind `status`.
 | `graph` | string | always | no | the canonical graph root |
 | `pid` | integer | always | no | the owner's process id |
 | `version` | string | always | no | the owner's Tine version |
-| `state` | string | always | no | `serving`; `busy` (stopped admitting, not yet stopping); or a stop's progress (`stopping`, `retrying: <reason>`) |
+| `state` | string | always | no | `serving`; `busy` (stopped admitting, not yet stopping); or the stop's progress text (`stopping`, or `retrying: <reason>` while a stop waits to write a crash draft). Treat any other value as progress text |
 
 ### `page.show` / `journal`
 
@@ -82,11 +82,20 @@ The fields of both:
 | `revision.incarnation` | integer | optional | no | the host incarnation the version belongs to |
 | `revision.version` | integer | optional | no | the page's version within that incarnation |
 | `read_only` | string | nullable | yes | `null` for an editable page; else the reason the file cannot round-trip safely, so Tine will not write it |
-| `text` | string | always | no | the page's bytes, decoded as UTF-8 with invalid sequences replaced; at most 64 MiB |
+| `text` | string | always | no | the page's bytes as UTF-8 (exactly what `rev` hashes); at most 64 MiB. A page whose bytes are not valid UTF-8 produces no payload at all (see *Pages the parser refuses* below), so `text` is never a lossy reading |
 | `page` | `tine_core::model::PageDto` | always | no | the parsed page: name, kind, title, pre-block, root blocks (`BlockDto`), format. Its own `rev` (nullable) and `read_only` (boolean) restate the two fields above |
 
 Read by the text output: `page.name`, `page.pre_block`,
-`page.blocks[].raw`, `page.blocks[].children`.
+`page.blocks[].raw`, `page.blocks[].children`, `page.blocks[].properties`.
+
+**Pages the parser refuses.** `page show` and `journal` parse the page's bytes before they build
+the payload, and the store's parse validation refuses bytes that are not valid UTF-8, an outline
+nested deeper than 128 levels, an Org headline nested deeper than 128 levels, and (as
+`too-large`) bytes over 64 MiB. A refusal other than `too-large` has no error code of its own
+today: the reply is `internal` with the diagnostic id `cli-store-failed` and the message
+`cli-store-failed: Undecodable` (exit 1), and no `text` is returned. A journal file containing
+`- \xff` is the pinned example. Naming a page that is not in the graph's page index is
+`not-found`, not this error.
 
 ### `block.show`
 
@@ -108,7 +117,7 @@ nodes left out; with a budget too small for even the root the block list is empt
 | `block.truncated` | integer | always | yes | nodes omitted by the 2,000-node or byte bound; `0` = the preview is complete. The text output says how many were omitted |
 
 Read by the text output: `block.group.page`, `block.group.blocks[].raw`,
-`block.group.blocks[].children`.
+`block.group.blocks[].children`, `block.group.blocks[].properties`.
 
 ### `refs`
 
@@ -124,7 +133,8 @@ Read by the text output: `block.group.page`, `block.group.blocks[].raw`,
 | `block` | boolean | always | no | whether `target` is a block id |
 | `groups` | array of `tine_core::model::RefGroup` | always | no | referring blocks grouped by source page. A group's `evidence` (bounded matched occurrences, with its own `truncated`) is highlight data only; the text output prints no evidence, so it is not a disclosure |
 
-Read by the text output: `groups[].page`, `groups[].blocks[].raw`, `groups[].blocks[].children`.
+Read by the text output: `groups[].page`, `groups[].blocks[].raw`, `groups[].blocks[].children`,
+`groups[].blocks[].properties`.
 
 ### `search`
 
@@ -132,19 +142,20 @@ Read by the text output: `groups[].page`, `groups[].blocks[].raw`, `groups[].blo
 box runs it. Kind `search`. The payload is `tine_core::query_plan::QueryExecution` with
 `schema` and `kind` added. Limits: `pages` defaults to 20 and is clamped to 500, `blocks`
 defaults to 50 and is clamped to 5,000; a request over the clamp is answered at the clamp, and
-`has_more` is what tells a reader a limit cut the list.
+`has_more` is what tells a reader a limit cut the list. A limit of `0` switches that category
+off: the engine does not search it, so its `has_more` is `false` and the hits hold none of it.
 
 | field | type | presence | disclosure | meaning |
 |---|---|---|---|---|
 | `schema` | string | always | no | `"tine.cli/1"` |
 | `kind` | string | always | no | `"search"` |
-| `hits` | array of `tine_core::query_plan::QueryHit` | always | no | page and block hits, tagged by `entity` (`page`, `block`), best first |
+| `hits` | array of `tine_core::query_plan::QueryHit` | always | no | page and block hits, tagged by `entity` (`page`, `block`), in the engine's order (each category's sort comes before its limit) |
 | `diagnostics` | array of `QueryDiagnostic` | always | yes | query parsing or execution problems (`code`, `message`); the text output prints each |
 | `explanation` | object | always | no | the declarative explanation tree of the search |
 | `has_more` | object | always | no | whether limits cut each category |
-| `has_more.pages` | boolean | always | yes | more page hits existed than were returned |
-| `has_more.blocks` | boolean | always | yes | more block hits existed than were returned |
-| `cancelled` | boolean | always | yes | the search was cancelled; no partial results are returned |
+| `has_more.pages` | boolean | always | yes | `true`: more page hits existed than the page limit returned. `false` means the list is complete **or** the category was switched off with `--pages 0` (not checked) |
+| `has_more.blocks` | boolean | always | yes | `true`: more block hits existed than the block limit returned. `false` means complete **or** switched off with `--blocks 0` (not checked) |
+| `cancelled` | boolean | always | yes | the search was cancelled and no partial results are returned. `tine search` names no cancellation lane, so nothing replaces its search and this is `false` today; the field is kept because it is part of the DTO and the text prints it when set |
 
 Read by the text output: `hits[].entity`, `hits[].display_text`, `hits[].page`.
 
@@ -169,7 +180,7 @@ holds the parser's diagnostics; an advanced form is not refused here, it runs an
 | `report.ran` | array of string | always | no | the clauses of an advanced form that ran |
 | `report.ignored` | array of string | always | yes | the clauses of an advanced form that could not be run. Execution is all-or-nothing: any ignored clause means the whole query returned nothing |
 | `report.supported` | boolean | always | yes | `false`: the advanced form was refused whole (rows are empty); `true` for every simple and TQL query |
-| `total` | integer | always | no | matches counted when the result was built; equals the returned rows unless `exceeded` |
+| `total` | integer | always | no | matches counted (blocks for a block-anchored query, pages for a page-anchored one). With `exceeded` false it is the number of block roots (summed over `groups`) or pages returned; once `exceeded` is true it also counts matches the bounds dropped, so it can be larger than what the payload holds |
 | `matched_total` | integer | optional | no | the exact complete stored match count, when the producer proved one |
 | `statistics` | `QueryStatistics` | optional | no | aggregates the query asked for; not printed by the text output |
 | `exceeded` | boolean | always | yes | the result hit the engine's row or byte bound and the list is incomplete. The text output says so |
@@ -181,8 +192,8 @@ holds the parser's diagnostics; an advanced form is not refused here, it runs an
 | `og_hint.rewrites[].query` | `Query` | optional | no | the rewrite as an IR query (the DTO's own field) |
 | `og_hint.rewrites[].text` | string | optional | no | the rewrite printed as a Logseq query by the existing OG printer; `null` when the OG syntax cannot say it. Added by the CLI payload, not part of the DTO |
 
-Read by the text output: `groups[].page`, `groups[].blocks[].raw`, `groups[].blocks[].children`
-(block-anchored) and `pages[].name` (page-anchored).
+Read by the text output: `groups[].page`, `groups[].blocks[].raw`, `groups[].blocks[].children`,
+`groups[].blocks[].properties` (block-anchored) and `pages[].name` (page-anchored).
 
 ### `pages`
 
@@ -226,6 +237,11 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
   its `author::` when there is one"): `ADDRESS [author:: NAME] first line`. The `author::` property
   line is not repeated among the block's other lines. The JSON `raw` is unchanged and still holds
   it. Other properties are shown as lines under the block, as written.
+- **Whether a block has an author is the projection's answer.** The text reads `properties`
+  (`BlockDto.properties`, the DocBlock projection in `tine-core`, which treats a `key::` line inside a
+  code fence as content) and does not scan `raw`. A literal `author:: NAME` line in a code fence is
+  content: it is neither attribution nor hidden. A block with no `properties` entry for `author` has
+  no attribution.
 - Continuation and property lines are indented under the address.
 - A block preview cut by its bound ends with a line naming how many nodes were omitted
   (`block.truncated`).

@@ -458,34 +458,85 @@ fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or("")
 }
 
-/// A block's `author::` (Markdown `key:: value`, or an Org drawer line
-/// `:key: value`) and its other lines. The author is read off the first
-/// property line after the header that the parser's property grammar
-/// recognises with that key; that line is not repeated below the block.
-fn split_author(raw: &str) -> (Option<&str>, Vec<&str>) {
-    let mut author = None;
-    let mut lines = Vec::new();
-    for (at, line) in raw.lines().enumerate() {
-        if at > 0 && author.is_none() {
-            if let Some(value) = author_value(line) {
-                author = Some(value);
-                continue;
-            }
+/// The block's `(key, value)` properties as the payload carries them
+/// (`BlockDto.properties`, the DocBlock projection's answer).
+fn block_properties(block: &Value) -> Vec<(String, String)> {
+    list(block, "properties")
+        .iter()
+        .filter_map(|pair| {
+            Some((
+                pair.get(0)?.as_str()?.to_string(),
+                pair.get(1)?.as_str()?.to_string(),
+            ))
+        })
+        .collect()
+}
+
+fn is_author_key(key: &str) -> bool {
+    tine_core::doc::property_key_norm(key) == "author"
+}
+
+/// What the DocBlock projection says a block body's properties are, for
+/// Markdown or Org syntax.
+fn projected_properties(raw: &str, org: bool) -> Vec<(String, String)> {
+    let mut block = tine_core::doc::DocBlock::new(raw);
+    block.set_org(org);
+    block.properties()
+}
+
+/// A block's `author::` and its other lines. Whether the block has an author
+/// is the projection's answer (`properties` in the payload, which treats a
+/// `key::` line inside a code fence as content), never a scan of the lines.
+/// The line shown beside the address is not repeated below it: it is the
+/// candidate author line whose removal leaves exactly the projection's other
+/// properties, so a literal `author::` line (in a fence, or a look-alike with
+/// the same value) stays.
+fn split_author<'a>(
+    raw: &'a str,
+    properties: &[(String, String)],
+) -> (Option<String>, Vec<&'a str>) {
+    let lines: Vec<&str> = raw.lines().collect();
+    let Some(first) = properties.iter().position(|(key, _)| is_author_key(key)) else {
+        return (None, lines);
+    };
+    let author = properties[first].1.trim().to_string();
+    // The payload was projected with the page's own syntax; find which.
+    let Some(org) = [false, true]
+        .into_iter()
+        .find(|org| projected_properties(raw, *org) == properties)
+    else {
+        return (None, lines);
+    };
+    let mut others = properties.to_vec();
+    others.remove(first);
+    let without = |at: usize| -> Vec<&'a str> {
+        lines
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != at)
+            .map(|(_, line)| *line)
+            .collect()
+    };
+    for at in 1..lines.len() {
+        if author_value(lines[at]).map(str::trim) != Some(author.as_str()) {
+            continue;
         }
-        lines.push(line);
+        let rest = without(at);
+        if projected_properties(&rest.join("\n"), org) == others {
+            return (Some(author), rest);
+        }
     }
-    (author, lines)
+    (Some(author), lines)
 }
 
 fn author_value(line: &str) -> Option<&str> {
-    let is_author = |key: &str| tine_core::doc::property_key_norm(key) == "author";
     if let Some((key, value)) = tine_core::property_line::parse_property_line(line) {
-        return is_author(key).then_some(value);
+        return is_author_key(key).then_some(value);
     }
     // Org drawer: `:author: value`.
     let rest = line.trim().strip_prefix(':')?;
     let (key, value) = rest.split_once(':')?;
-    (is_author(key) && value.starts_with(' ')).then(|| value.trim())
+    (is_author_key(key) && value.starts_with(' ')).then(|| value.trim())
 }
 
 fn outline(blocks: &[Value], prefix: &str, depth: usize, out: &mut String) {
@@ -493,7 +544,7 @@ fn outline(blocks: &[Value], prefix: &str, depth: usize, out: &mut String) {
     for (index, block) in blocks.iter().enumerate() {
         let address = format!("{prefix}{}", index + 1);
         let indent = "  ".repeat(depth);
-        let (author, lines) = split_author(text(block, "raw"));
+        let (author, lines) = split_author(text(block, "raw"), &block_properties(block));
         let mut lines = lines.into_iter();
         let head = lines.next().unwrap_or("");
         match author {
