@@ -144,7 +144,7 @@ export interface HostPort {
     resolve: DiskToken | null, kinds: EditKinds): Promise<PageRefusal | null>;
   move(session: number, id: number, source: [string, PageDto, number], receiver: [string, PageDto, number],
     kinds: EditKinds): Promise<PageRefusal | null>;
-  discard(session: number, id: number, key: string, version: number): Promise<PageRefusal | null>;
+  discard(session: number, id: number, key: string): Promise<PageRefusal | null>;
   close(session: number, id: number, key: string): Promise<PageRefusal | null>;
   // The publication queries are the session's (REVIEW-3b-P1 F1): a result never
   // vouches for another session's pages.

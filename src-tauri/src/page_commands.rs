@@ -142,13 +142,9 @@ pub(crate) async fn page_discard(
     session: u64,
     id: u64,
     key: String,
-    version: u64,
     ctx: GraphContext<'_>,
 ) -> Result<Option<PageRefusal>, String> {
-    hosted(ctx, move |host| {
-        host.discard(session, id, &key, version).err()
-    })
-    .await
+    hosted(ctx, move |host| host.discard(session, id, &key).err()).await
 }
 
 #[tauri::command]

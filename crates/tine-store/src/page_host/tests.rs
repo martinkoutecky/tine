@@ -458,7 +458,7 @@ fn oldest_first_removal_never_uncovers_older_record_and_abs_retains_newest() {
         }
         // User discard ends the current draft obligation when disk differs.
         h.fs.external("a.md", text("different"), true);
-        send(&mut h, "a.md", RequestKind::Discard { version: 0 });
+        send(&mut h, "a.md", RequestKind::Discard);
         assert!(!h.pages["a.md"].risk);
         h.begin_draft("a.md");
         for _ in 0..cut {
@@ -1262,9 +1262,8 @@ fn rename_cost_removal_first_copy_failure_preserves_sibling_after_crash() {
             h.fs.external("b.md", text("foreign b"), true);
             assert_eq!(h.observe("b.md"), Disposition::Applied);
             assert!(h.pages["b.md"].conflict);
-            let version = h.pages["a.md"].version;
             assert_eq!(
-                send(&mut h, "a.md", RequestKind::Discard { version }),
+                send(&mut h, "a.md", RequestKind::Discard),
                 Disposition::Applied
             );
             h.receive("a.md");
@@ -1289,9 +1288,8 @@ fn rename_cost_removal_first_copy_failure_preserves_sibling_after_crash() {
 fn rename_cost_removal_first_copy_requires_sibling_path_lock() {
     let mut h = lazy_operation_group();
     saved(&mut h, "c.md");
-    let version = h.pages["a.md"].version;
     assert_eq!(
-        send(&mut h, "a.md", RequestKind::Discard { version }),
+        send(&mut h, "a.md", RequestKind::Discard),
         Disposition::Applied
     );
     h.held = Some(BTreeSet::from(["a.md".into()]));

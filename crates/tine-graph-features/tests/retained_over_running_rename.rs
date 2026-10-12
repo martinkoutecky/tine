@@ -105,13 +105,13 @@ fn take_disk_for_two(f: &Fixture) {
         .as_str()
         .unwrap()
         .to_owned();
-    let version = loop {
+    loop {
         let m = f.mail.recv_timeout(Duration::from_secs(20)).unwrap();
         if m["key"] == key.as_str() && m["answer"]["id"] == id {
-            break m["page"]["version"].as_u64().unwrap();
+            break;
         }
-    };
-    f.host.discard(session, id + 1, &key, version).unwrap();
+    }
+    f.host.discard(session, id + 1, &key).unwrap();
 }
 
 const BUSY: &str = "Another rename of these pages is still finishing; try again in a moment.";

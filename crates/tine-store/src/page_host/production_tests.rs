@@ -938,8 +938,7 @@ fn unsyncable_trash_escapes_after_three_failures_and_never_blocks_discard() {
         assert_eq!(f.host.observe("a.md"), Disposition::Applied);
         f.edit("a.md", "recreated");
         if discard {
-            let version = f.host.pages["a.md"].version;
-            f.send("a.md", RequestKind::Discard { version });
+            f.send("a.md", RequestKind::Discard);
             assert!(!f.host.pages["a.md"].typed && f.host.pages["a.md"].buf.is_none());
             f.host
                 .fs
@@ -1032,12 +1031,7 @@ fn discard_has_no_trash_barrier_and_launch_completes_custody() {
     crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
     f.host.advance_save();
     fs::write(f.graph.join("a.md"), b"externally recreated").unwrap();
-    f.send(
-        "a.md",
-        RequestKind::Discard {
-            version: f.host.pages["a.md"].version,
-        },
-    );
+    f.send("a.md", RequestKind::Discard);
     assert!(f.host.pages["a.md"].clean());
     f.host
         .fs

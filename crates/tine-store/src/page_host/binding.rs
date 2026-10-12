@@ -1123,18 +1123,12 @@ impl PageHost {
     }
 
     /// `page_discard` (§3.1): the window consumed its unsent input first.
-    pub fn discard(
-        &self,
-        session: u64,
-        id: u64,
-        key: &str,
-        version: u64,
-    ) -> Result<(), PageRefusal> {
+    pub fn discard(&self, session: u64, id: u64, key: &str) -> Result<(), PageRefusal> {
         let request = Request {
             id,
             generation: 0,
             page: key.into(),
-            kind: RequestKind::Discard { version },
+            kind: RequestKind::Discard,
         };
         self.admit(session, request, vec![])
     }

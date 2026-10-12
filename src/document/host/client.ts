@@ -344,7 +344,7 @@ export class HostClient {
     if (!page.on || this.pages.get(name) !== page) return { took: false, refusal: "not-open" };
     page.sentSeq = page.editSeq;
     page.kinds = [];
-    return this.request(page, "discard", (id) => this.host.discard(this.session, id, page.key!, page.version ?? STALE_VERSION));
+    return this.request(page, "discard", (id) => this.host.discard(this.session, id, page.key!));
   }
 
   /** A two-page move (model `wOpTo`): both endpoints open, idle and clean. The

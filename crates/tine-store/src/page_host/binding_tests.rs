@@ -1817,6 +1817,40 @@ fn f1_publication_queries_never_answer_for_another_session() {
     host.stop();
 }
 
+/// P7: a Discard carries no version. One sent after the page's version moved
+/// past the window's view still takes the current disk, and one from an
+/// earlier window session is not admitted.
+#[test]
+fn a_discard_takes_the_current_disk_and_an_old_session_discard_is_not_admitted() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- typed\n", page.version, None).unwrap();
+    let typed = live.answer(&key, id).page.unwrap().version;
+    assert!(typed > page.version, "the submit moved the page's version");
+    let id = live.id();
+    live.host.discard(live.host.session(), id, &key).unwrap();
+    let mail = live.answer(&key, id);
+    assert_eq!(mail.answer.unwrap().outcome, AnswerOutcome::Applied);
+    let MailText::Page { dto } = &mail.page.unwrap().text else {
+        panic!("a discard that changed the buffer carries the disk's text");
+    };
+    assert_eq!(dto.blocks[0].raw, "one");
+    let held = (live.host.driver.shared).with_state(|state| {
+        let page = &state.progress.host.pages[&key];
+        (page.buf.as_deref() == Some(&b"- one\n"[..]), page.clean())
+    });
+    assert_eq!(held, (true, true), "the host holds the disk, clean");
+    let old = live.host.session();
+    live.host.window_reloaded();
+    assert_eq!(
+        live.host.discard(old, live.id(), &key),
+        Err(PageRefusal::NotAdmitted)
+    );
+    assert_eq!(live.disk(&key), "- one\n");
+    live.host.stop();
+}
+
 /// E101 (P1): a page the host let go and loads again gets a version above
 /// every version it had before, so no answer or need of the old load can
 /// be mistaken for the new one.

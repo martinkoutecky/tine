@@ -103,18 +103,7 @@ fn review_r1_failed_move_cannot_clear_unrecovered_source_refresh_error() {
 fn review_r1_discard_clears_obsolete_terminal_refresh_error() {
     let mut p = timed();
     failed_refresh(&mut p);
-    p.with_host(|h| {
-        assert_eq!(
-            send(
-                h,
-                "a.md",
-                RequestKind::Discard {
-                    version: h.pages["a.md"].version,
-                }
-            ),
-            Disposition::Applied
-        )
-    });
+    p.with_host(|h| assert_eq!(send(h, "a.md", RequestKind::Discard), Disposition::Applied));
     time(&p, 100_000);
     pump(&mut p);
     assert!(p.host.pages["a.md"].clean());
@@ -1180,8 +1169,7 @@ fn r2_escaped_custody_has_a_sticky_progress_notice() {
     assert_eq!(p.notice("a.md").custody_error, sticky, "after a later save");
     p.with_host(|h| {
         edit(h, "a.md", "E");
-        let version = h.pages["a.md"].version;
-        send(h, "a.md", RequestKind::Discard { version });
+        send(h, "a.md", RequestKind::Discard);
     });
     run_for(&mut p, 10_000);
     assert_eq!(p.notice("a.md").custody_error, sticky, "after Discard");
@@ -1733,9 +1721,8 @@ fn rename_cost_removal_copy_failure_keeps_the_sibling_through_progress() {
     saved(&mut h, "c.md");
     h.fs.external("b.md", text("foreign b"), true);
     assert_eq!(h.observe("b.md"), Disposition::Applied);
-    let version = h.pages["a.md"].version;
     assert_eq!(
-        send(&mut h, "a.md", RequestKind::Discard { version }),
+        send(&mut h, "a.md", RequestKind::Discard),
         Disposition::Applied
     );
     h.receive("a.md");

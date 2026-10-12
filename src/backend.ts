@@ -148,7 +148,7 @@ export interface Backend {
     kinds: EditKinds): Promise<PageRefusal | null>;
   pageMove(session: number, id: number, source: [string, PageDto, number], receiver: [string, PageDto, number],
     kinds: EditKinds): Promise<PageRefusal | null>;
-  pageDiscard(session: number, id: number, key: string, version: number): Promise<PageRefusal | null>;
+  pageDiscard(session: number, id: number, key: string): Promise<PageRefusal | null>;
   pageClose(session: number, id: number, key: string): Promise<PageRefusal | null>;
   /** Delete page `name` through the host. The backend checks its identity
    * (twins, a stale `expectedPath`, an external removal) and binds the host's
@@ -912,8 +912,8 @@ class TauriBackend implements Backend {
   pageMove(session: number, id: number, source: [string, PageDto, number], receiver: [string, PageDto, number], kinds: EditKinds) {
     return this.call<PageRefusal | null>("page_move", { session, id, source, receiver, kinds });
   }
-  pageDiscard(session: number, id: number, key: string, version: number) {
-    return this.call<PageRefusal | null>("page_discard", { session, id, key, version });
+  pageDiscard(session: number, id: number, key: string) {
+    return this.call<PageRefusal | null>("page_discard", { session, id, key });
   }
   pageClose(session: number, id: number, key: string) {
     return this.call<PageRefusal | null>("page_close", { session, id, key });

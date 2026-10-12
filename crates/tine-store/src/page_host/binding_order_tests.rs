@@ -153,11 +153,9 @@ fn a_discard_of_the_unwitnessed_destination_cancels_the_rename() {
     let renamed = std::thread::scope(|scope| {
         let caller = scope.spawn(|| rename(&live.host, &live.store));
         until("the rename is admitted", || census(&live.host).0 == 1);
-        let (key, page) = live.open(NEW);
+        let (key, _) = live.open(NEW);
         let id = live.id();
-        live.host
-            .discard(live.host.session(), id, &key, page.version)
-            .unwrap();
+        live.host.discard(live.host.session(), id, &key).unwrap();
         live.answer(&key, id);
         caller.join().unwrap()
     });
@@ -378,7 +376,7 @@ fn a_retained_writer_over_a_running_order_waits_until_it_completes() {
     assert!(rename(&live.host, &live.store).is_err());
     let (key, _) = live.open(REF);
     let id = live.submit(&key, "- typed\n", 0, None).unwrap();
-    let conflicted = live.answer(&key, id).page.unwrap().version;
+    live.answer(&key, id);
     clear_faults(&live);
     until("the destination is witnessed", || {
         live.root.join(NEW).exists()
@@ -406,9 +404,7 @@ fn a_retained_writer_over_a_running_order_waits_until_it_completes() {
         assert!(unrelated.is_ok(), "an unrelated writer stays available");
         drop(unrelated);
         let id = live.id();
-        live.host
-            .discard(live.host.session(), id, &key, conflicted)
-            .unwrap();
+        live.host.discard(live.host.session(), id, &key).unwrap();
         live.answer(&key, id);
         assert_eq!(
             waiting.recv_timeout(Duration::from_secs(20)),
@@ -446,11 +442,9 @@ fn a_retained_writer_over_a_running_order_waits_until_it_is_cancelled() {
         assert!(unrelated.is_ok(), "an unrelated writer stays available");
         drop(unrelated);
         clear_faults(&live);
-        let (key, page) = live.open(NEW);
+        let (key, _) = live.open(NEW);
         let id = live.id();
-        live.host
-            .discard(live.host.session(), id, &key, page.version)
-            .unwrap();
+        live.host.discard(live.host.session(), id, &key).unwrap();
         live.answer(&key, id);
         assert_eq!(
             waiting.recv_timeout(Duration::from_secs(20)),

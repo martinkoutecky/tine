@@ -88,7 +88,7 @@ function hostPort(): HostPort {
       return refusal;
     },
     move: (session, id, source, receiver, kinds) => b.pageMove(session, id, source, receiver, kinds).catch(failed),
-    discard: (session, id, key, version) => b.pageDiscard(session, id, key, version).catch(failed),
+    discard: (session, id, key) => b.pageDiscard(session, id, key).catch(failed),
     close: (session, id, key) => b.pageClose(session, id, key).catch(failed),
     saveNow: (session, keys) => b.pageSaveNow(session, keys).catch(ignoreSaveHintFailure),
     // One bounded wait (F1); a failed call is a failed barrier, never success.

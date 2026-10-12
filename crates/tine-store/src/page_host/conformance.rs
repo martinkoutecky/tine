@@ -145,6 +145,10 @@ struct Driver<F: ConformanceIo = ModelFs> {
     oracle: Oracle,
     windows: Vec<Window>,
     pending_ids: Vec<Option<u64>>,
+    /// The raw version the window held at each admitted Discard, by
+    /// (generation, id): the model's `bv`, which the host's Discard does not
+    /// carry (`upDiscard` never reads it).
+    discard_versions: BTreeMap<(u64, u64), u64>,
     observed: Value,
     versions: BTreeMap<(u64, u64), i64>,
     record_versions: BTreeMap<u64, i64>,
@@ -185,6 +189,7 @@ impl<F: ConformanceIo> Driver<F> {
             oracle,
             windows: vec![Window::default(); count],
             pending_ids: vec![None; count],
+            discard_versions: BTreeMap::new(),
             observed,
             versions: BTreeMap::new(),
             record_versions: BTreeMap::new(),
@@ -246,6 +251,7 @@ impl<F: ConformanceIo> Driver<F> {
             oracle: self.oracle.clone(),
             windows: self.windows.clone(),
             pending_ids: self.pending_ids.clone(),
+            discard_versions: self.discard_versions.clone(),
             observed: self.observed.clone(),
             versions: self.versions.clone(),
             record_versions: self.record_versions.clone(),
@@ -416,9 +422,10 @@ impl<F: ConformanceIo> Driver<F> {
                 match &r.kind {
                     RequestKind::Open => {}
                     RequestKind::Close => u["kind"] = json!("close"),
-                    RequestKind::Discard { version } => {
+                    RequestKind::Discard => {
                         u["kind"] = json!("discard");
-                        u["bv"] = json!(self.version(*version));
+                        let version = self.discard_versions[&(r.generation, r.id)];
+                        u["bv"] = json!(self.version(version));
                     }
                     RequestKind::Submit {
                         bytes,
@@ -549,7 +556,7 @@ impl<F: ConformanceIo> Driver<F> {
         self.barriers += 1;
     }
 
-    fn admit(&mut self, p: usize, kind: RequestKind) {
+    fn admit(&mut self, p: usize, kind: RequestKind) -> u64 {
         let id = self.host.last_admitted + 1;
         if !matches!(kind, RequestKind::Close) {
             self.pending_ids[p] = Some(id);
@@ -567,6 +574,7 @@ impl<F: ConformanceIo> Driver<F> {
             }),
             Disposition::Applied
         );
+        id
     }
 
     /// The binding registers a key when the window opens it or an operation
@@ -735,12 +743,9 @@ impl<F: ConformanceIo> Driver<F> {
             "wDiscard" => {
                 self.windows[p].pend = false;
                 self.windows[p].sent = true;
-                self.admit(
-                    p,
-                    RequestKind::Discard {
-                        version: self.raw(self.windows[p].bv),
-                    },
-                );
+                let version = self.raw(self.windows[p].bv);
+                let id = self.admit(p, RequestKind::Discard);
+                (self.discard_versions).insert((self.host.generation, id), version);
             }
             "wClose" => {
                 self.windows[p] = Window::default();

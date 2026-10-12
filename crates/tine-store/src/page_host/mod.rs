@@ -203,9 +203,7 @@ enum RequestKind {
         version: u64,
         resolve: Option<Text>,
     },
-    Discard {
-        version: u64,
-    },
+    Discard,
     Move {
         receiver: PageKey,
         source_text: Text,
@@ -991,7 +989,7 @@ impl<F: HostIo> Host<F> {
         }
         let mut keys = BTreeSet::from([request.page.clone()]);
         // A Discard of a running rename's destination reverts its source too.
-        if let (RequestKind::Discard { .. }, Some(src)) =
+        if let (RequestKind::Discard, Some(src)) =
             (&request.kind, self.order.partner(&request.page))
         {
             if self.busy(src) {
@@ -1054,7 +1052,7 @@ impl<F: HostIo> Host<F> {
                 self.set_submitted(key, page);
                 self.answer(request, key, true);
             }
-            RequestKind::Discard { .. } => self.discard(request),
+            RequestKind::Discard => self.discard(request),
             RequestKind::Move {
                 receiver,
                 source_text,

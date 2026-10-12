@@ -24,7 +24,7 @@ export type Call =
   | { cmd: "open"; id: number; name: string; kind: PageKind; path: string | null }
   | { cmd: "submit"; id: number; key: string; dto: PageDto; version: number; resolve: DiskToken | null; kinds: EditKinds }
   | { cmd: "move"; id: number; source: [string, PageDto, number]; receiver: [string, PageDto, number] }
-  | { cmd: "discard"; id: number; key: string; version: number }
+  | { cmd: "discard"; id: number; key: string }
   | { cmd: "close"; id: number; key: string }
   | { cmd: "saveNow"; keys: string[] }
   | { cmd: "wait"; needs: PublishedNeed[] }
@@ -98,8 +98,8 @@ export class FakeHost implements HostPort {
     return admitted;
   }
 
-  discard(_session: number, id: number, key: string, version: number) {
-    this.calls.push({ cmd: "discard", id, key, version });
+  discard(_session: number, id: number, key: string) {
+    this.calls.push({ cmd: "discard", id, key });
     const admitted = this.admit(id, this.refuse);
     this.answerLater(this.calls[this.calls.length - 1], admitted);
     return admitted;
