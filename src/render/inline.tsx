@@ -15,7 +15,7 @@ import { isJournalTitle } from "../journal";
 import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
-import { reportLinkOpenFailure } from "../components/ExternalLink";
+import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import { mime_from_path } from "./wasm/lsdoc_wasm";
@@ -503,7 +503,7 @@ function renderLink(
           if (unsafeHref) return;
           const rel = assetLinkRel(dest);
           if (rel !== null) void readOwned(graphOwner(), backend().openAsset(rel, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(dest, error));
-          else void readOwned(graphOwner(), backend().openExternal(dest)).catch((error) => reportLinkOpenFailure(dest, error));
+          else void openOutboundLink(dest);
         }}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
@@ -1082,7 +1082,7 @@ function MediaEmbed(props: {
     e.stopPropagation();
     const r = rel();
     if (r && !external) void readOwned(graphOwner(), backend().openAsset(r, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(props.url, error));
-    else void readOwned(graphOwner(), backend().openExternal(props.url)).catch((error) => reportLinkOpenFailure(props.url, error));
+    else void openOutboundLink(props.url);
   };
   let tryingBlobFallback = false;
   let blobLease: MediaBlobLease | null = null;

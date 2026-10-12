@@ -357,6 +357,27 @@ pub(crate) enum ExternalOpen {
     LocalPath(std::path::PathBuf),
     /// http(s) or mailto: the URL opener handles it.
     Url,
+    /// Another app's scheme (`zotero:`, `obsidian:`, `shortcuts:` …) that the
+    /// user confirmed for this click (GH #503): the URL opener hands it to the
+    /// OS, which picks the registered app.
+    CustomScheme,
+}
+
+/// Schemes no outbound link ever opens, confirmed or not: they run code or
+/// carry inline content in whatever receives them (I-22). `file:` and `tine:`
+/// have their own routes and are not custom schemes either.
+const NEVER_OPENED_SCHEMES: &[&str] = &["javascript", "vbscript", "data", "blob", "about"];
+
+/// The RFC 3986 scheme of `url`, lowercased, or `None` when it has none. A
+/// single letter is a Windows drive (`C:\notes`), not a scheme.
+pub(crate) fn url_scheme(url: &str) -> Option<String> {
+    let (scheme, _) = url.split_once(':')?;
+    let mut chars = scheme.chars();
+    let first = chars.next()?;
+    (scheme.len() > 1
+        && first.is_ascii_alphabetic()
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
+    .then(|| scheme.to_ascii_lowercase())
 }
 
 /// OG parity for `file:` (og-1.0.0 `electron/window.cljs` `open-default-app!`):
@@ -366,8 +387,20 @@ pub(crate) enum ExternalOpen {
 /// user's own content, and a link that silently does nothing (GH #444, where
 /// this gate rejected `file:` outright and the frontend then discarded the
 /// rejection) is worse for the honest case than the parity behaviour is for the
-/// hostile one. Every other scheme stays refused, which is stricter than OG.
-pub(crate) fn external_open_plan(url: &str) -> Result<ExternalOpen, String> {
+/// hostile one.
+///
+/// Any other scheme (GH #503: `zotero://`, `obsidian://`, `shortcuts://` …) OG
+/// also hands to the OS silently. Tine opens it only when `confirmed_scheme`
+/// names that exact scheme, which the frontend supplies after the user
+/// confirmed a prompt naming the scheme and the full target. Refusal scenario
+/// (in scope: malformed or imported Markdown, a synced note from another
+/// device): a link in a note is untrusted content, and an unconfirmed click
+/// must not launch an arbitrary registered handler. `javascript:`/`data:`-like
+/// schemes are refused even when confirmed (I-22).
+pub(crate) fn external_open_plan(
+    url: &str,
+    confirmed_scheme: Option<&str>,
+) -> Result<ExternalOpen, String> {
     if url.starts_with("file:") {
         let path = file_url_to_path(url)
             .ok_or_else(|| "that file link does not name a local file".to_string())?;
@@ -376,22 +409,37 @@ pub(crate) fn external_open_plan(url: &str) -> Result<ExternalOpen, String> {
     if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
         return Ok(ExternalOpen::Url);
     }
-    Err("unsupported url scheme".into())
+    let Some(scheme) = url_scheme(url) else {
+        return Err("unsupported url scheme".into());
+    };
+    if NEVER_OPENED_SCHEMES.contains(&scheme.as_str()) || scheme == "tine" {
+        return Err(format!("{scheme}: links are never opened"));
+    }
+    if confirmed_scheme.map(str::to_ascii_lowercase).as_deref() != Some(scheme.as_str()) {
+        return Err(format!("opening a {scheme}: link needs your confirmation"));
+    }
+    Ok(ExternalOpen::CustomScheme)
 }
 
-/// Open a web/mail URL, or a local `file:` link, in the user's default external
-/// application. The URL is passed as a single argument (no shell), so it can't
+/// Open a web/mail URL, a local `file:` link, or a user-confirmed custom-scheme
+/// link (GH #503) in the user's default external application. The URL is passed as a single argument (no shell), so it can't
 /// inject commands.
 /// Starting the opener (PATH search, exec) runs on the blocking pool, off the
 /// UI thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+pub(crate) async fn open_external(
+    app: tauri::AppHandle,
+    url: String,
+    confirmed_scheme: Option<String>,
+) -> Result<(), String> {
     if url.starts_with("tine:") {
         crate::deep_links::receive_url(&app, url);
         return Ok(());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        if let ExternalOpen::LocalPath(path) = external_open_plan(&url)? {
+        if let ExternalOpen::LocalPath(path) =
+            external_open_plan(&url, confirmed_scheme.as_deref())?
+        {
             // Every OS opener accepts a path that is not there — `explorer.exe` even
             // opens an unrelated window for one — so without this check a stale link
             // reproduces the reported "clicking does nothing" from the other side.
@@ -904,7 +952,7 @@ mod tests {
 
 #[cfg(test)]
 mod file_url_tests {
-    use super::{external_open_plan, file_url_to_path, ExternalOpen};
+    use super::{external_open_plan, file_url_to_path, url_scheme, ExternalOpen};
 
     /// The three shapes GH #444 reported, plus the ordinary POSIX one. On
     /// Windows all four resolve to a real local path; elsewhere the drive-letter
@@ -939,7 +987,7 @@ mod file_url_tests {
     #[test]
     fn a_file_link_is_routed_to_the_os_default_application() {
         for url in ["file://D:\\test.txt", "file:///D:\\test.txt"] {
-            match external_open_plan(url) {
+            match external_open_plan(url, None) {
                 Ok(ExternalOpen::LocalPath(path)) => {
                     assert!(path.to_string_lossy().ends_with("test.txt"), "{url}");
                 }
@@ -948,7 +996,7 @@ mod file_url_tests {
         }
         // A directory is the same route; OG hands it to the file manager too.
         assert!(matches!(
-            external_open_plan("file:///home/user/notes/"),
+            external_open_plan("file:///home/user/notes/", None),
             Ok(ExternalOpen::LocalPath(_))
         ));
     }
@@ -956,25 +1004,76 @@ mod file_url_tests {
     #[test]
     fn web_and_mail_links_keep_their_own_route_and_everything_else_stays_refused() {
         assert_eq!(
-            external_open_plan("https://example.com/a"),
+            external_open_plan("https://example.com/a", None),
             Ok(ExternalOpen::Url)
         );
         assert_eq!(
-            external_open_plan("http://example.com/a"),
+            external_open_plan("http://example.com/a", None),
             Ok(ExternalOpen::Url)
         );
         assert_eq!(
-            external_open_plan("mailto:a@example.com"),
+            external_open_plan("mailto:a@example.com", None),
             Ok(ExternalOpen::Url)
         );
-        // Stricter than OG, which hands every unknown scheme to the OS.
+        // Stricter than OG, which hands every unknown scheme to the OS: without
+        // the user's confirmation nothing else opens.
         for url in [
             "javascript:alert(1)",
             "smb://host/share",
             "data:text/html,x",
+            "zotero://select/items/ABC",
         ] {
-            assert!(external_open_plan(url).is_err(), "{url} must stay refused");
+            assert!(
+                external_open_plan(url, None).is_err(),
+                "{url} must stay refused"
+            );
         }
+    }
+
+    /// GH #503: another app's link opens once the user confirmed its scheme;
+    /// the confirmation is for that scheme only, and code-carrying schemes are
+    /// never opened, confirmed or not (I-22).
+    #[test]
+    fn a_confirmed_custom_scheme_opens_and_nothing_else_does() {
+        for (url, scheme) in [
+            ("shortcuts://run-shortcut?name=abc", "shortcuts"),
+            ("zotero://select/items/ABC", "zotero"),
+            ("obsidian://open?vault=v&file=f", "obsidian"),
+            ("Zotero://select/items/ABC", "ZOTERO"),
+            ("tel:+420123456", "tel"),
+        ] {
+            assert_eq!(
+                external_open_plan(url, Some(scheme)),
+                Ok(ExternalOpen::CustomScheme),
+                "{url}"
+            );
+        }
+        // A confirmation of one scheme does not open another.
+        assert!(external_open_plan("zotero://x", Some("obsidian")).is_err());
+        for url in [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            "vbscript:x",
+            "data:text/html,x",
+            "blob:https://x/y",
+            "about:blank",
+            "tine://today",
+        ] {
+            let scheme = url_scheme(url).expect("a scheme");
+            assert!(
+                external_open_plan(url, Some(&scheme)).is_err(),
+                "{url} must never open"
+            );
+        }
+        // A Windows drive path or a bare word is not a scheme.
+        assert_eq!(url_scheme("C:\\notes\\a.txt"), None);
+        assert_eq!(url_scheme("notes/a.txt"), None);
+        assert_eq!(url_scheme("-x:y"), None);
+        // http(s), mailto and file keep their routes whatever is confirmed.
+        assert_eq!(
+            external_open_plan("https://example.com", Some("zotero")),
+            Ok(ExternalOpen::Url)
+        );
     }
 
     #[test]

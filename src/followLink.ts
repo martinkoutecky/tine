@@ -15,9 +15,9 @@ import type { Format } from "./render/ast";
 import { openPage, openPageAtBlock } from "./router";
 import { openPageInSidebar, openBlockInSidebar } from "./ui";
 import { pushToast } from "./toasts";
-import { backend } from "./backend";
+import { openOutboundLink } from "./components/ExternalLink";
 import { blockRefTarget, resolveBlockBatched } from "./resolveBatch";
-import { ownedWhen, readOwned } from "./owned";
+import { readOwned } from "./owned";
 import { focusedSurfaceOwner } from "./focusedSurface";
 import { activeElement, isElementTag } from "./windowRealm";
 
@@ -71,9 +71,7 @@ function dispatch(link: NearestLink, where: "here" | "sidebar"): boolean {
   if (link.kind === "url") {
     // Not graph-scoped: opening a URL stays meaningful across graph switches,
     // so the owner is always live and a failure is always surfaced (I-9).
-    void readOwned(ownedWhen(), backend().openExternal(link.value)).catch(() => {
-      pushToast(`Couldn't open ${link.value}`, "error");
-    });
+    void openOutboundLink(link.value, false);
     return true;
   }
   if (link.kind === "block") {

@@ -274,8 +274,11 @@ export interface Backend {
   setStartOfWeek(n: number): Promise<void>;
   /** The graph's logseq/custom.css (empty string if none). */
   readCustomCss(): Promise<string>;
-  /** Open an http(s)/mailto URL in the OS default app. */
-  openExternal(url: string): Promise<void>;
+  /** Open an http(s)/mailto/`file:` URL in the OS default app. Any other
+   *  scheme (GH #503) opens only when `confirmedScheme` names it: pass it only
+   *  after the user confirmed a prompt naming the scheme and the full target
+   *  (`openOutboundLink`); the native side refuses it otherwise. */
+  openExternal(url: string, confirmedScheme?: string): Promise<void>;
   // Graph binding: every asset/PDF method that takes `bindingGeneration` needs
   // a positive safe-integer generation for this window's current graph. The frontend
   // rejects missing/invalid generations with missing-graph-binding; after IPC, a
@@ -1054,8 +1057,8 @@ class TauriBackend implements Backend {
   readCustomCss() {
     return this.call<string>("read_custom_css");
   }
-  openExternal(url: string) {
-    return this.call<void>("open_external", { url });
+  openExternal(url: string, confirmedScheme?: string) {
+    return this.call<void>("open_external", { url, confirmedScheme: confirmedScheme ?? null });
   }
   openAsset(name: string, bindingGeneration: number) {
     return this.assetCall<void>("open_asset", { name }, bindingGeneration);

@@ -832,6 +832,16 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn custom_scheme_link_guide_says_it_asks_before_opening_another_app() {
+        // GH #503: another app's link opens after a confirm; the Guide must not
+        // still say every non-web link is refused.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("A link to another app"));
+        assert!(search.contains("first asks whether to open it"));
+        assert!(!search.contains("or any other kind of link, is reported"));
+    }
+
+    #[test]
     fn empty_html_export_names_the_public_page_rule_in_the_guide() {
         // GH #560 (master 350efef1f): a zero-page export is explained, not silent.
         let files = include_str!("templates/files-external-edits-backups.md");
