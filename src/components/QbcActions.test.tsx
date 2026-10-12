@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 import { commandDefaults, installKeybindings } from "../keybindings";
 import { focusPane, focusedPaneId, paneRouter, resetPaneLayoutToSingle, splitPane } from "../panes";
 import { closeSettings, closeSwitcher, openSwitcher, switcherOpen, openSettings, setSidebarWidth, sidebarWidth, setRightSidebarWidth, rightSidebarWidth, setSidebarOpen, setRightSidebarOpen } from "../ui";
+import { rightSidebarMaxWidth } from "../sidebarSizing";
 import { Settings } from "./Settings";
 
 const ids = ["sidebar/grow-width", "sidebar/shrink-width", "right-sidebar/grow-width", "right-sidebar/shrink-width", "go/search-tab"];
@@ -35,9 +36,11 @@ it("GH #425: remapped keys resize both closed sidebars, clamp, and persist", () 
     key("3"); expect(rightSidebarWidth()).toBe(408);
     key("4"); expect(rightSidebarWidth()).toBe(360);
     for (let i = 0; i < 30; i++) { key("1"); key("3"); }
-    expect(sidebarWidth()).toBe(500); expect(rightSidebarWidth()).toBe(800);
+    // GH #521: the right bound is the window-relative maximum, no longer a fixed 800.
+    const rightMax = rightSidebarMaxWidth(window.innerWidth, 0);
+    expect(sidebarWidth()).toBe(500); expect(rightSidebarWidth()).toBe(rightMax);
     expect(localStorage.getItem("logseq-claude.sidebarWidth")).toBe("500");
-    expect(localStorage.getItem("logseq-claude.rightSidebarWidth")).toBe("800");
+    expect(localStorage.getItem("logseq-claude.rightSidebarWidth")).toBe(String(rightMax));
     for (let i = 0; i < 30; i++) { key("2"); key("4"); }
     expect(sidebarWidth()).toBe(180); expect(rightSidebarWidth()).toBe(220);
     expect(localStorage.getItem("logseq-claude.sidebarWidth")).toBe("180");

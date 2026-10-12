@@ -275,6 +275,23 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn tab_and_sidebar_actions_are_documented() {
+        let context = include_str!("templates/keep-context-visible.md");
+        for detail in [
+            "**Close others**, **Collapse others**",
+            "Drag the sidebar's left edge to resize it",
+            "Tabs stretch to fill the strip",
+            "a tab zoomed into a block is named for that block",
+            "anywhere onto another pane's tab bar to put it last there",
+        ] {
+            assert!(
+                context.contains(detail),
+                "missing tab/sidebar Guide detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
     fn selection_menu_and_keyboard_calendar_are_documented() {
         let tips = include_str!("templates/tips.md");
         for action in [
