@@ -46,6 +46,7 @@ export interface GpuEnv {
   /** Running inside a Flatpak sandbox: it cannot update itself in place, so the
    *  updater offers a manual download there. */
   flatpak: boolean;
+  packaged: boolean | null;
 }
 
 export interface BackupInfo {

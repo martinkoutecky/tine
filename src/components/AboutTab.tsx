@@ -5,7 +5,7 @@ import { APP_PRODUCT_NAME } from "../appIdentity";
 import { writeClipboardTextStrict } from "../clipboard";
 import { isTauri } from "../backend";
 import { platformKind } from "../platform";
-import { checkForUpdateNow, openReleasesPage } from "../update";
+import { checkForUpdateNow, openReleasesPage, isMsixPackaged } from "../update";
 import { checkForUpdatesAutomatically, setCheckForUpdatesAutomatically, initUpdateSettings } from "../updateSettings";
 import { openExternal } from "./primitives";
 
@@ -44,6 +44,7 @@ export function AboutTab(): JSX.Element {
   onCleanup(() => { alive = false; });
   const owner = ownedWhen(() => alive);
   const [checking, setChecking] = createSignal(false);
+  const [storeManaged, setStoreManaged] = createSignal(false);
   const [nativePlatform, setNativePlatform] = createSignal<"loading" | "desktop" | "android" | "ios" | "unavailable">(
     isTauri() ? "loading" : "unavailable"
   );
@@ -53,7 +54,10 @@ export function AboutTab(): JSX.Element {
     try {
       const platform = await platformKind();
       if (!owner()) return;
-      if (platform === "desktop") await initUpdateSettings();
+      const packaged = platform === "desktop" && await isMsixPackaged() === true;
+      if (!owner()) return;
+      setStoreManaged(packaged);
+      if (platform === "desktop" && !packaged) await initUpdateSettings();
       if (!owner()) return;
       setNativePlatform(platform);
     } catch {
@@ -104,13 +108,13 @@ export function AboutTab(): JSX.Element {
         <Show when={__GIT_COMMIT__}>
           <span class="about-commit mono">· {__GIT_COMMIT__}</span>
         </Show>
-        <Show when={nativePlatform() === "desktop"}>
+        <Show when={nativePlatform() === "desktop" && !storeManaged()}>
           <button class="btn-secondary about-check" onClick={check} disabled={checking()}>
             {checking() ? "Checking…" : "Check for updates"}
           </button>
         </Show>
       </div>
-      <Show when={nativePlatform() === "desktop"}>
+      <Show when={nativePlatform() === "desktop" && !storeManaged()}>
         <div class="settings-row">
           <span class="settings-label">Check for updates automatically</span>
           <button class="settings-toggle" classList={{ on: checkForUpdatesAutomatically() }}
@@ -120,6 +124,9 @@ export function AboutTab(): JSX.Element {
           </button>
         </div>
         <div class="settings-hint">Applies to this device. Manual checks remain available when turned off.</div>
+      </Show>
+      <Show when={storeManaged()}>
+        <div class="settings-hint about-status">Updates come from the Microsoft Store.</div>
       </Show>
       <Show when={nativePlatform() === "android" || nativePlatform() === "ios"}>
         <div class="settings-hint about-status">

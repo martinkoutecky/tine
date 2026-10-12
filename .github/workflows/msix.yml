@@ -1,0 +1,78 @@
+name: Microsoft Store MSIX proof
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build (empty uses the dispatch branch)
+        required: false
+        default: ''
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Require stable version and select shared release identity
+        run: |
+          node --input-type=module -e "import fs from 'node:fs'; import { msixVersion } from './scripts/lib/msix-version.mjs'; console.log(msixVersion(JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json')).version));"
+          if ($LASTEXITCODE) { throw 'Store requires a stable version' }
+          node scripts/set-app-identity.mjs release
+          if ($LASTEXITCODE) { throw 'Identity selection failed' }
+      - name: Install build toolchain
+        run: |
+          rustup target add x86_64-pc-windows-msvc aarch64-pc-windows-msvc
+          if ($LASTEXITCODE) { throw 'Rust targets failed' }
+          npm ci
+          if ($LASTEXITCODE) { throw 'npm ci failed' }
+      - name: Build embedded release executables
+        run: |
+          npm run tauri build -- --target x86_64-pc-windows-msvc --features custom-protocol --no-bundle -- --locked
+          if ($LASTEXITCODE) { throw 'x64 build failed' }
+          npm run tauri build -- --target aarch64-pc-windows-msvc --features custom-protocol --no-bundle -- --locked
+          if ($LASTEXITCODE) { throw 'ARM64 build failed' }
+          node scripts/stage-msix.mjs
+          if ($LASTEXITCODE) { throw 'Staging failed' }
+          ./scripts/msix-assets.ps1
+      - name: Install Microsoft winapp CLI
+        run: |
+          winget install microsoft.winappcli --source winget --accept-package-agreements --accept-source-agreements --disable-interactivity
+          if ($LASTEXITCODE) { throw 'winapp installation failed' }
+          # winget modifies user PATH; refresh it for this process and later steps.
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+          (Get-Command winapp).Source | Split-Path | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          winapp --version
+      - name: Pack unsigned Store bundle and test-signed twin
+        run: |
+          New-Item -ItemType Directory -Path msix-output -Force | Out-Null
+          winapp pack msix-stage/x64 msix-stage/arm64 --executable tine.exe --no-sign --output msix-output/TineOutline-unsigned.msixbundle
+          if ($LASTEXITCODE) { throw 'Unsigned packaging failed' }
+          if ((Get-AuthenticodeSignature msix-output/TineOutline-unsigned.msixbundle).Status -ne 'NotSigned') { throw 'Store bundle must be unsigned' }
+          $publisher = ([xml](Get-Content msix-stage/x64/AppxManifest.xml)).Package.Identity.Publisher
+          $cert = New-SelfSignedCertificate -Type Custom -Subject $publisher -KeyUsage DigitalSignature -FriendlyName 'Tine MSIX disposable test certificate' -CertStoreLocation Cert:\CurrentUser\My -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
+          $password = [guid]::NewGuid().ToString()
+          Export-PfxCertificate -Cert $cert -FilePath msix-stage/test.pfx -Password (ConvertTo-SecureString $password -AsPlainText -Force) | Out-Null
+          Export-Certificate -Cert $cert -FilePath msix-output/TineOutline-test.cer | Out-Null
+          Copy-Item msix-output/TineOutline-unsigned.msixbundle msix-output/TineOutline-test-signed.msixbundle
+          winapp sign msix-output/TineOutline-test-signed.msixbundle msix-stage/test.pfx --password $password
+          if ($LASTEXITCODE) { throw 'Test signing failed' }
+          $signature = Get-AuthenticodeSignature msix-output/TineOutline-test-signed.msixbundle
+          if (-not $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw 'Test signature missing or wrong' }
+          $sha = git rev-parse HEAD
+          $version = ([xml](Get-Content msix-stage/x64/AppxManifest.xml)).Package.Identity.Version
+          @{ sourceSha = $sha; version = $version; architectures = @('x64', 'arm64'); winapp = (winapp --version | Out-String).Trim(); virtualization = 'disabled; pending maintainer approval' } | ConvertTo-Json | Set-Content msix-output/receipt.json
+          Get-ChildItem msix-output -File -Exclude SHA256SUMS | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content msix-output/SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: TineOutline-msix-proof
+          path: msix-output/
+          if-no-files-found: error
