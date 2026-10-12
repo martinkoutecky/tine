@@ -470,7 +470,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </Field>
       <Field
         label="Typographic replacements"
-        hint="Show arrows and dashes as glyphs — `->` → →, `-->` → ⟶, `--` → – (en dash), `---` → — (em dash). “While reading” keeps your Markdown as ASCII and only changes the rendered view (like `\Delta` → Δ); “While typing” rewrites the source itself as you type. A Tine touch, not Logseq."
+        hint="Show arrows and dashes as glyphs — `->` → →, `-->` → ⟶, `--` → – (en dash), `---` → — (em dash). “While reading” keeps your Markdown as ASCII and only changes the rendered view (like `\Delta` → Δ); “While typing” rewrites the source itself as you type. Off by default, as in Logseq: text renders as you typed it."
       >
         <select
           class="settings-select"

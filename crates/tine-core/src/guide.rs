@@ -233,6 +233,27 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn find_and_replace_is_documented() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        let revisit = include_str!("templates/find-and-revisit.md");
+        let tips = include_str!("templates/tips.md");
+        for detail in [
+            "**Replace with**",
+            "**Replace all**",
+            "as one **Undo** step",
+            "a link's address and hidden properties such as `id::` are never changed",
+            "**⋯** menu → **Find in page**",
+        ] {
+            assert!(
+                reference.contains(detail),
+                "missing find/replace detail: {detail}"
+            );
+        }
+        assert!(revisit.contains("**⋯** menu → **Find in page**"));
+        assert!(tips.contains("**Replace** and **Replace all**"));
+    }
+
+    #[test]
     fn workspace_windows_are_documented() {
         let context = include_str!("templates/keep-context-visible.md");
         for detail in [
@@ -1216,6 +1237,13 @@ mod customize_look_guide_tests {
             "--tine-content-width",
             "--tine-content-font",
             "Nord, Solarized, Gruvbox",
+            // Style knobs (GH #610 item 3): the Fine-tuning section and its
+            // three first rows, named as Settings shows them.
+            "**Fine-tuning**",
+            "**Embedded blocks**",
+            "**Links to the web or a file**",
+            "**Links to pages that do not exist yet**",
+            "style.knobs.v1",
         ] {
             assert!(page.contains(needed), "the page must mention {needed}");
         }

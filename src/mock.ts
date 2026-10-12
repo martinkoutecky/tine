@@ -461,6 +461,30 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
       pre_block: null,
       blocks: [b("{{embed ((ui-block-embed-root))}}")],
     },
+    {
+      // GH #439: a whole-page embed among ordinary siblings and children.
+      name: "Page embed regression",
+      kind: "page",
+      title: "Page embed regression",
+      pre_block: null,
+      blocks: [
+        b("Ordinary parent", [
+          b("{{embed [[Page embed source regression]]}}"),
+          b("Ordinary sibling"),
+        ]),
+        b("{{embed [[Page embed source regression]]}}"),
+      ],
+    },
+    {
+      name: "Page embed source regression",
+      kind: "page",
+      title: "Page embed source regression",
+      pre_block: null,
+      blocks: [
+        b("Source root one", [b("Source child", [b("Source grandchild")])]),
+        b("Source root two"),
+      ],
+    },
   );
 }
 
