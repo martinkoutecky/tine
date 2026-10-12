@@ -16,7 +16,7 @@
   <img src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" alt="Tauri 2">
   <img src="https://img.shields.io/badge/SolidJS-1.9-2C4F7C?logo=solid&logoColor=white" alt="SolidJS">
   <img src="https://img.shields.io/badge/Rust-2021-000000?logo=rust&logoColor=white" alt="Rust">
-  <img src="https://img.shields.io/badge/platform-Linux%20(WebKitGTK)-555" alt="Linux">
+  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android%20%7C%20iOS-555" alt="Linux, macOS, Windows, Android, iOS">
   <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="AGPL-3.0">
 </p>
 
@@ -54,18 +54,19 @@ instead of re-parsing.
 ## Install
 
 Grab a prebuilt installer from the **[Releases](https://github.com/martinkoutecky/tine/releases)**
-page. The builds aren't code-signed yet, so your OS may warn the first time — here's how to get past
-it:
+page. macOS builds are signed and notarized; Windows builds aren't code-signed yet, so Windows may
+warn the first time — here's how to get past it:
 
 - **Linux** — the **AppImage** runs on any distro with no install: `chmod +x Tine_*.AppImage`, then
   run it. Or use the **`.deb`** (Debian/Ubuntu) or **`.rpm`** (Fedora/openSUSE).
-- **macOS** — open the **`.dmg`**; on first launch macOS says *"unidentified developer"*, so
-  **right-click the app → Open** (just once) and it opens normally after that. If Tine then
+- **macOS** — open the **`.dmg`** and drag Tine into Applications. If Tine
   **keeps asking to access your Documents folder on every launch**, see the
   [workaround](#macos-repeated-documents-permission-prompt) below.
 - **Windows** — run the **`.exe`** installer; if SmartScreen appears, click **More info → Run
   anyway**. Prefer no installer? Grab the portable **`Tine_*_x64-portable.zip`**, unzip, and run
   `Tine.exe` — it needs the WebView2 runtime, which is preinstalled on Windows 10/11.
+- **Android** — install from **[F-Droid](https://f-droid.org/packages/page.tine.app/)** for automatic
+  updates, or take the signed **`Tine_*_android-arm64.apk`** from Releases.
 - **iPhone and iPad** — Tine is in public beta on **[TestFlight](https://testflight.apple.com/join/rpGGpTVW)**:
   install Apple's TestFlight app, open the link, and install Tine (it appears as *TineOutline*).
   Graphs live in **On My iPhone → TineOutline** or **iCloud Drive → TineOutline**.
