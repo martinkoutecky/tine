@@ -1262,7 +1262,7 @@ pub fn merge_pages(
             .page_bytes(&dst_id, &survivor.doc, Some(old))
             .map_err(crate::why_error)?;
         let expected = |text: String| HostExpected::Bytes(text.into_bytes().into());
-        Ok(HostOp {
+        Ok(Some(HostOp {
             pages: vec![
                 (
                     dst_id.clone(),
@@ -1281,10 +1281,11 @@ pub fn merge_pages(
             ],
             policy: Input::Flush,
             moved: Some((dst_id.clone(), src_id.clone())),
-        })
+        }))
     };
     crate::retained::operation(
         running,
+        Input::Flush,
         &[dst_id.clone(), src_id.clone()],
         "the merge",
         "pages changed repeatedly during merge",

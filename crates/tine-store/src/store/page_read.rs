@@ -17,7 +17,7 @@ impl Store {
 
     /// [`Self::page_target`]'s checks that read no page file: its disk
     /// spelling and path, refusing a symlinked page or one outside the areas.
-    pub(super) fn page_spot(&self, id: &PageId) -> Result<(PageId, PathBuf), StoreError> {
+    pub(crate) fn page_spot(&self, id: &PageId) -> Result<(PageId, PathBuf), StoreError> {
         if self.as_page(&id.file()).is_none() {
             return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
         }

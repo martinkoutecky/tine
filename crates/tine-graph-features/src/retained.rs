@@ -66,28 +66,56 @@ pub(crate) fn unsaved(page: &str) -> io::Error {
 }
 
 /// A feature's write as one host operation (host-only-writer P2, DESIGN
-/// §3.1), planned from the store. `pages`' unsaved input is saved first:
-/// store reads answer saved bytes, so a page that exists only as typed
-/// input would read as absent (REVIEW P2). Then `plan` reads and computes
-/// the operation, and the host applies it; a page that changed since the
-/// plan replans, as a store conflict does, `exhausted` after four tries.
-/// `what` names the change in messages; `refused(page)` is the writer's
-/// unsaved-input error. Finding B: no message claims more than its
-/// evidence.
+/// §3.1), planned from the store, under the writer's `input` policy, which
+/// the operation carries. `plan` reads and computes the operation, or None
+/// when there is nothing to write; the host applies it, and a page that
+/// changed since the plan replans, as a store conflict does, `exhausted`
+/// after four tries. `what` names the change in messages; `refused(page)`
+/// is the writer's unsaved-input error.
+///
+/// `Flush` saves the unsaved input of `pages`, the pages the writer expects
+/// to touch, before the first plan: store reads answer saved bytes, so a
+/// page that exists only as typed input would plan as absent (REVIEW P2). A
+/// plan that names a page outside the saved set saves that one too and
+/// plans again. `Refuse` saves nothing: unsaved input on a planned page
+/// refuses the operation (`apply`). Finding B: no message claims more than
+/// its evidence.
 pub(crate) fn operation(
     host: &PageHost,
+    input: Input,
     pages: &[PageId],
     what: &str,
     exhausted: &'static str,
     refused: impl Fn(&str) -> io::Error,
-    mut plan: impl FnMut() -> io::Result<HostOp>,
+    mut plan: impl FnMut() -> io::Result<Option<HostOp>>,
 ) -> io::Result<()> {
-    host.flush_input(pages)
-        .map_err(|refusal| refusal_error(refusal, what, &refused))?;
-    crate::retry_on_conflict(exhausted, || match host.apply(plan()?) {
-        Ok(()) => Ok(Some(())),
-        Err(ApplyRefusal::Changed) => Ok(None),
-        Err(refusal) => Err(refusal_error(refusal, what, &refused)),
+    let fail = |refusal| refusal_error(refusal, what, &refused);
+    let mut saved: Vec<PageId> = Vec::new();
+    if input == Input::Flush {
+        host.flush_input(pages).map_err(fail)?;
+        saved.extend_from_slice(pages);
+    }
+    crate::retry_on_conflict(exhausted, || {
+        let Some(mut op) = plan()? else {
+            return Ok(Some(()));
+        };
+        op.policy = input;
+        if input == Input::Flush {
+            let unsaved: Vec<PageId> = (op.pages.iter())
+                .map(|(page, ..)| page.clone())
+                .filter(|page| !saved.contains(page))
+                .collect();
+            if !unsaved.is_empty() {
+                host.flush_input(&unsaved).map_err(fail)?;
+                saved.extend(unsaved);
+                return Ok(None);
+            }
+        }
+        match host.apply(op) {
+            Ok(()) => Ok(Some(())),
+            Err(ApplyRefusal::Changed) => Ok(None),
+            Err(refusal) => Err(fail(refusal)),
+        }
     })
 }
 
@@ -107,9 +135,13 @@ fn refusal_error(
             ),
         ),
         ApplyRefusal::Unsaved(page) => refused(page.as_str()),
-        // M6: the retained writers' existing wording (a running rename is what
-        // holds pages past the bound; docs/storage-contract.md, I-8).
-        ApplyRefusal::Busy => crate::pages::rename_busy(),
+        // Another operation, a reservation, a rename or a path lock held the
+        // pages past OPERATION_WAIT, or a rename held them past a flush's
+        // deadline: not only a rename (REVIEW P2 round 2, finding 3).
+        ApplyRefusal::Busy => error(
+            io::ErrorKind::WouldBlock,
+            format!("Tine is still finishing another change to these pages, so {what} did not start. Try again in a moment."),
+        ),
         ApplyRefusal::Refused => error(
             io::ErrorKind::Other,
             format!("Tine could not run {what}; nothing changed."),

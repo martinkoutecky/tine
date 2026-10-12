@@ -97,12 +97,19 @@ impl PageHost {
         let mut effects = BTreeMap::new();
         let mut spellings = BTreeMap::new();
         for (page, effect, expected) in &op.pages {
-            let (key, spelling, ..) = self.try_identify(page).ok_or_else(ended)?;
+            let (key, spelling, _, proved) = self.try_identify(page).ok_or_else(ended)?;
             // `open`'s invalid-target refusal: a path that is not a page file
-            // of this graph writes nothing. In-scope scenario: a plugin or a
-            // frontend defect passing a path.
-            if self.store.as_page(&spelling.file()).is_none() {
+            // of this graph, or reaches outside it through a symlink, writes
+            // nothing. In-scope scenarios: a plugin or a frontend defect
+            // passing a path; an imported graph holding a symlinked folder
+            // (REVIEW P2 round 2, finding 1).
+            if self.store.page_spot(&spelling).is_err() {
                 return Err(ApplyRefusal::Refused);
+            }
+            // A path that only collides with a registered entry, unproved,
+            // is not the page the feature planned from (DESIGN §3.1).
+            if !proved {
+                return Err(ApplyRefusal::Changed);
             }
             self.try_register(&key, &spelling).ok_or_else(ended)?;
             let new = match effect {
@@ -141,7 +148,7 @@ impl PageHost {
         }
         let keys: BTreeSet<PageKey> = effects.keys().cloned().collect();
         let (policy, kinds) = (op.policy, op.kinds);
-        let deadline = std::time::Instant::now() + OPERATION_WAIT;
+        let mut deadline = std::time::Instant::now() + OPERATION_WAIT;
         let shared = Arc::downgrade(&self.driver.shared);
         let effects = Arc::new(effects);
         let slot = loop {
@@ -205,7 +212,13 @@ impl PageHost {
                         return Err(ApplyRefusal::Unsaved(page));
                     }
                     match self.flush(&pages, &keys, deadline) {
-                        Ok(()) => continue,
+                        // The flush waits for a save as long as it runs; the
+                        // admission after it gets a whole budget again
+                        // (REVIEW P2 round 2, finding 2).
+                        Ok(()) => {
+                            deadline = std::time::Instant::now() + OPERATION_WAIT;
+                            continue;
+                        }
                         Err(ReserveRefusal::Unsaved(pages)) => {
                             let page = pages.into_iter().next().expect("unsaved");
                             return Err(ApplyRefusal::Unsaved(page));
@@ -239,10 +252,7 @@ impl PageHost {
     /// complete (a conflict or a persistent save error).
     pub fn flush_input(&self, pages: &[PageId]) -> Result<(), ApplyRefusal> {
         // `apply`'s invalid-target refusal, as `open`'s.
-        if pages
-            .iter()
-            .any(|page| self.store.as_page(&page.file()).is_none())
-        {
+        if pages.iter().any(|page| self.store.page_spot(page).is_err()) {
             return Err(ApplyRefusal::Refused);
         }
         let keys = self

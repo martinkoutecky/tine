@@ -665,7 +665,7 @@ pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) ->
             }
             Err(error) => return Err(store_error(error)),
         };
-        Ok(HostOp {
+        Ok(Some(HostOp {
             pages: vec![(
                 page.clone(),
                 HostEffect::Delete,
@@ -674,10 +674,11 @@ pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) ->
             kinds: vec![tine_store::EditKind::DeletePage],
             policy: Input::Flush,
             moved: None,
-        })
+        }))
     };
     crate::retained::operation(
         running,
+        Input::Flush,
         std::slice::from_ref(&page),
         "moving the journal to trash",
         "journal changed repeatedly during trash",

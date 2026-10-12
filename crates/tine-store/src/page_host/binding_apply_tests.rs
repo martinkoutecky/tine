@@ -183,6 +183,32 @@ fn flush_input_saves_a_page_that_exists_only_as_typed_input() {
     live.host.stop();
 }
 
+/// REVIEW P2 round 2, finding 1: an imported graph whose `pages/link` is a
+/// symlink to a folder outside it. A write under it is not a page of this
+/// graph: refused, and nothing is created outside the graph.
+#[cfg(unix)]
+#[test]
+fn a_write_through_a_symlinked_folder_is_refused() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), live.root.join("pages/link")).unwrap();
+    let applied = live.host.apply(op(
+        vec![(
+            "pages/link/new.md",
+            Effect::Write(bytes("- escaped\n")),
+            Expected::Absent,
+        )],
+        Input::Refuse,
+    ));
+    assert_eq!(applied, Err(ApplyRefusal::Refused));
+    assert_eq!(
+        live.host.flush_input(&[PageId::from("pages/link/new.md")]),
+        Err(ApplyRefusal::Refused)
+    );
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+    live.host.stop();
+}
+
 /// A move: the receiver's new bytes took the source's, which the operation
 /// deletes; a source planned from absent bytes, a move whose pages are not
 /// the operation's, and a page named twice are not operations.
