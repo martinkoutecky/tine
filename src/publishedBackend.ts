@@ -414,6 +414,10 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       }));
       return { rev: "0", entries, unreadable: [] };
     },
+    // A published export carries no file times: the Updated column shows dashes.
+    async pageModified() {
+      return { rev: "0", modified: [] };
+    },
     async resolvePage(name: string, kind: "journal" | "page") {
       const snapshot = await load();
       const page = pageByName(snapshot, name);
@@ -895,6 +899,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
  *  `Backend` method to be in exactly one. */
 export const PUBLISHED_ANSWERED_METHODS = [
   "pageInventory",
+  "pageModified",
   "resolvePage",
   "loadGraph",
   "inspectGraphAccess",

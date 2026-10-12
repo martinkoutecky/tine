@@ -1,4 +1,6 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { backend } from "../backend";
+import { graphOwner, readOwned } from "../owned";
 import type { PaneRouter } from "../router";
 import { allPages, pageListLabels } from "../pages";
 import { installPageIndex } from "../pageIndex";
@@ -10,21 +12,24 @@ import {
   DEFAULT_SORT,
   arrangeAllPages,
   formatPageDay,
+  formatUpdated,
   listablePages,
   nextSort,
   visibleRange,
   type AllPagesRow,
   type AllPagesSort,
   type AllPagesSortKey,
+  type ModifiedTimes,
 } from "../allPagesList";
 
 // The full All Pages view (GH #335). OG: frontend/components/page.cljs `all-pages`
 // lists name / backlinks / created / updated, sortable per column, with a name
-// search and a journals toggle (off by default). Tine's page index carries a
-// page's name, file and journal day, so this view sorts by title and journal day;
-// it adds no per-row backend call: the rows are the shared index
-// (`pageIndex.ts`) and only the visible slice is in the DOM, so 10k+ pages cost
-// what one screenful costs. Bulk actions (delete, orphan removal) are not here.
+// search and a journals toggle (off by default). The rows are the shared page
+// index (`pageIndex.ts`); the Updated column is ONE `page_modified` read when the
+// view opens (times the store already holds), never a call per row. Only the
+// visible slice is in the DOM, so 10k+ pages cost what one screenful costs.
+// Created and backlink-count columns, bulk actions (delete, orphan removal) are
+// not here: file creation time is not reliable across platforms.
 
 /** Every row is exactly this tall, so the scroll offset maps to a row by arithmetic. */
 export const ALL_PAGES_ROW_HEIGHT = 32;
@@ -36,7 +41,10 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
   const [sort, setSort] = createSignal<AllPagesSort>(DEFAULT_SORT);
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewport, setViewport] = createSignal(640);
+  const [modified, setModified] = createSignal<ModifiedTimes>(new Map());
   let scroller: HTMLDivElement | undefined;
+  let alive = true;
+  onCleanup(() => { alive = false; });
 
   const listed = createMemo(() => {
     const pages = allPages();
@@ -45,12 +53,21 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
   const labels = createMemo(() => pageListLabels(listed() ?? []));
   const rows = createMemo<AllPagesRow[]>(() => {
     const pages = listed();
-    return pages ? arrangeAllPages(pages, filter(), sort(), labels()) : [];
+    return pages ? arrangeAllPages(pages, filter(), sort(), labels(), modified()) : [];
   });
   const range = createMemo(() => visibleRange(scrollTop(), viewport(), ALL_PAGES_ROW_HEIGHT, rows().length));
   const slice = createMemo(() => rows().slice(range().start, range().end));
 
   onMount(() => {
+    // One read per open. The list is usable meanwhile; Updated fills in when it lands.
+    void (async () => {
+      try {
+        const result = await readOwned(graphOwner(() => alive), backend().pageModified());
+        if (result.kind === "current") setModified(new Map(result.value.modified));
+      } catch {
+        // No times: Updated shows dashes and the list still works.
+      }
+    })();
     const measure = () => { if (scroller?.isConnected) setViewport(scroller.clientHeight || 640); };
     measure();
     const observer = scroller ? newResizeObserver(scroller, measure) : null;
@@ -111,7 +128,10 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
           <button type="button" class="all-pages-col" role="columnheader" aria-sort={ariaSort("title")} onClick={() => sortBy("title")}>
             Page{arrow("title")}
           </button>
-          <button type="button" class="all-pages-col" role="columnheader" aria-sort={ariaSort("day")} onClick={() => sortBy("day")}>
+          <button type="button" class="all-pages-col all-pages-updated-col" role="columnheader" aria-sort={ariaSort("updated")} onClick={() => sortBy("updated")}>
+            Updated{arrow("updated")}
+          </button>
+          <button type="button" class="all-pages-col all-pages-day-col" role="columnheader" aria-sort={ariaSort("day")} onClick={() => sortBy("day")}>
             Journal date{arrow("day")}
           </button>
         </div>
@@ -145,6 +165,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
                     >
                       {row.label}
                     </button>
+                    <span class="all-pages-updated" role="cell">{formatUpdated(row.modified)}</span>
                     <span class="all-pages-day" role="cell">{formatPageDay(row.entry.date_key)}</span>
                   </div>
                 )}

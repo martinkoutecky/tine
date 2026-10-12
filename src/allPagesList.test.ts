@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PageEntry } from "./types";
-import { arrangeAllPages, DEFAULT_SORT, formatPageDay, listablePages, nextSort, visibleRange } from "./allPagesList";
+import { arrangeAllPages, DEFAULT_SORT, formatPageDay, formatUpdated, listablePages, nextSort, visibleRange } from "./allPagesList";
 import { parsePersistedSession } from "./session";
 import { routeTitle, sameRoute } from "./router";
 
@@ -8,6 +8,7 @@ import { routeTitle, sameRoute } from "./router";
 
 const page = (name: string, path = `pages/${name}.md`): PageEntry => ({ name, path, kind: "page", date_key: null });
 const journal = (day: number): PageEntry => ({ name: `J ${day}`, path: `journals/${day}.md`, kind: "journal", date_key: day });
+const TITLE = { key: "title", desc: false } as const;
 const names = (rows: { entry: PageEntry }[]) => rows.map((row) => row.entry.name);
 
 describe("All Pages list", () => {
@@ -20,7 +21,7 @@ describe("All Pages list", () => {
 
   it("sorts titles case-insensitively with numbers in numeric order, both ways", () => {
     const shown = listablePages(pages, false);
-    expect(names(arrangeAllPages(shown, "", DEFAULT_SORT))).toEqual(["Apple", "banana", "cherry 9", "cherry 10"]);
+    expect(names(arrangeAllPages(shown, "", TITLE))).toEqual(["Apple", "banana", "cherry 9", "cherry 10"]);
     expect(names(arrangeAllPages(shown, "", { key: "title", desc: true }))).toEqual(["cherry 10", "cherry 9", "banana", "Apple"]);
   });
 
@@ -33,20 +34,49 @@ describe("All Pages list", () => {
   });
 
   it("filters by name substring, case-insensitively, and an unmatched filter is empty", () => {
-    expect(names(arrangeAllPages(pages, "  CHERRY ", DEFAULT_SORT))).toEqual(["cherry 9", "cherry 10"]);
-    expect(arrangeAllPages(pages, "zzz", DEFAULT_SORT)).toEqual([]);
+    expect(names(arrangeAllPages(pages, "  CHERRY ", TITLE))).toEqual(["cherry 9", "cherry 10"]);
+    expect(arrangeAllPages(pages, "zzz", TITLE)).toEqual([]);
   });
 
   it("disambiguates two pages with one name by folder, and keeps both rows", () => {
-    const rows = arrangeAllPages([page("Same", "pages/a/Same.md"), page("Same", "pages/b/Same.md")], "", DEFAULT_SORT);
+    const rows = arrangeAllPages([page("Same", "pages/a/Same.md"), page("Same", "pages/b/Same.md")], "", TITLE);
     expect(rows.map((row) => row.label)).toEqual(["Same — a/", "Same — b/"]);
   });
 
   it("the first click on a column picks its natural direction and the second flips it", () => {
-    const byDay = nextSort(DEFAULT_SORT, "day");
+    const byDay = nextSort(TITLE, "day");
     expect(byDay).toEqual({ key: "day", desc: true });
     expect(nextSort(byDay, "day")).toEqual({ key: "day", desc: false });
     expect(nextSort(byDay, "title")).toEqual({ key: "title", desc: false });
+  });
+
+  it("opens newest-updated first, like OG's All pages", () => {
+    expect(DEFAULT_SORT).toEqual({ key: "updated", desc: true });
+    const modified = new Map([["pages/banana.md", 300], ["pages/Apple.md", 100], ["pages/cherry 9.md", 200]]);
+    const shown = listablePages(pages, false);
+    expect(names(arrangeAllPages(shown, "", DEFAULT_SORT, undefined, modified))).toEqual(["banana", "cherry 9", "Apple", "cherry 10"]);
+    expect(names(arrangeAllPages(shown, "", { key: "updated", desc: false }, undefined, modified))).toEqual(["Apple", "cherry 9", "banana", "cherry 10"]);
+    expect(arrangeAllPages(shown, "", DEFAULT_SORT, undefined, modified)[0].modified).toBe(300);
+  });
+
+  it("puts a page with no recorded time last in both directions, ordered by name", () => {
+    const shown = [page("zed"), page("Alpha"), page("timed")];
+    const modified = new Map([["pages/timed.md", 5]]);
+    expect(names(arrangeAllPages(shown, "", DEFAULT_SORT, undefined, modified))).toEqual(["timed", "Alpha", "zed"]);
+    expect(names(arrangeAllPages(shown, "", { key: "updated", desc: false }, undefined, modified))).toEqual(["timed", "Alpha", "zed"]);
+  });
+
+  it("the Updated column's first click is newest-first, the title column's is A to Z", () => {
+    expect(nextSort(TITLE, "updated")).toEqual({ key: "updated", desc: true });
+    expect(nextSort({ key: "updated", desc: true }, "updated")).toEqual({ key: "updated", desc: false });
+    expect(nextSort(DEFAULT_SORT, "title")).toEqual({ key: "title", desc: false });
+  });
+
+  it("shows an update time as local date and minutes, and a missing one as a dash", () => {
+    const at = new Date(2026, 5, 15, 14, 5).getTime() / 1000;
+    expect(formatUpdated(at)).toBe("2026-06-15 14:05");
+    expect(formatUpdated(undefined)).toBe("—");
+    expect(formatUpdated(Number.NaN)).toBe("—");
   });
 
   it("shows a journal day as a date and a page without one as a dash, never a zero date", () => {

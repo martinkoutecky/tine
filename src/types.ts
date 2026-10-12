@@ -164,6 +164,13 @@ export interface PageInventory {
   unreadable?: string[];
 }
 
+/** `page_modified` result: `[graph-relative path, Unix seconds]` for each page
+ *  file whose last-modified time the store holds. A file with no time is absent. */
+export interface PageModified {
+  rev: string;
+  modified: [string, number][];
+}
+
 /** One authoritative Journals-feed transaction.  Cursor fields are ordinal
  * journal days, never counts of returned DTOs (a selected file may vanish). */
 export interface JournalFeedPage {

@@ -32,7 +32,7 @@
 .all-pages-head,
 .all-pages-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 9.5em;
+  grid-template-columns: minmax(0, 1fr) 10.5em 8em;
   align-items: center;
   gap: 12px;
   box-sizing: border-box;
@@ -88,7 +88,8 @@
 .all-pages-open:hover {
   text-decoration: underline;
 }
-.all-pages-row .all-pages-day {
+.all-pages-row .all-pages-day,
+.all-pages-row .all-pages-updated {
   color: var(--text-secondary);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -103,6 +104,10 @@
 @media (max-width: 640px) {
   .all-pages-head,
   .all-pages-row {
-    grid-template-columns: minmax(0, 1fr) 7em;
+    grid-template-columns: minmax(0, 1fr) 9.5em;
+  }
+  .all-pages-day,
+  .all-pages-day-col {
+    display: none;
   }
 }

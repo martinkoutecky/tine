@@ -40,8 +40,8 @@ function stubRouter() {
   };
 }
 
-/** Every backend method except the inventory read and the ownership stamp the
- *  read itself carries: a call to any other is a per-open or per-row call. */
+/** Every backend method except the two one-shot reads (inventory, modified times)
+ *  and the ownership stamp they carry: a call to any other is a per-open or per-row call. */
 function spyOnEverythingElse() {
   const spies: ReturnType<typeof vi.fn>[] = [];
   const target = backend() as unknown as Record<string, unknown>;
@@ -49,14 +49,17 @@ function spyOnEverythingElse() {
   for (let proto: object | null = target; proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto))
     for (const key of Object.getOwnPropertyNames(proto)) names.add(key);
   for (const key of names) {
-    if (key === "constructor" || key === "pageInventory" || key === "graphBindingGeneration" || typeof target[key] !== "function") continue;
+    if (key === "constructor" || key === "pageInventory" || key === "pageModified" || key === "graphBindingGeneration" || typeof target[key] !== "function") continue;
     spies.push(vi.spyOn(target as never, key as never) as never);
   }
   return () => spies.reduce((n, spy) => n + spy.mock.calls.length, 0);
 }
 
-async function mountAllPages(entries = inventory()) {
+async function mountAllPages(entries = inventory(), modified: [string, number][] | "fail" = []) {
   const read = vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
+  const readModified = vi.spyOn(backend(), "pageModified");
+  if (modified === "fail") readModified.mockRejectedValue(new Error("no times"));
+  else readModified.mockResolvedValue({ rev: "1", modified });
   const otherCalls = spyOnEverythingElse();
   bumpGraphEpoch();
   const router = stubRouter();
@@ -64,7 +67,7 @@ async function mountAllPages(entries = inventory()) {
   document.body.append(host);
   const dispose = render(() => <AllPages router={router} />, host);
   await vi.waitFor(() => expect(host.querySelector(".all-pages-open")).not.toBeNull());
-  return { host, router, read, otherCalls, dispose };
+  return { host, router, read, readModified, otherCalls, dispose };
 }
 
 afterEach(() => {
@@ -78,7 +81,7 @@ afterEach(() => {
 
 describe("the All Pages view", () => {
   it("lists a graph of thousands of pages with a screenful of rows and one inventory read, whatever the user does", async () => {
-    const { host, read, otherCalls, dispose } = await mountAllPages();
+    const { host, read, readModified, otherCalls, dispose } = await mountAllPages();
     // The count is the full graph (pages only: the two journals are hidden)...
     expect(host.querySelector(".all-pages-count")!.textContent).toBe(`${TOTAL} pages`);
     // ...but only a window of rows exists. An unwindowed list has TOTAL rows here.
@@ -102,13 +105,43 @@ describe("the All Pages view", () => {
     host.querySelector<HTMLInputElement>(".all-pages-journals input")!.click();
     await settle();
     expect(read).toHaveBeenCalledTimes(1);
+    expect(readModified).toHaveBeenCalledTimes(1);
     expect(otherCalls()).toBe(0);
+    dispose();
+  });
+
+  it("opens with the most recently updated page first and shows each time, a page with none last", async () => {
+    const at = (h: number) => new Date(2026, 5, 15, h, 0).getTime() / 1000;
+    const { host, dispose } = await mountAllPages(
+      [existing("Old"), existing("Never"), existing("New")],
+      [["pages/Old.md", at(8)], ["pages/New.md", at(20)]],
+    );
+    await vi.waitFor(() => expect(rowNames(host)).toEqual(["New", "Old", "Never"]));
+    expect(column(host, "Updated").getAttribute("aria-sort")).toBe("descending");
+    expect([...host.querySelectorAll(".all-pages-row .all-pages-updated")].map((el) => el.textContent))
+      .toEqual(["2026-06-15 20:00", "2026-06-15 08:00", "—"]);
+    column(host, "Updated").click();
+    await settle();
+    expect(rowNames(host)).toEqual(["Old", "New", "Never"]);
+    dispose();
+  });
+
+  it("still lists every page when the times cannot be read", async () => {
+    const { host, readModified, dispose } = await mountAllPages([existing("Beta"), existing("Alpha")], "fail");
+    await settle();
+    expect(readModified).toHaveBeenCalledTimes(1);
+    expect(rowNames(host)).toEqual(["Alpha", "Beta"]);
+    expect([...host.querySelectorAll(".all-pages-row .all-pages-updated")].map((el) => el.textContent)).toEqual(["—", "—"]);
     dispose();
   });
 
   it("sorts by title (either way) and by journal day, and a click on the active column flips it", async () => {
     const { host, dispose } = await mountAllPages([existing("beta"), existing("Alpha"), existing("gamma"), journalEntry(20260101), journalEntry(20260301)]);
     expect(rowNames(host)).toEqual(["Alpha", "beta", "gamma"]);
+    column(host, "Page").click();
+    await settle();
+    expect(rowNames(host)).toEqual(["Alpha", "beta", "gamma"]);
+    expect(column(host, "Page").getAttribute("aria-sort")).toBe("ascending");
     column(host, "Page").click();
     await settle();
     expect(rowNames(host)).toEqual(["gamma", "beta", "Alpha"]);

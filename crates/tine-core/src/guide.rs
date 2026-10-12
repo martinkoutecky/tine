@@ -1234,7 +1234,8 @@ mod og_20d_guide_tests {
         let map = page("Start/Where things are");
         for detail in [
             "**Open the full list…**",
-            "**Page** to sort by name",
+            "**Updated** column shows when each page",
+            "**Page** (name)",
             "**Show journals**",
             "**Journal date**",
         ] {
