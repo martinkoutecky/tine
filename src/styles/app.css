@@ -7891,16 +7891,55 @@ html.tine-embed-shading-accent .embed-block {
 .inpage-find-bar {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
   padding: 6px 14px;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);
 }
-.inpage-find-input {
+.inpage-find-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+/* At phone width the inputs shrink, never the toggle or the buttons (GH #338). */
+.inpage-find-row > * {
+  flex: 0 0 auto;
+}
+.inpage-find-row > .inpage-find-input,
+.inpage-find-row > .inpage-replace-input {
+  flex: 0 1 240px;
+  min-width: 72px;
+}
+/* GH #208: the replace row sits under the find input (toggled in the bar). */
+.inpage-replace-toggle {
+  order: -1;
+}
+.inpage-replace-btn {
+  padding: 3px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.inpage-replace-btn:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+.inpage-replace-btn:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+.inpage-find-input,
+.inpage-replace-input {
   width: 240px;
-  max-width: min(48vw, 240px);
+  max-width: 240px;
   padding: 4px 8px;
   font-size: 13px;
   border: 1px solid var(--border-color);
@@ -7908,7 +7947,8 @@ html.tine-embed-shading-accent .embed-block {
   background-color: var(--bg-primary);
   color: var(--text-primary);
 }
-.inpage-find-input:focus {
+.inpage-find-input:focus,
+.inpage-replace-input:focus {
   border-color: var(--link-color);
   outline: none;
 }
