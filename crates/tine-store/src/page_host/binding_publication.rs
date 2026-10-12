@@ -10,6 +10,7 @@ impl PageHost {
     /// that version, or its durable draft holds a version at or past it. A
     /// page the host does not hold has nothing to recover; admitted input
     /// not applied yet (Q-P2b-4) is recoverable only through its draft.
+    #[cfg(test)]
     pub(crate) fn pages_recoverable(&self, pages: &[(String, u64)]) -> bool {
         let state = self.driver.shared.state.lock().unwrap();
         let host = &state.progress.host;

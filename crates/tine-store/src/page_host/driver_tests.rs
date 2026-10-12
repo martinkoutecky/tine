@@ -20,7 +20,6 @@ impl Clock for SharedClock {
 }
 
 enum Delivered {
-    Events(Vec<Event>),
     Mail(PageKey, Mail),
 }
 
@@ -32,9 +31,6 @@ impl Sink for Channel {
         delivery: Delivery,
         _: &dyn Fn(&str) -> Owner,
     ) -> Vec<(Publication, Indexing)> {
-        if !delivery.events.is_empty() {
-            let _ = self.0.send(Delivered::Events(delivery.events));
-        }
         for (page, mail, _) in delivery.mail {
             let _ = self.0.send(Delivered::Mail(page, mail));
         }

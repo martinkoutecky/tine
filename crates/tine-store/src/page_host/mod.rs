@@ -1,5 +1,4 @@
 //! Unwired page owner. Runtime code is independent of the page_state oracle.
-#![allow(dead_code)]
 
 mod binding;
 pub use binding::{
@@ -101,6 +100,7 @@ impl Keys {
         self.0.insert(key)
     }
 
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.0.len()
     }
@@ -853,6 +853,7 @@ impl<F: HostIo> Host<F> {
         Disposition::Applied
     }
 
+    #[cfg(test)]
     fn abstract_queue(&self) -> Vec<Request> {
         self.applying
             .iter()
@@ -936,6 +937,7 @@ impl<F: HostIo> Host<F> {
         }
     }
 
+    #[cfg(test)]
     fn load(&mut self, key: &str) -> Disposition {
         if !self.alive || !self.keys.contains(key) || self.pages.contains_key(key) {
             return Disposition::Disabled;
@@ -1215,6 +1217,7 @@ impl<F: HostIo> Host<F> {
         Disposition::Applied
     }
 
+    #[cfg(test)]
     fn release(&mut self, keys: &BTreeSet<PageKey>) -> Disposition {
         if !keys.is_subset(&self.retained) {
             return Disposition::Refused;
@@ -1261,6 +1264,7 @@ impl<F: HostIo> Host<F> {
         Disposition::Applied
     }
 
+    #[cfg(test)]
     fn switch_request(&mut self) -> Disposition {
         if self.worker.is_some() || !self.retained.is_empty() {
             return Disposition::Waiting;

@@ -1,6 +1,8 @@
 //! Constrained page operations; rewrites reuse tine-core's pure boundary.
 use super::*;
+#[cfg(test)]
 use tine_core::config::FileNameFormat;
+#[cfg(test)]
 use tine_core::model::Format;
 
 impl<F: HostIo> Host<F> {
@@ -17,6 +19,7 @@ impl<F: HostIo> Host<F> {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn delete(&mut self, key: &str) -> Disposition {
         self.delete_with_load(key, true, None)
     }
@@ -81,50 +84,6 @@ impl<F: HostIo> Host<F> {
                 None,
             );
             Disposition::Pending
-        })
-    }
-
-    fn rewrite(
-        bytes: &Text,
-        key: &str,
-        from: &str,
-        to: &str,
-        format: FileNameFormat,
-    ) -> Result<Text, ()> {
-        let Some(bytes) = bytes else { return Ok(None) };
-        let text = std::str::from_utf8(bytes).map_err(|_| ())?;
-        Ok(Some(Arc::from(
-            tine_core::refs::rename_rewrite(
-                text,
-                key.ends_with(".org"),
-                &[(from.into(), to.into())],
-                format,
-            )
-            .into_bytes(),
-        )))
-    }
-
-    /// Referrer discovery's index portion belongs to the caller; held buffers
-    /// are checked here so an unindexed held reference is never missed.
-    pub(super) fn rename(
-        &mut self,
-        source: &str,
-        target: &str,
-        referrers: &BTreeSet<PageKey>,
-        from: &str,
-        to: &str,
-        format: FileNameFormat,
-    ) -> Disposition {
-        self.rename_with(source, target, referrers, |bytes, key, moving| {
-            if !moving {
-                return Self::rewrite(bytes, key, from, to, format);
-            }
-            let Some(raw) = bytes else { return Ok(None) };
-            let text = std::str::from_utf8(raw).map_err(|_| ())?;
-            let syntax = Format::from_path(std::path::Path::new(source));
-            Ok(tine_core::model::rebind_page_title(text, syntax, from, to)
-                .map(|text| Some(Arc::from(text.into_bytes())))
-                .unwrap_or_else(|| bytes.clone()))
         })
     }
 
@@ -240,6 +199,55 @@ impl<F: HostIo> Host<F> {
             let reply = Reply::Caller(host.order.allocate(host.incarnation));
             host.install_operation(pages, records, reply, last_version, reads, gates);
             Disposition::Pending
+        })
+    }
+}
+
+/// The model scheduler's rename policy: rewrite references, rebind the
+/// moved page's title. Production supplies its own (`PageHost::rename`).
+#[cfg(test)]
+impl<F: HostIo> Host<F> {
+    fn rewrite(
+        bytes: &Text,
+        key: &str,
+        from: &str,
+        to: &str,
+        format: FileNameFormat,
+    ) -> Result<Text, ()> {
+        let Some(bytes) = bytes else { return Ok(None) };
+        let text = std::str::from_utf8(bytes).map_err(|_| ())?;
+        Ok(Some(Arc::from(
+            tine_core::refs::rename_rewrite(
+                text,
+                key.ends_with(".org"),
+                &[(from.into(), to.into())],
+                format,
+            )
+            .into_bytes(),
+        )))
+    }
+
+    /// Referrer discovery's index portion belongs to the caller; held buffers
+    /// are checked here so an unindexed held reference is never missed.
+    pub(super) fn rename(
+        &mut self,
+        source: &str,
+        target: &str,
+        referrers: &BTreeSet<PageKey>,
+        from: &str,
+        to: &str,
+        format: FileNameFormat,
+    ) -> Disposition {
+        self.rename_with(source, target, referrers, |bytes, key, moving| {
+            if !moving {
+                return Self::rewrite(bytes, key, from, to, format);
+            }
+            let Some(raw) = bytes else { return Ok(None) };
+            let text = std::str::from_utf8(raw).map_err(|_| ())?;
+            let syntax = Format::from_path(std::path::Path::new(source));
+            Ok(tine_core::model::rebind_page_title(text, syntax, from, to)
+                .map(|text| Some(Arc::from(text.into_bytes())))
+                .unwrap_or_else(|| bytes.clone()))
         })
     }
 }

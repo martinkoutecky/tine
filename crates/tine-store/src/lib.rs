@@ -101,6 +101,7 @@ pub use page_host::{
     DiskToken, DraftStatus, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
     Reloaded, RenameRefusal, Reservation, ReserveRefusal, StopMode, StopState, Stopped,
 };
+#[cfg(test)]
 mod page_state;
 mod path_identity;
 mod platform_step;

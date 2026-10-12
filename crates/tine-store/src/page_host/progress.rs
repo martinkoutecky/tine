@@ -397,12 +397,14 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
     }
 
     /// Graph-level sticky error while trash custody cannot be listed (V1).
+    #[cfg(test)]
     pub fn custody_unknown(&self) -> Option<&str> {
         self.host.custody_unknown.as_deref()
     }
 
     /// Wakeup required for a pending draft or custody retry; repeated early
     /// polls stutter.
+    #[cfg(test)]
     pub fn draft_retry_at(&self) -> Option<u64> {
         self.draft_retry.into_iter().chain(self.custody_retry).min()
     }

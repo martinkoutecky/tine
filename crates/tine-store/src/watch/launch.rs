@@ -19,7 +19,7 @@ use crate::store::{ChangeKind, FileId, FileRev, LoadError};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Baseline {
     /// A stat walk when the watcher starts (a store built ready, in tests).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     Walk,
     /// The load pass's own observations, installed before the launch diff.
     FromLoad,

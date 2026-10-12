@@ -508,7 +508,8 @@ fn every_host_operation_records_its_edit_kind() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/page_host");
     let operations = host_operations(&std::fs::read_to_string(dir.join("operations.rs")).unwrap());
     assert!(
-        operations.contains(&"delete".to_owned()) && operations.contains(&"rename_with".to_owned()),
+        operations.contains(&"delete_checked".to_owned())
+            && operations.contains(&"rename_with".to_owned()),
         "the host operation scan found {operations:?}"
     );
     let mut functions = BTreeMap::new();

@@ -815,6 +815,7 @@ impl WatchHandle {
         // file before reading it; nothing changes it before Ready because no
         // diff runs while loading.
         let snapshot = match baseline {
+            #[cfg(test)]
             Baseline::Walk => {
                 let baseline_began = Instant::now();
                 let (snapshot, _, baseline_walk) =

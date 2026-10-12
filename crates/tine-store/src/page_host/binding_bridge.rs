@@ -47,6 +47,7 @@ impl Sink for Bridge {
                 let started = crate::bench_events::enabled().then(std::time::Instant::now);
                 let indexing = match owner(&publication.key) {
                     Owner::Reservation => Indexing::Reserved,
+                    #[cfg(test)]
                     _ if self.fault() => Indexing::Failed,
                     _ if index(store, &publication) => Indexing::Indexed,
                     _ => Indexing::Failed,
@@ -71,18 +72,13 @@ impl Sink for Bridge {
     }
 }
 
+#[cfg(test)]
 impl Bridge {
-    #[cfg(test)]
     fn fault(&self) -> bool {
         use std::sync::atomic::Ordering;
         self.index_faults
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
             .is_ok()
-    }
-
-    #[cfg(not(test))]
-    fn fault(&self) -> bool {
-        false
     }
 }
 

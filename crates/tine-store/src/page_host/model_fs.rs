@@ -23,7 +23,6 @@ const CHAIN: [&str; 3] = [
 pub(super) enum Fault {
     Before,
     After,
-    Unsupported,
     Collision,
     /// The call's first `k` system calls complete and the next one fails, as
     /// an error there or a process or power cut between the two.
@@ -276,7 +275,7 @@ impl ModelFs {
         }
         let fault = self.faults.get_mut(&phase).and_then(VecDeque::pop_front);
         match fault {
-            Some(Fault::Before | Fault::Unsupported) => Err(IoFailure {
+            Some(Fault::Before) => Err(IoFailure {
                 kind: ErrorKind::Io,
                 completed: false,
                 operation: None,

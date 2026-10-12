@@ -48,6 +48,7 @@ impl<F: HostIo> Host<F> {
     }
 
     /// One page's draft step, the model's `draftSync`.
+    #[cfg(test)]
     pub(super) fn begin_draft(&mut self, key: &str) -> Disposition {
         self.begin_draft_with(key, false)
     }

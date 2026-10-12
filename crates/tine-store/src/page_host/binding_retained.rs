@@ -703,6 +703,7 @@ impl PageHost {
     }
 
     /// Stop the host (see `Drop`).
+    #[cfg(test)]
     pub(crate) fn stop(self) {}
 
     /// Begin a switch or restore stop (§6 step 3, §7 step 3) once the
