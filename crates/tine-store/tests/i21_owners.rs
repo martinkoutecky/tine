@@ -131,7 +131,9 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // +2 GH #623: open_asset and edit_asset_external start the OS opener
         // (PATH search, exec) on the blocking pool, awaited by their futures.
         // -1 step 3b P2b: the deleted `delete_page` command (page_delete).
-        36,
+        // +1 All pages view: page_modified loads the whole-graph view off the
+        // main thread, awaited by its command future like get_page.
+        37,
         "command future",
         "caller awaits blocking result",
     ),
