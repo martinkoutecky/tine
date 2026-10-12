@@ -18,12 +18,14 @@ vi.mock("./index", async (importOriginal) => {
   };
 });
 const listeners: ((event: { payload: string }) => void)[] = [];
+// Set to hold this window's broadcast `emit` open.
+let emitHold: Promise<void> | null = null;
 vi.mock("@tauri-apps/api/event", () => ({
   listen: async (_name: string, handler: (event: { payload: string }) => void) => {
     listeners.push(handler);
     return () => {};
   },
-  emit: async () => {},
+  emit: async () => { if (emitHold) await emitHold; },
 }));
 
 const { backend } = await import("../backend");
@@ -185,6 +187,32 @@ describe("the UI language lifecycle", () => {
     expect(activeLocale()).toBe("zh-CN");
     expect(uiLanguagePreference()).toBe("zh-CN");
     expect(native).toHaveBeenLastCalledWith("zh-CN");
+    await resetToEnglish();
+  });
+
+  it("a failed save shows what the settings file holds, not an older local value (CODE-3 B2)", async () => {
+    const toasts = await import("../toasts");
+    const emitted = deferred<void>();
+    emitHold = emitted.promise;
+    try {
+      setUiLanguage("en");
+      await flush();
+      // Another window stores and broadcasts Chinese while this window's emit is held.
+      vi.spyOn(backend(), "getAppString").mockResolvedValue("zh-CN");
+      broadcast("zh-CN");
+      await releaseAll("zh-CN");
+      emitted.resolve();
+      await flush();
+    } finally {
+      emitHold = null;
+    }
+    vi.spyOn(backend(), "setAppString").mockRejectedValue(new Error("disk full"));
+    setUiLanguage("en");
+    await flush();
+    await releaseAll("zh-CN");
+    expect(activeLocale()).toBe("zh-CN");
+    expect(uiLanguagePreference()).toBe("zh-CN");
+    expect(toasts.toasts().some((toast) => toast.key.startsWith("toast-language-save-failed:"))).toBe(true);
     await resetToEnglish();
   });
 

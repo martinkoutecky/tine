@@ -104,6 +104,7 @@ export interface MessageArgs {
   "toast-copy-title": {};
   "toast-dismiss": {};
   "toast-language-load-failed": {};
+  "toast-language-save-failed": {};
   "toast-repeat-count": { "count": string | number };
 }
 

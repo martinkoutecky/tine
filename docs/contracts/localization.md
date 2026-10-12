@@ -85,21 +85,27 @@ revisions 2 and 3).
   absent, as for every device preference: the system's language, no toast.
 - One operation owns the UI language at a time (`src/i18n/preference.ts`):
   the startup read and its fallback, a broadcast from another window, the
-  user's choice and a write rollback each start one, and only the latest may
-  show a locale, fall back to English, seed the committed value or report to
-  native code. Concurrent loads of one catalog share a single load. Startup
-  settles when the latest operation has, following each supersession: a
-  broadcast during startup holds the mount until its catalog shows, and a
-  catalog it made obsolete never does. A broadcast value is committed (the
-  other window persisted it): an older local write that fails afterwards
-  toasts but does not roll back over it.
+  user's choice and a failed save's re-read each start one, and only the
+  latest may show a locale, fall back to English or report to native code.
+  Concurrent loads of one catalog share a single load. Startup settles when the
+  latest operation has, following each supersession: a broadcast during
+  startup holds the mount until its catalog shows, and a catalog it made
+  obsolete never does.
+- The committed choice is `tine-settings.json` alone; the frontend keeps no
+  copy of it. A failed save toasts and, unless something newer changed the
+  language meanwhile, reads the file again and shows what it holds. The
+  language does not use the generic device-preference write queue.
 - The boot card (`index.html`, shown until the frontend mounts) reads its text
   from `ui_locale_resolved`: the main window's at launch
   (`__TINE_BOOT_TEXT__`; main starts hidden and is revealed after the first
   stable frame), a graph window's when that window is built
   (`__TINE_WINDOW_BOOT_TEXT__`), so a graph opened after a language change
-  shows the current language. Graph windows are not hidden: an unmounted
-  window always shows its boot card. Mobile shows it in English (DESIGN rev. 3).
+  shows the language the frontend last reported. The card is best effort: a
+  graph built in the moment between a change and its ordered report (for
+  example, while that window's lane finishes an earlier command) shows the
+  previous language until the frontend mounts. Graph windows are not hidden:
+  an unmounted window always shows its boot card. Mobile shows it in English
+  (DESIGN rev. 3).
 - The frontend reports the resolved tag through `set_ui_locale` (an ordered
   write, `ORDERED_COMMANDS`), stored as `ui_locale_resolved`; the stored value
   and the tray relabel change under one lock, in call order. Native code never
@@ -116,5 +122,5 @@ revisions 2 and 3).
 | Command message ids follow the command ids, without collisions | `src/i18n/commands.test.ts` |
 | Live switch, persistence, bounded startup read, late and failed reads | `src/components/LanguageSetting.test.tsx` |
 | Localized toasts keep English reports | `src/components/Toasts.test.tsx` |
-| Startup read, catalog loads, broadcasts and choices resolve latest-first; only the latest reports to native | `src/i18n/preference.lifecycle.test.ts` |
+| Startup read, catalog loads, broadcasts, choices and failed saves resolve latest-first; only the latest reports to native | `src/i18n/preference.lifecycle.test.ts` |
 | Shell text falls back to English | `src-tauri/src/i18n_shell.rs` tests |

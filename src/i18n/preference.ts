@@ -5,7 +5,6 @@
 // window is broadcast to the others.
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
-import { preferenceReadCurrent, preferenceRevision, seedPreference, supersedePreference, writePreference } from "../preferenceWrites";
 import { pushToast } from "../toasts";
 import { loadLocale, msg, negotiateLocale, showLocale, SOURCE_LOCALE } from "./index";
 
@@ -25,12 +24,14 @@ export function systemLanguages(): readonly string[] {
   return navigator.languages?.length ? navigator.languages : navigator.language ? [navigator.language] : [];
 }
 
-// One owner for the UI language (review CODE-1 F1/F2, CODE-2 A/B): every change
-// (the startup read, its fallback, a broadcast from another window, the user's
-// choice, a write rollback) starts an operation, and only the latest operation
-// may show a locale, fall back, seed the committed value or tell native code. A
-// superseded operation's load, failure or late read is inert, whatever order
-// they finish in. Startup's mount barrier follows the latest operation, not its own.
+// One owner for the UI language (review CODE-1 F1/F2, CODE-2 A/B, CODE-3 B2):
+// every change (the startup read, its fallback, a broadcast from another window,
+// the user's choice, a failed save's re-read) starts an operation, and only the
+// latest operation may show a locale, fall back or tell native code. A superseded
+// operation's load, failure or late read is inert, whatever order they finish
+// in. Startup's mount barrier follows the latest operation, not its own. The
+// committed value is the settings file alone: nothing here mirrors it, so a
+// failed save rolls back by reading it again.
 type Operation = { id: number; done: Promise<void>; superseded: Promise<void>; supersede: () => void };
 let current: Operation | null = null;
 let operation = 0;
@@ -79,17 +80,18 @@ async function activate(choice: string, mine: number): Promise<void> {
 
 type Read = { ok: true; stored: string } | { ok: false };
 
-/** The startup read's result, for operation `mine` if it is still the latest and
- * no write of this window raced it. */
-async function land(read: Read, mine: number, revision: number): Promise<void> {
-  if (!owns(mine) || !preferenceReadCurrent(preference, revision)) return;
+const readStored = (): Promise<Read> => backend().getAppString(KEY, "")
+  .then((stored) => ({ ok: true as const, stored }), () => ({ ok: false as const }));
+
+/** A settings read's result, for operation `mine` if it is still the latest. */
+async function land(read: Read, mine: number): Promise<void> {
+  if (!owns(mine)) return;
   if (!read.ok) {
     pushToast(msg("toast-language-load-failed"), "error");
     await activate("", mine);
     return;
   }
   await activate(read.stored, mine);
-  if (owns(mine)) seedPreference(preference);
 }
 
 /** Read the stored choice and show its locale. Await before mounting a webview:
@@ -101,17 +103,15 @@ export async function startUiLanguage(): Promise<void> {
   // Subscribe first, so a change broadcast during the read is never missed.
   await listenForChanges();
   const mine = begin();
-  const revision = preferenceRevision(preference);
-  const reading: Promise<Read> = backend().getAppString(KEY, "")
-    .then((stored) => ({ ok: true as const, stored }), () => ({ ok: false as const }));
+  const reading = readStored();
   void track(mine, (async () => {
     const first = await Promise.race([
       reading,
       new Promise<null>((resolve) => setTimeout(() => resolve(null), READ_BOUND_MS)),
     ]);
-    if (first) return land(first, mine, revision);
+    if (first) return land(first, mine);
     await activate("", mine);
-    void reading.then((late) => land(late, mine, revision));
+    void reading.then((late) => land(late, mine));
   })());
   await settled();
 }
@@ -121,9 +121,7 @@ async function listenForChanges(): Promise<void> {
     const { listen } = await import("@tauri-apps/api/event");
     await listen<string>(BROADCAST, (event) => {
       // Another window persisted this choice (or this one did: its echo keeps
-      // every window on the last write). It is committed, and an older local
-      // write's failure must not roll back over it (review CODE-2 B).
-      supersedePreference(preference, event.payload);
+      // every window on the last write).
       // Always a new operation, even for the value already showing: it retires an
       // older startup read that would otherwise land after it (review CODE-1 F2).
       const mine = begin();
@@ -134,16 +132,30 @@ async function listenForChanges(): Promise<void> {
   }
 }
 
-/** Choose the UI language (`""` = the system's): applies now, persists, tells the other windows. */
+/** This window's saves, in call order. */
+let saves: Promise<void> = Promise.resolve();
+
+/** Choose the UI language (`""` = the system's): applies now, persists, tells the
+ * other windows. A failed save toasts and, unless something newer changed the
+ * language meanwhile, shows what the settings file still holds (CODE-3 B2). */
 export function setUiLanguage(choice: string): void {
-  writePreference(preference, (next) => { const mine = begin(); void track(mine, activate(next, mine)); }, choice,
-    async (next) => {
-      await backend().setAppString(KEY, next);
-      try {
-        const { emit } = await import("@tauri-apps/api/event");
-        await emit(BROADCAST, next);
-      } catch {
-        // Not in Tauri.
-      }
-    }, "language preference");
+  const mine = begin();
+  void track(mine, activate(choice, mine));
+  saves = saves.then(async () => {
+    try {
+      await backend().setAppString(KEY, choice);
+    } catch {
+      pushToast(msg("toast-language-save-failed"), "error");
+      if (!owns(mine)) return;
+      const again = begin();
+      void track(again, readStored().then((read) => land(read, again)));
+      return;
+    }
+    try {
+      const { emit } = await import("@tauri-apps/api/event");
+      await emit(BROADCAST, choice);
+    } catch {
+      // Not in Tauri.
+    }
+  });
 }
