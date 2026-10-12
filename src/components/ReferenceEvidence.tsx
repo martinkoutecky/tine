@@ -1,5 +1,9 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
-import { openPageAtBlock } from "../router";
+import { openInNewTab, openPageAtBlock } from "../router";
+import { openRouteInOtherPane } from "../panes";
+import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
+import { openBlockInSidebar, openContextMenu } from "../ui";
+import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { focusedSurfaceOwner } from "../focusedSurface";
 import { formatForPage, resolveBlockRef, node as docNode } from "../document";
 import { startEditing, type EditorSelection } from "../editorController";
@@ -51,29 +55,24 @@ function focusMainOccurrence(
 
 export function OccurrenceControls(props: {
   evidence: ReferenceBlockEvidence;
-  onOccurrence: (span: MatchSpan) => void;
-  /**
-   * Occurrences the surrounding surface already shows the user. Unlinked
-   * References renders a highlighted excerpt, so a mention it marked is one the
-   * reader can already see and click; numbering it again is redundant. Linked
-   * References renders the live block and marks nothing, so it passes 0 and
-   * keeps the full control.
-   */
-  visible?: number;
+  /** Jump mode (Linked References' live block has no excerpt to mark): each
+   *  numbered circle opens the mention in the editor. */
+  onOccurrence?: (span: MatchSpan) => void;
+  /** Select mode (Unlinked References' excerpt): the circles choose WHICH mention
+   *  the excerpt highlights, in place; nothing navigates (GH #556 item 3). */
+  selected?: number;
+  onSelect?: (index: number) => void;
 }): JSX.Element {
   const total = () => props.evidence.total ?? props.evidence.occurrences.length;
+  const selecting = () => props.onSelect !== undefined;
   // Logseq shows no per-block mention count or occurrence-jump controls in
   // Linked References. For a single mention the "1 mention" label + lone "1" jump
   // button are redundant and confusing (GH #200), so surface these controls only
   // when a block mentions the page more than once — where jumping to a specific
   // occurrence is actually useful. Gate on the true total (GH #137), not the
   // capped occurrence list, so an honest ">1" is what shows the controls.
-  //
-  // Second gate (master GH #200): only when the surface cannot already show the
-  // occurrences itself. Derived from the excerpt, not a tuned constant: only the
-  // mentions beyond its window need a numbered jump.
   return (
-    <Show when={total() > 1 && total() > (props.visible ?? 0)}>
+    <Show when={total() > 1}>
     <span class="reference-occurrence-controls">
       <span class="reference-mention-count">
         {total()} {total() === 1 ? "mention" : "mentions"}
@@ -83,9 +82,11 @@ export function OccurrenceControls(props: {
           <button
             type="button"
             class="reference-occurrence-jump"
-            title={`Jump to ${occurrence.kind} mention ${index() + 1}`}
-            aria-label={`Jump to mention ${index() + 1} of ${total()}`}
-            onClick={() => props.onOccurrence(occurrence.span)}
+            classList={{ selected: selecting() && props.selected === index() }}
+            title={selecting() ? `Highlight ${occurrence.kind} mention ${index() + 1}` : `Jump to ${occurrence.kind} mention ${index() + 1}`}
+            aria-label={`${selecting() ? "Highlight" : "Jump to"} mention ${index() + 1} of ${total()}`}
+            aria-pressed={selecting() ? props.selected === index() : undefined}
+            onClick={() => (selecting() ? props.onSelect!(index()) : props.onOccurrence?.(occurrence.span))}
           >
             {index() + 1}
           </button>
@@ -126,29 +127,66 @@ export function ReferenceExcerptBlocks(props: {
 }): JSX.Element {
   const evidenceById = createMemo(() => new Map(props.evidence.map((item) => [item.block_id, item])));
   const [full, setFull] = createSignal<Record<string, boolean>>({});
+  // GH #556 item 1/3: ONE mention is highlighted per block (the first until the
+  // reader picks another with the numbered circles), not every mention at once:
+  // all-occurrence marking cluttered long blocks and fought the user's own
+  // highlighting. Picking a circle stays in this view; the excerpt re-centres on it.
+  const [selected, setSelected] = createSignal<Record<string, number>>({});
   return (
     <For each={props.blocks}>
       {(block) => {
         const evidence = () => evidenceById().get(block.id);
         const spans = () => evidence()?.occurrences.map((occurrence) => occurrence.span) ?? [];
+        const selectedIndex = () => Math.min(selected()[block.id] ?? 0, Math.max(0, spans().length - 1));
+        const markedSpans = () => (spans().length ? [spans()[selectedIndex()]] : []);
         const segments = (): Segment[] => {
           if (!evidence()) return [{ text: block.raw, marked: false }];
-          return full()[block.id] ? buildFullMarkedSegments(block.raw, spans()) : buildSearchExcerpt(block.raw, spans());
+          return full()[block.id] ? buildFullMarkedSegments(block.raw, markedSpans()) : buildSearchExcerpt(block.raw, markedSpans());
         };
-        // What the reader can already see and click; drives the jump row's second
-        // gate, so expanding a block retires the row on its own.
-        const shownOccurrences = () => new Set(
-          segments().filter((segment) => segment.marked && segment.span).map((segment) => `${segment.span!.start}:${segment.span!.end}`),
-        ).size;
         // The label names the MENTION's ordinal, not the excerpt segment's.
         const ordinalOf = (span: MatchSpan) => {
           const index = spans().findIndex((candidate) => candidate.start === span.start && candidate.end === span.end);
           return index < 0 ? 1 : index + 1;
         };
+        const sourceRoute = () => ({
+          kind: "page" as const, name: props.page, pageKind: props.kind, block: blockDtoExternalId(block),
+          ...(props.path ? { path: props.path } : {}),
+        });
         const jumpTo = (span: MatchSpan) => focusMainOccurrence(props.page, props.kind, blockDtoExternalId(block), span, props.path);
         return (
-          <div class="reference-excerpt-row" data-reference-block={block.id}>
-            <span class="reference-excerpt-bullet" aria-hidden="true">•</span>
+          <div
+            class="reference-excerpt-row"
+            data-reference-block={block.id}
+            onContextMenu={(event) => {
+              // The block's own context menu, once its page is loaded (the row
+              // is a bounded excerpt until then and has no runtime block).
+              if (!docNode(block.id) || !shouldOpenBlockContextMenu(event.target)) return;
+              event.preventDefault();
+              openContextMenu(event.clientX, event.clientY, block.id);
+            }}
+          >
+            {/* GH #556 item 7: the bullet is the block-level way into the source
+                block, as in Linked References and the outline; the highlighted
+                text locates a mention. Same modified-click contract as every
+                internal link (linkGesture.ts). */}
+            <button
+              type="button"
+              class="reference-excerpt-bullet"
+              title={`Open this block in ${props.page}`}
+              aria-label={`Open this block in ${props.page}`}
+              onMouseDown={internalLinkMouseDown}
+              onClick={(event) => {
+                switch (internalLinkDest(event)) {
+                  case "sidebar":
+                    openBlockInSidebar({ page: props.page, pageKind: props.kind, uuid: blockDtoExternalId(block), ...(props.path ? { path: props.path } : {}) });
+                    break;
+                  case "background": openInNewTab(sourceRoute()); break;
+                  case "pane": openRouteInOtherPane(sourceRoute()); break;
+                  default: openPageAtBlock(props.page, props.kind, blockDtoExternalId(block), props.path);
+                }
+              }}
+              onAuxClick={(event) => internalLinkAuxClick(event, () => openInNewTab(sourceRoute()))}
+            >•</button>
             <div class="reference-excerpt-content">
               <div class="reference-excerpt-text" aria-label={block.raw}>
                 <For each={segments()}>
@@ -177,8 +215,8 @@ export function ReferenceExcerptBlocks(props: {
                   {(item) => (
                     <OccurrenceControls
                       evidence={item()}
-                      visible={shownOccurrences()}
-                      onOccurrence={jumpTo}
+                      selected={selectedIndex()}
+                      onSelect={(index) => setSelected((state) => ({ ...state, [block.id]: index }))}
                     />
                   )}
                 </Show>
