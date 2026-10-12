@@ -84,7 +84,8 @@ function upsertPage(dto: PageDto & { id?: string }) {
   // already in the store, so unsaved text answers "conflict" before a reload is
   // reached; an IME composition pins the page). Carry it across the reload:
   // close it on the old block and reopen it on the same block in the new copy,
-  // caret clamped. Without this the page stayed stale for as long as a block on
+  // caret clamped (the old editor instance's removal blur neither writes nor
+  // ends the carried edit: Editor `replacedUnderEditor`). Without this the page stayed stale for as long as a block on
   // it was open in the editor (Syncthing while Tine was in the background).
   const carried = existing ? editorOnPage(dto) : null;
   // Record the load baseline (the on-disk rev) so saves conflict against it.
