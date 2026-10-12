@@ -5,6 +5,7 @@
 // window is broadcast to the others.
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
+import { ownedWhen, readOwned } from "../owned";
 import { pushToast } from "../toasts";
 import { loadLocale, msg, negotiateLocale, showLocale, SOURCE_LOCALE } from "./index";
 
@@ -43,17 +44,19 @@ const begin = (): number => {
   return operation;
 };
 const owns = (mine: number) => mine === operation;
-/** Record `work` as operation `mine`'s; returns it. */
+/** Record `work` as operation `mine`'s. Its failure is logged here, so the
+ * mount barrier and fire-and-forget callers never see a rejection. */
 function track(mine: number, work: Promise<void>): Promise<void> {
-  if (current && current.id === mine) current.done = work;
-  return work;
+  const logged = work.catch((error: unknown) => console.error("i18n: a language change failed", error));
+  if (current && current.id === mine) current.done = logged;
+  return logged;
 }
 /** Settles once the latest operation has, following each supersession. */
 async function settled(): Promise<void> {
   for (;;) {
     const op = current;
     if (!op) return;
-    await Promise.race([op.done.catch(() => {}), op.superseded]);
+    await Promise.race([op.done, op.superseded]);
     if (current === op) return;
   }
 }
@@ -80,12 +83,17 @@ async function activate(choice: string, mine: number): Promise<void> {
 
 type Read = { ok: true; stored: string } | { ok: false };
 
-const readStored = (): Promise<Read> => backend().getAppString(KEY, "")
-  .then((stored) => ({ ok: true as const, stored }), () => ({ ok: false as const }));
+/** Read the stored choice for operation `mine`: `null` once it is no longer
+ * the latest (a retired read is inert, failure included). */
+const readStored = (mine: number): Promise<Read | null> =>
+  readOwned(ownedWhen(() => owns(mine)), backend().getAppString(KEY, "")).then(
+    (result) => result.kind === "stale" ? null : { ok: true as const, stored: result.value },
+    () => ({ ok: false as const }),
+  );
 
 /** A settings read's result, for operation `mine` if it is still the latest. */
-async function land(read: Read, mine: number): Promise<void> {
-  if (!owns(mine)) return;
+async function land(read: Read | null, mine: number): Promise<void> {
+  if (!read || !owns(mine)) return;
   if (!read.ok) {
     pushToast(msg("toast-language-load-failed"), "error");
     await activate("", mine);
@@ -103,13 +111,13 @@ export async function startUiLanguage(): Promise<void> {
   // Subscribe first, so a change broadcast during the read is never missed.
   await listenForChanges();
   const mine = begin();
-  const reading = readStored();
+  const reading = readStored(mine);
   void track(mine, (async () => {
     const first = await Promise.race([
       reading,
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), READ_BOUND_MS)),
+      new Promise<"slow">((resolve) => setTimeout(() => resolve("slow"), READ_BOUND_MS)),
     ]);
-    if (first) return land(first, mine);
+    if (first !== "slow") return land(first, mine);
     await activate("", mine);
     void reading.then((late) => land(late, mine));
   })());
@@ -148,7 +156,7 @@ export function setUiLanguage(choice: string): void {
       pushToast(msg("toast-language-save-failed"), "error");
       if (!owns(mine)) return;
       const again = begin();
-      void track(again, readStored().then((read) => land(read, again)));
+      void track(again, readStored(again).then((read) => land(read, again)));
       return;
     }
     try {
