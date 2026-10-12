@@ -19,10 +19,7 @@ use tine_core::model::{
 };
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use tine_core::sync_diff::{self, SyncConflictDiff};
-use tine_store::{
-    Area, FileId, FileRev, HostEffect, HostExpected, HostOp, Input, PageHost, PageId, SaveBase,
-    Store,
-};
+use tine_store::{Area, FileId, FileRev, Input, PageHost, PageId, SaveBase, Store};
 
 mod queue;
 pub use queue::{conflict_inventory, ConflictQueue};
@@ -750,50 +747,38 @@ fn fold_pair(
             pre_choice,
         )
     };
+    let transaction = |fold: &Folded, include_source: bool| {
+        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        tx.save_page(
+            &[
+                tine_store::EditKind::ReplacePage,
+                tine_store::EditKind::DeletePage,
+            ],
+            &page,
+            SaveBase::Existing(fold.win_rev.clone()),
+            &fold.doc,
+        );
+        if include_source {
+            tx.trash(conf, fold.conf_rev.clone(), tine_store::TrashIf::Any);
+        }
+        tx
+    };
     let Some(running) = host else {
         let discover = || Ok(crate::retained::pages(store, [win, conf]));
         return crate::retained::reserved(host, Input::Refuse, discover, refused, |_| {
             crate::retry_on_conflict(EXHAUSTED, || {
                 let fold = fold()?;
-                let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-                tx.save_page(
-                    &[
-                        tine_store::EditKind::ReplacePage,
-                        tine_store::EditKind::DeletePage,
-                    ],
-                    &page,
-                    SaveBase::Existing(fold.win_rev),
-                    &fold.doc,
-                );
-                tx.trash(conf, fold.conf_rev, tine_store::TrashIf::Any);
-                Ok(crate::commit_retry(tx.commit())?.then_some(()))
+                Ok(crate::commit_retry(transaction(&fold, true).commit())?.then_some(()))
             })
         });
     };
     let mut copy_rev = None;
     let plan = || {
         let fold = fold()?;
-        let bytes = (store.page_bytes(&page, &fold.doc, Some(fold.mine.as_bytes()), false))
-            .map_err(crate::why_error)?;
-        let expected = |text: String| HostExpected::Bytes(text.into_bytes().into());
-        let mut pages = vec![(
-            page.clone(),
-            HostEffect::Write(bytes.into()),
-            expected(fold.mine),
-        )];
-        match &copy {
-            Some(stray) => pages.push((stray.clone(), HostEffect::Delete, expected(fold.theirs))),
-            None => copy_rev = Some(fold.conf_rev),
+        if copy.is_none() {
+            copy_rev = Some(fold.conf_rev.clone());
         }
-        Ok(Some(HostOp {
-            pages,
-            kinds: vec![
-                tine_store::EditKind::ReplacePage,
-                tine_store::EditKind::DeletePage,
-            ],
-            policy: Input::Refuse,
-            moved: copy.clone().map(|stray| (page.clone(), stray)),
-        }))
+        crate::retained::plan(transaction(&fold, copy.is_some())).map(Some)
     };
     let touched = crate::retained::pages(store, [win, conf]);
     let applied = crate::retained::operation(
@@ -824,8 +809,6 @@ fn fold_pair(
 /// The pair's fold as the review decided it, from the texts read now.
 struct Folded {
     doc: PageDto,
-    mine: String,
-    theirs: String,
     win_rev: FileRev,
     conf_rev: FileRev,
 }
@@ -893,8 +876,6 @@ fn folded(
     let doc = dto(store, page, Document { pre_block, roots });
     Ok(Folded {
         doc,
-        mine,
-        theirs,
         win_rev,
         conf_rev,
     })
@@ -1113,42 +1094,34 @@ pub fn resolve_vcs_marker_conflict(
         let merged = marker_resolution(store, &file, &page, &content, decisions, pre_choice)?;
         Ok((content, rev, merged))
     };
+    let transaction = |rev, merged: &PageDto| {
+        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        tx.save_page(
+            &[tine_store::EditKind::ReplacePage],
+            &page,
+            SaveBase::ResolvingMarkers(rev),
+            merged,
+        );
+        tx
+    };
     let Some(running) = host else {
         let discover = || Ok(vec![page.clone()]);
         return crate::retained::reserved(None, Input::Refuse, discover, refused, |_| {
             crate::retry_on_conflict(EXHAUSTED, || {
                 let (_, rev, merged) = reviewed()?;
-                let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-                tx.save_page(
-                    &[tine_store::EditKind::ReplacePage],
-                    &page,
-                    SaveBase::ResolvingMarkers(rev),
-                    &merged,
-                );
-                Ok(crate::commit_retry(tx.commit())?.then_some(()))
+                Ok(crate::commit_retry(transaction(rev, &merged).commit())?.then_some(()))
             })
         });
     };
+    // C4: the durable non-page marker copy precedes the read-only planner.
+    let (content, rev, merged) = reviewed()?;
+    transaction(rev, &merged).plan().map_err(crate::why_error)?;
+    store
+        .stage_marker_copy(&file, content.as_bytes())
+        .map_err(crate::why_error)?;
     let plan = || {
-        let (content, _, merged) = reviewed()?;
-        let bytes = (store.page_bytes(&page, &merged, Some(content.as_bytes()), true))
-            .map_err(crate::why_error)?;
-        // DESIGN §3.4 pre: the old bytes are in conflict trash before the
-        // operation can replace them. A refused or replanned operation leaves
-        // this copy behind (harmless; a replan after a change refuses above).
-        store
-            .stage_marker_copy(&file, content.as_bytes())
-            .map_err(crate::why_error)?;
-        Ok(Some(HostOp {
-            pages: vec![(
-                page.clone(),
-                HostEffect::Write(bytes.into()),
-                HostExpected::Bytes(content.into_bytes().into()),
-            )],
-            kinds: vec![tine_store::EditKind::ReplacePage],
-            policy: Input::Refuse,
-            moved: None,
-        }))
+        let (_, rev, merged) = reviewed()?;
+        crate::retained::plan(transaction(rev, &merged)).map(Some)
     };
     crate::retained::operation(
         running,

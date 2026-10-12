@@ -124,6 +124,41 @@ fn a_rescue_with_a_host_moves_the_file_unchanged() {
     );
 }
 
+/// A sync-conflict source is not a page. Its destination still belongs to
+/// the host, including the host's publication and edit-kind delivery.
+#[test]
+fn a_non_page_rescue_is_published_by_the_host() {
+    let src = "pages/A.sync-conflict-20261012-000000-DEVICE.md";
+    let f = hosted(&[(src, "- rescued copy\n")]);
+    assert!(f
+        .store
+        .as_page(&tine_store::FileId::from(src.to_owned()))
+        .is_none());
+    drop(f.host);
+    let (sent, received) = mpsc::channel();
+    let host = PageHost::start(
+        &f.store,
+        &f._dir.path().join("app"),
+        "test-graph",
+        move |page, kinds| {
+            sent.send((page.to_owned(), kinds.to_vec())).unwrap();
+        },
+        |_| {},
+    )
+    .unwrap();
+    pages::rename_file_to_page(&f.store, Some(&host), src, "Rescued").unwrap();
+    let (page, kinds) = received
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the destination must publish through the host");
+    assert_eq!(page, "pages/Rescued.md");
+    assert!(kinds.contains(&tine_store::EditKind::RenamePage));
+    assert!(!f.root.join(src).exists());
+    assert_eq!(
+        fs::read_to_string(f.root.join("pages/Rescued.md")).unwrap(),
+        "- rescued copy\n"
+    );
+}
+
 #[test]
 fn a_rescue_planned_before_an_external_edit_moves_the_edited_bytes() {
     let f = hosted(&[("journals/Loose.md", "- planned\n")]);

@@ -10,10 +10,7 @@ use tine_core::guide::{
     guide_copy_page_name, guide_link_renames, rewrite_bundled_guide_links, CONFIG_EDN,
     GUIDE_ASSETS, GUIDE_TEMPLATES, QUICK_CAPTURE_PNG,
 };
-use tine_store::{
-    Area, Content, HostEffect, HostExpected, HostOp, Input, OpenError, PageHost, Resolved, Store,
-    StoreError, TxOutcome, Why,
-};
+use tine_store::{Area, Content, Input, OpenError, PageHost, Resolved, Store, TxOutcome, Why};
 
 use crate::{store_error, tx_error};
 
@@ -67,6 +64,15 @@ fn create_if_absent(
     bytes: &[u8],
 ) -> io::Result<bool> {
     let id = store.file_id(area, rel).map_err(store_error)?;
+    let transaction = || {
+        let mut tx = if area == Area::Pages {
+            store.transaction(Some(tine_store::EditKind::ReplacePage))
+        } else {
+            store.transaction(None)
+        };
+        tx.create(&id, Content::Bytes(bytes.to_vec()));
+        tx
+    };
     let (Some(running), Some(page)) = (host, store.as_page(&id)) else {
         // No host, or an asset: the transaction under the retained-writer route, as before P3.
         let discover = || Ok(crate::retained::pages(store, [&id]));
@@ -76,13 +82,7 @@ fn create_if_absent(
             discover,
             crate::retained::unsaved,
             |_| {
-                let mut tx = if area == Area::Pages {
-                    store.transaction(Some(tine_store::EditKind::ReplacePage))
-                } else {
-                    store.transaction(None)
-                };
-                tx.create(&id, Content::Bytes(bytes.to_vec()));
-                let outcome = tx.commit();
+                let outcome = transaction().commit();
                 match &outcome {
                     TxOutcome::Committed { .. } => Ok(true),
                     TxOutcome::NotCommitted {
@@ -98,27 +98,21 @@ fn create_if_absent(
             },
         );
     };
-    // One host operation (DESIGN §3.1): the page's bytes over no file.
-    // Anything at the path (a file, or a folder) is an existing page,
-    // skipped as the transaction's conflict was; a file that appears after
-    // the plan makes the operation `Changed`, and the replan skips it.
     let mut created = false;
-    let plan = || {
-        created = match store.read(&id, Some(0)) {
-            Err(StoreError::NotFound) => true,
-            Ok(_) | Err(StoreError::TooLarge { .. } | StoreError::InvalidTarget(_)) => false,
-            Err(error) => return Err(store_error(error)),
-        };
-        Ok(created.then(|| HostOp {
-            pages: vec![(
-                page.clone(),
-                HostEffect::Write(bytes.into()),
-                HostExpected::Absent,
-            )],
-            kinds: vec![tine_store::EditKind::ReplacePage],
-            policy: Input::Flush,
-            moved: None,
-        }))
+    let plan = || match transaction().plan() {
+        Ok(op) => {
+            created = true;
+            Ok(Some(op))
+        }
+        Err(Why::Conflict { .. } | Why::Refused(tine_store::Refusal::Twin { .. })) => {
+            created = false;
+            Ok(None)
+        }
+        Err(Why::Failed(error)) if error.kind == io::ErrorKind::IsADirectory => {
+            created = false;
+            Ok(None)
+        }
+        Err(why) => Err(crate::why_error(why)),
     };
     crate::retained::operation(
         running,

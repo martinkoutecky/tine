@@ -28,6 +28,7 @@ mod move_file;
 #[cfg(feature = "test-faults")]
 #[path = "../tests/support/og_k1_pause.rs"]
 mod og_k1_pause;
+mod plan;
 mod preflight;
 mod prepared;
 use prepared::PreparedRewrite;
@@ -476,6 +477,11 @@ impl<'a> Transaction<'a> {
         doc: &PageDto,
     ) -> &mut Self {
         assert!(!kinds.is_empty(), "OG-RULES Rule 8: page save needs a kind; exemplar crates/tine-graph-features/src/pages.rs");
+        for kind in kinds {
+            if !self.kinds.contains(kind) {
+                self.kinds.push(*kind);
+            }
+        }
         let (base, markers) = match base {
             SaveBase::ResolvingMarkers(rev) => (SaveBase::Existing(rev), Markers::Resolve),
             other => (other, Markers::Refuse),
@@ -747,6 +753,13 @@ impl<'a> Transaction<'a> {
             return Ok(());
         };
         let path = self.path(file)?;
+        if let Some(existing) = self.disk_twin(file)? {
+            if moving_from != Some(&existing) {
+                return Err(Why::Refused(Refusal::Twin {
+                    existing: PageId::from(existing.as_str()),
+                }));
+            }
+        }
         let Some(entry) = self.store.graph.entry_for_path(&path) else {
             return Ok(());
         };
@@ -1580,86 +1593,40 @@ impl<'a> Transaction<'a> {
         let _writer = self.store.writer.lock().unwrap();
         timing.writer_acquired();
         let rev = || self.store.changes.rev();
-        if self.store.is_closed() {
-            return TxOutcome::NotCommitted {
-                step: 0,
-                why: Why::Refused(Refusal::Closed),
-                rollback: Rollback::default(),
-                publication_errors: Vec::new(),
-                graph_rev: rev(),
-            };
-        }
-        if let Some(failure) = self.config_write_failure() {
-            return failure;
-        }
-        if let Some(stale) = self.stale_view() {
-            return stale;
-        }
+        let names = match self.preflight_names() {
+            Ok(names) => names,
+            Err((step, why)) => {
+                return TxOutcome::NotCommitted {
+                    step,
+                    why,
+                    rollback: Rollback::default(),
+                    publication_errors: Vec::new(),
+                    graph_rev: rev(),
+                }
+            }
+        };
         let starting_rev = self.store.graph.cache_generation();
-        let mut names = Vec::new();
-        for step in &self.steps {
-            match step {
-                Step::Save { id, .. } | Step::Rewrite { id, .. } => names.push(id.file()),
-                Step::Create { file, .. }
-                | Step::Replace { file, .. }
-                | Step::Expect { file, .. }
-                | Step::Trash { file, .. } => names.push(file.clone()),
-                Step::Move { file, to, .. } => {
-                    names.push(file.clone());
-                    names.push(to.clone());
-                }
-                Step::Unique { .. } => {}
-            }
-        }
-        let mut seen = HashSet::new();
-        for (index, step) in self.steps.iter().enumerate() {
-            let ids: Vec<FileId> = match step {
-                Step::Save { id, .. } | Step::Rewrite { id, .. } => vec![id.file()],
-                Step::Create { file, .. }
-                | Step::Replace { file, .. }
-                | Step::Expect { file, .. }
-                | Step::Trash { file, .. } => vec![file.clone()],
-                Step::Move { file, to, .. } => vec![file.clone(), to.clone()],
-                Step::Unique { .. } => Vec::new(),
-            };
-            for id in ids {
-                if !seen.insert(id.clone()) {
-                    return TxOutcome::NotCommitted {
-                        step: index,
-                        why: Why::Refused(Refusal::RepeatedFile(id)),
-                        rollback: Rollback::default(),
-                        publication_errors: Vec::new(),
-                        graph_rev: rev(),
-                    };
-                }
-            }
-        }
-        names.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-        names.dedup();
-        let paths: Vec<PathBuf> = names
+        let locks: Vec<_> = names
             .iter()
-            .map(|id| self.store.graph.root.join(id.as_str()))
-            .collect();
-        let locks: Vec<_> = paths
-            .iter()
-            .map(|path| self.store.graph.page_lock(path))
+            .map(|id| {
+                self.store
+                    .graph
+                    .page_lock(&self.store.graph.root.join(id.as_str()))
+            })
             .collect();
         let _guards: Vec<_> = locks.iter().map(|lock| lock.lock().unwrap()).collect();
-        let mut plans = Vec::new();
-        for (index, step) in self.steps.iter().enumerate() {
-            match self.preflight(step) {
-                Ok(plan) => plans.push(plan),
-                Err(why) => {
-                    return TxOutcome::NotCommitted {
-                        step: index,
-                        why,
-                        rollback: Rollback::default(),
-                        publication_errors: Vec::new(),
-                        graph_rev: rev(),
-                    }
+        let plans = match self.prepare_steps() {
+            Ok(plans) => plans,
+            Err((step, why)) => {
+                return TxOutcome::NotCommitted {
+                    step,
+                    why,
+                    rollback: Rollback::default(),
+                    publication_errors: Vec::new(),
+                    graph_rev: rev(),
                 }
             }
-        }
+        };
         self.spelling_entries.borrow_mut().clear();
         let mut before = BTreeMap::new();
         for (plan, step) in plans.iter().zip(&self.steps) {

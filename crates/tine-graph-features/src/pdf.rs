@@ -9,8 +9,7 @@ use std::io;
 use tine_core::model::{Format, PageDto, PageKind};
 use tine_core::pdf::{self, Highlight, PdfState};
 use tine_store::{
-    Area, Content, FileId, FileRev, HostEffect, HostExpected, HostOp, Input, PageHost, PageId,
-    SaveBase, Store, StoreError,
+    Area, Content, FileId, FileRev, Input, PageHost, PageId, SaveBase, Store, StoreError,
 };
 
 use crate::store_error;
@@ -637,6 +636,30 @@ const PAGE_CHANGED: &str = "highlight annotation page changed repeatedly during 
 /// The host operation, as its refusals name it.
 const PAGE_UPDATE: &str = "the annotation page update";
 
+fn annotation_steps(
+    tx: &mut tine_store::Transaction<'_>,
+    annotation: &Annotation,
+    doc: &PageDto,
+    include_legacy: bool,
+) {
+    let base = annotation
+        .existing
+        .as_ref()
+        .map_or(SaveBase::CreateNew, |(_, rev)| {
+            SaveBase::Existing(rev.clone())
+        });
+    let mut kinds = vec![tine_store::EditKind::ReplacePage];
+    if include_legacy && annotation.legacy.is_some() {
+        kinds.push(tine_store::EditKind::DeletePage);
+    }
+    tx.save_page(&kinds, &annotation.page, base, doc);
+    if include_legacy {
+        if let Some((id, _, rev)) = &annotation.legacy {
+            tx.trash(&id.file(), rev.clone(), tine_store::TrashIf::Any);
+        }
+    }
+}
+
 /// Merge caller highlights by ID against the current sidecar. Changed color,
 /// text and image values win locally; unchanged values follow disk. Page and
 /// position form one geometry value: changing either locally selects both local
@@ -730,12 +753,7 @@ pub fn write_highlights(
                             return Ok(None);
                         }
                     }
-                    let base = (annotation.existing.as_ref())
-                        .map_or(SaveBase::CreateNew, |(_, rev)| {
-                            SaveBase::Existing(rev.clone())
-                        });
-                    let kinds = [tine_store::EditKind::ReplacePage];
-                    tx.save_page(&kinds, &annotation.page, base, &page_dto);
+                    annotation_steps(&mut tx, &annotation, &page_dto, false);
                     if !crate::commit_retry(tx.commit())? {
                         return Ok(None);
                     }
@@ -773,63 +791,52 @@ pub fn write_highlights(
     )?;
     let (merged, old) = crate::retry_on_conflict(SIDECAR_CHANGED, || {
         let (current, old, merged, next) = read()?;
-        // A page this write refuses refuses before the sidecar is written.
-        annotation(store, &name, &old_name, migrate)?;
+        // Validate the page before writing the highlight data.
+        let initial = annotation(store, &name, &old_name, migrate)?;
+        let doc = annotation_dto(&initial, &name, pdf_name, label, &merged);
+        let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+        annotation_steps(&mut tx, &initial, &doc, true);
+        match tx.plan() {
+            Err(tine_store::Why::Conflict { .. }) => return Ok(None),
+            result => {
+                result.map_err(crate::why_error)?;
+            }
+        }
         let guard = legacy_id.as_ref().zip(old.as_ref());
-        let saved = save_sidecar(store, &primary, current.as_ref(), &next, guard)?;
-        Ok(saved.then_some((merged, old)))
-    })?;
-    let plan = || {
-        let annotation = annotation(store, &name, &old_name, migrate)?;
-        let page_dto = annotation_dto(&annotation, &name, pdf_name, label, &merged);
-        let existing = annotation.existing.map(|(raw, _)| raw.into_bytes());
-        let bytes = (store.page_bytes(&annotation.page, &page_dto, existing.as_deref(), false))
-            .map_err(crate::why_error)?;
-        let Some((legacy, raw, _)) = annotation.legacy else {
-            if existing.as_deref() == Some(bytes.as_slice()) {
+        if !save_sidecar(store, &primary, current.as_ref(), &next, guard)? {
+            return Ok(None);
+        }
+        let saved_rev = FileRev::from_bytes(next.as_bytes());
+        let mut remerge = false;
+        let plan = || {
+            // C4: a page replan may not reuse data superseded by another
+            // saver. Return to the outer merge + non-page save loop.
+            if optional(store, &primary)?.as_ref().map(|(_, rev)| rev) != Some(&saved_rev) {
+                remerge = true;
                 return Ok(None);
             }
-            let expected =
-                existing.map_or(HostExpected::Absent, |old| HostExpected::Bytes(old.into()));
-            return Ok(Some(HostOp {
-                pages: vec![(annotation.page, HostEffect::Write(bytes.into()), expected)],
-                kinds: vec![tine_store::EditKind::ReplacePage],
-                policy: Input::Flush,
-                moved: None,
-            }));
+            let annotation = annotation(store, &name, &old_name, migrate)?;
+            let doc = annotation_dto(&annotation, &name, pdf_name, label, &merged);
+            let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+            annotation_steps(&mut tx, &annotation, &doc, true);
+            let op = crate::retained::plan(tx)?;
+            let unchanged = op.pages.iter().all(|(_, effect, expected)| {
+                matches!((effect, expected),
+                    (tine_store::HostEffect::Write(new), tine_store::HostExpected::Bytes(old)) if new == old)
+            });
+            Ok((!unchanged).then_some(op))
         };
-        // The new page takes the legacy page's text, which the operation
-        // deletes: a move, so the deletion publishes last.
-        Ok(Some(HostOp {
-            pages: vec![
-                (
-                    annotation.page.clone(),
-                    HostEffect::Write(bytes.into()),
-                    HostExpected::Absent,
-                ),
-                (
-                    legacy.clone(),
-                    HostEffect::Delete,
-                    HostExpected::Bytes(raw.into_bytes().into()),
-                ),
-            ],
-            kinds: vec![
-                tine_store::EditKind::ReplacePage,
-                tine_store::EditKind::DeletePage,
-            ],
-            policy: Input::Flush,
-            moved: Some((annotation.page, legacy)),
-        }))
-    };
-    crate::retained::operation(
-        running,
-        Input::Flush,
-        &pages,
-        PAGE_UPDATE,
-        PAGE_CHANGED,
-        unsaved,
-        plan,
-    )?;
+        crate::retained::operation(
+            running,
+            Input::Flush,
+            &pages,
+            PAGE_UPDATE,
+            PAGE_CHANGED,
+            unsaved,
+            plan,
+        )?;
+        Ok((!remerge).then_some((merged, old)))
+    })?;
     let source_key = if old.is_some() { &legacy } else { &key };
     retire(
         store,

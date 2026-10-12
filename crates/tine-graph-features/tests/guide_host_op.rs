@@ -158,3 +158,64 @@ fn with_a_host_a_folder_at_a_guide_page_path_is_skipped() {
     assert!(copied.skipped_pages.contains(&name), "{copied:?}");
     assert!(g.root.join(&rel).is_dir());
 }
+
+/// P3 review #2: malformed imported bytes can already own the Guide copy's
+/// name. The hosted copy must preserve the transaction's refusal and leave
+/// every destination absent.
+#[test]
+fn an_unreadable_owner_refuses_the_guide_copy_with_and_without_a_host() {
+    let (name, rel) = first_copy();
+    for running in [false, true] {
+        let g = hosted(&[]);
+        let mut owner = format!("title:: {name}\n").into_bytes();
+        owner.extend_from_slice(b"broken:: \xff\n\n- imported\n");
+        fs::write(g.root.join("pages/Other.md"), &owner).unwrap();
+        g.store.refresh(tine_store::Depth::Bytes).unwrap();
+        g.store.whole_graph().unwrap();
+        let copied =
+            guide::copy_guide_into_graph(&g.store, running.then_some(&g.host), "Tine Guide");
+        assert!(copied.is_err(), "host={running}: {copied:?}");
+        assert_eq!(copied.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert!(!g.root.join(&rel).exists(), "host={running}: created {rel}");
+        assert_eq!(fs::read(g.root.join("pages/Other.md")).unwrap(), owner);
+        assert_eq!(fs::read_dir(g.root.join("pages")).unwrap().count(), 1);
+    }
+}
+
+/// P3 review #3, DESIGN §3.1c C3: a twin delivered after planning must
+/// invalidate admission before an operation is recorded. Replanning then
+/// reports the Guide page skipped, rather than leaving unfinished work.
+#[test]
+fn a_guide_twin_that_arrives_after_the_plan_is_reported_skipped() {
+    let (name, rel) = first_copy();
+    let g = hosted(&[]);
+    let held = g
+        .host
+        .reserve(|| vec![PageId::from(rel.as_str())], Input::Refuse)
+        .expect("nothing unsaved");
+    let twin = Path::new(&rel).with_extension("org");
+    std::thread::scope(|scope| {
+        let (done, finished) = mpsc::channel();
+        let (store, host) = (&*g.store, &g.host);
+        scope.spawn(move || {
+            let copied = guide::copy_guide_into_graph(store, Some(host), "Tine Guide");
+            done.send(copied.map_err(|error| error.to_string()))
+                .unwrap();
+        });
+        assert!(
+            finished.recv_timeout(Duration::from_millis(500)).is_err(),
+            "the copy wrote while another reservation holds {rel}"
+        );
+        assert!(!g.root.join(&rel).exists());
+        fs::write(g.root.join(&twin), "* delivered twin\n").unwrap();
+        drop(held);
+        let copied = finished
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the copy answers once the page is released")
+            .expect("an arriving twin must be a skipped Guide page");
+        assert!(copied.skipped_pages.contains(&name), "{copied:?}");
+        assert!(!copied.created_pages.contains(&name), "{copied:?}");
+    });
+    assert!(!g.root.join(&rel).exists());
+    assert_eq!(read(&g.root, twin.to_str().unwrap()), "* delivered twin\n");
+}

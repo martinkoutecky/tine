@@ -274,6 +274,49 @@ fn the_annotation_page_under_its_encoded_name_is_admitted_by_the_host() {
 /// The encoded annotation page of a PDF with a `%` in its key.
 const ENCODED: &str = "pages/hls__half%25.md";
 
+/// Two honest savers: A saves unchanged yellow and parks, B saves blue and
+/// publishes, then A resumes. A must merge B's sidecar again on its replan.
+#[test]
+fn a_page_replan_merges_the_other_savers_sidecar_again() {
+    let loaded = vec![highlight(A, "yellow", None)];
+    let (_dir, root) = graph(&[
+        ("assets/half%.edn", &pdf::write_highlights(&loaded, "")),
+        (ENCODED, &page("half%.pdf", &[(A, "text of a")])),
+    ]);
+    let store = open(&root);
+    let app_data = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    while_held(
+        &host,
+        &root,
+        ENCODED,
+        || {
+            features_pdf::write_highlights(
+                &store,
+                Some(&host),
+                "half%.pdf",
+                "Half",
+                &loaded,
+                &loaded,
+            )
+        },
+        || {
+            let other = open(&root);
+            let blue = vec![highlight(A, "blue", None)];
+            features_pdf::write_highlights(&other, None, "half%.pdf", "Half", &blue, &loaded)
+                .unwrap();
+            other.close();
+        },
+    );
+    let sidecar = features_pdf::read_highlights_checked(&store, "half%.pdf").unwrap();
+    assert_eq!(sidecar[0].color, "blue");
+    let written = fs::read_to_string(root.join(ENCODED)).unwrap();
+    assert!(
+        written.contains("hl-color:: blue"),
+        "sidecar blue must have a blue annotation: {written}"
+    );
+}
+
 /// A second highlight save to a PDF whose annotation page has an encoded
 /// file name updates that page, with and without a host. The page is found
 /// under its encoded name only by resolving the page name, and the writer

@@ -1,9 +1,11 @@
 //! Rule 8 census of Tauri page-content writers and their kind-taking store path.
 
 fn body<'a>(source: &'a str, name: &str) -> &'a str {
-    let signature = format!("fn {name}(");
+    let signature = format!("fn {name}");
     let start = source
-        .find(&signature)
+        .match_indices(&signature)
+        .find(|(start, _)| source[*start + signature.len()..].starts_with(['(', '<']))
+        .map(|(start, _)| start)
         .unwrap_or_else(|| panic!("missing writer {name}"));
     let open = source[start..].find('{').unwrap() + start;
     let mut depth = 0;
@@ -175,11 +177,31 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         (
             JOURNALS,
             "migrate_one",
+            "migration_transaction(",
+        ),
+        (
+            JOURNALS,
+            "migrate_hosted",
+            "migration_transaction(",
+        ),
+        (
+            JOURNALS,
+            "migration_transaction",
             "transaction(Some(tine_store::EditKind::RenamePage))",
         ),
         (
             FEATURES,
             "trash_current",
+            "trash_transaction(",
+        ),
+        (
+            JOURNALS,
+            "trash_journal_file",
+            "crate::trash_transaction(",
+        ),
+        (
+            FEATURES,
+            "trash_transaction",
             "transaction(Some(tine_store::EditKind::DeletePage))",
         ),
         // Both two-file folds (a sync copy, a duplicate journal day) write
@@ -199,12 +221,35 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         (
             PDF,
             "write_highlights",
-            "let kinds = [tine_store::EditKind::ReplacePage];",
+            "annotation_steps(",
         ),
-        (PDF, "write_highlights", "tx.save_page(&kinds,"),
+        (PDF, "annotation_steps", "let mut kinds = vec![tine_store::EditKind::ReplacePage];"),
+        (PDF, "annotation_steps", "kinds.push(tine_store::EditKind::DeletePage)"),
+        (PDF, "annotation_steps", "tx.save_page(&kinds,"),
     ];
     for (source, name, marker) in destinations {
         assert!(calls(body(source, name), marker), "OG-RULES Rule 8: {name} must reach a kind-taking store entry; exemplar crates/tine-graph-features/src/pages.rs");
+    }
+    // The hosted branch consumes that same builder through read-only plan,
+    // whose declared kinds reach PageHost::apply (the store census checks took).
+    for (source, name, marker) in [
+        (GUIDE, "create_if_absent", "transaction().plan()"),
+        (JOURNALS, "migrate_hosted", ".plan()"),
+        (JOURNALS, "trash_journal_file", "crate::retained::plan("),
+        (PAGES, "rename_file_to_page", "crate::retained::plan("),
+        (PAGES, "merge_pages", "crate::retained::plan("),
+        (CONFLICTS, "fold_pair", "crate::retained::plan("),
+        (
+            CONFLICTS,
+            "resolve_vcs_marker_conflict",
+            "crate::retained::plan(",
+        ),
+        (PDF, "write_highlights", "crate::retained::plan("),
+    ] {
+        assert!(
+            calls(body(source, name), marker),
+            "OG-RULES Rule 8: {name}'s hosted branch must plan its kind-taking transaction"
+        );
     }
     assert!(calls(
         body(BACKUP, "restore_backup"),
@@ -229,6 +274,12 @@ fn writer_guard_rejects_a_missing_kind_path() {
     let altered = "fn trash_current() { store.transaction(None); }";
     assert!(!calls(
         body(altered, "trash_current"),
+        "transaction(Some(tine_store::EditKind::DeletePage))"
+    ));
+    let generic =
+        "fn trash_transaction<'a>() { store.transaction(Some(tine_store::EditKind::DeletePage)); }";
+    assert!(calls(
+        body(generic, "trash_transaction"),
         "transaction(Some(tine_store::EditKind::DeletePage))"
     ));
 }
