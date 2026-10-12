@@ -27,7 +27,10 @@ const ENTRIES: &[&str] = &[
 
 /// Files allowed to call lsdoc directly, each with its reason.
 const EXEMPT: &[(&str, &str)] = &[
-    ("crates/tine-outline/src/lsdoc_block_parse.rs", "the bounded boundary itself"),
+    (
+        "crates/tine-outline/src/lsdoc_block_parse.rs",
+        "the bounded boundary itself",
+    ),
     (
         "crates/tine-core/src/query/conformance.rs",
         "a #[cfg(test)] module (asserted below)",
