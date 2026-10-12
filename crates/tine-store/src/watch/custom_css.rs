@@ -124,7 +124,6 @@ mod tests {
         let graph = crate::model::Graph::open(&root);
         let scope = AssetScope::new(&graph);
         let config = tine_core::Config::default();
-        let dirs = [root.clone()];
         let event = |paths: Vec<PathBuf>| notify::Event {
             kind: notify::EventKind::Modify(notify::event::ModifyKind::Data(
                 notify::event::DataChange::Any,
@@ -135,13 +134,13 @@ mod tests {
 
         let mut pending = Pending::default();
         let css = event(vec![root.join("logseq/custom.css")]);
-        assert!(pending.add_event(Ok(css), &dirs, &config, &scope));
+        assert!(pending.add_event(Ok(css), &root, &config, &scope));
         assert!(pending.custom_css, "the stylesheet lane was not flagged");
         assert!(!pending.config && !pending.full && pending.paths.is_empty());
 
         let mut pending = Pending::default();
         let other = event(vec![root.join("logseq/Custom.CSS")]);
-        assert!(pending.add_event(Ok(other), &dirs, &config, &scope));
+        assert!(pending.add_event(Ok(other), &root, &config, &scope));
         assert!(
             pending.custom_css,
             "a case-folded spelling must reach the lane"
@@ -149,12 +148,12 @@ mod tests {
 
         let mut pending = Pending::default();
         let notes = event(vec![root.join("logseq/bak.css")]);
-        pending.add_event(Ok(notes), &dirs, &config, &scope);
+        pending.add_event(Ok(notes), &root, &config, &scope);
         assert!(!pending.custom_css, "only custom.css belongs to the lane");
 
         let mut pending = Pending::default();
         let config_edit = event(vec![root.join("logseq/config.edn")]);
-        assert!(pending.add_event(Ok(config_edit), &dirs, &config, &scope));
+        assert!(pending.add_event(Ok(config_edit), &root, &config, &scope));
         assert!(pending.config && !pending.custom_css);
         fs::remove_dir_all(root).unwrap();
     }

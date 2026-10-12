@@ -22,30 +22,25 @@ pub(super) fn run(
     let pending = Arc::new(Mutex::new(Pending::default()));
     let mut watcher: Option<notify::RecommendedWatcher> = None;
     let mut active = None;
-    let mut active_dirs: Option<[PathBuf; 1]> = None;
-    let mut active_dir_ids: Option<[Option<u128>; 1]> = None;
+    let mut active_root_id: Option<Option<u128>> = None;
     let mut assets_watched = false;
     let mut assets_failure: Option<String> = None;
     while !core.closed.load(Ordering::Acquire) {
         let selected = *mode.lock().unwrap();
-        let dirs = core.dirs.read().unwrap().clone();
-        let dir_ids = [directory_identity(&dirs[0])];
+        // The root's spelling is fixed; its identity changes when it is
+        // replaced or recreated.
+        let root_id = directory_identity(&core.graph.root);
         // A refused watch is retried every cycle: polling covers the gap (I-9:
         // the refusal was reported, so it is never silent staleness).
         let retry = selected == WatchMode::Notify && watcher.is_none();
-        if retry
-            || active != Some(selected)
-            || active_dirs.as_ref() != Some(&dirs)
-            || active_dir_ids.as_ref() != Some(&dir_ids)
-        {
+        if retry || active != Some(selected) || active_root_id != Some(root_id) {
             let retrying = retry && active == Some(selected);
             watcher = None;
             assets_watched = false;
             active = Some(selected);
-            active_dirs = Some(dirs.clone());
-            active_dir_ids = Some(dir_ids);
+            active_root_id = Some(root_id);
             if selected == WatchMode::Notify {
-                match install_watch(&core, &dirs, &pending, &wake) {
+                match install_watch(&core, &pending, &wake) {
                     Ok(created) => {
                         watcher = Some(created);
                         // The asset baseline predates registration. An edit in
@@ -70,7 +65,7 @@ pub(super) fn run(
         let external_assets = core
             .assets
             .scope()
-            .external_root(&dirs[0])
+            .external_root(&core.graph.root)
             .map(Path::to_path_buf);
         let assets_polled = match (watcher.as_mut(), external_assets) {
             (Some(live), Some(root)) if !assets_watched => {

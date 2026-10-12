@@ -8,7 +8,7 @@ use super::{collect_with_revs, stamp, Core, RestoreBaseline, WatchHandle};
 use crate::store::{journal_ids_from_entries, ChangeKind, LoadStatus, Origin};
 
 fn collect_restore(core: &Core) -> RestoreBaseline {
-    let mut files = collect_with_revs(&core.dirs.read().unwrap(), &core.graph.current_config());
+    let mut files = collect_with_revs(&core.graph.root, &core.graph.current_config());
     let mut stack = vec![core.graph.assets_path()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = fs::read_dir(dir) else {
@@ -76,10 +76,7 @@ impl WatchHandle {
             }
         }
         let observed = SystemTime::now();
-        let baseline = collect_with_revs(
-            &self.core.dirs.read().unwrap(),
-            &self.core.graph.current_config(),
-        );
+        let baseline = collect_with_revs(&self.core.graph.root, &self.core.graph.current_config());
         *self.core.racy.lock().unwrap() = baseline
             .iter()
             .filter(|(_, value)| value.racy_at(observed))

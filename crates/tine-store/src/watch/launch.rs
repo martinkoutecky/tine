@@ -57,7 +57,7 @@ impl Core {
     pub(crate) fn install_walked_baseline(&self) {
         let began = Instant::now();
         let (walked, _, times) =
-            collect_with_errors(&self.dirs.read().unwrap(), &self.graph.current_config());
+            collect_with_errors(&self.graph.root, &self.graph.current_config());
         self.graph.diag.baseline(times, began.elapsed());
         {
             let mut snapshot = self.snapshot.lock().unwrap();
