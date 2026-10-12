@@ -62,7 +62,7 @@
 
 #[cfg(test)]
 mod derived_cache_fuzz_tests;
-pub mod edit_kind;
+pub use tine_outline::edit_kind;
 pub mod file_kind;
 pub use edit_kind::EditKind;
 #[cfg(test)]

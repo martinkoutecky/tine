@@ -417,7 +417,7 @@ mod tests {
     /// marks, numbers, `_`, `.`, `/`, `-`). Widening the panel means widening these readers first.
     #[test]
     fn editable_property_keys_fixture() {
-        let fixture = include_str!("../tests/fixtures/editable-property-keys.txt");
+        let fixture = include_str!("../../tine-core/tests/fixtures/editable-property-keys.txt");
         let accepted: Vec<&str> = fixture
             .lines()
             .filter_map(|line| line.strip_prefix('+'))
@@ -431,7 +431,7 @@ mod tests {
         for key in accepted.iter().map(|k| k.to_string()).chain(class) {
             let line = format!("{key}:: v");
             assert_eq!(
-                crate::doc::parse_property_line(&line),
+                crate::property_line::parse_property_line(&line),
                 Some((key.as_str(), "v")),
                 "{key}"
             );

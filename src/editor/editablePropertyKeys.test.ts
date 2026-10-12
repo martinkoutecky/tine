@@ -1,7 +1,7 @@
 // og 14 Q5 follow-up (G3 blocker): the properties panel must never write a key
 // that ANY Tine property reader would not find again. The accepted/rejected
 // lists are a fixture shared with the Rust readers' test
-// (crates/tine-core/src/logbook.rs `editable_property_keys_fixture`), so a
+// (crates/tine-outline/src/logbook.rs `editable_property_keys_fixture`), so a
 // drift on either side fails a test instead of shipping an invisible property.
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";

@@ -1,6 +1,6 @@
 //! I-22 (og C3 L03): a property value is reparsed for its references. That
 //! reparse called raw `lsdoc::parse_format`, bypassing the depth-bounded
-//! block-parse boundary (`crates/lsdoc-block-parse.rs`), and walked/dropped
+//! block-parse boundary (`crates/tine-outline/src/lsdoc_block_parse.rs`), and walked/dropped
 //! the tree recursively. A synced or imported `foo:: >>>>…` (≥5000 `>`)
 //! builds a ~2500-deep quote staircase and aborted the process as soon as the
 //! query index was built (first backlinks/search/query) — on every launch.

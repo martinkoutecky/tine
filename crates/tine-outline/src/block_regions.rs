@@ -28,8 +28,7 @@ pub fn is_linkable_property_separator(ch: char) -> bool {
     ch == ',' || ch == '，'
 }
 
-#[path = "page_filename.rs"]
-mod reference_filename;
+use crate::page_filename as reference_filename;
 
 /// Interpret an already accepted link target. Evidence uses File labels;
 /// filename candidates use decoded page filenames, preserving the existing

@@ -203,7 +203,7 @@ describe("OG-P12B one answerer for page headers, fences and task markers", () =>
     const fences = readFileSync("src/editor/fences.ts", "utf8");
     expect(fences).toContain("literal_blocks");
     expect(fences).toContain("open_fence");
-    const rust = readFileSync("crates/tine-core/src/block_regions.rs", "utf8");
+    const rust = readFileSync("crates/tine-outline/src/block_regions.rs", "utf8");
     expect(rust, "the unclosed-fence editor policy has exactly one home").toMatch(/fn open_fence\(/);
   });
   it("I-12: marker and priority spans come from markers.ts headerTokens (the parser's header)", () => {

@@ -4,7 +4,7 @@
 //! testable without the Tauri shell.
 
 pub mod asset_refs;
-pub mod block_regions;
+pub use tine_outline::block_regions;
 pub mod concord_queue;
 pub mod config;
 pub mod corpus;
@@ -15,7 +15,7 @@ pub mod edn;
 pub mod guide;
 pub mod html_sanitize;
 pub mod latency;
-pub mod logbook;
+pub use tine_outline::logbook;
 pub mod media_mime;
 pub mod model;
 pub mod org;
@@ -23,7 +23,7 @@ mod outline;
 pub mod page_properties;
 pub mod pdf;
 pub mod projection;
-mod property_line;
+pub use tine_outline::property_line;
 pub mod query;
 pub mod query_edn;
 pub mod query_plan;

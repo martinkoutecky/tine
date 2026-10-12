@@ -66,8 +66,7 @@ pub fn canonical_group_field(value: &str) -> Option<String> {
     group_field::canonical_group_token(value).map(str::to_owned)
 }
 
-#[path = "../../tine-core/src/page_filename.rs"]
-mod page_filename;
+use tine_outline::page_filename;
 
 /// Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
 /// namespaces, false selects triple-lowbar. O(title bytes), no I/O or failure.
@@ -106,23 +105,13 @@ pub fn task_checkbox_state(marker: &str) -> Option<bool> {
     render_facets::task_checkbox_state(marker)
 }
 
-#[path = "../../tine-core/src/block_regions.rs"]
-mod block_regions;
-mod render {
-    pub(crate) use crate::lsdoc_block_parse::parse_block;
-    pub(crate) fn parse_text_bounded(text: &str, is_org: bool) -> Option<lsdoc::ast::Projection> {
-        crate::lsdoc_block_parse::parse_text_bounded(text, if is_org { "org" } else { "md" })
-    }
-}
+use tine_outline::block_regions;
 
-#[path = "../../tine-core/src/logbook.rs"]
-mod logbook;
+use tine_outline::logbook;
 #[path = "../../tine-core/src/media_mime.rs"]
 mod media_mime;
-#[path = "../../lsdoc-block-parse.rs"]
-mod lsdoc_block_parse;
-#[path = "../../tine-core/src/property_line.rs"]
-mod property_line;
+use tine_outline::lsdoc_block_parse;
+use tine_outline::property_line;
 
 /// Accepted single Markdown property line, using the native borrowed grammar.
 /// O(line bytes), no parse or I/O; malformed input serializes as null.

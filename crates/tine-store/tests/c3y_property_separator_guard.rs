@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const EXEMPLAR: &str = "crates/tine-core/src/block_regions.rs";
+const EXEMPLAR: &str = "crates/tine-outline/src/block_regions.rs";
 
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap().flatten() {

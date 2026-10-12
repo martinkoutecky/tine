@@ -10,6 +10,7 @@ test-faults = []
 [dependencies]
 tine-core = { path = "../tine-core" }
 serde = { workspace = true }
+tine-outline = { path = "../tine-outline" }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = "0.10"

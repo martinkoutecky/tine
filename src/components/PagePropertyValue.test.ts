@@ -28,7 +28,7 @@ describe("implicit page-property members", () => {
     }
   });
 
-  it("names no separator of its own (I-12; exemplar crates/tine-core/src/block_regions.rs is_linkable_property_separator)", () => {
+  it("names no separator of its own (I-12; exemplar crates/tine-outline/src/block_regions.rs is_linkable_property_separator)", () => {
     const source = readFileSync("src/components/PagePropertyValue.tsx", "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
     expect(source).not.toMatch(/[，,]\s*["'\]/]|\[,，\]|\[，,\]/);
   });

@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[path = "page_filename.rs"]
-mod page_filename;
+use tine_outline::page_filename;
 
 /// Encode a page title as a reversible Windows-safe file stem using the
 /// graph's configured Logseq format. Existing file paths are never recoded.

@@ -118,8 +118,9 @@ struct store::ConfigState
 
 # Step 3b P2b: the old save engine's Store::save_pages and SavePagesOutcome are
 # deleted; page saves are the page host's (STEP3 §12; 7 -> 5).
-## Save (ceiling: 5)
-enum edit_kind::EditKind
+# Outline kernel M0: EditKind moved to tine-outline (a leaf crate shared with the
+# window's wasm); tine-store re-exports it below (Save 5 -> 4, Re-exports 9 -> 10).
+## Save (ceiling: 4)
 fn directory_durability::sync_directory_entry
 enum store::SaveBase
 enum store::SaveOutcome
@@ -342,7 +343,8 @@ enum page_host::ReserveRefusal
 enum page_host::StopMode
 struct page_host::Stopped
 fn page_host::Stopped::relaunch
-## Re-exports (ceiling: 9)
+## Re-exports (ceiling: 10)
+use crate::tine_outline::edit_kind
 use crate::page_host::{DiskToken,DraftStatus,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}

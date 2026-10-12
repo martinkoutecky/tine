@@ -83,6 +83,7 @@ dependencies = [
  "lsdoc",
  "serde",
  "serde_json",
+ "tine-outline",
  "tine-search",
  "unicode-normalization",
  "wasm-bindgen",
@@ -283,8 +284,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tine-outline"
+version = "0.7.0-beta.3"
+dependencies = [
+ "lsdoc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "tine-search"
-version = "0.7.0-beta.1"
+version = "0.7.0-beta.3"
 dependencies = [
  "regex",
  "unicode-normalization",

@@ -13,7 +13,7 @@ const MAX_PARSED_TREE_DEPTH: usize = 1024;
 /// Source-side ceiling on a line's quote staircase for free-text doors; the
 /// same 128-level ceiling the page admission applies (`PARSE_INPUT_MAX_DEPTH`).
 #[allow(dead_code)] // each crate that includes this file uses a subset
-pub(crate) const SOURCE_QUOTE_DEPTH_MAX: usize = 128;
+pub const SOURCE_QUOTE_DEPTH_MAX: usize = 128;
 
 /// `>` markers that open a quote staircase on one line: after leading spaces
 /// and any list markers, each `>` optionally followed by spaces. lsdoc parses
@@ -21,7 +21,7 @@ pub(crate) const SOURCE_QUOTE_DEPTH_MAX: usize = 128;
 /// re-parses the stripped body), so a tree check after the parse is too late:
 /// ~1,300 levels overflow a 2 MiB debug stack before any tree exists (I-22).
 /// Counts markers, an upper bound on levels (lsdoc may strip two per level).
-pub(crate) fn line_quote_depth(line: &str) -> usize {
+pub fn line_quote_depth(line: &str) -> usize {
     let spaces = |bytes: &[u8], mut at: usize| {
         while matches!(bytes.get(at), Some(b' ' | b'\t' | b'\x0c' | b'\x1a')) {
             at += 1;
@@ -461,7 +461,7 @@ fn restore_blocks(blocks: &mut [Block], protected: &[ProtectedCode], restored: &
     }
 }
 
-pub(crate) fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
+pub fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
     admit_block_source(raw);
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
@@ -482,7 +482,7 @@ pub(crate) fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
 }
 
 #[allow(dead_code)] // the wasm crate needs block parsing only; tine-core uses the full projection
-pub(crate) fn parse_projection(raw: &str, is_org: bool) -> Projection {
+pub fn parse_projection(raw: &str, is_org: bool) -> Projection {
     admit_block_source(raw);
     let prepared = match prepare(raw, is_org) {
         Preparation::Plain(input) => {
@@ -518,7 +518,7 @@ pub(crate) fn parse_projection(raw: &str, is_org: bool) -> Projection {
 /// production `lsdoc::parse*` call is in this file
 /// (`tine-core/tests/lsdoc_parse_boundary.rs`).
 #[allow(dead_code)] // each crate that includes this file uses a subset
-pub(crate) fn parse_text_bounded(text: &str, format: &str) -> Option<Projection> {
+pub fn parse_text_bounded(text: &str, format: &str) -> Option<Projection> {
     if !quote_depth_within(text, SOURCE_QUOTE_DEPTH_MAX) {
         return None;
     }
@@ -539,7 +539,7 @@ pub(crate) fn parse_text_bounded(text: &str, format: &str) -> Option<Projection>
 /// [`SOURCE_QUOTE_DEPTH_MAX`] (refused before lsdoc recurses) or lsdoc does not
 /// take ownership of the text. lsdoc drops its own parse tree stack-safely.
 #[allow(dead_code)] // each crate that includes this file uses a subset
-pub(crate) fn parse_outline_bounded(text: &str, format: &str) -> Option<Vec<lsdoc::OutlineHeader>> {
+pub fn parse_outline_bounded(text: &str, format: &str) -> Option<Vec<lsdoc::OutlineHeader>> {
     if !quote_depth_within(text, SOURCE_QUOTE_DEPTH_MAX) {
         return None;
     }
@@ -550,7 +550,7 @@ pub(crate) fn parse_outline_bounded(text: &str, format: &str) -> Option<Vec<lsdo
 
 /// [`lsdoc::inline`] under the same bound, for inline-only readers.
 #[allow(dead_code)] // each crate that includes this file uses a subset
-pub(crate) fn parse_inline_bounded(text: &str, format: &str) -> Option<Vec<Inline>> {
+pub fn parse_inline_bounded(text: &str, format: &str) -> Option<Vec<Inline>> {
     let wrapped = vec![Block::Paragraph {
         inline: lsdoc::inline(text, format),
         span: None,
