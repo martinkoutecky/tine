@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
-import { openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
@@ -235,6 +235,12 @@ export function Sidebar(props: {
             </Show>
           </div>
           <Show when={showAll() && allGraphPages()}>
+            <div
+              class="nav-item nav-all-pages-open"
+              onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}
+            >
+              Open the full list…
+            </div>
             <For each={allPages().slice(0, ALL_PAGES_CAP)}>
               {(p) => (
                 <div

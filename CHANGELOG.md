@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Keyboard block commands, assignable in Settings > Keyboard shortcuts and listed in the command palette, with no default key (Logseq binds none): **Copy block refs of the selected blocks** (GH #576), **Paste as link** (GH #448), **Duplicate block below (with children)** (GH #379), **Insert child block** (GH #634), **Collapse children (one level)** and **Expand children (one level)** (GH #525), and **Search for the selected text** (GH #633).
 - The Ctrl/Cmd+Shift+V "paste as plain text" key is now listed in the shortcut reference and the Guide (GH #513).
 - Right sidebar: each item has a ⋯ menu with **Close**, **Close others**, **Close all**, **Collapse**/**Expand**, **Collapse others**, **Collapse all**, **Expand all**, and **Open as page** for a page item, as in Logseq (GH #462).
+- **All pages** view: the sidebar's All pages section now ends in **Open the full list…**, which opens every page of the graph in the main pane as a scrolling table (a graph of tens of thousands of pages stays quick: only the visible rows are drawn). Sort by name, or journals by day; filter by name; tick **Show journals** to include daily pages. Rows open with the usual click, Shift-click, Ctrl/Cmd- or middle-click and Alt-click gestures. Last-modified and backlink-count columns, multi-select and delete are not part of this view yet (GH #335).
 
 ### Changed
 
