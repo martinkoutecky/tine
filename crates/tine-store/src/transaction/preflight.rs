@@ -37,11 +37,18 @@ impl<'a> Transaction<'a> {
     }
 
     pub(super) fn prepare_steps(&self) -> Result<Vec<Prepared>, (usize, Why)> {
-        self.steps
-            .iter()
-            .enumerate()
-            .map(|(index, step)| self.preflight(step).map_err(|why| (index, why)))
-            .collect()
+        let mut allocated = HashSet::new();
+        let mut prepared = Vec::new();
+        for (index, step) in self.steps.iter().enumerate() {
+            let next = self
+                .preflight(step, &allocated)
+                .map_err(|why| (index, why))?;
+            if matches!(step, Step::Unique { .. }) {
+                allocated.insert(next.src.clone());
+            }
+            prepared.push(next);
+        }
+        Ok(prepared)
     }
 
     pub(super) fn raw_create_slot(&self, file: &FileId) -> Result<(), Why> {
@@ -50,7 +57,11 @@ impl<'a> Transaction<'a> {
         self.unreadable_owner(file, &[])
     }
 
-    pub(super) fn preflight(&self, step: &Step) -> Result<Prepared, Why> {
+    pub(super) fn preflight(
+        &self,
+        step: &Step,
+        allocated: &HashSet<FileId>,
+    ) -> Result<Prepared, Why> {
         let unsupported_config_step = match step {
             Step::Trash { file, .. } => file.as_str() == "logseq/config.edn",
             Step::Unique {
@@ -174,7 +185,7 @@ impl<'a> Transaction<'a> {
                         .file_id(*area, &rel)
                         .map_err(|_| Why::Refused(Refusal::InvalidTarget(rel)))?;
                     // Only occupancy matters here: never read an occupant.
-                    if self.occupied(&candidate)? {
+                    if allocated.contains(&candidate) || self.occupied(&candidate)? {
                         continue;
                     }
                     self.twin(&candidate, None)?;

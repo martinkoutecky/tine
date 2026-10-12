@@ -1206,17 +1206,12 @@ pub fn rename_file_to_page(
     let mut cleanup_rev = None;
     let plan = || {
         unclaimed()?;
-        let (bytes, rev) = store.read(&src, max).map_err(store_error)?;
-        let tx = if store.as_page(&src).is_some() {
-            transaction(rev)
-        } else {
+        let (_, rev) = store.read(&src, max).map_err(store_error)?;
+        if store.as_page(&src).is_none() {
             // C2: destination through the host, source retained until Applied.
-            cleanup_rev = Some(rev);
-            let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-            tx.create(&to, tine_store::Content::Bytes(bytes));
-            tx
-        };
-        crate::retained::plan(tx).map(Some)
+            cleanup_rev = Some(rev.clone());
+        }
+        crate::retained::plan(transaction(rev)).map(Some)
     };
     let touched = crate::retained::pages(store, [&src, &to]);
     crate::retained::operation(
@@ -1306,7 +1301,9 @@ pub fn merge_pages(
     // deletion at relaunch rather than appending the blocks twice.
     let plan = || {
         let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
-        crate::retained::plan(transaction(&survivor)).map(Some)
+        let mut op = crate::retained::plan(transaction(&survivor))?;
+        op.moved = Some((dst_id.clone(), src_id.clone()));
+        Ok(Some(op))
     };
     crate::retained::operation(
         running,

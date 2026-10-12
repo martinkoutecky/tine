@@ -165,12 +165,9 @@ impl PageHost {
                 }
                 let check = op.creation_checks.iter().find(|(id, ..)| id == page);
                 let name = check.and_then(|(_, name, _)| name.clone());
-                let source = check.and_then(|(_, _, source)| source.clone()).or_else(|| {
-                    op.moved
-                        .as_ref()
-                        .filter(|(dst, _)| dst == page)
-                        .map(|(_, src)| src.file())
-                });
+                // Slot rules belong to the original transaction step. Move
+                // ordering declared by a feature cannot replace a Save's rules.
+                let source = check.and_then(|(_, _, source)| source.clone());
                 Some((page.file(), name, source))
             })
             .collect();

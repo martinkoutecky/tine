@@ -632,6 +632,12 @@ fn retire(
 }
 
 const SIDECAR_CHANGED: &str = "highlight sidecar changed repeatedly during update";
+
+#[cfg(test)]
+thread_local! {
+    static BEFORE_ANNOTATION_READ: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
 const PAGE_CHANGED: &str = "highlight annotation page changed repeatedly during update";
 /// The host operation, as its refusals name it.
 const PAGE_UPDATE: &str = "the annotation page update";
@@ -809,17 +815,27 @@ pub fn write_highlights(
         let saved_rev = FileRev::from_bytes(next.as_bytes());
         let mut remerge = false;
         let plan = || {
-            // C4: a page replan may not reuse data superseded by another
-            // saver. Return to the outer merge + non-page save loop.
+            #[cfg(test)]
+            BEFORE_ANNOTATION_READ.with(|hook| {
+                if let Some(pause) = hook.borrow_mut().take() {
+                    pause();
+                }
+            });
+            let annotation = annotation(store, &name, &old_name, migrate)?;
+            // Read the page before confirming the sidecar. A saver that has
+            // already replaced both is detected here; a subsequent page save
+            // invalidates the staged page base at planning or admission.
             if optional(store, &primary)?.as_ref().map(|(_, rev)| rev) != Some(&saved_rev) {
                 remerge = true;
                 return Ok(None);
             }
-            let annotation = annotation(store, &name, &old_name, migrate)?;
             let doc = annotation_dto(&annotation, &name, pdf_name, label, &merged);
             let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
             annotation_steps(&mut tx, &annotation, &doc, true);
-            let op = crate::retained::plan(tx)?;
+            let mut op = crate::retained::plan(tx)?;
+            if let Some((source, ..)) = &annotation.legacy {
+                op.moved = Some((annotation.page.clone(), source.clone()));
+            }
             let unchanged = op.pages.iter().all(|(_, effect, expected)| {
                 matches!((effect, expected),
                     (tine_store::HostEffect::Write(new), tine_store::HostExpected::Bytes(old)) if new == old)

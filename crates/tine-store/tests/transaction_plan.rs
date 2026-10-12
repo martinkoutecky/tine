@@ -123,7 +123,7 @@ fn a_repeated_file_has_the_same_preflight_refusal() {
 }
 
 #[test]
-fn a_merge_plan_keeps_both_kinds_and_sets_the_move() {
+fn a_merge_declares_its_move_after_planning_and_keeps_both_kinds() {
     let (dir, store) = graph();
     for name in ["A", "B"] {
         fs::write(
@@ -146,9 +146,18 @@ fn a_merge_plan_keeps_both_kinds_and_sets_the_move() {
         &read.doc,
     );
     tx.trash(&source.file(), other.rev, TrashIf::Any);
-    let op = tx.plan().unwrap();
+    tx.create(
+        &PageId::from("pages/Referrer.md").file(),
+        Content::Bytes(b"- referrer\n".to_vec()),
+    );
+    let mut op = tx.plan().unwrap();
+    assert_eq!(op.moved, None);
+    op.moved = Some((receiver.clone(), source.clone()));
     assert_eq!(op.moved, Some((receiver, source)));
     assert_eq!(op.kinds, [EditKind::InsertBlocks, EditKind::DeletePage]);
+    let app = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(&store, app.path()).unwrap();
+    host.apply(op).unwrap();
 }
 
 #[test]
@@ -186,4 +195,103 @@ fn admission_retains_the_raw_create_and_dto_name_distinction() {
         }
         assert_eq!(fs::read(dir.path().join("pages/Other.md")).unwrap(), owner);
     }
+}
+
+#[test]
+fn two_unique_creates_allocate_the_same_names_as_commit() {
+    let (dir, store) = graph();
+    let transaction = || {
+        let mut tx = store.transaction(Some(EditKind::ReplacePage));
+        for _ in 0..2 {
+            tx.create_unique(Area::Pages, "A", ".md", Content::Bytes(b"- a\n".to_vec()));
+        }
+        tx
+    };
+    let op = transaction().plan().unwrap();
+    let names: Vec<_> = op.pages.iter().map(|(id, ..)| id.as_str()).collect();
+    assert_eq!(names, ["pages/A.md", "pages/A_1.md"]);
+    assert!(matches!(
+        transaction().commit(),
+        tine_store::TxOutcome::Committed { .. }
+    ));
+    for (id, effect, _) in op.pages {
+        assert_eq!(
+            effect,
+            HostEffect::Write(fs::read(dir.path().join(id.as_str())).unwrap().into())
+        );
+    }
+    let (host_dir, host_store) = graph();
+    let mut tx = host_store.transaction(Some(EditKind::ReplacePage));
+    for _ in 0..2 {
+        tx.create_unique(Area::Pages, "A", ".md", Content::Bytes(b"- a\n".to_vec()));
+    }
+    let app = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(&host_store, app.path()).unwrap();
+    host.apply(tx.plan().unwrap()).unwrap();
+    for name in ["pages/A.md", "pages/A_1.md"] {
+        assert_eq!(fs::read(host_dir.path().join(name)).unwrap(), b"- a\n");
+    }
+}
+
+#[test]
+fn a_declared_transfer_keeps_create_news_dto_name_check() {
+    let (dir, store) = graph();
+    let src = PageId::from("pages/Src.md");
+    let dst = PageId::from("pages/A.md");
+    fs::write(dir.path().join(src.as_str()), b"- source\n").unwrap();
+    store.refresh(tine_store::Depth::Bytes).unwrap();
+    let source = store.page(&src).unwrap();
+    let doc = store
+        .page_of(&dst, b"title:: Hidden\n\n- source\n")
+        .unwrap()
+        .doc;
+    let transaction = || {
+        let mut tx = store.transaction(Some(EditKind::ReplacePage));
+        tx.save_page(
+            &[EditKind::ReplacePage, EditKind::DeletePage],
+            &dst,
+            SaveBase::CreateNew,
+            &doc,
+        );
+        tx.trash(&src.file(), source.rev.clone(), TrashIf::Any);
+        tx
+    };
+    let mut op = transaction().plan().unwrap();
+    op.moved = Some((dst.clone(), src.clone()));
+    let owner = b"title:: Hidden\nbroken:: \xff\n\n- imported\n";
+    fs::write(dir.path().join("pages/Other.md"), owner).unwrap();
+    store.refresh(tine_store::Depth::Bytes).unwrap();
+    store.whole_graph().unwrap();
+    assert!(matches!(
+        transaction().commit(),
+        tine_store::TxOutcome::NotCommitted {
+            why: Why::Refused(Refusal::UnreadableOwner { .. }),
+            ..
+        }
+    ));
+    let app = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(&store, app.path()).unwrap();
+    assert_eq!(host.apply(op), Err(tine_store::ApplyRefusal::Changed));
+    assert!(!dir.path().join(dst.as_str()).exists());
+    assert_eq!(
+        fs::read(dir.path().join(src.as_str())).unwrap(),
+        b"- source\n"
+    );
+    assert!(host.quiescent_for_tests());
+}
+
+#[test]
+fn independent_save_and_trash_do_not_infer_a_transfer() {
+    let (dir, store) = graph();
+    let src = PageId::from("pages/Src.md");
+    fs::write(dir.path().join(src.as_str()), b"- source\n").unwrap();
+    store.refresh(tine_store::Depth::Bytes).unwrap();
+    let source = store.page(&src).unwrap();
+    let mut tx = store.transaction(Some(EditKind::ReplacePage));
+    tx.create(
+        &PageId::from("pages/A.md").file(),
+        Content::Bytes(b"- independent\n".to_vec()),
+    );
+    tx.trash(&src.file(), source.rev, TrashIf::Any);
+    assert_eq!(tx.plan().unwrap().moved, None);
 }

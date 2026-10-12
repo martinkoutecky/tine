@@ -778,7 +778,11 @@ fn fold_pair(
         if copy.is_none() {
             copy_rev = Some(fold.conf_rev.clone());
         }
-        crate::retained::plan(transaction(&fold, copy.is_some())).map(Some)
+        let mut op = crate::retained::plan(transaction(&fold, copy.is_some()))?;
+        if let Some(source) = &copy {
+            op.moved = Some((page.clone(), source.clone()));
+        }
+        Ok(Some(op))
     };
     let touched = crate::retained::pages(store, [win, conf]);
     let applied = crate::retained::operation(

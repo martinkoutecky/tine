@@ -5,8 +5,11 @@ use crate::{HostEffect, HostExpected, HostOp, Input};
 impl Transaction<'_> {
     /// Prepare this transaction as a page-host operation without publishing
     /// or writing anything. Runs commit's preflight and stages its guarded old
-    /// bytes and serialized effects. Non-page steps belong in a separate,
-    /// guarded transaction before or after the operation, and are refused.
+    /// bytes and serialized effects. Non-page effects belong in a separate,
+    /// guarded transaction before or after the operation. A byte-preserving
+    /// move from a non-page source stages only its page destination; the caller
+    /// must retire the source after Applied in its own revision-guarded transaction.
+    /// Other non-page steps are refused.
     pub fn plan(self) -> Result<HostOp, Why> {
         self.await_reference_publication();
         let _writer = self.store.writer.lock().unwrap();
@@ -29,11 +32,13 @@ impl Transaction<'_> {
             creation_checks: Vec::new(),
         };
         for (step, prepared) in self.steps.iter().zip(prepared) {
-            let page = self.store.as_page(&prepared.src).ok_or_else(|| {
-                Why::Refused(Refusal::InvalidTarget(
+            let page = self.store.as_page(&prepared.src);
+            let non_page_move = page.is_none() && matches!(step, Step::Move { renames: None, .. });
+            if page.is_none() && !non_page_move {
+                return Err(Why::Refused(Refusal::InvalidTarget(
                     "a host operation requires page steps only".into(),
-                ))
-            })?;
+                )));
+            }
             let old = prepared
                 .old
                 .map(|bytes| std::sync::Arc::<[u8]>::from(bytes));
@@ -66,9 +71,12 @@ impl Transaction<'_> {
                     HostEffect::Write(bytes.into()),
                     HostExpected::Absent,
                 ));
-                op.moved = Some((destination, page.clone()));
-                op.pages.push((page, HostEffect::Delete, expected));
+                if let Some(page) = page {
+                    op.moved = Some((destination, page.clone()));
+                    op.pages.push((page, HostEffect::Delete, expected));
+                }
             } else {
+                let page = page.expect("non-page steps refused above");
                 if matches!(step, Step::Expect { .. }) {
                     return Err(Why::Refused(Refusal::InvalidTarget(
                         "a host operation requires effects, not read-only expectations".into(),
@@ -89,21 +97,6 @@ impl Transaction<'_> {
                 let effect =
                     new.map_or(HostEffect::Delete, |bytes| HostEffect::Write(bytes.into()));
                 op.pages.push((page, effect, expected));
-            }
-        }
-        // Save + trash is the transaction form of a merge: the receiver holds
-        // the source's content and must publish before the source is deleted.
-        if op.moved.is_none() && op.pages.len() == 2 {
-            let receiver = op
-                .pages
-                .iter()
-                .find(|(_, e, _)| matches!(e, HostEffect::Write(_)));
-            let source = op
-                .pages
-                .iter()
-                .find(|(_, e, _)| matches!(e, HostEffect::Delete));
-            if let (Some((dst, ..)), Some((src, ..))) = (receiver, source) {
-                op.moved = Some((dst.clone(), src.clone()));
             }
         }
         Ok(op)

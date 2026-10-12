@@ -160,6 +160,25 @@ fn a_non_page_rescue_is_published_by_the_host() {
 }
 
 #[test]
+fn a_non_page_rescue_preserves_invalid_utf8_with_and_without_a_host() {
+    let src = "pages/A.sync-conflict-20261012-000000-DEVICE.md";
+    let bytes = b"- imported \xff\n";
+    for hosted_path in [false, true] {
+        let f = hosted(&[]);
+        fs::write(f.root.join(src), bytes).unwrap();
+        f.store.refresh(tine_store::Depth::Bytes).unwrap();
+        assert!(f
+            .store
+            .as_page(&tine_store::FileId::from(src.to_owned()))
+            .is_none());
+        pages::rename_file_to_page(&f.store, hosted_path.then_some(&f.host), src, "Rescued")
+            .unwrap();
+        assert_eq!(fs::read(f.root.join("pages/Rescued.md")).unwrap(), bytes);
+        assert!(!f.root.join(src).exists());
+    }
+}
+
+#[test]
 fn a_rescue_planned_before_an_external_edit_moves_the_edited_bytes() {
     let f = hosted(&[("journals/Loose.md", "- planned\n")]);
     edited_between_plan_and_admission(&f, "journals/Loose.md", "- edited\n", |store, host| {
