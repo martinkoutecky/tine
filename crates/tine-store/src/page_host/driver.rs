@@ -294,6 +294,10 @@ pub(super) struct Shared<F: HostIo, C: Clock> {
     /// Pauses a retained writer's flush before its first check (tests, N1).
     #[cfg(test)]
     pub flush_pause: Mutex<Option<crate::store::TestPause>>,
+    /// Commands deferred on the store writer after the driver's last pass
+    /// (tests: an admission's dispatch, observed).
+    #[cfg(test)]
+    pub deferred: std::sync::atomic::AtomicUsize,
 }
 
 impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
@@ -397,7 +401,10 @@ impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
     /// [`Self::call`] for an admission, a request id the host admits only
     /// in increasing order: it runs after every admission queued before it,
     /// one deferred on the store writer included, so a window's requests
-    /// are admitted in the order it sent them.
+    /// are admitted in the order they arrive. Never issued holding the store
+    /// writer: it could wait behind an open that waits for that writer. Only
+    /// the window's page commands admit (`src-tauri`
+    /// `window_admissions_run_only_from_the_page_commands`).
     pub fn admission<R: Send + 'static>(
         &self,
         action: impl FnOnce(&mut State<F, C>) -> R + Send + 'static,
@@ -632,6 +639,8 @@ where
             ended: AtomicBool::new(false),
             #[cfg(test)]
             flush_pause: Mutex::new(None),
+            #[cfg(test)]
+            deferred: std::sync::atomic::AtomicUsize::new(0),
         });
         let thread = {
             let shared = shared.clone();
@@ -919,6 +928,8 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
                 }
             }
         }
+        #[cfg(test)]
+        shared.deferred.store(deferred.len(), Ordering::SeqCst);
         if stop {
             // The last step's results reach the sink before `join` returns.
             if let Some(delivery) = pending.take() {

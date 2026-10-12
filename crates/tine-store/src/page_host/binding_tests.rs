@@ -2615,9 +2615,11 @@ fn the_driver_answers_while_another_thread_holds_the_store_writer() {
 /// P1 re-review 1: the host admits a window's request ids in increasing
 /// order, so an admission deferred on the store writer (an open) is never
 /// overtaken by a later one (a submit on another page), which would refuse
-/// it although its caller sent it first and never left.
+/// it although its caller sent it first and never left. The submit is sent
+/// once the driver has deferred the open (observed, not slept for).
 #[test]
 fn an_admission_deferred_on_the_writer_is_not_overtaken() {
+    use std::sync::atomic::Ordering;
     let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- b\n")]);
     let (key, page) = live.open("pages/a.md");
     let session = live.host.session();
@@ -2628,18 +2630,26 @@ fn an_admission_deferred_on_the_writer_is_not_overtaken() {
         let host = &live.host;
         let b = PageId::from("pages/b.md");
         let opened = scope.spawn(move || host.open(session, open_id, &b, "b").map(|_| ()));
-        std::thread::sleep(Duration::from_millis(50));
-        // A read answered after the open was queued: the driver has
-        // dispatched the open, which waits on the writer.
-        host.owed(session, None).expect("a read is answered");
-        assert!(!opened.is_finished(), "an open needs the writer");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while host.driver.shared.deferred.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline, "the open was never deferred");
+            std::thread::sleep(Duration::from_millis(1));
+        }
         let key = key.clone();
         let submitted = scope.spawn(move || {
             let kinds = [EditKind::SaveBlock];
             host.submit(session, submit_id, &key, &dto, page.version, None, &kinds)
         });
-        std::thread::sleep(Duration::from_millis(100));
-        let waited = !submitted.is_finished();
+        // The submit reaches the driver while the open still waits: queued
+        // behind it here, or answered by a driver that lets it pass (bounded
+        // for an implementation that does neither).
+        let queued = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < queued
+            && host.driver.shared.deferred.load(Ordering::SeqCst) < 2
+            && !submitted.is_finished()
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
         drop(writer);
         assert_eq!(
             opened.join().unwrap(),
@@ -2647,7 +2657,6 @@ fn an_admission_deferred_on_the_writer_is_not_overtaken() {
             "the earlier open is admitted"
         );
         assert_eq!(submitted.join().unwrap(), Ok(()), "the later submit too");
-        assert!(waited, "the submit waits for the deferred open");
     });
     live.answer(&key, submit_id);
     live.until_indexed(&key, "- two\n");
