@@ -594,6 +594,16 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // returning to Tine resumes editing exactly where you left off.
   let savedSel: { start: number; end: number } | null = null;
   const node = () => docNode(props.id);
+  // The node this editor instance was built to show. A page replacement (an
+  // external change, the host's answer to an Open) purges the page's nodes and
+  // builds new ones, often under the same ids (runtime ids are structural), and
+  // remounts the outline; `upsertPage` carries the editor to the new copy.
+  // Chromium-family webviews then fire `blur` on this instance's removed,
+  // focused textarea. Such an instance is stale: its text is the pre-reload
+  // block, so writing it would silently revert the external change, and
+  // ending the edit would close the carried editor (UI-CARRY-RELOAD-STALE-BLUR).
+  const shownNode = node();
+  const replacedUnderEditor = () => !editorMounted && (!node() || node() !== shownNode);
   const sheetInitialRaw = sheetCell ? node()?.raw ?? "" : null;
   // Page format drives in-block list markers (`-` is an org bullet, not md).
   const pageFmt = (): "md" | "org" => (pageByName(node().page)?.format === "org" ? "org" : "md");
@@ -636,6 +646,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const isCalc = editingCalc;
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
+    // A disposed editor whose block was replaced never writes (see shownNode).
+    if (replacedUnderEditor()) return;
     const commitAsCalc = opts?.calc ?? isCalc();
     // For calc, `text` is the bare expressions the user sees — re-fence it.
     // Keep any trailing space the user left (or that a `/priority` insert added as
@@ -2840,6 +2852,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     clearPasteRaw();
     unregisterFocusedEditor();
     if (sheetCanceling) return;
+    // The engine's blur on a textarea removed by a page replacement: not the
+    // user leaving the block. The carried editor (if any) owns editing now.
+    if (replacedUnderEditor()) return;
     // A block-move reorder blurs us momentarily — stay in edit mode (the move
     // handler refocuses and restores the caret). Commit as-is, don't normalize.
     if (isBlockMoving()) {
