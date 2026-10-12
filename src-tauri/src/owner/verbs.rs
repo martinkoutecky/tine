@@ -14,6 +14,50 @@ use super::endpoint::busy;
 use super::wire::{ok, ErrorBody, Request};
 use crate::state::GraphSlot;
 
+/// The most nodes a `block.show` preview carries; `max_nodes` clamps to it.
+/// The human output names it when it reports omitted nodes.
+pub(crate) const PREVIEW_NODES: usize = 2000;
+
+/// The named diagnostic ids of an `internal` error (PROTOCOL §2.3: "message
+/// names the diag id"). The set is closed: `internal` takes one of these, so a
+/// bare-prose internal error cannot be written, and the output contract
+/// (`docs/contracts/cli-output.md`) lists exactly [`Diag::ALL`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Diag {
+    /// The graph's load failed or the Store closed under a read.
+    GraphLoad,
+    /// A reply payload could not be encoded as JSON.
+    Encode,
+    /// A graph read (references, preview, search) failed.
+    ReadFailed,
+    /// A parsed query failed to run.
+    QueryFailed,
+    /// The Store failed on a page read in a way no code names.
+    StoreFailed,
+}
+
+impl Diag {
+    #[cfg(test)]
+    pub(crate) const ALL: [Diag; 5] = [
+        Diag::GraphLoad,
+        Diag::Encode,
+        Diag::ReadFailed,
+        Diag::QueryFailed,
+        Diag::StoreFailed,
+    ];
+
+    /// The id in the error message, the owner's log and the contract.
+    pub(crate) fn id(self) -> &'static str {
+        match self {
+            Self::GraphLoad => "cli-graph-load",
+            Self::Encode => "cli-reply-encode",
+            Self::ReadFailed => "cli-read-failed",
+            Self::QueryFailed => "cli-query-failed",
+            Self::StoreFailed => "cli-store-failed",
+        }
+    }
+}
+
 /// Answer `request` against `slot`'s graph and page host.
 pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, ErrorBody> {
     let args = &request.args;
@@ -33,11 +77,12 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             let BlockArgs { uuid, max_nodes } = parse(args)?;
             check_uuid(&uuid)?;
             let graph = whole_graph(slot)?;
-            let max_nodes = max_nodes.unwrap_or(2000).clamp(1, 2000);
+            let max_nodes = max_nodes.unwrap_or(PREVIEW_NODES).clamp(1, PREVIEW_NODES);
             match graph.preview_block(&uuid, max_nodes) {
                 Ok(Some(preview)) => Ok(ok("block", json!({ "block": preview }))),
                 Ok(None) => Err(not_found(format!("no block has id:: {uuid}"))),
                 Err(error) => Err(read_failed(
+                    Diag::ReadFailed,
                     crate::commands::query_error_wire::reference_error(error),
                 )),
             }
@@ -51,7 +96,12 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             } else {
                 graph.backlinks(&target)
             }
-            .map_err(|e| read_failed(crate::commands::query_error_wire::reference_error(e)))?;
+            .map_err(|e| {
+                read_failed(
+                    Diag::ReadFailed,
+                    crate::commands::query_error_wire::reference_error(e),
+                )
+            })?;
             Ok(ok(
                 "refs",
                 json!({ "target": target, "block": block, "groups": &*groups }),
@@ -76,7 +126,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                 None,
                 None,
             )
-            .map_err(|e| read_failed(crate::commands::feature_search_error(e)))?;
+            .map_err(|e| read_failed(Diag::ReadFailed, crate::commands::feature_search_error(e)))?;
             Ok(ok("search", to_value(&execution)?))
         }
         "query" => {
@@ -91,7 +141,16 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             };
             let parsed = crate::query_ir::parse(&graph, &text, dialect, &[])
                 .map_err(|e| ErrorBody::new("bad-args", e, false))?;
-            if parsed.query.is_invalid() {
+            // An advanced (datalog) form carries a provisional parse-time
+            // diagnostic that execution-time resolution replaces by its own
+            // report (`resolve_for_execution`, SPEC §4.4): it runs, and the
+            // answer's `report` and `diagnostics` say what ran and what was
+            // ignored. Any other invalid query does not run.
+            let advanced = matches!(
+                parsed.query.source,
+                tine_core::query::ir::Source::Advanced { .. }
+            );
+            if parsed.query.is_invalid() && !advanced {
                 let mut body = ErrorBody::new("bad-args", "the query does not parse", false);
                 body.detail = Some(json!({
                     "admitted": false,
@@ -105,8 +164,14 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                 &parsed.view,
                 &tine_core::query::ir::ExecutionContext::none(),
             )
-            .map_err(read_failed)?;
-            Ok(ok("query", to_value(&result)?))
+            .map_err(|e| read_failed(Diag::QueryFailed, e))?;
+            let mut payload = to_value(&result)?;
+            // D-18: the cue for a Logseq form that adds no condition travels
+            // with the answer, in both outputs.
+            if let (Some(hint), Some(fields)) = (&parsed.og_hint, payload.as_object_mut()) {
+                fields.insert("og_hint".into(), og_hint_payload(hint, &parsed.view)?);
+            }
+            Ok(ok("query", payload))
         }
         "pages" => {
             let PagesArgs { namespace } = parse(args)?;
@@ -194,30 +259,60 @@ fn parse<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, ErrorBody> {
 }
 
 fn to_value(value: &impl serde::Serialize) -> Result<Value, ErrorBody> {
-    serde_json::to_value(value).map_err(|e| internal(e.to_string()))
+    serde_json::to_value(value).map_err(|e| internal(Diag::Encode, e.to_string()))
+}
+
+/// `ParsedQuery.og_hint` as the payload carries it: the DTO verbatim, plus
+/// each rewrite's `text`, the explicit OG form the existing printer writes
+/// for it (`null` when the OG syntax cannot say it). The command line prints
+/// rather than re-derives; nothing here decides what a form means.
+fn og_hint_payload(
+    hint: &tine_core::query::wire_parse::OgQueryHint,
+    view: &tine_core::query::ir::ViewSettings,
+) -> Result<Value, ErrorBody> {
+    use tine_core::query::print::{og_expressible, query_print, PrintDialect};
+    let mut value = to_value(hint)?;
+    if let Some(rewrites) = value.get_mut("rewrites").and_then(Value::as_array_mut) {
+        for (slot, rewrite) in rewrites.iter_mut().zip(&hint.rewrites) {
+            let text = og_expressible(&rewrite.query, view)
+                .then(|| query_print(&rewrite.query, view, PrintDialect::Og, false).ok())
+                .flatten();
+            if let Some(slot) = slot.as_object_mut() {
+                slot.insert("text".into(), json!(text));
+            }
+        }
+    }
+    Ok(value)
 }
 
 fn not_found(message: impl Into<String>) -> ErrorBody {
     ErrorBody::new("not-found", message, true)
 }
 
-fn internal(message: impl Into<String>) -> ErrorBody {
-    ErrorBody::new("internal", message, true)
+/// An owner bug or an unnamed failure: the message leads with the diag id
+/// (which the owner also logs; the detail may hold graph content, so only
+/// the id goes to stderr), and `detail.diag` repeats it for scripts.
+pub(super) fn internal(diag: Diag, message: impl Into<String>) -> ErrorBody {
+    let message = message.into();
+    crate::debug::diag_private(diag.id(), &message);
+    let mut body = ErrorBody::new("internal", format!("{}: {message}", diag.id()), true);
+    body.detail = Some(json!({ "admitted": true, "diag": diag.id() }));
+    body
 }
 
 /// A read's failure: an answer over a result budget is `too-large`.
-fn read_failed(message: String) -> ErrorBody {
+fn read_failed(diag: Diag, message: String) -> ErrorBody {
     if message.starts_with("result-too-large") {
         ErrorBody::new("too-large", message, true)
     } else {
-        internal(message)
+        internal(diag, message)
     }
 }
 
 fn whole_graph(slot: &GraphSlot) -> Result<WholeGraph, ErrorBody> {
     slot.store
         .whole_graph()
-        .map_err(|e| internal(format!("graph load failed: {e:?}")))
+        .map_err(|e| internal(Diag::GraphLoad, format!("graph load failed: {e:?}")))
 }
 
 /// A persisted `id::` value (A2): runtime block ids change every open.
@@ -332,6 +427,6 @@ fn store_failed(error: StoreError) -> ErrorBody {
         ),
         StoreError::NotFound => not_found("the page does not exist"),
         StoreError::Closed => busy(),
-        other => internal(format!("{other:?}")),
+        other => internal(Diag::StoreFailed, format!("{other:?}")),
     }
 }

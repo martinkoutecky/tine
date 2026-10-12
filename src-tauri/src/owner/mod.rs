@@ -27,6 +27,8 @@ pub(crate) mod verbs;
 pub(crate) mod wire;
 
 #[cfg(test)]
+mod output_tests;
+#[cfg(test)]
 mod owner_tests;
 
 /// A failure to reach or become the owner (PROTOCOL §2.3, client-side codes).
