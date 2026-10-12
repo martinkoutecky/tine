@@ -57,6 +57,7 @@ import { ContentWidthFields } from "./ContentWidthFields";
 import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
+import { GraphFolderSetting } from "./GraphFolderSetting";
 import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
@@ -258,6 +259,7 @@ export function Settings(): JSX.Element {
                 <BackupsTab />
               </Show>
               <Show when={tab() === "graph"}>
+                <GraphFolderSetting />
                 <HomePageSetting />
                 <GraphPublish /><QueryExportLimitSetting />
               </Show>

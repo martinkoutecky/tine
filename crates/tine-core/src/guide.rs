@@ -832,6 +832,15 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn graph_folder_guide_names_the_settings_entry_and_its_reveal() {
+        // GH #447: Settings → Graph names the graph folder and, on desktop,
+        // shows it in the file manager.
+        let guide = include_str!("templates/bring-existing-graph.md");
+        assert!(guide.contains("**Graph folder** shows the current graph path"));
+        assert!(guide.contains("**Show in folder**"));
+    }
+
+    #[test]
     fn custom_scheme_link_guide_says_it_asks_before_opening_another_app() {
         // GH #503: another app's link opens after a confirm; the Guide must not
         // still say every non-web link is refused.

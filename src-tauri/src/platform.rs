@@ -1218,3 +1218,45 @@ mod clipboard_tool_tests {
         assert!(spawn_reaped(&mut std::process::Command::new("/nonexistent/tine-opener")).is_err());
     }
 }
+
+#[cfg(test)]
+mod reveal_platform_arms {
+    /// The body of `fn name` in `source`, from its signature to the next
+    /// top-level item. Test-only source slicing; O(source bytes).
+    fn body<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("fn {name} not found"));
+        let rest = &source[start..];
+        let end = rest.find("\n}\n").map_or(rest.len(), |end| end + 3);
+        &rest[..end]
+    }
+
+    /// I-16 (GH #447): "show the graph folder" names all five shipped targets.
+    /// tauri-build defines `desktop` as "target_os is neither ios nor android"
+    /// (tauri-build 2.6 `cfg_alias("desktop", !mobile)`), so Linux, Windows and
+    /// macOS each need their own reveal arm, and iOS/Android must reach the
+    /// `not(desktop)` refusal that the frontend's `canRevealInFileManager`
+    /// hides. Dropping any arm, or the refusal, fails here.
+    #[test]
+    fn reveal_names_linux_windows_macos_and_refuses_ios_android() {
+        let platform = include_str!("platform.rs");
+        let reveal = body(platform, "reveal_page_source");
+        for os in ["linux", "windows", "macos"] {
+            assert_eq!(
+                reveal
+                    .matches(&format!("#[cfg(target_os = \"{os}\")]"))
+                    .count(),
+                1,
+                "I-16: reveal_page_source needs exactly one {os} arm; exemplar platform.rs"
+            );
+        }
+        let settings = include_str!("settings.rs");
+        let command = body(settings, "reveal_known_graph");
+        assert!(command.contains("#[cfg(desktop)]"));
+        assert!(
+            command.contains("#[cfg(not(desktop))]"),
+            "I-16: iOS/Android must get reveal_known_graph's explicit refusal"
+        );
+    }
+}

@@ -27,7 +27,7 @@ icon:: 📂
 	- If a page changes on disk while you have unsaved edits, Tine overwrites nothing — a banner offers **Review**, which compares your draft with the disk version on the page. The mechanics are in [[Reference/Files, external edits, and backups]].
 	- Syncthing and Dropbox keep working on the folder as before; Tine detects their conflict copies, shows an **N conflicts** badge in the left sidebar, and helps you merge them — also in [[Reference/Files, external edits, and backups]].
 - ## First safety checks
-	- 1. Confirm you opened the graph root: Settings (**t s**) → **Graph** shows the current graph path. In a standard Logseq graph, this is the folder containing `pages/`, `journals/`, and `logseq/config.edn`.
+	- 1. Confirm you opened the graph root: Settings (**t s**) → **Graph** → **Graph folder** shows the current graph path; on desktop, **Show in folder** beside it opens that folder in Finder, File Explorer or your file manager. In a standard Logseq graph, this is the folder containing `pages/`, `journals/`, and `logseq/config.edn`.
 	- 2. Skim [[Reference/Files, external edits, and backups]] now — know where snapshots, conflict copies, and the trash live before you need them.
 	- 3. What you should see: no conflict banner, your existing pages in their original locations, and edits from Tine landing in the same files Logseq reads.
 - ## Where next
