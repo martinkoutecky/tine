@@ -223,7 +223,10 @@ export function rawByteOfEditor(raw: string, format: "md" | "org", policy: strin
 }
 /** Editor text plus its hidden lines back to raw (`editor_text::join_with`). */
 export function editorTextJoin(visible: string, hidden: string, format: "md" | "org"): string {
-  if (format !== "org" || !hidden) return editor_text_join(visible, hidden, false, null);
+  // Nothing hidden is the only case before the parser is ready (splitProps
+  // hides nothing then), and joining it is the identity.
+  if (!hidden) return visible;
+  if (format !== "org") return editor_text_join(visible, hidden, false, null);
   const regions = blockRegions(visible, format);
   if (regions.quarantined) throw new Error("Structural edit refused: block parsing is quarantined");
   return editor_text_join(visible, hidden, true, regions);

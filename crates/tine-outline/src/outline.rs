@@ -58,8 +58,8 @@ pub struct OutlinePage {
     pub pre_block: Option<String>,
     pub roots: Vec<Key>,
     pub blocks: HashMap<Key, Block>,
-    /// The root materialized from an unbulleted Markdown page header: never an
-    /// outline parent (GH #638).
+    /// The block materialized from an unbulleted Markdown page header, wherever
+    /// it now sits: never an outline parent (GH #638).
     #[serde(default)]
     pub header_root: Option<Key>,
     /// An Org page Tine cannot round-trip, or a bundled Guide page.
@@ -1012,22 +1012,44 @@ fn outdent(cx: &mut Cx, keys: &[Key], logical: bool) -> Result<(), Reason> {
 /// The window's `deleteBlock` (`edits/blocks.ts:597`) and `deleteSelection`
 /// (`edits/selection.ts:393`); OG `delete-blocks` (`outliner/core.cljs:654`):
 /// each block is removed with its subtree.
+/// Keys are deduplicated and a key inside another key's subtree goes with it,
+/// as in [`move_to`].
 fn delete(cx: &mut Cx, keys: &[Key]) -> Result<(), Reason> {
-    let ts = cx.txs_of(keys)?;
-    for &t in &ts {
-        cx.writable(t)?;
+    let roots = outermost(cx, keys)?;
+    for (_, t) in &roots {
+        cx.writable(*t)?;
     }
-    for (k, &t) in keys.iter().zip(&ts) {
-        let tx = &mut cx.txs[t];
-        // A key inside an earlier key's subtree, or listed twice.
-        if tx.block(k).is_none() {
-            return Err(Reason::Incomplete);
-        }
+    for (k, t) in &roots {
+        let tx = &mut cx.txs[*t];
         tx.detach(k)?;
         tx.remove_subtree(k);
         tx.kind(&[EditKind::DeleteBlocks]);
     }
     Ok(())
+}
+
+/// `keys` deduplicated, without those inside another key's subtree, in order,
+/// each with its page. A cycle above a key is `Incomplete`.
+fn outermost(cx: &mut Cx, keys: &[Key]) -> Result<Vec<(Key, usize)>, Reason> {
+    let mut unique: Vec<Key> = Vec::with_capacity(keys.len());
+    let mut seen = std::collections::HashSet::new();
+    for k in keys {
+        if seen.insert(k.as_str()) {
+            unique.push(k.clone());
+        }
+    }
+    let ts = cx.txs_of(&unique)?;
+    let mut roots = Vec::new();
+    for (k, &t) in unique.iter().zip(&ts) {
+        let ancestors = cx.txs[t].ancestors(k);
+        if ancestors.contains(&None) {
+            return Err(Reason::Incomplete);
+        }
+        if !ancestors.iter().flatten().any(|a| seen.contains(a)) {
+            roots.push((k.clone(), t));
+        }
+    }
+    Ok(roots)
 }
 
 /// Drag and drop, and a journal-feed move across days: the window's
@@ -1046,24 +1068,7 @@ fn move_to(
     to: &Place,
     inherit_from: Option<&str>,
 ) -> Result<(), Reason> {
-    let mut unique: Vec<Key> = Vec::with_capacity(keys.len());
-    let mut seen = std::collections::HashSet::new();
-    for k in keys {
-        if seen.insert(k.as_str()) {
-            unique.push(k.clone());
-        }
-    }
-    let ts = cx.txs_of(&unique)?;
-    let mut roots: Vec<(Key, usize)> = Vec::new();
-    for (k, &t) in unique.iter().zip(&ts) {
-        let ancestors = cx.txs[t].ancestors(k);
-        if ancestors.contains(&None) {
-            return Err(Reason::Incomplete);
-        }
-        if !ancestors.iter().flatten().any(|a| seen.contains(a)) {
-            roots.push((k.clone(), t));
-        }
-    }
+    let roots = outermost(cx, keys)?;
     let (d, parent, anchor) = match to {
         Place::Before { key } | Place::After { key } => {
             let d = cx.tx_of(key)?;
@@ -1754,5 +1759,42 @@ mod tests {
             .unwrap();
         assert_eq!(b.children, ["a1", "b1"]);
         assert_eq!(run(&[p], step(true)), Err(Reason::NoOutlineStep));
+    }
+
+    /// M1 review F2: a selection through an embed or a reference list can list
+    /// a block and a deeper descendant of it, or one block twice; the old
+    /// `deleteSelection` deleted the outer block and skipped the rest.
+    #[test]
+    fn delete_takes_nested_and_repeated_keys_with_the_outer_block() {
+        let keys = |ks: &[&str]| Verb::Delete {
+            keys: ks.iter().map(|k| k.to_string()).collect(),
+        };
+        for ks in [&["d0", "d2"][..], &["d2", "d0"], &["d1", "d1"]] {
+            let change = run(&[chain(4)], keys(ks)).unwrap();
+            let mut deleted = change.pages[0].deleted.clone();
+            deleted.sort();
+            let expect: &[&str] = if ks[0] == "d1" {
+                &["d1", "d2", "d3"]
+            } else {
+                &["d0", "d1", "d2", "d3"]
+            };
+            assert_eq!(deleted, expect, "keys {ks:?}");
+        }
+    }
+
+    /// M1 review F3: the page-header block refuses children wherever it sits,
+    /// not only as the first root.
+    #[test]
+    fn nothing_indents_under_the_header_block_after_it_moved() {
+        let mut p = page(
+            "P",
+            &[("a", "a", &[]), ("h", "title:: x", &[]), ("b", "b", &[])],
+            &["a", "h", "b"],
+        );
+        p.header_root = Some("h".into());
+        let indent = Verb::Indent {
+            keys: vec!["b".into()],
+        };
+        assert_eq!(run(&[p], indent), Err(Reason::HeaderRoot));
     }
 }

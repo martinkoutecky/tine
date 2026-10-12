@@ -4401,6 +4401,39 @@
     ],
     "focus": null
    }
+  },
+  {
+   "name": "indent: the page-header block is never a parent, even after something moved above it",
+   "note": "M1 review F3: the window used to send the header block only as the first root.",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "a"
+     },
+     {
+      "key": "h",
+      "raw": "title:: Page"
+     },
+     {
+      "key": "b",
+      "raw": "body"
+     }
+    ],
+    "header_root": "h"
+   },
+   "verb": {
+    "verb": "indent",
+    "keys": [
+     "b"
+    ]
+   },
+   "expect": {
+    "refused": true,
+    "reason": "header_root"
+   }
   }
  ]
 }

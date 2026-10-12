@@ -4,7 +4,7 @@
 // applies its answer in one store mutation. Undo, dirty marking, the caret and
 // toasts stay with the caller, in the order DESIGN §6 fixes: on refusal stop
 // (no undo entry), pushUndo, apply, markDirty, startEditing.
-import { produce } from "solid-js/store";
+import { produce, unwrap } from "solid-js/store";
 import type { EditKind, EditKinds } from "../editKind";
 import type { PageDto } from "../types";
 import { outlineApply } from "../render/parse";
@@ -51,29 +51,37 @@ export interface OutlineChange {
 }
 
 /** The kernel's view of one loaded page: an arena keyed by block id. The
- *  parent links are not sent; the kernel derives them. O(page blocks). */
+ *  parent links are not sent; the kernel derives them. O(page blocks), read
+ *  from the unwrapped store: a structural edit runs in an event handler, and
+ *  reading 600 blocks through the store's proxies cost more than the kernel
+ *  (outline-kernel gate 2). The arrays are serialized before anything else
+ *  runs, so they are not copied. */
 function outlinePage(name: string) {
-  const page = pageByName(name);
+  const page = unwrap(pageByName(name));
   if (!page) return null;
-  const blocks: Record<string, { raw: string; children: string[] }> = {};
+  const byId = unwrap(doc.byId);
+  const blocks: Record<string, { raw: string; children: readonly string[] }> = {};
+  // The block made from the page's header properties, wherever it now sits:
+  // nothing may nest under it (M1 review F3).
+  let headerRoot: string | null = null;
   const pending = [...page.roots];
   while (pending.length) {
     const id = pending.pop()!;
-    const node = doc.byId[id];
+    const node = byId[id];
     // A block listed twice is sent once; the kernel sees the second listing
     // and refuses the page as malformed.
     if (!node || blocks[id]) continue;
-    blocks[id] = { raw: node.raw, children: [...node.children] };
+    blocks[id] = { raw: node.raw, children: node.children };
+    if (node.originatedFromPageHeader && headerRoot === null) headerRoot = id;
     pending.push(...node.children);
   }
-  const first = page.roots[0];
   return {
     name,
     format: page.format,
     pre_block: page.preBlock,
-    roots: [...page.roots],
+    roots: page.roots,
     blocks,
-    header_root: first && doc.byId[first]?.originatedFromPageHeader ? first : null,
+    header_root: headerRoot,
     read_only: page.readOnly || page.guide,
     frozen: graphRewriteFrozen() || pageFrozen(name),
   };
