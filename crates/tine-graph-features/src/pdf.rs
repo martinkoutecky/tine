@@ -141,15 +141,20 @@ fn page_id(store: &Store, name: &str) -> io::Result<(PageId, Option<(String, Fil
     store
         .refresh(tine_store::Depth::Stamps)
         .map_err(|error| io::Error::other(format!("{error:?}")))?;
-    let id = match store
+    // A page found by name under another file name (an encoded one: `%`,
+    // `#`, ...) is written over its current text, not created.
+    match store
         .whole_graph()
         .map_err(|_| io::Error::other("graph unavailable"))?
         .resolve(name, false)
     {
-        tine_store::Resolved::Existing { id, .. } | tine_store::Resolved::Absent { id } => id,
-        tine_store::Resolved::Alias { .. } => store.as_page(&md).expect("md page"),
-    };
-    Ok((id, None))
+        tine_store::Resolved::Existing { id, .. } => {
+            let existing = optional(store, &id.file())?;
+            Ok((id, existing))
+        }
+        tine_store::Resolved::Absent { id } => Ok((id, None)),
+        tine_store::Resolved::Alias { .. } => Ok((store.as_page(&md).expect("md page"), None)),
+    }
 }
 
 fn format(id: &PageId) -> Format {

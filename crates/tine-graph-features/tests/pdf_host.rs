@@ -249,8 +249,7 @@ fn while_held(
 /// encoded file, outside the unencoded names the writer used to reserve.
 /// With a host, the operation names the page it writes, so the host admits
 /// that page: a reservation of it holds the writer's page write until it
-/// is released. (A second save to an existing encoded page is RECEIPT-P3d
-/// Q1, a pre-existing failure of `page_id` with or without a host.)
+/// is released.
 #[test]
 fn the_annotation_page_under_its_encoded_name_is_admitted_by_the_host() {
     let (_dir, root) = graph(&[]);
@@ -274,6 +273,34 @@ fn the_annotation_page_under_its_encoded_name_is_admitted_by_the_host() {
 
 /// The encoded annotation page of a PDF with a `%` in its key.
 const ENCODED: &str = "pages/hls__half%25.md";
+
+/// A second highlight save to a PDF whose annotation page has an encoded
+/// file name updates that page, with and without a host. The page is found
+/// under its encoded name only by resolving the page name, and the writer
+/// used to drop its text there, so it planned a creation over the existing
+/// file and every save after the first failed.
+#[test]
+fn a_second_highlight_save_to_an_encoded_annotation_page_succeeds() {
+    let result = same_with_a_host("second save", &[], |store, host, root| {
+        let first = vec![highlight(A, "yellow", None)];
+        features_pdf::write_highlights(store, host, "half%.pdf", "Half", &first, &[])
+            .expect("the first save creates the page");
+        let mut page = fs::read_to_string(root.join(ENCODED)).unwrap();
+        page.push_str("- my own block\n");
+        fs::write(root.join(ENCODED), page).unwrap();
+        let next = vec![highlight(A, "red", None), highlight(B, "yellow", None)];
+        let written =
+            features_pdf::write_highlights(store, host, "half%.pdf", "Half", &next, &first);
+        let page = fs::read_to_string(root.join(ENCODED)).unwrap();
+        assert!(
+            page.contains(A) && page.contains(B) && page.contains("- my own block"),
+            "{page}"
+        );
+        assert!(!root.join("pages/hls__half%.md").exists());
+        written
+    });
+    assert!(result.starts_with("Ok"), "{result}");
+}
 
 /// The same page open in the window before it has a file (the host holds
 /// it): the first save creates it through the host's operation.
