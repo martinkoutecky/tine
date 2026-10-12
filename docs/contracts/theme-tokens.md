@@ -38,6 +38,8 @@ entry and a row here (the guard fails otherwise).
 | `--tine-bullet-size` | Diameter of the block bullet dot | `var(--ls-block-bullet-size)`, 6px |
 | `--tine-tag-color` | Color of `#tags` and tag chips | `var(--tag-color)`, i.e. `--ls-tag-text-color` |
 | `--tine-highlight-bg` | Background of `^^highlighted^^` text | `var(--mark-bg)`, i.e. `--ls-page-mark-bg-color` |
+| `--tine-missing-page-color` | Color of a `[[link]]` to a page that does not exist yet | A link-colored tint pulled toward `var(--text-secondary)` (`color-mix(in srgb, var(--link-color) 55%, var(--text-secondary))`) |
+| `--tine-external-link-underline` | The line under a link to a web address or file (`border-bottom` shorthand; `none` removes it) | `1px solid`, in the text color (OG's `.external-link`) |
 | `--tine-content-width` | Maximum width of the standard page column | 810px (what `--ls-main-content-max-width` is by default) |
 | `--tine-content-width-wide` | Maximum width of the column in Wide mode | 100% (`--ls-main-content-max-width-wide`) |
 | `--tine-page-title-size` | Font size of a page title | `var(--ls-page-title-size)`, 28px |
@@ -126,9 +128,32 @@ without a CHANGELOG entry; a custom.css that sets them is unsupported.
 | Two outside edits land close together | The newest re-read wins; an older read that finishes last is dropped | Editor autosave plus sync delivery |
 | Another window or an editor writes the file | The window re-applies it without reopening the graph | Syncthing/Dropbox delivery, external editor |
 
+## 5. Style knobs (Settings > Appearance > Fine-tuning)
+
+Visual details that would otherwise each need a Settings toggle are rows of one
+table, `KNOBS` in `src/styleKnobs.ts` (GH #610 item 3). Settings renders the
+table; the table's rows are the contract, the Guide page names each one.
+
+- **Same variables, not new ones.** A variable knob sets a public token of
+  section 2 (`--tine-<id>`) and a class knob adds `tine-<id>-<option>` to
+  `<html>`; the stylesheet default is the token's fallback, so an unset knob
+  changes nothing (K3).
+- **Order.** `#tine-knobs` sits after `#tine-theme` and before
+  `#tine-custom-css`: a rule in `custom.css` outranks a knob (a class knob's
+  rule, being a deliberate choice in Settings, outranks the matching token).
+- **Only validated values reach CSS** (K2): the emitted text comes from the
+  table (a declared option, an in-range number with the declared unit, a hex
+  colour that also matches the theme manifest grammar), never from the stored
+  string.
+- **Device preference, no graph write** (K5): app setting `style.knobs.v1`,
+  JSON `{knobId: value}`. A stored id this build does not declare is kept.
+- **Safe mode** (K4): **Disable custom CSS** empties `#tine-knobs` and removes
+  the knob classes for the session.
+
 ## Tests
 
 - src/themeTokens.guard.test.ts (the token tables against the shipped CSS, the code and the Guide page)
+- src/styleKnobs.test.ts and src/styleKnobs.render.test.tsx (the knob table, what reaches CSS, the order of #tine-knobs, safe mode, the Settings control)
 - src/customCss.test.tsx (live reload, transient read failures keep the last sheet, latest read wins, safe mode, the palette command, the Settings affordances)
 - src/styles/themes/soft.test.ts (the Soft palette's contrast on every real text/surface pair, including on-accent, links on the selection overlay and markers, GH #649)
 - crates/tine-store/src/watch/custom_css.rs (the lane's own tests, including the metadata shortcut that skips hashing an unchanged file)

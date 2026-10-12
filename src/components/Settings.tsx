@@ -57,6 +57,7 @@ import { ContentWidthFields } from "./ContentWidthFields";
 import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
+import { LanguageSetting } from "./LanguageSetting";
 import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
@@ -403,6 +404,8 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 
   return (
     <>
+      <LanguageSetting />
+
       <div class="settings-row">
         <span class="settings-label">Mode</span>
         <ThemeChoice />
@@ -468,7 +471,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </Field>
       <Field
         label="Typographic replacements"
-        hint="Show arrows and dashes as glyphs — `->` → →, `-->` → ⟶, `--` → – (en dash), `---` → — (em dash). “While reading” keeps your Markdown as ASCII and only changes the rendered view (like `\Delta` → Δ); “While typing” rewrites the source itself as you type. A Tine touch, not Logseq."
+        hint="Show arrows and dashes as glyphs — `->` → →, `-->` → ⟶, `--` → – (en dash), `---` → — (em dash). “While reading” keeps your Markdown as ASCII and only changes the rendered view (like `\Delta` → Δ); “While typing” rewrites the source itself as you type. Off by default, as in Logseq: text renders as you typed it."
       >
         <select
           class="settings-select"

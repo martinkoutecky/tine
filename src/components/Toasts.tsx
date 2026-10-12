@@ -1,5 +1,6 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
-import { toasts, dismissToast, pushToast } from "../toasts";
+import { toasts, dismissToast, pushToast, toUiText } from "../toasts";
+import { msg, render, t as tr } from "../i18n";
 import { writeClipboardText } from "../clipboard";
 import { lightbox, setLightbox, lightboxGallery, lightboxIndex, setLightboxIndex } from "../ui";
 import { createImageViewerGestures, type Transform } from "../imageViewerGestures";
@@ -20,9 +21,9 @@ export function Toasts(): JSX.Element {
             // Transient toasts dismiss on any click; sticky ones only via the ✕.
             onClick={() => !t.sticky && dismissToast(t.id)}
           >
-            <span class="toast-msg">{t.message}</span>
+            <span class="toast-msg">{render(t.text)}</span>
             <Show when={(t.count ?? 1) > 1}>
-              <span class="toast-count" aria-label={`shown ${t.count} times`}>×{t.count}</span>
+              <span class="toast-count" aria-label={tr("toast-repeat-count", { count: t.count ?? 1 })}>×{t.count}</span>
             </Show>
             <Show when={t.action}>
               <button
@@ -33,28 +34,28 @@ export function Toasts(): JSX.Element {
                   dismissToast(t.id);
                 }}
               >
-                {t.action!.label}
+                {render(toUiText(t.action!.label))}
               </button>
             </Show>
             <Show when={t.kind === "error"}>
               <button
                 class="toast-action toast-copy"
-                title="Copy the full message"
+                title={tr("toast-copy-title")}
                 onClick={(e) => {
                   e.stopPropagation();
                   // The error toast stays open; the copy result is a separate note.
                   void writeClipboardText(t.message).then(
-                    () => pushToast("Error message copied", "success"),
-                    () => pushToast("Couldn't copy the message; select its text instead.", "warn"),
+                    () => pushToast(msg("toast-copied"), "success"),
+                    () => pushToast(msg("toast-copy-failed"), "warn"),
                   );
                 }}
               >
-                Copy
+                {tr("toast-copy")}
               </button>
             </Show>
             <button
               class="toast-close"
-              aria-label="Dismiss"
+              aria-label={tr("toast-dismiss")}
               onClick={(e) => {
                 e.stopPropagation();
                 dismissToast(t.id);

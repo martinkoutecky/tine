@@ -689,6 +689,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async setAppString(key: string, value: string) {
       appStrings.set(key, value);
     },
+    async setUiLocale() {},
     async loadSession() {
       return session;
     },
@@ -983,6 +984,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "getWatchMode",
   "listSpellcheckDictionaries",
   "applySpellcheck",
+  "setUiLocale",
   "setSystemBarAppearance",
   "closeGraphWindow",
   "trayApply",

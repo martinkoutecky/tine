@@ -620,6 +620,9 @@ export interface Backend {
    *  the key + default. Used by the asset-filename format template. */
   getAppString(key: string, fallback: string): Promise<string>;
   setAppString(key: string, value: string): Promise<void>;
+  /** The UI locale the frontend resolved (tine#107): native shell text (the
+   *  tray) follows it, since native code never negotiates or formats messages. */
+  setUiLocale(locale: string): Promise<void>;
   /** Push the spellcheck prefs onto the native webview(s) live (no restart):
    *  `enabled` toggles WebKitGTK's checker; `languages` (locale codes, empty ⇒ OS
    *  locale) sets the dictionaries checked simultaneously. */
@@ -1452,6 +1455,9 @@ class TauriBackend implements Backend {
   }
   setAppString(key: string, value: string) {
     return this.call<void>("set_app_string", { key, value });
+  }
+  setUiLocale(locale: string) {
+    return this.call<void>("set_ui_locale", { locale });
   }
   applySpellcheck(enabled: boolean, languages: string[]) {
     return this.call<void>("apply_spellcheck", { enabled, languages });

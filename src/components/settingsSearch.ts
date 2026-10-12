@@ -1,14 +1,22 @@
 // Settings search vocabulary and matching contract: each visible setting has
 // one label/description and optionally aliases; search matches all terms within
 // that entry. Cost O(entries × query length), no I/O or failure.
+import { KNOBS } from "../styleKnobs";
 import type { SettingsTabId } from "../ui";
 type Tab = SettingsTabId;
 
 export type SettingSearchEntry = { tab: Tab; label: string; description: string; aliases?: string[]; level?: "advanced" };
 export const SETTING_SEARCH: SettingSearchEntry[] = [
+  { tab: "appearance", label: "Language", description: "interface translation locale menus", aliases: ["语言", "中文", "Chinese", "English"] },
   { tab: "appearance", label: "Theme mode", description: "light dark system" },
   { tab: "appearance", label: "Style", description: "typography journal headings presentation theme" },
   { tab: "appearance", label: "Color scheme", description: "default nord solarized gruvbox soft medium light dark theme gallery package colors" },
+  // Fine-tuning: one entry per knob in the table, so a new knob is searchable with no code here.
+  ...KNOBS.filter((knob) => knob.type !== "heading").map((knob): SettingSearchEntry => ({
+    tab: "appearance",
+    label: knob.title,
+    description: `fine-tuning style knob visual detail ${knob.description ?? ""}`,
+  })),
   { tab: "appearance", label: "Edit custom.css", description: "logseq custom.css stylesheet theming tokens CSS variables recipes open default app editor" },
   { tab: "appearance", label: "Disable custom CSS", description: "safe mode broken stylesheet unreadable session" },
   { tab: "appearance", label: "Developer tools", description: "inspector inspect element styles devtools" },
