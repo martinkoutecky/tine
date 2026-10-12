@@ -62,7 +62,6 @@ function loadFixture() {
     blocks: [leaf("above", "plain above"), leaf("host", "{{embed ((target))}}"), leaf("below", "plain below")] };
   const group: RefGroup = { page: "Src", kind: "page", blocks: [{ ...target, children: [] }] };
   vi.spyOn(backend(), "resolveBlocks").mockImplementation(async (ids) => ids.map((id) => (id === "target" ? group : null)));
-  vi.spyOn(backend(), "getPage").mockImplementation(async (name) => (name === "Src" ? src : name === "HostPage" ? host : null));
   loadSingle(src);
   loadSingle(host);
 }

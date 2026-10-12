@@ -4,10 +4,9 @@ import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
 import { isDirty, pageByName, readPageProperty, resetStore } from "../document";
 import { backend } from "../backend";
-import { loadSingle } from "../document/workingSet";
 import { editingId } from "../editorController";
 import { pagePropsPanel, closePageProps } from "../ui";
-import type { BlockDto, PageDto } from "../types";
+import type { BlockDto, PageRead } from "../types";
 import { LiveRefGroup } from "./LiveRefGroup";
 
 // GH #486: a page whose page-level properties link here is listed under Linked
@@ -39,12 +38,12 @@ function mount(node: () => JSX.Element) {
 
 const HEADER = "tags:: Target\ntypo-key:: book";
 
-function sourcePage(format: "md" | "org" = "md"): PageDto {
+function sourcePage(format: "md" | "org" = "md"): PageRead {
   return {
-    name: "Source", title: "Source", kind: "page", format,
+    id: format === "md" ? "pages/Source.md" : "pages/Source.org", name: "Source", title: "Source", kind: "page", format,
     pre_block: format === "md" ? `${HEADER}\n` : "#+tags: Target\n#+typo-key: book\n",
     blocks: [{ id: "body", raw: "Body block", collapsed: false, children: [] }],
-  } as PageDto;
+  } as PageRead;
 }
 
 const propertyRow = (raw = HEADER): BlockDto => ({

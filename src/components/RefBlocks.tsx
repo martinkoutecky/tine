@@ -18,6 +18,7 @@ import { PagePropertyValue } from "./PagePropertyValue";
 import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
+import { isElementNode } from "../windowRealm";
 
 const MAX_REF_BLOCK_DEPTH = 64;
 
@@ -149,7 +150,7 @@ function RefBlock(props: {
               // GH #486: the same gesture as the source page's properties area
               // (Page.tsx editPageHeader); links and buttons keep their own click.
               if (!props.block.page_property || !props.onEditPageProperties) return;
-              if (event.target instanceof Element && event.target.closest("a, button, .page-ref, .tag")) return;
+              if (isElementNode(event.target) && event.target.closest("a, button, .page-ref, .tag")) return;
               event.stopPropagation();
               props.onEditPageProperties(event);
             }}

@@ -7,7 +7,7 @@ import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { RefBlocks } from "../components/RefBlocks";
 import * as router from "../router";
-import type { BlockDto, PageDto } from "../types";
+import type { BlockDto, PageRead } from "../types";
 import { taskCheckboxState } from "../markers";
 
 // GH #518 follow-up (Brikas, 2026-10-05): the task state renders inside a
@@ -32,8 +32,8 @@ function sourceBlock(raw: string): BlockDto {
   return { id: ID, raw: `${raw}\nid:: ${ID}`, collapsed: false, children: [], properties: [["id", ID]], marker: raw.split(" ", 1)[0] };
 }
 
-function sourcePage(raw: string): PageDto {
-  return { kind: "page", name: "Task source", title: "Task source", pre_block: null, format: "md", blocks: [sourceBlock(raw)] } as PageDto;
+function sourcePage(raw: string): PageRead {
+  return { id: "pages/Task source.md", kind: "page", name: "Task source", title: "Task source", pre_block: null, format: "md", blocks: [sourceBlock(raw)] } as PageRead;
 }
 
 function mount(view: () => any) {

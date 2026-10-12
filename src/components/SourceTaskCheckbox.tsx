@@ -12,12 +12,14 @@
  * exact function the source block's own checkbox calls (`setRaw`: writability
  * check, undo entry, base-revision-guarded save of that page). */
 import { Show, type JSX } from "solid-js";
-import { resolveBlockRef, node as docNode } from "../document";
-import type { LoadedBlockRef } from "../document/edits/identity";
+import { resolveBlockRef, node as docNode, type blockRef } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { leadingMarker, taskCheckboxState } from "../markers";
 import { pushToast } from "../toasts";
 import { formatForBlockId, toggleBlockCheckbox } from "./blockParts";
+
+/** A durable reference to a block plus its exact owner page. */
+export type LoadedBlockRef = ReturnType<typeof blockRef>;
 
 export type TaskToggleOutcome = "toggled" | "stale" | "missing" | "refused";
 
