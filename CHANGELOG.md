@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Arrows and dashes (`->`, `<-`, `=>`, `--`, `---`) now show as you typed them, as in Logseq. **Typographic replacements** in Settings is off by default; a device that never chose keeps the typed characters, and one that had relied on the old default (nothing was stored) needs to pick **On (while reading)** again (GH #583, UI-GH583-ARROWS-RENDER-AS-TYPED).
 - Saving moved into one background page host per graph: every edit is saved as you type, from any window, and keeps saving after the page closes. If a file changes on disk while you have unsaved text on that page, the page shows a comparison where you keep your edits or take the disk version, block by block. Unsaved text survives a crash: the next start puts it back on its page, saves it, and names each recovered page; it is never written over a file that changed meanwhile. Closing the last window while a page still cannot be saved reopens the graph and names those pages instead of quitting. Switching graphs waits until a running rename finishes.
 - A conflict over a page whose file was deleted on disk offers **Use disk version** (accept the deletion) and **Keep mine** (recreate the file) directly in the conflict bar (GH #541).
 
