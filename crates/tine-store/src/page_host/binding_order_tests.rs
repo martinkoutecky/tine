@@ -878,6 +878,12 @@ fn page_host_methods() -> BTreeMap<String, String> {
 /// The forms the reserve path must not use, and why. No caller thread can
 /// lock the host state (it is private to `driver.rs`); what is left to
 /// police is how a writer treats an unanswered request and where it waits.
+/// A `read` or `call` is not a wait on host progress: the driver answers it
+/// between steps and never waits for a lock another thread holds (the
+/// store writer included: a reservation's writer may hold it), so it costs
+/// at most one step, as the state lock it replaced did. Pinned by
+/// `binding_tests.rs`
+/// `the_driver_answers_while_another_thread_holds_the_store_writer`.
 const UNCHECKED: &[(&str, &str)] = &[
     (
         "unwrap ()",
@@ -973,8 +979,14 @@ fn the_reserve_path_has_no_unchecked_lock_or_bare_wait() {
             "bounded",
             "{ self . driver . shared . locked_wait (deadline , step) }",
         ),
-        ("reserve", "{ self . identify (page) }"),
-        ("register_all", "{ self . register (key , spelling) }"),
+        (
+            "reserve",
+            "{ self . try_identify (page) . expect (\"ended\") }",
+        ),
+        (
+            "register_all",
+            "{ self . try_register (key , spelling) . unwrap () }",
+        ),
     ];
     for (function, added) in mutants {
         let mut planted = methods.clone();

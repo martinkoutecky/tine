@@ -34,12 +34,16 @@ use std::time::{Duration, Instant};
 /// the window (the page-mail bridge, §3.3).
 pub(super) trait Sink: Send {
     /// `owner` answers, under the state mutex, who publishes a key's index
-    /// now. Returns each publication's result, recorded in order (§5).
+    /// now. Returns each publication's result, recorded in order (§5). A
+    /// delivery that needs the store writer while another thread holds it
+    /// comes back untouched unless `wait`: the driver never waits for a lock
+    /// another thread holds while callers wait on it (A4), only at its stop.
     fn deliver(
         &mut self,
         delivery: Delivery,
         owner: &dyn Fn(&str) -> Owner,
-    ) -> Vec<(Publication, Indexing)>;
+        wait: bool,
+    ) -> Result<Vec<(Publication, Indexing)>, Delivery>;
 }
 
 /// Who publishes a key's index (§5, Q6).
@@ -108,10 +112,11 @@ impl<F: HostIo, C: Clock> State<F, C> {
 
     /// Another thread held `key`'s path lock: retry it after a short
     /// backoff (10 ms doubling to 160 ms), woken by the driver's timer.
-    fn contend(&mut self, key: PageKey) {
+    fn contend(&mut self, key: PageKey) -> Instant {
         let (misses, retry) = self.contended.entry(key).or_insert((0, Instant::now()));
         *misses = misses.saturating_add(1);
         *retry = Instant::now() + Duration::from_millis(10 << (*misses).min(5).saturating_sub(1));
+        *retry
     }
 
     /// The keys still waiting for their path-lock retry at `at`.
@@ -346,8 +351,17 @@ impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
         &self,
         read: impl FnOnce(&State<F, C>) -> R + Send + 'static,
     ) -> Result<R, Unanswered> {
+        self.read_by(Deadline::Never, read)
+    }
+
+    /// [`Self::read`], answered by `deadline` or withdrawn.
+    pub fn read_by<R: Send + 'static>(
+        &self,
+        deadline: Deadline,
+        read: impl FnOnce(&State<F, C>) -> R + Send + 'static,
+    ) -> Result<R, Unanswered> {
         let mut read = Some(read);
-        self.request(Deadline::Never, None, |reply| {
+        self.request(deadline, None, |reply| {
             Box::new(move |_, state| {
                 if let Some(read) = read.take() {
                     let _ = reply.send(read(&state));
@@ -451,10 +465,9 @@ impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
                         (state, None)
                     }
                     Locked::Done(state, Wait::Until(at), _) => (state, Some(at)),
-                    Locked::Held(state) => {
-                        let retry = state.retry();
-                        (state, Some(retry))
-                    }
+                    // Asked again at the held key's own retry, even one
+                    // already past: never left without a timer.
+                    Locked::Held(state, retry) => (state, Some(Some(retry))),
                     // The reply drops unanswered: the caller sees `Ended`.
                     Locked::Stopping(state) => (state, None),
                 },
@@ -637,8 +650,8 @@ pub(super) enum Locked<'a, F: HostIo, C: Clock, R> {
     /// `held` empty; true when it ran under path locks.
     Done(Guard<'a, F, C>, R, bool),
     /// A request's step needs a path lock another thread holds: nothing ran
-    /// under it, and the request waits for its retry (A4).
-    Held(Guard<'a, F, C>),
+    /// under it, and the request waits for that key's retry (A4).
+    Held(Guard<'a, F, C>, Instant),
     /// The driver is stopping.
     Stopping(Guard<'a, F, C>),
 }
@@ -690,9 +703,9 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
             return Locked::Stopping(state);
         }
         if let Some(key) = held_elsewhere {
-            state.contend(key);
+            let retry = state.contend(key);
             if !driver {
-                return Locked::Held(state);
+                return Locked::Held(state, retry);
             }
             result = step(&mut state);
             continue;
@@ -723,18 +736,39 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
     Locked::Done(state, result, false)
 }
 
+/// What became of a queued command.
+enum Dispatched<F: HostIo, C: Clock> {
+    /// Answered, a notice, or withdrawn by its caller.
+    Done,
+    /// It waits on the host, asked again at the instant.
+    Waiting(Command<F, C>, Option<Instant>),
+    /// Another thread holds the store writer it needs: still queued.
+    Deferred(Command<F, C>),
+}
+
 /// Start a queued command: run it on the driver (under the store writer
-/// first when it asks for it), unless its caller withdrew it. Returns it
-/// when it waits.
+/// first when it asks for it), unless its caller withdrew it. One whose
+/// writer another thread holds is deferred, not waited for (A4), unless
+/// `wait` (the driver's stop): it stays queued, and its caller may still
+/// withdraw it.
 fn dispatch<F: HostIo, C: Clock>(
     shared: &Shared<F, C>,
     mut command: Command<F, C>,
-) -> Option<(Command<F, C>, Option<Instant>)> {
-    if !claim(&command.claim, QUEUED) {
-        return None;
-    }
+    wait: bool,
+) -> Dispatched<F, C> {
     let writer = command.writer.clone();
-    let _writer = writer.as_ref().map(|writer| writer.lock().unwrap());
+    let _writer = match writer.as_deref() {
+        None => None,
+        Some(writer) if wait => Some(writer.lock().unwrap()),
+        Some(writer) => match writer.try_lock() {
+            Ok(guard) => Some(guard),
+            Err(std::sync::TryLockError::WouldBlock) => return Dispatched::Deferred(command),
+            Err(std::sync::TryLockError::Poisoned(error)) => panic!("{error}"),
+        },
+    };
+    if !claim(&command.claim, QUEUED) {
+        return Dispatched::Done;
+    }
     let state = shared.state.lock().unwrap();
     let (state, again) = (command.run)(shared, state);
     drop(state);
@@ -742,7 +776,10 @@ fn dispatch<F: HostIo, C: Clock>(
         again.is_none() || command.writer.is_none(),
         "a writer request waits"
     );
-    park(command, again)
+    match park(command, again) {
+        Some((command, at)) => Dispatched::Waiting(command, at),
+        None => Dispatched::Done,
+    }
 }
 
 /// Start an ask of a request that is `from` (queued or parked); false when
@@ -804,59 +841,85 @@ fn host_stats<F: HostIo>(host: &Host<F>) {
     });
 }
 
+/// The first and the longest pause before a store-writer retry: another
+/// thread's transaction holds it for a disk write or an index publication.
+const WRITER_RETRY: (Duration, Duration) = (Duration::from_millis(1), Duration::from_millis(20));
+
 fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
     let _ended = Ended(shared);
     // The next bench `host_stats` (None: events off).
     let mut stats = crate::bench_events::enabled().then(|| Instant::now() + HOST_STATS_EVERY);
     // Requests waiting on the host, each with the instant to ask it again.
     let mut waiting = Vec::new();
+    // Commands and a delivery whose store writer another thread held,
+    // retried after `writer_retry`. A pending delivery is the last step's
+    // results: no step runs until it is delivered, so host events reach the
+    // sink in host order (§5), as when the driver waited for the writer.
+    let mut deferred: VecDeque<Command<F, C>> = VecDeque::new();
+    let mut pending: Option<Delivery> = None;
+    let mut writer_retry = WRITER_RETRY.0;
     loop {
         // Commands first, between steps, so requests and notices interleave
-        // with a long run of driver steps; those queued before a stop run.
+        // with a long run of driver steps; those queued before a stop run,
+        // and at the stop the driver waits for the writer they need.
         let (commands, stop) = shared.take();
-        for command in commands {
-            waiting.extend(dispatch(shared, command));
+        let queued = std::mem::take(&mut deferred).into_iter().chain(commands);
+        for command in queued {
+            match dispatch(shared, command, stop) {
+                Dispatched::Done => {}
+                Dispatched::Waiting(command, at) => waiting.push((command, at)),
+                Dispatched::Deferred(command) => deferred.push_back(command),
+            }
         }
         if stop {
+            // The last step's results reach the sink before `join` returns.
+            if let Some(delivery) = pending.take() {
+                deliver(shared, sink, delivery, true);
+            }
             return;
         }
-        let state = shared.state.lock().unwrap();
+        let mut state = shared.state.lock().unwrap();
         let seq = state.wake_seq;
-        let (mut state, result, stepped) = match locked(shared, state, true, State::step) {
-            Locked::Done(state, result, stepped) => (state, result, stepped),
-            Locked::Held(_) | Locked::Stopping(_) => return,
+        let (delivery, idle) = match pending.take() {
+            // Retried, with no step: a held writer pauses below.
+            Some(delivery) => (delivery, false),
+            None => {
+                let (next, result, stepped) = match locked(shared, state, true, State::step) {
+                    Locked::Done(state, result, stepped) => (state, result, stepped),
+                    Locked::Held(..) | Locked::Stopping(_) => return,
+                };
+                state = next;
+                // Before the step's events are drained: what the vector holds.
+                if stats.is_some_and(|due| due <= Instant::now()) {
+                    host_stats(&state.progress.host);
+                    stats = Some(Instant::now() + HOST_STATS_EVERY);
+                }
+                let delivery = {
+                    let state = &mut *state;
+                    state.book.collect(&mut state.progress)
+                };
+                let idle =
+                    !stepped && matches!(result, Disposition::Waiting | Disposition::Disabled);
+                (delivery, idle)
+            }
         };
-        // Before the step's events are drained: what the vector holds.
-        if stats.is_some_and(|due| due <= Instant::now()) {
-            host_stats(&state.progress.host);
-            stats = Some(Instant::now() + HOST_STATS_EVERY);
-        }
-        let delivery = {
-            let state = &mut *state;
-            state.book.collect(&mut state.progress)
-        };
-        let idle = !stepped && matches!(result, Disposition::Waiting | Disposition::Disabled);
         if !delivery.is_empty() {
             drop(state);
-            let owner = |key: &str| {
-                let state = shared.state.lock().unwrap();
-                state.book.owner(key, &state.progress.host)
-            };
-            let results = sink.deliver(delivery, &owner);
+            pending = deliver(shared, sink, delivery, false);
             state = shared.state.lock().unwrap();
-            if !results.is_empty() {
-                // Collect again: an eviction or a notice may now be due.
-                let now = state.progress.clock.now_ms();
-                state.book.record(results, now);
-                state.wake();
-            }
         }
         // A finished job or worker step may answer a waiting request; every
         // step chain ends here.
         state = revisit(shared, state, &mut waiting);
+        let retry_writer = pending.is_some() || !deferred.is_empty();
+        let writer_wait = retry_writer.then_some(writer_retry);
+        writer_retry = match retry_writer {
+            true => (writer_retry * 2).min(WRITER_RETRY.1),
+            false => WRITER_RETRY.0,
+        };
         if idle && state.wake_seq == seq {
             // Sleep until a command arrives, or until the earliest timed
-            // work or waiting request is due.
+            // work, waiting request or writer retry is due.
             let now = state.progress.clock.now_ms();
             let timer = state
                 .until()
@@ -875,10 +938,42 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
                     .chain(lock)
                     .chain(report)
                     .chain(asks)
+                    .chain(writer_wait)
                     .min(),
             );
+        } else if pending.is_some() {
+            // No step runs until the delivery is made; commands still run
+            // between tries (`sleep` returns on one).
+            drop(state);
+            shared.sleep(writer_wait);
         }
     }
+}
+
+/// Hand `delivery` to the sink and record its index results; the delivery
+/// back when the store writer it needs is held elsewhere and not `wait`.
+fn deliver<F: HostIo, C: Clock>(
+    shared: &Shared<F, C>,
+    sink: &mut impl Sink,
+    delivery: Delivery,
+    wait: bool,
+) -> Option<Delivery> {
+    let owner = |key: &str| {
+        let state = shared.state.lock().unwrap();
+        state.book.owner(key, &state.progress.host)
+    };
+    let results = match sink.deliver(delivery, &owner, wait) {
+        Ok(results) => results,
+        Err(delivery) => return Some(delivery),
+    };
+    if !results.is_empty() {
+        // Collect again: an eviction or a notice may now be due.
+        let mut state = shared.state.lock().unwrap();
+        let now = state.progress.clock.now_ms();
+        state.book.record(results, now);
+        state.wake();
+    }
+    None
 }
 
 /// Wall-clock milliseconds since the driver started.

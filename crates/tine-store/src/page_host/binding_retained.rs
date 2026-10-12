@@ -344,16 +344,16 @@ impl PageHost {
         prepared: Arc<PreparedRewrite>,
     ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
         crate::bench_events::mark("rename_enter", referrers.len() as u64);
-        let (src, src_spelling, ..) = self.identify(source);
-        let (dst, dst_spelling, ..) = self.identify(target);
+        // A host that ended renames nothing.
+        let ended = || RenameRefusal::Refused;
+        let (src, src_spelling, ..) = self.try_identify(source).ok_or_else(ended)?;
+        let (dst, dst_spelling, ..) = self.try_identify(target).ok_or_else(ended)?;
         if src == dst {
             return Err(RenameRefusal::Alias);
         }
-        self.register(&src, &src_spelling);
-        self.register(&dst, &dst_spelling);
-        let mut refs = self
-            .register_all(referrers.to_vec())
-            .expect("page host driver ended");
+        self.try_register(&src, &src_spelling).ok_or_else(ended)?;
+        self.try_register(&dst, &dst_spelling).ok_or_else(ended)?;
+        let mut refs = self.register_all(referrers.to_vec()).ok_or_else(ended)?;
         crate::bench_events::mark("rename_registered", refs.len() as u64);
         refs.remove(&src);
         refs.remove(&dst);
@@ -608,13 +608,8 @@ impl PageHost {
     /// same file, not listed apart); else a key for the new entry
     /// ([`super::Host::key_for`]: never a live key spelling another entry).
     /// Also whether the host holds that page, and whether the path is proved
-    /// to name that key's entry.
-    pub(super) fn identify(&self, page: &PageId) -> (PageKey, PageId, bool, bool) {
-        self.try_identify(page).expect("page host driver ended")
-    }
-
-    /// [`Self::identify`], or None when the driver ended.
-    fn try_identify(&self, page: &PageId) -> Option<(PageKey, PageId, bool, bool)> {
+    /// to name that key's entry. None when the driver ended.
+    pub(super) fn try_identify(&self, page: &PageId) -> Option<(PageKey, PageId, bool, bool)> {
         let graph = &self.store.graph;
         let ended = std::cell::Cell::new(false);
         let registered = |fold: &str| {

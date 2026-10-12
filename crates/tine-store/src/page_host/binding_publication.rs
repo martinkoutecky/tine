@@ -159,9 +159,13 @@ impl PageHost {
                     let live = move |state: &State<ProductionIo, SystemClock>| {
                         state.book.session == session && state.progress.host.alive
                     };
-                    return match self.driver.shared.read(live) {
+                    // Bounded too: a liveness check the driver does not
+                    // answer within one more `bound` is pending.
+                    let by = Deadline::At(std::time::Instant::now() + bound);
+                    return match self.driver.shared.read_by(by, live) {
                         Ok(true) => PageOperation::Applied,
-                        _ => PageOperation::Refused,
+                        Ok(false) | Err(Unanswered::Ended) => PageOperation::Refused,
+                        Err(_) => PageOperation::Pending,
                     };
                 }
                 Ok(Barrier::Refused) | Err(Unanswered::Ended) => return PageOperation::Refused,
@@ -194,8 +198,14 @@ impl PageHost {
     /// None when `session` is not the current window session (F1), or the
     /// host ended: an empty list would claim no debt.
     pub fn owed(&self, session: u64, paths: Option<&[PageId]>) -> Option<Vec<(PageKey, u64)>> {
-        let only: Option<BTreeSet<PageKey>> =
-            paths.map(|paths| paths.iter().map(|page| self.identify(page).0).collect());
+        let only: Option<BTreeSet<PageKey>> = match paths {
+            Some(paths) => Some(
+                (paths.iter())
+                    .map(|page| self.try_identify(page).map(|(key, ..)| key))
+                    .collect::<Option<_>>()?,
+            ),
+            None => None,
+        };
         let read = move |state: &State<ProductionIo, SystemClock>| {
             let wanted = |key: &PageKey| only.as_ref().is_none_or(|only| only.contains(key));
             let host = &state.progress.host;

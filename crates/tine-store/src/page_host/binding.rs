@@ -943,11 +943,6 @@ impl PageHost {
         reloaded.expect(ENDED)
     }
 
-    fn register(&self, key: &str, spelling: &PageId) {
-        self.try_register(key, spelling)
-            .expect("page host state poisoned");
-    }
-
     /// [`admit`] on the driver; a host that ended admits nothing.
     fn admit(
         &self,
@@ -978,13 +973,17 @@ impl PageHost {
         page: &PageId,
         name: &str,
     ) -> Result<Opened, PageRefusal> {
-        let (key, spelling, held, baseline_entry) = self.identify(page);
+        // A host that ended admits nothing.
+        let Some((key, spelling, held, baseline_entry)) = self.try_identify(page) else {
+            return Err(PageRefusal::NotAdmitted);
+        };
         if !held {
             self.store
                 .transaction(None)
                 .page_open_checks(&spelling.file(), name)?;
         }
-        self.register(&key, &spelling);
+        self.try_register(&key, &spelling)
+            .ok_or(PageRefusal::NotAdmitted)?;
         let request = Request {
             id,
             generation: 0,
@@ -1181,7 +1180,10 @@ impl PageHost {
     /// or a persistent save error; it completes once it can); `Superseded`
     /// or `Uncertain` otherwise.
     pub fn delete(&self, session: u64, page: &PageId, checked: &[u8]) -> PageOperation {
-        let (key, spelling, ..) = self.identify(page);
+        // A host that ended deletes nothing.
+        let Some((key, spelling, ..)) = self.try_identify(page) else {
+            return PageOperation::Refused;
+        };
         // `open`'s invalid-target refusal (docs/storage-contract.md
         // `page_host::delete`): a path that is not a page file of this graph
         // (outside the root, not a graph text file) deletes nothing. In-scope
@@ -1189,7 +1191,9 @@ impl PageHost {
         if self.store.as_page(&spelling.file()).is_none() {
             return PageOperation::Refused;
         }
-        self.register(&key, &spelling);
+        if self.try_register(&key, &spelling).is_none() {
+            return PageOperation::Refused;
+        }
         let deadline = std::time::Instant::now() + retained::OPERATION_WAIT;
         let (shared, checked) = (Arc::downgrade(&self.driver.shared), checked.to_vec());
         let delete = move |state: &mut State<ProductionIo, SystemClock>| {

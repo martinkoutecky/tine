@@ -24,17 +24,27 @@ impl Sink for Bridge {
         &mut self,
         delivery: Delivery,
         owner: &dyn Fn(&str) -> Owner,
-    ) -> Vec<(Publication, Indexing)> {
+        wait: bool,
+    ) -> Result<Vec<(Publication, Indexing)>, Delivery> {
         let store = &*self.store;
         let mut results = Vec::new();
+        let indexes = !delivery.claimed.is_empty()
+            || !delivery.publications.is_empty()
+            || !delivery.evicted.is_empty();
+        // All or nothing: a delivery whose writer is held comes back whole.
+        let writer = match indexes {
+            false => None,
+            true if wait => Some(store.writer.lock().unwrap()),
+            true => match store.writer.try_lock() {
+                Ok(writer) => Some(writer),
+                Err(std::sync::TryLockError::WouldBlock) => return Err(delivery),
+                Err(std::sync::TryLockError::Poisoned(error)) => panic!("{error}"),
+            },
+        };
         for (key, kinds) in &delivery.kinds {
             (self.kinds.lock().unwrap())(key, kinds);
         }
-        if !delivery.claimed.is_empty()
-            || !delivery.publications.is_empty()
-            || !delivery.evicted.is_empty()
-        {
-            let _writer = store.writer.lock().unwrap();
+        if let Some(writer) = writer {
             for (key, _, observed) in delivery.claimed {
                 store.watch.hold_observed(key, observed);
             }
@@ -60,12 +70,13 @@ impl Sink for Bridge {
                 }
             }
             store.publish_retired();
+            drop(writer);
         }
         for (key, mail, facts) in delivery.mail {
             let mail = page_mail(store, key, mail, facts);
             (self.mail.lock().unwrap())(mail);
         }
-        results
+        Ok(results)
     }
 }
 

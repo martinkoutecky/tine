@@ -334,9 +334,25 @@ fn an_alias_spelling_is_refused_for_a_respell_that_keeps_the_page() {
     live.host.stop();
 }
 
+/// The spelling lookups and registered-key visits counted on this thread.
+fn counted() -> (usize, usize) {
+    let lookups = super::super::production::SPELLING_LOOKUPS.with(|n| n.get());
+    (lookups, super::super::KEY_VISITS.with(|n| n.get()))
+}
+
+fn uncount() {
+    super::super::production::SPELLING_LOOKUPS.with(|n| n.set(0));
+    super::super::KEY_VISITS.with(|n| n.set(0));
+}
+
 /// A-R5 (D-10): a reservation's key lookup and a single-page rename cost
 /// the same however many keys the binding registered before (keys are
-/// never unregistered): no step walks every registered key.
+/// never unregistered): no step walks every registered key. The counters
+/// are per thread: the caller's and the driver's, where the host's work
+/// runs (host-only-writer P1), are summed. The driver's also count the
+/// steps it runs meanwhile (the reservation's release observation, the
+/// rename's saves), a few more or fewer by timing; a walk over every key
+/// would add at least one per extra key.
 #[test]
 fn rename_and_reserve_cost_is_independent_of_registered_keys() {
     let cost = |registered: usize| {
@@ -346,10 +362,11 @@ fn rename_and_reserve_cost_is_independent_of_registered_keys() {
         ]);
         for n in 0..registered {
             let page = PageId::from(format!("pages/k{n}.md").as_str());
-            live.host.register(page.as_str(), &page);
+            live.host.try_register(page.as_str(), &page).unwrap();
         }
-        super::super::production::SPELLING_LOOKUPS.with(|n| n.set(0));
-        super::super::KEY_VISITS.with(|n| n.set(0));
+        let shared = &live.host.driver.shared;
+        uncount();
+        shared.call(|_| uncount()).unwrap();
         drop(
             live.host
                 .reserve(|| vec![PageId::from("pages/r.md")], Input::Refuse)
@@ -366,14 +383,14 @@ fn rename_and_reserve_cost_is_independent_of_registered_keys() {
                 Arc::new(|_: &PageId, _: &[u8], _| None),
             )
             .unwrap();
-        let lookups = super::super::production::SPELLING_LOOKUPS.with(|n| n.get());
-        let visits = super::super::KEY_VISITS.with(|n| n.get());
+        let (caller, driver) = (counted(), shared.read(|_| counted()).unwrap());
         live.host.stop();
-        (lookups, visits)
+        (caller.0 + driver.0, caller.1 + driver.1)
     };
     let (few, many) = (cost(10), cost(400));
-    assert_eq!(
-        few, many,
+    let extra = 400 - 10;
+    assert!(
+        many.0 < few.0 + extra && many.1 < few.1 + extra,
         "A-R5/D-10: a reserve plus a one-page rename cost (spelling lookups, registered-key \
          visits) {few:?} with 10 registered keys and {many:?} with 400; exemplars binding.rs \
          key_spelled and operations.rs rename_with's version allocation"
@@ -837,5 +854,76 @@ fn a_long_rename_that_keeps_publishing_is_waited_for() {
         assert_eq!(live.disk(key), "- see [[New]]\n");
     }
     assert!(!live.root.join("pages/Old.md").exists());
+    live.host.stop();
+}
+
+/// host-only-writer P1 (review F4): a host whose driver ended refuses each
+/// operation as a stopped host does; none panics.
+#[test]
+fn every_operation_on_an_ended_driver_is_refused() {
+    let mut live = Live::new(&[("pages/Old.md", "- body\n")]);
+    let session = live.host.session();
+    let view = live.store.whole_graph().unwrap();
+    live.host.driver.join();
+    assert!(live.host.driver.shared.ended());
+    let old = PageId::from("pages/Old.md");
+    let opened = live.host.open(session, 1, &old, "Old").err();
+    assert_eq!(opened, Some(PageRefusal::NotAdmitted), "open");
+    let deleted = live.host.delete(session, &old, b"- body\n");
+    assert_eq!(deleted, PageOperation::Refused, "delete");
+    assert_eq!(live.host.owed(session, Some(&[old.clone()])), None, "owed");
+    let renamed = live.host.rename(
+        &old,
+        &PageId::from("pages/New.md"),
+        &[],
+        &map("Old", "New"),
+        &view,
+        Arc::new(|_: &PageId, _: &[u8], _| None),
+    );
+    assert_eq!(renamed.err(), Some(RenameRefusal::Refused), "rename");
+}
+
+/// host-only-writer P1 (§3.2a deltas): a rename or a delete whose page's
+/// path lock another thread holds is not admitted past `OPERATION_WAIT`.
+/// The rename refuses `Busy` and the delete answers `Waiting`; nothing
+/// changed on disk. Before P1 both blocked on the lock without a bound.
+#[test]
+fn a_rename_or_delete_under_a_held_path_lock_is_bounded() {
+    use super::super::retained::OPERATION_WAIT;
+    let live = Live::new(&[("pages/Old.md", "- body\n"), ("pages/Gone.md", "- gone\n")]);
+    let session = live.host.session();
+    let view = live.store.whole_graph().unwrap();
+    let graph = &live.store.graph;
+    let old_lock = graph.page_lock(&live.root.join("pages/Old.md"));
+    let gone_lock = graph.page_lock(&live.root.join("pages/Gone.md"));
+    let held = (old_lock.lock().unwrap(), gone_lock.lock().unwrap());
+    let started = Instant::now();
+    let (renamed, deleted) = std::thread::scope(|scope| {
+        let renamed = scope.spawn(|| {
+            live.host.rename(
+                &PageId::from("pages/Old.md"),
+                &PageId::from("pages/New.md"),
+                &[],
+                &map("Old", "New"),
+                &view,
+                Arc::new(|_: &PageId, _: &[u8], _| None),
+            )
+        });
+        let gone = PageId::from("pages/Gone.md");
+        let host = &live.host;
+        let deleted = scope.spawn(move || host.delete(session, &gone, b"- gone\n"));
+        (renamed.join().unwrap(), deleted.join().unwrap())
+    });
+    let waited = started.elapsed();
+    drop(held);
+    assert!(
+        waited < OPERATION_WAIT + Duration::from_secs(3),
+        "bounded: {waited:?}"
+    );
+    assert_eq!(renamed.err(), Some(RenameRefusal::Busy), "rename");
+    assert_eq!(deleted, PageOperation::Waiting, "delete");
+    assert_eq!(live.disk("pages/Old.md"), "- body\n");
+    assert_eq!(live.disk("pages/Gone.md"), "- gone\n");
+    assert!(!live.root.join("pages/New.md").exists());
     live.host.stop();
 }

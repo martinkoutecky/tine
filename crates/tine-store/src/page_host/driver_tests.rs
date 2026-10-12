@@ -4,7 +4,7 @@ use super::model_fs::{Fault, ModelFs};
 use super::tests::{draft, edit, host, open, risk, saved, text};
 use super::*;
 use crate::page_host::binding::{Delivery, Indexing, Publication};
-use crate::page_host::driver::{Driver, Owner, Sink};
+use crate::page_host::driver::{Deadline, Driver, Owner, Sink, State, Wait};
 use crate::page_host::progress::{Clock, Progress};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,12 +30,13 @@ impl Sink for Channel {
         &mut self,
         delivery: Delivery,
         _: &dyn Fn(&str) -> Owner,
-    ) -> Vec<(Publication, Indexing)> {
+        _: bool,
+    ) -> Result<Vec<(Publication, Indexing)>, Delivery> {
         for (page, mail, _) in delivery.mail {
             let _ = self.0.send(Delivered::Mail(page, mail));
         }
         let indexed = delivery.publications.into_iter();
-        indexed.map(|p| (p, Indexing::Indexed)).collect()
+        Ok(indexed.map(|p| (p, Indexing::Indexed)).collect())
     }
 }
 
@@ -487,41 +488,40 @@ fn a_retained_writer_and_a_saving_driver_never_deadlock() {
             d.shared.with_state_for_tests(|_| {});
             std::thread::sleep(Duration::from_millis(1));
         }
-        // A retained writer (§7) reserves under the state mutex only and,
-        // finding the page busy, waits on the host condition holding nothing.
+        // A retained writer (§7) reserves by a request on the driver and,
+        // finding the page busy, waits for its answer holding nothing; each
+        // driver step asks again, so a lost wakeup is a missed deadline.
         let waiting = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let writer = {
             let (shared, waiting, lock_a) = (d.shared.clone(), waiting.clone(), lock_a.clone());
             std::thread::spawn(move || {
                 let keys = BTreeSet::from(["a.md".to_string()]);
-                let reserving = Instant::now();
-                let mut state = shared.state_for_tests();
-                while state.progress.host.reserve(&keys) == Disposition::Waiting {
-                    waiting.store(true, Ordering::SeqCst);
-                    // Holding nothing while the driver's step runs.
-                    drop(state);
-                    std::thread::sleep(Duration::from_millis(1));
-                    state = shared.state_for_tests();
-                    assert!(
-                        reserving.elapsed() < Duration::from_secs(5),
-                        "never reserved"
-                    );
-                }
+                let reserve = move |state: &mut State<ModelFs, SharedClock>| {
+                    let host = &mut state.progress.host;
+                    if host.reserve(&keys) == Disposition::Waiting {
+                        waiting.store(true, Ordering::SeqCst);
+                        return Wait::Until(None);
+                    }
+                    Wait::Ready(host.fs.files["graph/a.md"].clone())
+                };
+                let deadline = Deadline::At(Instant::now() + Duration::from_secs(5));
+                let disk = shared.wait(deadline, reserve).expect("lost wakeup");
                 // Reserved only once the blocked save had completed.
-                let disk = state.progress.host.fs.files["graph/a.md"].clone();
                 assert_eq!(&*disk, format!("mine {round}").as_bytes());
-                drop(state);
                 // Its transaction: writer → paths, then the release.
                 let transaction = lock_a.lock().unwrap();
-                shared.with_state_for_tests(|s| {
-                    let bytes = text(&format!("tx {round}"));
+                let bytes = text(&format!("tx {round}"));
+                let write = move |s: &mut State<ModelFs, SharedClock>| {
                     s.progress.host.fs.external("a.md", bytes, true)
-                });
+                };
+                shared.call(write).unwrap();
                 drop(transaction);
-                shared.with_state_for_tests(|s| {
-                    s.progress.host.retained.remove("a.md");
-                    s.observe.insert("a.md".into(), Default::default());
-                });
+                shared
+                    .call(|s| {
+                        s.progress.host.retained.remove("a.md");
+                        s.observe.insert("a.md".into(), Default::default());
+                    })
+                    .unwrap();
             })
         };
         while !waiting.load(Ordering::SeqCst) {
@@ -531,8 +531,6 @@ fn a_retained_writer_and_a_saving_driver_never_deadlock() {
             );
             std::thread::yield_now();
         }
-        // The writer holds the state mutex from its check until it waits.
-        drop(d.shared.state_for_tests());
         drop(other);
         writer.join().expect("writer");
         // The driver observes the transaction before the next round.

@@ -2562,3 +2562,52 @@ fn an_open_that_moves_no_row_leaves_the_checkpoint_capturable() {
         "an unchanged open and release publish nothing"
     );
 }
+
+/// host-only-writer P1 (review: the driver never waits for the store
+/// writer while callers wait on it). While another thread's transaction
+/// holds the writer, a save's publication waits for it, and the driver
+/// keeps answering: a read is answered, and a command that needs the writer
+/// (an open) waits alone. Once the writer is free, both complete.
+#[test]
+fn the_driver_answers_while_another_thread_holds_the_store_writer() {
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- b\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let session = live.host.session();
+    let writer = live.store.writer.lock().unwrap();
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.until_disk(&key, "- two\n");
+    // The save's publication is due, and needs the writer.
+    std::thread::sleep(Duration::from_millis(100));
+    let (opened, open_done) = mpsc::channel();
+    let (owed, owed_done) = mpsc::channel();
+    std::thread::scope(|scope| {
+        let host = &live.host;
+        scope.spawn(move || {
+            let b = PageId::from("pages/b.md");
+            let _ = opened.send(host.open(session, 1_000, &b, "b").is_ok());
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        scope.spawn(move || {
+            let _ = owed.send(host.owed(session, None));
+        });
+        let answered = owed_done.recv_timeout(Duration::from_secs(5));
+        let open_waited = open_done.try_recv().is_err();
+        drop(writer);
+        let debt = answered.expect("a read is answered while the writer is held");
+        let debt = debt.expect("the current session");
+        assert!(
+            debt.iter().any(|(owed, _)| *owed == key),
+            "the publication waits for the writer: {debt:?}"
+        );
+        assert!(open_waited, "an open needs the writer");
+        let opened = open_done.recv_timeout(Duration::from_secs(5));
+        assert_eq!(
+            opened,
+            Ok(true),
+            "the open completes once the writer is free"
+        );
+    });
+    live.answer(&key, id);
+    live.until_indexed(&key, "- two\n");
+    live.host.stop();
+}
