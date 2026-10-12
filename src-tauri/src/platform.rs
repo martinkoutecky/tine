@@ -349,12 +349,14 @@ pub(crate) fn file_url_to_path(url: &str) -> Option<std::path::PathBuf> {
     (path.as_os_str().len() > 0).then_some(path)
 }
 
-/// The OS path of `relative` (a `/`-separated graph-relative path that a
-/// relative link resolved to, GH #457) inside the graph at `root`. Refusal
-/// scenario (in scope: malformed or imported Markdown, a synced note): a link
-/// in a note is untrusted content, so a path that leaves the graph folder,
-/// lexically (`..` above the root, an absolute or drive component) or through
-/// a symlink, is refused rather than handed to the OS opener; a missing target
+/// The OS path of `relative` (a `/`-separated graph-relative path that a file
+/// link resolved to as OG does, GH #457, src/render/relativeFileLink.ts) inside
+/// the graph at `root`. Refusal scenario (in scope: malformed or imported
+/// Markdown, a synced note): a link in a note is untrusted content, so a path
+/// that leaves the graph folder, lexically (`..` above the root, an absolute or
+/// drive component) or through a symlink, is refused rather than handed to the
+/// OS opener. That is an intentional difference from OG, which opens absolute
+/// paths and lets its path join climb out of the graph. A missing target
 /// is reported instead of opening an unrelated window. Read-only; Cost
 /// O(path components) plus two canonicalizations.
 pub(crate) fn graph_relative_target(
@@ -1312,7 +1314,7 @@ mod reveal_platform_arms {
 mod graph_relative_target_tests {
     use super::graph_relative_target;
 
-    /// GH #457: a resolved relative link opens the file inside the graph, and a
+    /// GH #457: a resolved file link opens the file inside the graph, and a
     /// path that leaves the graph folder, lexically or through a symlink, is
     /// refused (a note's link is untrusted content).
     #[test]

@@ -24,7 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - The Ctrl/Cmd+Shift+V "paste as plain text" key is now listed in the shortcut reference and the Guide (GH #513).
 - Right sidebar: each item has a ⋯ menu with **Close**, **Close others**, **Close all**, **Collapse**/**Expand**, **Collapse others**, **Collapse all**, **Expand all**, and **Open as page** for a page item, as in Logseq (GH #462).
 - Settings → **Graph** shows the open graph's folder, with **Show in folder** on desktop to open it in Finder, File Explorer or your file manager. The graph menu's right-click **Show in folder** does the same for any remembered graph (GH #447).
-- A relative link to a file, such as `[report](../files/report.pdf)` or Org `[[file:../files/a.txt][a]]`, opens that file on desktop, resolved from the folder of the page that contains it. A link that points outside the graph folder is shown struck through and is never opened (GH #457).
+- A link to a file by its path in the graph, such as `[report](files/report.pdf)`, `[report](../files/report.pdf)` or Org `[[file:../files/a.txt][a]]`, opens that file on desktop, read from the graph folder as Logseq does. A link whose path points outside the graph folder, including an absolute path, is shown struck through and is never opened (GH #457).
 
 ### Changed
 

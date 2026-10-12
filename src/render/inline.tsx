@@ -58,7 +58,7 @@ import { createLongPress } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
-import { relativeFileLinkPath } from "./relativeFileLink";
+import { fileLinkTarget } from "./relativeFileLink";
 import { RelativeFileLink } from "./RelativeFileLink";
 import { galleryFor } from "../imageGallery";
 import { queryMacroRenderRun } from "./queryMacroRender";
@@ -477,14 +477,14 @@ function renderLink(
       return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     if (!externalPdf) return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
-  // GH #457: a relative path to a file outside `assets/` names a file next to
-  // the page's own file; an asset link keeps the asset routes below.
-  // A bare `x.pdf` keeps the reader route it had.
-  const relative = assetLinkRel(dest) === null ? relativeFileLinkPath(dest) : null;
-  if (relative !== null && (!/\.pdf$/i.test(dest) || relative.includes("/"))) {
+  // GH #457: a plain path to a file outside `assets/` names a file in the
+  // graph folder, resolved as OG does (relativeFileLink.ts); an asset link
+  // keeps the asset routes below and a bare `x.pdf` keeps the reader route.
+  const fileTarget = assetLinkRel(dest) === null ? fileLinkTarget(dest) : null;
+  if (fileTarget !== null && (!/\.pdf$/i.test(dest) || /[/\\]/.test(dest))) {
     return (
       <span class="link-copy-wrap">
-        <RelativeFileLink dest={dest} relative={relative} blockId={blockId} spanAttrs={spanAttrs}>
+        <RelativeFileLink dest={dest} target={fileTarget} spanAttrs={spanAttrs}>
           <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
         </RelativeFileLink>
         <CopyButton text={dest} title="Copy link" class="copy-inline" />

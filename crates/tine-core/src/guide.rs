@@ -852,12 +852,11 @@ mod rename_guide_tests {
 
     #[test]
     fn relative_file_link_guide_names_its_base_and_the_graph_boundary() {
-        // GH #457: a relative link resolves from the page's folder and never
+        // GH #457: a file link resolves from the graph folder as Logseq does and
         // opens a path outside the graph.
         let search = include_str!("templates/pages-links-references-search.md");
-        assert!(search.contains("is read from the folder of the page that contains it"));
-        assert!(search
-            .contains("points outside the graph folder is shown struck through and never opened"));
+        assert!(search.contains("is read from the graph folder as Logseq reads it"));
+        assert!(search.contains("points outside the graph folder, such as an absolute"));
     }
 
     #[test]

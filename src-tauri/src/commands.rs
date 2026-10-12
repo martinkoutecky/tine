@@ -1507,7 +1507,7 @@ fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<Str
     String::from_utf8(bytes).map_err(|e| e.to_string())
 }
 
-/// Open a graph-relative file or folder that a relative link resolved to
+/// Open a graph-relative file or folder that a file link resolved to
 /// (GH #457) in the OS default app. `crate::platform::graph_relative_target`
 /// refuses a path that leaves the graph folder, including through a symlink,
 /// and a missing target. Read-only OS handoff on the blocking pool (I-21);

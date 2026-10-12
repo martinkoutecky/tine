@@ -8,13 +8,16 @@ import { resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { PageView } from "../components/Page";
 import { setToasts, toasts } from "../toasts";
-import { relativeFileLinkPath, resolvePageRelative } from "./relativeFileLink";
+import { fileLinkTarget, graphRelative } from "./relativeFileLink";
 
-// GH #457 (UI-RELATIVE-FILE-LINK-457): a relative link to a file resolves
-// against the file of the page the block lives on and opens that file; a path
-// that climbs out of the graph folder is shown as a broken link and never
-// opened. Before the fix every such link went to the URL opener, which refused
-// it as an "unsupported url scheme".
+// GH #457 (UI-RELATIVE-FILE-LINK-457): a link to a file by plain path opens
+// that file from the graph folder, resolved as OG does (logseq 0.10.9
+// block.cljs relative-assets-path->absolute-path + config.cljs
+// get-local-asset-absolute-path: strip every leading `.` and `/`, join to the
+// graph folder), whichever folder the page is in. Intentional Tine difference:
+// a path that leaves the graph folder (absolute, or climbing out) is shown as
+// a broken link and never opened, where OG opens it. Before the fix every such
+// link went to the URL opener, which refused it as an "unsupported url scheme".
 
 beforeAll(initParser);
 afterEach(() => {
@@ -41,20 +44,25 @@ function clickLink(raw: string, format: "md" | "org" = "md"): HTMLAnchorElement 
   return link!;
 }
 
-describe("relative file links open the file next to the page (GH #457)", () => {
+describe("file links open the file in the graph folder, as OG resolves them (GH #457)", () => {
   for (const [pageFile, raw, opened, format] of [
+    // `files/x` and `../files/x` name the same file from pages/ and journals/.
+    ["pages/Plan.md", "[report](files/report.odt)", "files/report.odt", "md"],
     ["pages/Plan.md", "[report](../files/report.odt)", "files/report.odt", "md"],
+    ["journals/2026_10_12.md", "[report](files/report.odt)", "files/report.odt", "md"],
     ["journals/2026_10_12.md", "[report](../files/report.odt)", "files/report.odt", "md"],
-    ["pages/Plan.md", "[here](notes.txt)", "pages/notes.txt", "md"],
-    ["pages/Plan.md", "[sub](./sub/notes.txt)", "pages/sub/notes.txt", "md"],
-    ["pages/projects/Plan.md", "[up](../files/a.txt)", "pages/files/a.txt", "md"],
+    ["pages/projects/Plan.md", "[up](../files/a.txt)", "files/a.txt", "md"],
+    ["pages/Plan.md", "[deep](../../files/a.txt)", "files/a.txt", "md"],
+    ["pages/Plan.md", "[here](notes.txt)", "notes.txt", "md"],
+    ["pages/Plan.md", "[sub](./sub/notes.txt)", "sub/notes.txt", "md"],
+    ["pages/Plan.md", "[back](files/old/../a.txt)", "files/a.txt", "md"],
     ["pages/Plan.md", "[spaced](<../files/my file.txt>)", "files/my file.txt", "md"],
     ["pages/Plan.md", "[escaped](../files/a%20b.txt)", "files/a b.txt", "md"],
     ["pages/Plan.md", "[windows](..\\files\\a.txt)", "files/a.txt", "md"],
     ["pages/Plan.md", "[scheme](file:../files/a.txt)", "files/a.txt", "md"],
     ["pages/Plan.org", "[[file:../files/a.txt][org]]", "files/a.txt", "org"],
     ["pages/Plan.md", "[paper](../docs/paper.pdf)", "docs/paper.pdf", "md"],
-    ["pages/Plan.md", "[folder](../files/)", "files", "md"],
+    ["pages/Plan.md", "[folder](../files.d/)", "files.d", "md"],
   ] as const) {
     it(`${raw} on ${pageFile} opens ${opened}`, () => {
       loadPage(pageFile, raw);
@@ -68,7 +76,10 @@ describe("relative file links open the file next to the page (GH #457)", () => {
     });
   }
 
-  for (const raw of ["[out](../../outside.txt)", "[out](../files/../../../etc/passwd)"]) {
+  // Intentional Tine difference: OG opens these (an absolute path as is, and a
+  // path its join lets climb out); Tine never opens a path outside the graph
+  // folder, because a link in a note is untrusted content.
+  for (const raw of ["[out](files/../../outside.txt)", "[out](../files/../../../etc/passwd.txt)", "[abs](/home/me/report.odt)", "[drive](C:\\Users\\me\\report.odt)", "[abs](/home/me/paper.pdf)"]) {
     it(`${raw} leaves the graph folder: shown broken, never opened`, () => {
       loadPage("pages/Plan.md", raw);
       const open = vi.spyOn(backend(), "openGraphFile").mockResolvedValue(undefined);
@@ -86,14 +97,6 @@ describe("relative file links open the file next to the page (GH #457)", () => {
     vi.spyOn(backend(), "openGraphFile").mockRejectedValue(new Error("files/gone.txt could not be found"));
     clickLink("[gone](../files/gone.txt)");
     await vi.waitFor(() => expect(toasts().map((toast) => toast.message).join("\n")).toContain("could not be found"));
-  });
-
-  it("a page with no file yet says so instead of guessing", () => {
-    loadPage(undefined, "[x](../files/a.txt)");
-    const open = vi.spyOn(backend(), "openGraphFile").mockResolvedValue(undefined);
-    clickLink("[x](../files/a.txt)");
-    expect(open).not.toHaveBeenCalled();
-    expect(toasts().map((toast) => toast.message).join("\n")).toContain("no file yet");
   });
 
   it("links into assets keep the asset routes", () => {
@@ -137,18 +140,19 @@ describe("relative file links open the file next to the page (GH #457)", () => {
   });
 });
 
-describe("what counts as a relative file link", () => {
-  it("leaves schemes, absolute paths, anchors and bare page words alone", () => {
-    for (const dest of ["https://x/a.txt", "zotero://x", "tel:+42", "/abs/a.txt", "C:\\a.txt", "~/a.txt", "#anchor", "Some Page"]) {
-      expect(relativeFileLinkPath(dest), dest).toBeNull();
+describe("what counts as a file link", () => {
+  it("leaves schemes, anchors and page-like dests alone", () => {
+    for (const dest of ["https://x/a.txt", "zotero://x", "tel:+42", "#anchor.x", "*heading.x", "Some Page", "files/report", "file:///tmp/a.txt"]) {
+      expect(fileLinkTarget(dest), dest).toBeNull();
     }
-    expect(relativeFileLinkPath("file:///tmp/a.txt")).toBeNull();
-    expect(relativeFileLinkPath("file:../a.txt")).toBe("../a.txt");
+    expect(fileLinkTarget("file:../a.txt")).toEqual({ kind: "graph", path: "a.txt" });
+    expect(fileLinkTarget("/abs/a.txt")).toEqual({ kind: "outside", reason: "absolute" });
+    expect(fileLinkTarget("C:\\a.txt")).toEqual({ kind: "outside", reason: "absolute" });
   });
 
-  it("never climbs above the graph root", () => {
-    expect(resolvePageRelative("pages/Plan.md", "../../a.txt")).toEqual({ kind: "outside" });
-    expect(resolvePageRelative("Plan.md", "../a.txt")).toEqual({ kind: "outside" });
-    expect(resolvePageRelative("pages/Plan.md", "..")).toEqual({ kind: "graph", path: "" });
+  it("strips leading dots and slashes as OG does, and never climbs above the graph folder", () => {
+    expect(graphRelative("../../a.txt")).toEqual({ kind: "graph", path: "a.txt" });
+    expect(graphRelative("files/../../a.txt")).toEqual({ kind: "outside", reason: "escapes" });
+    expect(graphRelative("..")).toEqual({ kind: "graph", path: "" });
   });
 });
