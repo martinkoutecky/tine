@@ -765,7 +765,7 @@ export function App(): JSX.Element {
     const graphPath = injected || startup || persistedGraphPath();
     dbg(`loading graph: ${graphPath || "(default/configured)"}`);
     try {
-      if (!(window as any).__TINE_LINK_LAUNCH__ || injected) await loadGraphPath(graphPath);
+      await loadGraphPath(graphPath);
       dbg("graph load call returned");
     } catch (e) {
       // No graph configured (fresh install), or it failed to open. Fall through to

@@ -30,6 +30,7 @@ import { cutBlocks } from "../cut";
 import { copyBlockLink, copyTineLink } from "./blockLinkCopy";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
+import { openInPageFind } from "../inpageFind";
 import { isHTMLElementNode, requestFrame, viewportOf } from "../windowRealm";
 
 function reportCopy(write: Promise<void>, okMsg: string): void {
@@ -919,6 +920,9 @@ function PageMenu(props: {
           { id: "open-default-app", label: "Open with default app", run: () => void runFileAction(false) },
         ]
       : []),
+    // GH #338: phones have no Mod+F. The page header's menu opens Find, whose
+    // bar holds the replace row (GH #208).
+    ...(props.fileActions ? [{ id: "find-in-page", label: "Find in page", run: () => openInPageFind() }] : []),
     ...(!readOnly() ? [{ id: "page-properties", label: "Page properties…", run: () => openPageProps(props.name, props.x, props.y) }] : []),
     // Carry a past day's unfinished tasks to today (journal days only, not today).
     ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(appNow())

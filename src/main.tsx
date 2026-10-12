@@ -8,6 +8,7 @@ import { applyTheme, applyAccent } from "./ui";
 import { pushToast } from "./toasts";
 import { startCommunityExtensions } from "./plugins/startup";
 import { backend, isTauri } from "./backend";
+import { startUiLanguage } from "./i18n/preference";
 import { installBackendClock } from "./journal";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -111,4 +112,5 @@ void Promise.all([
   isPublishedExport() ? Promise.resolve() : parserSettled.then(() => Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))])),
   communityExtensionsReady,
   publishedSnapshotReady,
+  startUiLanguage(),
 ]).then(mount, () => { if (!isPublishedExport()) mount(); else console.error("published app startup failed"); });

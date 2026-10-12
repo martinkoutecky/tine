@@ -75,7 +75,7 @@ tine-ios-folder-picker-native = { path = "ios-folder-picker-native" }
 tine-ios-native-integrations = { path = "ios-native-integrations" }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx"] }
 # Windows uses Schannel through native-tls: the default rustls transport does
 # not inherit every Windows network/certificate policy and failed before
 # fetching latest.json on an otherwise-online Windows 11 system (GH #241).

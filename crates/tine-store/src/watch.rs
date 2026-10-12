@@ -1053,6 +1053,13 @@ impl WatchHandle {
         }
     }
 
+    /// Join the background watcher while keeping explicit refresh available.
+    #[cfg(test)]
+    pub(crate) fn stop_background_for_test(&self) {
+        self.stop();
+        self.core.closed.store(false, Ordering::Release);
+    }
+
     pub(crate) fn stop(&self) {
         if !self.core.closed.swap(true, Ordering::AcqRel) {
             let _ = self.wake.send(());

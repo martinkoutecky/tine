@@ -21,7 +21,7 @@ export const ORDERED_COMMANDS: ReadonlySet<string> = new Set([
   "set_app_string", "set_capture_enter_files", "set_smooth_scroll", "forget_known_graph", "set_backup_keep",
   "set_watch_mode", "dismiss_defender_hint", "approve_external_assets", "create_graph", "install_plugin",
   "uninstall_plugin", "set_plugin_enabled", "store_plugin_registry_cache", "diagnostic_session_active",
-  "clear_diagnostics",
+  "clear_diagnostics", "set_ui_locale",
 ]);
 
 /** An ordered lane: `lane(cmd, issue)` for one call, `lane.joined` to join a

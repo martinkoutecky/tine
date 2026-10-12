@@ -4,7 +4,64 @@ use super::*;
 use tine_core::model::Format;
 
 impl<'a> Transaction<'a> {
-    pub(super) fn preflight(&self, step: &Step) -> Result<Prepared, Why> {
+    pub(super) fn preflight_names(&self) -> Result<Vec<FileId>, (usize, Why)> {
+        if self.store.is_closed() {
+            return Err((0, Why::Refused(Refusal::Closed)));
+        }
+        if let Some(TxOutcome::NotCommitted { why, .. }) =
+            self.config_write_failure().or_else(|| self.stale_view())
+        {
+            return Err((0, why));
+        }
+        let mut seen = HashSet::new();
+        let mut names = Vec::new();
+        for (index, step) in self.steps.iter().enumerate() {
+            let ids = match step {
+                Step::Save { id, .. } | Step::Rewrite { id, .. } => vec![id.file()],
+                Step::Create { file, .. }
+                | Step::Replace { file, .. }
+                | Step::Expect { file, .. }
+                | Step::Trash { file, .. } => vec![file.clone()],
+                Step::Move { file, to, .. } => vec![file.clone(), to.clone()],
+                Step::Unique { .. } => Vec::new(),
+            };
+            for id in ids {
+                if !seen.insert(id.clone()) {
+                    return Err((index, Why::Refused(Refusal::RepeatedFile(id))));
+                }
+                names.push(id);
+            }
+        }
+        names.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        Ok(names)
+    }
+
+    pub(super) fn prepare_steps(&self) -> Result<Vec<Prepared>, (usize, Why)> {
+        let mut allocated = HashSet::new();
+        let mut prepared = Vec::new();
+        for (index, step) in self.steps.iter().enumerate() {
+            let next = self
+                .preflight(step, &allocated)
+                .map_err(|why| (index, why))?;
+            if matches!(step, Step::Unique { .. }) {
+                allocated.insert(next.src.clone());
+            }
+            prepared.push(next);
+        }
+        Ok(prepared)
+    }
+
+    pub(super) fn raw_create_slot(&self, file: &FileId) -> Result<(), Why> {
+        self.absent(file)?;
+        self.twin(file, None)?;
+        self.unreadable_owner(file, &[])
+    }
+
+    pub(super) fn preflight(
+        &self,
+        step: &Step,
+        allocated: &HashSet<FileId>,
+    ) -> Result<Prepared, Why> {
         let unsupported_config_step = match step {
             Step::Trash { file, .. } => file.as_str() == "logseq/config.edn",
             Step::Unique {
@@ -65,9 +122,7 @@ impl<'a> Transaction<'a> {
                     return Err(Why::Refused(Refusal::InvalidTarget(file.as_str().into())));
                 }
                 self.path(file)?;
-                self.absent(file)?;
-                self.twin(file, None)?;
-                self.unreadable_owner(file, &[])?;
+                self.raw_create_slot(file)?;
                 if file.as_str() == "logseq/config.edn" {
                     validate_config_content(self.store, content)?;
                 }
@@ -116,18 +171,21 @@ impl<'a> Transaction<'a> {
                 } else if let Content::Stream { source, max_bytes } = content {
                     validate_stream(source, *max_bytes)?;
                 }
-                for index in 0usize.. {
-                    let rel = if index == 0 {
+                let candidate = (0usize..).map(|index| {
+                    if index == 0 {
                         first.clone()
                     } else {
                         crate::atomic_file::marked_name(stem, &format!("_{index}"), ext)
-                    };
+                    }
+                });
+                let mut chosen = None;
+                for rel in candidate {
                     let candidate = self
                         .store
                         .file_id(*area, &rel)
                         .map_err(|_| Why::Refused(Refusal::InvalidTarget(rel)))?;
                     // Only occupancy matters here: never read an occupant.
-                    if self.occupied(&candidate)? {
+                    if allocated.contains(&candidate) || self.occupied(&candidate)? {
                         continue;
                     }
                     self.twin(&candidate, None)?;
@@ -135,10 +193,11 @@ impl<'a> Transaction<'a> {
                     if self.fixed_step_names().contains(&candidate) {
                         return Err(Why::Refused(Refusal::RepeatedFile(candidate)));
                     }
+                    chosen = Some(candidate);
                     break;
                 }
                 Ok(Prepared {
-                    src: file,
+                    src: chosen.expect("an unoccupied candidate"),
                     dst: None,
                     old: None,
                     new: None,

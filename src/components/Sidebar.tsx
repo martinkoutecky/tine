@@ -298,7 +298,7 @@ export function Sidebar(props: {
 // Display name for the active graph = basename of its root folder (OG shows the
 // same). Falls back to "No graph" when none is loaded (e.g. mock/first run).
 function graphDisplayName(): string {
-  const root = graphMeta()?.root;
+  const root = graphMeta()?.display_root ?? graphMeta()?.root;
   if (!root) return "No graph";
   const base = root.replace(/[/\\]+$/, "").split(/[/\\]/).pop();
   return base || root;
@@ -364,7 +364,7 @@ export function GraphSwitcher(props: {
     <div class="graph-switch">
       <button
         class="graph-switch-btn"
-        title={graphMeta()?.root ?? undefined}
+        title={graphMeta()?.display_root ?? graphMeta()?.root ?? undefined}
         onClick={() => setOpen(!open())}
       >
         <svg viewBox="0 0 24 24" class="graph-switch-icon">
@@ -391,7 +391,7 @@ export function GraphSwitcher(props: {
               <div
                 class="ctx-item graph-switch-row"
                 classList={{ active: graph.path === graphMeta()?.root }}
-                title={graph.path}
+                title={graph.display_path ?? graph.path}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   event.stopPropagation();

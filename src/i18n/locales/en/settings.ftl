@@ -1,0 +1,13 @@
+## Settings › Appearance
+settings-language-label = Language
+settings-language-description = The language of { -brand }'s menus, settings and messages. Your notes are never translated.
+# $language (string): the endonym of the language the system default resolves to.
+settings-language-system = System default ({ $language })
+toast-language-load-failed = Could not load the language preference; using the system language.
+toast-language-save-failed = Could not save the language preference.
+
+## Settings › About
+settings-about-store-updates = Updates come from the Microsoft Store.
+
+## Graph creation
+graph-wsl-rootfs-refused = Cannot create a graph here: Windows access to a WSL1 rootfs can corrupt Linux files. Choose \\wsl.localhost\<distro>\… instead.

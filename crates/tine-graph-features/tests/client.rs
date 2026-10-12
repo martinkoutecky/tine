@@ -132,6 +132,7 @@ fn source_scan_guard_clients_touch_no_path() {
         ("lib", include_str!("../src/lib.rs")),
         ("assets", include_str!("../src/assets.rs")),
         ("conflicts", include_str!("../src/conflicts.rs")),
+        ("conflicts/queue", include_str!("../src/conflicts/queue.rs")),
         ("config", include_str!("../src/config.rs")),
         ("custom_css", include_str!("../src/custom_css.rs")),
         ("journals", include_str!("../src/journals.rs")),

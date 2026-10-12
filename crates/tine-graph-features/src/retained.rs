@@ -65,6 +65,24 @@ pub(crate) fn unsaved(page: &str) -> io::Error {
     )
 }
 
+#[derive(Debug)]
+struct Replan;
+impl std::fmt::Display for Replan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("concurrent graph write")
+    }
+}
+impl std::error::Error for Replan {}
+
+/// Preflight conflicts consume the same bounded retry as admission's Changed.
+/// Other Why values retain the transaction path's refusal mapping.
+pub(crate) fn plan(tx: tine_store::Transaction<'_>) -> io::Result<HostOp> {
+    tx.plan().map_err(|why| match why {
+        tine_store::Why::Conflict { .. } => io::Error::new(io::ErrorKind::WouldBlock, Replan),
+        why => crate::why_error(why),
+    })
+}
+
 /// A feature's write as one host operation (host-only-writer P2, DESIGN
 /// §3.1), planned from the store, under the writer's `input` policy, which
 /// the operation carries. `plan` reads and computes the operation, or None
@@ -96,7 +114,13 @@ pub(crate) fn operation(
         saved.extend_from_slice(pages);
     }
     crate::retry_on_conflict(exhausted, || {
-        let Some(mut op) = plan()? else {
+        let planned = match plan() {
+            Err(error) if error.get_ref().is_some_and(|cause| cause.is::<Replan>()) => {
+                return Ok(None)
+            }
+            result => result?,
+        };
+        let Some(mut op) = planned else {
             return Ok(Some(()));
         };
         op.policy = input;

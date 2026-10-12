@@ -305,6 +305,33 @@ pub(crate) struct GpuEnv {
     software_forced: bool,
     appimage: bool,
     flatpak: bool,
+    packaged: Option<bool>,
+}
+
+/// Package identity is a runtime property, shared by Store and sideloaded MSIX.
+/// None preserves a failed probe so only the installer can fail closed.
+#[cfg(target_os = "windows")]
+fn packaged() -> Option<bool> {
+    use windows_sys::Win32::Foundation::{APPMODEL_ERROR_NO_PACKAGE, ERROR_INSUFFICIENT_BUFFER};
+    use windows_sys::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+    let mut length = 0;
+    // SAFETY: length is writable; a null buffer requests only the required size.
+    let result = unsafe { GetCurrentPackageFullName(&mut length, std::ptr::null_mut()) };
+    match result as u32 {
+        ERROR_INSUFFICIENT_BUFFER => Some(true),
+        APPMODEL_ERROR_NO_PACKAGE => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "android"
+))]
+fn packaged() -> Option<bool> {
+    Some(false)
 }
 
 /// Whether the process runs inside a Flatpak sandbox: Flatpak sets `FLATPAK_ID`
@@ -323,6 +350,7 @@ pub(crate) fn gpu_env() -> GpuEnv {
             || set("WEBKIT_DISABLE_COMPOSITING_MODE")
             || std::env::var("TINE_GPU").as_deref() == Ok("0"),
         appimage: set("APPIMAGE"),
+        packaged: packaged(),
         flatpak: in_flatpak(
             set("FLATPAK_ID"),
             std::path::Path::new("/.flatpak-info").exists(),

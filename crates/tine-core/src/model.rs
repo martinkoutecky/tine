@@ -845,8 +845,11 @@ pub struct GraphMeta {
     pub scheduled_future_days: Option<i32>,
     /// Visible journal config parse diagnostics.
     pub journal_config_diagnostics: Vec<String>,
-    /// Canonical graph root for display and OS handoff.
+    /// Canonical graph root for identity, persistence and OS handoff.
     pub root: String,
+    /// Presentable spelling, never used for graph identity or filesystem access.
+    #[serde(default)]
+    pub display_root: String,
     /// "now" (LATER/NOW) or "todo" (TODO/DOING) — display form of the
     /// graph configuration's `Workflow`, not an independent edit setting.
     pub preferred_workflow: String,
@@ -977,6 +980,7 @@ impl GraphMeta {
         journal_format: &crate::date::JournalFormat,
     ) -> Self {
         Self {
+            display_root: crate::graph_paths::normalize_graph_path(&root),
             root,
             default_journal_queries: config.default_journal_queries.clone(),
             disable_scheduled_and_deadline_query: config.disable_scheduled_and_deadline_query,

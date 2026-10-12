@@ -472,6 +472,14 @@
       "nonRequirements": ["Launching the system editor from Edit custom.css (covered by graph-features and render tests; a native run must not start an editor).", "Exact colors beyond the file's own values, pixels or DOM nesting."],
       "stability": "burn-in"
     },
+    "scripts/e2e-find-replace.mjs": {
+      "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "On a routed named page, in-page Find's Replace all rewrites only the visible matches in the page file, leaves a hidden id:: property value and a [label](url) link address that contain the word byte-identical, and one undo restores the original file.", "blocking": true, "authority": "GH #208" }
+      ],
+      "acceptableVariations": ["Find bar layout, count wording, toast text and save latency may vary while the file reaches the exact expected text."],
+      "nonRequirements": ["Replace in the journals feed, sidebar or split panes (render and unit tests cover scope), the mobile page-menu entry (GH #338, render test), exact pixels or DOM nesting, or certification outside Linux WebKitGTK."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-host-saves.mjs": {
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "Text typed into a block reaches the page file while the editor is still open, with no blur or navigation.", "blocking": true, "authority": "STEP3-DESIGN section 4 (og-s3 step 3b)" },

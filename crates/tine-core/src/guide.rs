@@ -221,6 +221,16 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn the_language_setting_says_where_it_is_and_what_it_never_translates() {
+        let places = include_str!("templates/where-things-are.md");
+        assert!(places.contains("**Language** is the first item under Settings → **Appearance**"));
+        assert!(places.contains("**System default** follows your system's language"));
+        assert!(
+            places.contains("Your notes, page names, properties and queries are never translated")
+        );
+    }
+
+    #[test]
     fn search_workspace_and_find_explain_visible_views_and_destinations() {
         let reference = include_str!("templates/pages-links-references-search.md");
         let tips = include_str!("templates/tips.md");
@@ -230,6 +240,27 @@ mod journal_guide_tests {
         assert!(reference.contains("Page results offer the same right-click menu"));
         assert!(tips.contains("**Enter** / **Shift+Enter** move forward / backward"));
         assert!(tips.contains("In a Search tab, clicking a result opens a new tab"));
+    }
+
+    #[test]
+    fn find_and_replace_is_documented() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        let revisit = include_str!("templates/find-and-revisit.md");
+        let tips = include_str!("templates/tips.md");
+        for detail in [
+            "**Replace with**",
+            "**Replace all**",
+            "as one **Undo** step",
+            "a link's address and hidden properties such as `id::` are never changed",
+            "**⋯** menu → **Find in page**",
+        ] {
+            assert!(
+                reference.contains(detail),
+                "missing find/replace detail: {detail}"
+            );
+        }
+        assert!(revisit.contains("**⋯** menu → **Find in page**"));
+        assert!(tips.contains("**Replace** and **Replace all**"));
     }
 
     #[test]

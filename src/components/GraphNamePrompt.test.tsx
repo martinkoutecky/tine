@@ -9,6 +9,22 @@ let dispose: (() => void) | undefined;
 afterEach(() => { dispose?.(); document.body.replaceChildren(); });
 const tick = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
+it("explains the WSL storage refusal and the supported route", async () => {
+  dispose = render(() => <GraphNamePrompt />, document.body);
+  const result = askGraphName("notes", vi.fn().mockRejectedValue("wsl-rootfs"));
+  await tick();
+  document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  await tick();
+  try {
+    const message = document.querySelector('[role="alert"]')?.textContent;
+    expect(message).toContain("corrupt Linux files");
+    expect(message).toContain("\\\\wsl.localhost\\<distro>\\");
+  } finally {
+    [...document.querySelectorAll("button")].find(b => b.textContent === "Cancel")!.click();
+    await result;
+  }
+});
+
 it("prefills the Rust suggestion and cancel creates nothing", async () => {
   dispose = render(() => <GraphNamePrompt />, document.body);
   const create = vi.fn(async () => "/parent/notes-2");

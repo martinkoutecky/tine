@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Windows MSIX installs show that updates come from the Microsoft Store and disable Tine's self-updater (GH #307).
+- Interface language: Settings → Appearance → **Language** offers English and Simplified Chinese (简体中文), or the system's language. It applies live in every window and the tray menu, the startup screen follows from the next launch, and the choice is remembered per device; notes are never translated. In this first step the command palette, keyboard-shortcut list and notifications' own controls are translated; the rest of the interface follows (GH #107).
 - Settings → Appearance has a **Fine-tuning** section for small visual details, so they do not each become a setting of their own: how embedded blocks look (shaded box, or accent line and dot only), the underline on links to the web or a file (solid, dotted, none) and how strongly links to pages that do not exist yet stand out. Each starts at Tine's default look and has a Reset; choices are saved on this device, `logseq/custom.css` still outranks them, and **Disable custom CSS** switches them off with it. Later visual preferences are added as rows of one table (GH #610, UI-GH610-STYLE-KNOBS).
 - Colored text from Logseq notes shows its color: `[:span {:style "color: red"} "x"]` (and `background-color`, `text-decoration-color`) render as written. Only those three color properties are read from `style`; layout, positioning and anything that fetches stay stripped. `==x==` and `^^x^^` highlight as before. The static-HTML export still drops `style` (GH #243, UI-GH243-COLORED-HICCUP-SPANS).
 - Common Logseq advanced queries translate automatically: tagged-page name lookups with string inputs, numeric and relative scheduled/deadline windows, direct page references, and scheduled-or-deadline alternatives. Strict date bounds and page results are preserved; unsupported queries refuse whole and translatable rows beneath a result transform get a TQL suggestion. Graph-supplied code never runs (GH #628).
@@ -28,6 +30,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Keyboard block commands, assignable in Settings > Keyboard shortcuts and listed in the command palette, with no default key (Logseq binds none): **Copy block refs of the selected blocks** (GH #576), **Paste as link** (GH #448), **Duplicate block below (with children)** (GH #379), **Insert child block** (GH #634), **Collapse children (one level)** and **Expand children (one level)** (GH #525), and **Search for the selected text** (GH #633).
 - The Ctrl/Cmd+Shift+V "paste as plain text" key is now listed in the shortcut reference and the Guide (GH #513).
 - Right sidebar: each item has a ⋯ menu with **Close**, **Close others**, **Close all**, **Collapse**/**Expand**, **Collapse others**, **Collapse all**, **Expand all**, and **Open as page** for a page item, as in Logseq (GH #462).
+- Find in page can replace: the arrow at the left of the find bar opens **Replace with**, with **Replace** (the highlighted match) and **Replace all** (every match on the page you opened Find in, as one Undo step). It edits the text you see, as typing would, so link addresses and hidden properties are never changed (GH #208). Find in page is also in each page's **⋯** menu, so phones can open it (GH #338).
 - **All pages** view: the sidebar's All pages section now ends in **Open the full list…**, which opens every page of the graph in the main pane as a scrolling table (a graph of tens of thousands of pages stays quick: only the visible rows are drawn). It opens with the most recently changed pages first and shows each page file's **Updated** time (one read when the view opens; nothing is stored). Sort by name, by updated time, or journals by day; filter by name; tick **Show journals** to include daily pages. Rows open with the usual click, Shift-click, Ctrl/Cmd- or middle-click and Alt-click gestures. Created and backlink-count columns, multi-select and delete are not part of this view yet (GH #335).
 
 ### Changed
@@ -49,6 +52,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - The right sidebar can be dragged up to 70% of the window (it was fixed at 800px), keeping at least 360px for the main pane; keyboard resizing follows the same limit (GH #521).
 
 ### Fixed
+
+- Representable Windows graph paths display without verbatim prefixes; stored canonical paths retain existing graph identity (REG-WIN-GRAPH-PATH).
+- Cold launches from a Tine link restore the last graph before handling the link (UI-WIN-LINK-COLD-START).
+- New graphs refuse Windows access to WSL1 backing rootfs folders; existing graphs warn and remain openable, with advice to use `\\wsl.localhost\<distro>\…` (UI-WIN-WSL-ROOTFS).
+- Opening another graph replaces the previous graph's undismissed Guide announcement (UI-WIN-GUIDE-TOAST-ONCE).
 
 - A page's `icon::` now also shows in the left sidebar's Favorites (in place of the star), Recent and All pages lists and on the right sidebar's page items, as in Logseq; before it showed only on the page title and in links to the page (GH #346, UI-GH346-PAGE-ICON-SURFACES). Image icons are not part of this change.
 - Linked References filter chips are listed alphabetically instead of by count (GH #433).

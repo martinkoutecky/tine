@@ -116,7 +116,7 @@ export interface Backend {
   /** Scaffold a brand-new demo graph (onboarding "create new graph"); returns
    *  the created graph's root path to then `loadGraph`. Creates the graph in
    *  the named child of `dir`, reusing only an empty directory. */
-  createGraph(dir: string, name: string): Promise<string>;
+  createGraph(dir: string, name: string): Promise<string | { root: string; display_root: string }>;
   /** First unused notes, notes-2, … child name, supplied by Rust. */
   suggestGraphName(dir: string): Promise<string>;
   /** The whole name inventory (physical pages/journals, aliases, reference-only
@@ -623,6 +623,9 @@ export interface Backend {
    *  the key + default. Used by the asset-filename format template. */
   getAppString(key: string, fallback: string): Promise<string>;
   setAppString(key: string, value: string): Promise<void>;
+  /** The UI locale the frontend resolved (tine#107): native shell text (the
+   *  tray) follows it, since native code never negotiates or formats messages. */
+  setUiLocale(locale: string): Promise<void>;
   /** Push the spellcheck prefs onto the native webview(s) live (no restart):
    *  `enabled` toggles WebKitGTK's checker; `languages` (locale codes, empty ⇒ OS
    *  locale) sets the dictionaries checked simultaneously. */
@@ -865,7 +868,7 @@ class TauriBackend implements Backend {
     return this.call<string>("default_graph_parent");
   }
   createGraph(dir: string, name: string) {
-    return this.call<string>("create_graph", { dir, name });
+    return this.call<{ root: string; display_root: string }>("create_graph", { dir, name });
   }
   suggestGraphName(dir: string) { return this.call<string>("suggest_graph_name", { dir }); }
   pageInventory() {
@@ -1458,6 +1461,9 @@ class TauriBackend implements Backend {
   }
   setAppString(key: string, value: string) {
     return this.call<void>("set_app_string", { key, value });
+  }
+  setUiLocale(locale: string) {
+    return this.call<void>("set_ui_locale", { locale });
   }
   applySpellcheck(enabled: boolean, languages: string[]) {
     return this.call<void>("apply_spellcheck", { enabled, languages });

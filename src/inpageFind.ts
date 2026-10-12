@@ -65,6 +65,18 @@ function cachedRenderedBlockText(blockId: string, raw: string, format: Format): 
   return text;
 }
 
+/** The text find searches for one block: what the block shows, uncached. Replace
+ *  re-renders a candidate raw with it to prove an edit lands on the occurrence
+ *  find showed (src/inpageReplace.ts). O(block bytes), one parse. */
+export function inPageFindRenderedText(raw: string, format: Format): string {
+  return renderedBlockText(raw, format, renderedTextOptions);
+}
+
+/** The cached form of {@link inPageFindRenderedText} that the match walk reads. */
+export function inPageFindBlockText(blockId: string, raw: string, format: Format): string {
+  return cachedRenderedBlockText(blockId, raw, format);
+}
+
 export function clearInPageFindRenderedTextCacheForTests() {
   renderedTextCache.clear();
 }
@@ -190,6 +202,11 @@ function notesPaneId(id: string | null): string {
 
 function currentFindPaneId(): string {
   return notesPaneId(state.paneId() ?? focusedPaneId());
+}
+
+/** The pane find was opened in: the only scope replace edits (GH #208). */
+export function inPageFindPaneScopeId(): string {
+  return currentFindPaneId();
 }
 
 /** Visible layout order, then mounted sidebar stack order;
