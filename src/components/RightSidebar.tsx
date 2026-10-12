@@ -12,6 +12,7 @@ import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../rout
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
+import { pageIconPrefix } from "../pageIconBatch";
 import { backend } from "../backend";
 import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, node as docNode } from "../document";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
@@ -312,7 +313,7 @@ function PageItem(props: {
           else openPageTarget(target);
         }} onAuxClick={(e) => internalLinkAuxClick(e, () =>
           openPageTargetInNewTab({ name: props.item.name, pageKind: props.item.pageKind, path: props.item.path }))}>
-          <EmojiText text={props.item.name} />
+          <EmojiText text={pageIconPrefix(props.item.name) + props.item.name} />
         </a>
         <button class="rs-close" onClick={props.onClose} title="Close">
           ✕
