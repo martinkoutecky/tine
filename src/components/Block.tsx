@@ -148,6 +148,7 @@ import { SheetContainer } from "./SheetContainer";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { wireBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
+import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
@@ -2068,7 +2069,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       if (ref === movedEditor && movedEditor.isConnected && editingId() === props.id
         && (documentOf(movedEditor).activeElement === movedEditor
           || documentOf(movedEditor).activeElement === documentOf(movedEditor).body)) restore();
-      await move;
+      const moved = await move;
+      // GH #641: a move this surface cannot show says where the block went.
+      if (moved !== false && moved !== "none") noticeMoveOutOfView(props.id, outlineScope);
       await nextFrame(ref);
       if (documentOf(ref).activeElement !== ref) restore();
     }).catch(() => console.error("Block move failed"));
