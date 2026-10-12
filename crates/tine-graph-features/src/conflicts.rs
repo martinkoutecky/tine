@@ -1096,60 +1096,109 @@ pub fn resolve_vcs_marker_conflict(
     base_rev: &str,
     pre_choice: &str,
 ) -> io::Result<()> {
+    const EXHAUSTED: &str = "marker file changed repeatedly during resolve";
     let file = id(store, rel)?;
     let page = store.as_page(&file).ok_or_else(invalid_path)?;
     // A retained writer (STEP3 §7): unsaved input on the page is refused as
     // a change on disk would be.
     let refused = |_: &str| changed("file");
-    let discover = || Ok(vec![page.clone()]);
-    crate::retained::reserved(host, Input::Refuse, discover, refused, |_| {
-        crate::retry_on_conflict("marker file changed repeatedly during resolve", || {
-            let (content, rev) = read_text(store, &file)?;
-            // Scenario: the VCS or an external editor changed the file after the
-            // review was computed; the user must review the new version.
-            if String::from(rev.clone()) != base_rev {
-                return Err(changed("file"));
-            }
-            let Some(sides) = parse_vcs_marker_sides(&content, format(&file)) else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "no VCS merge conflict markers to resolve",
-                ));
-            };
-            let fmt = format(&file);
-            // Scenario: malformed imported Org — a side that does not round-trip
-            // would be rewritten lossily.
-            if fmt == Format::Org
-                && (!tine_core::org::org_editable(&sides.mine)
-                    || !tine_core::org::org_editable(&sides.theirs))
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "an org side of this merge does not round-trip; not resolving",
-                ));
-            }
-            let mine = parse(&sides.mine, fmt);
-            let theirs = parse(&sides.theirs, fmt);
-            let base = sides.base.as_deref().map(|text| parse(text, fmt));
-            let artifact = sides.suggested.as_deref().map(|text| parse(text, fmt));
-            let roots = sync_diff::merge_blocks3(
-                base.as_ref().map(|doc| doc.roots.as_slice()),
-                &mine.roots,
-                &theirs.roots,
-                artifact.as_ref().map(|doc| doc.roots.as_slice()),
-                decisions,
-            )
-            .map_err(merge_refused)?;
-            let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
-            let merged = dto(store, &page, Document { pre_block, roots });
-            let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-            tx.save_page(
-                &[tine_store::EditKind::ReplacePage],
-                &page,
-                SaveBase::ResolvingMarkers(rev),
-                &merged,
-            );
-            Ok(crate::commit_retry(tx.commit())?.then_some(()))
-        })
-    })
+    // The review's text, read now. Scenario: the VCS or an external editor
+    // changed the file after the review was computed; the user must review
+    // the new version.
+    let reviewed = || {
+        let (content, rev) = read_text(store, &file)?;
+        if String::from(rev.clone()) != base_rev {
+            return Err(changed("file"));
+        }
+        let merged = marker_resolution(store, &file, &page, &content, decisions, pre_choice)?;
+        Ok((content, rev, merged))
+    };
+    let Some(running) = host else {
+        let discover = || Ok(vec![page.clone()]);
+        return crate::retained::reserved(None, Input::Refuse, discover, refused, |_| {
+            crate::retry_on_conflict(EXHAUSTED, || {
+                let (_, rev, merged) = reviewed()?;
+                let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+                tx.save_page(
+                    &[tine_store::EditKind::ReplacePage],
+                    &page,
+                    SaveBase::ResolvingMarkers(rev),
+                    &merged,
+                );
+                Ok(crate::commit_retry(tx.commit())?.then_some(()))
+            })
+        });
+    };
+    let plan = || {
+        let (content, _, merged) = reviewed()?;
+        let bytes = (store.page_bytes_resolving(&page, &merged, content.as_bytes()))
+            .map_err(crate::why_error)?;
+        // DESIGN §3.4 pre: the old bytes are in conflict trash before the
+        // operation can replace them. A refused or replanned operation leaves
+        // this copy behind (harmless; a replan after a change refuses above).
+        store.stage_marker_copy(&file, content.as_bytes()).map_err(crate::why_error)?;
+        Ok(Some(HostOp {
+            pages: vec![(
+                page.clone(),
+                HostEffect::Write(bytes.into()),
+                HostExpected::Bytes(content.into_bytes().into()),
+            )],
+            kinds: vec![tine_store::EditKind::ReplacePage],
+            policy: Input::Refuse,
+            moved: None,
+        }))
+    };
+    crate::retained::operation(
+        running,
+        Input::Refuse,
+        std::slice::from_ref(&page),
+        "resolving the merge",
+        EXHAUSTED,
+        refused,
+        plan,
+    )
+}
+
+/// The page a marker resolution writes: the review's `decisions` over the
+/// marker sides of `content`, with the chosen pre-block.
+fn marker_resolution(
+    store: &Store,
+    file: &FileId,
+    page: &PageId,
+    content: &str,
+    decisions: &HashMap<String, String>,
+    pre_choice: &str,
+) -> io::Result<PageDto> {
+    let fmt = format(file);
+    let Some(sides) = parse_vcs_marker_sides(content, fmt) else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "no VCS merge conflict markers to resolve",
+        ));
+    };
+    // Scenario: malformed imported Org — a side that does not round-trip
+    // would be rewritten lossily.
+    if fmt == Format::Org
+        && (!tine_core::org::org_editable(&sides.mine)
+            || !tine_core::org::org_editable(&sides.theirs))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "an org side of this merge does not round-trip; not resolving",
+        ));
+    }
+    let mine = parse(&sides.mine, fmt);
+    let theirs = parse(&sides.theirs, fmt);
+    let base = sides.base.as_deref().map(|text| parse(text, fmt));
+    let artifact = sides.suggested.as_deref().map(|text| parse(text, fmt));
+    let roots = sync_diff::merge_blocks3(
+        base.as_ref().map(|doc| doc.roots.as_slice()),
+        &mine.roots,
+        &theirs.roots,
+        artifact.as_ref().map(|doc| doc.roots.as_slice()),
+        decisions,
+    )
+    .map_err(merge_refused)?;
+    let pre_block = choose_pre(pre_choice, fmt, &mine, &theirs)?;
+    Ok(dto(store, page, Document { pre_block, roots }))
 }

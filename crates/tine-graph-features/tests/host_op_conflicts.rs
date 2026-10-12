@@ -387,3 +387,98 @@ fn a_sync_copy_is_never_a_page() {
     store.close();
     let _ = fs::remove_dir_all(root);
 }
+
+const MARKED: &str = "pages/Marked.md";
+const MARKED_TEXT: &str = "- before\n<<<<<<< ours\n- mine\n=======\n- theirs\n>>>>>>> theirs\n";
+
+/// The review of `MARKED` now: keep both sides of every changed row.
+fn marker_review(store: &Store) -> (HashMap<String, String>, String) {
+    let diff = conflicts::vcs_marker_conflict_diff(store, MARKED)
+        .unwrap()
+        .expect("markers");
+    let mut decisions = HashMap::new();
+    keep_both(&diff.diff.rows, &mut decisions);
+    (decisions, diff.diff.base_rev)
+}
+
+fn resolve_markers(
+    store: &Store,
+    host: Option<&PageHost>,
+    (decisions, base): &(HashMap<String, String>, String),
+) -> std::io::Result<()> {
+    conflicts::resolve_vcs_marker_conflict(store, host, MARKED, decisions, base, "union")
+}
+
+/// W8 (P3 combine): a marker resolution with a host writes what the plain
+/// one writes, and the marker bytes are in conflict trash, staged before the
+/// operation (DESIGN §3.4 pre).
+#[test]
+fn a_marker_resolution_with_a_host_writes_what_the_plain_one_writes() {
+    let plain = graph("markers-plain");
+    fs::write(plain.join(MARKED), MARKED_TEXT).unwrap();
+    let store = open(&plain);
+    let review = marker_review(&store);
+    resolve_markers(&store, None, &review).unwrap();
+    store.close();
+    let hosted = graph("markers-hosted");
+    fs::write(hosted.join(MARKED), MARKED_TEXT).unwrap();
+    let app_data = tempfile::tempdir().unwrap();
+    let store = open(&hosted);
+    let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let review = marker_review(&store);
+    resolve_markers(&store, Some(&host), &review).unwrap();
+    drop(host);
+    store.close();
+    assert_eq!(tree(&hosted), tree(&plain), "a resolution's bytes changed under a host");
+    let resolved = fs::read_to_string(hosted.join(MARKED)).unwrap();
+    assert!(!resolved.contains("<<<<<<<"), "{resolved:?}");
+    assert!(resolved.contains("- mine") && resolved.contains("- theirs"), "{resolved:?}");
+    assert_eq!(
+        trashed(&hosted.join("logseq/.tine-trash/conflicts")),
+        vec![MARKED_TEXT.to_owned()],
+        "the marker bytes are not recoverable in conflict trash"
+    );
+    let _ = fs::remove_dir_all(plain);
+    let _ = fs::remove_dir_all(hosted);
+}
+
+/// W8: a marker page edited after the resolution planned is never
+/// overwritten. The operation is refused as changed on disk; the staged copy
+/// of the reviewed bytes stays in trash (DESIGN §3.4: harmless).
+#[test]
+fn a_marker_page_changed_after_the_plan_is_never_overwritten() {
+    let root = graph("markers-raced");
+    fs::write(root.join(MARKED), MARKED_TEXT).unwrap();
+    let app_data = tempfile::tempdir().unwrap();
+    let store = open(&root);
+    let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
+    let review = marker_review(&store);
+    let held = host
+        .reserve(|| vec![PageId::from(MARKED)], Input::Refuse)
+        .expect("nothing unsaved");
+    let result = std::thread::scope(|scope| {
+        let (done, finished) = mpsc::channel();
+        let (store, host, review) = (&store, &host, &review);
+        scope.spawn(move || {
+            let _ = done.send(resolve_markers(store, Some(host), review));
+        });
+        // The resolution reads, stages and plans now; it cannot apply while
+        // the page is held.
+        std::thread::sleep(Duration::from_millis(300));
+        fs::write(root.join(MARKED), "- resolved by hand\n").unwrap();
+        drop(held);
+        finished
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the resolution finishes once the page is released")
+    });
+    drop(host);
+    store.close();
+    let error = result.expect_err("a resolution over a changed page refuses");
+    assert_eq!(error.to_string(), "file changed on disk");
+    assert_eq!(fs::read(root.join(MARKED)).unwrap(), b"- resolved by hand\n");
+    assert_eq!(
+        trashed(&root.join("logseq/.tine-trash/conflicts")),
+        vec![MARKED_TEXT.to_owned()]
+    );
+    let _ = fs::remove_dir_all(root);
+}

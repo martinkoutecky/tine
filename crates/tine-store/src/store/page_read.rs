@@ -124,11 +124,45 @@ impl Store {
         doc: &PageDto,
         old: Option<&[u8]>,
     ) -> Result<Vec<u8>, crate::Why> {
+        self.planned_bytes(id, doc, old, false)
+    }
+
+    /// [`Store::page_bytes`] for the one plan allowed over bytes that carry
+    /// VCS conflict markers: their resolution (R-VCS-MARKERS, as
+    /// `SaveBase::ResolvingMarkers` is for a transaction). The caller stages
+    /// the old bytes first ([`Store::stage_marker_copy`]). Writes nothing.
+    /// Cost O(bytes + blocks).
+    pub fn page_bytes_resolving(
+        &self,
+        id: &PageId,
+        doc: &PageDto,
+        old: &[u8],
+    ) -> Result<Vec<u8>, crate::Why> {
+        self.planned_bytes(id, doc, Some(old), true)
+    }
+
+    fn planned_bytes(
+        &self,
+        id: &PageId,
+        doc: &PageDto,
+        old: Option<&[u8]>,
+        resolving: bool,
+    ) -> Result<Vec<u8>, crate::Why> {
         let file = id.file();
         let tx = self.transaction(None);
         tx.page_save_target(&file, doc)?;
-        let (bytes, _) = tx.serialize_page(&file, doc, old, false)?;
+        let (bytes, _) = tx.serialize_page(&file, doc, old, resolving)?;
         Ok(bytes)
+    }
+
+    /// Stage a byte-exact copy of `old`, the bytes of marker-bearing page file
+    /// `file`, under `logseq/.tine-trash/conflicts/<stamp>__markers__<name>`
+    /// (no-replace, fsync'd), before a host operation resolves them (DESIGN
+    /// §3.4 pre): a crash leaves the old file plus its copy, or the resolved
+    /// file plus the copy, never a lost side. A refused operation leaves the
+    /// copy in trash. One write + fsync of `old`.
+    pub fn stage_marker_copy(&self, file: &FileId, old: &[u8]) -> Result<FileId, crate::Why> {
+        self.transaction(None).stage_marker_file(file, old)
     }
 
     /// Hold page `id` as a page host does, with no host running: its index

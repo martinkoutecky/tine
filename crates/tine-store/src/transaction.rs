@@ -983,7 +983,7 @@ impl<'a> Transaction<'a> {
     /// trash (no-replace, fsync'd) before a `SaveBase::ResolvingMarkers`
     /// replaces them. A crash after this point leaves the old file plus its
     /// copy, or the resolved file plus the copy: never a lost side.
-    fn stage_marker_file(&self, file: &FileId, old: &[u8]) -> Result<FileId, Why> {
+    pub(crate) fn stage_marker_file(&self, file: &FileId, old: &[u8]) -> Result<FileId, Why> {
         let name = Path::new(file.as_str())
             .file_name()
             .and_then(|s| s.to_str())
