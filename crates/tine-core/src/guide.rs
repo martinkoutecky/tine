@@ -233,6 +233,27 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn find_and_replace_is_documented() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        let revisit = include_str!("templates/find-and-revisit.md");
+        let tips = include_str!("templates/tips.md");
+        for detail in [
+            "**Replace with**",
+            "**Replace all**",
+            "as one **Undo** step",
+            "a link's address and hidden properties such as `id::` are never changed",
+            "**⋯** menu → **Find in page**",
+        ] {
+            assert!(
+                reference.contains(detail),
+                "missing find/replace detail: {detail}"
+            );
+        }
+        assert!(revisit.contains("**⋯** menu → **Find in page**"));
+        assert!(tips.contains("**Replace** and **Replace all**"));
+    }
+
+    #[test]
     fn workspace_windows_are_documented() {
         let context = include_str!("templates/keep-context-visible.md");
         for detail in [

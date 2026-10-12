@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Keyboard block commands, assignable in Settings > Keyboard shortcuts and listed in the command palette, with no default key (Logseq binds none): **Copy block refs of the selected blocks** (GH #576), **Paste as link** (GH #448), **Duplicate block below (with children)** (GH #379), **Insert child block** (GH #634), **Collapse children (one level)** and **Expand children (one level)** (GH #525), and **Search for the selected text** (GH #633).
 - The Ctrl/Cmd+Shift+V "paste as plain text" key is now listed in the shortcut reference and the Guide (GH #513).
 - Right sidebar: each item has a ⋯ menu with **Close**, **Close others**, **Close all**, **Collapse**/**Expand**, **Collapse others**, **Collapse all**, **Expand all**, and **Open as page** for a page item, as in Logseq (GH #462).
+- Find in page can replace: the arrow at the left of the find bar opens **Replace with**, with **Replace** (the highlighted match) and **Replace all** (every match on the page you opened Find in, as one Undo step). It edits the text you see, as typing would, so link addresses and hidden properties are never changed (GH #208). Find in page is also in each page's **⋯** menu, so phones can open it (GH #338).
 
 ### Changed
 
