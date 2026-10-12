@@ -440,7 +440,7 @@ def guard_oracle():
 def find(model_dir, quint, name, spec, reuse=False):
     work = ROOT / "scratch/s3/witnesses"
     work.mkdir(parents=True, exist_ok=True)
-    model = (model_dir / "storage-s3.qnt").read_text()
+    model = (model_dir / "storage-s33.qnt").read_text()
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
     pages = spec.get("pages", 3)
     if pages != 3:

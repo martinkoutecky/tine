@@ -13,7 +13,8 @@ export type MobileEditorCommandId =
   | "editor/open-date-picker"
   | "editor/insert-page-ref"
   | "editor/insert-block-ref"
-  | "editor/open-slash-menu";
+  | "editor/open-slash-menu"
+  | "editor/paste-as-link";
 
 export interface FocusedEditorCommandBridge {
   blockId: string;

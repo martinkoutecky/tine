@@ -96,6 +96,30 @@ afterEach(() => {
   resetPaneLayoutToSingle(journalsSnapshot());
 });
 
+describe("TabBar same-page tab labels (GH #528)", () => {
+  it("a zoomed tab whose block is not loaded is distinguishable from the plain tab of the same page", () => {
+    restorePaneLayout(
+      { kind: "pane", paneId: "main" },
+      new Map([["main", {
+        tabs: [
+          { history: [{ kind: "page", name: "Projects", pageKind: "page" }], pos: 0, pinned: false },
+          { history: [{ kind: "page", name: "Projects", pageKind: "page", block: "6f1c0000-0000-4000-8000-000000000001" }], pos: 0, pinned: false },
+        ],
+        activeIndex: 0,
+      } as PaneSnapshot]]),
+      "main"
+    );
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <TabBar router={paneRouter("main")} />, root);
+    const labels = Array.from(root.querySelectorAll(".tab .tab-title")).map((n) => n.textContent);
+    expect(labels).toHaveLength(2);
+    expect(new Set(labels).size).toBe(2);
+    expect(labels[1]).toContain("Projects");
+    dispose();
+  });
+});
+
 describe("TabBar close control (GH #340)", () => {
   it("is a real button with its own Close tab name, not the tab's pin tooltip", () => {
     resetPaneLayoutToSingle(pageSnapshot(["A", "B"]));
@@ -193,6 +217,42 @@ describe("TabBar pointer tab drag", () => {
 
     expect(namesForPane("main")).toEqual(["A"]);
     expect(namesForPane("pane-2")).toEqual(["B", "X", "Y"]);
+    document.elementFromPoint = prevElementFromPoint;
+    dispose();
+  });
+
+  it("GH #527: dropping on the empty space of another pane's tab bar places the tab last", () => {
+    const { root, dispose } = renderSplit(["A", "B"], ["X", "Y"]);
+    const dragged = tab(root, "main", 0);
+    const bar = root.querySelector('[data-pane-id="pane-2"] .tab-bar') as HTMLElement;
+    const strip = bar.querySelector(".tab-strip-scroll") as HTMLElement;
+    setRect(tab(root, "pane-2", 1), 260, 0, 60, 24);
+    const prevElementFromPoint = document.elementFromPoint;
+    // The pointer is far right of the last tab: it hits the strip, not any tab.
+    document.elementFromPoint = () => strip;
+
+    dragged.dispatchEvent(pointer("pointerdown", 20, 10));
+    window.dispatchEvent(pointer("pointermove", 480, 10));
+    window.dispatchEvent(pointer("pointerup", 480, 10, { buttons: 0 }));
+
+    expect(namesForPane("main")).toEqual(["B"]);
+    expect(namesForPane("pane-2")).toEqual(["X", "Y", "A"]);
+    document.elementFromPoint = prevElementFromPoint;
+    dispose();
+  });
+
+  it("GH #527: dropping on empty tab-bar space within the same pane moves the tab last", () => {
+    const { root, dispose } = renderSplit(["A", "B", "C"], ["X"]);
+    const dragged = tab(root, "main", 0);
+    const bar = root.querySelector('[data-pane-id="main"] .tab-bar') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => bar;
+
+    dragged.dispatchEvent(pointer("pointerdown", 20, 10));
+    window.dispatchEvent(pointer("pointermove", 400, 10));
+    window.dispatchEvent(pointer("pointerup", 400, 10, { buttons: 0 }));
+
+    expect(namesForPane("main")).toEqual(["B", "C", "A"]);
     document.elementFromPoint = prevElementFromPoint;
     dispose();
   });

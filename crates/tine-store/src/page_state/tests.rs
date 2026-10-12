@@ -12,6 +12,19 @@ fn config(profile: &str, mutant: &str) -> Config {
 
 // Evaluate the original scenario predicates, including intermediate expects.
 // Unsupported syntax is a harness error, never a passing assertion.
+fn substitute(e: &Value, name: &str, value: &Value) -> Value {
+    if e.is_array() && e[0] == "id" && e[1] == name {
+        return json!(["id", value.to_string()]);
+    }
+    match e {
+        Value::Array(a) => json!(a
+            .iter()
+            .map(|e| substitute(e, name, value))
+            .collect::<Vec<_>>()),
+        _ => e.clone(),
+    }
+}
+
 pub(super) fn eval(e: &Value, x: &State) -> Value {
     let tag = e[0].as_str().unwrap();
     match tag {
@@ -32,6 +45,10 @@ pub(super) fn eval(e: &Value, x: &State) -> Value {
                 "MUTANT" => json!(x.config.mutant),
                 "PAGES" => json!((0..x.s.pages.len()).collect::<Vec<_>>()),
                 "UNKNOWN" => json!(UNKNOWN),
+                // scenarios-s33.inc: `val cur = PAGES.mapBy(p => opCur(s, p))`.
+                "cur" => json!((0..x.s.pages.len())
+                    .map(|p| json!([p, op_cur(&x.s, p)]))
+                    .collect::<Vec<_>>()),
                 _ if n.starts_with('"') => json!(n.trim_matches('"')),
                 _ => json!(n.parse::<i64>().expect("unsupported identifier")),
             }
@@ -82,18 +99,6 @@ pub(super) fn eval(e: &Value, x: &State) -> Value {
                     let lambda = &args[0];
                     assert_eq!(lambda[1], "=>");
                     return json!(domain.as_array().unwrap().iter().all(|v| {
-                        fn substitute(e: &Value, name: &str, value: &Value) -> Value {
-                            if e.is_array() && e[0] == "id" && e[1] == name {
-                                return json!(["id", value.to_string()]);
-                            }
-                            match e {
-                                Value::Array(a) => json!(a
-                                    .iter()
-                                    .map(|e| substitute(e, name, value))
-                                    .collect::<Vec<_>>()),
-                                _ => e.clone(),
-                            }
-                        }
                         eval(
                             &substitute(&lambda[3], lambda[2][1].as_str().unwrap(), v),
                             x,
@@ -101,6 +106,19 @@ pub(super) fn eval(e: &Value, x: &State) -> Value {
                         .as_bool()
                         .unwrap()
                     }));
+                }
+                if method == "mapBy" {
+                    // A map as its (key, value) pairs, as `Map(..)` evaluates.
+                    let domain = eval(&f[1], x);
+                    let lambda = &args[0];
+                    assert_eq!(lambda[1], "=>");
+                    let name = lambda[2][1].as_str().unwrap();
+                    return json!(domain
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|v| json!([v, eval(&substitute(&lambda[3], name, v), x)]))
+                        .collect::<Vec<_>>());
                 }
                 if method == "get" {
                     return eval(&f[1], x)[eval(&args[0], x).as_u64().unwrap() as usize].clone();
@@ -122,6 +140,7 @@ pub(super) fn eval(e: &Value, x: &State) -> Value {
                 "dirty" => json!(dirty(&serde_json::from_value(a).unwrap())),
                 "draftEntry" => json!(draft_entry(&serde_json::from_value(a).unwrap())),
                 "opClean" => json!(op_clean(&x.s, eval(&args[1], x).as_u64().unwrap() as usize)),
+                "opCur" => json!(op_cur(&x.s, eval(&args[1], x).as_u64().unwrap() as usize)),
                 function => panic!("unsupported function {function}"),
             }
         }
@@ -159,6 +178,30 @@ pub(super) fn action(name: &str, args: &[Value]) -> Action {
                     )
                 })
                 .collect(),
+        ),
+        "opApply" => {
+            let map = |i: usize| -> std::collections::BTreeMap<usize, Text> {
+                args[i]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|pair| {
+                        (
+                            pair[0].as_u64().unwrap() as usize,
+                            pair[1].as_i64().unwrap(),
+                        )
+                    })
+                    .collect()
+            };
+            Action::OpApply(map(0), map(1), v(2), v(3))
+        }
+        // The trace driver's encoding: which pages change (bits), their new
+        // texts, the bytes each page holds (the plan), then (dst, src).
+        "opApplyPacked" => Action::OpApply(
+            (0..3).filter(|&i| b(i)).map(|i| (i, v(3 + i))).collect(),
+            (0..3).map(|i| (i, v(6 + i))).collect(),
+            v(9),
+            v(10),
         ),
         "powerK" => Action::PowerK(serde_json::from_value(args[0].clone()).unwrap()),
         "powerKBits" => Action::PowerK((0..3).filter(|&i| b(i)).collect()),
@@ -304,11 +347,11 @@ fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
     assert_eq!(fixture["model_sha256"], MODEL_SHA);
     assert_eq!(
         fixture["scenario_sha256"],
-        "92a75904b2da9b43a7bb9c80a0f2fc41b462cef5a60ec41f4d613b67d58ff1c3"
+        "033fc5b7aac419a70421c795cced1d9e0e7d8021a6f053632131fff7cefe43b8"
     );
     let scenarios = fixture["scenarios"].as_object().unwrap();
-    assert_eq!(scenarios.len(), 159);
-    assert_eq!(fixture["oracles"].as_array().unwrap().len(), 36);
+    assert_eq!(scenarios.len(), 177);
+    assert_eq!(fixture["oracles"].as_array().unwrap().len(), 40);
     let mut comparisons = 0;
     for oracle in fixture["oracles"].as_array().unwrap() {
         let profile = oracle["profile"].as_str().unwrap();
@@ -326,7 +369,7 @@ fn scenario_outcomes_equal_quint_in_all_profiles_and_mutants() {
             comparisons += 1;
         }
     }
-    assert_eq!(comparisons, 5724);
+    assert_eq!(comparisons, 7080);
 }
 
 #[test]
@@ -372,7 +415,7 @@ fn every_declared_mutant_is_caught() {
         );
         count += 1;
     }
-    assert_eq!(count, 32);
+    assert_eq!(count, 36);
 }
 
 fn replay_traces(fixture: &Value) -> (usize, usize) {

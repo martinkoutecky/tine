@@ -115,38 +115,37 @@ fn tx_error(outcome: TxOutcome) -> io::Result<Vec<tine_store::StepResult>> {
                         .collect::<Vec<_>>(), ", ")
                 ))));
             }
-            Err(match why {
-                Why::Conflict { .. } => {
-                    io::Error::new(io::ErrorKind::WouldBlock, "concurrent graph write")
-                }
-                Why::Failed(error) => io::Error::new(error.kind, error.message),
-                Why::Refused(refusal) => match refusal {
-                    Refusal::ReadOnly(message) | Refusal::InvalidTarget(message) => {
-                        io::Error::new(io::ErrorKind::InvalidInput, message)
-                    }
-                    Refusal::Twin { .. } => {
-                        io::Error::new(io::ErrorKind::AlreadyExists, "twin page")
-                    }
-                    Refusal::Undecodable => {
-                        io::Error::new(io::ErrorKind::InvalidData, "undecodable file")
-                    }
-                    Refusal::RepeatedFile(_) => {
-                        io::Error::new(io::ErrorKind::InvalidInput, "repeated file")
-                    }
-                    Refusal::Closed => io::Error::new(io::ErrorKind::BrokenPipe, "store closed"),
-                    Refusal::AssetReferenced => {
-                        io::Error::new(io::ErrorKind::InvalidInput, assets::AssetReferenced)
-                    }
-                    Refusal::UnreadableOwner { file } => io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "{} cannot be read and may already be this page",
-                            file.as_str()
-                        ),
-                    ),
-                },
-            })
+            Err(why_error(why))
         }
+    }
+}
+
+/// A refusal or failure as the caller's I/O error.
+fn why_error(why: Why) -> io::Error {
+    match why {
+        Why::Conflict { .. } => io::Error::new(io::ErrorKind::WouldBlock, "concurrent graph write"),
+        Why::Failed(error) => io::Error::new(error.kind, error.message),
+        Why::Refused(refusal) => match refusal {
+            Refusal::ReadOnly(message) | Refusal::InvalidTarget(message) => {
+                io::Error::new(io::ErrorKind::InvalidInput, message)
+            }
+            Refusal::Twin { .. } => io::Error::new(io::ErrorKind::AlreadyExists, "twin page"),
+            Refusal::Undecodable => io::Error::new(io::ErrorKind::InvalidData, "undecodable file"),
+            Refusal::RepeatedFile(_) => {
+                io::Error::new(io::ErrorKind::InvalidInput, "repeated file")
+            }
+            Refusal::Closed => io::Error::new(io::ErrorKind::BrokenPipe, "store closed"),
+            Refusal::AssetReferenced => {
+                io::Error::new(io::ErrorKind::InvalidInput, assets::AssetReferenced)
+            }
+            Refusal::UnreadableOwner { file } => io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{} cannot be read and may already be this page",
+                    file.as_str()
+                ),
+            ),
+        },
     }
 }
 

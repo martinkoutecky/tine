@@ -1648,6 +1648,9 @@ mod stop_saved;
 #[path = "binding_rename_tests.rs"]
 mod rename;
 
+#[path = "binding_apply_tests.rs"]
+mod apply_tests;
+
 #[path = "binding_order_tests.rs"]
 mod order;
 
@@ -2641,13 +2644,15 @@ fn an_admission_deferred_on_the_writer_is_not_overtaken() {
             host.submit(session, submit_id, &key, &dto, page.version, None, &kinds)
         });
         // The submit reaches the driver while the open still waits: queued
-        // behind it here, or answered by a driver that lets it pass (bounded
-        // for an implementation that does neither).
-        let queued = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < queued
-            && host.driver.shared.deferred.load(Ordering::SeqCst) < 2
-            && !submitted.is_finished()
-        {
+        // behind it here, or answered by a driver that lets it pass. The
+        // writer is released only once one of those was observed, so a submit
+        // that is merely slow to arrive cannot pass for an ordered one.
+        let queued = Instant::now() + Duration::from_secs(20);
+        while host.driver.shared.deferred.load(Ordering::SeqCst) < 2 && !submitted.is_finished() {
+            assert!(
+                Instant::now() < queued,
+                "the submit never reached the driver"
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
         drop(writer);

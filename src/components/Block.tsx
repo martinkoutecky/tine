@@ -3,7 +3,7 @@ import { LineGutter } from "../render/LineGutter";
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { autocompleteFacets, backend } from "../backend";
 import { reportUiFailure } from "../uiFailure";
-import { clearClipboardSlot, normalize, peekClipboardSlot } from "../clipboard";
+import { clearClipboardSlot, normalize, peekClipboardSlot, readClipboardText } from "../clipboard";
 import {
   detectTrigger,
   applyCompletion,
@@ -36,7 +36,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, type OutlineScope, node as docNode } from "../document";
-import { openDurableBlock } from "../blockRefActions";
+import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
   clearFocusSurface,
@@ -2133,6 +2133,27 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     applyEdit({ text: ref.value.slice(0, start) + "/" + ref.value.slice(end), start: start + 1, end: start + 1 });
     queueMicrotask(() => void updateAutocomplete());
   };
+  // GH #448 "Paste as link": the clipboard's URL or block ref becomes a link
+  // around the selection (a bare link without one). A command, so it reads the
+  // clipboard itself; ordinary paste is untouched.
+  const pasteAsLinkCmd = async () => {
+    const before = { value: ref.value, start: ref.selectionStart, end: ref.selectionEnd };
+    let clipboard: string;
+    try {
+      clipboard = await readClipboardText();
+    } catch {
+      pushToast("Couldn't read the clipboard", "error");
+      return;
+    }
+    // The user kept typing while the clipboard was read: the request is stale.
+    if (!ref.isConnected || ref.value !== before.value) return;
+    const edit = pasteAsLinkEdit(before.value, before.start, before.end, clipboard, pageFmt());
+    if (!edit) {
+      pushToast("The clipboard doesn't hold a link or a block ref", "warn");
+      return;
+    }
+    applyEdit(edit);
+  };
   const openScheduledDatePicker = () => {
     const r = ref.getBoundingClientRect();
     openDatePicker(props.id, "scheduled", r.left, r.bottom + 4);
@@ -2241,6 +2262,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         return true;
       case "editor/open-slash-menu":
         insertSlashMenuTrigger();
+        return true;
+      case "editor/paste-as-link":
+        void pasteAsLinkCmd();
         return true;
     }
   };

@@ -16,12 +16,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use syn::visit::Visit;
 
-const RULE: &str = "STEP3 §7 (R6): a production page writer runs under a page-host reservation";
+const RULE: &str =
+    "STEP3 §7 (R6): a production page writer runs under a page-host reservation or as a host operation (host-only-writer P2)";
 const EXEMPLAR: &str = "crates/tine-graph-features/src/conflicts.rs fold_pair";
 /// Store calls that write graph files.
 const WRITES: &[&str] = &["transaction", "restore"];
 /// Calls that route a writer through the host.
-const ROUTES: &[&str] = &["reserved", "restore_hosted"];
+const ROUTES: &[&str] = &["reserved", "applied", "restore_hosted"];
 
 /// Writers of no page file, by `file::fn`, each with its reason.
 const EXEMPT: &[(&str, &str)] = &[
@@ -424,7 +425,12 @@ const OPERATION_KINDS: &[(&str, &str)] = &[
     ("delete_checked", "DeletePage"),
     ("rename", "RenamePage"),
     ("rename_with", "RenamePage"),
+    // A feature's operation records the kinds it names; `PageHost::apply`
+    // refuses an operation that names none (binding_apply.rs).
+    ("apply", OWN_KINDS),
 ];
+/// The operation's own kinds (`HostOp::kinds`) rather than one fixed kind.
+const OWN_KINDS: &str = "*";
 
 /// The page host's production module tree: the files declared without
 /// `#[cfg(test)]`, from `mod.rs` down.
@@ -494,7 +500,10 @@ fn undeclared(functions: &BTreeMap<String, Function>, operations: &[String]) -> 
         for (op, kind) in OPERATION_KINDS {
             let runs = function.body.contains(&format!(". {op} ("));
             let declares = function.calls.contains("took")
-                && function.body.contains(&format!("EditKind :: {kind}"));
+                && match *kind {
+                    OWN_KINDS => function.body.contains("in & kinds"),
+                    kind => function.body.contains(&format!("EditKind :: {kind}")),
+                };
             if runs && !declares {
                 found.push(format!("{key} runs {op} without took(…, EditKind::{kind})"));
             }

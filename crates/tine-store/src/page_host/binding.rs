@@ -1308,6 +1308,10 @@ mod publication;
 
 #[path = "binding_launch.rs"]
 mod launch;
+
+#[path = "binding_apply.rs"]
+mod apply;
+pub use apply::{ApplyRefusal, Effect, Expected, HostOp};
 #[cfg(feature = "test-faults")]
 pub use retained::OPERATION_WAIT;
 pub use retained::{RenameRefusal, Reservation, ReserveRefusal};

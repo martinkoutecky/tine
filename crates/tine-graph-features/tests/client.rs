@@ -136,6 +136,10 @@ fn source_scan_guard_clients_touch_no_path() {
         ("custom_css", include_str!("../src/custom_css.rs")),
         ("journals", include_str!("../src/journals.rs")),
         ("pages", include_str!("../src/pages.rs")),
+        (
+            "pages/merge_payload",
+            include_str!("../src/pages/merge_payload.rs"),
+        ),
         ("pdf", include_str!("../src/pdf.rs")),
         ("guide", include_str!("../src/guide.rs")),
         ("print", include_str!("../src/print.rs")),
