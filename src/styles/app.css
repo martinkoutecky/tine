@@ -6923,8 +6923,21 @@ img.emoji {
 }
 
 .reference-excerpt-bullet {
+  align-self: flex-start;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
   color: var(--bullet-color, var(--text-muted));
   line-height: 1.55;
+  cursor: pointer;
+}
+.reference-excerpt-bullet:hover,
+.reference-excerpt-bullet:focus-visible {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
 }
 
 .reference-excerpt-content {
@@ -6988,6 +7001,12 @@ img.emoji {
   border-radius: 10px;
   font-size: 10px;
   cursor: pointer;
+}
+
+/* The numbered circle whose mention the excerpt currently highlights. */
+.reference-occurrence-jump.selected {
+  color: var(--bg-primary);
+  background: var(--accent-color);
 }
 
 .reference-live-evidence {
@@ -7463,6 +7482,47 @@ img.emoji {
 .block-embed-host .embed-block > .live-ref-group > .ls-block > .block-children-container > .block-children {
   border-left-width: 2px;
   border-left-color: var(--tine-embed-accent, var(--block-embed-accent));
+}
+
+/* GH #439: a whole-page embed. The host's bullet row carries a header naming the
+   page (OG block.cljs `page-embed`: page icon + page link in `.embed-header`);
+   the page's roots then sit on the host's own children grid, one indent step in,
+   under a guide in the embed accent, instead of in an inset tinted box whose
+   roots landed ~26px off the outline column. `--page-embed-controls` is the
+   host's control column (fold arrow + bullet, 40px on desktop): the embed starts
+   after it, while the children grid starts one indent from the host's left edge,
+   so the group is pulled back by (controls - indent). */
+.embed-block.embed-page {
+  background: none;
+  border-left: 0;
+  padding-left: 0;
+  margin: 0;
+  --page-embed-controls: 40px;
+}
+.embed-page-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
+}
+.embed-page-glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  color: var(--text-muted);
+}
+.embed-block.embed-page > .live-ref-group {
+  margin-left: calc(var(--ls-block-indent) - var(--page-embed-controls) - 3px);
+  padding-left: 1px;
+  border-left: 2px solid var(--tine-embed-accent, var(--block-embed-accent));
+}
+/* The phone layout takes the fold arrow out of the control column (see the
+   coarse-pointer block above), leaving the bullet column alone: 21px. */
+@media (max-width: 640px) and (pointer: coarse) {
+  .embed-block.embed-page {
+    --page-embed-controls: 21px;
+  }
 }
 
 /* video / iframe embeds */
