@@ -48,6 +48,10 @@ pub(super) struct ProductionIo {
     untouchable: std::collections::BTreeSet<String>,
     #[cfg(any(test, feature = "test-faults"))]
     pub faults: BTreeMap<super::io::Phase, std::collections::VecDeque<io::ErrorKind>>,
+    /// Slow every call of the phase by this much: a long operation that
+    /// keeps making progress.
+    #[cfg(test)]
+    pub delays: BTreeMap<super::io::Phase, std::time::Duration>,
     /// Abort the process just before the phase's call number `n` (0-based).
     #[cfg(any(test, feature = "test-faults"))]
     abort: Option<(super::io::Phase, usize)>,
@@ -85,6 +89,8 @@ impl ProductionIo {
             untouchable: Default::default(),
             #[cfg(any(test, feature = "test-faults"))]
             faults: ATTACH_FAULTS.with(|faults| faults.take()),
+            #[cfg(test)]
+            delays: BTreeMap::new(),
             #[cfg(any(test, feature = "test-faults"))]
             abort: ATTACH_ABORT.with(|abort| abort.take()),
         };
@@ -135,6 +141,10 @@ impl ProductionIo {
             .and_then(|queue| queue.pop_front())
         {
             return Err(failure(io::Error::new(kind, "injected phase failure")));
+        }
+        #[cfg(test)]
+        if let Some(delay) = self.delays.get(&phase) {
+            std::thread::sleep(*delay);
         }
         let _ = phase;
         Ok(())

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # M4 availability gate (REVIEW-progress-plan R5): a 250- and a 1000-referrer
-# rename through the page host complete inside their caller's bound
-# (OPERATION_WAIT, 10 s), in a release build. The tests print the timings.
+# rename through the page host are answered success, off Windows inside 10 s
+# (OPERATION_WAIT), in a release build. The tests print the timings.
 # Hosted Windows runs the same two tests in ci.yml's scope=windows job (G1). The structural linearity proof is the ordinary
 # test rename_cost.rs rename_host_work_is_linear.
 # Usage: scripts/rename-thousand-referrers.sh

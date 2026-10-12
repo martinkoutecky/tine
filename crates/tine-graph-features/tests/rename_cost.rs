@@ -368,11 +368,15 @@ fn rename_host_work_is_linear() {
 
 /// M4 (REVIEW-progress-plan R5): the availability half of the proof, kept
 /// apart from the structural counts above. A rename of 250 and of 1000
-/// referrers completes inside its caller's bound (`OPERATION_WAIT`, 10 s):
-/// `rename_page_expected` returns `TimedOut` past it. Release build only, so a
-/// loaded debug suite cannot decide it; the executable gate is
-/// `scripts/rename-thousand-referrers.sh` (Linux) and the `scope=windows` CI
-/// job (G1), which print the timings.
+/// referrers is answered success, and off Windows inside 10 s (the caller's
+/// `OPERATION_WAIT`). The caller's bound is on a stall, not the operation
+/// (storage contract, page host binding): on Windows each save's
+/// write-through rename makes a thousand referrers outlast 10 s while they
+/// keep publishing, an accepted cost (Martin 2026-10-12, journal "Windows
+/// rename cost: keep write-through"), so there only success is asserted and
+/// the timing printed. Release build only, so a loaded debug suite cannot
+/// decide it; the executable gate is `scripts/rename-thousand-referrers.sh`
+/// (Linux) and the `scope=windows` CI job (G1), which print the timings.
 fn release_rename_gate(referrers: usize) {
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     assert!(
@@ -381,11 +385,18 @@ fn release_rename_gate(referrers: usize) {
     );
     let started = std::time::Instant::now();
     let (c, call, heard) = rename_through_cleanup(80, referrers);
-    heard.expect("the caller hears success inside OPERATION_WAIT");
     eprintln!(
-        "M4 release gate, {referrers} referrers: caller {call:?}, {:?} through cleanup: {c:?}",
+        "M4 release gate, {referrers} referrers: caller {call:?} (heard {heard:?}), {:?} through \
+         cleanup: {c:?}",
         started.elapsed()
     );
+    heard.expect("the caller hears success: its bound is on a stall, not the operation");
+    if !cfg!(windows) {
+        assert!(
+            call < std::time::Duration::from_secs(10),
+            "M4: off Windows a rename of {referrers} referrers answers inside OPERATION_WAIT: {call:?}"
+        );
+    }
 }
 
 #[test]
