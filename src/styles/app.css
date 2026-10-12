@@ -4317,9 +4317,14 @@ html[data-system-insets="native-viewport"] {
 }
 
 /* Deliberate Martin-approved OG divergence: missing page refs are muted
-   and dotted, but still navigate/create; tags are exempt. OG dims only untitled pages. */
+   and dotted, but still navigate/create; tags are exempt. OG dims only untitled pages.
+   The colour is a link tint pulled toward the secondary text colour (GH #432): a link
+   to a page that does not exist yet stays above plain text in the emphasis order,
+   below a real link, and readable (>= 4.5:1 on the built-in palettes; a muted grey was
+   2.8:1 in light). Hover restores the full link colour. --tine-missing-page-color
+   overrides it. */
 [data-missing-page] {
-  color: var(--text-muted);
+  color: var(--tine-missing-page-color, color-mix(in srgb, var(--link-color) 55%, var(--text-secondary)));
   text-decoration: underline dotted;
   text-underline-offset: 2px;
 }
@@ -4328,13 +4333,14 @@ html[data-system-insets="native-viewport"] {
   text-decoration: underline dotted;
 }
 
+/* External links carry a solid underline, page refs none (OG common.css `.external-link`:
+   `border-bottom: 1px solid`, GH #430): a link that leaves the graph reads differently from
+   one that stays in it, with no second link colour. --tine-external-link-underline replaces
+   the underline (any border-bottom value, or `none`). */
 .external-link {
   color: var(--link-color);
   text-decoration: none;
-}
-
-.external-link:hover {
-  text-decoration: underline;
+  border-bottom: var(--tine-external-link-underline, 1px solid);
 }
 
 .inline-code {
