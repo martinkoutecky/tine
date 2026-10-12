@@ -1,6 +1,7 @@
 import type { JSX } from "solid-js";
 import { backend } from "../backend";
 import { pushToast } from "../toasts";
+import { t } from "../i18n";
 import { graphOwner, ownedWhen, readOwned } from "../owned";
 
 /** Schemes whose links open as before, with no prompt: web, mail, a local
@@ -35,8 +36,8 @@ export async function openOutboundLink(dest: string, graphScoped = true): Promis
     if (scheme && NEVER_OPENED_SCHEMES.has(scheme)) throw new Error(`${scheme}: links are never opened`);
     if (scheme && !DIRECT_SCHEMES.has(scheme)) {
       const answer = await readOwned(owner, backend().confirm(
-        `Open this ${scheme}: link in the app your system uses for it?\n\n${dest}`,
-        `Open ${scheme}: link`,
+        t("links-open-custom-scheme-confirm", { scheme, url: dest }),
+        t("links-open-custom-scheme-title", { scheme }),
       ));
       if (answer.kind === "stale" || !answer.value) return;
       await readOwned(owner, backend().openExternal(dest, scheme));

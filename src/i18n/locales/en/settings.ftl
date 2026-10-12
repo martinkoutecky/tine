@@ -9,5 +9,10 @@ toast-language-save-failed = Could not save the language preference.
 ## Settings › About
 settings-about-store-updates = Updates come from the Microsoft Store.
 
+## Settings › Graph
+settings-graph-folder-label = Graph folder
+settings-graph-folder-reveal = Show in folder
+settings-graph-folder-search-description = show in folder reveal file manager Finder Explorer location path where
+
 ## Graph creation
 graph-wsl-rootfs-refused = Cannot create a graph here: Windows access to a WSL1 rootfs can corrupt Linux files. Choose \\wsl.localhost\<distro>\… instead.

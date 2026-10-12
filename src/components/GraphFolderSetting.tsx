@@ -4,6 +4,7 @@ import { graphMeta } from "../graphSession";
 import { graphOwner, readOwned } from "../owned";
 import { canRevealInFileManager } from "../nativeChrome";
 import { pushToast } from "../toasts";
+import { msg, t } from "../i18n";
 
 /** Settings → Graph: where the open graph lives on disk (GH #447). The path is
  *  shown on every platform; **Show in folder** reveals the graph root in the
@@ -15,18 +16,18 @@ export function GraphFolderSetting(): JSX.Element {
     try {
       await readOwned(owner, backend().revealKnownGraph(path));
     } catch (error) {
-      pushToast(`Could not show the graph folder: ${String(error)}`, "error");
+      pushToast(msg("toast-graph-folder-reveal-failed", { error: String(error) }), "error");
     }
   };
   return (
     <Show when={graphMeta()?.root}>{(root) =>
       <div class="settings-field" data-setting-label="Graph folder">
         <div class="settings-field-row">
-          <span class="settings-label">Graph folder</span>
+          <span class="settings-label">{t("settings-graph-folder-label")}</span>
           <div class="settings-field-control">
             <span class="settings-value" data-graph-folder-value>{root()}</span>
             <Show when={canRevealInFileManager()}>
-              <button class="settings-btn" onClick={() => void reveal(root())}>Show in folder</button>
+              <button class="settings-btn" onClick={() => void reveal(root())}>{t("settings-graph-folder-reveal")}</button>
             </Show>
           </div>
         </div>

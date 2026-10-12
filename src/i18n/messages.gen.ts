@@ -99,7 +99,14 @@ export interface MessageArgs {
   "command-ui-toggle-wide-mode": {};
   "command-window-open-in-new-window": {};
   "graph-wsl-rootfs-refused": {};
+  "links-copy-title": {};
+  "links-open-custom-scheme-confirm": { "scheme": string | number; "url": string | number };
+  "links-open-custom-scheme-title": { "scheme": string | number };
+  "links-outside-graph-title": {};
   "settings-about-store-updates": {};
+  "settings-graph-folder-label": {};
+  "settings-graph-folder-reveal": {};
+  "settings-graph-folder-search-description": {};
   "settings-language-description": {};
   "settings-language-label": {};
   "settings-language-system": { "language": string | number };
@@ -112,8 +119,10 @@ export interface MessageArgs {
   "toast-copy-failed": {};
   "toast-copy-title": {};
   "toast-dismiss": {};
+  "toast-graph-folder-reveal-failed": { "error": string | number };
   "toast-language-load-failed": {};
   "toast-language-save-failed": {};
+  "toast-link-outside-graph": { "dest": string | number };
   "toast-repeat-count": { "count": string | number };
   "toast-wsl-rootfs-warning": {};
 }

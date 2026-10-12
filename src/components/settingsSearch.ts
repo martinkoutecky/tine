@@ -2,10 +2,11 @@
 // one label/description and optionally aliases; search matches all terms within
 // that entry. Cost O(entries × query length), no I/O or failure.
 import { KNOBS } from "../styleKnobs";
+import { msg, render, type Msg } from "../i18n";
 import type { SettingsTabId } from "../ui";
 type Tab = SettingsTabId;
 
-export type SettingSearchEntry = { tab: Tab; label: string; description: string; aliases?: string[]; level?: "advanced" };
+export type SettingSearchEntry = { tab: Tab; label: string | Msg; description: string | Msg; aliases?: string[]; level?: "advanced" };
 export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: "Language", description: "interface translation locale menus", aliases: ["语言", "中文", "Chinese", "English"] },
   { tab: "appearance", label: "Theme mode", description: "light dark system" },
@@ -62,7 +63,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "backups", label: "Snapshots to keep", description: "recovery retention conflicts" },
   { tab: "backups", label: "Always ask before applying an external change", description: "external edits disk reload keep mine conflict review" },
   { tab: "graph", label: "Graph", description: "folder export publish" },
-  { tab: "graph", label: "Graph folder", description: "show in folder reveal file manager Finder Explorer location path where", aliases: ["open graph folder"] },
+  { tab: "graph", label: msg("settings-graph-folder-label"), description: msg("settings-graph-folder-search-description"), aliases: ["open graph folder"] },
   { tab: "graph", label: "Home page", description: "home start startup page" },
   { tab: "diagnostics", label: "Help & diagnostics", description: "diagnostic report crash unclean exit save slow privacy help rescan graph timings statistics improve parser divergences anonymize" },
   { tab: "shortcuts", label: "Keyboard shortcuts", description: "key bindings commands remap" },
@@ -73,7 +74,8 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
  * O(entry text × query words), no I/O or failure. */
 export function settingMatches(entry: SettingSearchEntry, query: string): boolean {
   const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const haystack = [entry.label, entry.description, ...(entry.aliases ?? [])].join(" ").toLowerCase();
+  const haystack = [entry.label, entry.description, ...(entry.aliases ?? [])]
+    .map((text) => typeof text === "string" ? text : render(text)).join(" ").toLowerCase();
   return terms.every((term) => haystack.includes(term));
 }
 

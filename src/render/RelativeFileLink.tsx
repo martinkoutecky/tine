@@ -3,6 +3,7 @@ import { backend } from "../backend";
 import { reportLinkOpenFailure } from "../components/ExternalLink";
 import { graphOwner, readOwned } from "../owned";
 import { pushToast } from "../toasts";
+import { msg, t } from "../i18n";
 import type { FileLinkTarget } from "./relativeFileLink";
 import type { SpanDomAttrs } from "./spans";
 
@@ -24,14 +25,14 @@ export function RelativeFileLink(props: {
       class="external-link file-link"
       href={props.dest}
       data-broken-file-link={outside() ? "" : undefined}
-      title={outside() ? "This link points outside the graph folder, so Tine does not open it" : undefined}
+      title={outside() ? t("links-outside-graph-title") : undefined}
       {...(props.spanAttrs ?? {})}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
         const target = props.target;
         if (target.kind === "outside") {
-          pushToast(`${props.dest} points outside the graph folder, so Tine does not open it.`, "error");
+          pushToast(msg("toast-link-outside-graph", { dest: props.dest }), "error");
         } else {
           void readOwned(graphOwner(), backend().openGraphFile(target.path, backend().graphBindingGeneration()))
             .catch((error) => reportLinkOpenFailure(props.dest, error));

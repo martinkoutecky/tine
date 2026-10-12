@@ -1,4 +1,5 @@
 import { urlDest } from "./urlDest";
+import { t } from "../i18n";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
@@ -488,7 +489,7 @@ function renderLink(
         <RelativeFileLink dest={dest} target={fileTarget} spanAttrs={spanAttrs}>
           <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
         </RelativeFileLink>
-        <CopyButton text={dest} title="Copy link" class="copy-inline" />
+        <CopyButton text={dest} title={t("links-copy-title")} class="copy-inline" />
       </span>
     );
   }
@@ -525,7 +526,7 @@ function renderLink(
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
       </a>
-      <CopyButton text={dest} title="Copy link" class="copy-inline" />
+      <CopyButton text={dest} title={t("links-copy-title")} class="copy-inline" />
     </span>
   );
 }

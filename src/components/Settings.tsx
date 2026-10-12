@@ -59,6 +59,7 @@ import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { LanguageSetting } from "./LanguageSetting";
 import { GraphFolderSetting } from "./GraphFolderSetting";
+import { render, renderEnglish } from "../i18n";
 import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
@@ -111,7 +112,8 @@ export function Settings(): JSX.Element {
     setTab(entry.tab);
     queueMicrotask(() => {
       const fields = queryAllWindowsAll<HTMLElement>("[data-setting-label]");
-      fields.find((field) => field.dataset.settingLabel === entry.label)?.scrollIntoView({ block: "center" });
+      const label = typeof entry.label === "string" ? entry.label : renderEnglish(entry.label);
+      fields.find((field) => field.dataset.settingLabel === label)?.scrollIntoView({ block: "center" });
     });
   };
 
@@ -236,7 +238,7 @@ export function Settings(): JSX.Element {
                     <For each={matches()}>
                       {(entry) => (
                         <button type="button" class="settings-search-result" onClick={() => openSearchResult(entry)}>
-                          <span>{entry.label}</span>
+                          <span>{typeof entry.label === "string" ? entry.label : render(entry.label)}</span>
                           <small>{TABS.find((candidate) => candidate.id === entry.tab)?.label}{entry.level === "advanced" ? " › Advanced" : ""}</small>
                         </button>
                       )}
