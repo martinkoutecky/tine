@@ -773,7 +773,7 @@ fn fold_pair(
     let mut copy_rev = None;
     let plan = || {
         let fold = fold()?;
-        let bytes = (store.page_bytes(&page, &fold.doc, Some(fold.mine.as_bytes())))
+        let bytes = (store.page_bytes(&page, &fold.doc, Some(fold.mine.as_bytes()), false))
             .map_err(crate::why_error)?;
         let expected = |text: String| HostExpected::Bytes(text.into_bytes().into());
         let mut pages = vec![(
@@ -1131,12 +1131,14 @@ pub fn resolve_vcs_marker_conflict(
     };
     let plan = || {
         let (content, _, merged) = reviewed()?;
-        let bytes = (store.page_bytes_resolving(&page, &merged, content.as_bytes()))
+        let bytes = (store.page_bytes(&page, &merged, Some(content.as_bytes()), true))
             .map_err(crate::why_error)?;
         // DESIGN §3.4 pre: the old bytes are in conflict trash before the
         // operation can replace them. A refused or replanned operation leaves
         // this copy behind (harmless; a replan after a change refuses above).
-        store.stage_marker_copy(&file, content.as_bytes()).map_err(crate::why_error)?;
+        store
+            .stage_marker_copy(&file, content.as_bytes())
+            .map_err(crate::why_error)?;
         Ok(Some(HostOp {
             pages: vec![(
                 page.clone(),

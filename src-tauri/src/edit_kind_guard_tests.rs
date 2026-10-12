@@ -199,8 +199,9 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         (
             PDF,
             "write_highlights",
-            "tx.save_page(&[tine_store::EditKind::ReplacePage",
+            "let kinds = [tine_store::EditKind::ReplacePage];",
         ),
+        (PDF, "write_highlights", "tx.save_page(&kinds,"),
     ];
     for (source, name, marker) in destinations {
         assert!(calls(body(source, name), marker), "OG-RULES Rule 8: {name} must reach a kind-taking store entry; exemplar crates/tine-graph-features/src/pages.rs");

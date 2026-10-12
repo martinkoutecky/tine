@@ -429,10 +429,17 @@ fn a_marker_resolution_with_a_host_writes_what_the_plain_one_writes() {
     resolve_markers(&store, Some(&host), &review).unwrap();
     drop(host);
     store.close();
-    assert_eq!(tree(&hosted), tree(&plain), "a resolution's bytes changed under a host");
+    assert_eq!(
+        tree(&hosted),
+        tree(&plain),
+        "a resolution's bytes changed under a host"
+    );
     let resolved = fs::read_to_string(hosted.join(MARKED)).unwrap();
     assert!(!resolved.contains("<<<<<<<"), "{resolved:?}");
-    assert!(resolved.contains("- mine") && resolved.contains("- theirs"), "{resolved:?}");
+    assert!(
+        resolved.contains("- mine") && resolved.contains("- theirs"),
+        "{resolved:?}"
+    );
     assert_eq!(
         trashed(&hosted.join("logseq/.tine-trash/conflicts")),
         vec![MARKED_TEXT.to_owned()],
@@ -475,7 +482,10 @@ fn a_marker_page_changed_after_the_plan_is_never_overwritten() {
     store.close();
     let error = result.expect_err("a resolution over a changed page refuses");
     assert_eq!(error.to_string(), "file changed on disk");
-    assert_eq!(fs::read(root.join(MARKED)).unwrap(), b"- resolved by hand\n");
+    assert_eq!(
+        fs::read(root.join(MARKED)).unwrap(),
+        b"- resolved by hand\n"
+    );
     assert_eq!(
         trashed(&root.join("logseq/.tine-trash/conflicts")),
         vec![MARKED_TEXT.to_owned()]

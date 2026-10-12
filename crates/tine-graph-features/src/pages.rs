@@ -1302,7 +1302,7 @@ pub fn merge_pages(
         let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
         let old = survivor.dst_text.as_bytes();
         let bytes = store
-            .page_bytes(&dst_id, &survivor.doc, Some(old))
+            .page_bytes(&dst_id, &survivor.doc, Some(old), false)
             .map_err(crate::why_error)?;
         let expected = |text: String| HostExpected::Bytes(text.into_bytes().into());
         Ok(Some(HostOp {

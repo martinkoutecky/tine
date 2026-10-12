@@ -116,42 +116,22 @@ impl Store {
     /// no file) writes, after every check that save runs (Guide
     /// ephemerality, page target, nesting depth, VCS conflict markers, the
     /// page-header and Org round-trip firewalls): for a feature planning a
-    /// host operation (`HostOp`) from bytes it read. Writes nothing. Cost
-    /// O(bytes + blocks).
+    /// host operation (`HostOp`) from bytes it read. `resolving_markers` is
+    /// for the one plan allowed over bytes that carry VCS conflict markers,
+    /// their resolution (R-VCS-MARKERS, as `SaveBase::ResolvingMarkers` is for
+    /// a transaction); its caller stages the old bytes first
+    /// ([`Store::stage_marker_copy`]). Writes nothing. Cost O(bytes + blocks).
     pub fn page_bytes(
         &self,
         id: &PageId,
         doc: &PageDto,
         old: Option<&[u8]>,
-    ) -> Result<Vec<u8>, crate::Why> {
-        self.planned_bytes(id, doc, old, false)
-    }
-
-    /// [`Store::page_bytes`] for the one plan allowed over bytes that carry
-    /// VCS conflict markers: their resolution (R-VCS-MARKERS, as
-    /// `SaveBase::ResolvingMarkers` is for a transaction). The caller stages
-    /// the old bytes first ([`Store::stage_marker_copy`]). Writes nothing.
-    /// Cost O(bytes + blocks).
-    pub fn page_bytes_resolving(
-        &self,
-        id: &PageId,
-        doc: &PageDto,
-        old: &[u8],
-    ) -> Result<Vec<u8>, crate::Why> {
-        self.planned_bytes(id, doc, Some(old), true)
-    }
-
-    fn planned_bytes(
-        &self,
-        id: &PageId,
-        doc: &PageDto,
-        old: Option<&[u8]>,
-        resolving: bool,
+        resolving_markers: bool,
     ) -> Result<Vec<u8>, crate::Why> {
         let file = id.file();
         let tx = self.transaction(None);
         tx.page_save_target(&file, doc)?;
-        let (bytes, _) = tx.serialize_page(&file, doc, old, resolving)?;
+        let (bytes, _) = tx.serialize_page(&file, doc, old, resolving_markers)?;
         Ok(bytes)
     }
 

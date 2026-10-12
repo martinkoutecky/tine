@@ -130,7 +130,7 @@ enum store::SaveBase
 enum store::SaveOutcome
 enum store::StoreError
 
-## Transaction steps (ceiling: 28)
+## Transaction steps (ceiling: 29)
 enum transaction::Content
 enum transaction::Refusal
 enum transaction::StepResult
@@ -161,6 +161,12 @@ fn transaction::Transaction::replace
 # moved page's title rebind too (og-surface row 6).
 fn transaction::Transaction::rewrite_refs
 fn transaction::Transaction::save_page
+# host-only-writer P3 W8 (28 -> 29): a VCS-marker resolution run as a host operation
+# must stage the marker bytes' conflict-trash copy before the operation, with no
+# transaction to commit. `Transaction::trash` moves an existing file (removing it);
+# no item writes a given byte copy into the conflict trash and keeps the source, and
+# a mode parameter on `trash` would give one step two opposite effects.
+fn store::Store::stage_marker_copy
 fn transaction::Transaction::trash
 struct transaction::IoError
 struct transaction::RenameMap

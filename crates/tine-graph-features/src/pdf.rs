@@ -783,7 +783,7 @@ pub fn write_highlights(
         let annotation = annotation(store, &name, &old_name, migrate)?;
         let page_dto = annotation_dto(&annotation, &name, pdf_name, label, &merged);
         let existing = annotation.existing.map(|(raw, _)| raw.into_bytes());
-        let bytes = (store.page_bytes(&annotation.page, &page_dto, existing.as_deref()))
+        let bytes = (store.page_bytes(&annotation.page, &page_dto, existing.as_deref(), false))
             .map_err(crate::why_error)?;
         let Some((legacy, raw, _)) = annotation.legacy else {
             if existing.as_deref() == Some(bytes.as_slice()) {
