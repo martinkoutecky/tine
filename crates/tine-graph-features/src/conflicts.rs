@@ -21,7 +21,10 @@ use tine_core::model::{
 };
 use tine_core::projection::{assign_doc_runtime_ids, block_to_dto};
 use tine_core::sync_diff::{self, SyncConflictDiff};
-use tine_store::{Area, FileId, FileRev, Input, PageHost, PageId, SaveBase, Store};
+use tine_store::{
+    Area, FileId, FileRev, HostEffect, HostExpected, HostOp, Input, PageHost, PageId, SaveBase,
+    Store,
+};
 
 pub(crate) fn invalid_path() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, "invalid file path")
@@ -704,100 +707,214 @@ pub fn resolve_sync_conflict(
 
 /// The guarded two-file fold shared by a sync copy and a duplicate journal
 /// day, once the caller has proved the pairing: `conf` is merged into `win`
-/// per the row decisions and trashed recoverably, in one transaction. A
-/// retained writer (STEP3 §7) of both pages: unsaved input in either is
-/// refused as a change on disk would be, so the fold never drops it.
+/// per the row decisions and trashed recoverably. Unsaved input in either
+/// page is refused as a change on disk would be, so the fold never drops it.
+///
+/// With a host, one host operation (DESIGN §3.1) planned from the bytes the
+/// fold read: the winner's write, and for a duplicate day the stray's
+/// deletion as a move's source (the winner's new bytes hold the stray's
+/// rows), so a crash between them completes at relaunch rather than leaving
+/// the stray to fold in again. A sync copy is no page (`Store::as_page`), so
+/// it is trashed after the operation applied, guarded by the bytes the fold
+/// read (DESIGN §3.4, post): a copy changed since is kept. With no host, one
+/// transaction under the retained-writer route, as before P3.
 #[allow(clippy::too_many_arguments)]
 fn fold_pair(
     store: &Store,
     host: Option<&PageHost>,
     (win, conf): (&FileId, &FileId),
     decisions: &HashMap<String, String>,
-    (base_rev, conflict_rev): (&str, &str),
+    revs: (&str, &str),
     merge_base_rev: Option<&str>,
     bases: &[String],
     pre_choice: &str,
 ) -> io::Result<()> {
+    const EXHAUSTED: &str = "conflict files changed repeatedly during merge";
     let page = store.as_page(win).ok_or_else(invalid_path)?;
     let copy = store.as_page(conf);
     let refused = |key: &str| match copy.as_ref() {
         Some(copy) if copy.as_str().eq_ignore_ascii_case(key) => changed("conflict copy"),
         _ => changed("winner"),
     };
-    let discover = || Ok(crate::retained::pages(store, [win, conf]));
-    crate::retained::reserved(host, Input::Refuse, discover, refused, |_| {
-        crate::retry_on_conflict("conflict files changed repeatedly during merge", || {
-            let (mine, win_rev) = read_text(store, win)?;
-            let (theirs, conf_rev) = read_text(store, conf)?;
-            if String::from(win_rev.clone()) != base_rev {
-                return Err(changed("winner"));
-            }
-            if String::from(conf_rev.clone()) != conflict_rev {
-                return Err(changed("conflict copy"));
-            }
-            let fmt = format(win);
-            if fmt == Format::Org
-                && (!tine_core::org::org_editable(&mine) || !tine_core::org::org_editable(&theirs))
-            {
+    let fold = || {
+        let pair = (win, conf);
+        folded(
+            store,
+            &page,
+            pair,
+            decisions,
+            revs,
+            merge_base_rev,
+            bases,
+            pre_choice,
+        )
+    };
+    let Some(running) = host else {
+        let discover = || Ok(crate::retained::pages(store, [win, conf]));
+        return crate::retained::reserved(host, Input::Refuse, discover, refused, |_| {
+            crate::retry_on_conflict(EXHAUSTED, || {
+                let fold = fold()?;
+                let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
+                tx.save_page(
+                    &[
+                        tine_store::EditKind::ReplacePage,
+                        tine_store::EditKind::DeletePage,
+                    ],
+                    &page,
+                    SaveBase::Existing(fold.win_rev),
+                    &fold.doc,
+                );
+                tx.trash(conf, fold.conf_rev, tine_store::TrashIf::Any);
+                Ok(crate::commit_retry(tx.commit())?.then_some(()))
+            })
+        });
+    };
+    let mut copy_rev = None;
+    let plan = || {
+        let fold = fold()?;
+        let bytes = (store.page_bytes(&page, &fold.doc, Some(fold.mine.as_bytes())))
+            .map_err(crate::why_error)?;
+        let expected = |text: String| HostExpected::Bytes(text.into_bytes().into());
+        let mut pages = vec![(
+            page.clone(),
+            HostEffect::Write(bytes.into()),
+            expected(fold.mine),
+        )];
+        match &copy {
+            Some(stray) => pages.push((stray.clone(), HostEffect::Delete, expected(fold.theirs))),
+            None => copy_rev = Some(fold.conf_rev),
+        }
+        Ok(Some(HostOp {
+            pages,
+            kinds: vec![
+                tine_store::EditKind::ReplacePage,
+                tine_store::EditKind::DeletePage,
+            ],
+            policy: Input::Refuse,
+            moved: copy.clone().map(|stray| (page.clone(), stray)),
+        }))
+    };
+    let touched = crate::retained::pages(store, [win, conf]);
+    let applied = crate::retained::operation(
+        running,
+        Input::Refuse,
+        &touched,
+        "the merge",
+        EXHAUSTED,
+        refused,
+        plan,
+    );
+    // Set by a plan only for a sync copy, which is no page of the operation.
+    let Some(rev) = copy_rev else {
+        return applied;
+    };
+    applied.map_err(|error| match error.kind() {
+        // `Uncertain`: the merge may still complete; the copy stays.
+        io::ErrorKind::TimedOut => io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("{error} The conflict copy was kept."),
+        ),
+        _ => error,
+    })?;
+    // Scenario: sync-service delivery changed the copy after the review.
+    trash_copy(store, conf, rev)?.ok_or_else(|| changed("conflict copy"))
+}
+
+/// The pair's fold as the review decided it, from the texts read now.
+struct Folded {
+    doc: PageDto,
+    mine: String,
+    theirs: String,
+    win_rev: FileRev,
+    conf_rev: FileRev,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn folded(
+    store: &Store,
+    page: &PageId,
+    (win, conf): (&FileId, &FileId),
+    decisions: &HashMap<String, String>,
+    (base_rev, conflict_rev): (&str, &str),
+    merge_base_rev: Option<&str>,
+    bases: &[String],
+    pre_choice: &str,
+) -> io::Result<Folded> {
+    let (mine, win_rev) = read_text(store, win)?;
+    let (theirs, conf_rev) = read_text(store, conf)?;
+    if String::from(win_rev.clone()) != base_rev {
+        return Err(changed("winner"));
+    }
+    if String::from(conf_rev.clone()) != conflict_rev {
+        return Err(changed("conflict copy"));
+    }
+    let fmt = format(win);
+    if fmt == Format::Org
+        && (!tine_core::org::org_editable(&mine) || !tine_core::org::org_editable(&theirs))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "an org file in this pair does not round-trip; not merging",
+        ));
+    }
+    let mine_doc = parse(&mine, fmt);
+    let their_doc = parse(&theirs, format(conf));
+    // Only a `"merged"` row reads the base (mine/theirs/both do not), so a
+    // base that is gone or different blocks nothing else: a ledger read
+    // failure never refuses a resolve. For a merged row, scenario:
+    // sync-service delivery or an honest concurrent instance moved the
+    // ledger between review and apply; the user must review the body the
+    // merge would now compute.
+    let wants_merged = decisions.values().any(|d| d == "merged");
+    let base_doc = match (merge_base_rev, wants_merged) {
+        (Some(token), true) => match pick_base(bases, &mine, &theirs) {
+            Some((base, current)) if current == token => Some(parse(base, fmt)),
+            _ => {
                 return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "an org file in this pair does not round-trip; not merging",
-                ));
+                    io::ErrorKind::AlreadyExists,
+                    "merge base changed since the review",
+                ))
             }
-            let mine_doc = parse(&mine, fmt);
-            let their_doc = parse(&theirs, format(conf));
-            // Only a `"merged"` row reads the base (mine/theirs/both do not), so a
-            // base that is gone or different blocks nothing else: a ledger read
-            // failure never refuses a resolve. For a merged row, scenario:
-            // sync-service delivery or an honest concurrent instance moved the
-            // ledger between review and apply; the user must review the body the
-            // merge would now compute.
-            let wants_merged = decisions.values().any(|d| d == "merged");
-            let base_doc = match (merge_base_rev, wants_merged) {
-                (Some(token), true) => match pick_base(bases, &mine, &theirs) {
-                    Some((base, current)) if current == token => Some(parse(base, fmt)),
-                    _ => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::AlreadyExists,
-                            "merge base changed since the review",
-                        ))
-                    }
-                },
-                _ => None,
-            };
-            // A forged `"merged"` decision on a 2-way review refuses the whole
-            // resolve (malformed input).
-            let roots = sync_diff::merge_blocks3(
-                base_doc.as_ref().map(|doc| doc.roots.as_slice()),
-                &mine_doc.roots,
-                &their_doc.roots,
-                None,
-                decisions,
-            )
-            .map_err(merge_refused)?;
-            let pre_block = choose_pre(pre_choice, fmt, &mine_doc, &their_doc)?;
-            let merged = dto(store, &page, Document { pre_block, roots });
-            let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
-            tx.save_page(
-                &[
-                    tine_store::EditKind::ReplacePage,
-                    tine_store::EditKind::DeletePage,
-                ],
-                &page,
-                SaveBase::Existing(win_rev),
-                &merged,
-            );
-            tx.trash(conf, conf_rev, tine_store::TrashIf::Any);
-            Ok(crate::commit_retry(tx.commit())?.then_some(()))
-        })
+        },
+        _ => None,
+    };
+    // A forged `"merged"` decision on a 2-way review refuses the whole
+    // resolve (malformed input).
+    let roots = sync_diff::merge_blocks3(
+        base_doc.as_ref().map(|doc| doc.roots.as_slice()),
+        &mine_doc.roots,
+        &their_doc.roots,
+        None,
+        decisions,
+    )
+    .map_err(merge_refused)?;
+    let pre_block = choose_pre(pre_choice, fmt, &mine_doc, &their_doc)?;
+    let doc = dto(store, page, Document { pre_block, roots });
+    Ok(Folded {
+        doc,
+        mine,
+        theirs,
+        win_rev,
+        conf_rev,
     })
 }
 
-/// Recoverably trash only a sync copy, with four revision-guard retries. Cost
-/// O(copy bytes) per attempt.
+/// Trash a sync-conflict copy over `rev`, the bytes last read: no page
+/// (`Store::as_page` names none: `tests/host_op_conflicts.rs`
+/// `a_sync_copy_is_never_a_page`), so no host operation. `None`: the copy
+/// changed since.
+fn trash_copy(store: &Store, copy: &FileId, rev: FileRev) -> io::Result<Option<()>> {
+    let mut tx = store.transaction(None);
+    tx.trash(copy, rev, tine_store::TrashIf::Any);
+    Ok(crate::commit_retry(tx.commit())?.then_some(()))
+}
+
+/// Recoverably trash only a sync copy, with four revision-guard retries. The
+/// copy is no page, so neither a host operation nor a reservation fences
+/// it. Cost O(copy bytes) per attempt.
 pub fn trash_sync_conflict(
     store: &Store,
-    host: Option<&PageHost>,
+    _host: Option<&PageHost>,
     conflict: &str,
 ) -> io::Result<()> {
     let conf = id(store, conflict)?;
@@ -810,23 +927,20 @@ pub fn trash_sync_conflict(
     if !stem.is_some_and(|stem| sync_conflict_base(stem).is_some()) {
         return Err(invalid_path());
     }
-    let discover = || Ok(crate::retained::pages(store, [&conf]));
-    crate::retained::reserved(
-        host,
-        Input::Refuse,
-        discover,
-        crate::retained::unsaved,
-        |_| {
-            crate::retry_on_conflict("conflict copy changed repeatedly during trash", || {
-                crate::trash_current(
-                    store,
-                    &conf,
-                    Some(tine_store::PARSE_INPUT_MAX_BYTES),
+    crate::retry_on_conflict("conflict copy changed repeatedly during trash", || {
+        let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
+        let rev = match store.read(&conf, max) {
+            Ok((_, rev)) => rev,
+            Err(tine_store::StoreError::NotFound) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
                     "no such conflict file",
-                )
-            })
-        },
-    )
+                ))
+            }
+            Err(error) => return Err(crate::store_error(error)),
+        };
+        trash_copy(store, &conf, rev)
+    })
 }
 
 /// Two-way diff of a duplicate journal day's canonical file against one stray
