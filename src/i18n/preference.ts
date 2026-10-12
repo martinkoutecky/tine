@@ -47,7 +47,7 @@ const owns = (mine: number) => mine === operation;
 /** Record `work` as operation `mine`'s. Its failure is logged here, so the
  * mount barrier and fire-and-forget callers never see a rejection. */
 function track(mine: number, work: Promise<void>): Promise<void> {
-  const logged = work.catch((error: unknown) => console.error("i18n: a language change failed", error));
+  const logged = work.catch(() => console.error("i18n: a language change failed"));
   if (current && current.id === mine) current.done = logged;
   return logged;
 }
