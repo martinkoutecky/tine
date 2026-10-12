@@ -154,33 +154,17 @@ pub(crate) fn serve(graph: &Path, stop: bool) -> i32 {
     }
 }
 
-/// The startup failures `tine serve` reports with a code of their own:
-/// they exit like the other owner-discovery failures (PROTOCOL §2.3, §3.5).
-const STARTUP_CODES: [&str; 3] = ["owner-lock", "owner-unsafe", "unsupported"];
-
-/// The code of a `serve_graph` startup failure, if it has one.
-///
-/// RETARGET: `serve_graph` returns its failure as text, `"<code>: <message>"`
-/// for a failed claim (`serve.rs`, the `Claim::Failed` arm), so the code is
-/// read back off the text here. When `serve_graph` returns the typed
-/// [`super::OwnerError`], replace this function's body with `error.code()`
-/// and delete [`STARTUP_CODES`]; nothing else in this file depends on the
-/// text.
-fn startup_code(failure: &str) -> Option<&'static str> {
-    STARTUP_CODES.into_iter().find(|code| {
-        failure
-            .strip_prefix(code)
-            .is_some_and(|rest| rest.starts_with(": "))
-    })
-}
-
 /// The exit code of a finished `tine serve` (0 when it stopped cleanly).
-pub(super) fn serve_exit(result: Result<(), String>) -> i32 {
+pub(super) fn serve_exit(result: Result<(), super::serve::ServeFailure>) -> i32 {
+    use super::serve::ServeFailure;
     match result {
         Ok(()) => 0,
-        Err(message) => {
-            eprintln!("tine serve: {message}");
-            exit_code(startup_code(&message).unwrap_or("internal"))
+        Err(failure) => {
+            eprintln!("tine serve: {failure}");
+            exit_code(match &failure {
+                ServeFailure::Claim(error) => error.code(),
+                ServeFailure::Other(_) => "internal",
+            })
         }
     }
 }

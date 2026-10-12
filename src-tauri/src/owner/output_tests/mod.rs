@@ -888,27 +888,24 @@ fn an_ambiguous_name_and_a_query_that_does_not_parse_say_what_the_json_says() {
 
 #[test]
 fn tine_serve_exits_5_for_its_typed_startup_errors_and_0_for_a_clean_stop() {
-    // `serve_graph` reports a failed claim as "<code>: <message>"
-    // (`terminal::startup_code` is the one place that reads it back).
+    use super::serve::ServeFailure;
     assert_eq!(serve_exit(Ok(())), 0);
     for error in [
         super::OwnerError::Lock("the lock call failed".into()),
         super::OwnerError::Unsafe("the directory is not yours".into()),
         super::OwnerError::Unsupported,
     ] {
-        let reported = format!("{}: {error}", error.code());
-        assert_eq!(serve_exit(Err(reported.clone())), 5, "{reported}");
+        let code = error.code();
+        assert_eq!(serve_exit(Err(ServeFailure::Claim(error))), 5, "{code}");
     }
-    // Anything else is an internal failure.
-    assert_eq!(
-        serve_exit(Err("cannot open the command endpoint".into())),
-        1
-    );
-    assert_eq!(serve_exit(Err("owner-lockdown: not a code".into())), 1);
-    assert_eq!(
-        serve_exit(Err("no app data directory for crash drafts".into())),
-        1
-    );
+    // Anything else is an internal failure, whatever its text says.
+    for message in [
+        "cannot open the command endpoint",
+        "owner-lock: looks like a code but is not one",
+        "no app data directory for crash drafts",
+    ] {
+        assert_eq!(serve_exit(Err(message.into())), 1, "{message}");
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ use tine_store::{OpenOptions, Store};
 use super::endpoint::{After, Gate, Handler, IO_TIMEOUT};
 use super::lease::{self, Claim};
 use super::wire::{ok, Drafts, ErrorBody, Request};
+use super::OwnerError;
 use crate::state::{GraphSlot, PageHostSlot};
 
 /// An owner with no request for this long exits (§4).
@@ -48,7 +49,37 @@ pub(super) fn bound_log(log: &std::fs::File, cap: u64) {
 }
 
 /// Run the owner of `graph` until it yields or idles out.
-pub(crate) fn serve_graph(graph: &Path) -> Result<(), String> {
+/// Why `tine serve` stopped with an error: a failed owner claim keeps its
+/// typed code (it exits like the other owner-discovery failures, PROTOCOL
+/// §2.3, §3.5); anything else is internal.
+#[derive(Debug)]
+pub(crate) enum ServeFailure {
+    Claim(OwnerError),
+    Other(String),
+}
+
+impl From<String> for ServeFailure {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
+impl From<&str> for ServeFailure {
+    fn from(message: &str) -> Self {
+        Self::Other(message.to_owned())
+    }
+}
+
+impl std::fmt::Display for ServeFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Claim(error) => write!(f, "{}: {error}", error.code()),
+            Self::Other(message) => f.write_str(message),
+        }
+    }
+}
+
+pub(crate) fn serve_graph(graph: &Path) -> Result<(), ServeFailure> {
     // Before anything reads settings, as the app's startup does (§3.5).
     crate::data_home::ensure_usable(crate::app_identity::APP_IDENTIFIER);
     let root = crate::state::canonical_graph_root(&graph.display().to_string())?;
@@ -59,7 +90,7 @@ pub(crate) fn serve_graph(graph: &Path) -> Result<(), String> {
             eprintln!("tine serve: {} already has an owner", root.display());
             return Ok(());
         }
-        Claim::Failed(error) => return Err(format!("{}: {error}", error.code())),
+        Claim::Failed(error) => return Err(ServeFailure::Claim(error)),
     };
     let app_data = crate::app_identity::current_app_data_dir()
         .ok_or("no app data directory for crash drafts")?;
