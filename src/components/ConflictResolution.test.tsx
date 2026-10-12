@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { setToasts, toasts } from "../toasts";
-import { OUTLINE_MAX_DEPTH } from "../editor/outline";
+import { outlineMaxDepth } from "../editor/outline";
 import type { ConflictInventory, ConflictObject, DiffRow, SyncConflictDiff } from "../types";
 
 // og 8c: the in-page resolver for the two artifact sources (a sync tool's
@@ -278,7 +278,7 @@ describe("in-page conflict resolution", () => {
 });
 
 // Moved from the retired Settings merge modal (og 15b, I-22 / I-4): both files
-// are admitted at the parse cap, so a diff is at most OUTLINE_MAX_DEPTH deep and
+// are admitted at the parse cap, so a diff is at most outlineMaxDepth() deep and
 // must render in full, in document order.
 describe("resolver review depth", () => {
   function deepRows(levels: number): DiffRow[] {
@@ -292,12 +292,12 @@ describe("resolver review depth", () => {
   const shown = () => [...document.querySelectorAll<HTMLElement>(".sync-merge-row")].map((row) => `${row.style.paddingLeft}:${row.querySelector(".mine")?.textContent}`);
 
   it("renders a conflict diff exactly at the outline cap", async () => {
-    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff(deepRows(OUTLINE_MAX_DEPTH)));
+    vi.spyOn(backend(), "syncConflictDiff").mockResolvedValue(diff(deepRows(outlineMaxDepth())));
     const { dispose } = mount(copyConflict);
     await settle();
     const rows = document.querySelectorAll(".sync-merge-row");
-    expect(rows.length).toBe(OUTLINE_MAX_DEPTH);
-    expect(rows[rows.length - 1].textContent).toContain(`copy ${OUTLINE_MAX_DEPTH}`);
+    expect(rows.length).toBe(outlineMaxDepth());
+    expect(rows[rows.length - 1].textContent).toContain(`copy ${outlineMaxDepth()}`);
     dispose();
   });
 

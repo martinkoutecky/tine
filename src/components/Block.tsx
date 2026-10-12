@@ -116,7 +116,7 @@ import {
   caretOffsetOnLastRow,
   textareaCaretLeft,
 } from "../editor/caretRows";
-import { splitProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
+import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
@@ -280,7 +280,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     const n = node();
     if (!n) return "";
     const format = pageByName(n.page)?.format === "org" ? "org" : "md";
-    return splitProps(n.raw, isBuiltinHidden, format).visible;
+    return splitProps(n.raw, BUILTIN_HIDE, format).visible;
   };
   const editorIsUniline = () => !editorVisibleValue().includes("\n");
   // Block-level "linked references" panel toggled by the reference-count badge.
@@ -607,7 +607,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
   // Parsed editor facts travel with the committed buffer; hidden bytes survive.
   const isAnnot = () => annotationInfo(propertySession.facets(node().raw, pageFmt()).properties) !== null;
-  const hideFn = () => (isAnnot() ? hideAll : sheetCell ? isSheetCellHidden : isBuiltinHidden);
+  const hideFn = () => (isAnnot() ? HIDE_ALL : sheetCell ? SHEET_CELL_HIDE : BUILTIN_HIDE);
   const editorParts = createMemo(() => propertySession.split(node().raw, hideFn(), pageFmt()));
   const editorValue = () => editorParts().visible;
   // GH #357: while the buffer IS one whole-block code fence the editor presents
@@ -2250,7 +2250,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     return (docNode(id)?.children ?? []).find((child) => blockIsGridView(child)) ?? null;
   };
   const sheetVisibleLength = (id: string): number =>
-    splitProps(docNode(id)?.raw ?? "", isSheetCellHidden).visible.length;
+    splitProps(docNode(id)?.raw ?? "", SHEET_CELL_HIDE).visible.length;
   const deepestLastSheetOutline = (id: string): string => {
     let cur = id;
     for (;;) {

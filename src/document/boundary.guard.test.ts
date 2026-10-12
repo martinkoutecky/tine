@@ -147,7 +147,9 @@ function dtoBuilderViolations(all: Sources): string[] {
     if (file === `${DOC}/convert.ts` || file.endsWith("/mock.ts")) continue;
     const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
     const visit = (node: ts.Node): void => {
-      if (ts.isObjectLiteralExpression(node)) {
+      // document/kernel.ts builds the outline kernel's `OutlinePage` arena (a
+      // keyed block map the kernel reads), not a PageDto; nothing saves it.
+      if (ts.isObjectLiteralExpression(node) && !(file === `${DOC}/kernel.ts` && source.includes("function outlinePage("))) {
         const names = new Set(node.properties.flatMap((prop) => prop.name && ts.isIdentifier(prop.name) ? [prop.name.text] : []));
         if (names.has("pre_block") && names.has("blocks"))
           bad.push(`I-12: build PageDto in document/convert.ts; ${file}; exemplar src/document/convert.ts`);

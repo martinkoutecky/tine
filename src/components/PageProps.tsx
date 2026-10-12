@@ -4,7 +4,7 @@ import {
   blockPageReadOnly, blockProperty, formatForBlock, node, pageByName,
   readPageProperties, readPageProperty, setBlockProperty, setPageProperty,
 } from "../document";
-import { PAGE_PROP_SPECS, isEditablePropertyKey, isSheetCellHidden, type PagePropSpec } from "../editor/properties";
+import { PAGE_PROP_SPECS, isEditablePropertyKey, SHEET_CELL_HIDE, hides, type PagePropSpec } from "../editor/properties";
 import { facetsOf } from "../render/facets";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { bindingCurrent, type Binding } from "../binding";
@@ -29,7 +29,7 @@ export function PageProps(): JSX.Element {
 // Machine-managed keys (`id`, `collapsed`, `logseq.order-list-type`, `tine.*`)
 // keep their own surfaces. Same question as the sheet-cell editor asks, so it
 // delegates rather than minting a second hidden set.
-const machineManaged = (key: string) => isSheetCellHidden(key.toLowerCase());
+const machineManaged = (key: string) => hides(SHEET_CELL_HIDE, key);
 
 function existingProperties(scope: PropsPanelScope): [string, string][] {
   if (scope.kind === "page") return readPageProperties(scope.name);

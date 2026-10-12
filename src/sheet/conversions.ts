@@ -1,10 +1,10 @@
-import { splitProps, isBuiltinHidden } from "../editor/properties";
+import { splitProps, BUILTIN_HIDE } from "../editor/properties";
 import type { OutlineNode } from "../editor/outline";
 import type { Inline, TableBlock } from "../render/ast";
 import { visibleBody } from "../render/block";
 import { inlineText, parseBody } from "../render/facets";
 import { rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset } from "../render/spans";
-import { blockIsGridView, blockPageReadOnly, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineAfter, replaceChildOrders, setBlockProperty, setRaw, withUndoUnit, node as docNode } from "../document";
+import { blockIsGridView, blockPageReadOnly, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineAfter, setBlockProperty, setRaw, withUndoUnit, node as docNode } from "../document";
 import { pushToast } from "../toasts";
 import { sheetConfigFromRaw } from "./config";
 
@@ -181,7 +181,7 @@ function gridTableData(id: string): { ok: true; data: GridTableData } | { ok: fa
   for (const rowId of rows) {
     const row = docNode(rowId);
     if (!row || row.page !== node.page) return { ok: false, reason: "Can't convert this grid because a row is missing." };
-    const rowSplit = splitProps(row.raw, isBuiltinHidden);
+    const rowSplit = splitProps(row.raw, BUILTIN_HIDE);
     if (rowSplit.hidden) return { ok: false, reason: "Can't convert: row hidden properties would be lost." };
     if (rowSplit.visible !== "") return { ok: false, reason: "Can't convert: row blocks must be empty." };
     if (row.children.length === 0) {
@@ -192,7 +192,7 @@ function gridTableData(id: string): { ok: true; data: GridTableData } | { ok: fa
     for (const cellId of row.children) {
       const cell = docNode(cellId);
       if (!cell || cell.page !== node.page) return { ok: false, reason: "Can't convert this grid because a cell is missing." };
-      const cellSplit = splitProps(cell.raw, isBuiltinHidden);
+      const cellSplit = splitProps(cell.raw, BUILTIN_HIDE);
       if (cellSplit.hidden) return { ok: false, reason: "Can't convert: cell hidden properties would be lost." };
       if (cell.children.length > 0) return { ok: false, reason: "Can't convert: cells with children cannot be represented in a pipe table." };
       if (cell.raw.includes("\n")) return { ok: false, reason: "Can't convert: cells must be single-line." };
@@ -231,8 +231,10 @@ export function convertGridToPipeTable(id: string): boolean {
   return withUndoUnit("sheet:grid-to-pipe-table", [page], () => {
     stripTineSheetProps(id);
     appendTableToHead(id, table);
-    if (!replaceChildOrders({ [id]: [] })) throw new Error("failed to detach grid rows");
+    // Delete the rows where they stand: a verb sees only blocks reachable from
+    // the page's roots (outline kernel read set), never a detached subtree.
     for (const rowId of rows) deleteBlock(rowId);
+    if (docNode(id)?.children.length) throw new Error("failed to delete grid rows");
     return true;
   });
 }

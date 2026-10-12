@@ -505,6 +505,7 @@ pub fn raw_with_order_list_type(
 ) -> Result<String, Reason> {
     let hide = HidePolicy::Keys {
         keys: vec![ORDER_LIST_KEY.to_string()],
+        norm: true,
     };
     let visible = editor_text::split(raw, format.is_org(), &hide).visible;
     let Some(value) = value else {

@@ -3,7 +3,7 @@ import { pushToast } from "../toasts";
 import { clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock, node as docNode } from "../document";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { graphOwner } from "../owned";
-import { isSheetCellHidden, splitProps } from "../editor/properties";
+import { SHEET_CELL_HIDE, splitProps } from "../editor/properties";
 import {
   registerEditingStartListener,
   registerModeResetListener,
@@ -594,7 +594,7 @@ export function startCellEditing(sel: CellSelInput, offset?: number): boolean {
   if (blockPageReadOnly(blockId)) return false; // org round-trip gate (review finding)
   const node = docNode(blockId);
   if (!node) return false;
-  const visibleLen = splitProps(node.raw, isSheetCellHidden, formatForBlock(blockId)).visible.length;
+  const visibleLen = splitProps(node.raw, SHEET_CELL_HIDE, formatForBlock(blockId)).visible.length;
   setCellSel(scoped);
   startEditing(blockId, offset ?? visibleLen, cellOwner(scoped));
   return true;

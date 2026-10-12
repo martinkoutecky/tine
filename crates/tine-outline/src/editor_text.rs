@@ -28,9 +28,14 @@ pub enum HidePolicy {
     SheetCell,
     /// An annotation (PDF highlight) block edits only its text.
     All,
-    /// Exactly these keys, compared after [`property_key_norm`]. Used by the
-    /// raw transforms that replace one built-in (`id`, the list type).
-    Keys { keys: Vec<String> },
+    /// Exactly these keys, lower-cased; with `norm`, compared after
+    /// [`property_key_norm`] instead (the list-type transform, which the window
+    /// spells through `propertyKeyNorm`).
+    Keys {
+        keys: Vec<String>,
+        #[serde(default)]
+        norm: bool,
+    },
 }
 
 impl HidePolicy {
@@ -43,9 +48,12 @@ impl HidePolicy {
                 BUILTIN_HIDDEN.contains(&lower.as_str()) || lower.starts_with("tine.")
             }
             HidePolicy::All => true,
-            HidePolicy::Keys { keys } => {
+            HidePolicy::Keys { keys, norm: true } => {
                 let norm = property_key_norm(key);
                 keys.iter().any(|k| property_key_norm(k) == norm)
+            }
+            HidePolicy::Keys { keys, norm: false } => {
+                keys.iter().any(|k| k.to_lowercase() == lower)
             }
         }
     }
@@ -209,6 +217,19 @@ pub fn visible_to_raw_with(
 /// Markdown appends them below the body; Org folds them into the property
 /// drawer at its canonical place. A quarantined Org parse refuses.
 pub fn join(visible: &str, hidden: &str, is_org: bool) -> Result<String, String> {
+    if hidden.is_empty() || !is_org {
+        return join_with(visible, hidden, is_org, &BlockRegions::default());
+    }
+    join_with(visible, hidden, true, &block_regions::parse(visible, true))
+}
+
+/// [`join`], given the regions parsed from exactly `visible` (read for Org only).
+pub fn join_with(
+    visible: &str,
+    hidden: &str,
+    is_org: bool,
+    visible_regions: &BlockRegions,
+) -> Result<String, String> {
     if hidden.is_empty() {
         return Ok(visible.to_string());
     }
@@ -219,7 +240,7 @@ pub fn join(visible: &str, hidden: &str, is_org: bool) -> Result<String, String>
             format!("{visible}\n{hidden}")
         });
     }
-    block_regions::parse(visible, true).reattach_org_properties(visible, hidden)
+    visible_regions.reattach_org_properties(visible, hidden)
 }
 
 fn floor_boundary(s: &str, mut at: usize) -> usize {

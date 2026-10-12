@@ -8,7 +8,7 @@ import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, format
 import { facetsOf } from "../render/facets";
 import { InlineText } from "../render/inline";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import { isBuiltinHidden } from "../editor/properties";
+import { BUILTIN_HIDE } from "../editor/properties";
 import { isLegacyBareColumnList } from "../editor/queryViewProperties";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { editingId, editingOwner } from "../editorController";
@@ -1133,7 +1133,7 @@ function TitleCell(props: {
       setCellSel(cell());
       return;
     }
-    startCellEditing(cell(), sheetClickOffset(e, contentRef, raw(), isBuiltinHidden) ?? undefined);
+    startCellEditing(cell(), sheetClickOffset(e, contentRef, raw(), BUILTIN_HIDE) ?? undefined);
   };
   const openCellMenu = (e: MouseEvent) => {
     if (!liveFormulaRowNode(props.row)) return;

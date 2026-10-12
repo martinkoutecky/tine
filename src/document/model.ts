@@ -219,3 +219,11 @@ let idCounter = 0;
 export function freshId(): string {
   return `b${Date.now().toString(36)}-${idCounter++}`;
 }
+/** The outline kernel's source of fresh keys: the same scheme as {@link freshId}.
+ *  Advance it with {@link keysUsed} by the `Change`'s `keys_used`. */
+export function keySource(): { prefix: string; next: number } {
+  return { prefix: `b${Date.now().toString(36)}-`, next: idCounter };
+}
+export function keysUsed(count: number): void {
+  idCounter += count;
+}

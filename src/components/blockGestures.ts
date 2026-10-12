@@ -21,7 +21,7 @@ import { codeFences } from "../editor/fences";
 import { codeBodyProjection } from "../editor/codeFence";
 import { blockDropPosition, type BlockDropPosition } from "../editor/blockDrag";
 import { textareaCaretPoints } from "../editor/caretRows";
-import { isBuiltinHidden, splitProps } from "../editor/properties";
+import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
 
@@ -224,7 +224,7 @@ export function renderedClickOffset(contentRef: HTMLElement, raw: string, fmt: "
   const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
   // GH #489/#510: highlight.js has no inline spans. Find the clicked card's
   // parser-owned fence, then map its rendered body to visible-raw coordinates.
-  const visible = splitProps(raw, isBuiltinHidden, fmt).visible;
+  const visible = splitProps(raw, BUILTIN_HIDE, fmt).visible;
   const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
   if (range) {
     const cards = Array.from(contentRef.querySelectorAll("pre.code-block > code"));
@@ -238,7 +238,7 @@ export function renderedClickOffset(contentRef: HTMLElement, raw: string, fmt: "
   // whatever the block ends with. Asked before the span map, because a trailing
   // construct with an invisible closing delimiter (`*italic*`) maps that click
   // to a legitimate-looking interior offset just before the delimiter.
-  if (clickBeyondRenderedEnd(contentRef, e.clientX, e.clientY)) return splitProps(raw, isBuiltinHidden, fmt).visible.length;
+  if (clickBeyondRenderedEnd(contentRef, e.clientX, e.clientY)) return splitProps(raw, BUILTIN_HIDE, fmt).visible.length;
   if (!range) return null;
-  return editorOffsetFromRenderedRange(contentRef, range, raw, isBuiltinHidden, fmt);
+  return editorOffsetFromRenderedRange(contentRef, range, raw, BUILTIN_HIDE, fmt);
 }

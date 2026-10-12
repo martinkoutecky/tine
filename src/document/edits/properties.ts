@@ -8,7 +8,7 @@ import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
-import { isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
+import { isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
@@ -267,6 +267,7 @@ export function toggleBlockProperty(id: string, key: string, value: string) {
 }
 
 const ORDER_KEY = "logseq.order-list-type";
+const ORDER_KEY_HIDE = hideKeys([ORDER_KEY], true);
 export function isOrdered(id: string | null | undefined): boolean {
   const node = id ? doc.byId[id] : undefined;
   return !!node && orderedFromProperties(facetsOf(node.raw, formatForBlock(id!)).properties);
@@ -290,7 +291,7 @@ export function orderListTypeFromRaw(raw: string, format: Format): string | null
  * OG writes both the in-memory property and serialized content at
  * `src/main/frontend/modules/outliner/core.cljs:420-433` (6e7afa8eb). */
 export function rawWithOrderListType(raw: string, value: string | null, format: Format): string {
-  const { visible } = splitProps(raw, (key) => propertyKeyNorm(key) === ORDER_KEY, format);
+  const { visible } = splitProps(raw, ORDER_KEY_HIDE, format);
   if (value === null) return visible;
   const property = format === "org" ? `:${ORDER_KEY}: ${value}` : `${ORDER_KEY}:: ${value}`;
   return joinProps(visible, property, format);
@@ -311,7 +312,7 @@ function setOwnNumberedList(id: string, enabled: boolean, visibleText?: string):
   const format = formatForBlock(id);
   const base = visibleText === undefined
     ? node.raw
-    : joinProps(visibleText, splitProps(node.raw, isBuiltinHidden, format).hidden, format);
+    : joinProps(visibleText, splitProps(node.raw, BUILTIN_HIDE, format).hidden, format);
   const next = rawWithOrderListType(base, enabled ? "number" : null, format);
   if (next === node.raw) return false;
   pushUndo(`own-numbered:${id}`, [node.page]);
@@ -491,7 +492,7 @@ export function setSchedule(
  *  show up collapsed in OG / the mobile app. Fence-aware via splitProps. */
 export function rawWithCollapsed(raw: string, collapsed: boolean, format: Format): string {
   if (format === "org") return orgRawWithProperty(raw, "collapsed", collapsed ? "true" : null);
-  const { visible, hidden } = splitProps(raw, isBuiltinHidden, format);
+  const { visible, hidden } = splitProps(raw, BUILTIN_HIDE, format);
   const nextHidden = upsertPropertyLine(hidden, "collapsed", collapsed ? "true" : null) ?? "";
   return joinProps(visible, nextHidden, format);
 }

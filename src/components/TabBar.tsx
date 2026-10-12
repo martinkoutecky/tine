@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMou
 import { FloatingPortal } from "./FloatingPortal";
 import { resolveRouteBlock, routeTitle, type PaneRouter, type Route, type Tab } from "../router";
 import { formatForBlock, node as docNode } from "../document";
-import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
+import { splitProps, BUILTIN_HIDE, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
 import { parseBlock, parserReady } from "../render/parse";
 import { inlineText } from "../render/facets";
@@ -29,7 +29,7 @@ const EDGE_ZONE_PX = 24;
 // as the PARSER does (I-12): links show their label, page refs their name, emphasis
 // and code spans their text, and a heading its title - no regex over the markup.
 export function blockSummary(raw: string, format: PropFormat, truncate = true): string {
-  const { visible } = splitProps(raw, isBuiltinHidden, format);
+  const { visible } = splitProps(raw, BUILTIN_HIDE, format);
   const line =
     visible
       .split("\n")

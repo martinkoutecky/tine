@@ -1,7 +1,7 @@
 import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, outlineFits, replaceChildOrders, setRaw, pageByName, setBlockProperty, undo, withUndoUnit, node as docNode } from "../document";
 import { clipboardWriteRevision, copyRich } from "../clipboard";
 import { captureBinding, bindingCurrent } from "../binding";
-import { isSheetCellHidden, joinProps, splitProps } from "../editor/properties";
+import { SHEET_CELL_HIDE, hideKeys, joinProps, splitProps } from "../editor/properties";
 import { parseOutline, type OutlineNode } from "../editor/outline";
 import { visibleBody } from "../render/block";
 import { pushToast } from "../toasts";
@@ -33,7 +33,7 @@ type SheetStructuralCopy = { fingerprint: string; outlineMd: string };
 
 let lastSheetCopy: SheetStructuralCopy | null = null;
 
-const COMPACT_GRID_CONFIG_KEYS = new Set([
+const COMPACT_GRID_CONFIG_HIDE = hideKeys([
   "tine.view",
   "tine.header",
   "tine.col-widths",
@@ -116,14 +116,14 @@ function cellText(blockId: string | null): string {
  *  ((ref)) pointing at it (review finding). Fence-aware via splitProps. */
 function writeCellVisible(id: string, visible: string): void {
   const fmt = formatForBlock(id);
-  const hidden = splitProps(docNode(id)?.raw ?? "", isSheetCellHidden, fmt).hidden;
-  const body = splitProps(visible, isSheetCellHidden, fmt).visible;
+  const hidden = splitProps(docNode(id)?.raw ?? "", SHEET_CELL_HIDE, fmt).hidden;
+  const body = splitProps(visible, SHEET_CELL_HIDE, fmt).visible;
   setRaw(id, hidden ? joinProps(body, hidden, fmt) : body, { timetracking: false });
 }
 
 function rawForCellTransfer(id: string): string {
   const raw = docNode(id)?.raw ?? "";
-  return splitProps(raw, isSheetCellHidden, formatForBlock(id)).visible;
+  return splitProps(raw, SHEET_CELL_HIDE, formatForBlock(id)).visible;
 }
 
 function escapeHtml(s: string): string {
@@ -488,7 +488,7 @@ function compactGridConfigSplit(
   raw: string,
   fmt: "md" | "org"
 ): { visible: string; hidden: string } {
-  return splitProps(raw, (key) => COMPACT_GRID_CONFIG_KEYS.has(key.toLowerCase()), fmt);
+  return splitProps(raw, COMPACT_GRID_CONFIG_HIDE, fmt);
 }
 
 function isCompactGridCell(id: string): boolean {

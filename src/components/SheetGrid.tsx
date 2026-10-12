@@ -33,7 +33,7 @@ import {
   sheetGridIdFromEventTarget,
 } from "../sheet/pointerSelection";
 import { setColumnWidth } from "../sheet/mutations";
-import { isSheetCellHidden, splitProps } from "../editor/properties";
+import { SHEET_CELL_HIDE, splitProps } from "../editor/properties";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { editingId, editingOwner, startEditing } from "../editorController";
 import { openSheetContextMenu } from "../ui";
@@ -707,7 +707,7 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
     const blockId = props.cell.blockId;
     if (!blockId) return;
     const node = docNode(blockId);
-    const offset = node ? sheetClickOffset(e, contentRef, node.raw, isSheetCellHidden) : null;
+    const offset = node ? sheetClickOffset(e, contentRef, node.raw, SHEET_CELL_HIDE) : null;
     startCellEditing(sel(), offset ?? undefined);
   };
   const removeCtx = () => ({
@@ -812,9 +812,9 @@ function SheetBlock(props: {
     e.stopPropagation();
     const n = node();
     if (!n) return;
-    const fallback = splitProps(n.raw, isSheetCellHidden).visible.length;
+    const fallback = splitProps(n.raw, SHEET_CELL_HIDE).visible.length;
     setCellSel(props.cell);
-    startEditing(props.id, sheetClickOffset(e, contentRef, n.raw, isSheetCellHidden) ?? fallback, cellOwner(props.cell));
+    startEditing(props.id, sheetClickOffset(e, contentRef, n.raw, SHEET_CELL_HIDE) ?? fallback, cellOwner(props.cell));
   };
 
   return (

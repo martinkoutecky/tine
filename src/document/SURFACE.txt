@@ -29,6 +29,7 @@ blockRef
 blockSubtreeMarkdown
 blockWritable
 buildClipboardPayload
+canIndentBlock  # why: the swipe indent cue asks the kernel indent verb instead of restating its depth rule (outline kernel twin 14); batch-outline-kernel
 captureScratchPage
 captureToPage
 carryTodayPage

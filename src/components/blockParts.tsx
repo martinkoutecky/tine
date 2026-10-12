@@ -7,7 +7,7 @@
 import { For, type JSX } from "solid-js";
 import { node as docNode, pageByName, setRaw } from "../document";
 import { literalBlockOfLine } from "../editor/literalLines";
-import { hideAll, splitProps } from "../editor/properties";
+import { HIDE_ALL, splitProps } from "../editor/properties";
 import { toggleMarkerLabel, toggleTaskDone } from "../editor/repeat";
 import type { LogbookInfo } from "../logbook";
 import { logbookWithSecondSupport, timetrackingEnabled, workflow } from "../ui";
@@ -110,7 +110,7 @@ export function resizeBlockEditor(editor: HTMLTextAreaElement): void {
  *  the candidate's label. Which lines are properties is lsdoc's (`splitProps` over the block-region
  *  door), so a `key:: value` line inside a code fence is content, not skipped metadata (I-12). */
 export function blockFirstLine(raw: string, format: "md" | "org" = "md"): string {
-  for (const line of splitProps(raw, hideAll, format).visible.split("\n")) {
+  for (const line of splitProps(raw, HIDE_ALL, format).visible.split("\n")) {
     if (line.trim() !== "") return line.trim();
   }
   return "";

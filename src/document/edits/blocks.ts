@@ -1,6 +1,4 @@
-import { removeSubtree } from "./subtree";
-import { blockRegions } from "../../render/parse";
-import { blockWritable, pageWritable, rawWithInheritedOrderListType, isOrdered, rawWithOrderListType, rawWithCollapsed, writeCollapsed } from "./properties";
+import { blockWritable, pageWritable, rawWithInheritedOrderListType, writeCollapsed } from "./properties";
 import { doc, docHasBlockIdentity, formatForBlock, setDoc, freshId, type DocState, formatForPage, pageByName } from "../model";
 
 /** Reveal a search result without creating an edit, undo entry, or save. */
@@ -12,13 +10,13 @@ import { timetrackingEnabled, logbookWithSecondSupport, logicalOutdenting, remov
 import { pushRawUndo, pushUndo, undo, undoTopTag } from "../history";
 import { markDirty, noteTitleIdentityIntent } from "../host/wiring";
 import { produce } from "solid-js/store";
-import { OUTLINE_MAX_DEPTH, outlineDepth, type OutlineNode } from "../../editor/outline";
-import { splitProps, isBuiltinHidden, joinProps, isPropertiesOnly, readPropertyValue } from "../../editor/properties";
+import { applyOutlineChange, markOutlineDirty, outlineChange, type OutlineChange } from "../kernel";
+import { outlineMaxDepth, outlineDepth, type OutlineNode } from "../../editor/outline";
+import { splitProps, BUILTIN_HIDE, HIDE_ID, joinProps, isPropertiesOnly, readPropertyValue, visibleOffsetToRawByte } from "../../editor/properties";
 import { startEditing, editingId, endEdit, type EditorSelection } from "../../editorController";
 import { batch } from "solid-js";
-import type { EditKind, EditKinds } from "../../editKind";
 import { isBlockMoving, setBlockMoving } from "./moves";
-import { depthOf, existingSubtreeFits, indexInSiblings, rootsOf, OutlineScope, prevVisible, nextVisible } from "../tree";
+import { depthOf, existingSubtreeFits, OutlineScope, prevVisible, nextVisible } from "../tree";
 import { blockExternalId, existingBlockId, isBlockRefUuid } from "./identity";
 import { captureReferenceChangeCount, pushReferenceChangeNotice, pushToast } from "../../toasts";
 import { graphEpoch } from "../../graphSession";
@@ -61,12 +59,13 @@ export function prepareReferenceChangeNotice(roots: readonly string[], subtree: 
 // Mutations (each schedules a debounced save of the affected page)
 // ---------------------------------------------------------------------------
 
+
 /** Keep imported properties except an id already owned by a live block. */
 function outlineRaw(raw: string, format: "md" | "org", incoming: Set<string>): string {
   const id = existingBlockId(raw, format)?.toLowerCase();
   if (!id) return raw;
   if (incoming.has(id) || docHasBlockIdentity(id))
-    return splitProps(raw, (key) => key.toLowerCase() === "id", format).visible;
+    return splitProps(raw, HIDE_ID, format).visible;
   incoming.add(id);
   return raw;
 }
@@ -118,21 +117,15 @@ export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean 
 export function insertEmptyChildBlock(parentId: string, at: number): string | null {
   const parent = doc.byId[parentId];
   if (!parent || !blockWritable(parentId) || at < 0 || at > parent.children.length) return null;
-  if (!outlineFits(parentId, [{ raw: "", children: [] }], 1)) {
-    pushToast("Outline is too deep to insert a child", "error");
+  const change = outlineChange({ verb: "insert_empty_child", parent: parentId, at }, [parent.page]);
+  if ("refused" in change) {
+    if (change.refused === "depth_cap") pushToast("Outline is too deep to insert a child", "error");
     return null;
   }
   pushUndo(`insert-child:${parentId}`, [parent.page]);
-  const id = freshId();
-  const pageName = parent.page;
-  setDoc(
-    produce((s) => {
-      s.byId[id] = { id, raw: "", collapsed: false, parent: parentId, page: pageName, children: [] };
-      s.byId[parentId].children.splice(at, 0, id);
-    })
-  );
-  markDirty(pageName, "insert-blocks");
-  return id;
+  applyOutlineChange(change);
+  markOutlineDirty(change);
+  return change.focus?.key ?? null;
 }
 
 /** Replace child ordering for existing blocks under existing parents.
@@ -172,7 +165,7 @@ export function replaceChildOrders(nextByParent: Record<string, readonly string[
 /** Whether an outline fits beside `hostId`, or `levelsBelowHost` levels below
  * it, under the shared depth ceiling. Bounds every recursive outline insert. */
 export function outlineFits(hostId: string, nodes: readonly OutlineNode[], levelsBelowHost = 0): boolean {
-  return !!doc.byId[hostId] && depthOf(hostId) + levelsBelowHost + outlineDepth(nodes) <= OUTLINE_MAX_DEPTH;
+  return !!doc.byId[hostId] && depthOf(hostId) + levelsBelowHost + outlineDepth(nodes) <= outlineMaxDepth();
 }
 
 /** Append parsed outline blocks as children of `parentId`; null means empty,
@@ -196,9 +189,11 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
   return lastId;
 }
 
-/** Enter: split the block at `offset`. Built-in `id::`/`collapsed::` props are
- *  hidden from the editor (see editor/properties splitProps): the caret offset is
- *  in visible space, and hidden props stay with the ORIGINAL block across a split. */
+/** Enter: split the block at `offset`, a caret in the editor's visible text
+ *  (built-in properties hidden). The kernel's `split` owns the rule
+ *  (outline::split): hidden props stay with the original block, a split at the
+ *  head inserts an empty block before it, and GH #361's line boundary becomes the
+ *  block separator. Returns false when the outline cap refuses a child. */
 export function splitBlock(
   id: string,
   offset: number,
@@ -208,97 +203,25 @@ export function splitBlock(
 ) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
-  const fmt = formatForBlock(id);
-  // The caret offset is in editor-visible space (hidden props aren't shown), so
-  // split the visible text and keep the hidden props on the original block.
-  const { visible, hidden } = splitProps(node.raw, isBuiltinHidden, fmt);
-  // GH #361: the caret can report either side of the same source-line boundary
-  // (end of line one or start of line two). In both cases that newline becomes
-  // the structural block separator instead of content in either block.
-  const boundaryBefore = offset < visible.length && visible[offset] === "\n";
-  const boundaryAfter = offset > 0 && visible[offset - 1] === "\n";
-  const splitBefore = boundaryAfter ? offset - 1 : offset;
-  const splitAfter = !boundaryAfter && boundaryBefore ? offset + 1 : offset;
-  const before = visible.slice(0, splitBefore);
-  const after = visible.slice(splitAfter);
-  const childSplit = before.trim() === "" && after.trim() !== ""
-    ? keepStartInScope
-    : (node.children.length > 0 && !node.collapsed) || forceChild;
-  if (childSplit && !outlineFits(id, [{ raw: "", children: [] }], 1)) {
+  const change = outlineChange({
+    verb: "split",
+    key: id,
+    raw_offset: visibleOffsetToRawByte(node.raw, offset, BUILTIN_HIDE, formatForBlock(id)),
+    force_child: forceChild,
+    children_visible: node.children.length > 0 && !node.collapsed,
+    keep_start_in_scope: keepStartInScope,
+  }, [node.page]);
+  if ("refused" in change) {
+    if (change.refused !== "depth_cap") return;
     pushToast("Outline is too deep to insert a child", "error");
     return false;
   }
   pushUndo("split", [node.page]);
-  const pageName = node.page;
-  // Ordered-list items propagate: a block split off an ordered item is itself
-  // ordered (OG inherits `:logseq.order-list-type`), toggleable per-block later.
-  const ordered = isOrdered(id);
-  const withOrdered = (raw: string) => rawWithOrderListType(raw, "number", fmt);
-  const orderedAfter = ordered ? withOrdered(after) : after;
-  const orderedEmpty = ordered ? withOrdered("") : "";
-
-  // Caret-at-start case (blank before, content after): create a NEW EMPTY block
-  // *before* the current one. The current block keeps its uuid, its content, and
-  // its children — its identity never changes. This mirrors OG's
-  // insert-new-block-before-block-aux! and is what keeps a block stable when it's
-  // shown elsewhere (sidebar / ref / query) and you press Enter at its head.
-  // Without it, the content would migrate to a fresh uuid and any external view
-  // tracking the original uuid would land on the now-empty block.
-  if (before.trim() === "" && after.trim() !== "") {
-    const emptyId = freshId();
-    setDoc(
-      produce((s) => {
-        // At offset zero the original block is untouched. At a later line
-        // boundary, however, the blank prefix and its separator become the new
-        // empty block, so the original must retain only the post-boundary text.
-        if (offset > 0) s.byId[id].raw = joinProps(after, hidden, fmt);
-        s.byId[emptyId] = {
-          id: emptyId,
-          raw: orderedEmpty,
-          collapsed: false,
-          parent: keepStartInScope ? id : node.parent,
-          page: pageName,
-          children: [],
-        };
-        if (keepStartInScope) {
-          s.byId[id].children.unshift(emptyId);
-        } else {
-          const sibs = node.parent === null
-            ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-            : s.byId[node.parent].children;
-          sibs.splice(sibs.indexOf(id), 0, emptyId);
-        }
-      })
-    );
-    startEditing(emptyId, 0, null, editingSurface);
-    markDirty(pageName, offset > 0 ? ["insert-blocks", "save-block"] : "insert-blocks");
-    return;
+  applyOutlineChange(change);
+  if (change.focus) {
+    startEditing(change.focus.key, change.focus.editorOffset ?? 0, null, editingSurface);
   }
-
-  const newId = freshId();
-
-  setDoc(
-    produce((s) => {
-      s.byId[id].raw = joinProps(before, hidden, fmt);
-      const hasVisibleChildren = node.children.length > 0 && !node.collapsed;
-      if (hasVisibleChildren || forceChild) {
-        s.byId[newId] = {
-          id: newId, raw: orderedAfter, collapsed: false, parent: id, page: pageName, children: [],
-        };
-        s.byId[id].children.unshift(newId);
-      } else {
-        s.byId[newId] = {
-          id: newId, raw: orderedAfter, collapsed: false, parent: node.parent, page: pageName, children: [],
-        };
-        const sibs = node.parent === null
-          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-          : s.byId[node.parent].children;
-        sibs.splice(sibs.indexOf(id) + 1, 0, newId);
-      }
-    })
-  );
-  startEditing(newId, 0, null, editingSurface);
-  markDirty(pageName, ["save-block", "insert-blocks"]);
+  markOutlineDirty(change);
 }
 
 /** Tab: make the block the last child of its previous sibling. Returns false
@@ -311,48 +234,37 @@ export function splitBlock(
  *  block further down the page (GH #477). */
 export function indentBlock(id: string, caretOffset: number | EditorSelection, editingSurface: string | null = null) {
   if (!blockWritable(id)) return;
-  const i = indexInSiblings(id);
-  if (i <= 0) return;
-  const sibs = rootsOf(id);
-  const newParent = sibs[i - 1];
-  // A materialized page preamble is not an outline parent (GH #638). Keep the
-  // first body block a root; an ordinary imported properties block may nest.
-  if (doc.byId[newParent].originatedFromPageHeader) return;
-  if (!existingSubtreeFits(id, newParent)) return false;
-  pushUndo("indent", [doc.byId[id].page]);
   const pageName = doc.byId[id].page;
+  // The kernel refuses the first sibling, a page-header parent (GH #638) and
+  // the outline cap; only the cap is reported to the caller.
+  const change = outlineChange({ verb: "indent", key: id }, [pageName]);
+  if ("refused" in change) return change.refused === "depth_cap" ? false : undefined;
+  pushUndo("indent", [pageName]);
   // Reparenting remounts the editor. Publish its selection and ownership in the
   // same reactive flush as the tree change, before the replacement can focus.
-  reparentEditingBlock(pageName, ["move-blocks", "save-block"], () => {
-    setDoc(
-      produce((s) => {
-        const arr = s.byId[id].parent === null
-          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-          : s.byId[s.byId[id].parent!].children;
-        arr.splice(arr.indexOf(id), 1);
-        s.byId[id].parent = newParent;
-        s.byId[newParent].children.push(id);
-        // Expand the new parent — and clear any persisted collapsed:: in its raw,
-        // else a reload would re-collapse it and hide the just-indented child.
-        const np = s.byId[newParent];
-        np.raw = rawWithCollapsed(np.raw, false, formatForBlock(newParent));
-        np.collapsed = false;
-      })
-    );
+  reparentEditingBlock(change, () => {
+    applyOutlineChange(change);
     startEditing(id, caretOffset, null, editingSurface);
   });
+}
+
+/** Whether Tab would indent `id`: the kernel's verb, its answer discarded
+ *  (DESIGN §5.4), so a preflight never restates the rule. O(page blocks). */
+export function canIndentBlock(id: string): boolean {
+  const node = doc.byId[id];
+  return !!node && blockWritable(id) && !("refused" in outlineChange({ verb: "indent", key: id }, [node.page]));
 }
 
 /** Run a reparenting tree update and the editor handoff in one reactive batch,
  *  marked as a block move so the old editor's blur during the flush does not
  *  end edit mode (#519, #495). An already active move (another page) is left
  *  to its owner. */
-function reparentEditingBlock(page: string, kinds: EditKind | EditKinds, update: () => void): void {
+function reparentEditingBlock(change: OutlineChange, update: () => void): void {
   const ownsMove = !isBlockMoving();
-  if (ownsMove) setBlockMoving(true, page);
+  if (ownsMove) setBlockMoving(true, change.pages[0].name);
   try {
     batch(update);
-    markDirty(page, kinds);
+    markOutlineDirty(change);
   } finally {
     if (ownsMove) setBlockMoving(false);
   }
@@ -362,36 +274,14 @@ function reparentEditingBlock(page: string, kinds: EditKind | EditKinds, update:
  *  `editingSurface` as in `indentBlock` (GH #477). */
 export function outdentBlock(id: string, caretOffset: number | EditorSelection, editingSurface: string | null = null) {
   const node = doc.byId[id];
-  if (!node || !blockWritable(id) || node.parent === null) return;
+  if (!node || !blockWritable(id)) return;
+  // Logical outdenting (OG `outliner/core.cljs:835-852` at `6e7afa8eb`) is a
+  // setting, passed so keyboard, mobile and any future caller share the verb.
+  const change = outlineChange({ verb: "outdent", key: id, logical: logicalOutdenting() }, [node.page]);
+  if ("refused" in change) return;
   pushUndo("outdent", [node.page]);
-  const parentId = node.parent;
-  const grandParent = doc.byId[parentId].parent;
-  const pageName = node.page;
-
-  reparentEditingBlock(pageName, "move-blocks", () => {
-    setDoc(
-      produce((s) => {
-        const parent = s.byId[parentId];
-        const idx = parent.children.indexOf(id);
-        // OG only reparents the following siblings for traditional outdenting;
-        // logical outdenting stops after moving this block (`src/main/frontend/modules/outliner/core.cljs:835-852`
-        // at `6e7afa8eb`). Keep this decision inside the shared store operation so
-        // keyboard, mobile, and any future caller all use the same mode.
-        if (logicalOutdenting()) {
-          parent.children.splice(idx, 1);
-        } else {
-          const following = parent.children.splice(idx);
-          following.shift(); // drop id
-          for (const f of following) s.byId[f].parent = id;
-          s.byId[id].children.push(...following);
-        }
-        s.byId[id].parent = grandParent;
-        const gArr = grandParent === null
-          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-          : s.byId[grandParent].children;
-        gArr.splice(gArr.indexOf(parentId) + 1, 0, id);
-      })
-    );
+  reparentEditingBlock(change, () => {
+    applyOutlineChange(change);
     startEditing(id, caretOffset, null, editingSurface);
   });
 }
@@ -428,62 +318,29 @@ export function mergeWithNext(
   return absorbInto(id, next, editingSurface);
 }
 
-/** The one merge answer for Backspace-at-start and Delete-at-end: `absorbed`'s
- *  visible text is appended to `survivor` (no separator), its children are
- *  appended to survivor's, and it is removed. The survivor keeps its identity
- *  and hidden props; the absorbed `id::` is kept only when the survivor has
- *  none. Refuses (false) across pages. */
+/** The one merge answer for Backspace-at-start and Delete-at-end: the
+ *  kernel's `merge` (outline::merge) appends `absorbed`'s visible text and its
+ *  children to `survivor` and removes it; the survivor keeps its identity and
+ *  hidden props, and takes the absorbed `id::` only when it has none. Refuses
+ *  (false) across pages and past the outline cap. */
 function absorbInto(survivor: string, absorbed: string, editingSurface: string | null): boolean {
-  const node = doc.byId[absorbed];
-  if (doc.byId[survivor].page !== node.page) return false; // don't merge across pages
-  // The absorbed block's children move under the survivor, which may sit deeper
-  // (Backspace into the last leaf of a deep chain). Refuse before mutating, as
-  // every other reparenting door does; work is the moved subtrees only (I-22).
-  for (const child of node.children) {
-    if (!existingSubtreeFits(child, survivor)) {
-      pushToast("Outline is too deep to merge", "error");
-      return false;
-    }
-  }
-  const fmt = formatForBlock(absorbed); // same page (checked above) → same format
-  // Merge visible content only; keep the survivor's hidden props (it keeps its
-  // identity) and drop the absorbed block's — otherwise the id::/collapsed::
-  // lines would be concatenated mid-line and a block could end up with two ids.
-  const keepSplit = splitProps(doc.byId[survivor].raw, isBuiltinHidden, fmt);
-  const goneSplit = splitProps(node.raw, isBuiltinHidden, fmt);
-  const joinOffset = keepSplit.visible.length;
-  const pageName = node.page;
-
-  // Preserve the absorbed block's id if the survivor has none — otherwise inbound
-  // ((id)) references to the absorbed block would orphan on merge. Match the id
-  // line in the block's on-disk syntax (md `id:: x` vs org drawer `:id: x`).
-  let hidden = keepSplit.hidden;
-  const survivorHasId = existingBlockId(doc.byId[survivor].raw, fmt) !== null;
-  const absorbedProperty = blockRegions(node.raw, fmt).id;
-  const absorbedId = absorbedProperty
-    ? new TextDecoder().decode(new TextEncoder().encode(node.raw).subarray(...absorbedProperty.line)).trim()
-    : null;
-  if (!survivorHasId && absorbedId) {
-    hidden = hidden ? `${hidden}\n${absorbedId}` : absorbedId;
-  }
-
-  const notice = prepareReferenceChangeNotice([absorbed], false, !survivorHasId && absorbedId !== null);
-  pushUndo(notice.tag, [node.page]);
-
-  setDoc(
-    produce((s) => {
-      s.byId[survivor].raw = joinProps(keepSplit.visible + goneSplit.visible, hidden, fmt);
-      for (const c of node.children) s.byId[c].parent = survivor;
-      s.byId[survivor].children.push(...node.children);
-      const arr = node.parent === null
-        ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-        : s.byId[node.parent].children;
-      arr.splice(arr.indexOf(absorbed), 1);
-      delete s.byId[absorbed];
-    })
+  const pageName = doc.byId[absorbed].page;
+  const change = outlineChange(
+    { verb: "merge", survivor, absorbed, absorbed_referenced: false },
+    [doc.byId[survivor].page, pageName],
   );
-  startEditing(survivor, joinOffset, null, editingSurface);
-  markDirty(pageName, ["save-block", "move-blocks", "delete-blocks"]);
+  if ("refused" in change) {
+    if (change.refused === "depth_cap") pushToast("Outline is too deep to merge", "error");
+    return false;
+  }
+  const transferred = change.notices.some((n) => n.kind === "id_transferred");
+  const notice = prepareReferenceChangeNotice([absorbed], false, transferred);
+  pushUndo(notice.tag, [pageName]);
+  applyOutlineChange(change);
+  if (change.focus) {
+    startEditing(change.focus.key, change.focus.editorOffset ?? 0, null, editingSurface);
+  }
+  markOutlineDirty(change);
   notice.show();
   return true;
 }
@@ -545,7 +402,7 @@ export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): 
   if (!outlineFits(id, nodes)) return null;
   const format = formatForBlock(id);
   const incoming = new Set<string>();
-  const split = splitProps(current.raw, isBuiltinHidden, format);
+  const split = splitProps(current.raw, BUILTIN_HIDE, format);
   if (split.visible.trim()) return null;
   pushUndo("paste-replace-empty", [current.page]);
   let lastId = id;
@@ -562,43 +419,25 @@ export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): 
   return lastId;
 }
 
-/** Remove a block and its subtree. */
-function deleteBlockInternal(id: string) {
-  const node = doc.byId[id];
-  if (!node) return;
-  const pageName = node.page;
-  const format = pageByName(pageName)?.format ?? "md";
-  const removedSidebarIds = new Set<string>();
-  const collectRemovedIds = (bid: string) => {
-    const current = doc.byId[bid];
-    if (!current) return;
-    removedSidebarIds.add(current.id);
-    const durable = existingBlockId(current.raw, format);
-    if (durable) removedSidebarIds.add(durable);
-    current.children.forEach(collectRemovedIds);
-  };
-  collectRemovedIds(id);
-  setDoc(
-    produce((s) => {
-      const arr =
-        node.parent === null
-          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-          : s.byId[node.parent!].children;
-      const ix = arr.indexOf(id);
-      if (ix >= 0) arr.splice(ix, 1);
-      removeSubtree(s, id);
-    })
-  );
-  removeDeletedBlocksFromSidebar(removedSidebarIds);
-  if (editingId() === id) endEdit("delete-block");
-  markDirty(pageName, "delete-blocks");
-}
-
+/** Remove a block and its subtree (outline::delete). */
 export function deleteBlock(id: string) {
   if (!blockWritable(id)) return;
+  const pageName = doc.byId[id].page;
+  const change = outlineChange({ verb: "delete", key: id }, [pageName]);
+  if ("refused" in change) return;
   const notice = prepareReferenceChangeNotice([id], true);
-  pushUndo(notice.tag, [doc.byId[id].page]);
-  deleteBlockInternal(id);
+  pushUndo(notice.tag, [pageName]);
+  const format = pageByName(pageName)?.format ?? "md";
+  const removedSidebarIds = new Set<string>();
+  for (const patch of change.pages) for (const key of patch.deleted) {
+    removedSidebarIds.add(key);
+    const durable = existingBlockId(doc.byId[key].raw, format);
+    if (durable) removedSidebarIds.add(durable);
+  }
+  applyOutlineChange(change);
+  removeDeletedBlocksFromSidebar(removedSidebarIds);
+  if (editingId() === id) endEdit("delete-block");
+  markOutlineDirty(change);
   notice.show();
 }
 

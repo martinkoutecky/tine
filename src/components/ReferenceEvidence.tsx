@@ -7,7 +7,7 @@ import type { BlockDto, MatchSpan, PageKind, ReferenceBlockEvidence } from "../t
 import { blockDtoExternalId } from "../blockIdentity";
 import { EmojiText } from "../render/emoji";
 import { buildSearchExcerpt, type Segment } from "./SearchResultRow";
-import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";
+import { BUILTIN_HIDE, rawOffsetToVisibleOffset } from "../editor/properties";
 
 /**
  * Land on the occurrence as a SELECTION, not a collapsed caret. Every jump for
@@ -17,8 +17,8 @@ import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties"
  */
 export function occurrenceSelection(raw: string, span: MatchSpan, page: string): EditorSelection {
   const format = formatForPage(page);
-  const start = rawOffsetToVisibleOffset(raw, span.start, isBuiltinHidden, format);
-  const end = rawOffsetToVisibleOffset(raw, span.end, isBuiltinHidden, format);
+  const start = rawOffsetToVisibleOffset(raw, span.start, BUILTIN_HIDE, format);
+  const end = rawOffsetToVisibleOffset(raw, span.end, BUILTIN_HIDE, format);
   return { start, end: Math.max(start, end), direction: "forward" };
 }
 

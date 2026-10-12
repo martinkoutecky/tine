@@ -1,5 +1,5 @@
 import { journalTitle, appNow } from "../../journal";
-import { OUTLINE_MAX_DEPTH, outlineDepth, parseOutline, type OutlineNode } from "../../editor/outline";
+import { outlineMaxDepth, outlineDepth, parseOutline, type OutlineNode } from "../../editor/outline";
 import { type PageKind } from "../../types";
 import { bindingOwner } from "../../owned";
 import { pageByName, freshId, setDoc } from "../model";
@@ -41,7 +41,7 @@ export async function captureToPage(title: string, markdown: string): Promise<bo
  *  it landed. */
 async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNode[]): Promise<boolean> {
   // Captured blocks land at root level, so the outline's own depth is the result's (I-22).
-  if (!nodes.length || outlineDepth(nodes) > OUTLINE_MAX_DEPTH) return false;
+  if (!nodes.length || outlineDepth(nodes) > outlineMaxDepth()) return false;
   const owner = bindingOwner();
   // Admit the file the name resolves to. Another file holding the name is
   // replaced when it has no unsaved input; when it has, stop rather than append

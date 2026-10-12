@@ -56,8 +56,9 @@ use tine_core::reference_evidence::{BlockSignature, ReferenceFilter};
 
 /// Maximum source bytes admitted to a page/config/EDN parser or renderer.
 pub const PARSE_INPUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
-/// Maximum structural depth admitted before recursive projections or rendering.
-pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = 128;
+/// Maximum structural depth admitted before recursive projections or rendering:
+/// the outline kernel's cap, so admission and every edit agree (twin 4).
+pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = tine_outline::outline::OUTLINE_MAX_DEPTH;
 
 pub(crate) enum SyncFileResult {
     Reconciled {

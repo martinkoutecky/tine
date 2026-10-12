@@ -1,6 +1,8 @@
 // Outline-kernel characterization (DESIGN §9): drive the window's edit
 // functions over the shared verb fixtures that the Rust kernel is checked
-// against (crates/tine-outline/tests/ops_fixtures.rs). With
+// against (crates/tine-outline/tests/ops_fixtures.rs). Since M1 the edits run
+// through the kernel adapter (document/kernel.ts), so this is the WASM leg of
+// the both-ways check, plus the adapter's caret and store mapping. With
 // TINE_RECORD_KERNEL_FIXTURES=1 the observed results are written back as
 // `expect`; a difference from the Rust transcription is investigated, never
 // resolved by editing `expect` alone.
@@ -14,7 +16,12 @@ let dirty: Record<string, string[]> = {};
 let focus: { key: string; editor_offset: number | null } | null = null;
 const KEEP = { start: -1, end: -1 };
 
-vi.mock("../model", async (orig) => ({ ...(await orig<typeof import("../model")>()), freshId: () => `n${nextKey++}` }));
+vi.mock("../model", async (orig) => ({
+  ...(await orig<typeof import("../model")>()),
+  freshId: () => `n${nextKey++}`,
+  keySource: () => ({ prefix: "n", next: nextKey }),
+  keysUsed: (count: number) => { nextKey += count; },
+}));
 vi.mock("../../ui", async (orig) => ({ ...(await orig<typeof import("../../ui")>()), logicalOutdenting: () => logical }));
 // `markDirty` is replaced through a proxy over the real module, loaded in
 // beforeAll: an importOriginal factory hands blocks.ts the real module, since
@@ -37,7 +44,7 @@ vi.mock("../../editorController", async (orig) => ({
 
 import { initParser } from "../../render/parse";
 import { clearSeededFacets } from "../../render/facets";
-import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../../editor/properties";
+import { BUILTIN_HIDE, rawOffsetToVisibleOffset } from "../../editor/properties";
 import { doc, setDoc } from "../model";
 import { nextVisible } from "../tree";
 import { loadFeed, resetStore } from "../workingSet";
@@ -88,7 +95,7 @@ function run(c: Case): Expect {
   switch (v.verb) {
     case "split": {
       const raw = doc.byId[v.key].raw;
-      const offset = rawOffsetToVisibleOffset(raw, utf16(raw, v.raw_offset), isBuiltinHidden, c.page.format);
+      const offset = rawOffsetToVisibleOffset(raw, utf16(raw, v.raw_offset), BUILTIN_HIDE, c.page.format);
       splitBlock(v.key, offset, v.force_child ?? false, v.keep_start_in_scope ?? false, null);
       break;
     }

@@ -14,7 +14,7 @@ import { pageToDto } from "./document/convert";
 import { doc, setDoc } from "./document/model";
 import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
-import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
+import { splitProps, joinProps, BUILTIN_HIDE, HIDE_ALL } from "./editor/properties";
 import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";
 import { backend } from "./backend";
 import { isConflicted, installAliasDraftRouteHandler, unsavedDrafts } from "./document";
@@ -853,7 +853,7 @@ describe("clipboard copy strips id:: (OG parity)", () => {
 describe("property splitting is fence-aware", () => {
   it("keeps built-in id::/collapsed:: inside a code fence as visible content", () => {
     const raw = "```text\nid:: literal-in-code\ncollapsed:: true\n```\nid:: real-block-id";
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden);
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE);
     expect(hidden).toBe("id:: real-block-id"); // only the real trailing property is hidden
     expect(visible).toContain("id:: literal-in-code"); // fenced lines stay put
     expect(visible).toContain("collapsed:: true");
@@ -864,16 +864,16 @@ describe("property splitting is fence-aware", () => {
   it("joinProps on a metadata-only block adds no leading blank line", () => {
     // splitProps of "id:: x" → visible "", hidden "id:: x"; reassembly must not
     // prepend a newline (that would corrupt the block with a blank first line).
-    const { visible, hidden } = splitProps("id:: x", isBuiltinHidden);
+    const { visible, hidden } = splitProps("id:: x", BUILTIN_HIDE);
     expect(visible).toBe("");
     expect(hidden).toBe("id:: x");
     expect(joinProps(visible, hidden)).toBe("id:: x");
   });
 
-  it("hideAll (annotation blocks) is ALSO fence-aware — a key:: inside a fence stays", () => {
+  it("HIDE_ALL (annotation blocks) is ALSO fence-aware — a key:: inside a fence stays", () => {
     // The old annotation splitter wasn't fence-aware and would yank this out.
     const raw = "highlight text\n```\nkey:: not-a-prop\n```\nls-type:: annotation\nhl-page:: 3";
-    const { visible, hidden } = splitProps(raw, hideAll);
+    const { visible, hidden } = splitProps(raw, HIDE_ALL);
     expect(visible).toBe("highlight text\n```\nkey:: not-a-prop\n```");
     expect(hidden).toBe("ls-type:: annotation\nhl-page:: 3");
     expect(joinProps(visible, hidden)).toBe(raw);
@@ -1367,7 +1367,7 @@ describe("merge (Backspace at 0)", () => {
     const next = nextVisible(first);
 
     expect(mergeWithPrev(first)).toBe(false);
-    expect(splitProps(doc.byId[first].raw, isBuiltinHidden).visible.trim()).toBe("");
+    expect(splitProps(doc.byId[first].raw, BUILTIN_HIDE).visible.trim()).toBe("");
     expect(doc.byId[first].children).toHaveLength(0);
     expect(next).toBe(dto.blocks[1].id);
 
