@@ -1188,6 +1188,13 @@ mod customize_look_guide_tests {
             "--tine-content-width",
             "--tine-content-font",
             "Nord, Solarized, Gruvbox",
+            // Style knobs (GH #610 item 3): the Fine-tuning section and its
+            // three first rows, named as Settings shows them.
+            "**Fine-tuning**",
+            "**Embedded blocks**",
+            "**Links to the web or a file**",
+            "**Links to pages that do not exist yet**",
+            "style.knobs.v1",
         ] {
             assert!(page.contains(needed), "the page must mention {needed}");
         }

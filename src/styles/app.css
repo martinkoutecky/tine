@@ -2208,6 +2208,22 @@ html[data-system-insets="native-viewport"] {
   font-size: 13px;
   color: var(--text-secondary);
 }
+/* Fine-tuning (style knobs): a group label between settings rows. */
+.settings-subsection {
+  margin-top: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.knob-slider,
+.knob-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.knob-reset {
+  margin-left: 8px;
+}
 .theme-gallery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
@@ -7469,6 +7485,13 @@ img.emoji {
   border-left: 3px solid var(--border-color);
   padding-left: 12px;
   margin: 2px 0;
+}
+
+/* Style knob "Embedded blocks" = accent line and dot only (src/styleKnobs.ts,
+   class on <html>): the shade goes, the accent bullet and guide stay. It sits
+   above --tine-embed-bg on purpose, since the user chose it in Settings. */
+html.tine-embed-shading-accent .embed-block {
+  background: none;
 }
 
 /* A whole-block block embed is visually the referenced outline, not an empty

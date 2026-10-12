@@ -128,9 +128,32 @@ without a CHANGELOG entry; a custom.css that sets them is unsupported.
 | Two outside edits land close together | The newest re-read wins; an older read that finishes last is dropped | Editor autosave plus sync delivery |
 | Another window or an editor writes the file | The window re-applies it without reopening the graph | Syncthing/Dropbox delivery, external editor |
 
+## 5. Style knobs (Settings > Appearance > Fine-tuning)
+
+Visual details that would otherwise each need a Settings toggle are rows of one
+table, `KNOBS` in `src/styleKnobs.ts` (GH #610 item 3). Settings renders the
+table; the table's rows are the contract, the Guide page names each one.
+
+- **Same variables, not new ones.** A variable knob sets a public token of
+  section 2 (`--tine-<id>`) and a class knob adds `tine-<id>-<option>` to
+  `<html>`; the stylesheet default is the token's fallback, so an unset knob
+  changes nothing (K3).
+- **Order.** `#tine-knobs` sits after `#tine-theme` and before
+  `#tine-custom-css`: a rule in `custom.css` outranks a knob (a class knob's
+  rule, being a deliberate choice in Settings, outranks the matching token).
+- **Only validated values reach CSS** (K2): the emitted text comes from the
+  table (a declared option, an in-range number with the declared unit, a hex
+  colour that also matches the theme manifest grammar), never from the stored
+  string.
+- **Device preference, no graph write** (K5): app setting `style.knobs.v1`,
+  JSON `{knobId: value}`. A stored id this build does not declare is kept.
+- **Safe mode** (K4): **Disable custom CSS** empties `#tine-knobs` and removes
+  the knob classes for the session.
+
 ## Tests
 
 - src/themeTokens.guard.test.ts (the token tables against the shipped CSS, the code and the Guide page)
+- src/styleKnobs.test.ts and src/styleKnobs.render.test.tsx (the knob table, what reaches CSS, the order of #tine-knobs, safe mode, the Settings control)
 - src/customCss.test.tsx (live reload, transient read failures keep the last sheet, latest read wins, safe mode, the palette command, the Settings affordances)
 - src/styles/themes/soft.test.ts (the Soft palette's contrast on every real text/surface pair, including on-accent, links on the selection overlay and markers, GH #649)
 - crates/tine-store/src/watch/custom_css.rs (the lane's own tests, including the metadata shortcut that skips hashing an unchanged file)
