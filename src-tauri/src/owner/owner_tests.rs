@@ -409,7 +409,8 @@ fn serve_yields_only_into_its_own_draft_namespace() {
         &*slot.host.read().unwrap(),
         PageHostSlot::Running(_)
     ));
-    let (bad, _) = ask(json!({ "drafts": drafts, "force": true }));
+    // Args are an object; fields this owner does not know are ignored (§2.4).
+    let (bad, _) = ask(json!([drafts]));
     assert_eq!(bad.unwrap_err().code, "bad-args");
 
     let (yielded, after) = ask(json!({ "drafts": drafts }));
@@ -530,4 +531,224 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         !handlers.contains("owner::"),
         "the invoke handler must not name the owner module (PROTOCOL §6)"
     );
+}
+
+/// An owner whose `slow` request holds until released and whose `exit`
+/// yields, as `tine serve`'s `owner.yield` does.
+struct Holding {
+    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl Handler for Holding {
+    fn answer_request(&self, request: &Request) -> (Result<Value, ErrorBody>, After) {
+        match request.verb.as_str() {
+            "slow" => {
+                let _ = self.release.lock().unwrap().recv();
+                (Ok(json!({})), After::Continue)
+            }
+            "exit" => (Ok(json!({})), After::Exit),
+            _ => (Ok(json!({})), After::Continue),
+        }
+    }
+
+    fn status(&self, gate: &Gate) -> Value {
+        json!({ "state": gate.state() })
+    }
+}
+
+fn holding(graph: &Graph) -> (Endpoint, Arc<Gate>, std::sync::mpsc::Sender<()>) {
+    let gate = Gate::new();
+    let (release, released) = std::sync::mpsc::channel();
+    let endpoint = Endpoint::bind(
+        &graph.paths().socket,
+        hello(&graph.root, "serve"),
+        gate.clone(),
+        Arc::new(Holding {
+            release: std::sync::Mutex::new(released),
+        }),
+        None,
+    )
+    .unwrap();
+    (endpoint, gate, release)
+}
+
+#[test]
+fn a_stop_settles_admitted_work_and_only_resumed_admission_cuts_it_short() {
+    // Review CODE-1 F1: a stop waits for admitted work, not a socket deadline.
+    let graph = Graph::new();
+    let (_endpoint, gate, release) = holding(&graph);
+    let mut conn = graph.connect();
+    let slow = std::thread::spawn(move || conn.call("slow", Value::Null).is_ok());
+    while gate.state() == "serving" && gate.idle_for().is_some() {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    gate.pause();
+    let settling = {
+        let gate = gate.clone();
+        std::thread::spawn(move || gate.settle(0))
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!settling.is_finished(), "settled with work in flight");
+    release.send(()).unwrap();
+    settling.join().unwrap();
+    assert!(slow.join().unwrap());
+    // An adoption resumes admission: a settle in progress returns.
+    gate.resume();
+    let mut conn = graph.connect();
+    let slow = std::thread::spawn(move || conn.call("slow", Value::Null).is_ok());
+    while gate.idle_for().is_some() {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    gate.pause();
+    let settling = {
+        let gate = gate.clone();
+        std::thread::spawn(move || gate.settle(0))
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    gate.resume();
+    settling.join().unwrap();
+    release.send(()).unwrap();
+    assert!(slow.join().unwrap());
+}
+
+#[test]
+fn a_yield_closes_the_other_connections_before_it_replies() {
+    // Review CODE-1 F1 / PROTOCOL §4.3.
+    let graph = Graph::new();
+    let (_endpoint, _gate, _release) = holding(&graph);
+    let mut other = graph.connect();
+    assert!(other.call("ping", Value::Null).is_ok());
+    let mut yielding = graph.connect();
+    assert!(yielding.call("exit", Value::Null).is_ok());
+    assert!(matches!(
+        other.call("ping", Value::Null),
+        Err(Failure::Lost(_))
+    ));
+}
+
+/// A peer on the graph's socket that answers each handshake with `hello`
+/// and each request with `reply` (or never, when `None`).
+fn fake_owner(socket: &Path, hello: Value, reply: Option<Value>) {
+    use std::io::{BufRead, BufReader, Write};
+    let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { return };
+            let hello = hello.clone();
+            let reply = reply.clone();
+            std::thread::spawn(move || {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut writer = stream;
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    return;
+                }
+                let _ = writeln!(writer, "{hello}");
+                loop {
+                    line.clear();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        return;
+                    }
+                    if let Some(reply) = &reply {
+                        let _ = writeln!(writer, "{reply}");
+                    }
+                }
+            });
+        }
+    });
+}
+
+fn owner_hello(graph: &str, owner: Option<&str>) -> Value {
+    let mut hello = json!({ "tine": "owner", "protocol": 1, "version": "x", "graph": graph });
+    if let Some(owner) = owner {
+        hello["owner"] = json!(owner);
+    }
+    hello
+}
+
+#[test]
+fn the_client_checks_the_owners_hello_and_each_replys_id() {
+    // Review CODE-1 F4.
+    let graph = Graph::new();
+    let root = graph.root.display().to_string();
+    let socket = graph.paths().socket;
+    fake_owner(&socket, owner_hello("/elsewhere", Some("serve")), None);
+    assert!(matches!(
+        open(&socket, &graph.root),
+        Err(OwnerError::Mismatch(_))
+    ));
+    std::fs::remove_file(&socket).unwrap();
+    fake_owner(&socket, owner_hello(&root, None), None);
+    assert!(matches!(
+        open(&socket, &graph.root),
+        Err(OwnerError::Protocol(_))
+    ));
+    std::fs::remove_file(&socket).unwrap();
+    fake_owner(
+        &socket,
+        owner_hello(&root, Some("serve")),
+        Some(json!({ "id": 99, "ok": {} })),
+    );
+    let mut conn = open(&socket, &graph.root).unwrap().unwrap();
+    assert!(matches!(
+        conn.call("pages", Value::Null),
+        Err(Failure::Lost(_))
+    ));
+}
+
+#[test]
+fn the_owner_takes_only_a_clients_hello() {
+    // Review CODE-1 F4: the owner checks `tine == "cli"`.
+    let graph = Graph::new();
+    let (_endpoint, _gate) = endpoint(&graph, Arc::new(graph.slot()));
+    let line = format!(
+        "{}\n",
+        owner_hello(&graph.root.display().to_string(), Some("serve"))
+    );
+    assert!(raw(&graph.paths().socket, line.as_bytes()).contains("malformed"));
+}
+
+#[test]
+fn a_wedged_owner_cannot_hold_the_handover_past_its_bound() {
+    // Review CODE-1 F5: the status probe obeys the remaining deadline.
+    let graph = Graph::new();
+    let paths = graph.paths();
+    let _held = OwnerLock::try_take(&paths.lock, "serve").unwrap().unwrap();
+    fake_owner(
+        &paths.socket,
+        owner_hello(&graph.root.display().to_string(), Some("serve")),
+        None,
+    );
+    let (done, finished) = std::sync::mpsc::channel();
+    let root = graph.root.clone();
+    std::thread::spawn(move || {
+        let drafts = super::wire::Drafts {
+            app_data: "a".into(),
+            graph_id: "g".into(),
+        };
+        let result =
+            super::client::take_over(&root, &paths, drafts, Duration::from_secs(2), |_| {});
+        let _ = done.send(result.is_err());
+    });
+    assert_eq!(
+        finished.recv_timeout(Duration::from_secs(15)),
+        Ok(true),
+        "the handover outlived its bound"
+    );
+}
+
+#[test]
+fn the_start_log_is_emptied_past_its_cap() {
+    // Review CODE-1 F9.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("start.log");
+    std::fs::write(&path, vec![b'x'; 2048]).unwrap();
+    let log = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    super::serve::bound_log(&log, 4096);
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), 2048);
+    super::serve::bound_log(&log, 1024);
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
 }

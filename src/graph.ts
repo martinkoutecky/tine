@@ -264,6 +264,12 @@ export async function loadGraphPath(
   const stopWaiting = await backend().onGraphOpenWaiting((saving) => {
     waitingToast ??= pushToast(`Waiting for Tine to finish saving “${saving}” before opening this graph…`, "info", { sticky: true });
   }).catch(() => () => {});
+  // `tine serve` owns the graph: the open waits for it to hand over (CLI
+  // PROTOCOL §4.5), showing its progress as it changes.
+  const stopOwnerWaiting = await backend().onGraphOpenOwnerWaiting((progress) => {
+    if (waitingToast !== null) dismissToast(waitingToast);
+    waitingToast = pushToast(`Finishing the command line's work on this graph (${progress})…`, "info", { sticky: true });
+  }).catch(() => () => {});
   try {
     result = await backend().loadGraph(path);
   } catch (error) {
@@ -274,6 +280,7 @@ export async function loadGraphPath(
     throw error;
   } finally {
     stopWaiting();
+    stopOwnerWaiting();
     if (waitingToast !== null) dismissToast(waitingToast);
   }
   if (result.kind === "focused_existing") {

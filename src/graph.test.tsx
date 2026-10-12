@@ -60,6 +60,7 @@ async function loadHarness(
     ]),
     readCustomCss: vi.fn(async () => ""),
     onGraphOpenWaiting: vi.fn(async (_waiting: (saving: string) => void) => () => {}),
+    onGraphOpenOwnerWaiting: vi.fn(async (_waiting: (progress: string) => void) => () => {}),
   };
   // The document door's page write (`./document` is mocked below): each call is
   // one page written through the page host, resolving the published revision.

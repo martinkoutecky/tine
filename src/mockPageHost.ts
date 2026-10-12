@@ -59,5 +59,6 @@ export function mockPageHost(read: (path: string) => PageDto | null,
     async pageDraftsRetry() {},
     async onPageMail(cb: (mail: PageMail) => void) { listeners.add(cb); return () => { listeners.delete(cb); }; },
     async onGraphOpenWaiting() { return () => {}; },
+    async onGraphOpenOwnerWaiting() { return () => {}; },
   };
 }

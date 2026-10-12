@@ -103,6 +103,17 @@ impl HostRetirement {
     /// first. Each pass takes the host lock briefly, so an adoption or a
     /// restore can come in between passes.
     fn stop_and_close(&self, slot: Arc<GraphSlot>) {
+        // The command line's admitted requests settle before the host stops
+        // (CLI PROTOCOL §3.2); `retire` paused admission, an adoption resumes it.
+        let gate = slot
+            .owner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|lease| lease.gate().clone());
+        if let Some(gate) = gate {
+            gate.settle(0);
+        }
         let mut backoff = Duration::from_secs(1);
         loop {
             let mut host = slot.host.write().unwrap_or_else(|e| e.into_inner());

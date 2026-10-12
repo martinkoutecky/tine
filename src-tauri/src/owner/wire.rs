@@ -121,6 +121,28 @@ pub(crate) fn read_frame(
     }
 }
 
+/// The one wire reader (§2.1, §2.4): a message is a JSON object, and fields
+/// this side does not know are ignored (an additive change needs no protocol
+/// bump). An array or a scalar is not a message, even one serde could read
+/// positionally into a struct.
+pub(crate) fn read_line<T: serde::de::DeserializeOwned>(line: &[u8]) -> Result<T, String> {
+    let value: Value = serde_json::from_slice(line).map_err(|e| e.to_string())?;
+    read_object(value)
+}
+
+/// [`read_line`] for a parsed value: `null` request args read as `{}`.
+pub(crate) fn read_object<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, String> {
+    let value = if value.is_null() {
+        Value::Object(Default::default())
+    } else {
+        value
+    };
+    if !value.is_object() {
+        return Err("not a JSON object".into());
+    }
+    serde_json::from_value(value).map_err(|e| e.to_string())
+}
+
 /// Write one message as a line and flush it.
 pub(crate) fn write_frame(
     writer: &mut impl Write,
@@ -157,6 +179,29 @@ mod tests {
         assert_eq!(read_frame(&mut big, 10), Err(FrameError::TooLarge));
         let mut empty = std::io::Cursor::new(Vec::new());
         assert_eq!(read_frame(&mut empty, 10).unwrap(), None);
+    }
+
+    #[test]
+    fn readers_take_objects_only_and_ignore_unknown_fields() {
+        // Review CODE-1 F3: `[1,"pages",{}]` used to execute as a request.
+        assert!(read_line::<Request>(br#"[1,"pages",{}]"#).is_err());
+        assert!(read_line::<Request>(b"42").is_err());
+        let request: Request =
+            read_line(br#"{"id":3,"verb":"pages","args":{},"trace":"x"}"#).unwrap();
+        assert_eq!((request.id, request.verb.as_str()), (3, "pages"));
+        let hello: Hello = read_line(
+            br#"{"tine":"owner","protocol":1,"version":"9","graph":"/g","owner":"app","caps":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(hello.owner.as_deref(), Some("app"));
+        #[derive(Deserialize, Debug)]
+        struct Args {
+            #[allow(dead_code)]
+            limit: Option<u32>,
+        }
+        assert!(read_object::<Args>(serde_json::json!({ "limit": 2, "later": true })).is_ok());
+        assert!(read_object::<Args>(Value::Null).is_ok());
+        assert!(read_object::<Args>(serde_json::json!([2])).is_err());
     }
 
     #[test]

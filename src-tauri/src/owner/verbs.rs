@@ -143,20 +143,17 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct PageArgs {
     name: String,
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct JournalArgs {
     #[serde(default)]
     date: Option<String>,
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct BlockArgs {
     uuid: String,
     #[serde(default)]
@@ -164,7 +161,6 @@ struct BlockArgs {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct RefsArgs {
     target: String,
     #[serde(default)]
@@ -172,7 +168,6 @@ struct RefsArgs {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct SearchArgs {
     text: String,
     #[serde(default)]
@@ -182,7 +177,6 @@ struct SearchArgs {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct QueryArgs {
     text: String,
     #[serde(default)]
@@ -190,19 +184,13 @@ struct QueryArgs {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct PagesArgs {
     #[serde(default)]
     namespace: Option<String>,
 }
 
 fn parse<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, ErrorBody> {
-    let args = if args.is_null() {
-        json!({})
-    } else {
-        args.clone()
-    };
-    serde_json::from_value(args).map_err(|e| ErrorBody::new("bad-args", e.to_string(), false))
+    super::wire::read_object(args.clone()).map_err(|e| ErrorBody::new("bad-args", e, false))
 }
 
 fn to_value(value: &impl serde::Serialize) -> Result<Value, ErrorBody> {

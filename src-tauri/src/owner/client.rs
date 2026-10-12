@@ -47,8 +47,43 @@ mod unix {
         next: u64,
     }
 
+    /// The owner's hello names this protocol, this graph and an owner kind
+    /// (§2.2); anything else is not the owner this client asked for.
+    fn owner_hello_matches(hello: &Hello, root: &Path) -> Result<(), OwnerError> {
+        if hello.protocol != PROTOCOL {
+            return Err(OwnerError::Protocol(format!(
+                "the graph's owner speaks protocol {}, this tine speaks {PROTOCOL}",
+                hello.protocol
+            )));
+        }
+        if hello.graph != root.display().to_string() {
+            return Err(OwnerError::Mismatch(format!(
+                "the endpoint serves {}, not {}",
+                hello.graph,
+                root.display()
+            )));
+        }
+        if !matches!(hello.owner.as_deref(), Some("app" | "serve")) {
+            return Err(OwnerError::Protocol(
+                "the endpoint did not say what kind of owner it is".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// `Ok(None)`: no endpoint listens there (none, or a dead one's path).
     pub(crate) fn open(socket: &Path, root: &Path) -> Result<Option<Conn>, OwnerError> {
+        open_with(socket, root, IO_TIMEOUT, None)
+    }
+
+    /// [`open`] with the handshake bounded by `io` and each reply by
+    /// `replies` (`None`: a reply waits for the work, however long).
+    pub(crate) fn open_with(
+        socket: &Path,
+        root: &Path,
+        io: Duration,
+        replies: Option<Duration>,
+    ) -> Result<Option<Conn>, OwnerError> {
         let stream = match UnixStream::connect(socket) {
             Ok(stream) => stream,
             Err(e)
@@ -66,9 +101,10 @@ mod unix {
                 )))
             }
         };
+        let bound = io;
         let io = |e: std::io::Error| OwnerError::Start(format!("the owner's endpoint failed: {e}"));
-        stream.set_read_timeout(Some(IO_TIMEOUT)).map_err(io)?;
-        stream.set_write_timeout(Some(IO_TIMEOUT)).map_err(io)?;
+        stream.set_read_timeout(Some(bound)).map_err(io)?;
+        stream.set_write_timeout(Some(bound)).map_err(io)?;
         let mut reader = BufReader::new(stream.try_clone().map_err(io)?);
         let mut writer = stream;
         let hello = Hello {
@@ -84,10 +120,12 @@ mod unix {
             // An owner that closed at once is stopping: like no endpoint.
             Ok(None) | Err(_) => return Ok(None),
         };
-        if let Ok(hello) = serde_json::from_slice::<Hello>(&line) {
+        if let Ok(hello) = wire::read_line::<Hello>(&line) {
             if hello.tine == "owner" {
-                // Slow work is not a slow socket: wait for the answer.
-                writer.set_read_timeout(None).map_err(io)?;
+                owner_hello_matches(&hello, root)?;
+                // Slow work is not a slow socket: wait for the answer, unless
+                // the caller bounds it (a status probe).
+                writer.set_read_timeout(replies).map_err(io)?;
                 return Ok(Some(Conn {
                     reader,
                     writer,
@@ -95,7 +133,7 @@ mod unix {
                 }));
             }
         }
-        let reply = serde_json::from_slice::<Reply>(&line).ok();
+        let reply = wire::read_line::<Reply>(&line).ok();
         let error = reply.and_then(|reply| reply.error);
         Err(match error {
             Some(body) if body.code == "owner-mismatch" => OwnerError::Mismatch(body.message),
@@ -121,8 +159,16 @@ mod unix {
                 Ok(None) => return Err(Failure::Lost("the owner closed the connection".into())),
                 Err(e) => return Err(Failure::Lost(format!("{e:?}"))),
             };
-            let reply: Reply = serde_json::from_slice(&line)
+            let reply: Reply = wire::read_line(&line)
                 .map_err(|e| Failure::Lost(format!("unreadable reply: {e}")))?;
+            // One request at a time per connection (§2.3): the reply is this
+            // request's, or the connection is not the protocol's.
+            if reply.id != id {
+                return Err(Failure::Lost(format!(
+                    "a reply to request {} arrived for request {id}",
+                    reply.id
+                )));
+            }
             match (reply.ok, reply.error) {
                 (_, Some(error)) => Err(Failure::Owner(error)),
                 (Some(ok), None) => Ok(ok),
@@ -154,7 +200,17 @@ pub(crate) fn open(_socket: &Path, _root: &Path) -> Result<Option<Conn>, OwnerEr
 }
 
 #[cfg(unix)]
-pub(crate) use unix::open;
+pub(crate) use unix::{open, open_with};
+
+#[cfg(windows)]
+pub(crate) fn open_with(
+    _socket: &Path,
+    _root: &Path,
+    _io: Duration,
+    _replies: Option<Duration>,
+) -> Result<Option<Conn>, OwnerError> {
+    Err(OwnerError::Unsupported)
+}
 
 /// Reach `root`'s owner, starting `tine serve` when nobody answers (§3.4).
 pub(crate) fn connect(root: &Path) -> Result<Conn, OwnerError> {
@@ -198,7 +254,13 @@ pub(crate) fn connect_existing(root: &Path) -> Result<Option<Conn>, OwnerError> 
 fn spawn_serve(root: &Path, paths: &GraphPaths) -> Result<(), OwnerError> {
     let start = |e: std::io::Error| OwnerError::Start(format!("cannot start `tine serve`: {e}"));
     let exe = std::env::current_exe().map_err(start)?;
-    let log = std::fs::File::create(&paths.start_log).map_err(start)?;
+    // Emptied (last run only), then appended to, so serve can bound it while
+    // it runs by truncating it (`serve::bound_start_log`, §3.4).
+    std::fs::File::create(&paths.start_log).map_err(start)?;
+    let log = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&paths.start_log)
+        .map_err(start)?;
     let mut command = std::process::Command::new(exe);
     command
         .arg("serve")
@@ -283,7 +345,11 @@ pub(crate) fn take_over(
         }
         if reported.elapsed() >= Duration::from_secs(1) {
             reported = Instant::now();
-            if let Some(state) = status(&paths.socket, root) {
+            // A wedged serve cannot hold the probe past the deadline (§4.5).
+            let left = deadline
+                .saturating_duration_since(Instant::now())
+                .clamp(Duration::from_millis(100), Duration::from_secs(2));
+            if let Some(state) = status(&paths.socket, root, left) {
                 progress = state;
             }
             waiting(&progress);
@@ -309,9 +375,10 @@ fn refusal_text(body: &ErrorBody) -> String {
     }
 }
 
-/// The owner's `owner.status` state, if one answers.
-fn status(socket: &Path, root: &Path) -> Option<String> {
-    let mut conn = open(socket, root).ok()??;
+/// The owner's `owner.status` state, if one answers within `bound` (each
+/// of the handshake and the reply).
+fn status(socket: &Path, root: &Path, bound: Duration) -> Option<String> {
+    let mut conn = open_with(socket, root, bound, Some(bound)).ok()??;
     let status = conn.call("owner.status", Value::Null).ok()?;
     conn.shutdown();
     status

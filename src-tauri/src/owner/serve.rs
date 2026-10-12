@@ -19,6 +19,33 @@ use crate::state::{GraphSlot, PageHostSlot};
 
 /// An owner with no request for this long exits (§4).
 const IDLE_EXIT: Duration = Duration::from_secs(30 * 60);
+/// The start log's bound while serve runs (§3.4).
+const START_LOG_CAP: u64 = 1 << 20;
+
+/// Keep this run's start log (the detached serve's stderr, opened for
+/// append by `client::spawn_serve`) under `START_LOG_CAP` by emptying it when
+/// it grows past: a long draft-failure retry cannot fill the disk, and serve
+/// keeps custody (review CODE-1 F9). A terminal or pipe is left alone.
+fn bound_start_log() {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsFd;
+        let Ok(owned) = std::io::stderr().as_fd().try_clone_to_owned() else {
+            return;
+        };
+        bound_log(&std::fs::File::from(owned), START_LOG_CAP);
+    }
+}
+
+/// Empty `log` if it is a regular file longer than `cap`.
+pub(super) fn bound_log(log: &std::fs::File, cap: u64) {
+    if log
+        .metadata()
+        .is_ok_and(|meta| meta.is_file() && meta.len() > cap)
+    {
+        let _ = log.set_len(0);
+    }
+}
 
 /// Run the owner of `graph` until it yields or idles out.
 pub(crate) fn serve_graph(graph: &Path) -> Result<(), String> {
@@ -80,6 +107,7 @@ pub(crate) fn serve_graph(graph: &Path) -> Result<(), String> {
             // Yielded: the host has stopped and the reply went out.
             Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {
+                bound_start_log();
                 if gate.idle_for().is_some_and(|idle| idle >= IDLE_EXIT) {
                     gate.pause();
                     // A request admitted just before the pause counts as
@@ -118,6 +146,7 @@ fn stop_host(slot: &GraphSlot, gate: &Gate) {
         if pause >= Duration::from_secs(1) {
             gate.set_progress("retrying: a crash draft could not be written");
         }
+        bound_start_log();
         std::thread::sleep(pause);
     }
 }
@@ -130,7 +159,6 @@ pub(super) struct ServeOwner {
 }
 
 #[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 struct YieldArgs {
     #[serde(default)]
     drafts: Option<Drafts>,
@@ -144,19 +172,9 @@ impl Handler for ServeOwner {
                 After::Continue,
             );
         }
-        let args = if request.args.is_null() {
-            json!({})
-        } else {
-            request.args.clone()
-        };
-        let YieldArgs { drafts } = match serde_json::from_value(args) {
+        let YieldArgs { drafts } = match super::wire::read_object(request.args.clone()) {
             Ok(args) => args,
-            Err(e) => {
-                return (
-                    Err(ErrorBody::new("bad-args", e.to_string(), false)),
-                    After::Continue,
-                )
-            }
+            Err(e) => return (Err(ErrorBody::new("bad-args", e, false)), After::Continue),
         };
         // Custody first: never yield into a namespace that cannot recover
         // this host's drafts (§3.5).
@@ -170,10 +188,10 @@ impl Handler for ServeOwner {
             return (Err(body), After::Continue);
         }
         self.gate.pause();
-        // Every admitted request but this one settles first.
-        if !self.gate.drain(1, IO_TIMEOUT) {
-            crate::debug::diag("owner-yield-with-requests-in-flight");
-        }
+        // Every admitted request but this one settles first, however long
+        // it takes; `owner.status` reports it meanwhile.
+        self.gate.set_progress("finishing requests");
+        self.gate.settle(1);
         stop_host(&self.slot, &self.gate);
         (Ok(ok("yield", json!({ "yielded": true }))), After::Exit)
     }

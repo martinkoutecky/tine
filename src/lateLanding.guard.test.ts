@@ -59,7 +59,7 @@ const EXEMPT_CALLS: Record<string, string[]> = {
   "src/components/Block.tsx#Editor.capturePhotoCmd": ["capturePhoto"],
   "src/components/Block.tsx#Editor.voiceMemoToggle": ["stopRecording", "startRecording"],
   "src/debug.ts#initDebug": ["debugInfo"],
-  "src/graph.ts#loadGraphPath": ["loadGraph", "onGraphOpenWaiting"],
+  "src/graph.ts#loadGraphPath": ["loadGraph", "onGraphOpenWaiting", "onGraphOpenOwnerWaiting"],
   "src/plugins/manager.ts#uninstall": ["uninstallPlugin", "setAppString"],
   "src/plugins/registry.ts#loadVerifiedCachedRegistry": ["loadPluginRegistryCache"],
   "src/assetSettings.ts#initAssetSettings": ["getAppString"],
@@ -136,7 +136,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   // The page host's reads and controls: opening a page takes custody and writes
   // nothing; the mail and graph-open events, the publication barrier and debt
   // queries, the draft I/O re-probe, the v1 drafts path, the read-only merge.
-  "pageWindowReloaded", "pageOpen", "pageWait", "pageOwed", "onPageMail", "onGraphOpenWaiting", "pageDraftsRetry",
+  "pageWindowReloaded", "pageOpen", "pageWait", "pageOwed", "onPageMail", "onGraphOpenWaiting", "onGraphOpenOwnerWaiting", "pageDraftsRetry",
   "legacyDraftsFile", "mergeLiveConflict", "guidePages", "getBacklinks",
   "getBacklinkFilterContext", "getUnlinkedRefs", "warmDone", "getBlockRefCounts", "getBlockReferrers",
   "pagePrintHtml", "sheetExportInputs", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",

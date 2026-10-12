@@ -29,36 +29,39 @@ pub enum HostReadError {
 
 impl PageHost {
     /// `page`'s current text: the held buffer, or the file the host would
-    /// load. Not `Store::page`, whose indexed bytes can lag the buffer.
+    /// load. Not `Store::page`, whose indexed bytes can lag the buffer. The
+    /// held-or-file choice, the bytes and the revision come from one host
+    /// read, so an open or a save cannot fall between them (review CODE-1
+    /// F2); the caller parses outside it (A-K3).
     pub fn read(&self, page: &PageId) -> Result<HostRead, HostReadError> {
         let (key, spelling, ..) = self.try_identify(page).ok_or(HostReadError::Ended)?;
-        let held = self
-            .driver
+        let store = self.store.clone();
+        let asked = page.clone();
+        self.driver
             .shared
             .read(move |state: &retained::HostState| {
                 let host = &state.progress.host;
-                host.pages
-                    .get(&key)
-                    .map(|page| (page.buf.clone(), (host.incarnation, page.version)))
+                if let Some(held) = host.pages.get(&key) {
+                    return Ok(HostRead {
+                        page: spelling,
+                        bytes: held.buf.clone(),
+                        revision: Some((host.incarnation, held.version)),
+                    });
+                }
+                // Unheld: its spelling and bytes as the host would load them now.
+                let spelling = store.disk_spelling(&asked).unwrap_or(spelling);
+                let cap = Some(crate::PARSE_INPUT_MAX_BYTES);
+                let bytes = match store.read(&spelling.file(), cap) {
+                    Ok((bytes, _)) => Some(Arc::from(bytes)),
+                    Err(StoreError::NotFound) => None,
+                    Err(error) => return Err(HostReadError::Store(error)),
+                };
+                Ok(HostRead {
+                    page: spelling,
+                    bytes,
+                    revision: None,
+                })
             })
-            .map_err(|_| HostReadError::Ended)?;
-        if let Some((bytes, revision)) = held {
-            return Ok(HostRead {
-                page: spelling,
-                bytes,
-                revision: Some(revision),
-            });
-        }
-        let cap = Some(crate::PARSE_INPUT_MAX_BYTES);
-        let bytes = match self.store.read(&spelling.file(), cap) {
-            Ok((bytes, _)) => Some(Arc::from(bytes)),
-            Err(StoreError::NotFound) => None,
-            Err(error) => return Err(HostReadError::Store(error)),
-        };
-        Ok(HostRead {
-            page: spelling,
-            bytes,
-            revision: None,
-        })
+            .map_err(|_| HostReadError::Ended)?
     }
 }

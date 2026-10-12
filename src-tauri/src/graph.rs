@@ -521,17 +521,21 @@ fn claim_owner(
         app_data: app_data.display().to_string(),
         graph_id: crate::settings::host_graph_id(root_key),
     };
-    let mut told = false;
-    crate::owner::lease::claim_for_app(root_key, drafts, OWNER_HANDOVER_WAIT, |_progress| {
-        if !told {
-            told = true;
-            crate::debug::diag("graph-open-waits-for-the-command-line-owner");
-            let _ = app.emit_to(
-                window_label,
-                "graph-open-waiting",
-                root_key.display().to_string(),
-            );
+    // The window hears each change of serve's progress (§4.5), not only the start.
+    let mut told: Option<String> = None;
+    crate::owner::lease::claim_for_app(root_key, drafts, OWNER_HANDOVER_WAIT, |progress| {
+        if told.as_deref() == Some(progress) {
+            return;
         }
+        if told.is_none() {
+            crate::debug::diag("graph-open-waits-for-the-command-line-owner");
+        }
+        told = Some(progress.to_string());
+        let _ = app.emit_to(
+            window_label,
+            "graph-open-owner-waiting",
+            progress.to_string(),
+        );
     })
 }
 

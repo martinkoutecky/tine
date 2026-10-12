@@ -99,6 +99,7 @@ impl Gate {
         state.admitting = true;
         state.progress = None;
         state.last = Instant::now();
+        self.changed.notify_all();
     }
 
     /// Wait up to `bound` until at most `except` requests are in flight
@@ -118,6 +119,17 @@ impl Gate {
                 .0;
         }
         true
+    }
+
+    /// While not admitting, wait until at most `except` requests are in
+    /// flight, however long their work takes: admitted work settles before a
+    /// stop, it is never cut off (§3.2, §4.2). Socket deadlines bound I/O,
+    /// not work. Returns early if admission resumes (an adoption).
+    pub(crate) fn settle(&self, except: usize) {
+        let mut state = self.lock();
+        while state.in_flight > except && !state.admitting {
+            state = self.changed.wait(state).unwrap_or_else(|e| e.into_inner());
+        }
     }
 
     /// How long the owner has been idle: admitting, nothing in flight.
@@ -169,9 +181,9 @@ mod unix {
     const CONNECTION_THREAD: &str = "tine-owner-connection";
 
     /// A listening endpoint. Dropping it closes it: stop admitting, let
-    /// admitted requests settle (bounded by `IO_TIMEOUT`), close the
-    /// listener and every connection, remove the socket path. Its owner
-    /// still holds the lock while it drops (`Lease` field order, §3.2).
+    /// admitted requests settle (`Gate::settle`), close the listener and
+    /// every connection, remove the socket path. Its owner still holds the
+    /// lock while it drops (`Lease` field order, §3.2).
     pub(crate) struct Endpoint {
         socket: PathBuf,
         gate: Arc<Gate>,
@@ -241,10 +253,8 @@ mod unix {
             // A connection thread can drop the last reference to a slot
             // (and so its endpoint) after its own request; it must not wait
             // for itself.
-            if std::thread::current().name() != Some(CONNECTION_THREAD)
-                && !self.gate.drain(0, IO_TIMEOUT)
-            {
-                crate::debug::diag("owner-endpoint-closed-with-requests-in-flight");
+            if std::thread::current().name() != Some(CONNECTION_THREAD) {
+                self.gate.settle(0);
             }
             self.shared.closed.store(true, Ordering::SeqCst);
             // Wake the accept loop; it sees `closed` and ends.
@@ -290,7 +300,7 @@ mod unix {
             let spawned = std::thread::Builder::new()
                 .name(CONNECTION_THREAD.into())
                 .spawn(move || {
-                    connection(stream, &serving);
+                    connection(id, stream, &serving);
                     serving
                         .connections
                         .lock()
@@ -336,7 +346,7 @@ mod unix {
         }
     }
 
-    fn connection(stream: UnixStream, shared: &Shared) {
+    fn connection(id: u64, stream: UnixStream, shared: &Shared) {
         let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
         let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
         let Ok(reader) = stream.try_clone() else {
@@ -346,7 +356,7 @@ mod unix {
         let mut writer = stream;
         // Handshake: the client's hello first (§2.2).
         let client = match wire::read_frame(&mut reader, REQUEST_CAP) {
-            Ok(Some(line)) => serde_json::from_slice::<Hello>(&line),
+            Ok(Some(line)) => wire::read_line::<Hello>(&line),
             Err(FrameError::TooLarge) => {
                 send(&mut writer, &error(0, frame_too_large()));
                 return;
@@ -354,8 +364,9 @@ mod unix {
             _ => return,
         };
         let client = match client {
-            Ok(client) => client,
-            Err(_) => {
+            Ok(client) if client.tine == "cli" => client,
+            // Not a client's hello (another owner, a stray peer): §2.2.
+            _ => {
                 send(&mut writer, &error(0, malformed()));
                 return;
             }
@@ -395,7 +406,7 @@ mod unix {
                 // EOF, EOF mid-line (never executed), timeout, I/O.
                 Ok(None) | Err(_) => return,
             };
-            let request = match serde_json::from_slice::<Request>(&line) {
+            let request = match wire::read_line::<Request>(&line) {
                 Ok(request) => request,
                 Err(_) => {
                     send(&mut writer, &error(0, malformed()));
@@ -421,6 +432,20 @@ mod unix {
                 continue;
             };
             let (result, after) = shared.handler.answer_request(&request);
+            if after == After::Exit {
+                // Yielded: close every other connection before the reply,
+                // which goes out while the lock is still held (§4.3).
+                for (other, connection) in shared
+                    .connections
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .iter()
+                {
+                    if *other != id {
+                        let _ = connection.shutdown(std::net::Shutdown::Both);
+                    }
+                }
+            }
             let reply = match result {
                 Ok(ok) => Reply {
                     id: request.id,
