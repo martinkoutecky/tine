@@ -61,6 +61,7 @@
     "theme:docs-screenshots": "node scripts/shot-theme-docs.mjs"
   },
   "dependencies": {
+    "@fluent/bundle": "^0.19.1",
     "@fontsource-variable/noto-emoji": "^5.2.12",
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
@@ -81,6 +82,7 @@
     "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
+    "@fluent/syntax": "^0.19.0",
     "@tauri-apps/cli": "^2.1.0",
     "@types/katex": "^0.16.8",
     "@types/turndown": "^5.0.6",

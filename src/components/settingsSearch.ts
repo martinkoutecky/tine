@@ -6,6 +6,7 @@ type Tab = SettingsTabId;
 
 export type SettingSearchEntry = { tab: Tab; label: string; description: string; aliases?: string[]; level?: "advanced" };
 export const SETTING_SEARCH: SettingSearchEntry[] = [
+  { tab: "appearance", label: "Language", description: "interface translation locale menus", aliases: ["语言", "中文", "Chinese", "English"] },
   { tab: "appearance", label: "Theme mode", description: "light dark system" },
   { tab: "appearance", label: "Style", description: "typography journal headings presentation theme" },
   { tab: "appearance", label: "Color scheme", description: "default nord solarized gruvbox soft medium light dark theme gallery package colors" },

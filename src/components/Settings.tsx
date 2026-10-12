@@ -57,6 +57,7 @@ import { ContentWidthFields } from "./ContentWidthFields";
 import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
+import { LanguageSetting } from "./LanguageSetting";
 import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
@@ -403,6 +404,8 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 
   return (
     <>
+      <LanguageSetting />
+
       <div class="settings-row">
         <span class="settings-label">Mode</span>
         <ThemeChoice />

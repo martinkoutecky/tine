@@ -1568,6 +1568,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setAppString(key: string, value: string): Promise<void> {
       mockAppStrings[key] = value;
     },
+    async setUiLocale(): Promise<void> { /* no native shell in the mock */ },
     async applySpellcheck(): Promise<void> { /* no native webview in the mock */ },
     // A representative set so the picker renders in the browser mock / harness.
     async listSpellcheckDictionaries(): Promise<string[]> { return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"]; },

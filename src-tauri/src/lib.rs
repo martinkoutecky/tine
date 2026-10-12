@@ -35,6 +35,7 @@ mod graph_verification;
 mod host_retirement;
 #[cfg(test)]
 mod host_slot_guard_tests;
+mod i18n_shell;
 #[cfg(target_os = "ios")]
 mod ios_folder_picker;
 #[cfg(target_os = "linux")]
@@ -774,6 +775,9 @@ pub fn run() {
         "globalThis.__TINE_LOCAL_CLOCK__ = {{ offset_minutes: {offset_minutes}, unix_ms: {unix_ms} }};"
     ));
 
+    // The boot card in the last resolved UI language (tine#107).
+    let builder = builder.append_invoke_initialization_script(i18n_shell::boot_text_script());
+
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let builder = builder.append_invoke_initialization_script(format!(
         "globalThis.__TINE_NATIVE_FRAME__ = {native_frame_active};"
@@ -1177,6 +1181,7 @@ pub fn run() {
             set_app_bool,
             get_app_string,
             set_app_string,
+            i18n_shell::set_ui_locale,
             apply_spellcheck,
             list_spellcheck_dictionaries,
             debug_info,

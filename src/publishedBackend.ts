@@ -689,6 +689,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async setAppString(key: string, value: string) {
       appStrings.set(key, value);
     },
+    async setUiLocale() {},
     async loadSession() {
       return session;
     },

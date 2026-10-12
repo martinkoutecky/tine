@@ -12,6 +12,7 @@ import { browserPlatform } from "./browserPlatform";
 
 import { openSwitcher, closeSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer } from "./ui";
 import { pushToast } from "./toasts";
+import { msg, render, renderEnglish, type UiText } from "./i18n";
 import { customCssDisabled, setCustomCssDisabled } from "./customCss";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { zoomReset } from "./zoom";
@@ -120,8 +121,9 @@ export type ShortcutScope = "global" | "editor" | "select";
 interface CommandDef {
   id: string;
   binding: string;
-  /** Human label for the Settings reference. */
-  label: string;
+  /** Human label for the palette and the Settings reference: a catalog message
+   *  (`command-` + the id with `/` as `-`, D4), or a plugin's own title. */
+  label: UiText;
   /** Global commands run from the window dispatcher; editor commands are
    *  matched by Block.tsx inside the textarea handler. */
   scope: "global" | "editor";
@@ -262,88 +264,88 @@ export function handlePaneSelectKey(e: KeyboardEvent): boolean {
 
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
-  { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: () => openSwitcher({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
-  { id: "go/search-current-page", binding: "mod+shift+k", label: "Search blocks in current page", scope: "global", run: () => openSwitcher({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
-  { id: "guide/open", binding: "", label: "Open Guide", scope: "global", run: () => void openGuide(), global: true },
-  { id: "go/find-in-page", binding: "mod+f", label: "Find in page", scope: "global", run: openInPageFind, global: true },
+  { id: "go/search", binding: "mod+k", label: msg("command-go-search"), scope: "global", run: () => openSwitcher({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  { id: "go/search-current-page", binding: "mod+shift+k", label: msg("command-go-search-current-page"), scope: "global", run: () => openSwitcher({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  { id: "guide/open", binding: "", label: msg("command-guide-open"), scope: "global", run: () => void openGuide(), global: true },
+  { id: "go/find-in-page", binding: "mod+f", label: msg("command-go-find-in-page"), scope: "global", run: openInPageFind, global: true },
   // GH #274 / OG parity: `:editor/follow-link` (mod+o) and
   // `:editor/open-link-in-sidebar` (mod+shift+o) in OG's shortcut config.
   // Global rather than editor-scoped because the handler reads the focused
   // textarea itself and is a no-op when nothing is being edited.
-  { id: "editor/follow-link", binding: "mod+o", label: "Open the link at the caret", scope: "global", run: () => { followLinkUnderCaret(); }, global: true },
-  { id: "editor/open-link-in-sidebar", binding: "mod+shift+o", label: "Open the link at the caret in the sidebar", scope: "global", run: () => { openLinkUnderCaretInSidebar(); }, global: true },
-  { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: () => openCommandPalette(pluginFocusedBlock() ?? null), global: true },
+  { id: "editor/follow-link", binding: "mod+o", label: msg("command-editor-follow-link"), scope: "global", run: () => { followLinkUnderCaret(); }, global: true },
+  { id: "editor/open-link-in-sidebar", binding: "mod+shift+o", label: msg("command-editor-open-link-in-sidebar"), scope: "global", run: () => { openLinkUnderCaretInSidebar(); }, global: true },
+  { id: "command-palette/toggle", binding: "mod+shift+p", label: msg("command-command-palette-toggle"), scope: "global", run: () => openCommandPalette(pluginFocusedBlock() ?? null), global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
   // Ctrl+Shift+I / F12 / Ctrl+Shift+C are all swallowed by WebKitGTK itself (its
   // built-in inspector keys, handled in the web process below where the app can
   // intercept), so they never reach this dispatcher. Ctrl+Shift+J — Chrome's other
   // devtools shortcut (console) — is NOT grabbed by WebKit, so it works here. A
   // mod-chord, so it fires even while editing; remap it in Settings if you like.
-  { id: "ui/toggle-devtools", binding: "mod+shift+j", label: "Toggle developer tools", scope: "global", run: openDevtools, global: true },
-  { id: "ui/toggle-custom-css", binding: "", label: "Toggle custom CSS (safe mode, this session)", scope: "global", run: () => setCustomCssDisabled(!customCssDisabled()), global: true },
-  { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
-  { id: "go/home", binding: "g h", label: "Go to home page", scope: "global", run: goHome },
-  { id: "go/journal-next", binding: "g n", label: "Go to next journal day", scope: "global", run: () => goAdjacentJournal(1) },
-  { id: "go/journal-prev", binding: "g p", label: "Go to previous journal day", scope: "global", run: () => goAdjacentJournal(-1) },
-  { id: "go/keyboard-shortcuts", binding: "g s", label: "Go to keyboard shortcuts", scope: "global", run: () => openSettings("shortcuts") },
+  { id: "ui/toggle-devtools", binding: "mod+shift+j", label: msg("command-ui-toggle-devtools"), scope: "global", run: openDevtools, global: true },
+  { id: "ui/toggle-custom-css", binding: "", label: msg("command-ui-toggle-custom-css"), scope: "global", run: () => setCustomCssDisabled(!customCssDisabled()), global: true },
+  { id: "go/journals", binding: "g j", label: msg("command-go-journals"), scope: "global", run: openJournals },
+  { id: "go/home", binding: "g h", label: msg("command-go-home"), scope: "global", run: goHome },
+  { id: "go/journal-next", binding: "g n", label: msg("command-go-journal-next"), scope: "global", run: () => goAdjacentJournal(1) },
+  { id: "go/journal-prev", binding: "g p", label: msg("command-go-journal-prev"), scope: "global", run: () => goAdjacentJournal(-1) },
+  { id: "go/keyboard-shortcuts", binding: "g s", label: msg("command-go-keyboard-shortcuts"), scope: "global", run: () => openSettings("shortcuts") },
   // Browser-style history nav (per-tab back/forward). Special-cased in the
   // dispatcher so they fire even while editing a block; remappable like any other.
-  { id: "go/backward", binding: "alt+left", label: "Go back", scope: "global", run: goBack, global: true },
-  { id: "go/forward", binding: "alt+right", label: "Go forward", scope: "global", run: goForward, global: true },
+  { id: "go/backward", binding: "alt+left", label: msg("command-go-backward"), scope: "global", run: goBack, global: true },
+  { id: "go/forward", binding: "alt+right", label: msg("command-go-forward"), scope: "global", run: goForward, global: true },
   // mod+w is a mod-chord, so it clears the while-editing guard and reaches the
   // generic dispatch loop below — closes the active tab even mid-edit (like a
   // browser). The last tab can't be closed, so this never quits the app.
-  { id: "tab/close", binding: "mod+w", label: "Close current tab", scope: "global", run: closeActiveTab, global: true },
+  { id: "tab/close", binding: "mod+w", label: msg("command-tab-close"), scope: "global", run: closeActiveTab, global: true },
   // Reopen the most-recently-closed tab (browser-style). mod-chord ⇒ fires even
   // mid-edit, like mod+w.
-  { id: "tab/reopen-closed", binding: "mod+shift+t", label: "Reopen closed tab", scope: "global", run: reopenClosedTab, global: true },
+  { id: "tab/reopen-closed", binding: "mod+shift+t", label: msg("command-tab-reopen-closed"), scope: "global", run: reopenClosedTab, global: true },
   // Browser-style tab cycling (Ctrl+PgDn / Ctrl+PgUp on Linux/Windows; Cmd on
   // macOS). mod-chords, so they fire mid-edit; remappable like everything here.
-  { id: "tab/next", binding: "mod+pagedown", label: "Next tab", scope: "global", run: activateNextTab, global: true },
-  { id: "tab/previous", binding: "mod+pageup", label: "Previous tab", scope: "global", run: activatePrevTab, global: true },
-  { id: "pane/split-right", binding: "mod+alt+\\", label: "Split right", scope: "global", run: () => void splitPane(focusedPaneId(), "row"), global: true },
-  { id: "pane/split-down", binding: "mod+alt+shift+\\", label: "Split down", scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
-  { id: "pane/close", binding: "", label: "Close pane", scope: "global", run: () => void closePane(focusedPaneId()), global: true },
-  { id: "pane/toggle-maximize", binding: "mod+alt+m", label: "Toggle maximize active pane", scope: "global", run: () => { togglePaneMaximize(); }, global: true },
-  { id: "window/open-in-new-window", binding: "", label: "Open current page in new window", scope: "global", available: () => workspaceWindowsSupported(), run: () => { if (workspaceWindowsSupported()) openWorkspaceWindow({ snapshot: focusedRouter().duplicateActiveSnapshot() }); }, global: true },
-  { id: "sidebar/grow-width", binding: "", label: "Grow left sidebar width", scope: "global", run: () => adjustSidebarWidth("left", true), global: true },
-  { id: "sidebar/shrink-width", binding: "", label: "Shrink left sidebar width", scope: "global", run: () => adjustSidebarWidth("left", false), global: true },
-  { id: "right-sidebar/grow-width", binding: "", label: "Grow right sidebar width", scope: "global", run: () => adjustSidebarWidth("right", true), global: true },
-  { id: "right-sidebar/shrink-width", binding: "", label: "Shrink right sidebar width", scope: "global", run: () => adjustSidebarWidth("right", false), global: true },
-  { id: "go/search-tab", binding: "", label: "Open search tab", scope: "global", run: () => { closeSwitcher(); openQueryInNewTab("", "search", true); }, global: true },
-  { id: "pane/grow-width", binding: "", label: "Grow active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", true); }, global: true },
-  { id: "pane/shrink-width", binding: "", label: "Shrink active pane width", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", false); }, global: true },
-  { id: "pane/grow-height", binding: "", label: "Grow active pane height", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", true); }, global: true },
-  { id: "pane/shrink-height", binding: "", label: "Shrink active pane height", scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", false); }, global: true },
+  { id: "tab/next", binding: "mod+pagedown", label: msg("command-tab-next"), scope: "global", run: activateNextTab, global: true },
+  { id: "tab/previous", binding: "mod+pageup", label: msg("command-tab-previous"), scope: "global", run: activatePrevTab, global: true },
+  { id: "pane/split-right", binding: "mod+alt+\\", label: msg("command-pane-split-right"), scope: "global", run: () => void splitPane(focusedPaneId(), "row"), global: true },
+  { id: "pane/split-down", binding: "mod+alt+shift+\\", label: msg("command-pane-split-down"), scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
+  { id: "pane/close", binding: "", label: msg("command-pane-close"), scope: "global", run: () => void closePane(focusedPaneId()), global: true },
+  { id: "pane/toggle-maximize", binding: "mod+alt+m", label: msg("command-pane-toggle-maximize"), scope: "global", run: () => { togglePaneMaximize(); }, global: true },
+  { id: "window/open-in-new-window", binding: "", label: msg("command-window-open-in-new-window"), scope: "global", available: () => workspaceWindowsSupported(), run: () => { if (workspaceWindowsSupported()) openWorkspaceWindow({ snapshot: focusedRouter().duplicateActiveSnapshot() }); }, global: true },
+  { id: "sidebar/grow-width", binding: "", label: msg("command-sidebar-grow-width"), scope: "global", run: () => adjustSidebarWidth("left", true), global: true },
+  { id: "sidebar/shrink-width", binding: "", label: msg("command-sidebar-shrink-width"), scope: "global", run: () => adjustSidebarWidth("left", false), global: true },
+  { id: "right-sidebar/grow-width", binding: "", label: msg("command-right-sidebar-grow-width"), scope: "global", run: () => adjustSidebarWidth("right", true), global: true },
+  { id: "right-sidebar/shrink-width", binding: "", label: msg("command-right-sidebar-shrink-width"), scope: "global", run: () => adjustSidebarWidth("right", false), global: true },
+  { id: "go/search-tab", binding: "", label: msg("command-go-search-tab"), scope: "global", run: () => { closeSwitcher(); openQueryInNewTab("", "search", true); }, global: true },
+  { id: "pane/grow-width", binding: "", label: msg("command-pane-grow-width"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", true); }, global: true },
+  { id: "pane/shrink-width", binding: "", label: msg("command-pane-shrink-width"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", false); }, global: true },
+  { id: "pane/grow-height", binding: "", label: msg("command-pane-grow-height"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", true); }, global: true },
+  { id: "pane/shrink-height", binding: "", label: msg("command-pane-shrink-height"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", false); }, global: true },
   // Palette-discoverable entry into pane-select (it's otherwise only reachable
   // via Esc-with-nothing-open, which users won't guess — Martin didn't).
-  { id: "pane/select-mode", binding: "", label: "Pane select mode (arrows move, Enter opens/splits)", scope: "global", run: enterPaneSelectFromFocus, global: true },
+  { id: "pane/select-mode", binding: "", label: msg("command-pane-select-mode"), scope: "global", run: enterPaneSelectFromFocus, global: true },
   ...Array.from({ length: 9 }, (_, i): CommandDef => ({
     id: `pane/focus-${i + 1}`,
     binding: `mod+${i + 1}`,
-    label: `Focus pane ${i + 1}`,
+    label: msg("command-pane-focus-n", { index: i + 1 }),
     scope: "global",
     run: () => focusPaneByNumber(i + 1),
     global: true,
   })),
-  { id: "pane/focus-left", binding: "mod+alt+left", label: "Focus pane left", scope: "global", run: () => focusPaneInDirection("left"), global: true },
-  { id: "pane/focus-right", binding: "mod+alt+right", label: "Focus pane right", scope: "global", run: () => focusPaneInDirection("right"), global: true },
-  { id: "pane/focus-up", binding: "mod+alt+up", label: "Focus pane up", scope: "global", run: () => focusPaneInDirection("up"), global: true },
-  { id: "pane/focus-down", binding: "mod+alt+down", label: "Focus pane down", scope: "global", run: () => focusPaneInDirection("down"), global: true },
-  { id: "pane/move-tab-left", binding: "mod+alt+shift+left", label: "Move tab to pane left", scope: "global", run: () => moveActiveTab("left"), global: true },
-  { id: "pane/move-tab-right", binding: "mod+alt+shift+right", label: "Move tab to pane right", scope: "global", run: () => moveActiveTab("right"), global: true },
-  { id: "pane/move-tab-up", binding: "mod+alt+shift+up", label: "Move tab to pane up", scope: "global", run: () => moveActiveTab("up"), global: true },
-  { id: "pane/move-tab-down", binding: "mod+alt+shift+down", label: "Move tab to pane down", scope: "global", run: () => moveActiveTab("down"), global: true },
-  { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
-  { id: "ui/reset-zoom", binding: "", label: "Reset interface zoom", scope: "global", run: zoomReset, global: true },
-  { id: "ui/toggle-brackets", binding: "mod+c mod+b", label: "Toggle reference brackets", scope: "global", run: () => changeShowBrackets(!showBrackets()), global: true },
-  { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
-  { id: "ui/toggle-right-sidebar", binding: "t r", label: "Toggle right sidebar", scope: "global", run: toggleRightSidebar },
-  { id: "ui/open-settings", binding: "t s", label: "Open settings", scope: "global", run: openSettings },
+  { id: "pane/focus-left", binding: "mod+alt+left", label: msg("command-pane-focus-left"), scope: "global", run: () => focusPaneInDirection("left"), global: true },
+  { id: "pane/focus-right", binding: "mod+alt+right", label: msg("command-pane-focus-right"), scope: "global", run: () => focusPaneInDirection("right"), global: true },
+  { id: "pane/focus-up", binding: "mod+alt+up", label: msg("command-pane-focus-up"), scope: "global", run: () => focusPaneInDirection("up"), global: true },
+  { id: "pane/focus-down", binding: "mod+alt+down", label: msg("command-pane-focus-down"), scope: "global", run: () => focusPaneInDirection("down"), global: true },
+  { id: "pane/move-tab-left", binding: "mod+alt+shift+left", label: msg("command-pane-move-tab-left"), scope: "global", run: () => moveActiveTab("left"), global: true },
+  { id: "pane/move-tab-right", binding: "mod+alt+shift+right", label: msg("command-pane-move-tab-right"), scope: "global", run: () => moveActiveTab("right"), global: true },
+  { id: "pane/move-tab-up", binding: "mod+alt+shift+up", label: msg("command-pane-move-tab-up"), scope: "global", run: () => moveActiveTab("up"), global: true },
+  { id: "pane/move-tab-down", binding: "mod+alt+shift+down", label: msg("command-pane-move-tab-down"), scope: "global", run: () => moveActiveTab("down"), global: true },
+  { id: "ui/toggle-theme", binding: "t t", label: msg("command-ui-toggle-theme"), scope: "global", run: toggleTheme },
+  { id: "ui/reset-zoom", binding: "", label: msg("command-ui-reset-zoom"), scope: "global", run: zoomReset, global: true },
+  { id: "ui/toggle-brackets", binding: "mod+c mod+b", label: msg("command-ui-toggle-brackets"), scope: "global", run: () => changeShowBrackets(!showBrackets()), global: true },
+  { id: "ui/toggle-left-sidebar", binding: "t l", label: msg("command-ui-toggle-left-sidebar"), scope: "global", run: toggleSidebar },
+  { id: "ui/toggle-right-sidebar", binding: "t r", label: msg("command-ui-toggle-right-sidebar"), scope: "global", run: toggleRightSidebar },
+  { id: "ui/open-settings", binding: "t s", label: msg("command-ui-open-settings"), scope: "global", run: openSettings },
   {
     id: "page/export-pdf",
     binding: "",
-    label: "Export current page to PDF…",
+    label: msg("command-page-export-pdf"),
     scope: "global",
     run: () => {
       const r = route();
@@ -351,27 +353,27 @@ const COMMANDS: CommandDef[] = [
       else pushToast("Open a page first to export it to PDF", "warn");
     },
   },
-  { id: "ui/toggle-wide-mode", binding: "t w", label: "Toggle wide mode", scope: "global", run: toggleWideMode },
-  { id: "ui/toggle-document-mode", binding: "t d", label: "Toggle document mode", scope: "global", run: toggleDocumentMode },
-  { id: "ui/toggle-focus-mode", binding: "t f", label: "Toggle focus mode", scope: "global", run: toggleFocusMode },
-  { id: "ui/toggle-dim-blocks", binding: "t b", label: "Toggle dim inactive blocks", scope: "global", run: toggleDimInactiveBlocks },
+  { id: "ui/toggle-wide-mode", binding: "t w", label: msg("command-ui-toggle-wide-mode"), scope: "global", run: toggleWideMode },
+  { id: "ui/toggle-document-mode", binding: "t d", label: msg("command-ui-toggle-document-mode"), scope: "global", run: toggleDocumentMode },
+  { id: "ui/toggle-focus-mode", binding: "t f", label: msg("command-ui-toggle-focus-mode"), scope: "global", run: toggleFocusMode },
+  { id: "ui/toggle-dim-blocks", binding: "t b", label: msg("command-ui-toggle-dim-blocks"), scope: "global", run: toggleDimInactiveBlocks },
   // Web KeyboardEvent reports Shift+/ as key "?", so the binding must use the
   // shifted character. OG stores "shift+/" and rewrites it for display; Tine
   // matches eventToChord's actual output instead.
-  { id: "ui/toggle-help", binding: "shift+?", label: "Toggle help", scope: "global", run: toggleHelpPopup },
+  { id: "ui/toggle-help", binding: "shift+?", label: msg("command-ui-toggle-help"), scope: "global", run: toggleHelpPopup },
   // Carry unfinished tasks forward. Palette-only (no default binding); the presets
   // and the settings-configured N are all surfaced in Ctrl-K.
-  { id: "task/carry-7", binding: "", label: "Carry unfinished tasks: last 7 days", scope: "global", run: () => void carryDaysBack(7) },
-  { id: "task/carry-30", binding: "", label: "Carry unfinished tasks: last 30 days", scope: "global", run: () => void carryDaysBack(30) },
-  { id: "task/carry-365", binding: "", label: "Carry unfinished tasks: last 365 days", scope: "global", run: () => void carryDaysBack(365) },
-  { id: "task/carry-n", binding: "", label: "Carry unfinished tasks: last N days (Settings)", scope: "global", run: () => void carryDaysBack(carryDays()) },
-  { id: "editor/undo", binding: "mod+z", label: "Undo", scope: "global", run: undo, global: true },
+  { id: "task/carry-7", binding: "", label: msg("command-task-carry-7"), scope: "global", run: () => void carryDaysBack(7) },
+  { id: "task/carry-30", binding: "", label: msg("command-task-carry-30"), scope: "global", run: () => void carryDaysBack(30) },
+  { id: "task/carry-365", binding: "", label: msg("command-task-carry-365"), scope: "global", run: () => void carryDaysBack(365) },
+  { id: "task/carry-n", binding: "", label: msg("command-task-carry-n"), scope: "global", run: () => void carryDaysBack(carryDays()) },
+  { id: "editor/undo", binding: "mod+z", label: msg("command-editor-undo"), scope: "global", run: undo, global: true },
   // Logseq binds redo to mod+shift+z alone, and that stays the binding Settings
   // shows and remaps. Ctrl+Y is the Windows/Linux convention for redo and Logseq
   // leaves it unbound, so pressing it was silence (GH #491, master 2721c0126). It
   // rides along as an alias so the shortcuts list keeps one Redo row. Not on
   // macOS: there Ctrl+Y is the system's Emacs-style yank inside every text field.
-  { id: "editor/redo", binding: "mod+shift+z", alias: isMac ? "" : "ctrl+y", label: "Redo", scope: "global", run: redo, global: true },
+  { id: "editor/redo", binding: "mod+shift+z", alias: isMac ? "" : "ctrl+y", label: msg("command-editor-redo"), scope: "global", run: redo, global: true },
   // Palette-only, matching OG's empty binding and mode report at
   // `src/main/frontend/modules/shortcut/config.cljs:355-356` and
   // `src/main/frontend/modules/editor/undo_redo.cljs:232-237`
@@ -379,47 +381,47 @@ const COMMANDS: CommandDef[] = [
   {
     id: "editor/toggle-undo-redo-mode",
     binding: "",
-    label: "Toggle undo/redo mode",
+    label: msg("command-editor-toggle-undo-redo-mode"),
     scope: "global",
     run: () => pushToast(`Undo/redo mode: ${toggleUndoRedoMode()}`),
   },
   // Editor commands (resolved in Block.tsx / selection handler).
-  { id: "editor/indent", binding: "tab", label: "Indent block", scope: "editor" },
-  { id: "editor/outdent", binding: "shift+tab", label: "Outdent block", scope: "editor" },
+  { id: "editor/indent", binding: "tab", label: msg("command-editor-indent"), scope: "editor" },
+  { id: "editor/outdent", binding: "shift+tab", label: msg("command-editor-outdent"), scope: "editor" },
   // OG's non-Mac default (alt+shift+arrow). Super+arrow (the old "meta+up"
   // binding) is grabbed by most Linux compositors for window tiling, so it never
   // reached the app.
-  { id: "editor/move-block-up", binding: "alt+shift+up", label: "Move block up", scope: "editor" },
-  { id: "editor/move-block-down", binding: "alt+shift+down", label: "Move block down", scope: "editor" },
-  { id: "editor/collapse", binding: "mod+up", label: "Collapse block", scope: "editor" },
-  { id: "editor/expand", binding: "mod+down", label: "Expand block", scope: "editor" },
-  { id: "editor/select-block-up", binding: "shift+up", label: "Select block up", scope: "editor" },
-  { id: "editor/select-block-down", binding: "shift+down", label: "Select block down", scope: "editor" },
+  { id: "editor/move-block-up", binding: "alt+shift+up", label: msg("command-editor-move-block-up"), scope: "editor" },
+  { id: "editor/move-block-down", binding: "alt+shift+down", label: msg("command-editor-move-block-down"), scope: "editor" },
+  { id: "editor/collapse", binding: "mod+up", label: msg("command-editor-collapse"), scope: "editor" },
+  { id: "editor/expand", binding: "mod+down", label: msg("command-editor-expand"), scope: "editor" },
+  { id: "editor/select-block-up", binding: "shift+up", label: msg("command-editor-select-block-up"), scope: "editor" },
+  { id: "editor/select-block-down", binding: "shift+down", label: msg("command-editor-select-block-down"), scope: "editor" },
   // Ctrl/Cmd+A ladder (GH #262): first press selects the block's text natively,
   // then the block's subtree, then each ancestor's subtree, then the outline.
-  { id: "editor/select-all", binding: "mod+a", label: "Select block / expand selection", scope: "editor" },
-  { id: "editor/cycle-todo", binding: "mod+enter", label: "Cycle TODO / DOING / DONE", scope: "editor" },
+  { id: "editor/select-all", binding: "mod+a", label: msg("command-editor-select-all"), scope: "editor" },
+  { id: "editor/cycle-todo", binding: "mod+enter", label: msg("command-editor-cycle-todo"), scope: "editor" },
   // Quick-capture mini-window only: file the capture to today's journal. Acts
   // only when CaptureCtx is present (Block.tsx); a no-op in the main app. Default
   // mod+shift+enter avoids mod+enter (cycle-todo) and shift+enter (soft newline).
-  { id: "editor/quick-capture-file", binding: "mod+shift+enter", label: "Quick-capture: file to today's journal", scope: "editor" },
+  { id: "editor/quick-capture-file", binding: "mod+shift+enter", label: msg("command-editor-quick-capture-file"), scope: "editor" },
   // Inline formatting toggles.
-  { id: "editor/bold", binding: "mod+b", label: "Bold", scope: "editor" },
-  { id: "editor/italics", binding: "mod+i", label: "Italic", scope: "editor" },
-  { id: "editor/strike-through", binding: "mod+shift+s", label: "Strikethrough", scope: "editor" },
-  { id: "editor/highlight", binding: "mod+shift+h", label: "Highlight", scope: "editor" },
-  { id: "editor/insert-link", binding: "mod+l", label: "Insert link", scope: "editor" },
+  { id: "editor/bold", binding: "mod+b", label: msg("command-editor-bold"), scope: "editor" },
+  { id: "editor/italics", binding: "mod+i", label: msg("command-editor-italics"), scope: "editor" },
+  { id: "editor/strike-through", binding: "mod+shift+s", label: msg("command-editor-strike-through"), scope: "editor" },
+  { id: "editor/highlight", binding: "mod+shift+h", label: msg("command-editor-highlight"), scope: "editor" },
+  { id: "editor/insert-link", binding: "mod+l", label: msg("command-editor-insert-link"), scope: "editor" },
   // GH #279: the embed counterpart of builtin Mod+C (copy block ref) — with a
   // text selection the handler declines so the platform's ordinary copy runs.
-  { id: "editor/copy-embed", binding: "mod+shift+c", label: "Copy block embed when no text is selected", scope: "editor" },
-  { id: "editor/clear-block", binding: "alt+l", label: "Clear block content", scope: "editor" },
+  { id: "editor/copy-embed", binding: "mod+shift+c", label: msg("command-editor-copy-embed"), scope: "editor" },
+  { id: "editor/clear-block", binding: "alt+l", label: msg("command-editor-clear-block"), scope: "editor" },
   // Emacs-style cursor/kill motions.
-  { id: "editor/kill-line-before", binding: "alt+u", label: "Delete to line start", scope: "editor" },
-  { id: "editor/kill-line-after", binding: "alt+k", label: "Delete to line end", scope: "editor" },
-  { id: "editor/backward-word", binding: "alt+b", label: "Cursor word backward", scope: "editor" },
-  { id: "editor/forward-word", binding: "alt+f", label: "Cursor word forward", scope: "editor" },
-  { id: "editor/backward-kill-word", binding: "alt+w", label: "Delete word backward", scope: "editor" },
-  { id: "editor/forward-kill-word", binding: "alt+d", label: "Delete word forward", scope: "editor" },
+  { id: "editor/kill-line-before", binding: "alt+u", label: msg("command-editor-kill-line-before"), scope: "editor" },
+  { id: "editor/kill-line-after", binding: "alt+k", label: msg("command-editor-kill-line-after"), scope: "editor" },
+  { id: "editor/backward-word", binding: "alt+b", label: msg("command-editor-backward-word"), scope: "editor" },
+  { id: "editor/forward-word", binding: "alt+f", label: msg("command-editor-forward-word"), scope: "editor" },
+  { id: "editor/backward-kill-word", binding: "alt+w", label: msg("command-editor-backward-kill-word"), scope: "editor" },
+  { id: "editor/forward-kill-word", binding: "alt+d", label: msg("command-editor-forward-kill-word"), scope: "editor" },
 ];
 
 export interface BuiltinKeyDef {
@@ -583,7 +585,7 @@ function pluginCommandDefs(): CommandDef[] {
   return pluginManager.commands().map(({ pluginId, contribution }) => ({
     id: `plugin:${pluginId}:${contribution.id}`,
     binding: contribution.defaultBinding ?? "",
-    label: `Plugin: ${contribution.title}`,
+    label: msg("command-plugin", { title: contribution.title }),
     scope: "global",
     global: true,
     run: () => {
@@ -725,17 +727,19 @@ export function editorCommandFor(e: KeyboardEvent): string | null {
  *  switcher itself is excluded (no point launching the launcher). */
 export function paletteCommands(
   focusedPluginBlock: OwnedPluginBlockSnapshot | null = pluginFocusedBlock() ?? null
-): { id: string; label: string; binding: string; run: () => void }[] {
+): { id: string; label: string; english: string; binding: string; run: () => void }[] {
   const builtIn = COMMANDS.filter((c) => c.scope === "global" && c.run && c.id !== "go/search" && (!c.available || c.available()))
     .map((c) => ({
       id: c.id,
-      label: c.label,
+      label: render(c.label),
+      english: renderEnglish(c.label),
       binding: (overridesApplied[c.id] ?? c.binding) === "false" ? "" : overridesApplied[c.id] ?? c.binding,
       run: c.run!,
     }));
   const plugins = pluginManager.commands().map(({ pluginId, contribution }) => ({
     id: `plugin:${pluginId}:${contribution.id}`,
     label: contribution.title,
+    english: contribution.title,
     binding: overridesApplied[`plugin:${pluginId}:${contribution.id}`] === "false"
       ? ""
       : overridesApplied[`plugin:${pluginId}:${contribution.id}`] ?? contribution.defaultBinding ?? "",
@@ -757,9 +761,10 @@ export function runGlobalCommand(id: string): boolean {
 
 /** Built-in command defaults (id + label + default binding) for the Settings
  *  remap UI, which computes the effective binding reactively from these plus
- *  config.edn and the user's local overrides. */
-export function commandDefaults(): { id: string; label: string; binding: string; alias?: string; scope: ShortcutScope }[] {
-  return [...COMMANDS, ...pluginCommandDefs()].map((c) => ({ id: c.id, label: c.label, binding: c.binding, alias: c.alias, scope: shortcutScope(c) }));
+ *  config.edn and the user's local overrides. Call from a reactive consumer:
+ *  `label` is in the active UI language, `english` is for search. */
+export function commandDefaults(): { id: string; label: string; english: string; binding: string; alias?: string; scope: ShortcutScope }[] {
+  return [...COMMANDS, ...pluginCommandDefs()].map((c) => ({ id: c.id, label: render(c.label), english: renderEnglish(c.label), binding: c.binding, alias: c.alias, scope: shortcutScope(c) }));
 }
 
 /** Turn a keyboard event into a binding string like "mod+shift+down". Returns

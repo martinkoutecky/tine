@@ -14,9 +14,15 @@
     <div id="root">
       <div class="startup-shell" role="status" aria-live="polite">
         <span class="startup-shell-mark" aria-hidden="true"></span>
-        <span>Opening Tine…</span>
+        <span id="startup-shell-text">Opening Tine…</span>
       </div>
     </div>
+    <script>
+      // tine#107: the native shell's text in the last chosen UI language.
+      if (typeof globalThis.__TINE_BOOT_TEXT__ === "string") {
+        document.getElementById("startup-shell-text").textContent = globalThis.__TINE_BOOT_TEXT__;
+      }
+    </script>
     <script id="tine-engine-check">
       // GH #572. Tine needs the web engine of Safari 15.4 or later: the parser is
       // wasm with reference types (Safari 15) and the frontend uses ES2022

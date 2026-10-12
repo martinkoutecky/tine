@@ -139,7 +139,8 @@ export function QuickSwitcher(): JSX.Element {
     const ranked = !ql
       ? paletteCommands(switcherPluginBlock())
       : paletteCommands(switcherPluginBlock())
-          .map((c) => ({ c, s: fuzzyScore(ql, c.label) }))
+          // The English label also matches, so a typed English command name works in any UI language.
+          .map((c) => ({ c, s: Math.max(fuzzyScore(ql, c.label), c.english === c.label ? 0 : fuzzyScore(ql, c.english)) }))
           .filter((x) => x.s > 0)
           .sort((a, b) => b.s - a.s)
           .map((x) => x.c);

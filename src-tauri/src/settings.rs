@@ -124,6 +124,18 @@ pub(crate) fn update_settings(
     update_settings_at(&p, mutate)
 }
 
+/// The device-settings JSON at `path`, if it can be read and parsed.
+pub(crate) fn read_settings_value_at(path: &std::path::Path) -> Option<serde_json::Value> {
+    read_app_text(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+}
+
+/// The device-settings JSON, if it can be read and parsed.
+pub(crate) fn read_settings_value(app: &tauri::AppHandle) -> Option<serde_json::Value> {
+    settings_path(app).and_then(|path| read_settings_value_at(&path))
+}
+
 fn graph_display_name(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
