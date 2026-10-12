@@ -393,7 +393,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                     <Show when={dtoById(id)}>
                       {(d) => props.excerpt
                         ? <ReferenceExcerptBlocks blocks={[d()]} evidence={evidenceById().has(id) ? [evidenceById().get(id)!] : []} page={props.page} kind={props.kind} path={props.path} />
-                        : <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} />}
+                        : <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} path={props.path} />}
                     </Show>
                   }
                 >
