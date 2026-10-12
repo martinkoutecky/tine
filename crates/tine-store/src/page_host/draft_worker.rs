@@ -77,9 +77,7 @@ impl<F: HostIo> Host<F> {
             let page = host.pages.get(key).cloned();
             let desired = page.as_ref().filter(|p| p.risk);
             if let Some(page) = desired {
-                if previous.is_some_and(|r| {
-                    r.bytes == page.buf && r.base == page.base && r.version == page.version
-                }) {
+                if previous.is_some_and(|r| r.holds(page)) {
                     return Disposition::Disabled;
                 }
                 let record = host.record(key, page);

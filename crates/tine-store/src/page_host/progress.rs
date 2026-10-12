@@ -136,7 +136,7 @@ impl Timing {
 
 impl Record {
     /// This draft is exactly the page's buffer at its version.
-    fn holds(&self, page: &Page) -> bool {
+    pub(super) fn holds(&self, page: &Page) -> bool {
         self.bytes == page.buf && self.base == page.base && self.version == page.version
     }
 }

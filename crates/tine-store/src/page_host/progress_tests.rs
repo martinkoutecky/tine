@@ -1878,3 +1878,51 @@ fn rename_cost_failing_draft_writes_do_not_abort_a_saving_stop() {
     }
     assert_eq!(state(&p), StopState::Ready);
 }
+
+/// P5 (I-12): draft refresh suppression (`begin_draft_with`), the switch
+/// barrier (`can_switch`) and Progress ask one question through
+/// `Record::holds`: bytes, base and version all equal. Each field differing
+/// alone, absent bytes and an UNKNOWN base included, makes it false.
+#[test]
+fn a_draft_holds_its_page_only_when_bytes_base_and_version_all_match() {
+    let bytes = |s: &str| -> Text { Some(Arc::from(s.as_bytes())) };
+    let page = |buf: Text, base: Base, version: u64| Page {
+        buf,
+        base,
+        version,
+        typed: true,
+        risk: true,
+        conflict: false,
+        obs: None,
+    };
+    let record = |b: Text, base: Base, version: u64| Record {
+        page: "a.md".into(),
+        wseq: 1,
+        version,
+        base,
+        bytes: b,
+    };
+    let known = || Base::Known(bytes("old"));
+    for (buf, base) in [
+        (bytes("new"), known()),
+        (None, known()),
+        (bytes("new"), Base::Unknown),
+        (None, Base::Unknown),
+    ] {
+        let p = page(buf.clone(), base.clone(), 7);
+        assert!(record(buf.clone(), base.clone(), 7).holds(&p));
+        let other = if buf.is_some() { None } else { bytes("new") };
+        assert!(!record(other, base.clone(), 7).holds(&p), "bytes");
+        let other_base = if base == Base::Unknown {
+            known()
+        } else {
+            Base::Unknown
+        };
+        assert!(!record(buf.clone(), other_base, 7).holds(&p), "base");
+        assert!(
+            !record(buf.clone(), Base::Known(bytes("x")), 7).holds(&p),
+            "base bytes"
+        );
+        assert!(!record(buf, base, 8).holds(&p), "version");
+    }
+}

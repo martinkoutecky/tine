@@ -1303,9 +1303,7 @@ impl<F: HostIo> Host<F> {
             let page = self.pages.get(key);
             page.is_none_or(|p| p.clean() || p.risk)
                 && match page.filter(|p| p.risk) {
-                    Some(p) => drafts.get(key).is_some_and(|r| {
-                        r.bytes == p.buf && r.base == p.base && r.version == p.version
-                    }),
+                    Some(p) => drafts.get(key).is_some_and(|r| r.holds(p)),
                     None => !drafts.contains_key(key),
                 }
         })
