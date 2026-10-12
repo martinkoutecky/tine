@@ -1010,6 +1010,16 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
                         "a page host starts outside the graph-window binding: {relative}: {line}"
                     );
                     PRODUCTION_STARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    // Its kinds sink is the app's edit-kinds log (N1, OG-RULES
+                    // Rule 8, STEP3 §3.2; 318a6f40a dropped the log once).
+                    let call = lines[i..]
+                        .iter()
+                        .take_while(|line| !line.trim_start().starts_with(')'))
+                        .any(|line| line.contains("page_commands::log_edit_kinds"));
+                    assert!(
+                        call,
+                        "the page host start does not log edit kinds: {relative}: {line}"
+                    );
                 }
                 assert!(
                     test_code || !line.contains("start_for_tests"),

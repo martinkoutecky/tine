@@ -1,6 +1,6 @@
-//! The driver's sink (STEP3 §5, §3.3): each delivery's claims, publications
-//! and evictions apply to the index under the store writer, then its page
-//! mail goes to the window.
+//! The driver's sink (STEP3 §5, §3.3): each delivery's edit kinds go to the
+//! kinds sink (OG-RULES Rule 8), its claims, publications and evictions apply
+//! to the index under the store writer, then its page mail goes to the window.
 use super::*;
 
 /// The driver's sink: the publication consumer (§5), then page mail to the
@@ -8,10 +8,9 @@ use super::*;
 pub(super) struct Bridge {
     pub(super) store: Arc<Store>,
     pub(super) mail: MailSink,
+    pub(super) kinds: KindsSink,
     #[cfg(test)]
     pub(super) index_faults: Arc<std::sync::atomic::AtomicU32>,
-    #[cfg(test)]
-    pub(super) published_kinds: PublishedKinds,
 }
 
 impl Sink for Bridge {
@@ -28,11 +27,9 @@ impl Sink for Bridge {
     ) -> Vec<(Publication, Indexing)> {
         let store = &*self.store;
         let mut results = Vec::new();
-        #[cfg(test)]
-        self.published_kinds
-            .lock()
-            .unwrap()
-            .extend(delivery.kinds.iter().cloned());
+        for (key, kinds) in &delivery.kinds {
+            (self.kinds.lock().unwrap())(key, kinds);
+        }
         if !delivery.claimed.is_empty()
             || !delivery.publications.is_empty()
             || !delivery.evicted.is_empty()

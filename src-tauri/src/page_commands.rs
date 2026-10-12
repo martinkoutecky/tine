@@ -31,6 +31,14 @@ async fn hosted<T: Send + 'static>(
     off_ui(move || with_host(&slot, work)).await
 }
 
+/// A published page's edit kinds (OG-RULES Rule 8, STEP3 §3.2), in the
+/// opt-in debug log: the host's kinds sink.
+pub(crate) fn log_edit_kinds(page: &str, kinds: &[EditKind]) {
+    if crate::debug::debug_enabled() {
+        crate::debug::diag_private("edit-kinds", format!("{page}: {kinds:?}"));
+    }
+}
+
 /// Where page mail goes: the window that owns the binding (`label`). An
 /// adopting window retargets it (`PageHost::retarget`, S2).
 pub(crate) fn page_mail_sink(

@@ -61,9 +61,15 @@ fn fixture(phase: Phase, times: usize) -> Fixture {
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     fail(phase, std::io::ErrorKind::Other, times);
     let (sender, mail) = mpsc::channel::<serde_json::Value>();
-    let host = PageHost::start(&store, &dir.path().join("app"), "graph", move |m| {
-        let _ = sender.send(serde_json::to_value(m).unwrap());
-    })
+    let host = PageHost::start(
+        &store,
+        &dir.path().join("app"),
+        "graph",
+        |_, _| {},
+        move |m| {
+            let _ = sender.send(serde_json::to_value(m).unwrap());
+        },
+    )
     .unwrap();
     Fixture {
         _dir: dir,

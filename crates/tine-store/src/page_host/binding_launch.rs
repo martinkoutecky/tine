@@ -7,7 +7,9 @@ impl PageHost {
     /// Bind a page host to `store`'s graph: drafts under
     /// `app_data/drafts-v2/<graph_id>`, recovered draft keys registered
     /// before launch (§2), then the driver, which owns the index of every
-    /// page it holds (§5). `mail` runs on the driver thread. Each launch
+    /// page it holds (§5). `mail` runs on the driver thread, and so does
+    /// `kinds`, which takes each published page's edit kinds (OG-RULES
+    /// Rule 8; the app logs them). Each launch
     /// draws a fresh session (E101). No draft lock exists: a graph opened
     /// again in this process routes to its existing binding, so production
     /// starts one host per graph (`src-tauri/src/graph.rs`
@@ -19,6 +21,7 @@ impl PageHost {
         store: &Arc<Store>,
         app_data: &Path,
         graph_id: &str,
+        kinds: impl FnMut(&str, &[EditKind]) + Send + 'static,
         mail: impl FnMut(PageMail) + Send + 'static,
     ) -> Result<Self, String> {
         Self::launch(Launch {
@@ -26,6 +29,7 @@ impl PageHost {
             app_data: app_data.to_path_buf(),
             graph_id: graph_id.into(),
             mail: Arc::new(Mutex::new(Box::new(mail))),
+            kinds: Arc::new(Mutex::new(Box::new(kinds))),
         })
     }
 
@@ -34,7 +38,7 @@ impl PageHost {
     /// discarded.
     #[cfg(any(test, feature = "test-faults"))]
     pub fn start_for_tests(store: &Arc<Store>, app_data: &Path) -> Result<Self, String> {
-        Self::start(store, app_data, "test-graph", |_| {})
+        Self::start(store, app_data, "test-graph", |_, _| {}, |_| {})
     }
 
     /// The host holds nothing and owes nothing: no page, job, draft worker,
@@ -111,15 +115,12 @@ impl PageHost {
         }
         #[cfg(test)]
         let index_faults = Arc::new(std::sync::atomic::AtomicU32::new(0));
-        #[cfg(test)]
-        let published_kinds = Arc::new(Mutex::new(Vec::new()));
         let bridge = Bridge {
             store: store.clone(),
             mail: launch.mail.clone(),
+            kinds: launch.kinds.clone(),
             #[cfg(test)]
             index_faults: index_faults.clone(),
-            #[cfg(test)]
-            published_kinds: published_kinds.clone(),
         };
         let driver = Driver::spawn(host, SystemClock::new(), bridge);
         driver
@@ -144,8 +145,6 @@ impl PageHost {
             recovered: BTreeMap::new(),
             #[cfg(test)]
             index_faults,
-            #[cfg(test)]
-            published_kinds,
         };
         // Recovered pages are held before launch reads them (§5), by the
         // host's keys and spelling table (B1).

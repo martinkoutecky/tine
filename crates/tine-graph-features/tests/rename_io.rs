@@ -214,9 +214,15 @@ fn a_forwarded_echo_bills_as_an_observation_read() {
     let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     let (sender, mail) = std::sync::mpsc::channel::<serde_json::Value>();
-    let host = tine_store::PageHost::start(&store, &temp.path().join("app"), "graph", move |m| {
-        let _ = sender.send(serde_json::to_value(m).unwrap());
-    })
+    let host = tine_store::PageHost::start(
+        &store,
+        &temp.path().join("app"),
+        "graph",
+        |_, _| {},
+        move |m| {
+            let _ = sender.send(serde_json::to_value(m).unwrap());
+        },
+    )
     .unwrap();
     let reloaded = serde_json::to_value(host.window_reloaded()).unwrap();
     let session = reloaded["session"].as_u64().unwrap();

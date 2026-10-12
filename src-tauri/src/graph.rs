@@ -471,6 +471,7 @@ fn start_host(
         store,
         &app_data,
         graph_id,
+        crate::page_commands::log_edit_kinds,
         crate::page_commands::page_mail_sink(app.clone(), window_label.to_string()),
     )
 }

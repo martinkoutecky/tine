@@ -194,7 +194,18 @@ struct Live {
     store: Arc<Store>,
     host: PageHost,
     mail: mpsc::Receiver<PageMail>,
+    /// Each published page's edit kinds, as the host's kinds sink took them.
+    kinds: Kinds,
     id: std::cell::Cell<u64>,
+}
+
+/// Published pages' edit kinds in delivery order (OG-RULES Rule 8).
+type Kinds = Arc<Mutex<Vec<(PageKey, Vec<EditKind>)>>>;
+
+/// A kinds sink that records into `kinds`.
+fn recording(kinds: &Kinds) -> impl FnMut(&str, &[EditKind]) + Send + 'static {
+    let kinds = kinds.clone();
+    move |page, taken| kinds.lock().unwrap().push((page.into(), taken.to_vec()))
 }
 
 impl Live {
@@ -230,7 +241,8 @@ impl Live {
         store.whole_graph_reconciled().unwrap();
         let root = store.graph.root.clone();
         let (sender, mail) = mpsc::channel();
-        let host = PageHost::start(&store, &app, "test-graph", move |mail| {
+        let kinds = Kinds::default();
+        let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), move |mail| {
             let _ = sender.send(mail);
         })
         .unwrap();
@@ -240,6 +252,7 @@ impl Live {
             store,
             host,
             mail,
+            kinds,
             id: std::cell::Cell::new(0),
         }
     }
@@ -900,7 +913,8 @@ fn a_restore_stop_saves_every_edit_and_a_fresh_host_reads_the_restored_tree() {
         fs::write(root.join(&a), "- restored\n").unwrap();
     }
     let (sender, mail) = mpsc::channel();
-    let host = PageHost::start(&store, &app, "test-graph", move |mail| {
+    let kinds = Kinds::default();
+    let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), move |mail| {
         let _ = sender.send(mail);
     })
     .unwrap();
@@ -910,6 +924,7 @@ fn a_restore_stop_saves_every_edit_and_a_fresh_host_reads_the_restored_tree() {
         store,
         host,
         mail,
+        kinds,
         id: std::cell::Cell::new(100),
     };
     let (_, page) = live.open("pages/a.md");
@@ -1749,7 +1764,7 @@ fn e101_every_host_instance_and_reload_draws_a_fresh_session() {
     let app = live.app();
     let Live { store, host, .. } = live;
     host.stop();
-    let host = PageHost::start(&store, &app, "test-graph", |_| {}).unwrap();
+    let host = PageHost::start(&store, &app, "test-graph", |_, _| {}, |_| {}).unwrap();
     assert!(
         ![first, reloaded.session].contains(&host.session()),
         "E101: a relaunched host draws a new session"
@@ -1804,7 +1819,7 @@ fn f1_publication_queries_never_answer_for_another_session() {
     let app = live.app();
     let Live { store, host, .. } = live;
     host.stop();
-    let host = PageHost::start(&store, &app, "test-graph", |_| {}).unwrap();
+    let host = PageHost::start(&store, &app, "test-graph", |_, _| {}, |_| {}).unwrap();
     assert_eq!(
         host.owed(now, None),
         None,
@@ -1848,6 +1863,21 @@ fn a_discard_takes_the_current_disk_and_an_old_session_discard_is_not_admitted()
         Err(PageRefusal::NotAdmitted)
     );
     assert_eq!(live.disk(&key), "- one\n");
+    live.host.stop();
+}
+
+/// N1 (OG-RULES Rule 8, STEP3 §3.2 `kinds`): a published page's edit kinds
+/// reach the sink `PageHost::start` was given, at its publication; the app
+/// logs them there (`src-tauri` `page_commands::log_edit_kinds`).
+#[test]
+fn a_published_pages_edit_kinds_reach_the_start_kinds_sink() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    live.until_indexed(&key, "- two\n");
+    let kinds = live.kinds.lock().unwrap().clone();
+    assert_eq!(kinds, vec![(key.clone(), vec![EditKind::SaveBlock])]);
     live.host.stop();
 }
 
@@ -2150,6 +2180,7 @@ fn b_q1_a_restore_relaunches_into_unavailable_drafts_and_retry_restores_them() {
         store,
         host,
         mail,
+        kinds,
         id,
     } = live;
     let stopped = host.stop_finish().ok().unwrap();
@@ -2162,6 +2193,7 @@ fn b_q1_a_restore_relaunches_into_unavailable_drafts_and_retry_restores_them() {
         store,
         host,
         mail,
+        kinds,
         id,
     };
     assert!(live.host.draft_status().unavailable.is_some());
@@ -2212,7 +2244,8 @@ fn s9_draft_status_names_recovered_and_unsaved_pages() {
     );
     crate::page_host::faults::fail(Phase::PageTemp, std::io::ErrorKind::Other, 100);
     let (sender, mail) = mpsc::channel();
-    let host = PageHost::start(&store, &app, "test-graph", move |mail| {
+    let kinds = Kinds::default();
+    let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), move |mail| {
         let _ = sender.send(mail);
     })
     .unwrap();
@@ -2222,6 +2255,7 @@ fn s9_draft_status_names_recovered_and_unsaved_pages() {
         store,
         host,
         mail,
+        kinds,
         id: std::cell::Cell::new(100),
     };
     let unsaved = |recovered, failing| {

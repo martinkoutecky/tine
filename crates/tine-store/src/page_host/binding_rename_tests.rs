@@ -113,14 +113,8 @@ fn host_rename_and_delete_publish_their_edit_kinds() {
     ];
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     let kinds = loop {
-        let kinds: BTreeMap<PageKey, Vec<EditKind>> = live
-            .host
-            .published_kinds
-            .lock()
-            .unwrap()
-            .iter()
-            .cloned()
-            .collect();
+        let kinds: BTreeMap<PageKey, Vec<EditKind>> =
+            live.kinds.lock().unwrap().iter().cloned().collect();
         if expected.iter().all(|(key, _)| kinds.contains_key(*key)) {
             break kinds;
         }
@@ -242,16 +236,18 @@ fn q4_a_case_only_rename_to_an_absent_entry_recovers_after_a_crash() {
             store,
             host,
             mail,
+            kinds,
             ..
         } = live;
         drop(host);
-        let host = PageHost::start(&store, &app, "test-graph", |_| {}).unwrap();
+        let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), |_| {}).unwrap();
         let live = Live {
             _dir,
             root,
             store,
             host,
             mail,
+            kinds,
             id: std::cell::Cell::new(100),
         };
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -694,7 +690,7 @@ fn a_rename_leaves_an_unsaved_referrer_that_already_says_the_new_name() {
         } else {
             assert!(!live.root.join("pages/New.md").exists());
         }
-        let kinds = live.host.published_kinds.lock().unwrap().clone();
+        let kinds = live.kinds.lock().unwrap().clone();
         assert!(
             !kinds.iter().any(|(page, _)| page == "journals/m.md"),
             "{source}: {kinds:?}"
@@ -727,7 +723,7 @@ fn a_held_referrer_the_planner_missed_is_part_of_the_rename() {
     assert_eq!(live.disk("pages/h.md"), "- see [[New]]\n");
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        let kinds = live.host.published_kinds.lock().unwrap().clone();
+        let kinds = live.kinds.lock().unwrap().clone();
         if kinds
             .iter()
             .any(|(page, kinds)| page == "pages/h.md" && kinds == &[EditKind::RenamePage])

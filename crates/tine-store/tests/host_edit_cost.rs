@@ -71,9 +71,15 @@ fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
     let (sink, mail) = mpsc::channel();
-    let host = PageHost::start(&store, &dir.path().join("app"), "cost", move |m| {
-        let _ = sink.send(serde_json::to_value(m).unwrap());
-    })
+    let host = PageHost::start(
+        &store,
+        &dir.path().join("app"),
+        "cost",
+        |_, _| {},
+        move |m| {
+            let _ = sink.send(serde_json::to_value(m).unwrap());
+        },
+    )
     .unwrap();
     let reloaded = serde_json::to_value(host.window_reloaded()).unwrap();
     let session = reloaded["session"].as_u64().unwrap();

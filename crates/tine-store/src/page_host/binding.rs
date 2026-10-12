@@ -28,9 +28,6 @@ pub struct PageHost {
     /// Index publications to fail before the next success (tests).
     #[cfg(test)]
     index_faults: Arc<std::sync::atomic::AtomicU32>,
-    /// Each publication's edit kinds as delivered (tests, Rule 8).
-    #[cfg(test)]
-    published_kinds: PublishedKinds,
 }
 
 /// Why a command did not admit its request. Nothing was sent: the window
@@ -841,9 +838,9 @@ impl Book {
 
 /// The window's page-mail sink, kept across a relaunch.
 type MailSink = Arc<Mutex<Box<dyn FnMut(PageMail) + Send>>>;
-/// Each publication's edit kinds as delivered (tests, Rule 8).
-#[cfg(test)]
-type PublishedKinds = Arc<Mutex<Vec<(PageKey, Vec<EditKind>)>>>;
+/// Where each published page's edit kinds go (OG-RULES Rule 8), kept across
+/// a relaunch.
+type KindsSink = Arc<Mutex<Box<dyn FnMut(&str, &[EditKind]) + Send>>>;
 
 /// A binding's launch parameters (`PageHost::start`).
 #[derive(Clone)]
@@ -852,6 +849,7 @@ struct Launch {
     app_data: std::path::PathBuf,
     graph_id: String,
     mail: MailSink,
+    kinds: KindsSink,
 }
 
 /// A host stopped for a restore (§7 step 4): the binding holds no host,
