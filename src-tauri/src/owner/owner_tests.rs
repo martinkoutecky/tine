@@ -1,6 +1,8 @@
 //! The owner endpoint end to end, in process: a real Store and page host,
 //! a real socket, the client's handshake and calls (CLI PROTOCOL §2–5),
 //! and the app lease through retirement and adoption (§3.1–3.2).
+// The endpoint is Unix-only in slice 1a (PROTOCOL §10: Windows has none yet).
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -92,8 +94,8 @@ impl Graph {
 struct Owner(Arc<GraphSlot>);
 
 impl Handler for Owner {
-    fn answer(&self, request: &Request) -> (Result<Value, ErrorBody>, After) {
-        (super::verbs::answer(&self.0, request), After::Continue)
+    fn answer_request(&self, request: &Request) -> (Result<Value, ErrorBody>, After) {
+        (super::verbs::answer_verb(&self.0, request), After::Continue)
     }
 
     fn status(&self, gate: &Gate) -> Value {
@@ -386,7 +388,7 @@ fn serve_yields_only_into_its_own_draft_namespace() {
         drafts: drafts.clone(),
     };
     let ask = |args: Value| {
-        owner.answer(&Request {
+        owner.answer_request(&Request {
             id: 1,
             verb: "owner.yield".into(),
             args,
@@ -517,7 +519,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         .filter(|entry| {
             let name = entry.as_ref().unwrap().file_name();
             let name = name.to_string_lossy();
-            name.ends_with(".rs") && name != "tests.rs"
+            name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
     assert_eq!(files, 10, "scan every owner/*.rs file");

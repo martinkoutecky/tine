@@ -404,24 +404,24 @@ pub(crate) fn dispatch() -> Option<i32> {
 
 /// A read command: one request to the graph's owner (CLI PROTOCOL §5).
 fn read_command(command: Command) -> i32 {
-    use crate::owner::terminal::read;
+    use crate::owner::terminal::read_verb;
     use serde_json::json;
     match command {
-        Command::Status(args) => read(args.target(), "owner.status", json!(null)),
+        Command::Status(args) => read_verb(args.target(), "owner.status", json!(null)),
         Command::Page {
             action: PageAction::Show { name, read: args },
-        } => read(args.target(), "page.show", json!({ "name": name })),
+        } => read_verb(args.target(), "page.show", json!({ "name": name })),
         Command::Block {
             action: BlockAction::Show { uuid, read: args },
-        } => read(args.target(), "block.show", json!({ "uuid": uuid })),
+        } => read_verb(args.target(), "block.show", json!({ "uuid": uuid })),
         Command::Journal { date, read: args } => {
-            read(args.target(), "journal", json!({ "date": date }))
+            read_verb(args.target(), "journal", json!({ "date": date }))
         }
         Command::Refs {
             target,
             block,
             read: args,
-        } => read(
+        } => read_verb(
             args.target(),
             "refs",
             json!({ "target": target, "block": block }),
@@ -431,7 +431,7 @@ fn read_command(command: Command) -> i32 {
             pages,
             blocks,
             read: args,
-        } => read(
+        } => read_verb(
             args.target(),
             "search",
             json!({ "text": text, "pages": pages, "blocks": blocks }),
@@ -440,11 +440,11 @@ fn read_command(command: Command) -> i32 {
             text,
             tql,
             read: args,
-        } => read(args.target(), "query", json!({ "text": text, "tql": tql })),
+        } => read_verb(args.target(), "query", json!({ "text": text, "tql": tql })),
         Command::Pages {
             namespace,
             read: args,
-        } => read(args.target(), "pages", json!({ "namespace": namespace })),
+        } => read_verb(args.target(), "pages", json!({ "namespace": namespace })),
         _ => 2,
     }
 }
@@ -734,6 +734,23 @@ mod tests {
             ),
             ("tine-doctor.1", include_str!("../../docs/tine-doctor.1")),
             ("tine-version.1", include_str!("../../docs/tine-version.1")),
+            ("tine-serve.1", include_str!("../../docs/tine-serve.1")),
+            ("tine-status.1", include_str!("../../docs/tine-status.1")),
+            ("tine-page.1", include_str!("../../docs/tine-page.1")),
+            (
+                "tine-page-show.1",
+                include_str!("../../docs/tine-page-show.1"),
+            ),
+            ("tine-pages.1", include_str!("../../docs/tine-pages.1")),
+            ("tine-journal.1", include_str!("../../docs/tine-journal.1")),
+            ("tine-block.1", include_str!("../../docs/tine-block.1")),
+            (
+                "tine-block-show.1",
+                include_str!("../../docs/tine-block-show.1"),
+            ),
+            ("tine-refs.1", include_str!("../../docs/tine-refs.1")),
+            ("tine-search.1", include_str!("../../docs/tine-search.1")),
+            ("tine-query.1", include_str!("../../docs/tine-query.1")),
         ];
         if std::env::var_os("TINE_UPDATE_MAN_PAGE").is_some() {
             clap_mangen::generate_to(

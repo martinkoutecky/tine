@@ -39,5 +39,32 @@ Check that a graph can be read and parsed without changing it
 .TP
 tine\-version(1)
 Print the Tine version and exit
+.TP
+tine\-serve(1)
+Run a graph\*(Aqs owner for the command line. Read commands start it when the app does not have the graph open; it exits after 30 idle minutes or when the app opens the graph
+.TP
+tine\-status(1)
+Show which process owns the graph and what it is doing
+.TP
+tine\-page(1)
+Read pages
+.TP
+tine\-block(1)
+Read blocks
+.TP
+tine\-journal(1)
+Show a journal page: today, or the given date (YYYY\-MM\-DD)
+.TP
+tine\-refs(1)
+Show the linked references of a page, or of a block with \-\-block
+.TP
+tine\-search(1)
+Search page names and block text, as the app\*(Aqs search does
+.TP
+tine\-query(1)
+Run a query: an OG simple or advanced query, or TQL with \-\-tql
+.TP
+tine\-pages(1)
+List pages, or the pages at or under a namespace
 .SH VERSION
 v0.7.0\-beta.3

@@ -178,7 +178,10 @@ enum Step<R> {
 /// The pages among `keys` with unsaved input (Q3), including an admitted
 /// operation's pages before its draft applies (a retiring draft is not
 /// input: its page is saved), each with its current spelling.
-fn unsaved(host: &Host<ProductionIo>, keys: &BTreeSet<PageKey>) -> BTreeMap<PageKey, PageId> {
+pub(super) fn unsaved(
+    host: &Host<ProductionIo>,
+    keys: &BTreeSet<PageKey>,
+) -> BTreeMap<PageKey, PageId> {
     keys.iter()
         .filter(|key| match host.logical(key) {
             Logical::Settled(page) => !page.clean(),
@@ -266,7 +269,7 @@ impl PageHost {
 
     /// `pages`' keys, each registered; None when the host state is
     /// poisoned.
-    fn register_all(&self, pages: Vec<PageId>) -> Option<BTreeSet<PageKey>> {
+    pub(super) fn register_all(&self, pages: Vec<PageId>) -> Option<BTreeSet<PageKey>> {
         pages
             .iter()
             .map(|page| {
@@ -685,7 +688,7 @@ impl PageHost {
     }
 
     /// A key's current spelling, as the page it names.
-    fn spelling(&self, key: &str) -> PageId {
+    pub(super) fn spelling(&self, key: &str) -> PageId {
         let key = key.to_owned();
         let read = move |state: &HostState| PageId::from(state.progress.host.fs.spelling(&key));
         self.driver
@@ -700,7 +703,7 @@ impl PageHost {
     /// dependency is classified over the writer's whole set, `reserving`, not
     /// only the pages it waits to see saved (REVIEW-3b-P2b-3): a rename
     /// holding a clean page of the set bounds the wait too.
-    fn flush(
+    pub(super) fn flush(
         &self,
         pages: &BTreeSet<PageKey>,
         reserving: &BTreeSet<PageKey>,

@@ -23,7 +23,7 @@ pub(crate) struct Target {
 }
 
 /// Run one read verb; the process exit code (PROTOCOL §2.3).
-pub(crate) fn read(target: Target, verb: &str, args: Value) -> i32 {
+pub(crate) fn read_verb(target: Target, verb: &str, args: Value) -> i32 {
     let root = match graph_root(target.graph) {
         Ok(root) => root,
         Err(message) => {
@@ -71,7 +71,7 @@ pub(crate) fn read(target: Target, verb: &str, args: Value) -> i32 {
 /// `tine serve GRAPH` runs the owner; `--stop` asks it to finish and exit.
 pub(crate) fn serve(graph: &Path, stop: bool) -> i32 {
     if !stop {
-        return match super::serve::run(graph) {
+        return match super::serve::serve_graph(graph) {
             Ok(()) => 0,
             Err(message) => {
                 eprintln!("tine serve: {message}");
@@ -93,7 +93,7 @@ pub(crate) fn serve(graph: &Path, stop: bool) -> i32 {
         }
         Ok(Some(mut conn)) => match conn.call("owner.yield", Value::Null) {
             Ok(_) => {
-                println!("Stopped the command-line owner of {}", root.display());
+                println!("The command-line owner of {} has stopped", root.display());
                 0
             }
             Err(Failure::Owner(body)) => {

@@ -26,8 +26,8 @@ pub(crate) mod terminal;
 pub(crate) mod verbs;
 pub(crate) mod wire;
 
-#[cfg(all(test, unix))]
-mod tests;
+#[cfg(test)]
+mod owner_tests;
 
 /// A failure to reach or become the owner (PROTOCOL §2.3, client-side codes).
 #[derive(Debug, Clone, PartialEq, Eq)]

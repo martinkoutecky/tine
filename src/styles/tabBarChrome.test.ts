@@ -22,3 +22,18 @@ describe("tab close stays rightmost (GH #340)", () => {
     expect(rule(".tab-close")).toMatch(/flex:\s*none/);
   });
 });
+
+// GH #529: tabs are wide enough to read typical page titles. They stretch into a
+// roomy strip up to the max and shrink evenly to the min before the strip scrolls.
+describe("tab width (GH #529)", () => {
+  const px = (prop: string) => Number(new RegExp(`${prop}:\\s*(\\d+)px`).exec(rule(".tab"))?.[1]);
+
+  it("keeps about 14 title characters at the narrowest and about 31 at the widest", () => {
+    expect(px("min-width")).toBe(144);
+    expect(px("max-width")).toBe(260);
+  });
+
+  it("stretches and shrinks (Chrome-style) instead of sizing to the label", () => {
+    expect(rule(".tab")).toMatch(/flex:\s*1\s+1\s+260px/);
+  });
+});

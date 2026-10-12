@@ -15,7 +15,10 @@ use tine_store::{
 
 /// Run `work` on the binding's running host, under the slot's host read
 /// lock: a restore (S8) or a retirement waits for it, and it for them.
-fn with_host<T>(slot: &GraphSlot, work: impl FnOnce(&PageHost) -> T) -> Result<T, String> {
+pub(crate) fn with_host<T>(
+    slot: &GraphSlot,
+    work: impl FnOnce(&PageHost) -> T,
+) -> Result<T, String> {
     match &*slot.host.read().unwrap_or_else(|e| e.into_inner()) {
         PageHostSlot::Running(host) => Ok(work(host)),
         PageHostSlot::Off => Err("no page host runs for this graph".into()),

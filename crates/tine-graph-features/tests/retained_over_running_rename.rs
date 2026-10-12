@@ -187,9 +187,12 @@ fn a_merge_over_a_conflicted_running_rename_is_told_busy_after_the_bound() {
             // the scope joins it.
             take_disk_for_two(&f);
         }
+        // A host operation's Busy names no rename: other holders refuse it
+        // too (REVIEW P2 round 2, finding 3).
+        let busy = "Tine is still finishing another change to these pages, so the merge did not start. Try again in a moment.";
         assert_eq!(
             outcome,
-            Ok(Err((std::io::ErrorKind::WouldBlock, BUSY.to_string()))),
+            Ok(Err((std::io::ErrorKind::WouldBlock, busy.to_string()))),
             "M6: the writer is refused Busy within its bound, not left waiting"
         );
         assert!(started.elapsed() >= tine_store::host_faults::OPERATION_WAIT);

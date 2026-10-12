@@ -1001,13 +1001,14 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
                 // The retained-writer surface (approved by Martin 2026-10-10) is named only
                 // where a census writer reserves from a host or the binding
                 // keeps one (STEP3 §7). Exactly one production path starts a
-                // host: every graph-window binding (`load_graph_for_label`,
-                // step 3b P2b). A second would be a second driver on the
-                // graph's drafts.
+                // host, `graph.rs` `launch_host`: the graph-window binding
+                // (`load_graph_for_label`, step 3b P2b) and the command-line
+                // owner (`owner::serve`, one per graph by the owner lock) both
+                // call it. A second would be a second driver on the graph's drafts.
                 if !test_code && line.contains("PageHost::start(") {
                     assert_eq!(
                         relative, "src-tauri/src/graph.rs",
-                        "a page host starts outside the graph-window binding: {relative}: {line}"
+                        "a page host starts outside graph.rs launch_host: {relative}: {line}"
                     );
                     PRODUCTION_STARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     // Its kinds sink is the app's edit-kinds log (N1, OG-RULES
@@ -1086,7 +1087,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
     assert_eq!(
         PRODUCTION_STARTS.load(std::sync::atomic::Ordering::Relaxed),
         1,
-        "every graph-window binding starts its page host in one place (graph.rs load_graph_for_label)"
+        "every production page host starts in one place (graph.rs launch_host)"
     );
     let runtime = [
         ("mod.rs", include_str!("mod.rs")),
@@ -1097,7 +1098,9 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
             "binding_publication.rs",
             include_str!("binding_publication.rs"),
         ),
+        ("binding_apply.rs", include_str!("binding_apply.rs")),
         ("binding_launch.rs", include_str!("binding_launch.rs")),
+        ("binding_read.rs", include_str!("binding_read.rs")),
         ("draft_worker.rs", include_str!("draft_worker.rs")),
         ("drafts.rs", include_str!("drafts.rs")),
         ("driver.rs", include_str!("driver.rs")),

@@ -74,7 +74,18 @@
           "usr/share/man/man1/tine-export-static.1": "../docs/tine-export-static.1",
           "usr/share/man/man1/tine-export-live.1": "../docs/tine-export-live.1",
           "usr/share/man/man1/tine-doctor.1": "../docs/tine-doctor.1",
-          "usr/share/man/man1/tine-version.1": "../docs/tine-version.1"
+          "usr/share/man/man1/tine-version.1": "../docs/tine-version.1",
+          "usr/share/man/man1/tine-serve.1": "../docs/tine-serve.1",
+          "usr/share/man/man1/tine-status.1": "../docs/tine-status.1",
+          "usr/share/man/man1/tine-page.1": "../docs/tine-page.1",
+          "usr/share/man/man1/tine-page-show.1": "../docs/tine-page-show.1",
+          "usr/share/man/man1/tine-pages.1": "../docs/tine-pages.1",
+          "usr/share/man/man1/tine-journal.1": "../docs/tine-journal.1",
+          "usr/share/man/man1/tine-block.1": "../docs/tine-block.1",
+          "usr/share/man/man1/tine-block-show.1": "../docs/tine-block-show.1",
+          "usr/share/man/man1/tine-refs.1": "../docs/tine-refs.1",
+          "usr/share/man/man1/tine-search.1": "../docs/tine-search.1",
+          "usr/share/man/man1/tine-query.1": "../docs/tine-query.1"
         }
       },
       "rpm": {
@@ -88,7 +99,18 @@
           "/usr/share/man/man1/tine-export-static.1": "../docs/tine-export-static.1",
           "/usr/share/man/man1/tine-export-live.1": "../docs/tine-export-live.1",
           "/usr/share/man/man1/tine-doctor.1": "../docs/tine-doctor.1",
-          "/usr/share/man/man1/tine-version.1": "../docs/tine-version.1"
+          "/usr/share/man/man1/tine-version.1": "../docs/tine-version.1",
+          "/usr/share/man/man1/tine-serve.1": "../docs/tine-serve.1",
+          "/usr/share/man/man1/tine-status.1": "../docs/tine-status.1",
+          "/usr/share/man/man1/tine-page.1": "../docs/tine-page.1",
+          "/usr/share/man/man1/tine-page-show.1": "../docs/tine-page-show.1",
+          "/usr/share/man/man1/tine-pages.1": "../docs/tine-pages.1",
+          "/usr/share/man/man1/tine-journal.1": "../docs/tine-journal.1",
+          "/usr/share/man/man1/tine-block.1": "../docs/tine-block.1",
+          "/usr/share/man/man1/tine-block-show.1": "../docs/tine-block-show.1",
+          "/usr/share/man/man1/tine-refs.1": "../docs/tine-refs.1",
+          "/usr/share/man/man1/tine-search.1": "../docs/tine-search.1",
+          "/usr/share/man/man1/tine-query.1": "../docs/tine-query.1"
         }
       }
     },

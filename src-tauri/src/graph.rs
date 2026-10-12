@@ -464,13 +464,33 @@ fn start_host(
         .path()
         .app_data_dir()
         .map_err(|error| format!("no app data directory for crash drafts: {error}"))?;
+    launch_host(
+        store,
+        &app_data,
+        root_key,
+        crate::page_commands::page_mail_sink(app.clone(), window_label.to_string()),
+    )
+}
+
+/// Start a graph's page host, the only writer of its page edits: crash drafts
+/// under `<app data>/drafts-v2/<graph id>`, the app's edit-kinds log as its
+/// kinds sink (OG-RULES Rule 8). Every production host starts here: the
+/// graph-window binding (`start_host`) and the command-line owner
+/// (`owner::serve`). The owner lock (CLI PROTOCOL §3) admits one of them per
+/// graph across processes, so a graph's drafts have one driver.
+pub(crate) fn launch_host(
+    store: &Arc<Store>,
+    app_data: &Path,
+    root_key: &Path,
+    mail: impl FnMut(tine_store::PageMail) + Send + 'static,
+) -> Result<tine_store::PageHost, String> {
     let graph_id = crate::settings::host_graph_id(root_key);
     tine_store::PageHost::start(
         store,
-        &app_data,
+        app_data,
         &graph_id,
         crate::page_commands::log_edit_kinds,
-        crate::page_commands::page_mail_sink(app.clone(), window_label.to_string()),
+        mail,
     )
 }
 

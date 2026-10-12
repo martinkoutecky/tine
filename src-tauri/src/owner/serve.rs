@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tine_store::{OpenOptions, PageHost, Store};
+use tine_store::{OpenOptions, Store};
 
 use super::endpoint::{After, Gate, Handler, IO_TIMEOUT};
 use super::lease::{self, Claim};
@@ -21,7 +21,7 @@ use crate::state::{GraphSlot, PageHostSlot};
 const IDLE_EXIT: Duration = Duration::from_secs(30 * 60);
 
 /// Run the owner of `graph` until it yields or idles out.
-pub(crate) fn run(graph: &Path) -> Result<(), String> {
+pub(crate) fn serve_graph(graph: &Path) -> Result<(), String> {
     // Before anything reads settings, as the app's startup does (§3.5).
     crate::data_home::ensure_usable(crate::app_identity::APP_IDENTIFIER);
     let root = crate::state::canonical_graph_root(&graph.display().to_string())?;
@@ -49,14 +49,8 @@ pub(crate) fn run(graph: &Path) -> Result<(), String> {
     .map_err(|error| crate::graph::open_error_text(error, true))?;
     let slot = Arc::new(GraphSlot::new(store, root.clone()));
     let graph_id = crate::settings::host_graph_id(&root);
-    let host = PageHost::start(
-        &slot.store,
-        &app_data,
-        &graph_id,
-        crate::page_commands::log_edit_kinds,
-        // No window: nothing to tell.
-        |_mail| {},
-    )?;
+    // No window: no page mail to deliver.
+    let host = crate::graph::launch_host(&slot.store, &app_data, &root, |_mail| {})?;
     *slot.host.write().unwrap() = PageHostSlot::Running(host);
     let gate = Gate::new();
     let (exit, exited) = mpsc::channel();
@@ -143,9 +137,12 @@ struct YieldArgs {
 }
 
 impl Handler for ServeOwner {
-    fn answer(&self, request: &Request) -> (Result<Value, ErrorBody>, After) {
+    fn answer_request(&self, request: &Request) -> (Result<Value, ErrorBody>, After) {
         if request.verb != "owner.yield" {
-            return (super::verbs::answer(&self.slot, request), After::Continue);
+            return (
+                super::verbs::answer_verb(&self.slot, request),
+                After::Continue,
+            );
         }
         let args = if request.args.is_null() {
             json!({})

@@ -134,7 +134,7 @@ struct AppOwner {
 }
 
 impl Handler for AppOwner {
-    fn answer(&self, request: &Request) -> (Result<Value, ErrorBody>, After) {
+    fn answer_request(&self, request: &Request) -> (Result<Value, ErrorBody>, After) {
         if request.verb == "owner.yield" {
             let mut body = ErrorBody::new(
                 "refused",
@@ -153,7 +153,7 @@ impl Handler for AppOwner {
         let Some(slot) = slot else {
             return (Err(busy()), After::Continue);
         };
-        (super::verbs::answer(&slot, request), After::Continue)
+        (super::verbs::answer_verb(&slot, request), After::Continue)
     }
 
     fn status(&self, gate: &Gate) -> Value {

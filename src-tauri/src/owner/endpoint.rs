@@ -33,7 +33,7 @@ pub(crate) enum After {
 /// The owner's answers. `answer` runs for an admitted request on its
 /// connection's thread; `status` for `owner.status`, unadmitted.
 pub(crate) trait Handler: Send + Sync + 'static {
-    fn answer(&self, request: &Request) -> (Result<Value, ErrorBody>, After);
+    fn answer_request(&self, request: &Request) -> (Result<Value, ErrorBody>, After);
     fn status(&self, gate: &Gate) -> Value;
 }
 
@@ -420,7 +420,7 @@ mod unix {
                 }
                 continue;
             };
-            let (result, after) = shared.handler.answer(&request);
+            let (result, after) = shared.handler.answer_request(&request);
             let reply = match result {
                 Ok(ok) => Reply {
                     id: request.id,

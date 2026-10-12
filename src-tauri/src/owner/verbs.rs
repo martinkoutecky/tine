@@ -15,7 +15,7 @@ use super::wire::{ok, ErrorBody, Request};
 use crate::state::GraphSlot;
 
 /// Answer `request` against `slot`'s graph and page host.
-pub(crate) fn answer(slot: &GraphSlot, request: &Request) -> Result<Value, ErrorBody> {
+pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, ErrorBody> {
     let args = &request.args;
     match request.verb.as_str() {
         "page.show" => {
@@ -305,14 +305,13 @@ fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<JournalDate, Erro
 
 /// Page `id` as the page host sees it: a held page's buffer, else its file.
 fn page(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {
-    let host = slot.host_slot().map_err(|_| busy())?;
-    let Some(host) = host.running() else {
-        return Err(busy());
-    };
-    let read = host.read(&id).map_err(|error| match error {
-        HostReadError::Ended => busy(),
-        HostReadError::Store(error) => store_failed(error),
-    })?;
+    // The host lock is held for the read only (A-K3: nothing under it takes it again).
+    let read = crate::page_commands::with_host(slot, |host| host.read(&id))
+        .map_err(|_| busy())?
+        .map_err(|error| match error {
+            HostReadError::Ended => busy(),
+            HostReadError::Store(error) => store_failed(error),
+        })?;
     let Some(bytes) = read.bytes else {
         return Err(not_found(format!("{} does not exist", id.as_str())));
     };

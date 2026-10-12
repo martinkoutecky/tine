@@ -225,7 +225,7 @@ fn all_s3_scenarios_in_four_profiles() {
             comparisons += 1;
         }
     }
-    assert_eq!(comparisons, 636);
+    assert_eq!(comparisons, 708);
     eprintln!("host scenarios: {comparisons} outcomes / {actions} actions / {barriers} barriers");
 }
 

@@ -95,10 +95,20 @@ mod tests {
         let first = OwnerLock::try_take(&path, "serve").unwrap().expect("free");
         assert!(OwnerLock::try_take(&path, "app").unwrap().is_none(), "held");
         drop(first);
-        assert!(
-            OwnerLock::try_take(&path, "app").unwrap().is_some(),
-            "released"
-        );
+        // A process another test spawns at the moment of the drop inherits the
+        // descriptor until its exec closes it (close-on-exec), and the lock
+        // belongs to the open file, so allow that window instead of flaking.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let retaken = loop {
+            if let Some(lock) = OwnerLock::try_take(&path, "app").unwrap() {
+                break Some(lock);
+            }
+            if std::time::Instant::now() > deadline {
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert!(retaken.is_some(), "released");
         assert!(path.exists(), "the lock file is never unlinked");
     }
 }
