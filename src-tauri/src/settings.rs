@@ -15,6 +15,24 @@ pub(crate) struct KnownGraph {
     pub(crate) name: String,
 }
 
+/// UI reply only: device settings continue serializing KnownGraph unchanged.
+#[derive(serde::Serialize)]
+pub(crate) struct DisplayKnownGraph {
+    pub(crate) path: String,
+    name: String,
+    display_path: String,
+}
+
+impl From<KnownGraph> for DisplayKnownGraph {
+    fn from(graph: KnownGraph) -> Self {
+        Self {
+            display_path: tine_core::graph_paths::normalize_graph_path(&graph.path),
+            path: graph.path,
+            name: graph.name,
+        }
+    }
+}
+
 // --- local app settings (outside the graph): currently just the backup keep
 // count. A tiny JSON file in the OS app-data dir. ---
 pub(crate) fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -226,11 +244,16 @@ pub(crate) fn remember_graph(app: &tauri::AppHandle, path: &str) -> Result<(), S
 }
 
 #[tauri::command]
-pub(crate) fn list_known_graphs(app: tauri::AppHandle) -> Vec<KnownGraph> {
+pub(crate) fn list_known_graphs(app: tauri::AppHandle) -> Vec<DisplayKnownGraph> {
     settings_path(&app)
         .and_then(|p| read_app_text(&p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .map(|json| parse_known_graphs(&json))
+        .map(|json| {
+            parse_known_graphs(&json)
+                .into_iter()
+                .map(DisplayKnownGraph::from)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -1031,6 +1054,22 @@ mod tests {
         forget_graph_json(&mut json, "/graphs/alpha");
         assert_eq!(parse_known_graphs(&json).len(), 1);
         assert_eq!(json["last_graph_path"], "/graphs/alpha");
+    }
+
+    #[test]
+    fn stored_verbatim_graph_identity_is_preserved_in_display_replies() {
+        let root = r"\\?\C:\notes";
+        let mut json = serde_json::json!({});
+        remember_graph_json(&mut json, root);
+        let graph = parse_known_graphs(&json).remove(0);
+        let reply = DisplayKnownGraph::from(graph);
+        assert_eq!(reply.path, root);
+        assert_eq!(reply.display_path, r"C:\notes");
+        assert_eq!(json["last_graph_path"], root);
+        assert_eq!(json["known_graphs"][0]["path"], root);
+        assert!(json["known_graphs"][0].get("display_path").is_none());
+        forget_graph_json(&mut json, root);
+        assert!(parse_known_graphs(&json).is_empty());
     }
 
     #[test]

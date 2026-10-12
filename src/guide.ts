@@ -4,7 +4,7 @@ import { focusedSurfaceOwner } from "./focusedSurface";
 import { openPage, openPageInNewTab } from "./router";
 import { loadGuidePages, pageByName } from "./document";
 import { bumpPageInventoryRev, graphMeta, setGraphMeta } from "./graphSession";
-import { pushToast } from "./toasts";
+import { pushToast, setToasts, toasts } from "./toasts";
 import type { GuidePage } from "./types";
 
 export const GUIDE_DISPLAY_PREFIX = "Tine-guide/";
@@ -15,6 +15,7 @@ let guideLoad: Promise<GuidePage[]> | null = null;
 let guideLoadOwner: Owner | null = null;
 const guideTitles = new Map<string, string>();
 const announcementShownForRoot = new Set<string>();
+let announcementToastId: number | null = null;
 
 function key(name: string): string {
   return name.trim().toLowerCase();
@@ -139,7 +140,10 @@ export function maybeShowGuideAnnouncement() {
   if (!meta || meta.guide_announced || announcementShownForRoot.has(meta.root)) return;
   announcementShownForRoot.add(meta.root);
   const owner = bindingOwner();
-  pushToast("New: in-app Guide \u2014 learn Sheets, formulas & queries.", "info", {
+  // Retire the old graph's sticky announcement without acknowledging it. The
+  // replacement's dismissal must belong to the graph now on screen.
+  setToasts(toasts().filter(toast => toast.id !== announcementToastId));
+  announcementToastId = pushToast("New: in-app Guide \u2014 learn Sheets, formulas & queries.", "info", {
     sticky: true,
     action: {
       label: "Open Guide",

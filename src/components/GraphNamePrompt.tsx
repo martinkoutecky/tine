@@ -2,6 +2,7 @@ import { Show, createSignal, onCleanup, onMount } from "solid-js";
 import { graphNameRequest, type GraphNameRequest } from "../graphNamePrompt";
 import { registerTransientLayer } from "../transientLayers";
 import { refuseStaleWrite } from "../binding";
+import { t } from "../i18n";
 
 export function GraphNamePrompt() {
   return <Show when={graphNameRequest()}>{request => <NameForm request={request()} />}</Show>;
@@ -40,7 +41,7 @@ function NameForm(props: { request: GraphNameRequest }) {
           aria-describedby={error() ? "graph-name-error" : undefined}
           onInput={event => { setName(event.currentTarget.value); setError(""); }} />
       </label>
-      <Show when={error()}><p id="graph-name-error" class="graph-name-error" role="alert">{error()}</p></Show>
+      <Show when={error()}><p id="graph-name-error" class="graph-name-error" role="alert">{error() === "wsl-rootfs" ? t("graph-wsl-rootfs-refused") : error()}</p></Show>
       <div class="export-foot">
         <button type="button" class="export-btn-secondary" disabled={busy()} onClick={cancel}>Cancel</button>
         <button type="submit" class="export-btn-primary" disabled={busy()}>{busy() ? "Creating…" : "Create graph"}</button>

@@ -73,6 +73,19 @@ jobs:
           $files = @(Get-ChildItem msix-output -File | Where-Object Name -ne 'SHA256SUMS')
           if ($files.Count -lt 4) { throw "expected 4 artifacts to hash, found $($files.Count)" }
           $files | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content msix-output/SHA256SUMS
+      - name: Windows App Certification Kit
+        run: |
+          $appcert = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\appcert.exe' -ErrorAction SilentlyContinue
+          if (-not $appcert) { throw 'appcert.exe not present on this runner image' }
+          Import-Certificate -FilePath msix-output/TineOutline-test.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
+          $report = Join-Path (Resolve-Path msix-output).Path 'wack-report.xml'
+          & $appcert.FullName reset
+          & $appcert.FullName test -appxpackagepath (Resolve-Path msix-output/TineOutline-test-signed.msixbundle).Path -reportoutputpath $report
+          if ($LASTEXITCODE) { throw "appcert exited $LASTEXITCODE" }
+          $result = ([xml](Get-Content $report)).REPORT.OVERALL_RESULT
+          Select-String -Path $report -Pattern 'Result="FAIL|Result="WARNING' | ForEach-Object { $_.Line.Trim() }
+          if ($result -ne 'PASS') { throw "WACK overall result: $result" }
+          Write-Host 'WACK overall result: PASS'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: TineOutline-msix-proof

@@ -427,6 +427,22 @@ describe("identifier migration notice", () => {
 });
 
 describe("first load completion", () => {
+  it("loads the remembered graph on a link launch before installing the link listener", async () => {
+    (window as any).__TINE_LINK_LAUNCH__ = true;
+    setFirstLoadDone(false);
+    vi.spyOn(backend(), "startupGraphPath").mockResolvedValue("/tmp/link-last-graph");
+    const load = vi.spyOn(backend(), "loadGraph").mockRejectedValue(new Error("probe reached graph load"));
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <App />, host);
+    try {
+      await vi.waitFor(() => expect(firstLoadDone()).toBe(true));
+      expect(load).toHaveBeenCalledWith("/tmp/link-last-graph");
+    } finally {
+      dispose();
+      delete (window as any).__TINE_LINK_LAUNCH__;
+    }
+  });
   it("I-20: marks the first load done after the startup graph load retires its own binding", async () => {
     // Opening a graph bumps the graph epoch, so an owner captured BEFORE the
     // load is always stale afterwards. Welcome's `mandatory` gate reads this

@@ -29,8 +29,8 @@ The shared identity switch selects stable Tine. Both architectures are built on
 The template is explicitly staged as `AppxManifest.xml`, which winapp recognizes.
 The existing 50, 44 and 150 pixel assets are copied. `scripts/msix-assets.ps1`
 generates scale and target-size/theme variants from `icon.png` using Windows
-System.Drawing, following the current Microsoft icon requirements. WACK still
-needs to validate the resulting resources.
+System.Drawing, following the current Microsoft icon requirements. WACK validated
+the resulting resources (PASS, run 38310552020).
 
 Download `TineOutline-msix-proof`: it contains the unsigned Store `.msixbundle`,
 a disposable test-signed twin, its public `.cer`, SHA-256 sums and a receipt with
@@ -86,7 +86,8 @@ preserving the specified Windows 10 1903 minimum.
 
 - Confirm the virtualization proposal and justify the restricted capabilities in Partner Center.
 - Resolve the Store documentation's “first version component cannot be 0” rule against live `0.x.y.0` precedent using a draft submission; no workaround is applied.
-- Run WACK on the exact bundle on a real Windows 11 box, including manifest/assets and S-mode checks.
+- WACK runs in `msix.yml` on the x64 runner against the test-signed bundle and fails the build unless the
+  overall result is PASS (first PASS: run 38310552020, 0.7.1.0). The kit is not available on ARM64 Windows hosts.
 - Complete [issue #307 §C](https://github.com/martinkoutecky/tine/issues/307): launch, graph read/write, backup/restore, plugins, drafts, capture, protocol cold/warm activation, single-instance, coexistence, upgrade/uninstall, Syncthing/network/OneDrive folders and clean-machine WebView2.
 - Execute the workflow to prove Windows x64/ARM64 compilation, packing and signing. Local Linux tests cannot establish Windows runtime behavior.
 

@@ -8,6 +8,7 @@ import { platformKind } from "../platform";
 import { checkForUpdateNow, openReleasesPage, isMsixPackaged } from "../update";
 import { checkForUpdatesAutomatically, setCheckForUpdatesAutomatically, initUpdateSettings } from "../updateSettings";
 import { openExternal } from "./primitives";
+import { t } from "../i18n";
 
 const WEBSITE = "https://tine.page";
 const REPO = "https://github.com/martinkoutecky/tine";
@@ -126,7 +127,7 @@ export function AboutTab(): JSX.Element {
         <div class="settings-hint">Applies to this device. Manual checks remain available when turned off.</div>
       </Show>
       <Show when={storeManaged()}>
-        <div class="settings-hint about-status">Updates come from the Microsoft Store.</div>
+        <div class="settings-hint about-status">{t("settings-about-store-updates")}</div>
       </Show>
       <Show when={nativePlatform() === "android" || nativePlatform() === "ios"}>
         <div class="settings-hint about-status">

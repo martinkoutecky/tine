@@ -6,3 +6,4 @@ toast-dismiss = Dismiss
 toast-repeat-count = shown { $count } times
 toast-copied = Error message copied
 toast-copy-failed = Couldn't copy the message; select its text instead.
+toast-wsl-rootfs-warning = This graph is inside a WSL1 rootfs. Windows access can corrupt Linux files. Open it through \\wsl.localhost\<distro>\… instead.

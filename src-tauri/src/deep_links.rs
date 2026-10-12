@@ -19,6 +19,8 @@ pub(crate) struct LinkRequest {
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub(crate) struct LinkTarget {
     pub(crate) root: String,
+    #[serde(default, rename = "displayRoot")]
+    display_root: String,
     #[serde(rename = "graphId")]
     graph_id: Option<String>,
     name: Option<String>,
@@ -165,6 +167,7 @@ fn target_in_store(
     let view = store.whole_graph().map_err(|e| format!("{e:?}"))?;
     let mut target = LinkTarget {
         root: root.into(),
+        display_root: tine_core::graph_paths::normalize_graph_path(root),
         graph_id: None,
         name: None,
         page_kind: None,
@@ -254,7 +257,7 @@ pub(crate) async fn scan_known_graphs_for_link(
             }
             let root_text = root.display().to_string();
             if request.page.is_none() && request.block.is_none() {
-                candidates.push(LinkTarget { root: root_text, graph_id: identity.ok().flatten(), name: None, page_kind: None, path: None, block: None, error: None });
+                candidates.push(LinkTarget { display_root: tine_core::graph_paths::normalize_graph_path(&root_text), root: root_text, graph_id: identity.ok().flatten(), name: None, page_kind: None, path: None, block: None, error: None });
                 continue;
             }
             let owner = state.graphs.read().unwrap().owner(&root);
@@ -272,7 +275,7 @@ pub(crate) async fn scan_known_graphs_for_link(
                     if let Ok(Some(id)) = identity {
                         // A remembered copy remains authoritative even if its
                         // target was deleted. Never silently use another copy.
-                        let missing = LinkTarget { root: root_text, graph_id: Some(id), name: request.page.clone(), page_kind: None, path: None, block: request.block.clone(), error: None };
+                        let missing = LinkTarget { display_root: tine_core::graph_paths::normalize_graph_path(&root_text), root: root_text, graph_id: Some(id), name: request.page.clone(), page_kind: None, path: None, block: request.block.clone(), error: None };
                         if request.graph.is_some() { candidates.push(missing); }
                         else { missing_copies.push(missing); }
                     }
@@ -280,7 +283,7 @@ pub(crate) async fn scan_known_graphs_for_link(
                 Err(e) => {
                     errors.push(e.clone());
                     if let Ok(Some(id)) = identity {
-                        let unavailable = LinkTarget { root: root_text, graph_id: Some(id), name: request.page.clone(), page_kind: None, path: None, block: request.block.clone(), error: Some(e) };
+                        let unavailable = LinkTarget { display_root: tine_core::graph_paths::normalize_graph_path(&root_text), root: root_text, graph_id: Some(id), name: request.page.clone(), page_kind: None, path: None, block: request.block.clone(), error: Some(e) };
                         if request.graph.is_some() { candidates.push(unavailable); }
                         else { missing_copies.push(unavailable); }
                     }

@@ -98,6 +98,8 @@ export interface MessageArgs {
   "command-ui-toggle-theme": {};
   "command-ui-toggle-wide-mode": {};
   "command-window-open-in-new-window": {};
+  "graph-wsl-rootfs-refused": {};
+  "settings-about-store-updates": {};
   "settings-language-description": {};
   "settings-language-label": {};
   "settings-language-system": { "language": string | number };
@@ -113,6 +115,7 @@ export interface MessageArgs {
   "toast-language-load-failed": {};
   "toast-language-save-failed": {};
   "toast-repeat-count": { "count": string | number };
+  "toast-wsl-rootfs-warning": {};
 }
 
 export type MessageId = keyof MessageArgs;
