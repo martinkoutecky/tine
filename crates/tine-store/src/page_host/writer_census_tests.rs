@@ -43,6 +43,14 @@ const EXEMPT: &[(&str, &str)] = &[
         "trashes a PDF crop image asset; no page",
     ),
     (
+        "crates/tine-graph-features/src/pdf.rs::save_sidecar",
+        "writes the PDF highlight sidecar EDN asset before the annotation page's host operation (host-only-writer P3, DESIGN §3.4 pre); no page",
+    ),
+    (
+        "crates/tine-graph-features/src/pdf.rs::retire",
+        "trashes the superseded legacy highlight sidecar and deleted crop image assets after a highlight save; no page",
+    ),
+    (
         "crates/tine-graph-features/src/config.rs::update",
         "writes config.edn; no page",
     ),
