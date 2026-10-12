@@ -22,12 +22,18 @@ impl Sink for Bridge {
     /// consumer still does not own return to the watcher.
     fn deliver(
         &mut self,
-        delivery: Delivery,
+        mut delivery: Delivery,
         owner: &dyn Fn(&str) -> Owner,
         wait: bool,
     ) -> Result<Vec<(Publication, Indexing)>, Delivery> {
         let store = &*self.store;
         let mut results = Vec::new();
+        // Before the writer, as the window's own callbacks may take it
+        // (`Store::page`), and taken out: a delivery that comes back below
+        // reports its kinds once.
+        for (key, kinds) in std::mem::take(&mut delivery.kinds) {
+            (self.kinds.lock().unwrap())(&key, &kinds);
+        }
         let indexes = !delivery.claimed.is_empty()
             || !delivery.publications.is_empty()
             || !delivery.evicted.is_empty();
@@ -41,9 +47,6 @@ impl Sink for Bridge {
                 Err(std::sync::TryLockError::Poisoned(error)) => panic!("{error}"),
             },
         };
-        for (key, kinds) in &delivery.kinds {
-            (self.kinds.lock().unwrap())(key, kinds);
-        }
         if let Some(writer) = writer {
             for (key, _, observed) in delivery.claimed {
                 store.watch.hold_observed(key, observed);
