@@ -9,14 +9,18 @@ export interface MessageArgs {
   "command-editor-bold": {};
   "command-editor-clear-block": {};
   "command-editor-collapse": {};
+  "command-editor-collapse-children": {};
   "command-editor-copy-embed": {};
   "command-editor-cycle-todo": {};
+  "command-editor-duplicate-block": {};
   "command-editor-expand": {};
+  "command-editor-expand-children": {};
   "command-editor-follow-link": {};
   "command-editor-forward-kill-word": {};
   "command-editor-forward-word": {};
   "command-editor-highlight": {};
   "command-editor-indent": {};
+  "command-editor-insert-child-block": {};
   "command-editor-insert-link": {};
   "command-editor-italics": {};
   "command-editor-kill-line-after": {};
@@ -25,6 +29,7 @@ export interface MessageArgs {
   "command-editor-move-block-up": {};
   "command-editor-open-link-in-sidebar": {};
   "command-editor-outdent": {};
+  "command-editor-paste-as-link": {};
   "command-editor-quick-capture-file": {};
   "command-editor-redo": {};
   "command-editor-select-all": {};
@@ -43,6 +48,7 @@ export interface MessageArgs {
   "command-go-keyboard-shortcuts": {};
   "command-go-search": {};
   "command-go-search-current-page": {};
+  "command-go-search-selection": {};
   "command-go-search-tab": {};
   "command-guide-open": {};
   "command-page-export-pdf": {};
@@ -67,6 +73,7 @@ export interface MessageArgs {
   "command-plugin": { "title": string | number };
   "command-right-sidebar-grow-width": {};
   "command-right-sidebar-shrink-width": {};
+  "command-select-copy-block-ref": {};
   "command-sidebar-grow-width": {};
   "command-sidebar-shrink-width": {};
   "command-tab-close": {};

@@ -435,12 +435,22 @@ fn window_admissions_run_only_from_the_page_commands() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files = Vec::new();
     production_files(&root.join("src"), &mut files);
-    production_files(&root.join("../crates/tine-graph-features/src"), &mut files);
+    // Every production crate but tine-store, which defines the admissions.
+    for entry in std::fs::read_dir(root.join("../crates")).unwrap() {
+        let krate = entry.unwrap().path();
+        if krate.file_name().is_some_and(|name| name != "tine-store") && krate.join("src").is_dir()
+        {
+            production_files(&krate.join("src"), &mut files);
+        }
+    }
+    // `submit`, `move_blocks` and `discard` are matched on any receiver (a
+    // binding named otherwise, or a call split across lines); `open` and
+    // `close` are too common a name, so only on a `host`.
     let admissions = [
         "host.open(",
-        "host.submit(",
-        "host.move_blocks(",
-        "host.discard(",
+        ".submit(",
+        ".move_blocks(",
+        ".discard(",
         "host.close(",
     ];
     let mut sites = 0;

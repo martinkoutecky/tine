@@ -90,3 +90,10 @@ command-editor-forward-kill-word = Delete word forward
 command-pane-focus-n = Focus pane { $index }
 # $title (string): the plugin's own command title (not translated).
 command-plugin = Plugin: { $title }
+command-go-search-selection = Search for the selected text
+command-select-copy-block-ref = Copy block refs of the selected blocks
+command-editor-duplicate-block = Duplicate block below (with children)
+command-editor-insert-child-block = Insert child block
+command-editor-collapse-children = Collapse children (one level)
+command-editor-expand-children = Expand children (one level)
+command-editor-paste-as-link = Paste as link

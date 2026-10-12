@@ -1,6 +1,7 @@
 //! Quint s3 page operations; pure rules, no storage wiring.
 use super::order::touches;
 use super::*;
+use std::collections::BTreeMap;
 
 /// Quint: opCur
 pub(super) fn op_cur(s: &Sys, p: usize) -> Text {
@@ -215,6 +216,104 @@ pub(super) fn op_delete(x: &State, p: usize) -> Option<State> {
     unrename(&mut g.renamed, &[p]);
     g.op_read[p].insert(if pg.held { pg.base } else { x.s.disk[p] });
     commit(x, s, g, "opDelete")
+}
+/// Quint s3.3: opApply — one host operation. `eff`: each page's new text
+/// (ABSENT: a deletion); `plan`: the bytes the feature computed it from;
+/// `(dst, src)`: an optional move, NONE for none.
+pub(super) fn op_apply(
+    x: &State,
+    eff: &BTreeMap<usize, Text>,
+    plan: &BTreeMap<usize, Text>,
+    dst: i64,
+    src: i64,
+) -> Option<State> {
+    let ps: BTreeSet<usize> = eff.keys().copied().collect();
+    let mv = dst != NONE;
+    let stale = ps
+        .iter()
+        .any(|p| plan.get(p).is_none_or(|t| op_cur(&x.s, *p) != *t));
+    let shape = if mv {
+        let (d, s) = (dst as usize, src as usize);
+        src != NONE
+            && dst != src
+            && ps.contains(&d)
+            && ps.contains(&s)
+            && eff[&s] == ABSENT
+            && eff[&d] != ABSENT
+            && plan.get(&s).is_some_and(|t| *t != ABSENT)
+    } else {
+        src == NONE
+    };
+    if !x.s.alive
+        || ps.is_empty()
+        || !op_free(x, &ps)
+        || !op_held(x, &ps)
+        || touches(&x.s, &ps)
+        || !ps
+            .iter()
+            .all(|p| op_clean(&x.s, *p) || x.config.mutant("MAC"))
+        || (stale && !x.config.mutant("MEX"))
+        || !shape
+    {
+        return None;
+    }
+    let versions: Vec<_> = (0..x.s.pages.len())
+        .scan(x.g.vc, |v, _| {
+            *v = next(*v);
+            Some(*v)
+        })
+        .collect();
+    let mut s = x.s.clone();
+    let mut g = x.g.clone();
+    for (&p, &t) in eff {
+        let mut np = op_edit(&x.s, p, t, versions[p]);
+        np.risk = true;
+        if !x.config.mutant("MAN") {
+            s.drafts[p] = draft_entry(&np);
+        }
+        s.pages[p] = np;
+    }
+    if mv {
+        let (d, sr) = (dst as usize, src as usize);
+        if !x.config.mutant("MAM") {
+            s.gates.push(Gate {
+                dst: d,
+                src: sr,
+                vers: (0..versions.len())
+                    .map(|p| if ps.contains(&p) { versions[p] } else { NONE })
+                    .collect(),
+                open: ps.clone(),
+            });
+        }
+        for &r in ps.iter().filter(|r| **r != d && **r != sr) {
+            g.obl.insert((r, d, versions[d], d));
+            g.obl.insert((sr, r, versions[r], d));
+        }
+        g.obl.insert((sr, d, versions[d], d));
+    }
+    g.vc = *versions.last().unwrap();
+    g.mine = ps.iter().copied().filter(|p| op_clean(&x.s, *p)).collect();
+    // G: each page's text was computed from the bytes the feature expected.
+    for p in &ps {
+        if let Some(t) = plan.get(p) {
+            g.op_read[*p].insert(*t);
+        }
+    }
+    unrename(&mut g.renamed, &ps.iter().copied().collect::<Vec<_>>());
+    if mv && x.s.disk[src as usize] != ABSENT {
+        g.renamed.insert((src as usize, dst as usize));
+    }
+    for (&p, &t) in eff {
+        g.wrote[p].insert((t, versions[p]));
+        g.promise[p] = ack(&g.promise[p], t, versions[p], false, 0);
+    }
+    if !ps.iter().all(|p| op_clean(&x.s, *p)) {
+        g.bad.insert("D4-unclean-page-changed".into());
+    }
+    if stale {
+        g.bad.insert("op-stale-base".into());
+    }
+    commit(x, s, g, "opApply")
 }
 /// Quint: flushDel
 pub(super) fn flush_del(x: &State, p: usize) -> Option<State> {

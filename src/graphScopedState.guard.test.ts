@@ -25,6 +25,7 @@ const RULE = "I-20: module state naming graph content (block id, page name, sele
 // Module-level signals whose declared type can name graph content, and why each
 // cannot write into another graph. Shrink-only: fix an entry rather than add one.
 const CLASSIFIED: Record<string, string> = {
+  "src/styleKnobs.ts#values": "the device preference style.knobs.v1 (knob ids and scalar choices), no graph content; it deliberately survives a graph switch, like the colour scheme",
   "src/components/blockGestures.ts#dragId": "drag state; a click ends the drag in the old graph first, and beginDrag commits only while bindingCurrent (asyncOwnership guard)",
   "src/components/blockGestures.ts#dropInd": "drop indicator of the same drag",
   "src/components/RightSidebar.tsx#rsDropTarget": "right-sidebar drag state (a row index and side, not graph content); pointerup ends the drag in the old graph first",

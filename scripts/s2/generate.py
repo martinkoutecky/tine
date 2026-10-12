@@ -54,9 +54,9 @@ def name(e):
     return e[1] if e[0]=='id' else None
 
 
-SHA = "1e6ec36c29ec8fd1b7a1ebdce099e82509c0ff59fa6c137cf6f0ef3d1e0d2bd4"
-SCENARIO_SHA = "92a75904b2da9b43a7bb9c80a0f2fc41b462cef5a60ec41f4d613b67d58ff1c3"
-SCENARIO_COUNT = 159
+SHA = "353162e99b1e87603cfd2d58deadc0abc3351cb8627d0115d41333014ed40a07"
+SCENARIO_SHA = "033fc5b7aac419a70421c795cced1d9e0e7d8021a6f053632131fff7cefe43b8"
+SCENARIO_COUNT = 177
 PROFILES = {
     "base": 'Set("crash", "power")',
     "R1": 'Set("crash", "power", "R1")',
@@ -66,7 +66,7 @@ PROFILES = {
 
 def scenarios(source):
     source = re.sub(r"//[^\n]*", "", source)
-    matches = list(re.finditer(r"\b(action|val|run)\s+(\w+)\s*(\([^\n]*?\))?\s*(?::\s*bool)?\s*=", source))
+    matches = list(re.finditer(r"\b(action|val|run)\s+(\w+)\s*(\([^\n]*?\))?\s*(?::\s*[\w\s\[\]>-]+?)?\s*=", source))
     definitions, runs = {}, []
     for i, m in enumerate(matches):
         kind, n, params = m.groups()
@@ -134,12 +134,12 @@ def traced_model(model):
     # Bias toward protocol progress while retaining every original choice.
     # Unbiased simulation mostly crashes before windows can send or saves run.
     weights = {"wOpen": 8, "wSend": 20, "wRecv": 20, "wEdit": 8,
-               "wResolve": 8, "wOpTo": 12, "opRename": 12, "opDelete": 8, "flushDel": 20, "deliverUp": 20, "flush": 8,
+               "wResolve": 8, "wOpTo": 12, "opRename": 12, "opDelete": 8, "opApplyPacked": 12, "flushDel": 20, "deliverUp": 20, "flush": 8,
                "check": 20, "rename": 20, "dirSync": 20, "launch": 20,
                "observe": 4, "draftSync": 4, "wDiscard": 2, "wClose": 2,
                "switchReq": 2}
     def emit(n, args=(), bind=""):
-        encoded = [f"if ({a}) 1 else 0" if a in ["ok", "dur", "k0", "k1", "k2", "r0", "r1", "r2"] else a for a in args]
+        encoded = [f"if ({a}) 1 else 0" if a in ["ok", "dur", "k0", "k1", "k2", "r0", "r1", "r2", "e0", "e1", "e2"] else a for a in args]
         call = n + ("(" + ", ".join(args) + ")" if args else "")
         group = bind + ' all { ' + call + ', traceAction\' = { name: "' + n + '", args: List(' + ", ".join(encoded) + ') } }'
         groups.extend([group] * weights.get(n, 1))
@@ -156,9 +156,16 @@ def traced_model(model):
     for n in ["opDelete", "flushDel"]: emit(n, ["p"], "nondet p = PAGES.oneOf()")
     emit("opRenamePacked", ["src", "dst", "r0", "r1", "r2", "t0", "t1", "t2"],
          "nondet src = PAGES.oneOf() nondet dst = PAGES.oneOf() nondet r0 = BOOLS.oneOf() nondet r1 = BOOLS.oneOf() nondet r2 = BOOLS.oneOf() nondet t0 = TEXTS.oneOf() nondet t1 = TEXTS.oneOf() nondet t2 = TEXTS.oneOf()")
+    # s3.3: the feature plans on the bytes the pages hold now (cur); the
+    # trace records them so the replay needs no state to decode the plan.
+    emit("opApplyPacked", ["e0", "e1", "e2", "t0", "t1", "t2", "opCur(s, 0)", "opCur(s, 1)", "opCur(s, 2)", "dst", "if (dst == NONE) NONE else src"],
+         "nondet e0 = BOOLS.oneOf() nondet e1 = BOOLS.oneOf() nondet e2 = BOOLS.oneOf() nondet t0 = TEXTS.union(Set(ABSENT)).oneOf() nondet t1 = TEXTS.union(Set(ABSENT)).oneOf() nondet t2 = TEXTS.union(Set(ABSENT)).oneOf() nondet dst = PAGES.union(Set(NONE)).oneOf() nondet src = PAGES.oneOf()")
     driver = """  action powerKBits(k0: bool, k1: bool, k2: bool): bool = powerK(PAGES.filter(p => (p == 0 and k0) or (p == 1 and k1) or (p == 2 and k2)))
   action opRenamePacked(src: int, dst: int, r0: bool, r1: bool, r2: bool, t0: int, t1: int, t2: int): bool =
     opRename(src, dst, PAGES.exclude(Set(src, dst)).filter(p => (p == 0 and r0) or (p == 1 and r1) or (p == 2 and r2)), Map(0 -> t0, 1 -> t1, 2 -> t2))
+  action opApplyPacked(e0: bool, e1: bool, e2: bool, t0: int, t1: int, t2: int, c0: int, c1: int, c2: int, dst: int, src: int): bool =
+    opApply(PAGES.filter(p => (p == 0 and e0) or (p == 1 and e1) or (p == 2 and e2)).mapBy(p => if (p == 0) t0 else if (p == 1) t1 else t2),
+      Map(0 -> c0, 1 -> c1, 2 -> c2), dst, src)
   var traceAction: { name: str, args: List[int] }
   action traceInit = all { init, traceAction' = { name: "init", args: List() } }
   action traceStep = any {
@@ -169,7 +176,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("model_dir", type=Path)
     ap.add_argument("--quint", type=Path)
-    ap.add_argument("--scenario-source", type=Path, required=True, help="authoritative s3.2 scenarios (og/merged/scenarios-s3.inc; hash-pinned)")
+    ap.add_argument("--scenario-source", type=Path, required=True, help="authoritative s3.3 scenarios (og/merged/scenarios-s33.inc; hash-pinned)")
     ap.add_argument("--traces-per-profile", type=int, default=64)
     ap.add_argument("--steps", type=int, default=40)
     ap.add_argument("--sample", type=int, default=8, help="committed traces per profile; all generated traces are also replayed")
@@ -179,7 +186,7 @@ def main():
     root = Path(__file__).resolve().parents[2]
     work = root/"scratch"/"s3"; work.mkdir(parents=True, exist_ok=True)
     fixture = root/"crates/tine-store/tests/fixtures/s2"; fixture.mkdir(parents=True, exist_ok=True)
-    model = (args.model_dir/"storage-s3.qnt").read_text()
+    model = (args.model_dir/"storage-s33.qnt").read_text()
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
     source = args.scenario_source.read_text()
     assert hashlib.sha256(source.encode()).hexdigest() == SCENARIO_SHA
@@ -225,7 +232,7 @@ def main():
         print(f"traces {p}: {len(paths)}", flush=True)
     seen = {s["action"]["name"] for t in traces for s in t["states"]}
     required = {"wOpen", "wSend", "wDiscard", "wClose", "wRecv", "flush", "observe", "draftSync",
-                "wEdit", "wResolve", "wOpTo", "opRenamePacked", "opDelete", "flushDel", "check", "rename", "saveFail", "switchReq", "switchFin",
+                "wEdit", "wResolve", "wOpTo", "opRenamePacked", "opApplyPacked", "opDelete", "flushDel", "check", "rename", "saveFail", "switchReq", "switchFin",
                 "crash", "windowCrash", "launch", "dirSync", "deliverUp", "extWriteD", "powerKBits", "load"}
     assert required <= seen, ("random corpus omitted actions", required-seen)
     all_data = {"model_sha256": SHA, "seeds": seeds, "max_steps": args.steps,

@@ -165,3 +165,38 @@ describe("Linked References filter summary is honest while indexing (GH #173)", 
     dispose();
   });
 });
+
+// GH #433. Chips used to sort by count (descending), so every typed query or
+// toggled filter reshuffled them. They now sit in alphabetical order (case
+// folded), which stays put while counts change; the count is still shown.
+// (OG's filter dialog sorts by count; this is an intentional, roadmap-approved
+// difference: reference.cljs `frequencies-sort`.)
+describe("Linked References facet chips are alphabetical (GH #433)", () => {
+  it("lists chips by name, not by count", async () => {
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([
+      {
+        page: "Journal",
+        kind: "journal",
+        blocks: [block("r1", "x [[My Project]]"), block("r2", "y [[My Project]]"), block("r3", "z [[My Project]]")],
+      },
+    ]);
+    vi.spyOn(backend(), "getBacklinkFilterContext").mockResolvedValue({
+      entries: [
+        { page: "Journal", kind: "journal", block_id: "r1", text: "x", facets: ["zebra", "beta", "Alpha"] },
+        { page: "Journal", kind: "journal", block_id: "r2", text: "y", facets: ["zebra", "beta"] },
+        { page: "Journal", kind: "journal", block_id: "r3", text: "z", facets: ["zebra"] },
+      ],
+    });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <LinkedReferences name="My Project" />, root);
+    await tick();
+    await tick();
+    root.querySelector<HTMLButtonElement>('button[aria-label="Filter linked references"]')!.click();
+    await tick();
+    await tick();
+    const names = [...root.querySelectorAll(".ref-filter-chip")].map((chip) => chip.textContent!.trim());
+    expect(names).toEqual(["Alpha 1", "beta 2", "zebra 3"]);
+    dispose();
+  });
+});

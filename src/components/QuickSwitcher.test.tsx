@@ -222,9 +222,14 @@ describe("QuickSwitcher search syntax help", () => {
       input.dispatchEvent(new InputEvent("input", { bubbles: true }));
 
       await vi.waitFor(() => {
-        const rows = [...root.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')];
+        // Commands whose labels fuzzy-match the query may follow; the page
+        // result is the one row outside them, and it comes first.
+        const rows = [...root.querySelectorAll<HTMLElement>(".switcher-section")]
+          .filter((section) => !section.querySelector(".switcher-group-header")?.textContent?.includes("Commands"))
+          .flatMap((section) => [...section.querySelectorAll<HTMLElement>('.switcher-row[role="option"]')]);
         expect(rows).toHaveLength(1);
         expect(rows[0].textContent).toContain("Research Hub");
+        expect(root.querySelector('.switcher-row[role="option"]')).toBe(rows[0]);
         // The alias is display/match context, never the navigation target.
         expect(rows[0].querySelector(".switcher-alias")?.textContent).toContain("book");
         expect(rows[0].textContent).not.toContain("Create page:");

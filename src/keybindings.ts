@@ -70,6 +70,8 @@ import {
   type PaneDirection,
 } from "./paneSelect";
 import { openGuide } from "./guide";
+import { copyTargetBlockRefs, duplicateTargetBlocks, insertChildIntoTarget, searchSelectedText, setTargetChildrenCollapsed } from "./blockRefActions";
+import { dispatchFocusedEditorCommand } from "./editorCommandBridge";
 import { goHome } from "./homePage";
 import { pluginManager } from "./plugins/manager";
 import { bindPluginBlockSnapshot, capturePluginGraphOwner, isPluginGraphOwnerCurrent, type OwnedPluginBlockSnapshot } from "./plugins/ownership";
@@ -266,6 +268,9 @@ export function handlePaneSelectKey(e: KeyboardEvent): boolean {
 const COMMANDS: CommandDef[] = [
   { id: "go/search", binding: "mod+k", label: msg("command-go-search"), scope: "global", run: () => openSwitcher({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   { id: "go/search-current-page", binding: "mod+shift+k", label: msg("command-go-search-current-page"), scope: "global", run: () => openSwitcher({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  // GH #633: search for the selected text. Unbound: mod+shift+f is OG's
+  // :command/toggle-favorite (config.cljs:493), so the chord is left to the user.
+  { id: "go/search-selection", binding: "", label: msg("command-go-search-selection"), scope: "global", run: searchSelectedText, global: true },
   { id: "guide/open", binding: "", label: msg("command-guide-open"), scope: "global", run: () => void openGuide(), global: true },
   { id: "go/find-in-page", binding: "mod+f", label: msg("command-go-find-in-page"), scope: "global", run: openInPageFind, global: true },
   // GH #274 / OG parity: `:editor/follow-link` (mod+o) and
@@ -385,6 +390,22 @@ const COMMANDS: CommandDef[] = [
     scope: "global",
     run: () => pushToast(`Undo/redo mode: ${toggleUndoRedoMode()}`),
   },
+  // Block commands (R2 B1). OG binds none of these, so none has a default key;
+  // each acts on the block selection, else on the block being edited.
+  { id: "select/copy-block-ref", binding: "", label: msg("command-select-copy-block-ref"), scope: "global", run: () => { copyTargetBlockRefs(); }, global: true },
+  { id: "editor/duplicate-block", binding: "", label: msg("command-editor-duplicate-block"), scope: "global", run: () => void duplicateTargetBlocks(), global: true },
+  { id: "editor/insert-child-block", binding: "", label: msg("command-editor-insert-child-block"), scope: "global", run: () => { insertChildIntoTarget(); }, global: true },
+  { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },
+  { id: "editor/expand-children", binding: "", label: msg("command-editor-expand-children"), scope: "global", run: () => { setTargetChildrenCollapsed(false); }, global: true },
+  // GH #448: the clipboard's URL or block ref becomes a link around the selection.
+  {
+    id: "editor/paste-as-link",
+    binding: "",
+    label: msg("command-editor-paste-as-link"),
+    scope: "global",
+    run: () => { if (!dispatchFocusedEditorCommand("editor/paste-as-link")) pushToast("Select text in a block, then use Paste as link", "warn"); },
+    global: true,
+  },
   // Editor commands (resolved in Block.tsx / selection handler).
   { id: "editor/indent", binding: "tab", label: msg("command-editor-indent"), scope: "editor" },
   { id: "editor/outdent", binding: "shift+tab", label: msg("command-editor-outdent"), scope: "editor" },
@@ -480,6 +501,17 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
     scope: "editor",
     binding: "mod+c",
     label: "Copy block reference when no text is selected",
+  },
+  // GH #513 / #81. OG: `:editor/paste-text-in-one-block-at-point` (mod+shift+v,
+  // handler/paste.cljs editor-on-paste-raw!). Not a remappable command: the key
+  // has to reach the platform's own paste so the clipboard can be read (Block.tsx
+  // keeps a one-shot latch between the keydown and the paste event).
+  {
+    id: "builtin/editor/paste-plain",
+    scope: "editor",
+    binding: "mod+shift+v",
+    label: "Paste as plain text (no formatting conversion)",
+    details: "Inserts the clipboard's plain text as typed, inside the current block: HTML structure is ignored and multiline text is not split into blocks. Ordinary paste keeps converting copied web content and outlines.",
   },
   {
     id: "builtin/editor/ac-nav",

@@ -262,6 +262,46 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn keyboard_block_commands_are_documented() {
+        // R2 B1 (GH #513, #576, #448, #379, #634, #525, #633): every command
+        // that ships without a default key must be findable in the Guide by
+        // the label the palette and Settings show.
+        let tips = include_str!("templates/tips.md");
+        for label in [
+            "Ctrl/Cmd+Shift+V",
+            "Paste as link",
+            "Duplicate block below (with children)",
+            "Insert child block",
+            "Collapse children (one level)",
+            "Expand children (one level)",
+            "Copy block refs of the selected blocks",
+            "Search for the selected text",
+        ] {
+            assert!(
+                tips.contains(label),
+                "Guide is missing keyboard command: {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn tab_and_sidebar_actions_are_documented() {
+        let context = include_str!("templates/keep-context-visible.md");
+        for detail in [
+            "**Close others**, **Collapse others**",
+            "Drag the sidebar's left edge to resize it",
+            "Tabs stretch to fill the strip",
+            "a tab zoomed into a block is named for that block",
+            "anywhere onto another pane's tab bar to put it last there",
+        ] {
+            assert!(
+                context.contains(detail),
+                "missing tab/sidebar Guide detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
     fn selection_menu_and_keyboard_calendar_are_documented() {
         let tips = include_str!("templates/tips.md");
         for action in [
@@ -1158,6 +1198,13 @@ mod customize_look_guide_tests {
             "--tine-content-width",
             "--tine-content-font",
             "Nord, Solarized, Gruvbox",
+            // Style knobs (GH #610 item 3): the Fine-tuning section and its
+            // three first rows, named as Settings shows them.
+            "**Fine-tuning**",
+            "**Embedded blocks**",
+            "**Links to the web or a file**",
+            "**Links to pages that do not exist yet**",
+            "style.knobs.v1",
         ] {
             assert!(page.contains(needed), "the page must mention {needed}");
         }

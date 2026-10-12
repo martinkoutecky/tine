@@ -1,17 +1,19 @@
 import { BlockList } from "./BlockList";
-import { resizeSidebar, commitSidebarWidth } from "../sidebarSizing";
+import { resizeSidebar, commitSidebarWidth, setLeftSidebarReserve } from "../sidebarSizing";
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
-import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, type SidebarBlock, type SidebarItem } from "../ui";
+import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, closeOtherRightSidebarItems, collapseOtherRightSidebarItems, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarOpen, sidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, type SidebarBlock, type SidebarItem } from "../ui";
 import { beginRowReorderDrag, rowReorderClickSuppressed, type RowDropTarget } from "./rowReorder";
 import "../styles/rightSidebarReorder.css";
 import { graphEpoch } from "../graphSession";
 import { mobileDrawerMode } from "../mobileDrawers";
-import { registerTransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
+import { FloatingPortal } from "./FloatingPortal";
 import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
+import { pageIconPrefix } from "../pageIconBatch";
 import { backend } from "../backend";
 import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, node as docNode } from "../document";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
@@ -81,6 +83,9 @@ export function RightSidebar(): JSX.Element {
     for (const item of rightSidebar()) prepareSurfaceForUnmount(surfaceKey(item));
   };
   onCleanup(registerRightSidebarClosePreparation(prepareAll));
+  // GH #521: the right sidebar's max width keeps the main pane usable beside the
+  // left sidebar; a drawer-mode left sidebar overlays instead of taking room.
+  createEffect(() => setLeftSidebarReserve(sidebarOpen() && !mobileDrawerMode() ? sidebarWidth() : 0));
   createEffect(() => {
     if (!actionsOpen()) return;
     const unregister = registerTransientLayer({
@@ -276,6 +281,107 @@ function SidebarItemView(props: {
   );
 }
 
+/** The per-item "more actions" menu with the item's close button (GH #462). Same
+ * entries as OG's sidebar item menu (og-1.0.0 components/right_sidebar.cljs
+ * `x-menu-content`): Close, Close others, Close all; Collapse or Expand this item,
+ * Collapse others, Collapse all, Expand all; Open as page for a page item. The
+ * "others/all" entries need a second item. The menu floats out of the item (the
+ * item clips its overflow) and closes on an outside press or Escape. */
+function ItemActions(props: { index: number; surfaceKey: string; page?: { name: string; pageKind: "journal" | "page"; path?: string }; collapsed: boolean; onClose: () => void }): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  const [pos, setPos] = createSignal({ top: 0, right: 0 });
+  const menuId = `rs-item-menu-${createUniqueId()}`;
+  let button: HTMLButtonElement | undefined;
+  let menu: HTMLDivElement | undefined;
+  const count = () => rightSidebar().length;
+  const prepareOthers = () => rightSidebar().forEach((it, i) => { if (i !== props.index) prepareSurfaceForUnmount(surfaceKey(it)); });
+  const finish = () => {
+    setOpen(false);
+    queueMicrotask(() => { if (button?.isConnected) button.focus(); });
+  };
+  const run = (action: () => void) => () => { action(); finish(); };
+  const toggleOpen = () => {
+    if (!open() && button) {
+      const rect = button.getBoundingClientRect();
+      setPos({ top: rect.bottom + 4, right: Math.max(8, mainWindow.innerWidth - rect.right) });
+    }
+    setOpen(!open());
+  };
+  createEffect(() => {
+    if (!open()) return;
+    queueMicrotask(() => menu?.querySelector<HTMLButtonElement>("button")?.focus());
+    const unregister = registerTransientLayer({
+      id: menuId,
+      root: () => menu ?? null,
+      trigger: () => button ?? null,
+      dismiss: () => { setOpen(false); button?.focus(); return true; },
+    });
+    onCleanup(unregister);
+  });
+  dismissOnOutsidePointer({ open, inside: () => [button, menu], dismiss: () => setOpen(false) });
+  const onKeyDown: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent> = (event) => {
+    const buttons = [...(menu?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    const index = buttons.indexOf(mainWindow.document.activeElement as HTMLButtonElement);
+    let next = index;
+    if (event.key === "ArrowDown") next = (index + 1 + buttons.length) % buttons.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + buttons.length) % buttons.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = buttons.length - 1;
+    else return; // Escape: the global transient registry owns it
+    event.preventDefault();
+    buttons[next]?.focus();
+  };
+  return (
+    <div class="rs-item-actions">
+      <button
+        ref={button}
+        class="rs-actions-button"
+        type="button"
+        title="More actions"
+        aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={open()}
+        aria-controls={open() ? menuId : undefined}
+        data-right-sidebar-item-actions
+        onClick={toggleOpen}
+      >⋯</button>
+      <button class="rs-close" onClick={props.onClose} title="Close">✕</button>
+      <Show when={open()}>
+        <FloatingPortal>
+          <div
+            ref={menu}
+            id={menuId}
+            class="rs-actions-menu rs-item-menu"
+            role="menu"
+            style={{ top: `${pos().top}px`, right: `${pos().right}px` }}
+            onKeyDown={onKeyDown}
+          >
+            <button type="button" role="menuitem" data-right-sidebar-item-action="close" onClick={run(props.onClose)}>Close</button>
+            <Show when={count() > 1}>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="close-others" onClick={run(() => { prepareOthers(); closeOtherRightSidebarItems(props.index); })}>Close others</button>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="close-all" onClick={run(() => { rightSidebar().forEach((it) => prepareSurfaceForUnmount(surfaceKey(it))); closeAllRightSidebarItems(); })}>Close all</button>
+            </Show>
+            <Show
+              when={props.collapsed}
+              fallback={<button type="button" role="menuitem" data-right-sidebar-item-action="collapse" onClick={run(() => { prepareSurfaceForUnmount(props.surfaceKey); setRightSidebarItemCollapsed(props.index, true); })}>Collapse</button>}
+            >
+              <button type="button" role="menuitem" data-right-sidebar-item-action="expand" onClick={run(() => setRightSidebarItemCollapsed(props.index, false))}>Expand</button>
+            </Show>
+            <Show when={count() > 1}>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="collapse-others" onClick={run(() => { prepareOthers(); collapseOtherRightSidebarItems(props.index); })}>Collapse others</button>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="collapse-all" onClick={run(() => { rightSidebar().forEach((it) => prepareSurfaceForUnmount(surfaceKey(it))); setAllRightSidebarItemsCollapsed(true); })}>Collapse all</button>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="expand-all" onClick={run(() => setAllRightSidebarItemsCollapsed(false))}>Expand all</button>
+            </Show>
+            <Show when={props.page}>
+              {(p) => <button type="button" role="menuitem" data-right-sidebar-item-action="open-as-page" onClick={run(() => openPageTarget({ name: p().name, pageKind: p().pageKind, path: p().path }))}>Open as page</button>}
+            </Show>
+          </div>
+        </FloatingPortal>
+      </Show>
+    </div>
+  );
+}
+
 function PageItem(props: {
   item: { name: string; pageKind: "journal" | "page"; path?: string };
   surfaceKey: string;
@@ -312,11 +418,9 @@ function PageItem(props: {
           else openPageTarget(target);
         }} onAuxClick={(e) => internalLinkAuxClick(e, () =>
           openPageTargetInNewTab({ name: props.item.name, pageKind: props.item.pageKind, path: props.item.path }))}>
-          <EmojiText text={props.item.name} />
+          <EmojiText text={pageIconPrefix(props.item.name) + props.item.name} />
         </a>
-        <button class="rs-close" onClick={props.onClose} title="Close">
-          ✕
-        </button>
+        <ItemActions index={props.row.index} surfaceKey={props.surfaceKey} page={props.item} collapsed={props.collapsed} onClose={props.onClose} />
       </div>
       <Show when={!props.collapsed}>
         <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}>
@@ -400,9 +504,7 @@ function BlockItem(props: {
         >
           {title()}
         </a>
-        <button class="rs-close" onClick={props.onClose} title="Close">
-          ✕
-        </button>
+        <ItemActions index={props.row.index} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onClose={props.onClose} />
       </div>
       <Show when={!props.collapsed}>
         <Show

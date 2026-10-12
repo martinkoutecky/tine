@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { pageIconPrefix } from "../pageIconBatch";
 import { openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
@@ -213,7 +214,7 @@ export function Sidebar(props: {
                           openPageContextMenu(e.clientX, e.clientY, target());
                         }}
                       >
-                        <SidebarTitle text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
+                        <SidebarTitle text={pageIconPrefix(r.name) + (r.name.startsWith("hls__") ? r.name.slice(5) : r.name)} fullTitle={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
                       </div>
                     );
                   }}
@@ -254,7 +255,7 @@ export function Sidebar(props: {
                     openPageContextMenu(e.clientX, e.clientY, { name: p.name, pageKind: "page", path: p.path });
                   }}
                 >
-                  <SidebarTitle text={pageLabel()(p)} />
+                  <SidebarTitle text={pageIconPrefix(p.name) + pageLabel()(p)} fullTitle={pageLabel()(p)} />
                 </div>
               )}
             </For>

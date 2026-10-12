@@ -147,21 +147,22 @@ export function toggleDocumentMode() {
 // --- typographic replacements (a "Differs from Logseq" opinion): render `->` as
 // `→`, `--` as `–`, `---` as `—`, etc.
 //   "render" = source keeps the ASCII, only the rendered view shows glyphs
-//              (default; mirrors how \Delta→Δ works).
+//              (opt-in; mirrors how \Delta→Δ works).
 //   "type"   = rewrite the SOURCE as you type (the .md itself gets the glyphs);
 //              the render pass is then off since the source already holds them.
-//   "off"    = leave the ASCII everywhere.
+//   "off"    = leave the ASCII everywhere (default: text renders as typed, as in
+//              Logseq, GH #583. Only the non-default modes are stored).
 // Local appearance pref, like wide/document mode. ---
 export type TypographyMode = "off" | "render" | "type";
 const TYPO_KEY = "logseq-claude.typography";
 function loadTypographyMode(): TypographyMode {
   const v = loadStr(TYPO_KEY);
-  return v === "off" ? "off" : v === "type" ? "type" : "render";
+  return v === "render" ? "render" : v === "type" ? "type" : "off";
 }
 export const [typographyMode, setTypographyModeSig] =
   createSignal<TypographyMode>(loadTypographyMode());
 export function setTypographyMode(m: TypographyMode) {
-  if (!saveStr(TYPO_KEY, m === "render" ? null : m)) return;
+  if (!saveStr(TYPO_KEY, m === "off" ? null : m)) return;
   setTypographyModeSig(m);
   bumpGraphEpoch(); // re-render open pages so the change is immediate
 }
@@ -1199,6 +1200,16 @@ export function closeRightSidebarItem(idx: number) {
 }
 export function closeAllRightSidebarItems() {
   setRightSidebar([]);
+}
+/** Keep only item `idx`, expanded (GH #462; og-1.0.0 state.cljs `sidebar-remove-rest!`). */
+export function closeOtherRightSidebarItems(idx: number) {
+  const item = rightSidebar()[idx];
+  if (item) setRightSidebar([{ ...item, collapsed: false }]);
+}
+/** Collapse every item except `idx`, which is left as it is (GH #462; og-1.0.0
+ *  state.cljs `sidebar-block-collapse-rest!`). */
+export function collapseOtherRightSidebarItems(idx: number) {
+  setRightSidebar(rightSidebar().map((item, i) => i === idx ? item : { ...item, collapsed: true }));
 }
 /** Move a right-sidebar item to a new position (GH #211 drag-reorder). Order
  *  persists through the same setRightSidebar owner (localStorage + session). */

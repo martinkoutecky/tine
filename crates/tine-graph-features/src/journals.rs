@@ -7,7 +7,10 @@ use std::io;
 
 use tine_core::date::{JournalDate, JournalFormat};
 use tine_core::model::{JournalConflict, JournalFile};
-use tine_store::{Area, Day, FileEntry, FileId, Input, PageHost, PageId, Store, StoreError};
+use tine_store::{
+    Area, Day, FileEntry, FileId, HostEffect, HostExpected, HostOp, Input, PageHost, PageId, Store,
+    StoreError,
+};
 
 use crate::{store_error, tx_error};
 
@@ -629,25 +632,57 @@ pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
 
 /// Trash one top-level journal with a revision guard, retrying an external
 /// conflict four times. Cost O(file bytes) per attempt.
-/// A retained writer (STEP3 §7): the page's unsaved input is saved first.
+/// With a host, one host operation deletes the page (DESIGN §3.1); the host
+/// keeps the deleted bytes in graph trash. The page's unsaved input is saved
+/// first (`Input::Flush`).
 pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) -> io::Result<()> {
     journal_name(name)?;
     let id = store.file_id(Area::Journals, name).map_err(store_error)?;
-    let discover = || Ok(crate::retained::pages(store, [&id]));
-    crate::retained::reserved(
-        host,
-        Input::Flush,
-        discover,
-        crate::retained::unsaved,
-        |_| {
-            crate::retry_on_conflict("journal changed repeatedly during trash", || {
-                crate::trash_current(
-                    store,
-                    &id,
-                    Some(tine_store::PARSE_INPUT_MAX_BYTES),
+    let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
+    let (Some(running), Some(page)) = (host, store.as_page(&id)) else {
+        // No host: the transaction under the retained-writer route, as before P2.
+        let discover = || Ok(crate::retained::pages(store, [&id]));
+        return crate::retained::reserved(
+            host,
+            Input::Flush,
+            discover,
+            crate::retained::unsaved,
+            |_| {
+                crate::retry_on_conflict("journal changed repeatedly during trash", || {
+                    crate::trash_current(store, &id, max, "no such journal file")
+                })
+            },
+        );
+    };
+    let plan = || {
+        let bytes = match store.read(&id, max) {
+            Ok((bytes, _)) => bytes,
+            Err(StoreError::NotFound) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
                     "no such journal file",
-                )
-            })
-        },
+                ))
+            }
+            Err(error) => return Err(store_error(error)),
+        };
+        Ok(Some(HostOp {
+            pages: vec![(
+                page.clone(),
+                HostEffect::Delete,
+                HostExpected::Bytes(bytes.into()),
+            )],
+            kinds: vec![tine_store::EditKind::DeletePage],
+            policy: Input::Flush,
+            moved: None,
+        }))
+    };
+    crate::retained::operation(
+        running,
+        Input::Flush,
+        std::slice::from_ref(&page),
+        "moving the journal to trash",
+        "journal changed repeatedly during trash",
+        crate::retained::unsaved,
+        plan,
     )
 }
