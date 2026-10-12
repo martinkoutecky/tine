@@ -50,6 +50,11 @@
     ],
     "deniedResourceSchemes": [
       "javascript"
+    ],
+    "styleProperties": [
+      "color",
+      "background-color",
+      "text-decoration-color"
     ]
   },
   "native": {

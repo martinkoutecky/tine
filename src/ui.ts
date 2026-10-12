@@ -147,21 +147,22 @@ export function toggleDocumentMode() {
 // --- typographic replacements (a "Differs from Logseq" opinion): render `->` as
 // `→`, `--` as `–`, `---` as `—`, etc.
 //   "render" = source keeps the ASCII, only the rendered view shows glyphs
-//              (default; mirrors how \Delta→Δ works).
+//              (opt-in; mirrors how \Delta→Δ works).
 //   "type"   = rewrite the SOURCE as you type (the .md itself gets the glyphs);
 //              the render pass is then off since the source already holds them.
-//   "off"    = leave the ASCII everywhere.
+//   "off"    = leave the ASCII everywhere (default: text renders as typed, as in
+//              Logseq, GH #583. Only the non-default modes are stored).
 // Local appearance pref, like wide/document mode. ---
 export type TypographyMode = "off" | "render" | "type";
 const TYPO_KEY = "logseq-claude.typography";
 function loadTypographyMode(): TypographyMode {
   const v = loadStr(TYPO_KEY);
-  return v === "off" ? "off" : v === "type" ? "type" : "render";
+  return v === "render" ? "render" : v === "type" ? "type" : "off";
 }
 export const [typographyMode, setTypographyModeSig] =
   createSignal<TypographyMode>(loadTypographyMode());
 export function setTypographyMode(m: TypographyMode) {
-  if (!saveStr(TYPO_KEY, m === "render" ? null : m)) return;
+  if (!saveStr(TYPO_KEY, m === "off" ? null : m)) return;
   setTypographyModeSig(m);
   bumpGraphEpoch(); // re-render open pages so the change is immediate
 }

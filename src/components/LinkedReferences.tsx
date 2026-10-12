@@ -225,7 +225,9 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     }
     return [...counts.values()]
       .map(({ name, count }) => [name, count] as const)
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      // GH #433: alphabetical (case-folded, locale-aware), so chips stay put as
+      // counts change while typing or filtering. OG sorts by count.
+      .sort((a, b) => a[0].localeCompare(b[0], undefined, { sensitivity: "base", numeric: true }) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   });
 
   const orphanFilters = createMemo(() => {

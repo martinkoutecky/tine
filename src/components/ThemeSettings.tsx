@@ -2,6 +2,7 @@ import { For, Show, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { ownedWhen, readOwned } from "../owned";
 import { CustomCssSettings } from "./CustomCssSettings";
+import { StyleKnobsSettings } from "./StyleKnobsSettings";
 import { COMMUNITY_REGISTRY_ENABLED, communityThemes, installCommunityTheme } from "../plugins/registry";
 import type { GalleryTheme } from "../styles/themes";
 import {
@@ -164,6 +165,8 @@ export function ThemeSettings(): JSX.Element {
       <div class="settings-hint theme-gallery-hint">
         Style and colors are independent. Theme packages use validated colors and Tine-owned presentation styles; your <code>logseq/custom.css</code> still takes priority.
       </div>
+
+      <StyleKnobsSettings />
 
       <CustomCssSettings />
 
