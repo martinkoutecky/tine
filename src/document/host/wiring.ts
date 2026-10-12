@@ -537,10 +537,6 @@ export function baseRevFor(name: string): string | null | undefined {
   return baseRev.get(name);
 }
 
-export function tombstone(name: string): void {
-  deletedPages.add(name);
-}
-
 export function untombstone(name: string): void {
   deletedPages.delete(name);
 }

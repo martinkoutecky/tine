@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { autoAnswer, mail, mailPage, opened, page, setup, textOf, tick, took } from "./fakes.test.support";
 import { settle, unpublishedAfterDrain } from "./settle";
+
+// Debounced sends stay scheduled and never fire unless a test advances time.
+beforeEach(() => { vi.useFakeTimers(); });
+afterEach(() => { vi.useRealTimers(); });
 
 async function healthy() {
   const ctx = await setup();
@@ -12,7 +16,7 @@ async function healthy() {
 function edit(ctx: Awaited<ReturnType<typeof setup>>, name: string, text: string) {
   if (!ctx.doc.pages.has(name)) ctx.doc.load(page(name, "", "r0"));
   ctx.doc.type(name, text);
-  ctx.client.noteEdit(name, "save-block", false);
+  ctx.client.noteEdit(name, "save-block");
 }
 
 describe("settle (S1: final synchronous quiescence proof)", () => {
@@ -89,20 +93,35 @@ describe("settle (S1: final synchronous quiescence proof)", () => {
     edit(ctx, "P", "image");
     const finish = ctx.assets.start(() => edit(ctx, "Q", "![](../assets/x.png)"));
     setTimeout(finish, 0);
-    expect(await settle(ctx.client, "all", { assets: true, rounds: 1 })).toBe(true);
+    const settling = settle(ctx.client, "all", { assets: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await settling).toBe(true);
+    // One round: each round reads the host's debt twice.
+    expect(ctx.host.count("owed")).toBe(2);
     expect(ctx.client.busy("Q")).toBe(false);
   });
 
-  it("an asset write that starts in the round and adds a late reference is new work, false at the bound", async () => {
-    for (const rounds of [1, 4]) {
-      const ctx = await healthy();
-      edit(ctx, "P", "a");
-      ctx.host.onWait = () => {
-        if (ctx.host.count("wait") === 1) ctx.assets.start(() => edit(ctx, "Q", "![](../assets/x.png)"))();
-      };
-      expect(await settle(ctx.client, "all", { assets: true, rounds })).toBe(rounds === 4);
-      expect(ctx.client.busy("Q")).toBe(rounds === 1);
-    }
+  it("an asset write that starts in the round and adds a late reference is new work for the next round", async () => {
+    const ctx = await healthy();
+    edit(ctx, "P", "a");
+    ctx.host.onWait = () => {
+      if (ctx.host.count("wait") === 1) ctx.assets.start(() => edit(ctx, "Q", "![](../assets/x.png)"))();
+    };
+    expect(await settle(ctx.client, "all", { assets: true })).toBe(true);
+    expect(ctx.host.count("owed")).toBe(4);
+    expect(ctx.client.busy("Q")).toBe(false);
+  });
+
+  it("work that arrives in every round is false at the four-round bound (E96)", async () => {
+    const ctx = await healthy();
+    edit(ctx, "P", "a");
+    ctx.host.onWait = () => {
+      ctx.assets.start(() => edit(ctx, "Q", `![](../assets/x${ctx.host.count("wait")}.png)`))();
+    };
+    expect(await settle(ctx.client, "all", { assets: true })).toBe(false);
+    // Four rounds, each reading the host's debt twice.
+    expect(ctx.host.count("owed")).toBe(8);
+    expect(ctx.client.busy("Q")).toBe(true);
   });
 
   it("dirty again across a took answer: needs the answered version, not the coalesced page's; the next round sends the rest", async () => {
@@ -114,7 +133,7 @@ describe("settle (S1: final synchronous quiescence proof)", () => {
     await tick();
     const first = host.last("submit");
     doc.type("P", "a2");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     // The host took a1 at 4; an external change made the page 6 before the mail.
     client.receive(mail(7, "pages/P.md", mailPage(6, { kind: "page", dto: page("P", "external") }), took(first.id, 4)));
     let second: ReturnType<typeof host.last<"submit">> | null = null;
@@ -151,8 +170,9 @@ describe("settle (S1: final synchronous quiescence proof)", () => {
     const ctx = await healthy();
     edit(ctx, "P", "a");
     ctx.host.onOwed = () => { if (!ctx.host.owedPages.length) ctx.host.owedPages = [{ key: "pages/R.md", version: 3 }]; };
-    expect(await settle(ctx.client, "all", { rounds: 1 })).toBe(false);
     expect(await settle(ctx.client, "all")).toBe(true);
+    // The debt the first round's last read found was the second round's work.
+    expect(ctx.host.count("owed")).toBe(4);
     expect(ctx.host.last("wait").needs).toContainEqual({ key: "pages/R.md", version: 3 });
   });
 

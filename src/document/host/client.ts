@@ -78,7 +78,7 @@ interface Page {
   stash: PageMail[];
   /** The authoring baseline an Open compares (S5): fixed when the Open is sent. */
   baseline: (PageFacts & { version: number | null; entry: boolean }) | null;
-  observed: { version: number; disk: DiskToken | null; conflict: boolean; risk: boolean } | null;
+  observed: { disk: DiskToken | null; conflict: boolean } | null;
   notice: MailNotice | null;
   /** Host content withheld from the text by the installation gate (S4). */
   held: { content: Content; version: number } | null;
@@ -208,13 +208,13 @@ export class HostClient {
 
   /** The dirty funnel (`markDirty`/`addDirty`): every programmatic mutation. An
    * edit on a page no surface acquired opens it here (the fallback). */
-  noteEdit(name: string, kinds: EditKind | EditKinds, schedule = true): void {
+  noteEdit(name: string, kinds: EditKind | EditKinds): void {
     const page = this.state(name);
     page.editSeq += 1;
     this.editClock += 1;
     for (const kind of typeof kinds === "string" ? [kinds] : kinds) if (!page.kinds.includes(kind)) page.kinds.push(kind);
     this.open(page);
-    if (schedule) this.schedule(page);
+    this.schedule(page);
     this.onChange();
   }
 
@@ -273,21 +273,12 @@ export class HostClient {
     return this.pages.get(name)?.refusal ?? null;
   }
 
-  /** The authoring version of the page's text (for tests and the UI's state line). */
-  versionOf(name: string): number | null {
-    return this.pages.get(name)?.version ?? null;
-  }
-
   keyOf(name: string): string | null {
     return this.pages.get(name)?.key ?? null;
   }
 
   isOpen(name: string): boolean {
     return !!this.pages.get(name)?.on;
-  }
-
-  heldVersion(name: string): number | null {
-    return this.pages.get(name)?.held?.version ?? null;
   }
 
   isFrozen(name: string): boolean {
@@ -706,7 +697,7 @@ export class HostClient {
   }
 
   private observe(page: Page, mail: MailPage): void {
-    page.observed = { version: mail.version, disk: mail.disk ?? null, conflict: mail.conflict, risk: mail.risk };
+    page.observed = { disk: mail.disk ?? null, conflict: mail.conflict };
   }
 
   private contentOf(mail: MailPage): Content | null {

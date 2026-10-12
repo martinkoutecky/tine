@@ -12,8 +12,6 @@ export interface SettleOptions {
   noConflict?: boolean;
   /** A block id the scoped pages' published bytes must contain (block refs, Q2). */
   witness?: string;
-  /** Today's `flushAll` bound (E96). */
-  rounds?: number;
 }
 
 export type SettleScope = readonly string[] | "all";
@@ -39,7 +37,8 @@ export async function settle(client: HostClient, scope: SettleScope, options: Se
 }
 
 async function rounds(client: HostClient, scope: SettleScope, options: SettleOptions): Promise<boolean> {
-  for (let round = 0; round < (options.rounds ?? 4); round += 1) {
+  // Today's `flushAll` bound (E96): four rounds.
+  for (let round = 0; round < 4; round += 1) {
     // A retired client's binding ended: nothing it drains is this graph's (I-20).
     if (client.retired) return false;
     if (options.assets) await Promise.all(client.assets.pending());

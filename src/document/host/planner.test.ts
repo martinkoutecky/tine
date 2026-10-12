@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PageDto } from "../../types";
 import { autoAnswer, mail, mailPage, page, setup, textOf } from "./fakes.test.support";
 import { runSequence, type SequenceStep } from "./planner";
@@ -24,19 +24,24 @@ function plan(drained: ReadonlyMap<string, PageDto>): SequenceStep[] {
 
 describe("§8 planned sequences", () => {
   it("drains every endpoint, then runs each move on the versions the previous step left", async () => {
-    const { host, doc, client } = await carry();
-    doc.type("A", "a typed");
-    client.noteEdit("A", "save-block", false);
-    const outcome = await runSequence(client, ["A", "C", "B"], plan, ["move-blocks"]);
-    expect(outcome).toEqual({ ok: true, completed: 2 });
-    const submit = host.last("submit");
-    const moves = host.calls.filter((call) => call.cmd === "move");
-    expect(textOf(submit.dto)).toBe("a typed");
-    expect(moves.map((call) => textOf(call.receiver[1]))).toEqual(["b\na typed", "b\na typed\nc"]);
-    // Step 2's receiver version is the one step 1's answer left.
-    expect(moves[1].receiver[2]).toBeGreaterThan(moves[0].receiver[2]);
-    expect(doc.text("B")).toBe("b\na typed\nc");
-    expect(client.isFrozen("A")).toBe(false);
+    vi.useFakeTimers();
+    try {
+      const { host, doc, client } = await carry();
+      doc.type("A", "a typed");
+      client.noteEdit("A", "save-block");
+      const outcome = await runSequence(client, ["A", "C", "B"], plan, ["move-blocks"]);
+      expect(outcome).toEqual({ ok: true, completed: 2 });
+      const submit = host.last("submit");
+      const moves = host.calls.filter((call) => call.cmd === "move");
+      expect(textOf(submit.dto)).toBe("a typed");
+      expect(moves.map((call) => textOf(call.receiver[1]))).toEqual(["b\na typed", "b\na typed\nc"]);
+      // Step 2's receiver version is the one step 1's answer left.
+      expect(moves[1].receiver[2]).toBeGreaterThan(moves[0].receiver[2]);
+      expect(doc.text("B")).toBe("b\na typed\nc");
+      expect(client.isFrozen("A")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stops at a refused step: completed steps stand, the receiver takes the host's state", async () => {

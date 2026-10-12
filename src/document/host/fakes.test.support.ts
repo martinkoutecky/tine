@@ -222,6 +222,16 @@ export async function tick(times = 5): Promise<void> {
   for (let i = 0; i < times; i += 1) await Promise.resolve();
 }
 
+/** The page's authoring version (model `bv`), read from the client's state. */
+export function versionOf(client: HostClient, name: string): number | null {
+  return client["pages"].get(name)?.version ?? null;
+}
+
+/** The version of host content the installation gate withholds (S4), if any. */
+export function heldVersion(client: HostClient, name: string): number | null {
+  return client["pages"].get(name)?.held?.version ?? null;
+}
+
 /** A bound client over fresh fakes. */
 export async function setup(): Promise<{ host: FakeHost; doc: FakeDoc; assets: FakeAssets; client: HostClient }> {
   const host = new FakeHost();
