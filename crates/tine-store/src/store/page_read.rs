@@ -17,7 +17,7 @@ impl Store {
 
     /// [`Self::page_target`]'s checks that read no page file: its disk
     /// spelling and path, refusing a symlinked page or one outside the areas.
-    pub(super) fn page_spot(&self, id: &PageId) -> Result<(PageId, PathBuf), StoreError> {
+    pub(crate) fn page_spot(&self, id: &PageId) -> Result<(PageId, PathBuf), StoreError> {
         if self.as_page(&id.file()).is_none() {
             return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
         }
@@ -110,6 +110,25 @@ impl Store {
         let (id, path, _) = self.page_target(id)?;
         let doc = page_dto(|| self.graph.page_dto_for_bytes(&path, bytes))?;
         self.page_read(id, doc)
+    }
+
+    /// The bytes a save of `doc` over page `id`'s file holding `old` (None:
+    /// no file) writes, after every check that save runs (Guide
+    /// ephemerality, page target, nesting depth, VCS conflict markers, the
+    /// page-header and Org round-trip firewalls): for a feature planning a
+    /// host operation (`HostOp`) from bytes it read. Writes nothing. Cost
+    /// O(bytes + blocks).
+    pub fn page_bytes(
+        &self,
+        id: &PageId,
+        doc: &PageDto,
+        old: Option<&[u8]>,
+    ) -> Result<Vec<u8>, crate::Why> {
+        let file = id.file();
+        let tx = self.transaction(None);
+        tx.page_save_target(&file, doc)?;
+        let (bytes, _) = tx.serialize_page(&file, doc, old, false)?;
+        Ok(bytes)
     }
 
     /// Hold page `id` as a page host does, with no host running: its index

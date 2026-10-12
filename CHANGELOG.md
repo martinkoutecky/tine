@@ -21,6 +21,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - iOS: a **Tine** share extension saves text, web pages, links and up to five images ("Saved to Tine"), and they land at the bottom of today's journal the next time you open Tine. Pages of the open graph appear in Spotlight search; hidden pages never do. The Shortcuts app and Siri offer **Add to Tine journal**, **Search Tine** and **Open page**, and the Home Screen icon has **Today's journal**, **Quick capture** and **Search** quick actions (REG-IOS-NATIVE-INTEGRATIONS).
 - Shared items are shaped like Logseq's mobile share on each platform, using Logseq's `:quick-capture-templates` from `config.edn`. On Android links become titled links, video links become `{{video}}` embeds and posts on X become `{{twitter}}` embeds; on iOS the shared text and link are kept as they are (REG-GH608-SHARE-SHAPE-OG).
 - `tine://today`, `tine://capture`, `tine://search?q=…` and `tine://page/<name>` open those places in the current graph. They only navigate and never write (REG-NATIVE-APP-ROUTES).
+- Keyboard block commands, assignable in Settings > Keyboard shortcuts and listed in the command palette, with no default key (Logseq binds none): **Copy block refs of the selected blocks** (GH #576), **Paste as link** (GH #448), **Duplicate block below (with children)** (GH #379), **Insert child block** (GH #634), **Collapse children (one level)** and **Expand children (one level)** (GH #525), and **Search for the selected text** (GH #633).
+- The Ctrl/Cmd+Shift+V "paste as plain text" key is now listed in the shortcut reference and the Guide (GH #513).
+- Right sidebar: each item has a ⋯ menu with **Close**, **Close others**, **Close all**, **Collapse**/**Expand**, **Collapse others**, **Collapse all**, **Expand all**, and **Open as page** for a page item, as in Logseq (GH #462).
 
 ### Changed
 
@@ -35,6 +38,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.
 
 - Queries: a bare `(task)` or `(priority)` in a `{{query}}` now adds no condition, as in Logseq, instead of meaning TODO/DOING/NOW/LATER or A/B/C; `(task)` alone, like an empty `{{query}}`, shows nothing. A note on such a query explains this and offers **Open tasks** (every unfinished marker, including WAITING, WAIT, STARTED and IN-PROGRESS), **Any task** or **A, B or C**, which rewrite the query with explicit markers. Queries with explicit markers are unchanged (GH #422).
+- Tabs are wider by default: they stretch to fill the strip up to 260px and share it evenly down to 144px before the strip scrolls (GH #529).
+- A zoomed tab whose block is not loaded yet (a background tab after a restart) reads "Page › …" instead of repeating the page's own tab name (GH #528).
+- Dropping a dragged tab anywhere on a pane's tab bar, not just beside a tab, puts it last in that pane (GH #527).
+- The right sidebar can be dragged up to 70% of the window (it was fixed at 800px), keeping at least 360px for the main pane; keyboard resizing follows the same limit (GH #521).
 
 ### Fixed
 

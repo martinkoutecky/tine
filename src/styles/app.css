@@ -519,13 +519,16 @@ html[data-system-insets="native-viewport"] {
 .tab {
   position: relative;
   display: flex;
-  flex: 0 0 auto;
+  /* GH #529: Chrome-style. Tabs stretch to fill a roomy strip up to 260px (about
+     31 title characters at 13px, matching the 32-character zoomed-block label) and
+     shrink evenly toward 144px (about 14 characters) before the strip scrolls. */
+  flex: 1 1 260px;
   align-items: center;
   gap: 6px;
   height: 26px;
   padding: 0 10px;
-  min-width: 112px;
-  max-width: 200px;
+  min-width: 144px;
+  max-width: 260px;
   font-size: 13px;
   color: var(--text-secondary);
   cursor: pointer;
@@ -7923,6 +7926,10 @@ img.emoji {
 .right-sidebar {
   position: relative;
   width: 360px;
+  /* GH #521: a stored wide width on a smaller window can never swallow the main
+     pane or its own resize handle (same bounds as sidebarSizing.rightSidebarMaxWidth;
+     drawer mode sets its own max-width above). */
+  max-width: min(70vw, calc(100vw - 360px));
   flex: 0 0 auto;
   border-left: 1px solid var(--border-color);
   background: var(--bg-secondary);
@@ -8083,6 +8090,23 @@ img.emoji {
   color: var(--text-muted);
   cursor: pointer;
   font-size: 12px;
+}
+
+/* GH #462: the per-item "more actions" button sits beside the close button; the
+   menu itself floats (position: fixed, portalled) because .rs-item clips overflow. */
+.rs-item-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.rs-item-actions .rs-close { margin-left: 0; }
+.rs-actions-menu.rs-item-menu {
+  position: fixed;
+  z-index: 90;
+  left: auto;
+  white-space: nowrap;
 }
 
 .rs-item-body {

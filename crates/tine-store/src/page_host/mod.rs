@@ -8,8 +8,9 @@
 
 mod binding;
 pub use binding::{
-    DiskToken, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal, Reloaded,
-    RenameRefusal, Reservation, ReserveRefusal, StopMode, StopState, Stopped,
+    ApplyRefusal, DiskToken, Effect, Expected, HostOp, Input, Opened, PageHost, PageMail,
+    PageOperation, PageRefusal, Reloaded, RenameRefusal, Reservation, ReserveRefusal, StopMode,
+    StopState, Stopped,
 };
 pub use io::DraftStatus;
 #[cfg(test)]

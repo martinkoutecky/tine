@@ -1201,6 +1201,16 @@ export function closeRightSidebarItem(idx: number) {
 export function closeAllRightSidebarItems() {
   setRightSidebar([]);
 }
+/** Keep only item `idx`, expanded (GH #462; og-1.0.0 state.cljs `sidebar-remove-rest!`). */
+export function closeOtherRightSidebarItems(idx: number) {
+  const item = rightSidebar()[idx];
+  if (item) setRightSidebar([{ ...item, collapsed: false }]);
+}
+/** Collapse every item except `idx`, which is left as it is (GH #462; og-1.0.0
+ *  state.cljs `sidebar-block-collapse-rest!`). */
+export function collapseOtherRightSidebarItems(idx: number) {
+  setRightSidebar(rightSidebar().map((item, i) => i === idx ? item : { ...item, collapsed: true }));
+}
 /** Move a right-sidebar item to a new position (GH #211 drag-reorder). Order
  *  persists through the same setRightSidebar owner (localStorage + session). */
 export function moveRightSidebarItem(from: number, to: number) {

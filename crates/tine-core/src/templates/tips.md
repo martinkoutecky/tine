@@ -22,6 +22,16 @@ icon:: ⌨️
 	- While editing with no text selected, **Ctrl/Cmd+C** copies a reference `((id))` to the block and **Ctrl/Cmd+Shift+C** copies an embed `{{embed ((id))}}`. With text selected, both keep their ordinary copy meaning.
 - ## Insert a block above
 	- To put a bullet *above* an existing one, press **Enter** with the caret at its very start. Some bullets keep Enter for themselves — inside a code block it adds a line of code — so for those, right-click the bullet's dot and choose **Insert block above**. That works on any bullet, including the first one on a page.
+- ## Paste plain text, or paste as a link
+	- **Ctrl/Cmd+Shift+V** pastes the clipboard as plain text inside the current block: copied web headings, bold runs and lists are not converted, and multiline text stays in one block instead of becoming several. Ordinary **Ctrl/Cmd+V** keeps converting copied web content and outlines.
+	- **Paste as link** turns what you copied into a link without typing the syntax. Copy a URL or a block reference, select some words in a block you are editing, and run it: `see context` becomes `[context](https://…)` or `[context](((id)))`. With nothing selected the link is inserted bare. It ships without a key, so assign one under **Settings → Shortcuts** (the command palette lists it too, but opening the palette leaves the editor, so use the key). Ordinary paste over a selection is unchanged.
+- ## Block commands you can bind
+	- These commands ship without a key, so nothing you already use changes. Assign keys under **Settings → Shortcuts**; each acts on the selected blocks, or on the block you are editing when nothing is selected.
+	- **Duplicate block below (with children)** puts a copy, children included, right under the block, and the caret follows it, so pressing it again stacks copies. The copy gets its own ids; one Undo removes it.
+	- **Insert child block** adds an empty last child under the block and starts editing it, which works where **Enter** then **Tab** cannot, such as an embedded block with no children yet. A folded block opens so the new child shows.
+	- **Collapse children (one level)** and **Expand children (one level)** fold or unfold only the immediate children of the block, leaving deeper folds as you built them; the block itself opens. With nothing selected they act on the page's top-level blocks.
+	- **Copy block refs of the selected blocks** copies a `((id))` reference for each selected block, one per line in the order you see them, the same text as **Copy block refs** in the block context menu.
+	- **Search for the selected text** opens search with the selection already typed in. The ready-made key for it, **Ctrl/Cmd+Shift+F**, is Logseq's *toggle favorite*, so it is left for you to choose.
 - ## Create one yourself
 	- 1. Press **Ctrl+K**.
 	- 2. Type part of a page name, a block phrase, or a command such as `Open Guide`.
