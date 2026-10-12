@@ -805,11 +805,11 @@ impl<F: ConformanceIo> Driver<F> {
                 assert_eq!(self.host.start_save(&key(p)), Disposition::Pending);
                 self.custody_stutter();
                 if name == "flush" && !self.stepped {
-                    self.host.advance_save(0);
+                    self.host.advance_save();
                 }
             }
             "check" => {
-                self.host.advance_save(0);
+                self.host.advance_save();
             }
             "rename" => {
                 let page = self.host.job.as_ref().unwrap().page.clone();
@@ -822,14 +822,14 @@ impl<F: ConformanceIo> Driver<F> {
                     .copied()
                     .unwrap_or(0);
                 if self.host.job.as_ref().unwrap().phase == SavePhase::Marker {
-                    self.host.advance_save(ep);
+                    self.host.advance_save_at(ep);
                     self.compare("custody marker");
                 }
-                self.host.advance_save(ep);
+                self.host.advance_save_at(ep);
             }
             "dirSync" => {
                 if self.host.job.as_ref().unwrap().phase == SavePhase::TrashSync {
-                    self.host.advance_save(0);
+                    self.host.advance_save();
                     self.compare("trash sync");
                 }
                 if !b(0) {
@@ -839,7 +839,7 @@ impl<F: ConformanceIo> Driver<F> {
                         .physical_mut()
                         .inject(Phase::PageSync, [Fault::Before]);
                 }
-                self.host.advance_save(0);
+                self.host.advance_save();
             }
             "saveFail" => {
                 let phase = match self.host.job.as_ref().unwrap().phase {
@@ -855,7 +855,7 @@ impl<F: ConformanceIo> Driver<F> {
                 };
                 let fault = self.cut.take().map_or(Fault::Before, Fault::Cut);
                 self.host.fs.physical_mut().inject(phase, [fault]);
-                self.host.advance_save(0);
+                self.host.advance_save();
             }
             "draftSync" => {
                 assert_eq!(self.host.begin_draft(&key(p)), Disposition::Pending);
@@ -1337,7 +1337,7 @@ impl<F: ConformanceIo> Driver<F> {
     /// (A4 rule 4): Custody and Temp are both abstract phase 1.
     fn custody_stutter(&mut self) {
         if self.host.job.as_ref().unwrap().phase == SavePhase::Custody {
-            self.host.advance_save(0);
+            self.host.advance_save();
         }
     }
 
@@ -1458,7 +1458,7 @@ fn promise(pr: &mut Value, bytes: i64, ver: i64, saved: bool, ep: u64) {
 pub(super) fn applies_next(worker: &DraftWorker) -> bool {
     let removal = matches!(
         worker.application,
-        Some(Application::Removal(_) | Application::Retire)
+        Some(Application::Removal | Application::Retire)
     );
     let retry = worker.retry_copy && worker.task.stage == Stage::Absent;
     worker.application.is_some()

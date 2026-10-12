@@ -73,7 +73,6 @@ impl<F: HostIo> Host<F> {
             if checked.is_some_and(|checked| page.buf.as_deref() != Some(checked)) {
                 return Disposition::Refused;
             }
-            let reads = BTreeMap::from([(key.into(), page.base.clone())]);
             page.buf = None;
             page.typed = true;
             page.risk = true;
@@ -86,7 +85,6 @@ impl<F: HostIo> Host<F> {
                 vec![record],
                 reply,
                 version,
-                reads,
                 None,
             );
             Disposition::Pending
@@ -157,7 +155,6 @@ impl<F: HostIo> Host<F> {
                 return Disposition::Waiting;
             }
             let mut pages = BTreeMap::new();
-            let mut reads = BTreeMap::new();
             for key in &keys {
                 let Ok(page) = host.operation_page(key) else {
                     return Disposition::Refused;
@@ -165,7 +162,6 @@ impl<F: HostIo> Host<F> {
                 if !page.clean() {
                     return Disposition::Refused;
                 }
-                reads.insert(key.clone(), page.base.clone());
                 pages.insert(key.clone(), page);
             }
             if full && pages[target].buf.is_some() {
@@ -203,7 +199,7 @@ impl<F: HostIo> Host<F> {
             let versions = pages.iter().map(|(k, p)| (k.clone(), p.version)).collect();
             let gates = full.then(|| Gates::new(target, source, versions));
             let reply = Reply::Caller(host.order.allocate(host.incarnation));
-            host.install_operation(pages, records, reply, last_version, reads, gates);
+            host.install_operation(pages, records, reply, last_version, gates);
             Disposition::Pending
         })
     }

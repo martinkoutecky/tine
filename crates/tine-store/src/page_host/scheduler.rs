@@ -15,7 +15,7 @@ impl Driver {
         let application = !matches!(worker.application, Some(Application::Representation))
             && super::applies_next(worker);
         let present = worker.task.stage == Stage::Present;
-        let removal = matches!(worker.application, Some(Application::Removal(_)));
+        let removal = matches!(worker.application, Some(Application::Removal));
         let inc = self.host.incarnation;
         self.host.advance_draft();
         let stutter = |d: &mut Self, context: &str| {
@@ -52,16 +52,17 @@ impl Driver {
                 .files
                 .contains_key(&format!("draft/{}", worker.task.name));
             let removal = match &worker.application {
-                Some(Application::Removal(p)) => !drafts::scan(survivor.draft_files(false))
-                    .logical
-                    .contains_key(p),
+                Some(Application::Removal) => {
+                    let logical = drafts::scan(survivor.draft_files(false)).logical;
+                    !worker.pages.iter().any(|p| logical.contains_key(p))
+                }
                 _ => false,
             };
             // A removal's copies are not its effect: it takes effect only
             // when its page's record is gone (RENAME-COST L2).
             let removing = matches!(
                 worker.application,
-                Some(Application::Removal(_) | Application::Retire)
+                Some(Application::Removal | Application::Retire)
             );
             let new_state = !removing && worker.task.bytes.is_some() && present;
             if new_state || removal {
@@ -174,7 +175,7 @@ impl Driver {
                 "switchReq" => assert_eq!(self.host.switch_request(), Disposition::Waiting),
                 "switchFin" => assert_eq!(self.host.switch_finish(), Disposition::Waiting),
                 "check" | "rename" | "dirSync" | "saveFail" => {
-                    assert_eq!(self.host.advance_save(0), Disposition::Waiting)
+                    assert_eq!(self.host.advance_save(), Disposition::Waiting)
                 }
                 _ => {}
             }
@@ -232,7 +233,7 @@ impl Driver {
                 .as_ref()
                 .is_some_and(|j| j.phase == SavePhase::Temp)
         {
-            self.host.advance_save(0);
+            self.host.advance_save();
             self.compare("temp synced barrier");
             return true;
         }
@@ -243,7 +244,7 @@ impl Driver {
                 .as_ref()
                 .is_some_and(|j| j.phase == SavePhase::TrashSync)
         {
-            self.host.advance_save(0);
+            self.host.advance_save();
             self.compare("trash directory sync barrier");
             return true;
         }
@@ -416,7 +417,7 @@ fn failing_custody_fails_saves_until_the_three_failure_escape() {
         d.host.fs.inject(Phase::TrashSync, [Fault::Before]);
         assert_eq!(d.host.start_save(&key(0)), Disposition::Pending);
         d.finish("flush", &[json!(0)]);
-        d.host.advance_save(0);
+        d.host.advance_save();
         if attempt < 3 {
             d.finish("saveFail", &[]);
             assert!(d.host.job.is_none());
@@ -463,11 +464,11 @@ fn collision_retires_its_unused_marker_at_every_cut() {
         }
         let drafts = d.host.fs.draft_files(true);
         run(&mut d, &[("flushDel", json!([0])), ("check", json!([]))]);
-        d.host.advance_save(0);
+        d.host.advance_save();
         d.compare("marker is a stutter");
         assert_eq!(markers(&mut d), 1);
         d.host.fs.inject(Phase::TrashMove, [Fault::Collision]);
-        d.host.advance_save(0);
+        d.host.advance_save();
         d.compare("collision leaves graph and abstract job unchanged");
         assert_eq!(d.host.job.as_ref().unwrap().phase, SavePhase::Marker);
         assert_eq!(markers(&mut d), 0, "unused marker retired");
@@ -510,7 +511,7 @@ fn discard_has_no_trash_barrier_and_launch_completes_custody() {
         ],
     );
     d.host.fs.inject(Phase::TrashSync, [Fault::Before]);
-    d.host.advance_save(0);
+    d.host.advance_save();
     d.finish("dirSync", &[json!(false)]);
     run(
         &mut d,
@@ -1142,7 +1143,7 @@ fn cut_deletion(d: &mut Driver, phase: Phase, k: usize) {
     match phase {
         Phase::CustodyWrite | Phase::TrashMove => {
             if phase == Phase::TrashMove {
-                d.host.advance_save(0);
+                d.host.advance_save();
                 d.compare("marker is a stutter");
             }
             d.cut = Some(k);
@@ -1153,7 +1154,7 @@ fn cut_deletion(d: &mut Driver, phase: Phase, k: usize) {
             // The process stops inside this call; nobody sees its outcome.
             d.host.fs.inject(phase, [Fault::Cut(k)]);
             let events = d.host.events.len();
-            d.host.advance_save(0);
+            d.host.advance_save();
             d.host.events.truncate(events);
         }
         _ => {

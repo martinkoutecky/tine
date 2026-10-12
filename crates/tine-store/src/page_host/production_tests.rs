@@ -81,7 +81,7 @@ impl Fixture {
         assert_eq!(self.host.start_save(page), Disposition::Pending);
         let start = self.host.events.len();
         for _ in 0..15 {
-            self.host.advance_save(0);
+            self.host.advance_save();
             if self.host.job.is_none() {
                 return self.host.events[start..]
                     .iter()
@@ -260,10 +260,10 @@ fn a_failed_save_carries_its_platform_step_and_os_error() {
     let mut f = Fixture::new();
     f.edit("c.md", "mine");
     assert_eq!(f.host.start_save("c.md"), Disposition::Pending);
-    f.host.advance_save(0); // synced temp
-    f.host.advance_save(0); // absent base guard
+    f.host.advance_save(); // synced temp
+    f.host.advance_save(); // absent base guard
     fs::write(f.graph.join("c.md"), b"other").unwrap();
-    f.host.advance_save(0); // real EEXIST
+    f.host.advance_save(); // real EEXIST
     let cause = f
         .host
         .events
@@ -296,10 +296,10 @@ fn create_race_after_guard_is_no_replace_and_then_observes_conflict() {
     let mut f = Fixture::new();
     f.edit("c.md", "mine");
     assert_eq!(f.host.start_save("c.md"), Disposition::Pending);
-    f.host.advance_save(0); // synced temp
-    f.host.advance_save(0); // absent base guard
+    f.host.advance_save(); // synced temp
+    f.host.advance_save(); // absent base guard
     fs::write(f.graph.join("c.md"), b"other").unwrap();
-    f.host.advance_save(0); // real EEXIST
+    f.host.advance_save(); // real EEXIST
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"other");
     assert!(f.host.events.iter().any(|e| matches!(
         e,
@@ -327,10 +327,10 @@ fn graph_unsupported_is_distinct_and_does_not_refuse_betas_tolerated_set() {
         f.edit("a.md", "mine");
         assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
         for _ in 0..3 {
-            f.host.advance_save(0);
+            f.host.advance_save();
         }
         crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(kind)));
-        f.host.advance_save(0);
+        f.host.advance_save();
         assert!(f.host.pages["a.md"].clean());
         assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"mine");
     }
@@ -342,13 +342,13 @@ fn post_rename_sync_error_is_tagged_uncertain_and_retry_preserves_input() {
     f.edit("a.md", "mine");
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
     for _ in 0..3 {
-        f.host.advance_save(0);
+        f.host.advance_save();
     }
     crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
     let error = f.host.fs.page_sync("a.md").unwrap_err();
     assert!(error.completed);
     crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
-    f.host.advance_save(0);
+    f.host.advance_save();
     assert!(f.host.events.iter().any(|e| matches!(
         e,
         Event::SaveOutcome { page, outcome: Outcome::Uncertain, .. } if page == "a.md"
@@ -388,13 +388,13 @@ fn weak_trash_and_strong_source_sync_do_not_claim_strong_delete_durability() {
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
-    f.host.advance_save(0); // move
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
+    f.host.advance_save(); // move
     crate::directory_durability::SYNC_ERROR
         .with(|error| error.set(Some(io::ErrorKind::InvalidInput)));
-    f.host.advance_save(0);
-    f.host.advance_save(0);
+    f.host.advance_save();
+    f.host.advance_save();
     assert!(f.host.pages["a.md"].clean());
     assert!(!f
         .host
@@ -413,12 +413,12 @@ fn trashed_external_payload_is_named_durably_before_the_deletion_witness() {
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
     fs::write(f.graph.join("a.md"), b"unflushed-external").unwrap(); // R1
-    f.host.advance_save(0); // moves actual external bytes
+    f.host.advance_save(); // moves actual external bytes
     crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
-    f.host.advance_save(0);
+    f.host.advance_save();
     assert!(f.host.pages["a.md"].risk);
     assert!(f.host.events.iter().any(|e| matches!(
         e,
@@ -450,9 +450,9 @@ fn guarded_save_abandonment_cleans_only_its_own_unpublished_temp() {
     let mut f = Fixture::new();
     f.edit("a.md", "mine");
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0);
+    f.host.advance_save();
     fs::write(f.graph.join("a.md"), b"external").unwrap();
-    f.host.advance_save(0);
+    f.host.advance_save();
     assert!(f.host.job.is_none());
     assert!(f.host.pages["a.md"].conflict);
     assert!(fs::read_dir(&f.graph).unwrap().all(|entry| !entry
@@ -537,9 +537,9 @@ fn delete_through_move(f: &mut Fixture) {
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
-    f.host.advance_save(0); // move
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
+    f.host.advance_save(); // move
     assert!(!f.graph.join("a.md").exists());
     assert_eq!(f.host.job.as_ref().unwrap().phase, SavePhase::TrashSync);
     assert_eq!(markers(f), 1);
@@ -650,7 +650,7 @@ fn launch_redoes_ancestor_custody_before_retiring_the_marker() {
         if !crash_before_b {
             crate::directory_durability::SYNC_ERROR
                 .with(|error| error.set(Some(io::ErrorKind::Other)));
-            f.host.advance_save(0);
+            f.host.advance_save();
             assert!(f.host.pages["a.md"].risk);
             assert_eq!(markers(&mut f), 1, "an Uncertain chain keeps its marker");
         }
@@ -776,12 +776,12 @@ fn restart_must_not_forget_unflushed_trash_payload() {
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0);
-    f.host.advance_save(0);
+    f.host.advance_save();
+    f.host.advance_save();
     fs::write(f.graph.join("a.md"), b"unflushed-external").unwrap();
-    f.host.advance_save(0);
+    f.host.advance_save();
     crate::atomic_file::FAIL_FILE_SYNC.with(|flag| flag.set(true));
-    f.host.advance_save(0);
+    f.host.advance_save();
     assert_eq!(markers(&mut f), 1);
     reset_syncs();
     f.restart();
@@ -804,8 +804,8 @@ fn restart_after_marker_before_move_retires_the_missing_payload_marker() {
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
     assert_eq!(markers(&mut f), 1);
     relaunch(&mut f);
     assert_eq!(markers(&mut f), 0);
@@ -829,11 +829,11 @@ fn collision_after_launch_rewrites_no_draft_and_leaves_no_unused_marker() {
     f.restart();
     let drafts = f.host.fs.draft_files(true);
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
     let (_, payload) = f.host.job.as_ref().unwrap().marker.clone().unwrap();
     fs::write(f.trash.join(&payload), b"foreign").unwrap();
-    f.host.advance_save(0); // real EEXIST
+    f.host.advance_save(); // real EEXIST
     assert!(
         f.host.worker.is_none(),
         "collision installed a draft rewrite"
@@ -886,7 +886,7 @@ fn weak_trash_cycles_leave_zero_markers_and_bounded_work() {
                 crate::directory_durability::SYNC_ERROR
                     .with(|error| error.set(Some(io::ErrorKind::InvalidInput)));
             }
-            f.host.advance_save(0);
+            f.host.advance_save();
         }
         assert!(f.host.pages["a.md"].clean());
     };
@@ -924,7 +924,7 @@ fn unsyncable_trash_escapes_after_three_failures_and_never_blocks_discard() {
             .fs
             .faults
             .insert(Phase::TrashSync, [io::ErrorKind::Other].into());
-        f.host.advance_save(0);
+        f.host.advance_save();
         assert!(f.host.job.is_none());
         let trash = f.trash.clone();
         fs::set_permissions(&trash, fs::Permissions::from_mode(0o000)).unwrap();
@@ -985,7 +985,7 @@ fn recreation_never_renames_before_custody_completes() {
                 .fs
                 .faults
                 .insert(Phase::TrashSync, [io::ErrorKind::Other].into());
-            f.host.advance_save(0);
+            f.host.advance_save();
             assert!(f.host.pages["a.md"].risk);
             assert_eq!(f.host.observe("a.md"), Disposition::Applied);
             fs::create_dir(f.trash.join("unrelated-unreadable__a.md")).unwrap();
@@ -1025,12 +1025,12 @@ fn discard_has_no_trash_barrier_and_launch_completes_custody() {
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0);
-    f.host.advance_save(0);
+    f.host.advance_save();
+    f.host.advance_save();
     fs::write(f.graph.join("a.md"), b"unflushed R1 payload").unwrap();
-    f.host.advance_save(0);
+    f.host.advance_save();
     crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
-    f.host.advance_save(0);
+    f.host.advance_save();
     fs::write(f.graph.join("a.md"), b"externally recreated").unwrap();
     f.send(
         "a.md",
@@ -1075,7 +1075,7 @@ fn second_deletion_with_owed_custody_keeps_both_payloads() {
             .fs
             .faults
             .insert(Phase::TrashSync, [io::ErrorKind::Other].into());
-        f.host.advance_save(0);
+        f.host.advance_save();
         if restart_before {
             f.host
                 .fs
@@ -1592,7 +1592,7 @@ fn r2_retirement_errors_do_not_turn_into_history() {
     let mut p = super::progress::Progress::new(host, clock);
     for now in (0..=1000).step_by(100) {
         p.clock.0.set(now);
-        p.poll(0);
+        p.poll();
     }
     assert!(p.host.retire.is_empty());
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
@@ -1638,7 +1638,7 @@ fn draft_after_failed_save(f: &mut Fixture, key: &str) {
         .faults
         .insert(Phase::PageTemp, [io::ErrorKind::Other].into());
     assert_eq!(f.host.start_save(key), Disposition::Pending);
-    f.host.advance_save(0);
+    f.host.advance_save();
     assert!(f.host.job.is_none() && f.host.pages[key].risk);
     if f.host.begin_draft(key) == Disposition::Pending {
         f.drain();
@@ -1716,9 +1716,9 @@ fn an_old_spelling_draft_and_custody_marker_recover_through_the_entry_spelling()
     assert_eq!(f.host.delete("Foo.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("Foo.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
-    f.host.advance_save(0); // move
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
+    f.host.advance_save(); // move
     assert!(spelled(&f.graph, "foo.md").is_empty());
     assert_eq!(markers(&mut f), 1);
     relaunch_as(&mut f, &[("Foo.md", "foo.md")]);
@@ -1839,11 +1839,11 @@ fn a_real_alternate_extension_twin_fails_or_annotates_a_creating_save() {
     f.edit("c.md", "created");
     assert_eq!(f.host.start_save("c.md"), Disposition::Pending);
     while f.host.job.as_ref().unwrap().phase != SavePhase::Rename {
-        f.host.advance_save(0);
+        f.host.advance_save();
     }
     fs::write(f.graph.join("c.org"), b"* org").unwrap();
     while f.host.job.is_some() {
-        f.host.advance_save(0);
+        f.host.advance_save();
     }
     assert!(f.host.events.iter().any(|event| matches!(
         event,
@@ -2211,7 +2211,7 @@ fn probe_deletion_step_timing() {
         while let Some(job) = f.host.job.as_ref() {
             let label = format!("delete: {:?}", job.phase);
             let start = Instant::now();
-            f.host.advance_save(0);
+            f.host.advance_save();
             time(&label, start);
         }
         let start = Instant::now();

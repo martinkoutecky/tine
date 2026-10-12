@@ -26,7 +26,7 @@ fn poll(p: &mut Timed) -> Disposition {
         .and_then(|j| p.host.fs.epochs.get(&j.page))
         .copied()
         .unwrap_or(0);
-    p.poll(epoch)
+    p.poll_at(epoch)
 }
 fn pump(p: &mut Timed) {
     for _ in 0..96 {
@@ -1120,11 +1120,11 @@ fn moved_with_unfinished_custody(h: &mut Host<ModelFs>) -> String {
     drain(h);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
     for _ in 0..3 {
-        h.advance_save(0); // guard, marker, move
+        h.advance_save(); // guard, marker, move
     }
     assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::TrashSync);
     h.fs.inject(Phase::TrashSync, [Fault::Before]);
-    h.advance_save(0);
+    h.advance_save();
     assert!(h.job.is_none());
     let debt = &h.custody["a.md"];
     debt.markers.values().next().unwrap().clone()
@@ -1150,8 +1150,8 @@ fn r2_unknown_custody_is_not_relisted_under_a_running_deletion() {
     assert_eq!(h.delete("a.md"), Disposition::Pending);
     drain(&mut h);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
-    h.advance_save(0); // guard
-    h.advance_save(0); // marker
+    h.advance_save(); // guard
+    h.advance_save(); // marker
     assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::Rename);
     h.recover_custody();
     let custody = |k: &&String| k.starts_with("draft/trash-custody/");
@@ -1211,7 +1211,7 @@ fn r2_third_failed_retirement_is_sticky_until_retired() {
     h.fs.inject(Phase::CustodyRetire, [Fault::Before; 3]);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
     while h.job.is_some() {
-        h.advance_save(0);
+        h.advance_save();
     }
     assert!(h.custody.is_empty());
     let payload = h.retire.values().next().unwrap().payload.clone();
@@ -1743,7 +1743,7 @@ fn rename_cost_removal_copy_failure_keeps_the_sibling_through_progress() {
     assert_eq!(poll(&mut p), Disposition::Pending);
     assert!(matches!(
         p.host.worker.as_ref().unwrap().application,
-        Some(Application::Removal(_))
+        Some(Application::Removal)
     ));
     p.host.fs.inject(Phase::DraftTemp, [Fault::Before]);
     for n in 1..=30 {

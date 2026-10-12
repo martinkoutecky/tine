@@ -28,7 +28,7 @@ fn send(host: &mut Host<ProductionIo>, page: &str, kind: RequestKind) {
 
 fn pump(progress: &mut Progress<ProductionIo, ManualClock>, drafts: &Path, peak: &mut usize) {
     for _ in 0..100 {
-        let result = progress.poll(0);
+        let result = progress.poll();
         let files = fs::read_dir(drafts)
             .unwrap()
             .filter(|entry| {
@@ -156,7 +156,7 @@ fn measure_anonymized_draft_unit_cost() {
             .faults
             .insert(Phase::PageTemp, [std::io::ErrorKind::Other].into());
         assert_eq!(host.start_save(page), Disposition::Pending);
-        host.advance_save(0);
+        host.advance_save();
         assert!(host.pages[page].risk);
         reset_counts();
         assert_eq!(host.begin_draft(page), Disposition::Pending);

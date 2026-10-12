@@ -139,7 +139,7 @@ pub(super) fn draft(host: &mut Host<ModelFs>, key: &str) {
 pub(super) fn risk(host: &mut Host<ModelFs>, key: &str) {
     assert_eq!(host.start_save(key), Disposition::Pending);
     host.fs.inject(Phase::PageTemp, [Fault::Before]);
-    host.advance_save(0);
+    host.advance_save();
     assert!(host.pages[key].risk);
 }
 
@@ -150,7 +150,7 @@ pub(super) fn saved(host: &mut Host<ModelFs>, key: &str) {
             break;
         }
         let epoch = host.fs.epochs.get(key).copied().unwrap_or(0);
-        host.advance_save(epoch);
+        host.advance_save_at(epoch);
     }
     assert!(host.pages[key].clean());
 }
@@ -480,9 +480,9 @@ fn save_guard_mismatch_and_uncertain_never_report_clean() {
     open(&mut h, "a.md");
     edit(&mut h, "a.md", "mine");
     h.start_save("a.md");
-    h.advance_save(0);
+    h.advance_save();
     h.fs.external("a.md", text("external"), true);
-    h.advance_save(1);
+    h.advance_save_at(1);
     assert!(h.job.is_none());
     assert!(h.pages["a.md"].conflict && h.pages["a.md"].risk);
     let version = h.pages["a.md"].version;
@@ -496,11 +496,11 @@ fn save_guard_mismatch_and_uncertain_never_report_clean() {
         },
     );
     h.start_save("a.md");
-    h.advance_save(0);
-    h.advance_save(0);
-    h.advance_save(1);
+    h.advance_save();
+    h.advance_save();
+    h.advance_save_at(1);
     h.fs.inject(Phase::PageSync, [Fault::Before]);
-    h.advance_save(1);
+    h.advance_save_at(1);
     assert!(h.pages["a.md"].risk && h.pages["a.md"].typed);
     assert_eq!(h.pages["a.md"].base, Base::Known(text("external")));
     assert_eq!(h.fs.files["graph/a.md"].as_ref(), b"mine");
@@ -513,10 +513,10 @@ fn deletion_durably_copies_trash_before_source_removal_at_power_cut() {
     assert_eq!(h.delete("a.md"), Disposition::Pending);
     drain(&mut h);
     h.start_save("a.md");
-    h.advance_save(0); // guard
-    h.advance_save(0); // marker
-    h.advance_save(0); // move
-    h.advance_save(0); // custody
+    h.advance_save(); // guard
+    h.advance_save(); // marker
+    h.advance_save(); // move
+    h.advance_save(); // custody
     assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::DirectorySync);
     assert!(h.fs.stable.contains_key("graph/a.md"));
     assert!(h.fs.stable.keys().any(|k| k.starts_with("trash/a.md/")));
@@ -532,10 +532,10 @@ fn completed_trash_move_error_keeps_observed_removal_and_reports_uncertain() {
     h.delete("a.md");
     drain(&mut h);
     h.start_save("a.md");
-    h.advance_save(0); // guard
-    h.advance_save(0); // marker
+    h.advance_save(); // guard
+    h.advance_save(); // marker
     h.fs.inject(Phase::TrashMove, [Fault::After]);
-    h.advance_save(0);
+    h.advance_save();
     assert!(h.job.is_none());
     assert!(h.pages["a.md"].risk);
     assert!(!h.fs.files.contains_key("graph/a.md"));
@@ -1218,7 +1218,7 @@ fn v3_a_save_mismatch_back_to_the_old_observation_publishes_it() {
             break;
         }
         let epoch = h.fs.epochs.get("a.md").copied().unwrap_or(0);
-        h.advance_save(epoch);
+        h.advance_save_at(epoch);
     }
     assert!(h.pages["a.md"].conflict);
     assert_eq!(
@@ -1271,7 +1271,7 @@ fn rename_cost_removal_first_copy_failure_preserves_sibling_after_crash() {
             assert!(!h.op_waits("a.md"));
             assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Pending);
             let w = h.worker.as_ref().unwrap();
-            assert!(matches!(w.application, Some(Application::Removal(_))));
+            assert!(matches!(w.application, Some(Application::Removal)));
             assert_eq!(
                 drafts::decode(w.task.bytes.as_ref().unwrap()).unwrap()[0].page,
                 "b.md"

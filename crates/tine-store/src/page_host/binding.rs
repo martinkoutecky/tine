@@ -401,7 +401,6 @@ struct Retry {
 /// One driver step's results, in host order.
 #[derive(Default)]
 pub(super) struct Delivery {
-    pub events: Vec<Event>,
     /// Keys the host took on without an Open (launch-recovered drafts, an
     /// operation): their index moves to the consumer before anything is
     /// published (§5). (key, spelling, the bytes the host observed for it
@@ -419,8 +418,7 @@ pub(super) struct Delivery {
 
 impl Delivery {
     pub fn is_empty(&self) -> bool {
-        self.events.is_empty()
-            && self.mail.is_empty()
+        self.mail.is_empty()
             && self.publications.is_empty()
             && self.claimed.is_empty()
             && self.evicted.is_empty()
@@ -500,8 +498,8 @@ impl Book {
         }
     }
 
-    /// Take this step's results: events (drained once progress has read
-    /// them), handoffs routed to answers and publications, and every mail.
+    /// Take this step's results: its events (drained once progress has read
+    /// them) routed to answers and publications, and every mail.
     pub fn collect<F: HostIo, C: Clock>(&mut self, progress: &mut Progress<F, C>) -> Delivery {
         progress.host.held = Some(BTreeSet::new());
         let now = progress.clock.now_ms();
@@ -735,7 +733,6 @@ impl Book {
             work(Work::Book, 1);
             subscribed.contains(page)
         });
-        delivery.events = events;
         self.delivering |= !delivery.publications.is_empty();
         delivery
     }

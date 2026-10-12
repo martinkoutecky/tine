@@ -163,7 +163,7 @@ impl<F: HostIo, C: Clock> State<F, C> {
                 }
             }
         }
-        self.progress.poll(0)
+        self.progress.poll()
     }
 
     /// A busy page is observed after its job, worker step or reservation

@@ -391,7 +391,7 @@ fn due_saves_are_served_round_robin_from_the_last_started_page() {
         p.clock.0.set(now);
         for _ in 0..8 {
             let job = p.host.job.as_ref().map(|j| j.page.clone());
-            if p.poll(0) == Disposition::Disabled {
+            if p.poll() == Disposition::Disabled {
                 break;
             }
             if let (None, Some(job)) = (job, p.host.job.as_ref()) {

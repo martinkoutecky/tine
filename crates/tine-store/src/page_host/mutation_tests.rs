@@ -721,8 +721,8 @@ fn guard_conflict_never_rewinds_an_unrelated_newer_version() {
     let version = h.version;
     h.fs.external("a.md", text("external"), true);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
-    assert_eq!(h.advance_save(0), Disposition::Pending);
-    assert_eq!(h.advance_save(0), Disposition::Applied);
+    assert_eq!(h.advance_save(), Disposition::Pending);
+    assert_eq!(h.advance_save(), Disposition::Applied);
     assert!(h.pages["a.md"].conflict);
     assert_eq!(h.version, version);
     assert_eq!(h.load("c.md"), Disposition::Applied);
@@ -751,7 +751,7 @@ fn save_phase_errors_keep_the_observed_completion_classification() {
             if h.job.is_none() {
                 break;
             }
-            h.advance_save(0);
+            h.advance_save();
         }
         assert!(h.job.is_none());
         assert!(h.events.iter().any(
@@ -771,12 +771,12 @@ fn trash_collision_retries_with_a_fresh_name_without_removal() {
     assert_eq!(h.delete("a.md"), Disposition::Pending);
     drain(&mut h);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
-    assert_eq!(h.advance_save(0), Disposition::Pending); // check
-    assert_eq!(h.advance_save(0), Disposition::Pending); // marker
+    assert_eq!(h.advance_save(), Disposition::Pending); // check
+    assert_eq!(h.advance_save(), Disposition::Pending); // marker
     let (marker, payload) = h.job.as_ref().unwrap().marker.clone().unwrap();
     assert_eq!(custody_entries(&h), 1);
     h.fs.inject(Phase::TrashMove, [Fault::Collision]);
-    assert_eq!(h.advance_save(0), Disposition::Pending);
+    assert_eq!(h.advance_save(), Disposition::Pending);
     assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::Marker);
     assert!(
         h.custody.is_empty(),
@@ -790,7 +790,7 @@ fn trash_collision_retries_with_a_fresh_name_without_removal() {
         if h.job.is_none() {
             break;
         }
-        h.advance_save(0);
+        h.advance_save();
     }
     assert!(h.pages["a.md"].clean());
     assert!(custody_entries(&h) == 0);
@@ -822,7 +822,7 @@ fn a_persistent_trash_collision_fails_the_save_on_the_third() {
             if h.job.is_none() {
                 break;
             }
-            h.advance_save(0);
+            h.advance_save();
         }
         assert!(
             h.job.is_none(),
@@ -847,7 +847,7 @@ fn a_persistent_trash_collision_fails_the_save_on_the_third() {
         if h.job.is_none() {
             break;
         }
-        h.advance_save(0);
+        h.advance_save();
     }
     assert!(!h.fs.files.contains_key("graph/a.md"));
     assert_eq!(custody_entries(&h), 0);

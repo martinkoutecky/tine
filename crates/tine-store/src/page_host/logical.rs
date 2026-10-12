@@ -37,6 +37,10 @@ pub(super) struct TestKnobs {
     /// `delete_loaded`: the s2 model's `opDelete`, which refuses a page the
     /// host does not hold instead of loading it.
     pub(super) loaded_deletes: bool,
+    /// `advance_save_at`: the path's external-write epoch the model's
+    /// conformance promise reads from `Published` (a ghost; production has
+    /// none).
+    pub(super) epoch: u64,
 }
 
 impl<F: HostIo> Host<F> {

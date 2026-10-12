@@ -20,6 +20,8 @@ pub mod faults;
 mod io;
 mod logical;
 #[cfg(test)]
+mod model_entries;
+#[cfg(test)]
 mod model_fs;
 #[cfg(test)]
 mod native_cost;
@@ -259,6 +261,7 @@ enum Outcome {
 /// Events originate here, never from an oracle's expected successor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Event {
+    #[cfg(test)]
     Loaded {
         page: PageKey,
         version: u64,
@@ -267,14 +270,18 @@ enum Event {
         page: PageKey,
         answer: Answer,
     },
+    #[cfg(test)]
     Draft(Record),
+    #[cfg(test)]
     DraftRemoved(PageKey),
     Published {
         page: PageKey,
         bytes: Text,
         version: u64,
+        #[cfg(test)]
         epoch: u64,
     },
+    #[cfg(test)]
     Renamed {
         page: PageKey,
         bytes: Text,
@@ -286,14 +293,17 @@ enum Event {
         /// A failed step's I/O diagnosis, for the notice (Q-P2b-3).
         cause: Option<IoFailure>,
     },
+    #[cfg(test)]
     Removed {
         page: PageKey,
         bytes: Text,
     },
+    #[cfg(test)]
     DeleteDurable {
         page: PageKey,
         bytes: Text,
     },
+    #[cfg(test)]
     OperationRead {
         page: PageKey,
         base: Base,
@@ -310,8 +320,10 @@ enum Event {
         refresh: Option<PageKey>,
         recovered: bool,
     },
+    #[cfg(test)]
     Unreadable(String),
     /// A4 escape: a save goes ahead past this trash file's unfinished custody.
+    #[cfg(test)]
     CustodyError {
         page: PageKey,
         payload: String,
@@ -364,12 +376,14 @@ pub(crate) enum Refusal {
 #[cfg_attr(test, derive(Clone))]
 enum Application {
     Refresh(Record),
-    Removal(PageKey),
+    /// The worker's one page's drafts leave.
+    Removal,
     Operation {
         pages: BTreeMap<PageKey, Page>,
         records: Vec<Record>,
         reply: Reply,
         last_version: u64,
+        #[cfg(test)]
         reads: BTreeMap<PageKey, Base>,
         gates: Option<Gates>,
     },
@@ -757,6 +771,7 @@ impl<F: HostIo> Host<F> {
                 debt.markers.insert(name, marker.payload);
             } else {
                 let name = format!("trash-custody/{name}");
+                #[cfg(test)]
                 self.events.push(Event::Unreadable(name.clone()));
                 let _ = self.fs.quarantine(&name);
             }
@@ -853,15 +868,6 @@ impl<F: HostIo> Host<F> {
         Disposition::Applied
     }
 
-    #[cfg(test)]
-    fn abstract_queue(&self) -> Vec<Request> {
-        self.applying
-            .iter()
-            .chain(self.queue.iter())
-            .cloned()
-            .collect()
-    }
-
     fn answer(&mut self, request: &Request, key: &str, took: bool) {
         if request.generation != self.generation {
             return;
@@ -937,18 +943,6 @@ impl<F: HostIo> Host<F> {
         }
     }
 
-    #[cfg(test)]
-    fn load(&mut self, key: &str) -> Disposition {
-        if !self.alive || !self.keys.contains(key) || self.pages.contains_key(key) {
-            return Disposition::Disabled;
-        }
-        let keys = BTreeSet::from([key.into()]);
-        if self.busy(key) || self.allocator_busy() || self.lacks_locks(&keys) {
-            return Disposition::Waiting;
-        }
-        self.with_locks(&keys, |host| host.load_locked(key))
-    }
-
     fn load_locked(&mut self, key: &str) -> Disposition {
         if self.pages.contains_key(key) {
             return Disposition::Disabled;
@@ -958,6 +952,7 @@ impl<F: HostIo> Host<F> {
         };
         self.version = self.next_version();
         self.set_page(key, Some(Self::initial_page(bytes, self.version)));
+        #[cfg(test)]
         self.events.push(Event::Loaded {
             page: key.into(),
             version: self.version,
@@ -1089,7 +1084,6 @@ impl<F: HostIo> Host<F> {
                     vec![record],
                     Reply::Window(request.clone()),
                     vs,
-                    BTreeMap::new(),
                     None,
                 );
                 return Disposition::Pending;
@@ -1217,38 +1211,6 @@ impl<F: HostIo> Host<F> {
         Disposition::Applied
     }
 
-    #[cfg(test)]
-    fn release(&mut self, keys: &BTreeSet<PageKey>) -> Disposition {
-        if !keys.is_subset(&self.retained) {
-            return Disposition::Refused;
-        }
-        if self.allocator_busy() || self.lacks_locks(keys) {
-            return Disposition::Waiting;
-        }
-        // Reconcile even an undone transaction; failed reads retain custody.
-        let result = self.with_locks(keys, |host| {
-            let mut observed = BTreeMap::new();
-            for key in keys {
-                let Ok(bytes) = host.fs.read_page(key) else {
-                    return Disposition::Waiting;
-                };
-                observed.insert(key.clone(), bytes);
-            }
-            for (key, bytes) in observed {
-                if host.pages.contains_key(&key) {
-                    host.adopt_read(&key, bytes);
-                }
-            }
-            Disposition::Applied
-        });
-        if result == Disposition::Applied {
-            for key in keys {
-                self.retained.remove(key);
-            }
-        }
-        result
-    }
-
     fn switch_ready(&mut self, consumed_last_id: u64) -> Disposition {
         if !self.alive {
             return Disposition::Disabled;
@@ -1261,27 +1223,6 @@ impl<F: HostIo> Host<F> {
         }
         self.admission_open = false;
         self.switch_confirmation = Some(consumed_last_id);
-        Disposition::Applied
-    }
-
-    #[cfg(test)]
-    fn switch_request(&mut self) -> Disposition {
-        if self.worker.is_some() || !self.retained.is_empty() {
-            return Disposition::Waiting;
-        }
-        let keys = self.pages.keys().cloned().collect();
-        if self.lacks_locks(&keys) {
-            return Disposition::Waiting;
-        }
-        self.with_locks(&keys, |host| {
-            for key in &keys {
-                let mut page = host.pages[key].clone();
-                if !page.clean() {
-                    page.risk = true;
-                }
-                host.set_page(key, Some(page));
-            }
-        });
         Disposition::Applied
     }
 
@@ -1358,6 +1299,7 @@ impl<F: HostIo> Host<F> {
             return Disposition::Waiting;
         }
         for name in &scan.unreadable {
+            #[cfg(test)]
             self.events.push(Event::Unreadable(name.clone()));
             // One that fails stays in place and is never touched (§4): the
             // graph opens anyway, and `draft_status` names it.

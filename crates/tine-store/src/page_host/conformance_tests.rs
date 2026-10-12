@@ -66,7 +66,7 @@ fn draft_during_save_holds_publication_until_snapshot_applies() {
         ],
     );
     assert_eq!(d.host.begin_draft(&key(0)), Disposition::Pending);
-    assert_eq!(d.host.advance_save(0), Disposition::Waiting);
+    assert_eq!(d.host.advance_save(), Disposition::Waiting);
     d.compare("save waits for snapshot");
     let inc = d.host.incarnation;
     let version = d.host.version;

@@ -619,9 +619,18 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         }
     }
 
-    /// Advance one real phase. epoch is supplied by the watcher boundary,
-    /// exactly as for Host::advance_save; it is never inferred from a hash.
-    pub fn poll(&mut self, epoch: u64) -> Disposition {
+    /// `poll` with the model's ghost external-write epoch for a save it
+    /// advances (`Host::advance_save_at`).
+    #[cfg(test)]
+    pub(super) fn poll_at(&mut self, epoch: u64) -> Disposition {
+        self.host.test.epoch = epoch;
+        let result = self.poll();
+        self.host.test.epoch = 0;
+        result
+    }
+
+    /// Advance one real phase.
+    pub fn poll(&mut self) -> Disposition {
         self.reconcile();
         if !self.host.alive {
             return Disposition::Disabled;
@@ -666,7 +675,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             return result;
         }
         if self.host.job.is_some() {
-            let result = self.host.advance_save(epoch);
+            let result = self.host.advance_save();
             self.reconcile();
             return result;
         }

@@ -135,7 +135,7 @@ impl<F: HostIo> Host<F> {
                     before: durable.clone(),
                     retry_copy: task.bytes.is_some(),
                     task,
-                    application: Some(Application::Removal(key.into())),
+                    application: Some(Application::Removal),
                     remaining: tasks,
                     allocator: false,
                     records,
@@ -216,10 +216,18 @@ impl<F: HostIo> Host<F> {
         records: Vec<Record>,
         reply: Reply,
         last_version: u64,
-        reads: BTreeMap<PageKey, Base>,
         gates: Option<Gates>,
     ) {
         let keys: BTreeSet<PageKey> = pages.keys().cloned().collect();
+        // The model's ghost `opRead`: a caller's operation read each page's
+        // base at capture; a window move reads none.
+        #[cfg(test)]
+        let reads = match reply {
+            Reply::Caller(_) => (pages.iter())
+                .map(|(key, page)| (key.clone(), page.base.clone()))
+                .collect(),
+            Reply::Window(_) => BTreeMap::new(),
+        };
         // M4: the live logical drafts of this worker's pages only; a pending
         // install exposes nothing else (`logical_drafts`).
         let before = keys
@@ -244,6 +252,7 @@ impl<F: HostIo> Host<F> {
                 records: records.clone(),
                 reply,
                 last_version,
+                #[cfg(test)]
                 reads,
                 gates,
             }),
@@ -323,7 +332,7 @@ impl<F: HostIo> Host<F> {
         // owes its other pages (RENAME-COST L2).
         let removal = matches!(
             worker.application,
-            Some(Application::Removal(_) | Application::Retire)
+            Some(Application::Removal | Application::Retire)
         );
         if (removal || worker.task.bytes.is_none()) && !worker.remaining.is_empty() {
             let task = worker.remaining.pop_front().unwrap();
@@ -387,6 +396,7 @@ impl<F: HostIo> Host<F> {
         match application {
             Application::Refresh(record) if present => {
                 self.bench_draft_durable(&record);
+                #[cfg(test)]
                 self.events.push(Event::Draft(record.clone()));
                 worker.remaining.extend(
                     self.older_vehicles(&record.page, Some(record.wseq))
@@ -394,17 +404,20 @@ impl<F: HostIo> Host<F> {
                         .map(Vehicle::remove),
                 );
             }
-            Application::Removal(key) => self.events.push(Event::DraftRemoved(key)),
-            Application::Retire => {
+            #[cfg(test)]
+            Application::Removal | Application::Retire => {
                 for key in &worker.pages {
                     self.events.push(Event::DraftRemoved(key.clone()));
                 }
             }
+            #[cfg(not(test))]
+            Application::Removal | Application::Retire => {}
             Application::Operation {
                 pages,
                 records,
                 reply,
                 last_version,
+                #[cfg(test)]
                 reads,
                 gates,
             } => {
@@ -416,12 +429,14 @@ impl<F: HostIo> Host<F> {
                     for (key, page) in pages {
                         self.set_page(&key, Some(page));
                     }
+                    #[cfg(test)]
                     for (key, base) in reads {
                         self.events.push(Event::OperationRead { page: key, base });
                     }
                     for record in &records {
                         self.bench_draft_durable(record);
                     }
+                    #[cfg(test)]
                     self.events
                         .extend(records.iter().cloned().map(Event::Draft));
                     // L2 (RENAME-COST): an older operation vehicle naming a

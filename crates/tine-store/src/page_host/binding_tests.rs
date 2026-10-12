@@ -1471,7 +1471,7 @@ fn save_through(u: &mut Unit, page: &str, twin_at_rename: bool) -> Option<Bindin
         if twin_at_rename && job.phase == SavePhase::Rename {
             u.progress.host.fs.twins.insert(page.into(), "c.org".into());
         }
-        u.progress.host.advance_save(0);
+        u.progress.host.advance_save();
         notice = mailed(&u.collect(), page).or(notice);
     }
     notice
@@ -2372,7 +2372,7 @@ fn m4_b2_an_open_overtaken_by_a_reload_is_evicted_after_release() {
         "held again: not an orphan"
     );
     for _ in 0..8 {
-        u.progress.poll(0);
+        u.progress.poll();
         u.progress.host.held = None;
     }
     assert!(!u.progress.host.pages.contains_key("b.md"), "released");
