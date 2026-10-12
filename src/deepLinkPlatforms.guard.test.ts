@@ -26,6 +26,8 @@ describe("GH #181 five shipped platform URL boundary", () => {
     expect(native).toContain("deep_links::receive_url(app.handle(), url)");
     expect(native).toContain("deep_links::PendingLinks::default()");
     expect(read("src-tauri/src/platform.rs")).toContain("crate::deep_links::receive_url(&app, url)");
-    expect(read("src/App.tsx")).toContain("__TINE_LINK_LAUNCH__ || injected");
+    const startup = read("src-tauri/src/graph.rs").split("fn startup_graph_path")[1].split("fn capture_target")[0];
+    expect(startup).not.toContain("LaunchRequest::Link");
+    expect(read("src/App.tsx")).toContain("await loadGraphPath(graphPath)");
   });
 });

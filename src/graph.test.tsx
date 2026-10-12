@@ -47,7 +47,7 @@ async function loadHarness(
     prepareGraphFolder: vi.fn(async (_path: string): Promise<PreparedGraphFolder> => ({ status: "ready", location: "local" })),
     defaultGraphParent: vi.fn(async () => "/tmp"),
     suggestGraphName: vi.fn(async () => "notes"),
-    createGraph: vi.fn(async () => META.root),
+    createGraph: vi.fn(async (): Promise<string | { root: string; display_root: string }> => META.root),
     getPage: vi.fn(async () => existing),
     resolvePage: vi.fn(async () => ({ kind: "absent" as const, id: "journals/2026_07_10.md" })),
     listTemplates: vi.fn(async () => [
@@ -194,6 +194,37 @@ afterEach(() => {
   vi.resetModules();
 });
 
+it("opens an existing Windows WSL rootfs graph and warns on every open", async () => {
+  const harness = await loadHarness(null);
+  const access = { graph_root: META.root, external_assets_path: null, approved: true, wsl_rootfs: true };
+  harness.api.inspectGraphAccess.mockResolvedValue(access);
+  await harness.loadGraphPath(META.root);
+  await harness.loadGraphPath(META.root);
+  expect(harness.api.loadGraph).toHaveBeenCalledTimes(2);
+  const { toasts } = await import("./toasts");
+  const warnings = toasts().filter(toast => toast.message.includes("corrupt Linux files"));
+  expect(warnings).toHaveLength(2);
+  expect(warnings[0].message).toContain("\\\\wsl.localhost\\<distro>\\");
+});
+
+it("keeps canonical graph identity and an open workspace when reopening the current graph", async () => {
+  const harness = await loadHarness(null);
+  const root = "\\\\?\\C:\\notes";
+  const display_root = "C:\\notes";
+  harness.api.inspectGraphAccess.mockResolvedValue({ graph_root: root, external_assets_path: null, approved: true });
+  harness.api.loadGraph.mockResolvedValue({ kind: "loaded", meta: { ...META, root, display_root }, binding_generation: 1 });
+  await harness.loadGraphPath(root);
+  const { graphMeta } = await import("./graphSession");
+  expect(graphMeta()?.root).toBe(root);
+  expect(graphMeta()?.display_root).toBe(display_root);
+  expect(localStorage.getItem("tine.graphPath")).toBe(root);
+  let workspaceVisible = true;
+  harness.closeAllWorkspaceWindows.mockImplementation(() => { workspaceVisible = false; });
+  harness.api.loadGraph.mockResolvedValue({ kind: "already_current", meta: { ...META, root, display_root }, binding_generation: 1 });
+  await expect(harness.loadGraphPath(root)).resolves.toEqual({ kind: "already_current", root });
+  expect(workspaceVisible).toBe(true);
+});
+
 // Ported from master graph.test.tsx "mobile graph folder picker" (027b5ae15,
 // fa78c7b74): iOS opens and creates graphs only inside the app's own
 // On My iPhone / iCloud Drive containers, prepared natively first.
@@ -263,6 +294,19 @@ describe("mobile graph folder picker", () => {
 });
 
 describe("GH #621 graph creation messages", () => {
+  it("opens the canonical create reply while displaying its separate spelling", async () => {
+    const h = await loadHarness(null);
+    const root = "\\\\?\\C:\\notes";
+    const display_root = "C:\\notes";
+    h.api.createGraph.mockResolvedValue({ root, display_root });
+    h.api.loadGraph.mockResolvedValue({ kind: "loaded", meta: { ...META, root, display_root }, binding_generation: 1 });
+    await expect(h.createNewGraph()).resolves.toEqual({ kind: "loaded", root });
+    expect(h.api.loadGraph).toHaveBeenCalledWith(root);
+    const { toasts } = await import("./toasts");
+    expect(toasts().at(-1)?.message).toBe(`Created and opened the graph at ${display_root}.`);
+    expect(localStorage.getItem("tine.graphPath")).toBe(root);
+  });
+
   it("reports a newly loaded graph and opens its tour", async () => {
     const h = await loadHarness(null);
     await expect(h.createNewGraph()).resolves.toEqual({ kind: "loaded", root: META.root });

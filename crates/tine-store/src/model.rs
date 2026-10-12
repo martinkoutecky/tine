@@ -10054,6 +10054,9 @@ mod tests {
         fs::write(&path, "- old\n").unwrap();
         let store = crate::Store::open(&dir, Default::default()).unwrap().0;
         let _view = store.whole_graph().unwrap();
+        // Drive reconciliation here; the watcher must not consume the write
+        // before refresh can exercise the injected parser panic.
+        store.watch.stop_background_for_test();
         fs::write(&path, "- changed outside\n").unwrap();
         store
             .graph

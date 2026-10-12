@@ -34,7 +34,7 @@ export function DeepLinkGraphChoice() {
       <section ref={root} class="tine-link-choice" role="dialog" aria-modal="true" aria-label="Choose graph for Tine link">
         <h2>Choose graph for Tine link</h2>
         <p>This link matches more than one copy of a graph. Tine will remember your choice on this device.</p>
-        <div class="tine-link-roots"><For each={pending().candidates}>{(target) => <button type="button" onClick={() => pending().finish(target)}>{target.root}</button>}</For></div>
+        <div class="tine-link-roots"><For each={pending().candidates}>{(target) => <button type="button" onClick={() => pending().finish(target)}>{target.displayRoot || target.root}</button>}</For></div>
         <button type="button" onClick={() => pending().finish(null)}>Cancel</button>
       </section>
     </div>

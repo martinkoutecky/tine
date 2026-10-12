@@ -103,6 +103,14 @@ fn shared_answers_have_one_definition() {
                     .unwrap(),
             );
         }
+        if file.ends_with("graph-features/src/conflicts.rs") {
+            // The derived conflict queue moved into a child module. Keep the
+            // classifier and admission checks over the whole Concord module.
+            source.push_str(
+                &fs::read_to_string(root.join("crates/tine-graph-features/src/conflicts/queue.rs"))
+                    .unwrap(),
+            );
+        }
         if file.ends_with("store/src/watch.rs") {
             // The watcher is split into child modules (the restore baseline
             // walks asset sidecars in `watch/restore.rs`). Keep the file-kind

@@ -9,6 +9,7 @@ fn bytes(text: &str) -> Arc<[u8]> {
 
 fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
     HostOp {
+        creation_checks: Vec::new(),
         pages: pages
             .into_iter()
             .map(|(page, effect, expected)| (PageId::from(page), effect, expected))
@@ -216,6 +217,7 @@ fn a_write_through_a_symlinked_folder_is_refused() {
 fn a_move_applies_and_a_malformed_operation_is_refused() {
     let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/c.md", "- c\n")]);
     let moving = |source: Expected, moved: Option<(&str, &str)>| HostOp {
+        creation_checks: Vec::new(),
         moved: moved.map(|(dst, src)| (PageId::from(dst), PageId::from(src))),
         ..op(
             vec![

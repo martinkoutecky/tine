@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import { backend, type InstalledPluginRecord } from "../backend";
 import { setRaw, node as docNode } from "../document";
 import { pushToast } from "../toasts";
+import { rawText } from "../i18n";
 import { platformKind } from "../platform";
 import { latestOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import {
@@ -756,7 +757,7 @@ export class PluginManager {
     const manifest = authority.plugin.manifest;
     switch (effect.kind) {
       case "notice":
-        pushToast(effect.message, effect.level === "error" ? "error" : "info");
+        pushToast(rawText(effect.message), effect.level === "error" ? "error" : "info");
         return true;
       case "replace-block-text": {
         if (!manifest.capabilities.includes("graph.write.block")) return false;

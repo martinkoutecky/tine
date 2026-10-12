@@ -64,34 +64,66 @@ fn create_if_absent(
     bytes: &[u8],
 ) -> io::Result<bool> {
     let id = store.file_id(area, rel).map_err(store_error)?;
-    let discover = || Ok(crate::retained::pages(store, [&id]));
-    crate::retained::reserved(
-        host,
+    let transaction = || {
+        let mut tx = if area == Area::Pages {
+            store.transaction(Some(tine_store::EditKind::ReplacePage))
+        } else {
+            store.transaction(None)
+        };
+        tx.create(&id, Content::Bytes(bytes.to_vec()));
+        tx
+    };
+    let (Some(running), Some(page)) = (host, store.as_page(&id)) else {
+        // No host, or an asset: the transaction under the retained-writer route, as before P3.
+        let discover = || Ok(crate::retained::pages(store, [&id]));
+        return crate::retained::reserved(
+            host,
+            Input::Flush,
+            discover,
+            crate::retained::unsaved,
+            |_| {
+                let outcome = transaction().commit();
+                match &outcome {
+                    TxOutcome::Committed { .. } => Ok(true),
+                    TxOutcome::NotCommitted {
+                        why: Why::Conflict { .. } | Why::Refused(tine_store::Refusal::Twin { .. }),
+                        ..
+                    } => Ok(false),
+                    TxOutcome::NotCommitted {
+                        why: Why::Failed(error),
+                        ..
+                    } if error.kind == io::ErrorKind::IsADirectory => Ok(false),
+                    _ => tx_error(outcome).map(|_| true),
+                }
+            },
+        );
+    };
+    let mut created = false;
+    let plan = || match transaction().plan() {
+        Ok(op) => {
+            created = true;
+            Ok(Some(op))
+        }
+        Err(Why::Conflict { .. } | Why::Refused(tine_store::Refusal::Twin { .. })) => {
+            created = false;
+            Ok(None)
+        }
+        Err(Why::Failed(error)) if error.kind == io::ErrorKind::IsADirectory => {
+            created = false;
+            Ok(None)
+        }
+        Err(why) => Err(crate::why_error(why)),
+    };
+    crate::retained::operation(
+        running,
         Input::Flush,
-        discover,
+        std::slice::from_ref(&page),
+        "copying the Guide",
+        "a Guide page changed repeatedly during the copy",
         crate::retained::unsaved,
-        |_| {
-            let mut tx = if area == Area::Pages {
-                store.transaction(Some(tine_store::EditKind::ReplacePage))
-            } else {
-                store.transaction(None)
-            };
-            tx.create(&id, Content::Bytes(bytes.to_vec()));
-            let outcome = tx.commit();
-            match &outcome {
-                TxOutcome::Committed { .. } => Ok(true),
-                TxOutcome::NotCommitted {
-                    why: Why::Conflict { .. } | Why::Refused(tine_store::Refusal::Twin { .. }),
-                    ..
-                } => Ok(false),
-                TxOutcome::NotCommitted {
-                    why: Why::Failed(error),
-                    ..
-                } if error.kind == io::ErrorKind::IsADirectory => Ok(false),
-                _ => tx_error(outcome).map(|_| true),
-            }
-        },
-    )
+        plan,
+    )?;
+    Ok(created)
 }
 
 /// Copy every Guide page in template order and the bundled assets in manifest

@@ -1,0 +1,2 @@
+-locale-name = 简体中文
+-locale-matches = zh-CN, zh, zh-Hans, zh-Hans-CN, zh-SG, zh-Hans-SG

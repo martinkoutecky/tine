@@ -69,6 +69,7 @@ fn parsed_and_rendered_inputs_use_the_shared_cap() {
         "crates/tine-store/src/store.rs",
         "crates/tine-graph-features/src/print.rs",
         "crates/tine-graph-features/src/conflicts.rs",
+        "crates/tine-graph-features/src/conflicts/queue.rs",
         "crates/tine-graph-features/src/pdf.rs",
         "crates/tine-graph-features/src/pages.rs",
         "crates/tine-graph-features/src/config.rs",
