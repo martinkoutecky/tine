@@ -20,6 +20,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - iOS: a **Tine** share extension saves text, web pages, links and up to five images ("Saved to Tine"), and they land at the bottom of today's journal the next time you open Tine. Pages of the open graph appear in Spotlight search; hidden pages never do. The Shortcuts app and Siri offer **Add to Tine journal**, **Search Tine** and **Open page**, and the Home Screen icon has **Today's journal**, **Quick capture** and **Search** quick actions (REG-IOS-NATIVE-INTEGRATIONS).
 - Shared items are shaped like Logseq's mobile share on each platform, using Logseq's `:quick-capture-templates` from `config.edn`. On Android links become titled links, video links become `{{video}}` embeds and posts on X become `{{twitter}}` embeds; on iOS the shared text and link are kept as they are (REG-GH608-SHARE-SHAPE-OG).
 - `tine://today`, `tine://capture`, `tine://search?q=…` and `tine://page/<name>` open those places in the current graph. They only navigate and never write (REG-NATIVE-APP-ROUTES).
+- Keyboard block commands, assignable in Settings > Keyboard shortcuts and listed in the command palette, with no default key (Logseq binds none): **Copy block refs of the selected blocks** (GH #576), **Paste as link** (GH #448), **Duplicate block below (with children)** (GH #379), **Insert child block** (GH #634), **Collapse children (one level)** and **Expand children (one level)** (GH #525), and **Search for the selected text** (GH #633).
+- The Ctrl/Cmd+Shift+V "paste as plain text" key is now listed in the shortcut reference and the Guide (GH #513).
 
 ### Changed
 

@@ -252,6 +252,29 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn keyboard_block_commands_are_documented() {
+        // R2 B1 (GH #513, #576, #448, #379, #634, #525, #633): every command
+        // that ships without a default key must be findable in the Guide by
+        // the label the palette and Settings show.
+        let tips = include_str!("templates/tips.md");
+        for label in [
+            "Ctrl/Cmd+Shift+V",
+            "Paste as link",
+            "Duplicate block below (with children)",
+            "Insert child block",
+            "Collapse children (one level)",
+            "Expand children (one level)",
+            "Copy block refs of the selected blocks",
+            "Search for the selected text",
+        ] {
+            assert!(
+                tips.contains(label),
+                "Guide is missing keyboard command: {label}"
+            );
+        }
+    }
+
+    #[test]
     fn selection_menu_and_keyboard_calendar_are_documented() {
         let tips = include_str!("templates/tips.md");
         for action in [
