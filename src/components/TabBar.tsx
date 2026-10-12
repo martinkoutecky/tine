@@ -50,29 +50,28 @@ function tabBlockId(r: Route): string | undefined {
 }
 
 // Tab label: a zoomed-into block shows its (shortened) content; everything else
-// shows the page name (falling back to it when the block isn't loaded or empty).
-function tabTitle(r: Route): string {
+// shows the page name. A zoomed tab whose block is not loaded (a background tab
+// after a session restore, or an evicted page) must still differ from the plain tab
+// of the same page, so it reads "Page › …" until the block is known (GH #528).
+function zoomedLabel(r: Route, truncate: boolean): string {
   if (r.kind === "page" && r.block) {
     const id = tabBlockId(r);
     const n = id ? docNode(id) : undefined;
     if (n) {
-      const s = blockSummary(n.raw, formatForBlock(id!));
+      const s = blockSummary(n.raw, formatForBlock(id!), truncate);
       if (s) return s;
     }
+    return `${routeTitle(r)} › …`;
   }
   return routeTitle(r);
 }
 
-function tabFullTitle(r: Route): string {
-  if (r.kind === "page" && r.block) {
-    const id = tabBlockId(r);
-    const n = id ? docNode(id) : undefined;
-    if (n) {
-      const summary = blockSummary(n.raw, formatForBlock(id), false);
-      if (summary) return summary;
-    }
-  }
-  return routeTitle(r);
+export function tabTitle(r: Route): string {
+  return zoomedLabel(r, true);
+}
+
+export function tabFullTitle(r: Route): string {
+  return zoomedLabel(r, false);
 }
 
 type SplitSide = "left" | "right" | "top" | "bottom";
@@ -208,7 +207,17 @@ export function tabDropTargetAt(
     return { kind: "seam", path, previewPaneId: preview.paneId, side: preview.side };
   }
 
-  if (el.closest(".tab-bar")) return null;
+  // GH #527: anywhere else in a tab bar (the empty space after the last tab, the
+  // overflow button) drops the tab LAST in that bar's pane. The visual cue is the
+  // "after" mark on the last tab.
+  const bar = el.closest(".tab-bar") as HTMLElement | null;
+  if (bar) {
+    const paneId = stripPaneId(bar);
+    const tabs = Array.from(bar.querySelectorAll<HTMLElement>(".tab[data-tab-id]"));
+    const last = tabs[tabs.length - 1]?.dataset.tabId;
+    if (!paneId || !last) return null;
+    return { kind: "tab", paneId, tabId: last, index: tabs.length, before: false };
+  }
   const pane = el.closest("[data-pane-id]") as HTMLElement | null;
   const paneId = pane?.dataset.paneId;
   if (!pane || !paneId || paneId === "pdf") return null;
