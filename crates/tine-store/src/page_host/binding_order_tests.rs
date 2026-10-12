@@ -45,7 +45,7 @@ fn replanned(
             &referrers,
             &map,
             &view,
-            &|_, _, _| None,
+            Arc::new(|_: &PageId, _: &[u8], _| None),
         ) {
             Err(RenameRefusal::Refused) => continue,
             done => return done,
@@ -58,15 +58,18 @@ fn clear_faults(live: &Live) {
     live.host
         .driver
         .shared
-        .with_state(|state| state.progress.host.fs.faults.clear());
+        .with_state_for_tests(|state| state.progress.host.fs.faults.clear());
 }
 
 /// (running orders, caller slots).
+/// Read through the driver's queue, after every notice sent before it (a
+/// slot's or a reservation's release).
 fn census(host: &PageHost) -> (usize, usize) {
-    host.driver.shared.with_state(|state| {
+    let read = host.driver.shared.read(|state| {
         let order = &state.progress.host.order;
         (order.view().count(), order.slots())
-    })
+    });
+    read.unwrap()
 }
 
 /// A writer parked in the flush pause, undone on drop: faults cleared, the
@@ -82,9 +85,9 @@ struct Unpark<'a, H> {
 
 impl<H> Drop for Unpark<'_, H> {
     fn drop(&mut self) {
-        if let Ok(mut state) = self.live.host.driver.shared.state.lock() {
-            state.progress.host.fs.faults.clear();
-        }
+        let mut state = self.live.host.driver.shared.state_for_tests();
+        state.progress.host.fs.faults.clear();
+        drop(state);
         let (state, resumed) = &*self.pause;
         state.lock().unwrap_or_else(|poison| poison.into_inner()).1 = true;
         resumed.notify_all();
@@ -214,7 +217,7 @@ fn an_operation_over_a_running_order_is_busy_until_the_order_ends() {
     let id = live.submit(&key, "- typed\n", 0, None).unwrap();
     live.answer(&key, id);
     until("the referrer conflicts", || {
-        live.host.driver.shared.with_state(|state| {
+        live.host.driver.shared.with_state_for_tests(|state| {
             state
                 .progress
                 .host
@@ -227,10 +230,9 @@ fn an_operation_over_a_running_order_is_busy_until_the_order_ends() {
     until("the destination publishes", || live.root.join(NEW).exists());
     // Witnessed: published and released (no window holds it), or clean.
     until("the destination is witnessed", || {
-        live.host
-            .driver
-            .shared
-            .with_state(|state| state.progress.host.pages.get(NEW).is_none_or(|p| p.clean()))
+        live.host.driver.shared.with_state_for_tests(|state| {
+            state.progress.host.pages.get(NEW).is_none_or(|p| p.clean())
+        })
     });
     assert_eq!(
         live.host
@@ -280,7 +282,7 @@ fn a_deletion_wait_ends_uncertain_when_the_session_changes() {
             live.host
                 .driver
                 .shared
-                .with_state(|state| state.progress.host.order.slots() == 1)
+                .with_state_for_tests(|state| state.progress.host.order.slots() == 1)
         });
         live.host.window_reloaded();
         caller.join().unwrap()
@@ -322,7 +324,7 @@ fn a_caller_on_a_poisoned_host_hears_uncertain_and_leaves_cleanly() {
         let poisoner = std::thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(20);
             while Instant::now() < deadline {
-                let state = shared.state.lock().unwrap();
+                let state = shared.state_for_tests();
                 if state.progress.host.order.slots() == 1 {
                     panic!("R2 test: poison the host state once the deletion is admitted");
                 }
@@ -402,7 +404,7 @@ fn a_retained_writer_over_a_running_order_waits_until_it_completes() {
     clear_faults(&live);
     until("the destination is witnessed", || {
         live.root.join(NEW).exists()
-            && live.host.driver.shared.with_state(|state| {
+            && live.host.driver.shared.with_state_for_tests(|state| {
                 state.progress.host.pages.get(NEW).is_none_or(|p| p.clean())
                     && state
                         .progress
@@ -504,7 +506,7 @@ fn a_retained_writer_over_an_unapplied_rename_is_told_busy_after_the_bound() {
         live.host
             .driver
             .shared
-            .with_state(|state| state.progress.host.worker.is_some())
+            .with_state_for_tests(|state| state.progress.host.worker.is_some())
     };
     std::thread::scope(|scope| {
         let renamed = scope.spawn(|| rename(&live.host, &live.store));
@@ -532,7 +534,7 @@ fn a_retained_writer_over_an_unapplied_rename_is_told_busy_after_the_bound() {
             "M6: a writer over an admitted rename's pages is refused Busy within its bound"
         );
         assert!(started.elapsed() >= OPERATION_WAIT);
-        live.host.driver.shared.with_state(|state| {
+        live.host.driver.shared.with_state_for_tests(|state| {
             assert!(
                 state.progress.host.retained.is_empty(),
                 "nothing is reserved"
@@ -571,7 +573,7 @@ fn the_writer_bound_covers_full_and_references_only_renames_not_a_deletion() {
         let live = Live::new(pages);
         live.faults(Phase::DraftSync, 10_000);
         let flag = || {
-            live.host.driver.shared.with_state(|state| {
+            live.host.driver.shared.with_state_for_tests(|state| {
                 state
                     .progress
                     .host
@@ -626,7 +628,7 @@ fn a_flush_handed_to_a_rename_is_told_busy_after_the_bound() {
         live.host
             .driver
             .shared
-            .with_state(|state| state.progress.host.worker.is_some())
+            .with_state_for_tests(|state| state.progress.host.worker.is_some())
     };
     std::thread::scope(|scope| {
         let _unpark = Unpark {
@@ -647,7 +649,7 @@ fn a_flush_handed_to_a_rename_is_told_busy_after_the_bound() {
         clear_faults(&live);
         live.until_disk(OLD, "- edited\n");
         until("the edit is saved", || {
-            live.host.driver.shared.with_state(|state| {
+            live.host.driver.shared.with_state_for_tests(|state| {
                 matches!(state.progress.host.logical(&key), Logical::Settled(page) if page.clean())
             })
         });
@@ -667,7 +669,7 @@ fn a_flush_handed_to_a_rename_is_told_busy_after_the_bound() {
             "N1: a flush over an admitted rename's page is refused Busy within the bound"
         );
         assert!(started.elapsed() >= OPERATION_WAIT);
-        live.host.driver.shared.with_state(|state| {
+        live.host.driver.shared.with_state_for_tests(|state| {
             assert!(
                 state.progress.host.retained.is_empty(),
                 "nothing is reserved"
@@ -710,7 +712,7 @@ fn a_flush_over_a_mixed_set_is_told_busy_when_a_rename_holds_its_clean_page() {
         live.host
             .driver
             .shared
-            .with_state(|state| state.progress.host.worker.is_some())
+            .with_state_for_tests(|state| state.progress.host.worker.is_some())
     };
     std::thread::scope(|scope| {
         let unpark = Unpark {
@@ -738,7 +740,7 @@ fn a_flush_over_a_mixed_set_is_told_busy_when_a_rename_holds_its_clean_page() {
             .host
             .driver
             .shared
-            .with_state(|state| state.progress.host.retained.is_empty());
+            .with_state_for_tests(|state| state.progress.host.retained.is_empty());
         drop(unpark);
         assert_eq!(
             outcome,
@@ -761,7 +763,7 @@ fn a_writer_entering_a_poisoned_host_is_told_busy() {
     let poisoned = graph();
     let shared = Arc::clone(&poisoned.host.driver.shared);
     let poisoner = std::thread::spawn(move || {
-        let _state = shared.state.lock().unwrap();
+        let _state = shared.state_for_tests();
         panic!("N1 test: poison the host state");
     });
     assert!(poisoner.join().is_err());
@@ -795,7 +797,7 @@ fn a_writer_entering_an_ended_driver_is_told_busy() {
         Some(ReserveRefusal::Busy),
         "an ended driver admits no writer"
     );
-    ended.host.driver.shared.with_state(|state| {
+    ended.host.driver.shared.with_state_for_tests(|state| {
         assert!(
             state.progress.host.retained.is_empty(),
             "nothing is reserved"
@@ -818,7 +820,7 @@ fn a_host_down_after_the_fence_refuses_busy_and_releases_the_pages() {
                     live.host
                         .driver
                         .shared
-                        .with_state(|state| state.progress.host.stop());
+                        .with_state_for_tests(|state| state.progress.host.stop());
                 }
                 vec![PageId::from(OLD)]
             },
@@ -831,7 +833,7 @@ fn a_host_down_after_the_fence_refuses_busy_and_releases_the_pages() {
         Some(ReserveRefusal::Busy),
         "a down host admits no writer"
     );
-    live.host.driver.shared.with_state(|state| {
+    live.host.driver.shared.with_state_for_tests(|state| {
         assert!(
             state.progress.host.retained.is_empty(),
             "the fenced pages are released"
@@ -873,26 +875,28 @@ fn page_host_methods() -> BTreeMap<String, String> {
     methods
 }
 
-/// The forms the reserve path must not use, and why.
+/// The forms the reserve path must not use, and why. No caller thread can
+/// lock the host state (it is private to `driver.rs`); what is left to
+/// police is how a writer treats an unanswered request and where it waits.
 const UNCHECKED: &[(&str, &str)] = &[
     (
         "unwrap ()",
-        "a lock or result unwrapped: a poisoned host panics the writer",
+        "a request's answer unwrapped: a driver that ended panics the writer",
     ),
     (
         "expect (",
-        "a lock or result expected: a poisoned host panics the writer",
+        "a request's answer expected: a driver that ended panics the writer",
     ),
-    (
-        ". with_state (",
-        "with_state panics on a poisoned host; use try_with_state",
-    ),
-    (". locked_step (", "locked_step locks unchecked"),
+    (". locked_wait (", "a path-lock wait outside `bounded`"),
+    (". locked_step (", "a path-lock wait outside `bounded`"),
     (
         ". wait (",
-        "a bare condition wait: no deadline, no ended or poison check",
+        "a host wait outside `bounded`: no writer deadline, no down check",
     ),
 ];
+
+/// The one function on the reserve path that waits on the host.
+const SANCTIONED_WAIT: &str = "bounded";
 
 /// Every function `reserve` reaches through `self.` calls, and each
 /// unchecked form one of them uses.
@@ -914,7 +918,8 @@ fn reserve_path_violations(methods: &BTreeMap<String, String>) -> (BTreeSet<Stri
     let mut violations = Vec::new();
     for name in &path {
         for (form, why) in UNCHECKED {
-            if methods[name].contains(form) {
+            let sanctioned = name == SANCTIONED_WAIT && *form == ". wait (";
+            if !sanctioned && methods[name].contains(form) {
                 violations.push(format!("{name} uses `{form}`: {why}"));
             }
         }
@@ -922,9 +927,10 @@ fn reserve_path_violations(methods: &BTreeMap<String, String>) -> (BTreeSet<Stri
     (path, violations)
 }
 
-/// REVIEW-3b-P2b-2 N1, shape: every lock and wait on a retained writer's
-/// reservation path is checked and goes through `bounded`, which carries the
-/// writer's deadline. Exemplar: `binding_retained.rs` `PageHost::flush`.
+/// REVIEW-3b-P2b-2 N1, shape: every wait on a retained writer's
+/// reservation path goes through `bounded`, which carries the writer's
+/// deadline, and no unanswered request panics the writer. Exemplar:
+/// `binding_retained.rs` `PageHost::flush`.
 /// Scope: it catches honest mistakes written in the house style, not
 /// adversarial spellings. Known limit (REVIEW-3b-P2b-3 N1): it follows only
 /// `self.method(..)` calls among the binding files' `PageHost` methods, so a
@@ -949,17 +955,24 @@ fn the_reserve_path_has_no_unchecked_lock_or_bare_wait() {
     }
     assert!(
         violations.is_empty(),
-        "M6/N1: the reserve path waits only through `bounded` (checked locks, the writer's \
-         deadline, ended/down/poison refuse Busy); exemplar binding_retained.rs flush:\n{}",
+        "M6/N1: the reserve path waits only through `bounded` (the writer's deadline; \
+         ended/down refuse Busy); exemplar binding_retained.rs flush:\n{}",
         violations.join("\n")
     );
     // The guard's own necessity: each unchecked form is caught.
     let mutants = [
         (
             "flush",
-            "{ let _ = self . driver . shared . state . lock () . unwrap () ; }",
+            "{ let _ = self . driver . shared . read (| s | s . book . session) . unwrap () ; }",
         ),
-        ("bounded", "{ shared . wait (state , pause) }"),
+        (
+            "flush",
+            "{ self . driver . shared . wait (Deadline :: Never , step) }",
+        ),
+        (
+            "bounded",
+            "{ self . driver . shared . locked_wait (deadline , step) }",
+        ),
         ("reserve", "{ self . identify (page) }"),
         ("register_all", "{ self . register (key , spelling) }"),
     ];

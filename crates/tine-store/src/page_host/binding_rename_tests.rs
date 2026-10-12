@@ -19,10 +19,14 @@ fn rename(
 ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
     for _ in 0..20 {
         let view = live.store.whole_graph().unwrap();
-        match live
-            .host
-            .rename(source, target, referrers, map, &view, &|_, _, _| None)
-        {
+        match live.host.rename(
+            source,
+            target,
+            referrers,
+            map,
+            &view,
+            Arc::new(|_: &PageId, _: &[u8], _| None),
+        ) {
             Err(RenameRefusal::Refused) => continue,
             done => return done,
         }
@@ -359,7 +363,7 @@ fn rename_and_reserve_cost_is_independent_of_registered_keys() {
                 &[PageId::from("pages/r.md")],
                 &map("Old", "New"),
                 &view,
-                &|_, _, _| None,
+                Arc::new(|_: &PageId, _: &[u8], _| None),
             )
             .unwrap();
         let lookups = super::super::production::SPELLING_LOOKUPS.with(|n| n.get());
@@ -632,7 +636,7 @@ fn a_rename_refusal_names_a_fresh_key_referrer_by_its_spelling() {
 
 /// The host page `key` as the driver holds it now.
 fn held_page(live: &Live, key: &str) -> Option<Page> {
-    let state = live.host.driver.shared.state.lock().unwrap();
+    let state = live.host.driver.shared.state_for_tests();
     state.progress.host.pages.get(key).cloned()
 }
 
@@ -762,7 +766,7 @@ fn a_rename_planned_before_a_config_change_is_refused_unwritten() {
         &[PageId::from("pages/r.md")],
         &map("Old", "New"),
         &view,
-        &|_, _, _| None,
+        Arc::new(|_: &PageId, _: &[u8], _| None),
     );
     assert_eq!(renamed, Err(RenameRefusal::Refused));
     assert_eq!(live.disk("pages/Old.md"), "- old\n");
@@ -804,7 +808,7 @@ fn a_long_rename_that_keeps_publishing_is_waited_for() {
         .collect();
     // Four page saves (the destination, three referrers), each a third of
     // the bound: the whole outlasts it, no gap between saves comes near it.
-    live.host.driver.shared.with_state(|state| {
+    live.host.driver.shared.with_state_for_tests(|state| {
         state
             .progress
             .host

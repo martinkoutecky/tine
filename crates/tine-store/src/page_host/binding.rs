@@ -3,7 +3,7 @@
 //! comparison source and admits it, and the page-mail bridge. The app
 //! starts one at every graph-window binding (`load_graph_for_label`); it is
 //! the only writer of a window's page edits.
-use super::driver::{Driver, Owner, Sink, SystemClock};
+use super::driver::{Deadline, Driver, Owner, Sink, State, SystemClock, Unanswered};
 use super::production::ProductionIo;
 use super::progress::{backoff, Clock, Notice, Progress, Stopping};
 use super::*;
@@ -872,27 +872,63 @@ impl Stopped {
 /// holds: host versions start at 1, so it is always stale.
 const STALE: u64 = 0;
 
+/// A request to a driver that ended: nothing answers (a host that panicked).
+const ENDED: &str = "page host driver ended";
+
+/// Admit `request` under `session`'s window generation; on admission
+/// its handoffs wait for its answer, and an Open's key is the
+/// consumer's (§5) in the same step, so no collection can evict it in
+/// between. A session that is not current is not admitted.
+fn admit(
+    state: &mut State<ProductionIo, SystemClock>,
+    session: u64,
+    mut request: Request,
+    handoffs: Vec<(PageKey, Handoff)>,
+) -> Result<(), PageRefusal> {
+    if session != state.book.session {
+        return Err(PageRefusal::NotAdmitted);
+    }
+    request.generation = state.progress.host.generation;
+    let id = request.id;
+    let open = (request.kind == RequestKind::Open).then(|| request.page.clone());
+    match state.progress.with_host(|host| host.admit(request)) {
+        Disposition::Applied => {
+            for (page, handoff) in handoffs {
+                state.book.pending.insert((page, id), handoff);
+            }
+            state.book.own(open, &state.progress.host);
+            Ok(())
+        }
+        _ => Err(PageRefusal::NotAdmitted),
+    }
+}
+
 impl PageHost {
-    /// Plan, lock, revalidate on the command thread (§1), then wake the
-    /// driver. None once the driver is stopping.
-    fn locked<R>(&self, mut step: impl FnMut(&mut Host<ProductionIo>) -> R) -> Option<R> {
-        self.driver
-            .shared
-            .locked_step(|state| state.progress.with_host(&mut step))
+    /// Plan, lock, revalidate on the driver (§1), waiting for its answer
+    /// as long as it runs. None once it is stopping or ended.
+    fn locked<R: Send + 'static>(
+        &self,
+        mut step: impl FnMut(&mut Host<ProductionIo>) -> R + Send + 'static,
+    ) -> Option<R> {
+        let shared = &self.driver.shared;
+        let step =
+            move |state: &mut State<ProductionIo, SystemClock>| state.progress.with_host(&mut step);
+        shared.locked_step(Deadline::Never, step).ok()
     }
 
     /// The session commands must carry now (tests; the window learns it
     /// from `window_reloaded`).
     #[cfg(test)]
     pub(crate) fn session(&self) -> u64 {
-        self.driver.shared.state.lock().unwrap().book.session
+        let shared = &self.driver.shared;
+        shared.read(|state| state.book.session).expect(ENDED)
     }
 
     /// A window (re)load (`window_crash`): unsent input is lost, admitted
     /// requests keep their custody, and the window gets a fresh session and
     /// the first request id the host can admit (R8).
     pub fn window_reloaded(&self) -> Reloaded {
-        self.driver.shared.with_state(|state| {
+        let reloaded = self.driver.shared.call(|state| {
             let next_id = state.progress.with_host(|host| {
                 host.window_crash();
                 host.last_admitted.saturating_add(1)
@@ -903,7 +939,8 @@ impl PageHost {
                 session: state.book.session,
                 next_id,
             }
-        })
+        });
+        reloaded.expect(ENDED)
     }
 
     fn register(&self, key: &str, spelling: &PageId) {
@@ -911,34 +948,18 @@ impl PageHost {
             .expect("page host state poisoned");
     }
 
-    /// Admit `request` under `session`'s window generation; on admission
-    /// its handoffs wait for its answer, and an Open's key is the
-    /// consumer's (§5) in the same step, so no collection can evict it in
-    /// between. A session that is not current is not admitted.
+    /// [`admit`] on the driver; a host that ended admits nothing.
     fn admit(
         &self,
         session: u64,
-        mut request: Request,
+        request: Request,
         handoffs: Vec<(PageKey, Handoff)>,
     ) -> Result<(), PageRefusal> {
-        self.driver.shared.with_state(|state| {
-            if session != state.book.session {
-                return Err(PageRefusal::NotAdmitted);
-            }
-            request.generation = state.progress.host.generation;
-            let id = request.id;
-            let open = (request.kind == RequestKind::Open).then(|| request.page.clone());
-            match state.progress.with_host(|host| host.admit(request)) {
-                Disposition::Applied => {
-                    for (page, handoff) in handoffs {
-                        state.book.pending.insert((page, id), handoff);
-                    }
-                    state.book.own(open, &state.progress.host);
-                    Ok(())
-                }
-                _ => Err(PageRefusal::NotAdmitted),
-            }
-        })
+        let admit = move |state: &mut State<ProductionIo, SystemClock>| {
+            admit(state, session, request, handoffs)
+        };
+        let admitted = self.driver.shared.call(admit);
+        admitted.unwrap_or(Err(PageRefusal::NotAdmitted))
     }
 
     /// `page_open` (§2, F4): every editable page, including one with no file
@@ -957,10 +978,9 @@ impl PageHost {
         page: &PageId,
         name: &str,
     ) -> Result<Opened, PageRefusal> {
-        let store = &*self.store;
         let (key, spelling, held, baseline_entry) = self.identify(page);
         if !held {
-            store
+            self.store
                 .transaction(None)
                 .page_open_checks(&spelling.file(), name)?;
         }
@@ -971,18 +991,21 @@ impl PageHost {
             page: key.clone(),
             kind: RequestKind::Open,
         };
-        let _writer = store.writer.lock().unwrap();
-        store.watch.hold_current(key.clone());
-        let admitted = self.admit(session, request, vec![]);
-        if admitted.is_err()
-            && !self
-                .driver
-                .shared
-                .with_state(|s| s.book.owned().contains(&key))
-        {
-            store.watch.release_hold(&key);
-        }
-        store.publish_retired();
+        // Under the writer, which the driver takes first (lock order).
+        let (held, store) = (key.clone(), self.store.clone());
+        let admitted = self
+            .driver
+            .shared
+            .call_writer(&self.store.writer, move |state| {
+                store.watch.hold_current(held.clone());
+                let admitted = admit(state, session, request, vec![]);
+                if admitted.is_err() && !state.book.owned().contains(&held) {
+                    store.watch.release_hold(&held);
+                }
+                store.publish_retired();
+                admitted
+            });
+        let admitted = admitted.unwrap_or(Err(PageRefusal::NotAdmitted));
         admitted.map(|()| Opened {
             key,
             baseline_entry,
@@ -1006,27 +1029,31 @@ impl PageHost {
         version: u64,
         resolve: Option<&DiskToken>,
     ) -> (String, Option<Text>, Option<Text>, u64) {
-        let state = self.driver.shared.state.lock().unwrap();
-        let host = &state.progress.host;
-        let spelling = if host.keys.contains(key) {
-            host.fs.spelling(key)
-        } else {
-            key.into()
-        };
-        let page = host.pages.get(key);
-        match (resolve, page) {
-            (Some(token), Some(page)) => match &page.obs {
-                Some(obs) if DiskToken::of(obs) == *token => {
-                    (spelling, Some(obs.clone()), Some(obs.clone()), version)
+        let (key, resolve) = (key.to_owned(), resolve.cloned());
+        let unknown = (key.clone(), None, None, STALE);
+        let read = move |state: &State<ProductionIo, SystemClock>| {
+            let host = &state.progress.host;
+            let spelling = if host.keys.contains(&key) {
+                host.fs.spelling(&key)
+            } else {
+                key.clone()
+            };
+            match (resolve.as_ref(), host.pages.get(&key)) {
+                (Some(token), Some(page)) => match &page.obs {
+                    Some(obs) if DiskToken::of(obs) == *token => {
+                        (spelling, Some(obs.clone()), Some(obs.clone()), version)
+                    }
+                    _ => (spelling, None, None, STALE),
+                },
+                (Some(_), None) => (spelling, None, None, STALE),
+                (None, Some(page)) if page.version == version => {
+                    (spelling, Some(page.buf.clone()), None, version)
                 }
-                _ => (spelling, None, None, STALE),
-            },
-            (Some(_), None) => (spelling, None, None, STALE),
-            (None, Some(page)) if page.version == version => {
-                (spelling, Some(page.buf.clone()), None, version)
+                (None, _) => (spelling, None, None, version),
             }
-            (None, _) => (spelling, None, None, version),
-        }
+        };
+        // A host that ended admits nothing: the request is stale.
+        self.driver.shared.read(read).unwrap_or(unknown)
     }
 
     /// The per-submit checks and serialization (§3.2), before admission.
@@ -1164,12 +1191,13 @@ impl PageHost {
         }
         self.register(&key, &spelling);
         let deadline = std::time::Instant::now() + retained::OPERATION_WAIT;
-        let deleted = self.driver.shared.locked_step(|state| {
+        let (shared, checked) = (Arc::downgrade(&self.driver.shared), checked.to_vec());
+        let delete = move |state: &mut State<ProductionIo, SystemClock>| {
             if state.book.session != session {
                 return (Disposition::Refused, None);
             }
             let (disposition, reply) = state.progress.with_host(|host| {
-                let disposition = host.delete_checked(&key, checked);
+                let disposition = host.delete_checked(&key, &checked);
                 let pending = disposition == Disposition::Pending;
                 (
                     disposition,
@@ -1180,11 +1208,12 @@ impl PageHost {
             if disposition == Disposition::Pending {
                 state.book.took([key.clone()], EditKind::DeletePage);
             }
-            let slot = reply.map(|id| retained::ReplySlot::new(&self.driver.shared, id));
+            let slot = reply.map(|id| retained::ReplySlot::new(shared.clone(), id));
             (disposition, slot)
-        });
+        };
+        let deleted = (self.driver.shared).locked_step(Deadline::At(deadline), delete);
         match deleted {
-            Some((Disposition::Pending, Some(slot))) => {
+            Ok((Disposition::Pending, Some(slot))) => {
                 match self.settle(&slot, Some(session), deadline) {
                     retained::Settled::Applied => PageOperation::Applied,
                     retained::Settled::DraftFailed => PageOperation::Refused,
@@ -1193,7 +1222,9 @@ impl PageHost {
                     retained::Settled::Uncertain => PageOperation::Uncertain,
                 }
             }
-            Some((Disposition::Waiting, _)) => PageOperation::Waiting,
+            // Not admitted in time: the page stayed busy (a path lock held).
+            Ok((Disposition::Waiting, _)) | Err(Unanswered::Withdrawn) => PageOperation::Waiting,
+            Err(Unanswered::Late) => PageOperation::Uncertain,
             _ => PageOperation::Refused,
         }
     }

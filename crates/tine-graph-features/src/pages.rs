@@ -896,11 +896,15 @@ fn host_rename(
     // The planner's rewrite of a referrer, reused when the host reads the
     // same bytes under the page locks (GH #623: no second rewrite under the
     // driver's state lock), and only under the planner's file-name format.
-    let prepared = |page: &PageId, old: &[u8], format| {
-        let (content, _) = first.reads.get(page)?;
-        let new = first.rewritten.get(page)?;
-        (format == first.config.file_name_format && content.as_bytes() == old)
-            .then(|| new.clone().into_bytes())
+    // The host runs it on its driver, so it owns the plan's reads (unused
+    // after the rename).
+    let reads = std::mem::take(&mut first.reads);
+    let rewritten = std::mem::take(&mut first.rewritten);
+    let planned = first.config.file_name_format;
+    let prepared = move |page: &PageId, old: &[u8], format| {
+        let (content, _) = reads.get(page)?;
+        let new = rewritten.get(page)?;
+        (format == planned && content.as_bytes() == old).then(|| new.clone().into_bytes())
     };
     let renamed = host.rename(
         &source,
@@ -908,7 +912,7 @@ fn host_rename(
         &referrers,
         &first.map,
         &first.graph,
-        &prepared,
+        std::sync::Arc::new(prepared),
     );
     let (changed, mut skipped) = match renamed {
         Ok(done) => done,

@@ -348,14 +348,15 @@ impl Live {
     /// Pause or resume request application and the draft worker (Q-P2b-4).
     /// Window Submits keep the edit debounce (`TestKnobs::submits_wait`).
     fn submits_wait(&self) {
-        (self.host.driver.shared).with_state(|state| state.progress.host.test.submits_wait = true);
+        (self.host.driver.shared)
+            .with_state_for_tests(|state| state.progress.host.test.submits_wait = true);
     }
 
     fn pause(&self, paused: bool) {
         self.host
             .driver
             .shared
-            .with_state(|state| state.progress.host.test.paused = paused);
+            .with_state_for_tests(|state| state.progress.host.test.paused = paused);
     }
 
     fn disk(&self, key: &str) -> String {
@@ -559,7 +560,7 @@ fn q1_trace(
         live.host
             .driver
             .shared
-            .with_state(|s| s.observe.contains_key(&key))
+            .with_state_for_tests(|s| s.observe.contains_key(&key))
     };
     while !owed() {
         assert!(Instant::now() < deadline, "the watcher never forwarded A");
@@ -819,7 +820,7 @@ impl Live {
 
     /// Fail the next `n` calls of `phase` in the host's file adapter.
     fn faults(&self, phase: super::io::Phase, n: usize) {
-        self.host.driver.shared.with_state(|state| {
+        self.host.driver.shared.with_state_for_tests(|state| {
             let queue = state.progress.host.fs.faults.entry(phase).or_default();
             queue.extend(std::iter::repeat_n(std::io::ErrorKind::Other, n));
         });
@@ -1044,19 +1045,20 @@ fn q3_a_page_discovered_under_the_reservation_is_checked_too() {
         ReserveRefusal::Unsaved(BTreeSet::from([PageId::from(key.clone())]))
     );
     assert!(
-        live.host
-            .driver
-            .shared
-            .state
-            .lock()
-            .unwrap()
-            .progress
-            .host
-            .retained
-            .is_empty(),
+        retained(&live.host).is_empty(),
         "a refused reservation is withdrawn"
     );
     live.host.stop();
+}
+
+/// The retained keys, read through the driver's queue: after every
+/// reservation release sent before it.
+fn retained(host: &PageHost) -> BTreeSet<PageKey> {
+    let read = host
+        .driver
+        .shared
+        .read(|state| state.progress.host.retained.clone());
+    read.unwrap()
 }
 
 /// A-R1, REVIEW-3a2 R1 probe 2: discovery names A, then panics when it
@@ -1074,13 +1076,11 @@ fn a_rediscovery_panic_withdraws_the_reservation() {
         live.host.reserve(discover, Input::Flush)
     }));
     assert!(unwound.is_err());
-    let state = live.host.driver.shared.state.lock().unwrap();
+    let retained = retained(&live.host);
     assert!(
-        state.progress.host.retained.is_empty(),
-        "A-R1: a rediscovery panic leaked the reservation: {:?}",
-        state.progress.host.retained
+        retained.is_empty(),
+        "A-R1: a rediscovery panic leaked the reservation: {retained:?}"
     );
-    drop(state);
     live.host.stop();
 }
 
@@ -1099,7 +1099,7 @@ fn a_reservation_dropped_on_a_poisoned_host_does_not_panic() {
     retained::BEFORE_RELEASE.with(|hook| {
         *hook.borrow_mut() = Some(Box::new(move || {
             let poisoner = std::thread::spawn(move || {
-                let _state = shared.state.lock().unwrap();
+                let _state = shared.state_for_tests();
                 panic!("E90 test: poison the host state");
             });
             assert!(poisoner.join().is_err());
@@ -1112,7 +1112,7 @@ fn a_reservation_dropped_on_a_poisoned_host_does_not_panic() {
     assert!(
         dropped.is_ok(),
         "E90: dropping a reservation on a poisoned host panicked; exemplar binding_retained.rs \
-         Reservation::drop (try_with_state)"
+         Reservation::drop (a notice)"
     );
 }
 
@@ -1133,7 +1133,8 @@ fn a_failed_first_publication_of_an_unchanged_file_keeps_its_row() {
     assert!(named());
     live.index_faults(u32::MAX);
     let (key, _page) = live.open("pages/a.md");
-    let failed = || (live.host.driver.shared).with_state(|s| s.book.retry.contains_key(&key));
+    let failed =
+        || (live.host.driver.shared).with_state_for_tests(|s| s.book.retry.contains_key(&key));
     let deadline = Instant::now() + Duration::from_secs(20);
     while !failed() {
         assert!(
@@ -1212,7 +1213,7 @@ fn q6_a_failed_publication_never_overwrites_a_retained_transaction() {
     // source does): the retry waits for the release.
     let until = Instant::now() + Duration::from_millis(1500);
     while Instant::now() < until {
-        live.host.driver.shared.with_state(|_| {});
+        live.host.driver.shared.with_state_for_tests(|_| {});
         std::thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(
@@ -1255,7 +1256,7 @@ fn v2_a_failed_release_observation_keeps_the_handover_protection() {
     drop(reservation);
     let until = Instant::now() + Duration::from_millis(1500);
     while Instant::now() < until {
-        live.host.driver.shared.with_state(|_| {});
+        live.host.driver.shared.with_state_for_tests(|_| {});
         std::thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(
@@ -1263,7 +1264,7 @@ fn v2_a_failed_release_observation_keeps_the_handover_protection() {
         Some(content_rev("- t\n")),
         "V2: P's retry overwrote the retained transaction's index after a failed observation"
     );
-    live.host.driver.shared.with_state(|state| {
+    live.host.driver.shared.with_state_for_tests(|state| {
         state
             .progress
             .host
@@ -1543,7 +1544,7 @@ fn a2_a_failing_release_observation_is_a_notice_that_clears_on_recovery() {
     live.wait(&key, "the third failed read is reported", |mail| {
         mail.notice.observe_error
     });
-    live.host.driver.shared.with_state(|state| {
+    live.host.driver.shared.with_state_for_tests(|state| {
         state
             .progress
             .host
@@ -1573,7 +1574,7 @@ fn a4_a_held_path_lock_does_not_stall_another_pages_due_save() {
         .host
         .driver
         .shared
-        .with_state(|state| state.observe.contains_key(&a))
+        .with_state_for_tests(|state| state.observe.contains_key(&a))
     {
         assert!(Instant::now() < deadline, "the watcher never forwarded A");
         std::thread::sleep(Duration::from_millis(10));
@@ -1589,7 +1590,12 @@ fn a4_a_held_path_lock_does_not_stall_another_pages_due_save() {
         std::thread::sleep(Duration::from_millis(20));
     }
     // Yielding is no spin: the held lock is retried on a backoff timer.
-    let polls = || live.host.driver.shared.with_state(|state| state.polls);
+    let polls = || {
+        live.host
+            .driver
+            .shared
+            .with_state_for_tests(|state| state.polls)
+    };
     let before = polls();
     std::thread::sleep(Duration::from_secs(1));
     let spent = polls() - before;
@@ -1851,7 +1857,7 @@ fn a_discard_takes_the_current_disk_and_an_old_session_discard_is_not_admitted()
         panic!("a discard that changed the buffer carries the disk's text");
     };
     assert_eq!(dto.blocks[0].raw, "one");
-    let held = (live.host.driver.shared).with_state(|state| {
+    let held = (live.host.driver.shared).with_state_for_tests(|state| {
         let page = &state.progress.host.pages[&key];
         (page.buf.as_deref() == Some(&b"- one\n"[..]), page.clean())
     });
@@ -2021,7 +2027,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     down.host
         .driver
         .shared
-        .with_state(|state| state.progress.host.stop());
+        .with_state_for_tests(|state| state.progress.host.stop());
     assert_eq!(
         down.host.wait_published(session, &needs, bound),
         PageOperation::Refused,
@@ -2034,7 +2040,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     let session = poisoned.host.session();
     let shared = Arc::clone(&poisoned.host.driver.shared);
     let poisoner = std::thread::spawn(move || {
-        let _state = shared.state.lock().unwrap();
+        let _state = shared.state_for_tests();
         panic!("R3 test: poison the host state");
     });
     assert!(poisoner.join().is_err());
@@ -2279,7 +2285,7 @@ fn s9_draft_status_names_recovered_and_unsaved_pages() {
     live.host
         .driver
         .shared
-        .with_state(|state| state.progress.host.fs.faults.clear());
+        .with_state_for_tests(|state| state.progress.host.fs.faults.clear());
     let deadline = Instant::now() + Duration::from_secs(40);
     while !live.host.draft_status().unsaved.is_empty() {
         assert!(Instant::now() < deadline, "the page never published");
@@ -2312,7 +2318,7 @@ fn i1c_a_removal_back_at_the_baseline_lifts_the_conflict_and_the_edit_saves() {
     live.host
         .driver
         .shared
-        .with_state(|state| state.progress.host.fs.faults.clear());
+        .with_state_for_tests(|state| state.progress.host.fs.faults.clear());
     // Saved means on disk and reported saved: the bytes appear at the
     // rename, a few milliseconds before the save's directory sync completes
     // and the page turns clean.
@@ -2486,8 +2492,9 @@ fn opening_an_unchanged_page_leaves_the_launch_checkpoint_clean() {
     let (b, _) = live.open("pages/b.md");
     // Past the owner's Open read publications.
     let read = || {
-        (live.host.driver.shared)
-            .with_state(|s| s.book.index.contains_key(&a) && s.book.index.contains_key(&b))
+        (live.host.driver.shared).with_state_for_tests(|s| {
+            s.book.index.contains_key(&a) && s.book.index.contains_key(&b)
+        })
     };
     let deadline = Instant::now() + Duration::from_secs(20);
     while !read() {
@@ -2525,7 +2532,7 @@ fn an_open_that_moves_no_row_leaves_the_checkpoint_capturable() {
     let rev = live.store.whole_graph().unwrap().rev();
     let (a, _) = live.open("pages/a.md");
     let deadline = Instant::now() + Duration::from_secs(20);
-    while !(live.host.driver.shared).with_state(|s| s.book.index.contains_key(&a)) {
+    while !(live.host.driver.shared).with_state_for_tests(|s| s.book.index.contains_key(&a)) {
         assert!(
             Instant::now() < deadline,
             "the Open read was never published"

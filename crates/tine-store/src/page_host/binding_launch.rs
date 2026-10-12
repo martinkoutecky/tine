@@ -2,6 +2,10 @@
 //! launch, which never fails on draft I/O, and crash-recovery status and
 //! Retry (S3).
 use super::*;
+use crate::page_host::driver::{Deadline, State, Wait};
+
+/// Why no host could start: the defensive launch error.
+const DOWN: &str = "the page host did not launch";
 
 impl PageHost {
     /// Bind a page host to `store`'s graph: drafts under
@@ -46,17 +50,19 @@ impl PageHost {
     /// for it so it measures an operation through its cleanup (M4).
     #[cfg(feature = "test-faults")]
     pub fn quiescent_for_tests(&self) -> bool {
-        // Read without waking the driver, so polling adds no host work.
-        let state = self.driver.shared.state.lock().unwrap();
-        let host = &state.progress.host;
-        host.pages.is_empty()
-            && host.job.is_none()
-            && host.worker.is_none()
-            && host.drafts.is_empty()
-            && host.queue.is_empty()
-            && host.applying.is_none()
-            && state.observe.is_empty()
-            && state.book.owned().is_empty()
+        // A read does not wake the driver, so polling adds no host work.
+        let read = self.driver.shared.read(|state| {
+            let host = &state.progress.host;
+            host.pages.is_empty()
+                && host.job.is_none()
+                && host.worker.is_none()
+                && host.drafts.is_empty()
+                && host.queue.is_empty()
+                && host.applying.is_none()
+                && state.observe.is_empty()
+                && state.book.owned().is_empty()
+        });
+        read.unwrap_or(false)
     }
 
     /// A cost test's measurement boundary (REVIEW-3b-P2b-2 N3): the watcher
@@ -81,7 +87,9 @@ impl PageHost {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
-            let now = self.driver.shared.state.lock().unwrap().wake_seq();
+            let Ok(now) = self.driver.shared.read(|state| state.wake_seq()) else {
+                return false;
+            };
             if last == Some(now) {
                 return true;
             }
@@ -123,15 +131,18 @@ impl PageHost {
             index_faults: index_faults.clone(),
         };
         let driver = Driver::spawn(host, SystemClock::new(), bridge);
-        driver
+        let session = next_session();
+        (driver
             .shared
-            .with_state(|state| state.book.session = next_session());
+            .call(move |state| state.book.session = session))
+        .map_err(|_| DOWN)?;
         // A watcher read of a held page (§5): the driver owes the host an
         // observation of it, taken under its path lock once the page is idle.
         let shared = Arc::downgrade(&driver.shared);
         let forward: crate::watch::Forward = Box::new(move |keys| {
             if let Some(shared) = shared.upgrade() {
-                shared.with_state(|state| {
+                // A notice: the watcher calls this holding the writer.
+                shared.notify(|state| {
                     for key in keys {
                         state.observe.entry(key).or_default().forwarded = true;
                     }
@@ -148,22 +159,21 @@ impl PageHost {
         };
         // Recovered pages are held before launch reads them (§5), by the
         // host's keys and spelling table (B1).
-        {
-            let _writer = store.writer.lock().unwrap();
-            store.watch.forward_held(forward, spellings);
+        let watched = store.clone();
+        let held = this.driver.shared.call_writer(&store.writer, move |state| {
+            watched.watch.forward_held(forward, spellings);
             for (key, _) in &recovered {
-                store.watch.hold(key.clone());
+                watched.watch.hold(key.clone());
             }
-            store.publish_retired();
-            this.driver.shared.with_state(|state| {
-                let keys = recovered.into_iter().map(|(k, _)| k);
-                state.book.own(keys, &state.progress.host)
-            });
-        }
+            watched.publish_retired();
+            let keys = recovered.into_iter().map(|(k, _)| k);
+            state.book.own(keys, &state.progress.host)
+        });
+        held.map_err(|_| DOWN)?;
         // Draft I/O failures never stop a launch (§4, B-Q1): they leave it
         // down, and `draft_status` says why.
         this.locked(|host| host.launch());
-        let (alive, recovered) = this.driver.shared.with_state(|state| {
+        let launched = this.driver.shared.read(move |state| {
             let host = &state.progress.host;
             let recovered = host
                 .pages
@@ -173,6 +183,7 @@ impl PageHost {
                 .collect();
             (host.alive, recovered)
         });
+        let (alive, recovered) = launched.map_err(|_| DOWN)?;
         this.recovered = recovered;
         if alive {
             let drafts = this.recovered.len();
@@ -180,7 +191,7 @@ impl PageHost {
             return Ok(this);
         }
         drop(this);
-        Err("the page host did not launch".into())
+        Err(DOWN.into())
     }
 
     /// Crash-recovery availability (§4, B-Q1), and the pages whose text is
@@ -188,7 +199,8 @@ impl PageHost {
     /// launch names what it recovered, an adopted host (B-QA) what it still
     /// holds. Bounded by the held pages and admitted input; no I/O.
     pub fn draft_status(&self) -> DraftStatus {
-        self.driver.shared.with_state(|state| {
+        let recovered = self.recovered.clone();
+        let status = self.driver.shared.read(move |state| {
             let host = &state.progress.host;
             let mut status = host.fs.draft_status();
             status.unsaved = host
@@ -204,14 +216,15 @@ impl PageHost {
                     };
                     Some(io::UnsavedPage {
                         path: host.fs.spelling(&key),
-                        recovered: self.recovered.get(&key) == Some(&version),
+                        recovered: recovered.get(&key) == Some(&version),
                         conflict,
                         failing: state.progress.notice(&key).save_error,
                     })
                 })
                 .collect();
             status
-        })
+        });
+        status.expect("page host driver ended")
     }
 
     /// `page_drafts_retry` (S3): re-probe down draft I/O in the running
@@ -220,17 +233,30 @@ impl PageHost {
     /// error says why draft I/O is still down.
     pub fn drafts_retry(&self) -> Result<(), String> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            match self.locked(|host| host.drafts_retry()) {
-                None => return Err("the page host is stopping".into()),
-                Some(Ok(Disposition::Waiting)) if std::time::Instant::now() < deadline => {
-                    let shared = &self.driver.shared;
-                    let pause = std::time::Duration::from_millis(100);
-                    drop(shared.wait(shared.state.lock().unwrap(), pause));
-                }
-                Some(Ok(Disposition::Waiting)) => return Err("draft work is still running".into()),
-                Some(result) => return result.map(drop),
+        // Probes at most every 100 ms, as the caller's pause did.
+        let mut next = std::time::Instant::now();
+        let step = move |state: &mut State<ProductionIo, SystemClock>| {
+            let now = std::time::Instant::now();
+            if now < next {
+                return Wait::Until(Some(next));
             }
+            let retried = state.progress.with_host(|host| host.drafts_retry());
+            if state.progress.host.lock_request.is_some() {
+                // A plan: it runs again under its path locks.
+                return Wait::Until(None);
+            }
+            match retried {
+                Ok(Disposition::Waiting) if now < deadline => {
+                    next = (now + std::time::Duration::from_millis(100)).min(deadline);
+                    Wait::Until(Some(next))
+                }
+                Ok(Disposition::Waiting) => Wait::Ready(Err("draft work is still running".into())),
+                result => Wait::Ready(result.map(drop)),
+            }
+        };
+        match self.driver.shared.locked_wait(Deadline::Never, step) {
+            Ok(result) => result,
+            Err(_) => Err("the page host is stopping".into()),
         }
     }
 }

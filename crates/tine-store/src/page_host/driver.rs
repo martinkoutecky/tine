@@ -10,10 +10,20 @@
 //! legal step from the current state, so an admission, reservation or
 //! observation that arrived meanwhile is honoured; a step needing other locks
 //! releases everything and replans.
+//!
+//! The state is private to this file (host-only-writer §3.2): every other
+//! thread reaches it through a request on the driver's inbox, run on the
+//! driver thread between its steps. A caller's only wait is for its answer,
+//! bounded by its deadline even while the driver sits in a disk call. A
+//! request that needs the store writer has the driver take it first (lock
+//! order); one whose path lock another thread holds is parked and retried
+//! (A4), so a caller never waits holding a lock the driver may need.
 use super::binding::{Book, Delivery, Indexing, Publication};
 use super::progress::{Clock, Progress};
 use super::*;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{Condvar, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -57,7 +67,6 @@ pub(super) struct State<F: HostIo, C: Clock> {
     /// Bumped by every wake source; the driver sleeps only while it is
     /// unchanged since its plan, so no wakeup is lost.
     wake_seq: u64,
-    stopping: bool,
     /// Keys whose disk state the driver owes the host an observation of.
     pub observe: BTreeMap<PageKey, Observation>,
     /// Keys whose path lock another thread held at the driver's last try:
@@ -198,9 +207,80 @@ impl<F: HostIo, C: Clock> State<F, C> {
     }
 }
 
+/// What a waiting request's step decided (§3.2).
+pub(super) enum Wait<R> {
+    /// The answer.
+    Ready(R),
+    /// Not yet: the driver asks again after its next step, or at this
+    /// instant at the latest.
+    Until(Option<Instant>),
+}
+
+/// Why a caller got no answer from the driver (§3.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Unanswered {
+    /// The deadline passed before the driver started the request: it never
+    /// runs.
+    Withdrawn,
+    /// The driver started the request and had not answered at the deadline;
+    /// what it started keeps going, and the driver stops asking.
+    Late,
+    /// The driver ended: nothing will answer.
+    Ended,
+}
+
+// A request's claim. The driver moves it QUEUED or PARKED → RUNNING for each
+// ask and back to PARKED (or DONE once answered); a caller that leaves swaps
+// in LEFT, and the previous value says whether the request was still unrun
+// between asks (withdrawn: it never takes effect) or mid-ask (late).
+const QUEUED: u8 = 0;
+const RUNNING: u8 = 1;
+const LEFT: u8 = 2;
+const PARKED: u8 = 3;
+const DONE: u8 = 4;
+
+/// How long a caller waits for its answer.
+#[derive(Clone)]
+pub(super) enum Deadline {
+    /// As long as the driver runs.
+    Never,
+    At(Instant),
+    /// An instant the request's own step may move later (a long operation
+    /// that keeps making progress).
+    Moving(Arc<Mutex<Instant>>),
+}
+
+impl Deadline {
+    fn current(&self) -> Option<Instant> {
+        match self {
+            Deadline::Never => None,
+            Deadline::At(at) => Some(*at),
+            Deadline::Moving(at) => Some(*at.lock().unwrap_or_else(|e| e.into_inner())),
+        }
+    }
+}
+
+type Guard<'a, F, C> = MutexGuard<'a, State<F, C>>;
+/// None: answered (or a notice). Some(at): ask again after the driver's
+/// next step, or at `at` at the latest.
+type Again = Option<Option<Instant>>;
+type Run<F, C> =
+    Box<dyn for<'a> FnMut(&'a Shared<F, C>, Guard<'a, F, C>) -> (Guard<'a, F, C>, Again) + Send>;
+
+/// A request or notice from another thread, run on the driver thread.
+struct Command<F: HostIo, C: Clock> {
+    /// Taken before the state mutex (lock order writer → state).
+    writer: Option<Arc<Mutex<()>>>,
+    claim: Arc<AtomicU8>,
+    run: Run<F, C>,
+}
+
 pub(super) struct Shared<F: HostIo, C: Clock> {
-    pub state: Mutex<State<F, C>>,
-    condition: Condvar,
+    state: Mutex<State<F, C>>,
+    inbox: Mutex<VecDeque<Command<F, C>>>,
+    /// Signalled with the inbox mutex: a command arrived or the driver must stop.
+    arrived: Condvar,
+    stop: AtomicBool,
     /// The driver thread returned or unwound: nothing will answer a caller.
     ended: AtomicBool,
     /// Pauses a retained writer's flush before its first check (tests, N1).
@@ -208,61 +288,244 @@ pub(super) struct Shared<F: HostIo, C: Clock> {
     pub flush_pause: Mutex<Option<crate::store::TestPause>>,
 }
 
-impl<F: HostIo, C: Clock> Shared<F, C> {
-    /// Run `action` under the state mutex and wake the driver: the wake
-    /// source for admission, watcher reads, reservations and switches.
-    pub fn with_state<R>(&self, action: impl FnOnce(&mut State<F, C>) -> R) -> R {
-        self.try_with_state(action)
-            .expect("page host state poisoned")
+impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
+    /// Queue `command` and wake the driver; false once it ended.
+    fn submit(&self, command: Command<F, C>) -> bool {
+        let mut inbox = self.inbox.lock().unwrap_or_else(|e| e.into_inner());
+        if self.ended() {
+            return false;
+        }
+        inbox.push_back(command);
+        drop(inbox);
+        self.arrived.notify_all();
+        true
     }
 
-    /// [`Self::with_state`], or None when the state is poisoned: a host
-    /// that already panicked under its lock. The lock result is the only
-    /// check, so a poison landing just before it is seen, not raced (E90).
-    pub fn try_with_state<R>(&self, action: impl FnOnce(&mut State<F, C>) -> R) -> Option<R> {
-        let mut state = self.state.lock().ok()?;
+    /// Send a request and wait for its answer until `deadline`. Past it,
+    /// a request between asks is withdrawn and never takes effect; one the
+    /// driver is running is `Late`.
+    fn request<R: Send + 'static>(
+        &self,
+        deadline: Deadline,
+        writer: Option<Arc<Mutex<()>>>,
+        run: impl FnOnce(SyncSender<R>) -> Run<F, C>,
+    ) -> Result<R, Unanswered> {
+        let (reply, answer) = mpsc::sync_channel(1);
+        let claim = Arc::new(AtomicU8::new(QUEUED));
+        let command = Command {
+            writer,
+            claim: claim.clone(),
+            run: run(reply),
+        };
+        if !self.submit(command) {
+            return Err(Unanswered::Ended);
+        }
+        loop {
+            let Some(at) = deadline.current() else {
+                return answer.recv().map_err(|_| Unanswered::Ended);
+            };
+            match answer.recv_timeout(at.saturating_duration_since(Instant::now())) {
+                Ok(answer) => return Ok(answer),
+                Err(RecvTimeoutError::Disconnected) => return Err(Unanswered::Ended),
+                // The step moved it: keep waiting.
+                Err(RecvTimeoutError::Timeout)
+                    if deadline.current().is_some_and(|now| now > Instant::now()) => {}
+                Err(RecvTimeoutError::Timeout) => {
+                    return match claim.swap(LEFT, Ordering::SeqCst) {
+                        QUEUED | PARKED => Err(Unanswered::Withdrawn),
+                        // An answer sent meanwhile is still the caller's.
+                        _ => answer.try_recv().map_err(|_| Unanswered::Late),
+                    };
+                }
+            }
+        }
+    }
+
+    /// Read the host state on the driver, without waking it for work.
+    pub fn read<R: Send + 'static>(
+        &self,
+        read: impl FnOnce(&State<F, C>) -> R + Send + 'static,
+    ) -> Result<R, Unanswered> {
+        let mut read = Some(read);
+        self.request(Deadline::Never, None, |reply| {
+            Box::new(move |_, state| {
+                if let Some(read) = read.take() {
+                    let _ = reply.send(read(&state));
+                }
+                (state, None)
+            })
+        })
+    }
+
+    /// Run `action` on the driver under the state mutex and wake it: the
+    /// wake source for admission, reservations and switches.
+    pub fn call<R: Send + 'static>(
+        &self,
+        action: impl FnOnce(&mut State<F, C>) -> R + Send + 'static,
+    ) -> Result<R, Unanswered> {
+        self.call_with(None, action)
+    }
+
+    /// [`Self::call`] under the store `writer`, which the driver takes
+    /// before the state mutex: a caller never waits for the driver holding
+    /// the writer its publication step takes.
+    pub fn call_writer<R: Send + 'static>(
+        &self,
+        writer: &Arc<Mutex<()>>,
+        action: impl FnOnce(&mut State<F, C>) -> R + Send + 'static,
+    ) -> Result<R, Unanswered> {
+        self.call_with(Some(writer.clone()), action)
+    }
+
+    fn call_with<R: Send + 'static>(
+        &self,
+        writer: Option<Arc<Mutex<()>>>,
+        action: impl FnOnce(&mut State<F, C>) -> R + Send + 'static,
+    ) -> Result<R, Unanswered> {
+        let mut action = Some(action);
+        self.request(Deadline::Never, writer, |reply| {
+            Box::new(move |_, mut state| {
+                if let Some(action) = action.take() {
+                    let answer = action(&mut state);
+                    state.wake();
+                    let _ = reply.send(answer);
+                }
+                (state, None)
+            })
+        })
+    }
+
+    /// A notice: run `action` on the driver and wake it, answering nothing.
+    /// Dropped once the driver ended. Never waits, so a watcher or a
+    /// `Drop` sends it holding any lock.
+    pub fn notify(&self, action: impl FnOnce(&mut State<F, C>) + Send + 'static) {
+        let mut action = Some(action);
+        self.submit(Command {
+            writer: None,
+            claim: Arc::new(AtomicU8::new(QUEUED)),
+            run: Box::new(move |_, mut state| {
+                if let Some(action) = action.take() {
+                    action(&mut state);
+                    state.wake();
+                }
+                (state, None)
+            }),
+        });
+    }
+
+    /// Wait on the host: the driver runs `step` under the state mutex now
+    /// and again after each of its steps, until it is ready, and answers
+    /// then (an answer wakes the driver, a wait does not). Past `deadline`
+    /// the caller leaves, and the driver stops asking.
+    pub fn wait<R: Send + 'static>(
+        &self,
+        deadline: Deadline,
+        mut step: impl FnMut(&mut State<F, C>) -> Wait<R> + Send + 'static,
+    ) -> Result<R, Unanswered> {
+        self.request(deadline, None, |reply| {
+            Box::new(move |_, mut state| match step(&mut state) {
+                Wait::Ready(answer) => {
+                    state.wake();
+                    let _ = reply.send(answer);
+                    (state, None)
+                }
+                Wait::Until(at) => (state, Some(at)),
+            })
+        })
+    }
+
+    /// [`Self::wait`] as plan, lock, revalidate (§1): `step` runs under the
+    /// path locks it names. One another thread holds parks the request
+    /// until its retry (A4), so the caller waits holding nothing.
+    pub fn locked_wait<R: Send + 'static>(
+        &self,
+        deadline: Deadline,
+        mut step: impl FnMut(&mut State<F, C>) -> Wait<R> + Send + 'static,
+    ) -> Result<R, Unanswered> {
+        self.request(deadline, None, |reply| {
+            Box::new(
+                move |shared, state| match locked(shared, state, false, &mut step) {
+                    Locked::Done(mut state, Wait::Ready(answer), _) => {
+                        state.wake();
+                        let _ = reply.send(answer);
+                        (state, None)
+                    }
+                    Locked::Done(state, Wait::Until(at), _) => (state, Some(at)),
+                    Locked::Held(state) => {
+                        let retry = state.retry();
+                        (state, Some(retry))
+                    }
+                    // The reply drops unanswered: the caller sees `Ended`.
+                    Locked::Stopping(state) => (state, None),
+                },
+            )
+        })
+    }
+
+    /// [`Self::locked_wait`] for a step that is always ready.
+    pub fn locked_step<R: Send + 'static>(
+        &self,
+        deadline: Deadline,
+        mut step: impl FnMut(&mut State<F, C>) -> R + Send + 'static,
+    ) -> Result<R, Unanswered> {
+        self.locked_wait(deadline, move |state| Wait::Ready(step(state)))
+    }
+
+    /// Tests: the state, read or held directly (holding it stalls the
+    /// driver); a poisoned one too, so an unwinding test can clean up.
+    #[cfg(test)]
+    pub fn state_for_tests(&self) -> Guard<'_, F, C> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+
+    /// Tests: change the state directly, then wake the driver.
+    #[cfg(test)]
+    pub fn with_state_for_tests<R>(&self, action: impl FnOnce(&mut State<F, C>) -> R) -> R {
+        let mut state = self.state.lock().unwrap();
         let result = action(&mut state);
         state.wake();
         drop(state);
-        self.condition.notify_all();
-        Some(result)
+        self.notify(|_| {});
+        result
     }
+}
 
-    /// Run one host step on a command thread as plan, lock, revalidate
-    /// (§1), then wake the driver. None once the driver is stopping.
-    pub fn locked_step<R>(&self, step: impl FnMut(&mut State<F, C>) -> R) -> Option<R> {
-        let state = self.state.lock().unwrap();
-        let (mut state, result, _) = locked(self, state, false, step)?;
-        state.wake();
-        drop(state);
-        self.condition.notify_all();
-        Some(result)
-    }
-
-    /// Wait on the host condition, under no lock but the state mutex
-    /// (a reservation that found its keys busy, §7). The driver notifies
-    /// after every step, so a finished job wakes the waiter.
-    pub fn wait<'a>(
-        &self,
-        state: MutexGuard<'a, State<F, C>>,
-        timeout: Duration,
-    ) -> MutexGuard<'a, State<F, C>> {
-        self.condition.wait_timeout(state, timeout).unwrap().0
-    }
-
-    /// [`Self::wait`] for an operation's caller: None once the state is
-    /// poisoned or the driver ended, never a panic (Finding B, R2).
-    pub fn wait_checked<'a>(
-        &self,
-        state: MutexGuard<'a, State<F, C>>,
-        timeout: Duration,
-    ) -> Option<MutexGuard<'a, State<F, C>>> {
-        let state = self.condition.wait_timeout(state, timeout).ok()?.0;
-        (!self.ended.load(Ordering::SeqCst)).then_some(state)
-    }
-
+impl<F: HostIo, C: Clock> Shared<F, C> {
     pub fn ended(&self) -> bool {
         self.ended.load(Ordering::SeqCst)
+    }
+
+    fn stopping(&self) -> bool {
+        self.stop.load(Ordering::SeqCst)
+    }
+
+    /// Ask the driver to stop after its current step; queued commands run first.
+    fn halt(&self) {
+        let inbox = self.inbox.lock().unwrap_or_else(|e| e.into_inner());
+        self.stop.store(true, Ordering::SeqCst);
+        drop(inbox);
+        self.arrived.notify_all();
+    }
+
+    /// The queued commands, and whether a stop was asked before them.
+    fn take(&self) -> (VecDeque<Command<F, C>>, bool) {
+        let mut inbox = self.inbox.lock().unwrap();
+        (std::mem::take(&mut *inbox), self.stopping())
+    }
+
+    /// Sleep until a command arrives, a stop is asked, or `wait` passes.
+    fn sleep(&self, wait: Option<Duration>) {
+        let inbox = self.inbox.lock().unwrap();
+        if !inbox.is_empty() || self.stopping() {
+            return;
+        }
+        match wait {
+            Some(wait) if wait.is_zero() => {}
+            Some(wait) => drop(self.arrived.wait_timeout(inbox, wait).unwrap()),
+            None => drop(self.arrived.wait(inbox).unwrap()),
+        }
     }
 }
 
@@ -279,8 +542,14 @@ impl<F: HostIo, C: Clock> Drop for Ended<'_, F, C> {
                 host_stats(&state.progress.host);
             }
         }
+        // Under the inbox mutex, so nothing is queued after: every caller
+        // still waiting sees its request dropped unanswered.
+        let mut inbox = self.0.inbox.lock().unwrap_or_else(|e| e.into_inner());
         self.0.ended.store(true, Ordering::SeqCst);
-        self.0.condition.notify_all();
+        let dropped = std::mem::take(&mut *inbox);
+        drop(inbox);
+        drop(dropped);
+        self.0.arrived.notify_all();
     }
 }
 
@@ -300,14 +569,15 @@ where
             state: Mutex::new(State {
                 progress: Progress::new(host, clock),
                 wake_seq: 0,
-                stopping: false,
                 observe: BTreeMap::new(),
                 contended: BTreeMap::new(),
                 book: Book::default(),
                 #[cfg(test)]
                 polls: 0,
             }),
-            condition: Condvar::new(),
+            inbox: Mutex::new(VecDeque::new()),
+            arrived: Condvar::new(),
+            stop: AtomicBool::new(false),
             ended: AtomicBool::new(false),
             #[cfg(test)]
             flush_pause: Mutex::new(None),
@@ -328,7 +598,7 @@ where
     /// Stop the loop and join the thread; its last step's results have been
     /// delivered to the sink when this returns (§7 restore step 4).
     pub fn join(&mut self) {
-        self.shared.with_state(|state| state.stopping = true);
+        self.shared.halt();
         if let Some(thread) = self.thread.take() {
             if let Err(panic) = thread.join() {
                 if !std::thread::panicking() {
@@ -342,11 +612,7 @@ where
 impl<F: HostIo, C: Clock> Drop for Driver<F, C> {
     fn drop(&mut self) {
         if let Some(thread) = self.thread.take() {
-            if let Ok(mut state) = self.shared.state.lock() {
-                state.stopping = true;
-                state.wake();
-            }
-            self.shared.condition.notify_all();
+            self.shared.halt();
             let _ = thread.join();
         }
     }
@@ -365,24 +631,34 @@ fn observation<R>(forwarded: bool, observe: impl FnOnce() -> R) -> R {
     observe()
 }
 
-/// The state mutex, a step's result, and whether it ran under path locks.
-type Locked<'a, F, C, R> = (MutexGuard<'a, State<F, C>>, R, bool);
+/// How a plan, lock, revalidate run ended (§1).
+pub(super) enum Locked<'a, F: HostIo, C: Clock, R> {
+    /// A step ran to its end, with the state mutex held, no path lock and
+    /// `held` empty; true when it ran under path locks.
+    Done(Guard<'a, F, C>, R, bool),
+    /// A request's step needs a path lock another thread holds: nothing ran
+    /// under it, and the request waits for its retry (A4).
+    Held(Guard<'a, F, C>),
+    /// The driver is stopping.
+    Stopping(Guard<'a, F, C>),
+}
 
-/// Plan, lock, revalidate (§1), for the driver and for command threads:
-/// run `step` holding no path lock; while it names path locks it lacks, take
-/// them in canonical spelling order holding nothing else, retake the state
-/// mutex and run it again, now the next legal step under those locks. An
-/// alias spelling move (§2) may replace a key's lock while this thread
-/// waits; the old spelling's lock does not exclude writers of the new one,
-/// so everything is released and the step replanned. Returns with the state
-/// mutex held, no path lock and `held` empty, plus whether a step ran under
-/// path locks; None once the driver is stopping.
+/// Plan, lock, revalidate (§1), for the driver's steps and for requests,
+/// all on the driver thread: run `step` holding no path lock; while it
+/// names path locks it lacks, take them in canonical spelling order holding
+/// nothing else, retake the state mutex and run it again, now the next
+/// legal step under those locks. An alias spelling move (§2) may replace a
+/// key's lock meanwhile; the old spelling's lock does not exclude writers of
+/// the new one, so everything is released and the step replanned. The
+/// driver never blocks on a path lock another thread holds (A4): its own
+/// step marks the key and replans, so other pages' work runs; a request
+/// returns `Held` and is asked again at the key's retry.
 pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
     shared: &'a Shared<F, C>,
-    mut state: MutexGuard<'a, State<F, C>>,
+    mut state: Guard<'a, F, C>,
     driver: bool,
     mut step: impl FnMut(&mut State<F, C>) -> R,
-) -> Option<Locked<'a, F, C, R>> {
+) -> Locked<'a, F, C, R> {
     state.progress.host.held = Some(BTreeSet::new());
     let mut result = step(&mut state);
     while let Some(keys) = state.progress.host.lock_request.take() {
@@ -394,15 +670,9 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
             .collect();
         handles.sort_by(|a, b| a.0.cmp(&b.0));
         drop(state);
-        // The driver never blocks on a path lock another thread holds (A4):
-        // it marks the key and replans, so other pages' work runs.
         let mut guards = Vec::new();
         let mut held_elsewhere = None;
         for (_, lock, key) in &handles {
-            if !driver {
-                guards.push(lock.lock().unwrap());
-                continue;
-            }
             match lock.try_lock() {
                 Ok(guard) => guards.push(guard),
                 Err(std::sync::TryLockError::WouldBlock) => {
@@ -416,11 +686,14 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
             guards.clear();
         }
         state = shared.state.lock().unwrap();
-        if state.stopping {
-            return None;
+        if shared.stopping() {
+            return Locked::Stopping(state);
         }
         if let Some(key) = held_elsewhere {
             state.contend(key);
+            if !driver {
+                return Locked::Held(state);
+            }
             result = step(&mut state);
             continue;
         }
@@ -438,7 +711,7 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
             state.progress.host.held = Some(BTreeSet::new());
             if state.progress.host.lock_request.is_none() {
                 drop(guards);
-                return Some((state, result, true));
+                return Locked::Done(state, result, true);
             }
         }
         // Another key set or lock: release everything and replan.
@@ -447,7 +720,77 @@ pub(super) fn locked<'a, F: HostIo, C: Clock, R>(
             result = step(&mut state);
         }
     }
-    Some((state, result, false))
+    Locked::Done(state, result, false)
+}
+
+/// Start a queued command: run it on the driver (under the store writer
+/// first when it asks for it), unless its caller withdrew it. Returns it
+/// when it waits.
+fn dispatch<F: HostIo, C: Clock>(
+    shared: &Shared<F, C>,
+    mut command: Command<F, C>,
+) -> Option<(Command<F, C>, Option<Instant>)> {
+    if !claim(&command.claim, QUEUED) {
+        return None;
+    }
+    let writer = command.writer.clone();
+    let _writer = writer.as_ref().map(|writer| writer.lock().unwrap());
+    let state = shared.state.lock().unwrap();
+    let (state, again) = (command.run)(shared, state);
+    drop(state);
+    debug_assert!(
+        again.is_none() || command.writer.is_none(),
+        "a writer request waits"
+    );
+    park(command, again)
+}
+
+/// Start an ask of a request that is `from` (queued or parked); false when
+/// its caller left.
+fn claim(claim: &AtomicU8, from: u8) -> bool {
+    let ordering = Ordering::SeqCst;
+    claim
+        .compare_exchange(from, RUNNING, ordering, ordering)
+        .is_ok()
+}
+
+/// End an ask: a request that waits is parked, unless its caller left
+/// meanwhile; one that answered is done.
+fn park<F: HostIo, C: Clock>(
+    command: Command<F, C>,
+    again: Again,
+) -> Option<(Command<F, C>, Option<Instant>)> {
+    let ordering = Ordering::SeqCst;
+    let Some(at) = again else {
+        let _ = command
+            .claim
+            .compare_exchange(RUNNING, DONE, ordering, ordering);
+        return None;
+    };
+    let parked = command
+        .claim
+        .compare_exchange(RUNNING, PARKED, ordering, ordering);
+    parked.is_ok().then_some((command, at))
+}
+
+/// Ask every waiting request again (after a step chain, what a condition
+/// broadcast did); a request whose caller left is dropped.
+fn revisit<'a, F: HostIo, C: Clock>(
+    shared: &'a Shared<F, C>,
+    mut state: Guard<'a, F, C>,
+    waiting: &mut Vec<(Command<F, C>, Option<Instant>)>,
+) -> Guard<'a, F, C> {
+    let mut kept = Vec::with_capacity(waiting.len());
+    for (mut command, _) in waiting.drain(..) {
+        if !claim(&command.claim, PARKED) {
+            continue;
+        }
+        let (next, again) = (command.run)(shared, state);
+        state = next;
+        kept.extend(park(command, again));
+    }
+    *waiting = kept;
+    state
 }
 
 /// How often the driver reports its host's event vector (bench events).
@@ -465,16 +808,23 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
     let _ended = Ended(shared);
     // The next bench `host_stats` (None: events off).
     let mut stats = crate::bench_events::enabled().then(|| Instant::now() + HOST_STATS_EVERY);
+    // Requests waiting on the host, each with the instant to ask it again.
+    let mut waiting = Vec::new();
     loop {
-        // Every step retakes the state mutex, so admission, watcher reads
-        // and reservations interleave with a long run of driver steps.
-        let state = shared.state.lock().unwrap();
-        if state.stopping {
+        // Commands first, between steps, so requests and notices interleave
+        // with a long run of driver steps; those queued before a stop run.
+        let (commands, stop) = shared.take();
+        for command in commands {
+            waiting.extend(dispatch(shared, command));
+        }
+        if stop {
             return;
         }
+        let state = shared.state.lock().unwrap();
         let seq = state.wake_seq;
-        let Some((mut state, result, stepped)) = locked(shared, state, true, State::step) else {
-            return;
+        let (mut state, result, stepped) = match locked(shared, state, true, State::step) {
+            Locked::Done(state, result, stepped) => (state, result, stepped),
+            Locked::Held(_) | Locked::Stopping(_) => return,
         };
         // Before the step's events are drained: what the vector holds.
         if stats.is_some_and(|due| due <= Instant::now()) {
@@ -485,9 +835,6 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
             let state = &mut *state;
             state.book.collect(&mut state.progress)
         };
-        // A finished job or worker step may unblock a waiting reservation;
-        // every step chain ends here.
-        shared.condition.notify_all();
         let idle = !stepped && matches!(result, Disposition::Waiting | Disposition::Disabled);
         if !delivery.is_empty() {
             drop(state);
@@ -504,20 +851,32 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
                 state.wake();
             }
         }
-        if idle {
-            // Sleep until woken, or until the earliest timed work is due.
-            let (until, retry) = (state.until(), state.retry());
-            while state.wake_seq == seq && !state.stopping {
-                let now = state.progress.clock.now_ms();
-                let timer = until.map(|due| Duration::from_millis(due.saturating_sub(now)));
-                let lock = retry.map(|at| at.saturating_duration_since(Instant::now()));
-                let report = stats.map(|due| due.saturating_duration_since(Instant::now()));
-                state = match timer.into_iter().chain(lock).chain(report).min() {
-                    Some(wait) if wait.is_zero() => break,
-                    Some(wait) => shared.condition.wait_timeout(state, wait).unwrap().0,
-                    None => shared.condition.wait(state).unwrap(),
-                };
-            }
+        // A finished job or worker step may answer a waiting request; every
+        // step chain ends here.
+        state = revisit(shared, state, &mut waiting);
+        if idle && state.wake_seq == seq {
+            // Sleep until a command arrives, or until the earliest timed
+            // work or waiting request is due.
+            let now = state.progress.clock.now_ms();
+            let timer = state
+                .until()
+                .map(|due| Duration::from_millis(due.saturating_sub(now)));
+            let at = Instant::now();
+            let lock = state
+                .retry()
+                .map(|retry| retry.saturating_duration_since(at));
+            let report = stats.map(|due| due.saturating_duration_since(at));
+            let asks = waiting.iter().filter_map(|(_, ask)| *ask);
+            let asks = asks.map(|ask: Instant| ask.saturating_duration_since(at));
+            drop(state);
+            shared.sleep(
+                timer
+                    .into_iter()
+                    .chain(lock)
+                    .chain(report)
+                    .chain(asks)
+                    .min(),
+            );
         }
     }
 }
