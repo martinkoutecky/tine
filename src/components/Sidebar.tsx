@@ -265,8 +265,8 @@ export function Sidebar(props: {
               )}
             </For>
             <Show when={allPages().length > ALL_PAGES_CAP}>
-              <div class="nav-page nav-page-more" onClick={() => openSwitcher()}>
-                +{allPages().length - ALL_PAGES_CAP} more — search to open…
+              <div class="nav-page nav-page-more" onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}>
+                +{allPages().length - ALL_PAGES_CAP} more — open the full list…
               </div>
             </Show>
           </Show>
