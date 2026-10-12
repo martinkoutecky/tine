@@ -62,6 +62,11 @@ const EXEMPT: &[(&str, &str)] = &[
         "crates/tine-graph-features/src/pages.rs::commit_home",
         "writes logseq/config.edn (the home page setting) after a host rename; no page",
     ),
+    (
+        "crates/tine-graph-features/src/conflicts.rs::trash_copy",
+        "trashes a sync-conflict copy (W7, and W6 after its host operation), which \
+         Store::as_page never names (tests/host_op_conflicts.rs a_sync_copy_is_never_a_page); no page",
+    ),
 ];
 
 #[derive(Default)]
@@ -320,7 +325,6 @@ fn every_production_page_writer_runs_under_a_host_reservation() {
         "crates/tine-graph-features/src/pages.rs::merge_pages",
         "crates/tine-graph-features/src/pages.rs::rename_file_to_page",
         "crates/tine-graph-features/src/conflicts.rs::fold_pair",
-        "crates/tine-graph-features/src/conflicts.rs::trash_sync_conflict",
         "crates/tine-graph-features/src/conflicts.rs::resolve_vcs_marker_conflict",
         "crates/tine-graph-features/src/journals.rs::migrate_journal_filenames",
         "crates/tine-graph-features/src/journals.rs::trash_journal_file",

@@ -90,6 +90,7 @@ const RUST_BASELINE: Record<string, number> = {
   "crates/tine-graph-features/src/journals.rs": 0,
   "crates/tine-graph-features/src/config.rs": 0,
   "crates/tine-graph-features/src/conflicts.rs": 0,
+  "crates/tine-graph-features/src/conflicts/queue.rs": 0,
   "crates/tine-graph-features/src/graph_verification.rs": 0,
   "crates/tine-store/src/transaction/read_checks.rs": 0,
   "crates/tine-store/src/model.rs": 6,
