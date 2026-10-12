@@ -1,5 +1,6 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { t } from "../i18n";
 import { graphOwner, readOwned } from "../owned";
 import type { PaneRouter } from "../router";
 import { allPages, pageListLabels } from "../pages";
@@ -99,13 +100,13 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
 
   return (
     <div class="all-pages">
-      <h1 class="page-title">All pages</h1>
+      <h1 class="page-title">{t("pages-all-title")}</h1>
       <div class="all-pages-controls">
         <input
           class="all-pages-filter"
           type="search"
-          placeholder="Filter page names"
-          aria-label="Filter page names"
+          placeholder={t("pages-all-filter")}
+          aria-label={t("pages-all-filter")}
           value={filter()}
           onInput={(event) => { setFilter(event.currentTarget.value); resetScroll(); }}
         />
@@ -115,24 +116,26 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
             checked={journals()}
             onChange={(event) => { setJournals(event.currentTarget.checked); resetScroll(); }}
           />{" "}
-          Show journals
+          {t("pages-all-show-journals")}
         </label>
         <span class="all-pages-count" aria-live="polite">
-          <Show when={listed()} fallback="Loading…">
-            {filter().trim() ? `${rows().length} of ${listed()!.length}` : listed()!.length} pages
+          <Show when={listed()} fallback={t("pages-all-loading")}>
+            {filter().trim()
+              ? t("pages-all-filtered-count", { count: rows().length, total: listed()!.length })
+              : t("pages-all-count", { count: listed()!.length })}
           </Show>
         </span>
       </div>
-      <div class="all-pages-table" role="table" aria-label="All pages">
+      <div class="all-pages-table" role="table" aria-label={t("pages-all-title")}>
         <div class="all-pages-head" role="row">
           <button type="button" class="all-pages-col" role="columnheader" aria-sort={ariaSort("title")} onClick={() => sortBy("title")}>
-            Page{arrow("title")}
+            {t("pages-all-column-page")}{arrow("title")}
           </button>
           <button type="button" class="all-pages-col all-pages-updated-col" role="columnheader" aria-sort={ariaSort("updated")} onClick={() => sortBy("updated")}>
-            Updated{arrow("updated")}
+            {t("pages-all-column-updated")}{arrow("updated")}
           </button>
           <button type="button" class="all-pages-col all-pages-day-col" role="columnheader" aria-sort={ariaSort("day")} onClick={() => sortBy("day")}>
-            Journal date{arrow("day")}
+            {t("pages-all-column-journal-date")}{arrow("day")}
           </button>
         </div>
         <div
@@ -173,7 +176,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
             </div>
           </div>
           <Show when={listed() && rows().length === 0}>
-            <p class="all-pages-empty">{filter().trim() ? "No page names match." : "No pages yet."}</p>
+            <p class="all-pages-empty">{filter().trim() ? t("pages-all-no-matches") : t("pages-all-empty")}</p>
           </Show>
         </div>
       </div>

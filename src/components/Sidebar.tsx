@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { pageIconPrefix } from "../pageIconBatch";
+import { t } from "../i18n";
 import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
@@ -240,7 +241,7 @@ export function Sidebar(props: {
               class="nav-item nav-all-pages-open"
               onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}
             >
-              Open the full list…
+              {t("pages-all-open-full-list")}
             </div>
             <For each={allPages().slice(0, ALL_PAGES_CAP)}>
               {(p) => (
@@ -267,7 +268,7 @@ export function Sidebar(props: {
             </For>
             <Show when={allPages().length > ALL_PAGES_CAP}>
               <div class="nav-page nav-page-more" onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}>
-                +{allPages().length - ALL_PAGES_CAP} more — open the full list…
+                {t("pages-all-open-more", { count: allPages().length - ALL_PAGES_CAP })}
               </div>
             </Show>
           </Show>
