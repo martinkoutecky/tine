@@ -70,7 +70,9 @@ jobs:
           $sha = git rev-parse HEAD
           $version = ([xml](Get-Content msix-stage/x64/AppxManifest.xml)).Package.Identity.Version
           @{ sourceSha = $sha; version = $version; architectures = @('x64', 'arm64'); winapp = (winapp --version | Out-String).Trim(); virtualization = 'disabled; pending maintainer approval' } | ConvertTo-Json | Set-Content msix-output/receipt.json
-          Get-ChildItem msix-output -File -Exclude SHA256SUMS | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content msix-output/SHA256SUMS
+          $files = @(Get-ChildItem msix-output -File | Where-Object Name -ne 'SHA256SUMS')
+          if ($files.Count -lt 4) { throw "expected 4 artifacts to hash, found $($files.Count)" }
+          $files | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content msix-output/SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: TineOutline-msix-proof
