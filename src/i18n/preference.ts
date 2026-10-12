@@ -5,8 +5,9 @@
 // window is broadcast to the others.
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
-import { writePreference } from "../preferenceWrites";
-import { activeLocale, negotiateLocale, setActiveLocale, SOURCE_LOCALE } from "./index";
+import { preferenceReadCurrent, preferenceRevision, seedPreference, writePreference } from "../preferenceWrites";
+import { pushToast } from "../toasts";
+import { activeLocale, msg, negotiateLocale, setActiveLocale, SOURCE_LOCALE } from "./index";
 
 const KEY = "ui_language";
 const BROADCAST = "ui-language-changed";
@@ -29,22 +30,35 @@ async function apply(choice: string): Promise<void> {
   const tag = negotiateLocale(choice, systemLanguages());
   try {
     await setActiveLocale(tag);
-  } catch (error) {
-    console.error("i18n: catalog failed to load; staying in English", error);
+  } catch {
+    console.error("i18n: catalog failed to load; staying in English");
     await setActiveLocale(SOURCE_LOCALE);
   }
   // Native text (the tray) follows the resolved locale; native code never negotiates.
-  void backend().setUiLocale(activeLocale()).catch(() => {});
+  void backend().setUiLocale(activeLocale())
+    .catch(() => console.error("i18n: the native shell did not take the language"));
 }
 
-/** Read the stored choice and activate its locale. Await before mounting a webview. */
+/** Read the stored choice and activate its locale. Await before mounting a webview.
+ * A read slower than READ_BOUND_MS mounts in the system's language and applies the
+ * stored choice when it lands, unless the user chose meanwhile; a failed read keeps
+ * the system's language and toasts. One settings read; O(1) otherwise. */
 export async function startUiLanguage(): Promise<void> {
-  const stored = await Promise.race([
-    backend().getAppString(KEY, "").catch(() => ""),
-    new Promise<string>((resolve) => setTimeout(() => resolve(""), READ_BOUND_MS)),
-  ]);
-  await apply(stored);
   void listenForChanges();
+  const revision = preferenceRevision(preference);
+  let landed = false;
+  const landing = backend().getAppString(KEY, "").then(async (stored) => {
+    landed = true;
+    if (!preferenceReadCurrent(preference, revision)) return;
+    await apply(stored);
+    seedPreference(preference);
+  }, async () => {
+    landed = true;
+    pushToast(msg("toast-language-load-failed"), "error");
+    await apply("");
+  });
+  await Promise.race([landing, new Promise<void>((resolve) => setTimeout(resolve, READ_BOUND_MS))]);
+  if (!landed) await apply("");
 }
 
 async function listenForChanges(): Promise<void> {

@@ -59,7 +59,10 @@ revisions 2 and 3).
   language subtag), else English.
 - Every webview awaits `startUiLanguage()` before it mounts (main) or renders
   (Quick Capture): one settings read bounded at 500 ms, then the chosen catalog
-  chunk. Nothing is painted in the wrong language first.
+  chunk. Nothing is painted in the wrong language first. A read slower than the
+  bound mounts in the system's language and switches when the read lands, unless
+  the user chose meanwhile; a failed read toasts and keeps the system's language.
+  Concurrent activations resolve latest-first (`setActiveLocale`).
 - The frontend reports the resolved tag through `set_ui_locale`, stored as
   `ui_locale_resolved`; the tray relabels at once. The startup screen reads that
   key at launch (desktop) through `__TINE_BOOT_TEXT__`; elsewhere it stays
@@ -74,6 +77,6 @@ revisions 2 and 3).
 | Catalog parses; no orphans, unknown references, cycles, unsupported functions; variable subset; shell literal-only; derivatives current | `src/i18n/i18n.test.ts` |
 | Literal UI text sites only shrink, by identity (`src/i18n/literals-baseline.json`); no module-level resolution | `src/i18n/literals.test.ts`, `scripts/i18n-literals.mjs` |
 | Command message ids follow the command ids, without collisions | `src/i18n/commands.test.ts` |
-| Live switch, persistence, bounded startup read | `src/components/LanguageSetting.test.tsx` |
+| Live switch, persistence, bounded startup read, late and failed reads | `src/components/LanguageSetting.test.tsx` |
 | Localized toasts keep English reports | `src/components/Toasts.test.tsx` |
 | Shell text falls back to English | `src-tauri/src/i18n_shell.rs` tests |

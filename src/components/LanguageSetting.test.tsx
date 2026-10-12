@@ -56,4 +56,27 @@ describe("the language setting", () => {
       vi.useRealTimers();
     }
   });
+
+  it("applies a slow stored choice when it lands, and keeps the system's language on a failed read", async () => {
+    vi.spyOn(backend(), "setUiLocale").mockResolvedValue();
+    let land!: (value: string) => void;
+    vi.spyOn(backend(), "getAppString").mockReturnValue(new Promise((resolve) => { land = resolve; }));
+    vi.useFakeTimers();
+    try {
+      const started = startUiLanguage();
+      await vi.advanceTimersByTimeAsync(500);
+      await started;
+      expect(activeLocale()).toBe("en");
+      land("zh-CN");
+      await vi.waitFor(() => expect(activeLocale()).toBe("zh-CN"));
+
+      const toasts = await import("../toasts");
+      vi.spyOn(backend(), "getAppString").mockRejectedValue(new Error("settings unreadable"));
+      await startUiLanguage();
+      expect(activeLocale()).toBe("en");
+      expect(toasts.toasts().some((toast) => toast.key.startsWith("toast-language-load-failed:"))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -103,6 +103,7 @@ export interface MessageArgs {
   "toast-copy-failed": {};
   "toast-copy-title": {};
   "toast-dismiss": {};
+  "toast-language-load-failed": {};
   "toast-repeat-count": { "count": string | number };
 }
 

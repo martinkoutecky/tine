@@ -54,7 +54,8 @@ function bundleOf(tag: string, sources: readonly string[]): FluentBundle {
   const bundle = new FluentBundle(tag, { useIsolating: false });
   for (const source of sources) {
     const errors = bundle.addResource(new FluentResource(source));
-    if (errors.length) console.error(`i18n: ${tag} catalog errors`, errors);
+    // Fixed text (I-5); scripts/lib/i18n-catalog.mjs checkCatalog (the catalog test) names it.
+    if (errors.length) console.error("i18n: a catalog failed to parse");
   }
   return bundle;
 }
@@ -92,17 +93,23 @@ export function negotiateLocale(preference: string, requested: readonly string[]
 }
 
 /** Make `tag` the active locale (loading its catalog first) and mark the document. */
+let activations = 0;
+/** Load `tag`'s catalog, then make it active, unless a later call superseded this
+ * one while it loaded: the latest choice wins, whatever order the loads finish in. */
 export async function setActiveLocale(tag: string): Promise<void> {
+  const mine = ++activations;
   await loadLocale(tag);
+  if (mine !== activations) return;
   setLocaleSignal(tag);
   if (typeof document !== "undefined") document.documentElement.lang = tag;
 }
 
 const reported = new Set<string>();
-function reportOnce(key: string, detail: unknown): void {
+/** One console line per failing message (fixed text, I-5); the catalog test names it. */
+function reportOnce(key: string): void {
   if (reported.has(key)) return;
   reported.add(key);
-  console.error(`i18n: ${key}`, detail);
+  console.error("i18n: a message failed to format; showing English");
 }
 
 function formatIn(bundle: FluentBundle, id: string, args?: Readonly<Record<string, FluentVariable>>): string | null {
@@ -114,7 +121,7 @@ function formatIn(bundle: FluentBundle, id: string, args?: Readonly<Record<strin
   const text = bundle.formatPattern(pattern, args as Record<string, FluentVariable> | undefined, errors);
   // A salvaged string with errors is not shown: the English message is (review #5).
   if (errors.length) {
-    reportOnce(`${bundle.locales[0]}:${id}`, errors);
+    reportOnce(`${bundle.locales[0]}:${id}`);
     return null;
   }
   return text;
@@ -125,7 +132,7 @@ function format(tag: string, id: MessageId, args?: Readonly<Record<string, strin
   const text = (chosen && tag !== SOURCE_LOCALE ? formatIn(chosen, id, args) : null)
     ?? formatIn(bundles.get(SOURCE_LOCALE)!, id, args);
   if (text !== null) return text;
-  reportOnce(`en:${id} did not format`, args);
+  reportOnce(`en:${id} did not format`);
   return id;
 }
 

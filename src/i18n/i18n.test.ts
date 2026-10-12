@@ -85,7 +85,7 @@ describe("catalog rules", () => {
     });
     expect(accepted.report.xx.stale).toEqual([]);
     const termChanged = catalog({
-      "en/a.ftl": "-brand = Tine Beta\nwelcome = Welcome to { -brand }\n",
+      "en/a.ftl": "-brand = Tine Nightly\nwelcome = Welcome to { -brand }\n",
       "xx/a.ftl": "-brand = Tine\nwelcome = Hi\n",
       "xx/.source-hashes.json": JSON.stringify({ welcome: hash }),
     });

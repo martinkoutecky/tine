@@ -984,6 +984,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "getWatchMode",
   "listSpellcheckDictionaries",
   "applySpellcheck",
+  "setUiLocale",
   "setSystemBarAppearance",
   "closeGraphWindow",
   "trayApply",
