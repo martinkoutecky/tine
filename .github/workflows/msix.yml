@@ -1,5 +1,7 @@
 name: Microsoft Store MSIX proof
 on:
+  push:
+    branches: [exp/msix-stable-proof]
   workflow_dispatch:
     inputs:
       ref:
