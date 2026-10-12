@@ -67,7 +67,7 @@ function hasDeniedResourceScheme(value: string): boolean {
 // one closed colour literal (#hex, a bare colour word, or a flat rgb()/hsl()/oklch()-
 // style function with only numbers, `%`, `/`, `,` and `.`): no url(), var(), calc(),
 // image-set() or `!important`. Anything else in the attribute is dropped.
-const STYLE_PROPERTIES = new Set<string>(policy.browser.styleProperties);
+const STYLE_PROPERTIES: readonly string[] = policy.browser.styleProperties;
 const COLOR_VALUE = /^(?:#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|[a-z]{3,30}|(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\(\s*[-+0-9a-z.%/,\s]{1,80}\))$/i;
 const COLOR_FUNCTION_BANNED = /(?:var|calc|url|env|attr|image|min|max|clamp)/i;
 
@@ -79,7 +79,7 @@ export function colorOnlyStyle(value: string): string {
     if (colon < 0) continue;
     const property = declaration.slice(0, colon).trim().toLowerCase();
     const v = declaration.slice(colon + 1).trim();
-    if (!STYLE_PROPERTIES.has(property) || !COLOR_VALUE.test(v)) continue;
+    if (!STYLE_PROPERTIES.includes(property) || !COLOR_VALUE.test(v)) continue;
     // A function body may contain letters (`from`, `none`, channel names) but never a nested call.
     if (v.includes("(") && COLOR_FUNCTION_BANNED.test(v.slice(v.indexOf("(")))) continue;
     kept.push(`${property}: ${v}`);
