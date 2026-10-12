@@ -1,4 +1,6 @@
-//! Unwired page owner. Runtime code is independent of the page_state oracle.
+//! The page host: the only page writer while Tine runs (storage s3), started
+//! per graph binding by `src-tauri/src/graph.rs` `start_host`. Runtime code is
+//! independent of the page_state oracle.
 
 mod binding;
 pub use binding::{

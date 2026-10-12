@@ -1,4 +1,5 @@
-//! Unwired production phase adapter over the audited publication primitives.
+//! The production phase adapter over the audited publication primitives: the
+//! running host's I/O (`PageHost`).
 //!
 //! The two physical censuses retain observed bytes and successful metadata
 //! witnesses, not logical drafts. Only drafts::scan selects logical records.

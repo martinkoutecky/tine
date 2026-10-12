@@ -173,10 +173,19 @@ rewrite and no work proportional to the graph. Proof:
 Every graph window binding runs a page host (step 3b P2b,
 `src-tauri/src/graph.rs` `start_host`): the window's page edits, moves,
 renames and deletions go through it, and its crash drafts live under
-`<app data>/drafts-v2/<graph id>`. A host that cannot start fails the open
-and the Store closes. Scenario: a concurrent honest instance already runs a
-host over this graph and holds its draft locks; two hosts would race each
-other's drafts. Unit cost: none beyond the drafts below; sessions, the orphan
+`<app data>/drafts-v2/<graph id>`. One process runs one host per graph: a
+graph opened again routes to the window already bound to it
+(`load_graph_for_label` → `route_bound_root`). On desktop one app identity
+runs one process (`tauri_plugin_single_instance`; on Linux it needs a D-Bus
+session bus, and without one a second process starts); stable and Beta are two
+identities with separate app data, so separate drafts, and their page saves
+meet the base-revision guard like any other concurrent writer. No draft lock
+exists. A host that cannot start fails the open and the Store closes; the
+one such failure is a platform that names no app data directory (`start_host`).
+Scenario: crash or power loss; with nowhere to write crash drafts, the
+window's unsaved input could not survive one. Draft I/O failures (a full or
+failing app-data disk) never fail the start: the graph opens with draft I/O
+down and `draft_status` says why. Unit cost: none beyond the drafts below; sessions, the orphan
 flag, the retirement map, a caller's reply slot and a running rename's order
 are memory only.
 

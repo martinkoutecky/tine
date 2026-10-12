@@ -1,5 +1,5 @@
 // The write gate is separate from the async intent so every edit can consult it
-// without pulling backend, save engine, or router dependencies into its module.
+// without pulling backend, page-host, or router dependencies into its module.
 let frozen = false;
 
 export function graphRewriteFrozen(): boolean {

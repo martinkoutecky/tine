@@ -1,4 +1,4 @@
-//! Phase seam shared by ModelFs and the unwired production adapter.
+//! Phase seam shared by ModelFs and the production adapter.
 use super::Text;
 
 /// A physical step of the host's I/O; tests outside the crate name one to

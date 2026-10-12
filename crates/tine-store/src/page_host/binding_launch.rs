@@ -8,10 +8,13 @@ impl PageHost {
     /// `app_data/drafts-v2/<graph_id>`, recovered draft keys registered
     /// before launch (§2), then the driver, which owns the index of every
     /// page it holds (§5). `mail` runs on the driver thread. Each launch
-    /// draws a fresh session (E101). The error says why no host could
-    /// start (another live host holds this graph's draft locks); the open
-    /// then fails. Production starts one per graph-window binding
-    /// (`src-tauri/src/graph.rs` `load_graph_for_label`, step 3b P2b).
+    /// draws a fresh session (E101). No draft lock exists: a graph opened
+    /// again in this process routes to its existing binding, so production
+    /// starts one host per graph (`src-tauri/src/graph.rs`
+    /// `load_graph_for_label` → `route_bound_root`, step 3b P2b). Draft I/O
+    /// failures leave the host up with draft I/O down; the error is only
+    /// the defensive "did not launch", when the host is not alive after
+    /// its launch.
     pub fn start(
         store: &Arc<Store>,
         app_data: &Path,

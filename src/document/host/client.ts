@@ -1,8 +1,11 @@
 // The window client of the page host (STEP3-DESIGN §4; plan v3 §5; REVIEW-3b-plan2
 // S4/S5/S7/R7). One instance per graph binding. It transcribes the model's window
 // (`storage-s3.qnt` wOpen/wEdit/wSend/wResolve/wDiscard/wOpTo/wClose/wRecv) over a
-// page-host port and a document port; it holds no base revisions, retries, drafts
-// or conflict detection of its own (§4.3).
+// page-host port and a document port. It holds no disk base revisions, save
+// retries, drafts or conflict detection of its own (§4.3): those are the host's.
+// It does keep the window's authoring baseline and version (`installed`, the
+// Open's `baseline`) and waits, with a pause between asks, until the host has
+// published what it took (J6 `needed`/`waited`).
 //
 // Wired by `wiring.ts` (step 3b P2b): the only page persistence of the window.
 
@@ -44,8 +47,9 @@ export interface DocumentPort {
   holdsPush(name: string): boolean;
   /** The page was deleted in this window (delete tombstone). */
   tombstoned(name: string): boolean;
-  /** The host took this instance's text, now on disk at `rev` (a took
-   * answer's revision): the page's baseline for later reads. */
+  /** The host took this instance's text at `rev` (a took answer's revision):
+   * the page's baseline for later reads. Took means the host has custody of
+   * it, not that it is published on disk (that is `needed`/`waited`). */
   took(name: string, rev: string): void;
 }
 

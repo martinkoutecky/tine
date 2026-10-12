@@ -1,7 +1,6 @@
 // Optimistic asset writes that a destructive transition (graph switch, restore,
-// app close) must wait for before it lets the bytes' references go. Shared by
-// the save engine's `flushAll` and the page-host client's `settle` (step 3b),
-// so both drain the same set.
+// app close) must wait for before it lets the bytes' references go. The
+// page-host wiring's `settle` (and so `flushAll`) drains this set (step 3b).
 
 const pending = new Set<Promise<boolean>>();
 let started = 0;

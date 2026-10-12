@@ -450,8 +450,9 @@ fn route_bound_root(
 /// The page host for a new graph-window binding (STEP3 §3, step 3b P2b): the
 /// only writer of the window's page edits, its crash drafts under
 /// `<app data>/drafts-v2/<graph id>`, keyed like the session file. It fails
-/// when another live host holds this graph's draft locks; the open then
-/// fails and the Store closes with the dropped slot.
+/// when the platform names no app data directory, so no crash draft could be
+/// written; the open then fails and the Store closes with the dropped slot.
+/// Draft I/O failures do not fail it (`PageHost::start`).
 fn start_host(
     app: &tauri::AppHandle,
     window_label: &str,
