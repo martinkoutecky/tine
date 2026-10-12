@@ -66,13 +66,21 @@ const [locale, setLocaleSignal] = createSignal(SOURCE_LOCALE);
 /** Reactive: the active UI locale's tag (`"en"`, `"zh-CN"`). */
 export const activeLocale = locale;
 
-/** Load `tag`'s catalog once (English is always loaded). */
-export async function loadLocale(tag: string): Promise<void> {
-  if (bundles.has(tag)) return;
+const loading = new Map<string, Promise<void>>();
+/** Load `tag`'s catalog once (English is always loaded). Concurrent calls share
+ * one load; a failed load is forgotten, so a later call retries it. */
+export function loadLocale(tag: string): Promise<void> {
+  if (bundles.has(tag)) return Promise.resolve();
+  const inFlight = loading.get(tag);
+  if (inFlight) return inFlight;
   const prefix = `./locales/${tag}/`;
   const files = Object.entries(otherFiles).filter(([file]) => file.startsWith(prefix));
-  if (!files.length) throw new Error(`no catalog for ${tag}`);
-  bundles.set(tag, bundleOf(tag, await Promise.all(files.map(([, load]) => load()))));
+  if (!files.length) return Promise.reject(new Error(`no catalog for ${tag}`));
+  const load = Promise.all(files.map(([, read]) => read())).then((sources) => {
+    bundles.set(tag, bundleOf(tag, sources));
+  }).finally(() => loading.delete(tag));
+  loading.set(tag, load);
+  return load;
 }
 
 /**
@@ -92,16 +100,19 @@ export function negotiateLocale(preference: string, requested: readonly string[]
   return SOURCE_LOCALE;
 }
 
-/** Make `tag` the active locale (loading its catalog first) and mark the document. */
-let activations = 0;
-/** Load `tag`'s catalog, then make it active, unless a later call superseded this
- * one while it loaded: the latest choice wins, whatever order the loads finish in. */
-export async function setActiveLocale(tag: string): Promise<void> {
-  const mine = ++activations;
-  await loadLocale(tag);
-  if (mine !== activations) return;
+/** Show `tag` now: its catalog must be loaded (`loadLocale`). Which activation
+ * may call this is the caller's decision (preference.ts owns the UI language). */
+export function showLocale(tag: string): void {
+  if (!bundles.has(tag)) throw new Error(`catalog for ${tag} is not loaded`);
   setLocaleSignal(tag);
   if (typeof document !== "undefined") document.documentElement.lang = tag;
+}
+
+/** Load `tag`'s catalog, then show it (tests and single-owner callers; the UI
+ * language goes through preference.ts, which owns concurrent activations). */
+export async function setActiveLocale(tag: string): Promise<void> {
+  await loadLocale(tag);
+  showLocale(tag);
 }
 
 const reported = new Set<string>();

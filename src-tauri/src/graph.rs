@@ -656,6 +656,10 @@ pub(crate) fn open_graph_window_blocking(
             tauri::WebviewUrl::App("index.html".into()),
         )
         .title(format!("Tine — {name}"))
+        // Hidden until the frontend's first stable frame (main.tsx reveals it),
+        // like `main`: its first visible frame is the mounted app in the current
+        // UI language, never the boot card built at process start (tine#107).
+        .visible(false)
         .inner_size(1200.0, 820.0)
         .min_inner_size(640.0, 480.0)
         .initialization_script(format!(

@@ -38,24 +38,33 @@ pub(crate) fn boot_text_script() -> String {
     )
 }
 
-/// Store the frontend's resolved locale and relabel native shell text.
+/// Serialises `set_ui_locale` from its comparison to its tray relabel, so the
+/// stored locale and the tray's labels change in one order (review CODE-1 F4):
+/// the relabel is queued on the main thread, which runs its queue in order.
+static PUBLISH: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Store the frontend's resolved locale and relabel native shell text. Ordered
+/// per webview (`ORDERED_COMMANDS`); across webviews the frontends converge on
+/// one choice through the change broadcast, so the last call carries it.
 #[tauri::command]
 pub(crate) async fn set_ui_locale(locale: String, app: tauri::AppHandle) -> Result<(), String> {
-    let current = crate::settings::read_settings_value(&app);
-    if resolved_locale(current.as_ref()) == locale {
-        return Ok(());
-    }
     let store = app.clone();
-    let value = locale.clone();
     crate::state::off_ui(move || {
+        let _publishing = PUBLISH
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let changed = std::cell::Cell::new(false);
         crate::settings::update_settings(&store, |json| {
-            json[UI_LOCALE_KEY] = serde_json::Value::String(value.clone());
-        })
+            changed.set(resolved_locale(Some(json)) != locale);
+            json[UI_LOCALE_KEY] = serde_json::Value::String(locale.clone());
+        })?;
+        #[cfg(desktop)]
+        if changed.get() {
+            crate::tray::relabel(&store, &locale);
+        }
+        Ok(())
     })
-    .await?;
-    #[cfg(desktop)]
-    crate::tray::relabel(&app, &locale);
-    Ok(())
+    .await
 }
 
 #[cfg(test)]

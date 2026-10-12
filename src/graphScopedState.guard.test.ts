@@ -140,6 +140,7 @@ const BOUNDED_COLLECTIONS: Record<string, string> = {
   "src/assetCache.ts#liveEntries": "active asset leases only; last release deletes the evicted entry; clearAssetBlobCache ends graph reuse",
   "src/render/parse.ts#cache": "CACHE_MAX=8000 LRU",
   "src/i18n/index.ts#bundles": "one Fluent bundle per shipped UI locale (the generated LOCALES registry), app-lifetime; not graph state",
+  "src/i18n/index.ts#loading": "one in-flight catalog load per shipped UI locale; deleted when the load settles",
   "src/i18n/index.ts#reported": "one key per (locale, message id) that failed to format: bounded by the catalog's message count",
   "src/workspaceWindows.ts#live": "one entry per open workspace window, at most MAX_WORKSPACE_WINDOWS (openWorkspaceWindow refuses past it); disposal deletes it, and a graph switch closes them all",
   "src/windowRealm.ts#registry": "one entry per open Tine window: main + at most MAX_WORKSPACE_WINDOWS popups; unregister on close",

@@ -43,8 +43,24 @@ revisions 2 and 3).
   `render(text)` read the reactive active locale, so a Solid computation
   re-renders on a language change.
 - Stored state and tables hold `Msg` (`msg(id, args)`) or `RawText`, never a
-  resolved string; only reactive consumers resolve. A `t(`, `render(` or
-  `renderEnglish(` call at module level fails the ratchet test.
+  resolved string; only reactive consumers resolve.
+- The literal ratchet (`scripts/i18n-literals.mjs`, baseline
+  `src/i18n/literals-baseline.json`) parses `src/**/*.ts(x)` and `index.html`
+  text nodes and attributes. It fails when a site appears whose (file, sink
+  kind, nearest enclosing named owner, normalized text) is not in the
+  baseline, counting every text with a two-letter word, lower-case included,
+  at the sinks it lists (JSX text and fragment/conditional string children,
+  `title`/`aria-label`/`placeholder`/`alt` attributes, toast and dialog
+  arguments, UI-named object properties). It does not read inline script
+  strings (the GH #572 unsupported-engine card stays English), and a converted
+  site leaves the baseline only through `--update`.
+- Separately, it fails a call of `t`, `render` or `renderEnglish` (a named
+  import, or a member of a namespace import) that runs while the module loads:
+  at module level, as an argument of a load-time call other than
+  `createMemo`/`createEffect`/`createRenderEffect`/`createComputed`, in a
+  function invoked or passed to a call at load, or in a class static
+  initializer. It is a syntactic, single-file check: aliases and cross-file
+  calls are not followed.
 - Toasts take `Msg | RawText` (a bare string is a legacy site the ratchet
   counts). A toast shows in the active locale; its dedupe key, the session
   error list, Copy and the debug log use the message id and English text, so a
@@ -57,16 +73,28 @@ revisions 2 and 3).
   default), written through the existing app-string path. System default = the
   first of the system's languages that a shipped locale serves (exact tag, then
   language subtag), else English.
-- Every webview awaits `startUiLanguage()` before it mounts (main) or renders
-  (Quick Capture): one settings read bounded at 500 ms, then the chosen catalog
-  chunk. Nothing is painted in the wrong language first. A read slower than the
-  bound mounts in the system's language and switches when the read lands, unless
-  the user chose meanwhile; a failed read toasts and keeps the system's language.
-  Concurrent activations resolve latest-first (`setActiveLocale`).
-- The frontend reports the resolved tag through `set_ui_locale`, stored as
-  `ui_locale_resolved`; the tray relabels at once. The startup screen reads that
-  key at launch (desktop) through `__TINE_BOOT_TEXT__`; elsewhere it stays
-  English. Native code never negotiates.
+- Every webview awaits `startUiLanguage()` before it mounts (main, graph
+  windows) or renders (Quick Capture). It settles once the chosen catalog is
+  showing. Only the settings read is bounded (500 ms): a slower read shows the
+  system's language and switches when the read lands, unless anything changed
+  the language meanwhile. A read the IPC call rejects toasts and keeps the
+  system's language. An unreadable or invalid `tine-settings.json` reads as
+  absent, as for every device preference: the system's language, no toast.
+- One operation owns the UI language at a time (`src/i18n/preference.ts`):
+  the startup read and its fallback, a broadcast from another window, the
+  user's choice and a write rollback each start one, and only the latest may
+  show a locale, fall back to English, seed the committed value or report to
+  native code. Concurrent loads of one catalog share a single load.
+- Desktop windows that mount the app (main and graph windows) start hidden
+  and are revealed after the first stable frame, so their first visible frame
+  is in the current language. The boot card text (`__TINE_BOOT_TEXT__`) is
+  read from `ui_locale_resolved` once at launch; it is what a visible webview
+  shows before the frontend mounts, and it can lag a language change made
+  later in the same process. Mobile shows it in English (DESIGN rev. 3).
+- The frontend reports the resolved tag through `set_ui_locale` (an ordered
+  write, `ORDERED_COMMANDS`), stored as `ui_locale_resolved`; the stored value
+  and the tray relabel change under one lock, in call order. Native code never
+  negotiates.
 - A change applies live and is broadcast (`ui-language-changed`) to the other
   windows.
 
@@ -75,8 +103,9 @@ revisions 2 and 3).
 | Check | Where |
 | --- | --- |
 | Catalog parses; no orphans, unknown references, cycles, unsupported functions; variable subset; shell literal-only; derivatives current | `src/i18n/i18n.test.ts` |
-| Literal UI text sites only shrink, by identity (`src/i18n/literals-baseline.json`); no module-level resolution | `src/i18n/literals.test.ts`, `scripts/i18n-literals.mjs` |
+| Literal UI text sites only shrink, by identity (`src/i18n/literals-baseline.json`); no load-time resolution | `src/i18n/literals.test.ts`, `scripts/i18n-literals.mjs` |
 | Command message ids follow the command ids, without collisions | `src/i18n/commands.test.ts` |
 | Live switch, persistence, bounded startup read, late and failed reads | `src/components/LanguageSetting.test.tsx` |
 | Localized toasts keep English reports | `src/components/Toasts.test.tsx` |
+| Startup read, catalog loads, broadcasts and choices resolve latest-first; only the latest reports to native | `src/i18n/preference.lifecycle.test.ts` |
 | Shell text falls back to English | `src-tauri/src/i18n_shell.rs` tests |

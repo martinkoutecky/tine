@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 // @ts-expect-error: plain ESM build script, no types.
 import { compare, identity, readBaseline, scan, scanSource } from "../../scripts/i18n-literals.mjs";
 
-type Site = { file: string; kind: string; text: string; line: number };
+type Site = { file: string; kind: string; owner: string; text: string; line: number };
+
+const violationsOf = (text: string, rel = "src/x.ts") => (scanSource(rel, text) as { violations: string[] }).violations;
+const sitesOf = (text: string, rel = "src/components/X.tsx") => (scanSource(rel, text) as { sites: Site[] }).sites;
 
 // tine#107 G4 (DESIGN rev. 2 #4, #6): no NEW English reaches the UI outside the
 // catalog, and nothing resolves a message at module load.
@@ -14,7 +17,8 @@ describe("the localization ratchet", () => {
     expect(added.map((site) => `${site.file}:${site.line} ${site.kind} ${site.text}`),
       "new literal UI text: put it in src/i18n/locales/en and use t()/msg()").toEqual([]);
     expect(gone, "converted sites: run node scripts/i18n-literals.mjs --update").toEqual([]);
-  });
+    // A whole-tree TypeScript parse: seconds, more on a loaded machine.
+  }, 60_000);
 
   it("counts JSX text, UI attributes, toasts, table labels and dialogs, by identity", () => {
     const { sites } = scanSource("src/components/Example.tsx", `
@@ -52,5 +56,137 @@ describe("the localization ratchet", () => {
     `) as { violations: string[] };
     expect(violations).toHaveLength(2);
     expect(violations[0]).toContain("src/x.ts:3");
+  });
+
+  // Finding 5 (REVIEW-CODE-1): the rule is "the nearest function is not invoked at load",
+  // not "has a function ancestor".
+  describe("load-time resolution", () => {
+    const head = `import { t, render } from "./i18n";\n`;
+    it.each([
+      ["an eager map", `export const labels = ids.map(id => t(id));`],
+      ["an eager map written with a function expression", `export const labels = ids.map(function (id) { return t(id); });`],
+      ["forEach", `ids.forEach(id => { t(id); });`],
+      ["filter", `export const kept = ids.filter(id => t(id) !== "");`],
+      ["reduce", `export const joined = ids.reduce((acc, id) => acc + t(id), "");`],
+      ["flatMap", `export const flat = ids.flatMap(id => [t(id)]);`],
+      ["Object.fromEntries over a map", `export const table = Object.fromEntries(ids.map(id => [id, t(id)]));`],
+      ["a nested eager callback", `export const nested = ids.map(id => others.map(o => t(o)));`],
+      ["an IIFE", `export const label = (() => t("x"))();`],
+      ["a new Promise executor", `export const p = new Promise(resolve => resolve(t("x")));`],
+      ["a callback to an arbitrary module-level call", `register(() => t("x"));`],
+      ["a declared function invoked at load", `function label() { return t("x"); }\nexport const l = label();`],
+      ["a declared function passed to an eager map", `function label(id) { return t(id); }\nexport const ls = ids.map(label);`],
+      ["a const arrow invoked at load", `const label = () => t("x");\nexport const l = label();`],
+      ["a static field", `export class C { static label = t("x"); }`],
+      ["a static block", `export class C { static { C.label = t("x"); } }`],
+      ["an instance field of a class constructed at load", `class C { label = t("x"); }\nexport const c = new C();`],
+      ["a plain module-level call", `export const label = t("x");`],
+      ["a state initializer", `export const [s] = createSignal(t("x"));`],
+    ])("rejects %s", (_name, body) => {
+      expect(violationsOf(head + body), body).toHaveLength(1);
+    });
+
+    it("rejects a namespace import, for t and for render", () => {
+      const ns = `import * as i18n from "./i18n";\n`;
+      expect(violationsOf(`${ns}export const row = { label: i18n.t("toast-copy") };`)).toHaveLength(1);
+      expect(violationsOf(`${ns}export const row = { label: i18n.render(m) };`)).toHaveLength(1);
+      expect(violationsOf(`${ns}export const labels = ids.map(id => i18n.t(id));`)).toHaveLength(1);
+      expect(violationsOf(`${ns}export const row = { label: () => i18n.t("x") };`)).toEqual([]);
+      expect(violationsOf(`${ns}export const row = { label: other.t("x") };`), "only the i18n namespace counts").toEqual([]);
+    });
+
+    it.each([
+      ["a function stored unevaluated in a table", `export const ROWS = [{ label: () => t("x") }];`],
+      ["a function declaration", `export function label() { return t("x"); }`],
+      ["a declared function that is never invoked at load", `function label() { return t("x"); }\nexport const f = [label];`],
+      ["a component body", `export function C() { const ids = [1]; return ids.map(id => t(id)); }`],
+      ["an eager map inside a function", `export const f = () => ids.map(id => t(id));`],
+      ["a method", `export class C { label() { return t("x"); } }`],
+      ["an instance field of a class never constructed at load", `export class C { label = t("x"); }`],
+      ["createMemo", `export const label = createMemo(() => t("x"));`],
+      ["createEffect", `createEffect(() => { document.title = t("x"); });`],
+      ["createRenderEffect", `createRenderEffect(() => { document.title = t("x"); });`],
+      ["createComputed", `export const label = createComputed(() => t("x"));`],
+      ["a handler argument of a JSX attribute", `export const C = () => <button onClick={() => t("x")} />;`],
+      ["a resolver that is not ours", `const t = (s) => s;\nexport const label = t("x");`],
+    ])("allows %s", (_name, body) => {
+      const imports = body.includes("const t =") ? `` : head;
+      expect(violationsOf(imports + body), body).toEqual([]);
+    });
+  });
+
+  // Finding 6 (REVIEW-CODE-1): the ratchet's UI-site scope.
+  describe("UI-site soundness", () => {
+    it("counts lower-case words at UI sinks, and fragment expression children", () => {
+      const sites = sitesOf(`
+        export const A = () => <button title="save">save</button>;
+        export const B = () => <>{"Save this page"}</>;
+        export const C = () => <div>{"Save this page"}</div>;
+        export const D = () => <input placeholder="search" aria-label={"filter"} alt={cond ? "on" : "off"} />;
+        export const E = () => <p>{ready() && "ready"}{name() || "untitled"}</p>;
+      `);
+      expect(sites.map((site) => `${site.kind} ${site.text}`)).toEqual([
+        "attr:title save",
+        "jsx-text save",
+        "jsx-text Save this page",
+        "jsx-text Save this page",
+        "attr:placeholder search",
+        "attr:aria-label filter",
+        "attr:alt on | off",
+        "jsx-text ready",
+        "jsx-text {} | untitled",
+      ]);
+    });
+
+    it("still ignores text without words: symbols, glyphs, single letters, numbers", () => {
+      expect(sitesOf(`export const A = () => <b title="×" aria-label={"1"}>x · … {1}</b>;`)).toEqual([]);
+    });
+
+    it("scans index.html text nodes and attribute sinks, not script or style bodies", () => {
+      const { sites } = scanSource("index.html", `<!doctype html><html><head><title>Tine</title><style>.a { content: "css words" }</style></head>
+        <body><div id="root"><span id="msg" title="Open it">Opening Tine…</span><img alt="logo mark" src="/a.png"><script>var s = "script words";</script></div></body></html>`) as { sites: Site[] };
+      expect(sites.map((site) => `${site.kind} ${site.owner} ${site.text}`)).toEqual([
+        "html-text <document> Tine",
+        "attr:title #msg Open it",
+        "html-text #msg Opening Tine…",
+        "attr:alt #root logo mark",
+      ]);
+    });
+
+    it("includes the real index.html in the scan", () => {
+      const { sites } = scan() as { sites: Site[] };
+      expect(sites.some((site) => site.file === "index.html" && site.text.startsWith("Opening"))).toBe(true);
+    });
+
+    it("identity: a converted site plus a new same-text site in another owner is one added site", () => {
+      const before = sitesOf(`
+        export const Toolbar = () => <button>Save</button>;
+        export const Menu = () => <b>Other thing</b>;
+      `);
+      const baseline = before.map(identity);
+      const after = sitesOf(`
+        import { t } from "../i18n";
+        export const Toolbar = () => <button>{t("save")}</button>;
+        export const Menu = () => <b>Other thing</b>;
+        export const Footer = () => <button>Save</button>;
+      `);
+      const { added, gone } = compare(after, baseline) as { added: Site[]; gone: string[] };
+      expect(added.map((site) => `${site.owner} ${site.text}`)).toEqual(["Footer Save"]);
+      expect(gone).toHaveLength(1);
+    });
+
+    it("identity: a move to another file and an extra duplicate are still new sites", () => {
+      const source = `export const Toolbar = () => <button>Save</button>;`;
+      const baseline = sitesOf(source).map(identity);
+      expect(compare(sitesOf(source, "src/components/Y.tsx"), baseline).added).toHaveLength(1);
+      expect(compare([...sitesOf(source), ...sitesOf(source)], baseline).added).toHaveLength(1);
+      // The same site moved down the file is the same identity: no line numbers.
+      expect(compare(sitesOf(`\n\n\n${source}`), baseline)).toEqual({ added: [], gone: [] });
+    });
+
+    it("identity: the sink kind separates a title from a text", () => {
+      const baseline = sitesOf(`export const A = () => <button title="Save" />;`).map(identity);
+      expect(compare(sitesOf(`export const A = () => <button>Save</button>;`), baseline).added).toHaveLength(1);
+    });
   });
 });
