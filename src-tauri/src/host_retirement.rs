@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::owner::lease::Lease;
 use crate::state::{GraphSlot, PageHostSlot};
 
 #[derive(Clone, Default)]
@@ -23,6 +24,41 @@ pub(crate) struct HostRetirement(Arc<Inner>);
 struct Inner {
     retiring: Mutex<HashMap<PathBuf, Arc<GraphSlot>>>,
     idle: Condvar,
+}
+
+/// One pass of stopping the host in `host` (the model's `windowCrash`, once
+/// per abandoned owner): `None` once it stopped (or there was none), else the
+/// pause before the next pass. A draft failure aborts the stop; the host
+/// keeps its pages, stays alive, and the stop is retried with `backoff`.
+/// Retirement and `tine serve` stop their hosts through this one step.
+pub(crate) fn stop_pass(host: &mut PageHostSlot, backoff: &mut Duration) -> Option<Duration> {
+    match &*host {
+        PageHostSlot::Off | PageHostSlot::Revoked => None,
+        PageHostSlot::Running(running) => match running.orphan_stop() {
+            tine_store::StopState::Ready => {
+                let PageHostSlot::Running(running) = std::mem::take(host) else {
+                    unreachable!()
+                };
+                match running.stop_finish() {
+                    Ok(_stopped) => None,
+                    Err(back) => {
+                        *host = PageHostSlot::Running(back);
+                        Some(Duration::from_millis(100))
+                    }
+                }
+            }
+            tine_store::StopState::Waiting => Some(Duration::from_millis(100)),
+            tine_store::StopState::Aborted(_) => {
+                // A draft failure (or a save failure in a restore the owner
+                // began). The stuck-graph window is P2b (STEP3-DESIGN B-QA).
+                running.stop_abort();
+                crate::debug::diag("page-host-retirement-aborted");
+                let pause = *backoff;
+                *backoff = (*backoff * 2).min(Duration::from_secs(30));
+                Some(pause)
+            }
+        },
+    }
 }
 
 impl HostRetirement {
@@ -35,6 +71,16 @@ impl HostRetirement {
     pub(crate) fn retire(&self, slot: Arc<GraphSlot>) -> Option<Arc<GraphSlot>> {
         if matches!(slot.host.try_read().as_deref(), Ok(PageHostSlot::Off)) {
             return Some(slot);
+        }
+        // The command line waits (`busy`) while the host stops; an
+        // adoption admits it again (CLI PROTOCOL §3.1).
+        if let Some(lease) = slot
+            .owner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            lease.gate().pause();
         }
         let previous = self
             .0
@@ -64,42 +110,22 @@ impl HostRetirement {
                 return;
             }
             let pause = match &*host {
-                PageHostSlot::Off => None,
                 // Revoked only by an adoption, which `claims` saw.
                 PageHostSlot::Revoked => return,
-                PageHostSlot::Running(running) => match running.orphan_stop() {
-                    tine_store::StopState::Ready => {
-                        let PageHostSlot::Running(running) = std::mem::take(&mut *host) else {
-                            unreachable!()
-                        };
-                        match running.stop_finish() {
-                            Ok(_stopped) => None,
-                            Err(back) => {
-                                *host = PageHostSlot::Running(back);
-                                Some(Duration::from_millis(100))
-                            }
-                        }
-                    }
-                    tine_store::StopState::Waiting => Some(Duration::from_millis(100)),
-                    tine_store::StopState::Aborted(_) => {
-                        // A draft failure (or a save failure in a restore
-                        // the owner began): the host keeps the pages and
-                        // stays alive, and the stop is retried. The
-                        // stuck-graph window is P2b (STEP3-DESIGN B-QA).
-                        running.stop_abort();
-                        crate::debug::diag("page-host-retirement-aborted");
-                        let pause = backoff;
-                        backoff = (backoff * 2).min(Duration::from_secs(30));
-                        Some(pause)
-                    }
-                },
+                _ => stop_pass(&mut host, &mut backoff),
             };
             let Some(pause) = pause else {
                 // Still under the host lock: an adoption either took the
                 // host before this pass or finds the slot gone.
+                let lease = slot.owner.lock().unwrap_or_else(|e| e.into_inner()).take();
                 slot.store.close();
                 self.0.retiring.lock().unwrap().remove(&slot.root_key);
                 self.0.idle.notify_all();
+                drop(host);
+                // The host has stopped: release the owner lease (endpoint,
+                // then lock; CLI PROTOCOL §3.2), outside the host lock so a
+                // request in flight can finish.
+                drop(lease);
                 return;
             };
             drop(host);
@@ -114,8 +140,8 @@ impl HostRetirement {
             .is_some_and(|kept| Arc::ptr_eq(kept, slot))
     }
 
-    /// Take over the retiring binding of `root`, if any: its Store and its
-    /// running host. A stop the retirement began ends when the adopting
+    /// Take over the retiring binding of `root`, if any: its Store, its
+    /// running host and its owner lease. A stop the retirement began ends when the adopting
     /// window reloads (`PageHost::window_reloaded`, the model's
     /// `windowCrash`), as every window's first command. The old slot is
     /// revoked and no longer closes the Store. Called outside the registry lock; the
@@ -123,7 +149,7 @@ impl HostRetirement {
     pub(crate) fn adopt(
         &self,
         root: &std::path::Path,
-    ) -> Option<(Arc<tine_store::Store>, PageHostSlot)> {
+    ) -> Option<(Arc<tine_store::Store>, PageHostSlot, Option<Lease>)> {
         let slot = self.0.retiring.lock().unwrap().get(root).cloned()?;
         let mut host = slot.host.write().unwrap_or_else(|e| e.into_inner());
         {
@@ -141,7 +167,10 @@ impl HostRetirement {
         // restore that still holds the old slot gets the stale-binding
         // outcome; one already under the gate finished before this write.
         let taken = std::mem::replace(&mut *host, PageHostSlot::Revoked);
-        Some((slot.store.clone(), taken))
+        // The owner lease moves with the host, never reacquired (CLI
+        // PROTOCOL §3.2); the adopter routes it to its slot.
+        let lease = slot.owner.lock().unwrap_or_else(|e| e.into_inner()).take();
+        Some((slot.store.clone(), taken, lease))
     }
 
     /// A retiring root that overlaps `root` (one contains the other), or
@@ -439,7 +468,7 @@ mod tests {
         let reservation = hold(&old);
         assert!(registry.remove("graph-1").is_none());
         let retirement = registry.retirement.clone();
-        let (store, host) = retirement.adopt(&f.root).expect("the retiring host");
+        let (store, host, _) = retirement.adopt(&f.root).expect("the retiring host");
         assert!(Arc::ptr_eq(&store, &f.store), "one Store");
         assert!(
             matches!(host, PageHostSlot::Running(_)),
@@ -499,7 +528,7 @@ mod tests {
             .lock()
             .unwrap()
             .insert(f.root.clone(), old.clone());
-        let (store, host) = retirement.adopt(&f.root).unwrap();
+        let (store, host, _) = retirement.adopt(&f.root).unwrap();
         let mut fresh = GraphSlot::new(store, f.root.clone());
         *fresh.host.get_mut().unwrap() = host;
         let window = window(&fresh);
@@ -669,7 +698,7 @@ mod tests {
         let reservation = hold(&old);
         assert!(registry.remove("graph-1").is_none());
         let retirement = registry.retirement.clone();
-        let (store, host) = retirement.adopt(&f.root).unwrap();
+        let (store, host, _) = retirement.adopt(&f.root).unwrap();
         let mut fresh = GraphSlot::new(store, f.root.clone());
         *fresh.host.get_mut().unwrap() = host;
         let fresh = Arc::new(fresh);
@@ -729,7 +758,7 @@ mod tests {
             !f.root.join("pages/a.md").exists() && f.root.join("pages/inside.md").exists(),
             "the writer under the gate finished"
         );
-        let (_, host) = adopted.expect("then the adoption");
+        let (_, host, _) = adopted.expect("then the adoption");
         assert!(matches!(host, PageHostSlot::Running(_)));
         assert_eq!(late_writer(&old, "late"), Err(STALE_BINDING.to_owned()));
         drop(host);
@@ -783,7 +812,7 @@ mod tests {
     fn reopen(f: &Fixture, state: &AppState, paused: impl FnOnce()) {
         let _load = state.graph_load.lock().unwrap();
         let retirement = state.graphs.read().unwrap().retirement.clone();
-        let (store, host) = retirement.adopt(&f.root).unwrap();
+        let (store, host, _) = retirement.adopt(&f.root).unwrap();
         paused();
         let mut fresh = GraphSlot::new(store, f.root.clone());
         *fresh.host.get_mut().unwrap() = host;

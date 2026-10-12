@@ -98,8 +98,9 @@ mod page_host;
 #[cfg(feature = "test-faults")]
 pub use page_host::faults as host_faults;
 pub use page_host::{
-    DiskToken, DraftStatus, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
-    Reloaded, RenameRefusal, Reservation, ReserveRefusal, StopMode, StopState, Stopped,
+    DiskToken, DraftStatus, HostRead, HostReadError, Input, Opened, PageHost, PageMail,
+    PageOperation, PageRefusal, Reloaded, RenameRefusal, Reservation, ReserveRefusal, StopMode,
+    StopState, Stopped,
 };
 #[cfg(test)]
 mod page_state;

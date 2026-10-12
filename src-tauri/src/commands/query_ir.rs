@@ -58,7 +58,7 @@ fn registry(graph: &WholeGraph) -> Result<Arc<Registry>, String> {
     }
 }
 
-fn parse(
+pub(crate) fn parse(
     graph: &WholeGraph,
     text: &str,
     dialect: QueryTextDialect,
@@ -73,7 +73,7 @@ fn parse(
     ))
 }
 
-fn run(
+pub(crate) fn run(
     graph: &WholeGraph,
     query: &Query,
     view: &ViewSettings,

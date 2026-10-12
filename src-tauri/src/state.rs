@@ -55,6 +55,12 @@ pub(crate) struct GraphSlot {
     /// takes the registry; a writer checks revocation from the gate's own
     /// state (`host_slot`).
     pub(crate) host: RwLock<PageHostSlot>,
+    /// The graph's owner lease (CLI PROTOCOL §3.1): the owner lock and the
+    /// command endpoint, taken with a fresh host and kept with it. Paused
+    /// at retirement, moved by `HostRetirement::adopt`, released by
+    /// retirement once the host has stopped. `None` when the platform or
+    /// filesystem gives no arbitration (the graph opens without endpoint).
+    pub(crate) owner: Mutex<Option<crate::owner::lease::Lease>>,
 }
 
 /// Where the binding's page host stands. `Off` before the open starts it,
@@ -105,6 +111,7 @@ impl GraphSlot {
             concord_ledger: Default::default(),
             rescan: Default::default(),
             host: Default::default(),
+            owner: Default::default(),
         }
     }
 

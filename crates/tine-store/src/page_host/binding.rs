@@ -1308,6 +1308,10 @@ mod publication;
 
 #[path = "binding_launch.rs"]
 mod launch;
+
+#[path = "binding_read.rs"]
+mod read;
+pub use read::{HostRead, HostReadError};
 #[cfg(feature = "test-faults")]
 pub use retained::OPERATION_WAIT;
 pub use retained::{RenameRefusal, Reservation, ReserveRefusal};
