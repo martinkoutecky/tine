@@ -639,10 +639,20 @@ pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) ->
     journal_name(name)?;
     let id = store.file_id(Area::Journals, name).map_err(store_error)?;
     let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
-    let (Some(host), Some(page)) = (host, store.as_page(&id)) else {
-        return crate::retry_on_conflict("journal changed repeatedly during trash", || {
-            crate::trash_current(store, &id, max, "no such journal file")
-        });
+    let (Some(running), Some(page)) = (host, store.as_page(&id)) else {
+        // No host: the transaction under the retained-writer route, as before P2.
+        let discover = || Ok(crate::retained::pages(store, [&id]));
+        return crate::retained::reserved(
+            host,
+            Input::Flush,
+            discover,
+            crate::retained::unsaved,
+            |_| {
+                crate::retry_on_conflict("journal changed repeatedly during trash", || {
+                    crate::trash_current(store, &id, max, "no such journal file")
+                })
+            },
+        );
     };
     crate::retry_on_conflict("journal changed repeatedly during trash", || {
         let bytes = match store.read(&id, max) {
@@ -666,7 +676,7 @@ pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) ->
             moved: None,
         };
         crate::retained::applied(
-            host,
+            running,
             op,
             "moving the journal to trash",
             crate::retained::unsaved,

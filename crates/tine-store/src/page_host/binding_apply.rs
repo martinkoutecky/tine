@@ -56,8 +56,8 @@ pub enum ApplyRefusal {
     /// Not admitted within `OPERATION_WAIT`: other work held its pages.
     Busy,
     /// Not an operation this host can run: a path that is not a page of
-    /// this graph, a page named twice, a move that is not a move, or a host
-    /// that stopped. Nothing changed.
+    /// this graph, a page named twice, a move that is not a move, no edit
+    /// kind, or a host that stopped. Nothing changed.
     Refused,
     /// The operation's draft could not be written: nothing changed.
     /// In-scope scenario: a full disk or an app-data disk error.
@@ -133,7 +133,8 @@ impl PageHost {
             },
             None => None,
         };
-        if effects.is_empty() {
+        // OG-RULES Rule 8 (A-K1): an operation records the edit kinds it names.
+        if effects.is_empty() || op.kinds.is_empty() {
             return Err(ApplyRefusal::Refused);
         }
         let keys: BTreeSet<PageKey> = effects.keys().cloned().collect();

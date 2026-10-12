@@ -192,6 +192,20 @@ fn a_move_applies_and_a_malformed_operation_is_refused() {
     );
     assert_eq!(live.host.apply(twice), refused);
     assert_eq!(live.host.apply(op(vec![], Input::Refuse)), refused);
+    let mut unkinded = op(
+        vec![(
+            "pages/c.md",
+            Effect::Write(bytes("- c2\n")),
+            Expected::Bytes(bytes("- c\n")),
+        )],
+        Input::Refuse,
+    );
+    unkinded.kinds.clear();
+    assert_eq!(
+        live.host.apply(unkinded),
+        refused,
+        "OG-RULES Rule 8: no kind"
+    );
     assert_eq!(live.disk("pages/a.md"), "- a\n");
     assert_eq!(live.disk("pages/c.md"), "- c\n");
     let applied = live.host.apply(moving(

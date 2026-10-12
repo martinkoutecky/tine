@@ -1224,22 +1224,32 @@ pub fn merge_pages(
     let dst_id = store
         .as_page(&dst)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
-    let Some(host) = host else {
-        return crate::retry_on_conflict("pages changed repeatedly during merge", || {
-            let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
-            let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
-            tx.save_page(
-                &[
-                    tine_store::EditKind::InsertBlocks,
-                    tine_store::EditKind::DeletePage,
-                ],
-                &dst_id,
-                SaveBase::Existing(survivor.dst_rev),
-                &survivor.doc,
-            );
-            tx.trash(&src, survivor.src_rev, tine_store::TrashIf::Any);
-            Ok(crate::commit_retry(tx.commit())?.then_some(()))
-        });
+    let Some(running) = host else {
+        // No host: the transaction under the retained-writer route, as before P2.
+        let discover = || Ok(vec![src_id.clone(), dst_id.clone()]);
+        return crate::retained::reserved(
+            host,
+            Input::Flush,
+            discover,
+            crate::retained::unsaved,
+            |_| {
+                crate::retry_on_conflict("pages changed repeatedly during merge", || {
+                    let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
+                    let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
+                    tx.save_page(
+                        &[
+                            tine_store::EditKind::InsertBlocks,
+                            tine_store::EditKind::DeletePage,
+                        ],
+                        &dst_id,
+                        SaveBase::Existing(survivor.dst_rev),
+                        &survivor.doc,
+                    );
+                    tx.trash(&src, survivor.src_rev, tine_store::TrashIf::Any);
+                    Ok(crate::commit_retry(tx.commit())?.then_some(()))
+                })
+            },
+        );
     };
     // One host operation (DESIGN §3.1): the survivor's write, then the
     // source's deletion, a move's order (the survivor holds the source's
@@ -1272,7 +1282,7 @@ pub fn merge_pages(
             policy: Input::Flush,
             moved: Some((dst_id.clone(), src_id.clone())),
         };
-        crate::retained::applied(host, op, "the merge", crate::retained::unsaved)
+        crate::retained::applied(running, op, "the merge", crate::retained::unsaved)
     })
 }
 

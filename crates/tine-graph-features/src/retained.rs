@@ -81,10 +81,9 @@ pub(crate) fn applied(
         Ok(()) => Ok(Some(())),
         Err(ApplyRefusal::Changed) => Ok(None),
         Err(ApplyRefusal::Unsaved(page)) => Err(refused(page.as_str())),
-        Err(ApplyRefusal::Busy) => Err(error(
-            io::ErrorKind::WouldBlock,
-            "Another change to these pages is still finishing; try again in a moment.".into(),
-        )),
+        // M6: the retained writers' existing wording (a running rename is what
+        // holds pages past the bound; docs/storage-contract.md, I-8).
+        Err(ApplyRefusal::Busy) => Err(crate::pages::rename_busy()),
         Err(ApplyRefusal::Refused) => Err(error(
             io::ErrorKind::Other,
             format!("Tine could not run {what}; nothing changed."),
