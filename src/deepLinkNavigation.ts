@@ -16,6 +16,7 @@ import { admitPageFile, captureEmptyPage, pageByName, reportPageLoadRefusal } fr
 import { journalTitle, appNow } from "./journal";
 import { openSwitcher } from "./ui";
 import { platformKind } from "./nativeChrome";
+import { activeElement, isElementTag, isHTMLElementNode, nextFrame } from "./windowRealm";
 import { focusPageTrailing } from "./components/pageTrailing";
 import { resolvedTarget, refreshPageIndex } from "./pageIndex";
 import { chooseLinkGraph } from "./components/DeepLinkGraphChoice";
@@ -142,9 +143,9 @@ async function openAppRoute(app: AppRoute, current: () => boolean): Promise<void
 const ROUTE_FOCUS_FRAMES = 60;
 
 function editableFocused(): boolean {
-  const active = document.activeElement;
-  return active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
-    || (active instanceof HTMLElement && active.isContentEditable);
+  const active = activeElement();
+  return isElementTag(active, "input") || isElementTag(active, "textarea")
+    || (isHTMLElementNode(active) && active.isContentEditable);
 }
 
 /** A route's focus is script-made, so Android leaves the keyboard down until
@@ -154,7 +155,7 @@ async function showKeyboardForFocusedInput(current: () => boolean): Promise<void
   const show = backend().tineLinks?.showKeyboard;
   if (platformKind !== "android" || !show) return;
   for (let frame = 0; frame < ROUTE_FOCUS_FRAMES && !editableFocused(); frame++) {
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await nextFrame();
   }
   if (!current() || !editableFocused()) return;
   try { await show(); }

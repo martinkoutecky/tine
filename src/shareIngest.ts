@@ -35,6 +35,7 @@ import { backend, isTauri } from "./backend";
 import { bindingOwner, writeOwned } from "./owned";
 import { clearOnBindingInvalidated } from "./binding";
 import { graphMeta } from "./graphSession";
+import { onAppReturn } from "./windowRealm";
 import { pushToast } from "./toasts";
 import { journalTitle, appNow } from "./journal";
 import { appendToJournalDay, flushPage, formatForPage, pageByName, trackAssetWrite } from "./document";
@@ -233,8 +234,7 @@ export async function installShareIngest(alive: () => boolean): Promise<() => vo
     createEffect(on(() => graphMeta()?.root, (root) => { if (root) run(); }));
     return dispose;
   });
-  const visible = () => { if (document.visibilityState === "visible") run(); };
-  document.addEventListener("visibilitychange", visible);
+  const offReturn = onAppReturn(run);
   let unlisten: () => void = () => {};
   try { unlisten = await inbox.subscribe(run); }
   catch { /* desktop has no producer plugin; launch and resume still ingest */ }
@@ -243,7 +243,7 @@ export async function installShareIngest(alive: () => boolean): Promise<() => vo
     if (disposed) return;
     disposed = true;
     disposeRoot();
-    document.removeEventListener("visibilitychange", visible);
+    offReturn();
     unlisten();
   };
 }
