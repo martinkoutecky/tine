@@ -579,7 +579,7 @@ fn a_stop_settles_admitted_work_and_only_resumed_admission_cuts_it_short() {
     let (_endpoint, gate, release) = holding(&graph);
     let mut conn = graph.connect();
     let slow = std::thread::spawn(move || conn.call("slow", Value::Null).is_ok());
-    while gate.state() == "serving" && gate.idle_for().is_some() {
+    while gate.in_flight() == 0 {
         std::thread::sleep(Duration::from_millis(5));
     }
     gate.pause();
@@ -596,7 +596,7 @@ fn a_stop_settles_admitted_work_and_only_resumed_admission_cuts_it_short() {
     gate.resume();
     let mut conn = graph.connect();
     let slow = std::thread::spawn(move || conn.call("slow", Value::Null).is_ok());
-    while gate.idle_for().is_some() {
+    while gate.in_flight() == 0 {
         std::thread::sleep(Duration::from_millis(5));
     }
     gate.pause();
@@ -751,4 +751,82 @@ fn the_start_log_is_emptied_past_its_cap() {
     assert_eq!(std::fs::metadata(&path).unwrap().len(), 2048);
     super::serve::bound_log(&log, 1024);
     assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+}
+
+#[test]
+fn a_second_yield_is_refused_so_the_first_settles() {
+    // Review CODE-2 #1: two concurrent yields never wait on each other.
+    use super::serve::ServeOwner;
+    let graph = Graph::new();
+    let slot = Arc::new(graph.slot());
+    let owner = Arc::new(ServeOwner {
+        slot: slot.clone(),
+        gate: Gate::new(),
+        root: graph.root.clone(),
+        drafts: super::wire::Drafts {
+            app_data: graph.app_data.display().to_string(),
+            graph_id: "test-graph".into(),
+        },
+    });
+    let yield_request = || Request {
+        id: 1,
+        verb: "owner.yield".into(),
+        args: Value::Null,
+    };
+    // Both admitted, as the endpoint admits them, before either runs.
+    let first = owner.gate.admit().unwrap();
+    let second = owner.gate.admit().unwrap();
+    let (done, finished) = std::sync::mpsc::channel();
+    {
+        let (owner, request) = (owner.clone(), yield_request());
+        std::thread::spawn(move || {
+            let (result, after) = owner.answer_request(&request);
+            drop(first);
+            let _ = done.send((result.is_ok(), after == After::Exit));
+        });
+    }
+    while owner.gate.state() == "serving" {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let (refused, after) = owner.answer_request(&yield_request());
+    assert_eq!(refused.unwrap_err().code, "busy");
+    assert_eq!(after, After::Continue);
+    drop(second);
+    assert_eq!(
+        finished.recv_timeout(Duration::from_secs(30)),
+        Ok((true, true)),
+        "the first yield never settled"
+    );
+}
+
+#[test]
+fn a_stop_is_claimed_once_and_never_reopened() {
+    // Review CODE-2 #2: the idle exit claims only an idle gate, in one
+    // step, and nothing resumes admission after a stop.
+    let gate = Gate::new();
+    let admitted = gate.admit().unwrap();
+    assert!(
+        !gate.claim_idle_stop(Duration::ZERO),
+        "claimed with work in flight"
+    );
+    drop(admitted);
+    assert!(gate.claim_stop());
+    assert!(!gate.claim_idle_stop(Duration::ZERO));
+    assert!(!gate.claim_stop());
+    gate.resume();
+    assert!(gate.admit().is_none(), "a resume reopened a stopped owner");
+}
+
+#[test]
+fn a_connection_accepted_after_a_yields_sweep_is_closed() {
+    // Review CODE-2 #3: the sweep seals registration.
+    let graph = Graph::new();
+    let (_endpoint, _gate, _release) = holding(&graph);
+    let mut yielding = graph.connect();
+    assert!(yielding.call("exit", Value::Null).is_ok());
+    let served = match open(&graph.paths().socket, &graph.root) {
+        Ok(Some(mut late)) => late.call("ping", Value::Null).is_ok(),
+        _ => false,
+    };
+    assert!(!served, "a connection accepted after the sweep was served");
 }

@@ -318,6 +318,10 @@ pub(crate) fn take_over(
     }
     let mut progress = String::from("stopping");
     let mut reported = Instant::now() - Duration::from_secs(1);
+    // At most one status probe in flight, off this loop: a serve wedged
+    // before `accept` can hold even `connect`, never the deadline (§4.5,
+    // review CODE-2 #5).
+    let mut probe: Option<std::sync::mpsc::Receiver<Option<String>>> = None;
     loop {
         match OwnerLock::try_take(&paths.lock, "app") {
             Ok(Some(lock)) => return Ok(Some(Claimed::from_lock(lock, paths.clone()))),
@@ -343,14 +347,20 @@ pub(crate) fn take_over(
                 root.display()
             ));
         }
+        if let Some(pending) = &probe {
+            match pending.try_recv() {
+                Ok(state) => {
+                    progress = state.unwrap_or(progress);
+                    probe = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => probe = None,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
         if reported.elapsed() >= Duration::from_secs(1) {
             reported = Instant::now();
-            // A wedged serve cannot hold the probe past the deadline (§4.5).
-            let left = deadline
-                .saturating_duration_since(Instant::now())
-                .clamp(Duration::from_millis(100), Duration::from_secs(2));
-            if let Some(state) = status(&paths.socket, root, left) {
-                progress = state;
+            if probe.is_none() {
+                probe = probe_status(&paths.socket, root);
             }
             waiting(&progress);
         }
@@ -373,6 +383,21 @@ fn refusal_text(body: &ErrorBody) -> String {
         "app-owner" => "The graph is open in another Tine window.".into(),
         _ => body.message.clone(),
     }
+}
+
+/// Probe the owner's state on a thread of its own; its answer (or `None`)
+/// arrives on the returned channel. A probe stuck in `connect` stays stuck
+/// only until the owner closes its listener.
+fn probe_status(socket: &Path, root: &Path) -> Option<std::sync::mpsc::Receiver<Option<String>>> {
+    let (answer, answered) = std::sync::mpsc::channel();
+    let (socket, root) = (socket.to_owned(), root.to_owned());
+    std::thread::Builder::new()
+        .name("tine-owner-status".into())
+        .spawn(move || {
+            let _ = answer.send(status(&socket, &root, Duration::from_secs(2)));
+        })
+        .ok()
+        .map(|_| answered)
 }
 
 /// The owner's `owner.status` state, if one answers within `bound` (each

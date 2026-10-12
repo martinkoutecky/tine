@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tine_store::{OpenOptions, Store};
 
-use super::endpoint::{After, Gate, Handler, IO_TIMEOUT};
+use super::endpoint::{After, Gate, Handler};
 use super::lease::{self, Claim};
 use super::wire::{ok, Drafts, ErrorBody, Request};
 use super::OwnerError;
@@ -139,15 +139,12 @@ pub(crate) fn serve_graph(graph: &Path) -> Result<(), ServeFailure> {
             Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
             Err(RecvTimeoutError::Timeout) => {
                 bound_start_log();
-                if gate.idle_for().is_some_and(|idle| idle >= IDLE_EXIT) {
-                    gate.pause();
-                    // A request admitted just before the pause counts as
-                    // work: answer it first.
-                    if gate.drain(0, IO_TIMEOUT) {
-                        stop_host(&slot, &gate);
-                        break;
-                    }
-                    gate.resume();
+                // Claimed only with nothing admitted, in one step: no
+                // request runs past this, and a yield's stop is never
+                // reopened (review CODE-2 #2).
+                if gate.claim_idle_stop(IDLE_EXIT) {
+                    stop_host(&slot, &gate);
+                    break;
                 }
             }
         }
@@ -218,7 +215,12 @@ impl Handler for ServeOwner {
             body.detail = Some(json!({ "admitted": false, "reason": "draft-namespace" }));
             return (Err(body), After::Continue);
         }
-        self.gate.pause();
+        // One stop at a time: a second yield (or one racing the idle exit)
+        // answers busy and ends its own admission, so the stop it would
+        // wait for can settle (review CODE-2 #1).
+        if !self.gate.claim_stop() {
+            return (Err(super::endpoint::busy()), After::Continue);
+        }
         // Every admitted request but this one settles first, however long
         // it takes; `owner.status` reports it meanwhile.
         self.gate.set_progress("finishing requests");

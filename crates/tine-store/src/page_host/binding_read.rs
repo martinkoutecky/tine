@@ -30,9 +30,10 @@ pub enum HostReadError {
 impl PageHost {
     /// `page`'s current text: the held buffer, or the file the host would
     /// load. Not `Store::page`, whose indexed bytes can lag the buffer. The
-    /// held-or-file choice, the bytes and the revision come from one host
-    /// read, so an open or a save cannot fall between them (review CODE-1
-    /// F2); the caller parses outside it (A-K3).
+    /// held-or-file choice, the spelling, the bytes and the revision come
+    /// from one host read, so an open, a save or a respelling cannot fall
+    /// between them (review CODE-1 F2, CODE-2 #4); the caller parses outside
+    /// it (A-K3).
     pub fn read(&self, page: &PageId) -> Result<HostRead, HostReadError> {
         let (key, spelling, ..) = self.try_identify(page).ok_or(HostReadError::Ended)?;
         let store = self.store.clone();
@@ -42,8 +43,10 @@ impl PageHost {
             .read(move |state: &retained::HostState| {
                 let host = &state.progress.host;
                 if let Some(held) = host.pages.get(&key) {
+                    // The held key's spelling now: a case-only rename since
+                    // `try_identify` respelled it (review CODE-2 #4).
                     return Ok(HostRead {
-                        page: spelling,
+                        page: PageId::from(host.fs.spelling(&key)),
                         bytes: held.buf.clone(),
                         revision: Some((host.incarnation, held.version)),
                     });

@@ -37,7 +37,10 @@ pub(crate) trait Handler: Send + Sync + 'static {
     fn status(&self, gate: &Gate) -> Value;
 }
 
-/// Admission: whether new requests are taken, and how many are in flight.
+/// Admission: whether new requests are taken, how many are in flight, and
+/// whether a stop owns the owner. A stop is claimed once, by one caller
+/// (a yield, or the idle exit), and never resumes admission (review
+/// CODE-2 #1, #2); a pause without a stop (app retirement) can.
 pub(crate) struct Gate {
     state: Mutex<GateState>,
     changed: Condvar,
@@ -45,6 +48,7 @@ pub(crate) struct Gate {
 
 struct GateState {
     admitting: bool,
+    stopping: bool,
     in_flight: usize,
     last: Instant,
     progress: Option<String>,
@@ -67,6 +71,7 @@ impl Gate {
         Arc::new(Self {
             state: Mutex::new(GateState {
                 admitting: true,
+                stopping: false,
                 in_flight: 0,
                 last: Instant::now(),
                 progress: None,
@@ -94,30 +99,42 @@ impl Gate {
         self.lock().admitting = false;
     }
 
+    /// Admit again after a pause (an adoption). Never after a stop.
     pub(crate) fn resume(&self) {
         let mut state = self.lock();
+        if state.stopping {
+            return;
+        }
         state.admitting = true;
         state.progress = None;
         state.last = Instant::now();
         self.changed.notify_all();
     }
 
-    /// Wait up to `bound` until at most `except` requests are in flight
-    /// (a yield waits for every request but its own); whether it got there.
-    pub(crate) fn drain(&self, except: usize, bound: Duration) -> bool {
-        let deadline = Instant::now() + bound;
+    /// Claim the stop for an admitted request (a yield): admission ends for
+    /// good. False when another stop owns it; the caller must not wait on
+    /// it, since that stop may be waiting on the caller's own admission.
+    pub(crate) fn claim_stop(&self) -> bool {
         let mut state = self.lock();
-        while state.in_flight > except {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return false;
-            }
-            state = self
-                .changed
-                .wait_timeout(state, left)
-                .unwrap_or_else(|e| e.into_inner())
-                .0;
+        if state.stopping {
+            return false;
         }
+        state.stopping = true;
+        state.admitting = false;
+        true
+    }
+
+    /// Claim the stop for the idle exit: only when admitting with nothing in
+    /// flight for at least `idle`, in one step, so no request is admitted
+    /// in between and nothing needs draining.
+    pub(crate) fn claim_idle_stop(&self, idle: Duration) -> bool {
+        let mut state = self.lock();
+        if state.stopping || !state.admitting || state.in_flight > 0 || state.last.elapsed() < idle
+        {
+            return false;
+        }
+        state.stopping = true;
+        state.admitting = false;
         true
     }
 
@@ -132,10 +149,9 @@ impl Gate {
         }
     }
 
-    /// How long the owner has been idle: admitting, nothing in flight.
-    pub(crate) fn idle_for(&self) -> Option<Duration> {
-        let state = self.lock();
-        (state.admitting && state.in_flight == 0).then(|| state.last.elapsed())
+    #[cfg(test)]
+    pub(crate) fn in_flight(&self) -> usize {
+        self.lock().in_flight
     }
 
     /// What `owner.status` reports while stopping (`stopping`,
@@ -191,9 +207,30 @@ mod unix {
         accept: Option<std::thread::JoinHandle<()>>,
     }
 
+    /// The open connections. Sealed by a yield's sweep or the endpoint's
+    /// close: a connection registered after it is closed at once, so the
+    /// sweep cannot miss one accepted meanwhile (review CODE-2 #3).
+    #[derive(Default)]
+    struct Connections {
+        open: HashMap<u64, UnixStream>,
+        sealed: bool,
+    }
+
+    impl Connections {
+        /// Close every connection but `except` and take no more.
+        fn seal(&mut self, except: Option<u64>) {
+            self.sealed = true;
+            for (id, connection) in self.open.drain() {
+                if Some(id) != except {
+                    let _ = connection.shutdown(std::net::Shutdown::Both);
+                }
+            }
+        }
+    }
+
     struct Shared {
         closed: AtomicBool,
-        connections: Mutex<HashMap<u64, UnixStream>>,
+        connections: Mutex<Connections>,
         next: AtomicU64,
         hello: Hello,
         handler: Arc<dyn Handler>,
@@ -226,7 +263,7 @@ mod unix {
             })?;
             let shared = Arc::new(Shared {
                 closed: AtomicBool::new(false),
-                connections: Mutex::new(HashMap::new()),
+                connections: Mutex::new(Connections::default()),
                 next: AtomicU64::new(0),
                 hello,
                 handler,
@@ -262,15 +299,9 @@ mod unix {
             if let Some(accept) = self.accept.take() {
                 let _ = accept.join();
             }
-            for (_, connection) in self
-                .shared
-                .connections
-                .lock()
+            (self.shared.connections.lock())
                 .unwrap_or_else(|e| e.into_inner())
-                .drain()
-            {
-                let _ = connection.shutdown(std::net::Shutdown::Both);
-            }
+                .seal(None);
             let _ = std::fs::remove_file(&self.socket);
         }
     }
@@ -289,22 +320,26 @@ mod unix {
                 }
             };
             let id = shared.next.fetch_add(1, Ordering::Relaxed);
-            if let Ok(clone) = stream.try_clone() {
-                shared
-                    .connections
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .insert(id, clone);
+            {
+                let mut connections =
+                    (shared.connections.lock()).unwrap_or_else(|e| e.into_inner());
+                let Ok(clone) = stream.try_clone() else {
+                    continue;
+                };
+                if connections.sealed {
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                    continue;
+                }
+                connections.open.insert(id, clone);
             }
             let serving = shared.clone();
             let spawned = std::thread::Builder::new()
                 .name(CONNECTION_THREAD.into())
                 .spawn(move || {
                     connection(id, stream, &serving);
-                    serving
-                        .connections
-                        .lock()
+                    (serving.connections.lock())
                         .unwrap_or_else(|e| e.into_inner())
+                        .open
                         .remove(&id);
                 });
             if spawned.is_err() {
@@ -433,18 +468,12 @@ mod unix {
             };
             let (result, after) = shared.handler.answer_request(&request);
             if after == After::Exit {
-                // Yielded: close every other connection before the reply,
-                // which goes out while the lock is still held (§4.3).
-                for (other, connection) in shared
-                    .connections
-                    .lock()
+                // Yielded: close every other connection, and any accepted
+                // after this, before the reply, which goes out while the
+                // lock is still held (§4.3).
+                (shared.connections.lock())
                     .unwrap_or_else(|e| e.into_inner())
-                    .iter()
-                {
-                    if *other != id {
-                        let _ = connection.shutdown(std::net::Shutdown::Both);
-                    }
-                }
+                    .seal(Some(id));
             }
             let reply = match result {
                 Ok(ok) => Reply {
