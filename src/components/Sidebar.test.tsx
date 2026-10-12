@@ -16,7 +16,7 @@ afterEach(() => {
 describe("graph open recovery (master 9a9122b1544d)", () => {
   it("keeps a known graph's open failure sticky and retries its same target", async () => {
     vi.spyOn(backend(), "listKnownGraphs").mockResolvedValue([
-      { name: "Shared notes", path: "/graphs/shared-notes" },
+      { name: "Shared notes", path: "\\\\?\\C:\\shared-notes", display_path: "C:\\shared-notes" },
     ]);
     const openKnown = vi.fn(async () => {
       throw new Error("graph root is not readable");
@@ -37,6 +37,7 @@ describe("graph open recovery (master 9a9122b1544d)", () => {
         return current!;
       });
       row.click();
+      expect(row.title).toBe("C:\\shared-notes");
       await vi.waitFor(() => expect(toasts()).toHaveLength(1));
       const failure = toasts()[0]!;
       expect(failure.kind).toBe("error");
@@ -46,7 +47,7 @@ describe("graph open recovery (master 9a9122b1544d)", () => {
 
       failure.action!.run();
       await vi.waitFor(() => expect(openKnown).toHaveBeenCalledTimes(2));
-      expect(openKnown).toHaveBeenLastCalledWith("/graphs/shared-notes", false);
+      expect(openKnown).toHaveBeenLastCalledWith("\\\\?\\C:\\shared-notes", false);
     } finally {
       dispose();
     }

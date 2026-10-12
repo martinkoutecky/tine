@@ -116,7 +116,7 @@ export interface Backend {
   /** Scaffold a brand-new demo graph (onboarding "create new graph"); returns
    *  the created graph's root path to then `loadGraph`. Creates the graph in
    *  the named child of `dir`, reusing only an empty directory. */
-  createGraph(dir: string, name: string): Promise<string>;
+  createGraph(dir: string, name: string): Promise<string | { root: string; display_root: string }>;
   /** First unused notes, notes-2, … child name, supplied by Rust. */
   suggestGraphName(dir: string): Promise<string>;
   /** The whole name inventory (physical pages/journals, aliases, reference-only
@@ -865,7 +865,7 @@ class TauriBackend implements Backend {
     return this.call<string>("default_graph_parent");
   }
   createGraph(dir: string, name: string) {
-    return this.call<string>("create_graph", { dir, name });
+    return this.call<{ root: string; display_root: string }>("create_graph", { dir, name });
   }
   suggestGraphName(dir: string) { return this.call<string>("suggest_graph_name", { dir }); }
   pageInventory() {

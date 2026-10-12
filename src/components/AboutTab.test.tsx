@@ -3,7 +3,8 @@ import { render } from "solid-js/web";
 import { AboutTab } from "./AboutTab";
 import { setToasts, toasts } from "../toasts";
 
-const { getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExternalMock, checkNowMock, getAppBoolMock, setAppBoolMock } = vi.hoisted(() => ({
+const { packagedMock, getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExternalMock, checkNowMock, getAppBoolMock, setAppBoolMock } = vi.hoisted(() => ({
+  packagedMock: vi.fn(async () => false),
   getAppBoolMock: vi.fn(async () => true),
   setAppBoolMock: vi.fn(async () => {}),
   getVersionMock: vi.fn(async () => "0.5.3"),
@@ -20,6 +21,7 @@ vi.mock("../backend", () => ({
 }));
 vi.mock("../platform", () => ({ platformKind: platformKindMock }));
 vi.mock("../update", () => ({
+  isMsixPackaged: packagedMock,
   checkForUpdateNow: checkNowMock,
   openReleasesPage: () => {},
 }));
@@ -38,8 +40,22 @@ describe("AboutTab", () => {
     vi.clearAllMocks();
     isTauriMock.mockReturnValue(false);
     platformKindMock.mockResolvedValue("desktop");
+    packagedMock.mockResolvedValue(false);
     openExternalMock.mockResolvedValue(undefined);
     setToasts([]);
+  });
+
+  it("MSIX replaces update controls with Microsoft Store distribution text", async () => {
+    isTauriMock.mockReturnValue(true);
+    packagedMock.mockResolvedValue(true);
+    const host = document.createElement("div");
+    const dispose = render(() => <AboutTab />, host);
+    try {
+      await flush();
+      expect(host.textContent).toContain("Updates come from the Microsoft Store.");
+      expect(host.textContent).not.toContain("Check for updates");
+      expect(getAppBoolMock).not.toHaveBeenCalled();
+    } finally { dispose(); }
   });
 
   it("GH #618: exposes a device-local automatic-check toggle and keeps manual checks", async () => {

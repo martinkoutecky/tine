@@ -1001,7 +1001,7 @@ impl Store {
             return Err(failed(parent, std::io::Error::new(std::io::ErrorKind::InvalidInput,
                 "Choose a non-empty graph name without path separators, control characters or <>:\"/\\|?*. Names cannot be . or .., end with a dot or space, or use a Windows device name (CON, NUL, COM1, etc.).")));
         }
-        let root = parent.join(name.trim());
+        let root = crate::path_identity::new_graph_root(parent, name.trim())?;
         match fs::create_dir(&root) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {

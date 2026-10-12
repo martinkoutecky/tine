@@ -11,7 +11,8 @@ import { browserPlatform } from "./browserPlatform";
 // update applies in place. On **macOS** (manual: the Developer ID-signed bundle's
 // in-place install is not enabled yet, GH #650) and outside Tauri, fall back to
 // opening the releases page in the browser. Android/iOS update through their distribution channel, so
-// both the notifier and installer are disabled there. The updater is inert until
+// both the notifier and installer are disabled there. MSIX package identity also
+// disables both; Microsoft Store manages those updates. The updater is inert until
 // a signed release with a `latest.json` exists; any failure (no manifest yet, bad
 // signature, offline) is caught and also falls back to the releases page — it can
 // never brick the app.
@@ -69,16 +70,32 @@ async function checkedChannelUpdate() {
 
 type UpdateMode = "self" | "manual" | "unavailable";
 
+/** Failed package detection leaves notification intact, but cannot authorize installation. */
+export function resolvePackagedUpdateMode(packaged: boolean | "unknown", installer: boolean): UpdateMode {
+  return packaged === true || (installer && packaged === "unknown") ? "unavailable" : "self";
+}
+
+export async function isMsixPackaged(): Promise<boolean | "unknown"> {
+  try {
+    const env = await readOwned(ownedWhen(), backend().gpuEnv());
+    return env.kind === "current" && typeof env.value.packaged === "boolean" ? env.value.packaged : "unknown";
+  } catch (error) {
+    dbg(`update package identity probe failed: ${String(error)}`);
+    return "unknown";
+  }
+}
+
 /** Resolve update behavior conservatively. Mobile builds update through their
  * distribution channel; a platform-detection failure must therefore fail closed
  * instead of accidentally exposing the desktop updater. */
-async function updateMode(): Promise<UpdateMode> {
+async function updateMode(installer = false): Promise<UpdateMode> {
   if (!isTauri()) return "unavailable";
   try {
     if ((await platformKind()) !== "desktop") return "unavailable";
   } catch {
     return "unavailable";
   }
+  if (resolvePackagedUpdateMode(await isMsixPackaged(), installer) === "unavailable") return "unavailable";
   if (browserPlatform(typeof navigator !== "undefined" ? navigator.userAgent : "").manualDesktopUpdate) return "manual";
   // A Flatpak's /app is read-only: the in-place install can only fail, so it
   // updates by downloading the new bundle, like macOS.
@@ -273,7 +290,7 @@ export const installUpdateForTest = (): Promise<void> => applyUpdateOrOpen();
  *  in place and relaunch; everything else (macOS, browser, or any failure) → open
  *  the releases page. Never throws. */
 async function applyUpdateOrOpen(): Promise<void> {
-  const mode = await updateMode();
+  const mode = await updateMode(true);
   if (mode === "unavailable") return;
   if (mode === "manual") {
     openReleases();

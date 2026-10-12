@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Windows MSIX installs show that updates come from the Microsoft Store and disable Tine's self-updater (GH #307).
 - Interface language: Settings → Appearance → **Language** offers English and Simplified Chinese (简体中文), or the system's language. It applies live in every window and the tray menu, the startup screen follows from the next launch, and the choice is remembered per device; notes are never translated. In this first step the command palette, keyboard-shortcut list and notifications' own controls are translated; the rest of the interface follows (GH #107).
 - Settings → Appearance has a **Fine-tuning** section for small visual details, so they do not each become a setting of their own: how embedded blocks look (shaded box, or accent line and dot only), the underline on links to the web or a file (solid, dotted, none) and how strongly links to pages that do not exist yet stand out. Each starts at Tine's default look and has a Reset; choices are saved on this device, `logseq/custom.css` still outranks them, and **Disable custom CSS** switches them off with it. Later visual preferences are added as rows of one table (GH #610, UI-GH610-STYLE-KNOBS).
 - Colored text from Logseq notes shows its color: `[:span {:style "color: red"} "x"]` (and `background-color`, `text-decoration-color`) render as written. Only those three color properties are read from `style`; layout, positioning and anything that fetches stay stripped. `==x==` and `^^x^^` highlight as before. The static-HTML export still drops `style` (GH #243, UI-GH243-COLORED-HICCUP-SPANS).
@@ -50,6 +51,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - The right sidebar can be dragged up to 70% of the window (it was fixed at 800px), keeping at least 360px for the main pane; keyboard resizing follows the same limit (GH #521).
 
 ### Fixed
+
+- Representable Windows graph paths display without verbatim prefixes; stored canonical paths retain existing graph identity (REG-WIN-GRAPH-PATH).
+- Cold launches from a Tine link restore the last graph before handling the link (UI-WIN-LINK-COLD-START).
+- New graphs refuse Windows access to WSL1 backing rootfs folders; existing graphs warn and remain openable, with advice to use `\\wsl.localhost\<distro>\…` (UI-WIN-WSL-ROOTFS).
+- Opening another graph replaces the previous graph's undismissed Guide announcement (UI-WIN-GUIDE-TOAST-ONCE).
 
 - A page's `icon::` now also shows in the left sidebar's Favorites (in place of the star), Recent and All pages lists and on the right sidebar's page items, as in Logseq; before it showed only on the page title and in links to the page (GH #346, UI-GH346-PAGE-ICON-SURFACES). Image icons are not part of this change.
 - Linked References filter chips are listed alphabetically instead of by count (GH #433).

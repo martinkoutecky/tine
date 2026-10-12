@@ -38,7 +38,7 @@ export function GraphPublish(): JSX.Element {
   };
   return <>
     <div class="settings-row"><span class="settings-label">Graph</span><div>
-      <span class="settings-value mono">{graphMeta()?.root ?? "—"}</span>
+      <span class="settings-value mono">{graphMeta()?.display_root ?? graphMeta()?.root ?? "—"}</span>
       <div style={{ "margin-top": "6px" }}><button class="settings-btn" onClick={() => void switchGraph()}>Open another graph…</button></div>
     </div></div>
     <div class="settings-row"><span class="settings-label">Publish</span><div>

@@ -23,6 +23,7 @@ import { chooseLinkGraph } from "./components/DeepLinkGraphChoice";
 
 export interface LinkTarget {
   root: string;
+  displayRoot?: string;
   graphId?: string | null;
   name?: string | null;
   pageKind?: "page" | "journal" | null;

@@ -512,6 +512,8 @@ export interface GraphMeta {
   scheduled_future_days?: number | null;
   journal_config_diagnostics?: string[];
   root: string;
+  /** Presentation only; root remains the canonical graph identity. */
+  display_root?: string;
   journals_dir: string;
   pages_dir: string;
   preferred_workflow: string; // "now" | "todo"
