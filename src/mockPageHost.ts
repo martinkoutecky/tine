@@ -4,7 +4,8 @@ import type { PageDto, ResolvedPage } from "./types";
 /** The browser mock's page host: one window, every request taken and
  * published at once, nothing written (the mock graph never changes on save).
  * Like the native host it keeps the text it took, so a later Open answers with
- * it rather than the mock graph's original. Answers arrive as page mail after
+ * it rather than the mock graph's original. A window reload loads the mock
+ * graph again, so the host forgets that text then. Answers arrive as page mail after
  * the command returns, as from the native host. Tests that need refusals or
  * held answers use the host fakes instead. */
 export function mockPageHost(read: (path: string) => PageDto | null,
@@ -34,7 +35,7 @@ export function mockPageHost(read: (path: string) => PageDto | null,
   };
   const admit = (id: number) => { nextId = Math.max(nextId, id + 1); };
   return {
-    async pageWindowReloaded() { session += 1; return { session, nextId }; },
+    async pageWindowReloaded() { session += 1; taken.clear(); return { session, nextId }; },
     async pageOpen(_session: number, id: number, page: { name: string; kind: "journal" | "page"; path: string | null }) {
       let path = page.path;
       if (path === null) {

@@ -34,6 +34,15 @@ describe("mockPageHost", () => {
     expect(openText(mail.find((m) => m.answer?.id === 4))).toBe("edited");
   });
 
+  it("forgets taken text on a window reload, which loads the mock graph again", async () => {
+    const { h, mail } = host();
+    await h.pageSubmit(1, 1, "pages/p.md", page("edited"));
+    const { session } = await h.pageWindowReloaded();
+    await h.pageOpen(session, 2, { name: "p", kind: "page", path: "pages/p.md" });
+    await flush();
+    expect(openText(mail.find((m) => m.answer?.id === 2))).toBe("original");
+  });
+
   it("keeps both endpoints' texts of a move", async () => {
     const { h, mail } = host();
     await h.pageMove(1, 1, ["pages/p.md", page("source"), 1], ["pages/q.md", page("receiver"), 1]);
