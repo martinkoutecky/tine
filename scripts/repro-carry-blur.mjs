@@ -5,7 +5,8 @@
 // page host afterwards. Harness-only hook: a temporary build transforms
 // src/mockPageHost.ts to expose push/submit capture; the shipped app is unchanged.
 // Usage: node scripts/repro-carry-blur.mjs   (exit 1 when any case loses data)
-import { chromium } from "playwright";
+// CB_ENGINE=webkit runs Playwright's WebKit (which fires no blur on removal).
+import { chromium, webkit } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -86,7 +87,9 @@ let browser;
 let failures = 0;
 const results = [];
 try {
-  browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
+  browser = process.env.CB_ENGINE === "webkit" ? await webkit.launch()
+    : await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
+  console.log(`engine ${browser.browserType().name()} ${browser.version()}`);
   for (const c of CASES) {
     const page = await browser.newPage({ viewport: { width: 1180, height: 820 } });
     page.setDefaultTimeout(8_000);
