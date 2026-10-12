@@ -139,6 +139,55 @@ describe("the UI language lifecycle", () => {
     await resetToEnglish();
   });
 
+  it("startup waits for a broadcast that superseded its read (CODE-2 A)", async () => {
+    const read = deferred<string>();
+    vi.spyOn(backend(), "getAppString").mockReturnValue(read.promise);
+    let settled = false;
+    const started = startUiLanguage().then(() => { settled = true; });
+    await flush();
+    broadcast("zh-CN");
+    await until(() => held.some((entry) => entry.tag === "zh-CN"));
+    read.resolve("");
+    await flush();
+    // The retired read is inert, and startup still waits for the current catalog.
+    expect(settled).toBe(false);
+    expect(activeLocale()).toBe("en");
+    await releaseAll("zh-CN");
+    await started;
+    expect(activeLocale()).toBe("zh-CN");
+    await resetToEnglish();
+  });
+
+  it("startup does not wait for a catalog a broadcast made obsolete (CODE-2 A)", async () => {
+    vi.spyOn(backend(), "getAppString").mockResolvedValue("zh-CN");
+    let settled = false;
+    const started = startUiLanguage().then(() => { settled = true; });
+    await until(() => held.some((entry) => entry.tag === "zh-CN"));
+    broadcast("");
+    await started;
+    expect(settled).toBe(true);
+    expect(activeLocale()).toBe("en");
+    expect(native).toHaveBeenLastCalledWith("en");
+    await releaseAll("zh-CN");
+    expect(activeLocale()).toBe("en");
+  });
+
+  it("an older local write failing after a broadcast does not roll back over it (CODE-2 B)", async () => {
+    const write = deferred<void>();
+    vi.spyOn(backend(), "setAppString").mockReturnValue(write.promise);
+    setUiLanguage("en");
+    await flush();
+    broadcast("zh-CN");
+    await releaseAll("zh-CN");
+    expect(activeLocale()).toBe("zh-CN");
+    write.reject(new Error("disk full"));
+    await flush();
+    expect(activeLocale()).toBe("zh-CN");
+    expect(uiLanguagePreference()).toBe("zh-CN");
+    expect(native).toHaveBeenLastCalledWith("zh-CN");
+    await resetToEnglish();
+  });
+
   it("only the latest operation reports to native code (F4)", async () => {
     broadcast("zh-CN");
     await flush();

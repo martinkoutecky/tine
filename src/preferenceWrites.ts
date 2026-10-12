@@ -40,6 +40,15 @@ export function writePreference<T>(
   });
 }
 
+/** A value another window persisted and broadcast: it is the committed value
+ * now, and it supersedes this window's pending writes, whose failure then
+ * toasts without rolling back over it. O(1). */
+export function supersedePreference<T>(read: () => T, value: T): void {
+  advanceRevision(read);
+  const state = states.get(read) as State<T> | undefined;
+  if (state) state.committed = value;
+}
+
 /** Capture a stable callback's revision before a startup read, without calling
  * it. O(1). */
 export function preferenceRevision<T>(read: () => T): number {

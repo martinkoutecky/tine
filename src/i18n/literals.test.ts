@@ -82,6 +82,17 @@ describe("the localization ratchet", () => {
       ["an instance field of a class constructed at load", `class C { label = t("x"); }\nexport const c = new C();`],
       ["a plain module-level call", `export const label = t("x");`],
       ["a state initializer", `export const [s] = createSignal(t("x"));`],
+      // Finding E (REVIEW-CODE-2): a static helper invoked while the module loads.
+      ["a static helper called by a static field", `class Labels { static copy() { return t("toast-copy"); } static row = Labels.copy(); }`],
+      ["a static helper called at module level", `class Labels { static copy() { return t("toast-copy"); } }\nexport const label = Labels.copy();`],
+      ["this.copy() in a static block", `class Labels { static copy() { return t("x"); } static { Labels.row = this.copy(); } }`],
+      ["this.copy() in a static field", `class Labels { static copy() { return t("x"); } static row = this.copy(); }`],
+      ["this.copy() inside an arrow in a static field", `class Labels { static copy() { return t("x"); } static row = (() => this.copy())(); }`],
+      ["a static helper called through another static helper", `class Labels { static copy() { return t("x"); } static all() { return [this.copy()]; } }\nexport const rows = Labels.all();`],
+      ["a static helper passed to an eager map", `class Labels { static copy(id) { return t(id); } }\nexport const rows = ids.map(Labels.copy);`],
+      ["a static helper named by a string index", `class Labels { static copy() { return t("x"); } }\nexport const label = Labels["copy"]();`],
+      ["a static getter read at load", `class Labels { static get copy() { return t("x"); } }\nexport const label = Labels.copy;`],
+      ["a static helper of a class expression", `const Labels = class { static copy() { return t("x"); } };\nexport const label = Labels.copy();`],
     ])("rejects %s", (_name, body) => {
       expect(violationsOf(head + body), body).toHaveLength(1);
     });
@@ -102,6 +113,13 @@ describe("the localization ratchet", () => {
       ["a component body", `export function C() { const ids = [1]; return ids.map(id => t(id)); }`],
       ["an eager map inside a function", `export const f = () => ids.map(id => t(id));`],
       ["a method", `export class C { label() { return t("x"); } }`],
+      ["a static helper only called from a function", `class Labels { static copy() { return t("x"); } }\nexport const f = () => Labels.copy();`],
+      ["a static helper only called from a component", `class Labels { static copy() { return t("x"); } }\nexport function C() { return h("b", Labels.copy()); }`],
+      ["a static helper only stored unevaluated", `class Labels { static copy() { return t("x"); } }\nexport const ROWS = [{ run: Labels.copy }];`],
+      ["a static helper called from an instance method", `class Labels { static copy() { return t("x"); } label() { return Labels.copy(); } }\nexport const l = new Labels();`],
+      ["a static helper called by a static method never invoked at load", `class Labels { static copy() { return t("x"); } static all() { return this.copy(); } }\nexport const f = () => Labels.all();`],
+      ["a static getter only read from a function", `class Labels { static get copy() { return t("x"); } }\nexport const f = () => Labels.copy;`],
+      ["an instance method of another class with the same name", `class A { static copy() { return t("x"); } }\nclass B { copy() { return 1; } }\nexport const l = new B().copy();`],
       ["an instance field of a class never constructed at load", `export class C { label = t("x"); }`],
       ["createMemo", `export const label = createMemo(() => t("x"));`],
       ["createEffect", `createEffect(() => { document.title = t("x"); });`],

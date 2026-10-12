@@ -58,8 +58,11 @@ revisions 2 and 3).
   import, or a member of a namespace import) that runs while the module loads:
   at module level, as an argument of a load-time call other than
   `createMemo`/`createEffect`/`createRenderEffect`/`createComputed`, in a
-  function invoked or passed to a call at load, or in a class static
-  initializer. It is a syntactic, single-file check: aliases and cross-file
+  function invoked or passed to a call at load, in a class static
+  initializer, or in a static method or static getter of a class in the same
+  file that is called (`Class.m()`, `Class["m"]()`, `this.m()` from a static
+  context, or passed as an argument) or, for a getter, read at load. It is a
+  syntactic, single-file check: aliases, instance-method calls and cross-file
   calls are not followed.
 - Toasts take `Msg | RawText` (a bare string is a legacy site the ratchet
   counts). A toast shows in the active locale; its dedupe key, the session
@@ -84,13 +87,19 @@ revisions 2 and 3).
   the startup read and its fallback, a broadcast from another window, the
   user's choice and a write rollback each start one, and only the latest may
   show a locale, fall back to English, seed the committed value or report to
-  native code. Concurrent loads of one catalog share a single load.
-- Desktop windows that mount the app (main and graph windows) start hidden
-  and are revealed after the first stable frame, so their first visible frame
-  is in the current language. The boot card text (`__TINE_BOOT_TEXT__`) is
-  read from `ui_locale_resolved` once at launch; it is what a visible webview
-  shows before the frontend mounts, and it can lag a language change made
-  later in the same process. Mobile shows it in English (DESIGN rev. 3).
+  native code. Concurrent loads of one catalog share a single load. Startup
+  settles when the latest operation has, following each supersession: a
+  broadcast during startup holds the mount until its catalog shows, and a
+  catalog it made obsolete never does. A broadcast value is committed (the
+  other window persisted it): an older local write that fails afterwards
+  toasts but does not roll back over it.
+- The boot card (`index.html`, shown until the frontend mounts) reads its text
+  from `ui_locale_resolved`: the main window's at launch
+  (`__TINE_BOOT_TEXT__`; main starts hidden and is revealed after the first
+  stable frame), a graph window's when that window is built
+  (`__TINE_WINDOW_BOOT_TEXT__`), so a graph opened after a language change
+  shows the current language. Graph windows are not hidden: an unmounted
+  window always shows its boot card. Mobile shows it in English (DESIGN rev. 3).
 - The frontend reports the resolved tag through `set_ui_locale` (an ordered
   write, `ORDERED_COMMANDS`), stored as `ui_locale_resolved`; the stored value
   and the tray relabel change under one lock, in call order. Native code never

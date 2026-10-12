@@ -138,13 +138,17 @@ function boundaryOf(node) {
  *   - no boundary: module level, runs at load;
  *   - class `static` block or `static` field: runs when the class is evaluated;
  *   - instance field or constructor: runs when `new C` runs at load;
- *   - method or accessor: runs when called, never counted (calls go through instances);
+ *   - static method or static accessor: runs at load iff `Class.member` is called (or a
+ *     static getter read) at load, or `this.member` is, from a static initializer or a
+ *     static method that itself runs at load (see `memberKey`);
+ *   - instance method or accessor: runs when called, never counted (calls go through instances);
  *   - function expression or arrow: an IIFE or an argument of a call that runs at
  *     load (unless the callee defers, see DEFERRING_CALLEES) runs at load; bound to a
  *     variable, it runs at load iff that name is invoked at load; elsewhere (object
  *     member, return value, JSX handler) it is stored unevaluated;
  *   - function declaration: runs at load iff its name is invoked at load.
- * `invoked` is the set of names called, `new`ed, or passed to a load-time call.
+ * `invoked` is the set of names called, `new`ed, or passed to a load-time call, plus the
+ * `Class.member` keys of static members called at load.
  */
 function runsAtLoad(node, invoked) {
   const boundary = boundaryOf(node);
@@ -170,14 +174,71 @@ function runsAtLoad(node, invoked) {
     if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) return invoked.has(parent.name.text);
     return false;
   }
-  return false; // methods, accessors
+  if (ts.isMethodDeclaration(boundary) || ts.isGetAccessor(boundary) || ts.isSetAccessor(boundary)) {
+    const key = isStaticMember(boundary) ? declaredMemberKey(boundary) : null;
+    return key !== null && invoked.has(key);
+  }
+  return false; // anything else
+}
+
+const isStaticMember = (member) => member.modifiers?.some((m) => m.kind === ts.SyntaxKind.StaticKeyword) ?? false;
+
+/** The member name as written (`copy`, `"copy"`), or null for a computed name. */
+function memberNameOf(name) {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
+  return null;
+}
+
+/** `Class.member` for a declared class member, or null (anonymous class, computed name). */
+function declaredMemberKey(member) {
+  const cls = className(member.parent);
+  const name = memberNameOf(member.name);
+  return cls !== null && name !== null ? `${cls}.${name}` : null;
+}
+
+/** The class `this` denotes at `node`, when that is a class evaluated or called statically; arrow functions are transparent. */
+function staticThisClass(node) {
+  for (let current = node.parent; current; current = current.parent) {
+    if (ts.isArrowFunction(current)) continue;
+    if (ts.isClassStaticBlockDeclaration(current)) return className(current.parent);
+    if ((ts.isPropertyDeclaration(current) || ts.isMethodDeclaration(current) || ts.isGetAccessor(current) || ts.isSetAccessor(current)) && isStaticMember(current)) {
+      return className(current.parent);
+    }
+    if (ts.isFunctionLike(current) || ts.isPropertyDeclaration(current) || ts.isClassLike(current)) return null;
+  }
+  return null;
+}
+
+/** `Class.member`, `this.member` (in a static context) or `Class["member"]` as a key, else null. Single file, no aliases. */
+function memberKey(expression) {
+  let name = null;
+  let target = null;
+  if (ts.isPropertyAccessExpression(expression)) {
+    name = memberNameOf(expression.name);
+    target = expression.expression;
+  } else if (ts.isElementAccessExpression(expression) && ts.isStringLiteralLike(expression.argumentExpression)) {
+    name = expression.argumentExpression.text;
+    target = expression.expression;
+  }
+  if (name === null || target === null) return null;
+  while (transparent(target)) target = target.expression;
+  if (ts.isIdentifier(target)) return `${target.text}.${name}`;
+  if (target.kind === ts.SyntaxKind.ThisKeyword) {
+    const cls = staticThisClass(expression);
+    return cls !== null ? `${cls}.${name}` : null;
+  }
+  return null;
 }
 
 /** Names invoked at load, to a fixpoint: a call at load adds its callee and its identifier arguments. */
 function loadInvokedNames(source) {
   const calls = [];
+  const reads = [];
+  const staticGetters = new Set();
   const collect = (node) => {
     if ((ts.isCallExpression(node) || ts.isNewExpression(node)) && node.expression) calls.push(node);
+    else if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) reads.push(node);
+    else if (ts.isGetAccessor(node) && isStaticMember(node) && declaredMemberKey(node) !== null) staticGetters.add(declaredMemberKey(node));
     ts.forEachChild(node, collect);
   };
   collect(source);
@@ -188,15 +249,26 @@ function loadInvokedNames(source) {
       if (!runsAtLoad(call, invoked)) continue;
       const names = [];
       if (ts.isIdentifier(call.expression)) names.push(call.expression.text);
+      else names.push(memberKey(call.expression)); // `Labels.copy()`, `this.copy()`
       if (!DEFERRING_CALLEES.has(calleeName(call) ?? "")) {
-        for (const argument of call.arguments ?? []) if (ts.isIdentifier(argument)) names.push(argument.text);
+        for (const argument of call.arguments ?? []) {
+          if (ts.isIdentifier(argument)) names.push(argument.text);
+          else names.push(memberKey(argument)); // `ids.map(Labels.copy)`
+        }
       }
       for (const name of names) {
-        if (!invoked.has(name)) {
+        if (name !== null && !invoked.has(name)) {
           invoked.add(name);
           changed = true;
         }
       }
+    }
+    // A static getter runs when it is read, not called: `export const l = Labels.title`.
+    for (const read of reads) {
+      const key = memberKey(read);
+      if (key === null || invoked.has(key) || !staticGetters.has(key) || !runsAtLoad(read, invoked)) continue;
+      invoked.add(key);
+      changed = true;
     }
   }
   return invoked;

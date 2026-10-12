@@ -18,9 +18,12 @@
       </div>
     </div>
     <script>
-      // tine#107: the native shell's text in the last chosen UI language.
-      if (typeof globalThis.__TINE_BOOT_TEXT__ === "string") {
-        document.getElementById("startup-shell-text").textContent = globalThis.__TINE_BOOT_TEXT__;
+      // tine#107: the native shell's text in the last chosen UI language: the
+      // window's own (read when a graph window is built), else the launch's.
+      var bootText = typeof globalThis.__TINE_WINDOW_BOOT_TEXT__ === "string"
+        ? globalThis.__TINE_WINDOW_BOOT_TEXT__ : globalThis.__TINE_BOOT_TEXT__;
+      if (typeof bootText === "string") {
+        document.getElementById("startup-shell-text").textContent = bootText;
       }
     </script>
     <script id="tine-engine-check">

@@ -656,16 +656,14 @@ pub(crate) fn open_graph_window_blocking(
             tauri::WebviewUrl::App("index.html".into()),
         )
         .title(format!("Tine — {name}"))
-        // Hidden until the frontend's first stable frame (main.tsx reveals it),
-        // like `main`: its first visible frame is the mounted app in the current
-        // UI language, never the boot card built at process start (tine#107).
-        .visible(false)
         .inner_size(1200.0, 820.0)
         .min_inner_size(640.0, 480.0)
         .initialization_script(format!(
             "window.__GRAPH_PATH__ = {};",
             serde_json::to_string(&meta.root).unwrap_or_else(|_| "\"\"".to_string())
-        ));
+        ))
+        // Its boot card in the language current now, not at process start (tine#107).
+        .initialization_script(crate::i18n_shell::window_boot_text_script(app));
         #[cfg(target_os = "macos")]
         let builder = builder
             .decorations(true)
