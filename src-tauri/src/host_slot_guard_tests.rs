@@ -422,3 +422,45 @@ fn a_planted_second_binding_fails_the_guard() {
         ["graph.rs::load_graph_for_label", "graph.rs::sneaky"]
     );
 }
+
+/// The page host's window admissions (`PageHost::open`, `submit`,
+/// `move_blocks`, `discard`, `close`) run only from the window's page
+/// commands (`page_commands.rs`), each on a blocking-pool thread of its own
+/// that holds no store writer. The driver keeps admissions in arrival order
+/// (`Shared::admission`): one issued by a thread holding the store writer
+/// could queue behind an open that waits for that writer, and never return
+/// (P1 re-review 2). Exemplar: `page_commands.rs` `page_submit`.
+#[test]
+fn window_admissions_run_only_from_the_page_commands() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    production_files(&root.join("src"), &mut files);
+    production_files(&root.join("../crates/tine-graph-features/src"), &mut files);
+    let admissions = [
+        "host.open(",
+        "host.submit(",
+        "host.move_blocks(",
+        "host.discard(",
+        "host.close(",
+    ];
+    let mut sites = 0;
+    for (file, source) in &files {
+        for admission in admissions {
+            let count = source.matches(admission).count();
+            if file.ends_with("page_commands.rs") {
+                sites += count;
+            } else {
+                assert_eq!(
+                    count, 0,
+                    "{file} calls {admission}: a window admission runs only from \
+                     src-tauri/src/page_commands.rs, on a thread holding no store writer \
+                     (exemplar page_submit)"
+                );
+            }
+        }
+    }
+    assert!(
+        sites >= 5,
+        "the admission scan found {sites} page command sites"
+    );
+}

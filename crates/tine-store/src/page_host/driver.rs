@@ -276,6 +276,9 @@ type Run<F, C> =
 struct Command<F: HostIo, C: Clock> {
     /// Taken before the state mutex (lock order writer → state).
     writer: Option<Arc<Mutex<()>>>,
+    /// An admission (a request id the host admits in order): it never
+    /// overtakes an earlier admission deferred on the writer.
+    ordered: bool,
     claim: Arc<AtomicU8>,
     run: Run<F, C>,
 }
@@ -291,6 +294,10 @@ pub(super) struct Shared<F: HostIo, C: Clock> {
     /// Pauses a retained writer's flush before its first check (tests, N1).
     #[cfg(test)]
     pub flush_pause: Mutex<Option<crate::store::TestPause>>,
+    /// Commands deferred on the store writer after the driver's last pass
+    /// (tests: an admission's dispatch, observed).
+    #[cfg(test)]
+    pub deferred: std::sync::atomic::AtomicUsize,
 }
 
 impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
@@ -315,9 +322,20 @@ impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
         writer: Option<Arc<Mutex<()>>>,
         run: impl FnOnce(SyncSender<R>) -> Run<F, C>,
     ) -> Result<R, Unanswered> {
+        self.request_with(deadline, writer, false, run)
+    }
+
+    fn request_with<R: Send + 'static>(
+        &self,
+        deadline: Deadline,
+        writer: Option<Arc<Mutex<()>>>,
+        ordered: bool,
+        run: impl FnOnce(SyncSender<R>) -> Run<F, C>,
+    ) -> Result<R, Unanswered> {
         let (reply, answer) = mpsc::sync_channel(1);
         let claim = Arc::new(AtomicU8::new(QUEUED));
         let command = Command {
+            ordered,
             writer,
             claim: claim.clone(),
             run: run(reply),
@@ -377,7 +395,21 @@ impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
         &self,
         action: impl FnOnce(&mut State<F, C>) -> R + Send + 'static,
     ) -> Result<R, Unanswered> {
-        self.call_with(None, action)
+        self.call_with(None, false, action)
+    }
+
+    /// [`Self::call`] for an admission, a request id the host admits only
+    /// in increasing order: it runs after every admission queued before it,
+    /// one deferred on the store writer included, so a window's requests
+    /// are admitted in the order they arrive. Never issued holding the store
+    /// writer: it could wait behind an open that waits for that writer. Only
+    /// the window's page commands admit (`src-tauri`
+    /// `window_admissions_run_only_from_the_page_commands`).
+    pub fn admission<R: Send + 'static>(
+        &self,
+        action: impl FnOnce(&mut State<F, C>) -> R + Send + 'static,
+    ) -> Result<R, Unanswered> {
+        self.call_with(None, true, action)
     }
 
     /// [`Self::call`] under the store `writer`, which the driver takes
@@ -388,16 +420,28 @@ impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
         writer: &Arc<Mutex<()>>,
         action: impl FnOnce(&mut State<F, C>) -> R + Send + 'static,
     ) -> Result<R, Unanswered> {
-        self.call_with(Some(writer.clone()), action)
+        self.call_with(Some(writer.clone()), false, action)
+    }
+
+    /// [`Self::admission`] under the store `writer`, which the driver takes
+    /// before the state mutex: a caller never waits for the driver holding
+    /// the writer its publication step takes.
+    pub fn admission_writer<R: Send + 'static>(
+        &self,
+        writer: &Arc<Mutex<()>>,
+        action: impl FnOnce(&mut State<F, C>) -> R + Send + 'static,
+    ) -> Result<R, Unanswered> {
+        self.call_with(Some(writer.clone()), true, action)
     }
 
     fn call_with<R: Send + 'static>(
         &self,
         writer: Option<Arc<Mutex<()>>>,
+        ordered: bool,
         action: impl FnOnce(&mut State<F, C>) -> R + Send + 'static,
     ) -> Result<R, Unanswered> {
         let mut action = Some(action);
-        self.request(Deadline::Never, writer, |reply| {
+        self.request_with(Deadline::Never, writer, ordered, |reply| {
             Box::new(move |_, mut state| {
                 if let Some(action) = action.take() {
                     let answer = action(&mut state);
@@ -416,6 +460,7 @@ impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
         let mut action = Some(action);
         self.submit(Command {
             writer: None,
+            ordered: false,
             claim: Arc::new(AtomicU8::new(QUEUED)),
             run: Box::new(move |_, mut state| {
                 if let Some(action) = action.take() {
@@ -594,6 +639,8 @@ where
             ended: AtomicBool::new(false),
             #[cfg(test)]
             flush_pause: Mutex::new(None),
+            #[cfg(test)]
+            deferred: std::sync::atomic::AtomicUsize::new(0),
         });
         let thread = {
             let shared = shared.clone();
@@ -863,14 +910,26 @@ fn run<F: HostIo, C: Clock>(shared: &Shared<F, C>, sink: &mut impl Sink) {
         // with a long run of driver steps; those queued before a stop run,
         // and at the stop the driver waits for the writer they need.
         let (commands, stop) = shared.take();
+        // Admissions keep their order: once one is deferred, every later
+        // one queues behind it (deferred commands are older, so first).
         let queued = std::mem::take(&mut deferred).into_iter().chain(commands);
+        let mut blocked = false;
         for command in queued {
+            if blocked && command.ordered {
+                deferred.push_back(command);
+                continue;
+            }
             match dispatch(shared, command, stop) {
                 Dispatched::Done => {}
                 Dispatched::Waiting(command, at) => waiting.push((command, at)),
-                Dispatched::Deferred(command) => deferred.push_back(command),
+                Dispatched::Deferred(command) => {
+                    blocked |= command.ordered;
+                    deferred.push_back(command);
+                }
             }
         }
+        #[cfg(test)]
+        shared.deferred.store(deferred.len(), Ordering::SeqCst);
         if stop {
             // The last step's results reach the sink before `join` returns.
             if let Some(delivery) = pending.take() {

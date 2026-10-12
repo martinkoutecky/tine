@@ -953,7 +953,7 @@ impl PageHost {
         let admit = move |state: &mut State<ProductionIo, SystemClock>| {
             admit(state, session, request, handoffs)
         };
-        let admitted = self.driver.shared.call(admit);
+        let admitted = self.driver.shared.admission(admit);
         admitted.unwrap_or(Err(PageRefusal::NotAdmitted))
     }
 
@@ -995,7 +995,7 @@ impl PageHost {
         let admitted = self
             .driver
             .shared
-            .call_writer(&self.store.writer, move |state| {
+            .admission_writer(&self.store.writer, move |state| {
                 store.watch.hold_current(held.clone());
                 let admitted = admit(state, session, request, vec![]);
                 if admitted.is_err() && !state.book.owned().contains(&held) {

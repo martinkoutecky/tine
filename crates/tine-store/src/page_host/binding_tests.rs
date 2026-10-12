@@ -2614,3 +2614,113 @@ fn the_driver_answers_while_another_thread_holds_the_store_writer() {
     live.until_indexed(&key, "- two\n");
     live.host.stop();
 }
+
+/// P1 re-review 1: the host admits a window's request ids in increasing
+/// order, so an admission deferred on the store writer (an open) is never
+/// overtaken by a later one (a submit on another page), which would refuse
+/// it although its caller sent it first and never left. The submit is sent
+/// once the driver has deferred the open (observed, not slept for).
+#[test]
+fn an_admission_deferred_on_the_writer_is_not_overtaken() {
+    use std::sync::atomic::Ordering;
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- b\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let session = live.host.session();
+    let (open_id, submit_id) = (live.id(), live.id());
+    let dto = live.dto(&key, "- two\n");
+    let writer = live.store.writer.lock().unwrap();
+    std::thread::scope(|scope| {
+        let host = &live.host;
+        let b = PageId::from("pages/b.md");
+        let opened = scope.spawn(move || host.open(session, open_id, &b, "b").map(|_| ()));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while host.driver.shared.deferred.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline, "the open was never deferred");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let key = key.clone();
+        let submitted = scope.spawn(move || {
+            let kinds = [EditKind::SaveBlock];
+            host.submit(session, submit_id, &key, &dto, page.version, None, &kinds)
+        });
+        // The submit reaches the driver while the open still waits: queued
+        // behind it here, or answered by a driver that lets it pass (bounded
+        // for an implementation that does neither).
+        let queued = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < queued
+            && host.driver.shared.deferred.load(Ordering::SeqCst) < 2
+            && !submitted.is_finished()
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        drop(writer);
+        assert_eq!(
+            opened.join().unwrap(),
+            Ok(()),
+            "the earlier open is admitted"
+        );
+        assert_eq!(submitted.join().unwrap(), Ok(()), "the later submit too");
+    });
+    live.answer(&key, submit_id);
+    live.until_indexed(&key, "- two\n");
+    live.host.stop();
+}
+
+/// P1 re-review 2: the kinds sink `PageHost::start` was given runs outside
+/// the store writer, as before the driver took it: a sink that takes the
+/// writer (`Store::page` on a loaded graph) must not deadlock the driver.
+/// The sink asks for the writer for 2 s, so a watcher reconcile holding it
+/// briefly is not mistaken for the driver.
+#[test]
+fn the_kinds_sink_runs_outside_the_store_writer() {
+    let dir = tempfile::tempdir().unwrap();
+    let graph = dir.path().join("graph");
+    fs::create_dir_all(graph.join("pages")).unwrap();
+    fs::write(graph.join("pages/a.md"), "- one\n").unwrap();
+    let app = dir.path().join("app");
+    fs::create_dir_all(&app).unwrap();
+    let store = Arc::new(Store::open(&graph, Default::default()).unwrap().0);
+    store.whole_graph_reconciled().unwrap();
+    let free = Arc::new(Mutex::new(Vec::new()));
+    let (sink_store, seen) = (Arc::downgrade(&store), free.clone());
+    let kinds = move |_: &str, _: &[EditKind]| {
+        let Some(store) = sink_store.upgrade() else {
+            return;
+        };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let taken = loop {
+            if store.writer.try_lock().is_ok() {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        seen.lock().unwrap().push(taken);
+    };
+    let (sender, mail) = mpsc::channel();
+    let host = PageHost::start(&store, &app, "test-graph", kinds, move |mail| {
+        let _ = sender.send(mail);
+    })
+    .unwrap();
+    let live = Live {
+        root: store.graph.root.clone(),
+        _dir: dir,
+        store,
+        host,
+        mail,
+        kinds: Kinds::default(),
+        id: std::cell::Cell::new(0),
+    };
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    live.until_indexed(&key, "- two\n");
+    assert_eq!(
+        *free.lock().unwrap(),
+        vec![true],
+        "the sink could take the writer"
+    );
+    live.host.stop();
+}
