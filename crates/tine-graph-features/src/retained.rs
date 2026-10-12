@@ -65,54 +65,80 @@ pub(crate) fn unsaved(page: &str) -> io::Error {
     )
 }
 
-/// Run `op` as one host operation (host-only-writer P2, DESIGN §3.1): None
-/// when a page changed since the plan (the caller replans, as for a store
-/// conflict). `what` names the change in messages; `refused(page)` is the
-/// writer's unsaved-input error. Finding B: no message claims more than its
+/// A feature's write as one host operation (host-only-writer P2, DESIGN
+/// §3.1), planned from the store. `pages`' unsaved input is saved first:
+/// store reads answer saved bytes, so a page that exists only as typed
+/// input would read as absent (REVIEW P2). Then `plan` reads and computes
+/// the operation, and the host applies it; a page that changed since the
+/// plan replans, as a store conflict does, `exhausted` after four tries.
+/// `what` names the change in messages; `refused(page)` is the writer's
+/// unsaved-input error. Finding B: no message claims more than its
 /// evidence.
-pub(crate) fn applied(
+pub(crate) fn operation(
     host: &PageHost,
-    op: HostOp,
+    pages: &[PageId],
     what: &str,
-    refused: impl FnOnce(&str) -> io::Error,
-) -> io::Result<Option<()>> {
-    let error = |kind, message: String| io::Error::new(kind, message);
-    match host.apply(op) {
+    exhausted: &'static str,
+    refused: impl Fn(&str) -> io::Error,
+    mut plan: impl FnMut() -> io::Result<HostOp>,
+) -> io::Result<()> {
+    host.flush_input(pages)
+        .map_err(|refusal| refusal_error(refusal, what, &refused))?;
+    crate::retry_on_conflict(exhausted, || match host.apply(plan()?) {
         Ok(()) => Ok(Some(())),
         Err(ApplyRefusal::Changed) => Ok(None),
-        Err(ApplyRefusal::Unsaved(page)) => Err(refused(page.as_str())),
+        Err(refusal) => Err(refusal_error(refusal, what, &refused)),
+    })
+}
+
+fn refusal_error(
+    refusal: ApplyRefusal,
+    what: &str,
+    refused: &impl Fn(&str) -> io::Error,
+) -> io::Error {
+    let error = |kind, message: String| io::Error::new(kind, message);
+    match refusal {
+        // Only an applied operation's pages change; `operation` replans.
+        ApplyRefusal::Changed => error(
+            io::ErrorKind::WouldBlock,
+            format!(
+                "{} raced another change; nothing changed.",
+                capitalized(what)
+            ),
+        ),
+        ApplyRefusal::Unsaved(page) => refused(page.as_str()),
         // M6: the retained writers' existing wording (a running rename is what
         // holds pages past the bound; docs/storage-contract.md, I-8).
-        Err(ApplyRefusal::Busy) => Err(crate::pages::rename_busy()),
-        Err(ApplyRefusal::Refused) => Err(error(
+        ApplyRefusal::Busy => crate::pages::rename_busy(),
+        ApplyRefusal::Refused => error(
             io::ErrorKind::Other,
             format!("Tine could not run {what}; nothing changed."),
-        )),
-        Err(ApplyRefusal::DraftFailed) => Err(error(
+        ),
+        ApplyRefusal::DraftFailed => error(
             io::ErrorKind::Other,
             format!(
                 "{} could not be recorded; nothing changed.",
                 capitalized(what)
             ),
-        )),
-        Err(ApplyRefusal::Unwritten(page)) => Err(error(
+        ),
+        ApplyRefusal::Unwritten(page) => error(
             io::ErrorKind::WouldBlock,
             format!(
                 "“{}” could not be written; {what} finishes once it can be.",
                 page.as_str()
             ),
-        )),
-        Err(ApplyRefusal::Superseded(page)) => Err(error(
+        ),
+        ApplyRefusal::Superseded(page) => error(
             io::ErrorKind::Other,
             format!(
                 "“{}” changed before {what} finished; your later edit stands.",
                 page.as_str()
             ),
-        )),
-        Err(ApplyRefusal::Uncertain) => Err(error(
+        ),
+        ApplyRefusal::Uncertain => error(
             io::ErrorKind::TimedOut,
             format!("Couldn't confirm {what} yet; Tine keeps trying to finish it."),
-        )),
+        ),
     }
 }
 

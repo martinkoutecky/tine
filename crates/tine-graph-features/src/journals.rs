@@ -654,7 +654,7 @@ pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) ->
             },
         );
     };
-    crate::retry_on_conflict("journal changed repeatedly during trash", || {
+    let plan = || {
         let bytes = match store.read(&id, max) {
             Ok((bytes, _)) => bytes,
             Err(StoreError::NotFound) => {
@@ -665,7 +665,7 @@ pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) ->
             }
             Err(error) => return Err(store_error(error)),
         };
-        let op = HostOp {
+        Ok(HostOp {
             pages: vec![(
                 page.clone(),
                 HostEffect::Delete,
@@ -674,12 +674,14 @@ pub fn trash_journal_file(store: &Store, host: Option<&PageHost>, name: &str) ->
             kinds: vec![tine_store::EditKind::DeletePage],
             policy: Input::Flush,
             moved: None,
-        };
-        crate::retained::applied(
-            running,
-            op,
-            "moving the journal to trash",
-            crate::retained::unsaved,
-        )
-    })
+        })
+    };
+    crate::retained::operation(
+        running,
+        std::slice::from_ref(&page),
+        "moving the journal to trash",
+        "journal changed repeatedly during trash",
+        crate::retained::unsaved,
+        plan,
+    )
 }

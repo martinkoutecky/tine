@@ -269,7 +269,7 @@ impl PageHost {
 
     /// `pages`' keys, each registered; None when the host state is
     /// poisoned.
-    fn register_all(&self, pages: Vec<PageId>) -> Option<BTreeSet<PageKey>> {
+    pub(super) fn register_all(&self, pages: Vec<PageId>) -> Option<BTreeSet<PageKey>> {
         pages
             .iter()
             .map(|page| {

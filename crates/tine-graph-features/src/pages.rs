@@ -1255,14 +1255,14 @@ pub fn merge_pages(
     // source's deletion, a move's order (the survivor holds the source's
     // blocks), from one draft, so a crash between them completes the
     // deletion at relaunch rather than appending the blocks twice.
-    crate::retry_on_conflict("pages changed repeatedly during merge", || {
+    let plan = || {
         let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
         let old = survivor.dst_text.as_bytes();
         let bytes = store
             .page_bytes(&dst_id, &survivor.doc, Some(old))
             .map_err(crate::why_error)?;
         let expected = |text: String| HostExpected::Bytes(text.into_bytes().into());
-        let op = HostOp {
+        Ok(HostOp {
             pages: vec![
                 (
                     dst_id.clone(),
@@ -1281,9 +1281,16 @@ pub fn merge_pages(
             ],
             policy: Input::Flush,
             moved: Some((dst_id.clone(), src_id.clone())),
-        };
-        crate::retained::applied(running, op, "the merge", crate::retained::unsaved)
-    })
+        })
+    };
+    crate::retained::operation(
+        running,
+        &[dst_id.clone(), src_id.clone()],
+        "the merge",
+        "pages changed repeatedly during merge",
+        crate::retained::unsaved,
+        plan,
+    )
 }
 
 struct Survivor {

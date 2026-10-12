@@ -142,6 +142,47 @@ fn unsaved_input_refuses_or_is_saved_first() {
     live.host.stop();
 }
 
+/// REVIEW P2: a feature plans from the store, whose reads answer saved
+/// bytes only, so a page that exists only as typed input reads as absent.
+/// `flush_input` saves it first (waiting for the save), after which the
+/// store reads the typed bytes a plan expects; a clean page returns at once.
+#[test]
+fn flush_input_saves_a_page_that_exists_only_as_typed_input() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let (key, page) = live.open("pages/new.md");
+    live.pause(true);
+    let id = live.submit(&key, "- typed\n", page.version, None).unwrap();
+    let new = PageId::from("pages/new.md");
+    assert!(
+        matches!(
+            live.store.read(&new.file(), None),
+            Err(crate::StoreError::NotFound)
+        ),
+        "the plan's read sees no file"
+    );
+    std::thread::scope(|scope| {
+        let host = &live.host;
+        let new = &new;
+        let flushed = scope.spawn(move || host.flush_input(std::slice::from_ref(new)));
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!flushed.is_finished(), "the flush waits for the save");
+        live.pause(false);
+        assert_eq!(flushed.join().unwrap(), Ok(()));
+    });
+    live.answer(&key, id);
+    assert_eq!(live.disk("pages/new.md"), "- typed\n");
+    assert_eq!(
+        &*live.store.read(&new.file(), None).unwrap().0,
+        b"- typed\n"
+    );
+    assert_eq!(live.host.flush_input(&[PageId::from("pages/a.md")]), Ok(()));
+    assert_eq!(
+        live.host.flush_input(&[PageId::from("../outside.md")]),
+        Err(ApplyRefusal::Refused)
+    );
+    live.host.stop();
+}
+
 /// A move: the receiver's new bytes took the source's, which the operation
 /// deletes; a source planned from absent bytes, a move whose pages are not
 /// the operation's, and a page named twice are not operations.

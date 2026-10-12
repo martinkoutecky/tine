@@ -293,7 +293,7 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 47)
+## Page host (ceiling: 48)
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
 # for its retained-writer callers (census writers in tine-graph-features, backup restore in
 # src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
@@ -360,6 +360,11 @@ fn page_host::PageHost::apply
 enum page_host::Expected
 enum page_host::Effect
 enum page_host::ApplyRefusal
+# P2 review (47 -> 48): `flush_input`, the save-first half of `apply`'s `Input::Flush` before the
+# feature plans. Store reads answer saved bytes, so a page that exists only as typed input reads
+# as absent and the plan fails "not found" before `apply` could flush it. `apply` cannot carry it:
+# it needs the plan, and the plan needs the saved bytes.
+fn page_host::PageHost::flush_input
 ## Re-exports (ceiling: 10)
 use crate::tine_outline::edit_kind
 use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostOp,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}

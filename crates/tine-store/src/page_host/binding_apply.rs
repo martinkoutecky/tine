@@ -86,7 +86,9 @@ impl PageHost {
     /// decision on the driver under the operation's path locks: unsaved
     /// input refuses (`Input::Refuse`) or is saved first (`Input::Flush`);
     /// a page busy in another operation or reservation waits, at most
-    /// `OPERATION_WAIT` from entry (`Busy`); a page whose content is not
+    /// `OPERATION_WAIT` from entry (`Busy`), while a flush waits for the
+    /// save as a reservation's does (`bounded`: past the deadline
+    /// only a page held by a rename refuses); a page whose content is not
     /// the operation's expected content refuses (`Changed`). Then waits
     /// for the operation's answer and every page's publication, as
     /// `rename` does.
@@ -226,5 +228,33 @@ impl PageHost {
             Settled::Superseded(page) => Err(ApplyRefusal::Superseded(self.spelling(&page))),
             Settled::Uncertain => Err(ApplyRefusal::Uncertain),
         }
+    }
+
+    /// Save `pages`' unsaved input now, waiting as `apply`'s
+    /// `Input::Flush` does: a feature planning an operation from the store
+    /// first makes every page it reads hold its saved bytes, because a page
+    /// that exists only as typed input reads as absent (REVIEW P2). Then the
+    /// plan's expected bytes are the page's, and input typed after this is
+    /// `apply`'s to flush. `Unsaved` names a page whose save cannot
+    /// complete (a conflict or a persistent save error).
+    pub fn flush_input(&self, pages: &[PageId]) -> Result<(), ApplyRefusal> {
+        // `apply`'s invalid-target refusal, as `open`'s.
+        if pages
+            .iter()
+            .any(|page| self.store.as_page(&page.file()).is_none())
+        {
+            return Err(ApplyRefusal::Refused);
+        }
+        let keys = self
+            .register_all(pages.to_vec())
+            .ok_or(ApplyRefusal::Refused)?;
+        let deadline = std::time::Instant::now() + OPERATION_WAIT;
+        self.flush(&keys, &keys, deadline)
+            .map_err(|refusal| match refusal {
+                ReserveRefusal::Unsaved(pages) => {
+                    ApplyRefusal::Unsaved(pages.into_iter().next().expect("unsaved"))
+                }
+                ReserveRefusal::Busy => ApplyRefusal::Busy,
+            })
     }
 }
