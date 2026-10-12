@@ -64,7 +64,7 @@ which have no multi-file rollback; a failed one keeps the input in custody.
 
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
 view with `whole_graph()` can wait for the initial parse. The public operation
-surface is 43 operations: the methods of `Store` and `Transaction` plus every
+surface is 44 operations: the methods of `Store` and `Transaction` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 The graph-command boundary guard lives at `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is

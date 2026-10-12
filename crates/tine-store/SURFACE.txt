@@ -88,7 +88,7 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 15)
+## Reads (ceiling: 16)
 const model::PARSE_INPUT_MAX_BYTES
 fn model::parse_input_depth_within_limit
 field store::PageRead.doc
@@ -102,6 +102,10 @@ fn store::Store::page_named
 # A-V4b: a write parses the exact bytes its revision guards; `page` reads the
 # file itself, and for a page a host holds answers the host's bytes (A-V4).
 fn store::Store::page_of
+# host-only-writer P2 (DESIGN §3.1a, 15 -> 16): a feature planning a host operation needs the
+# bytes a save of its doc would write before admission; `page_of` goes bytes -> doc and every
+# existing doc -> bytes path writes the file, so no item answers this with a parameter.
+fn store::Store::page_bytes
 # test-oracle: tests hold a page as a page host does, with no host running (A-V4b).
 fn store::Store::hold_page
 fn store::Store::read
@@ -289,7 +293,7 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 38)
+## Page host (ceiling: 47)
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
 # for its retained-writer callers (census writers in tine-graph-features, backup restore in
 # src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
@@ -343,9 +347,22 @@ enum page_host::ReserveRefusal
 enum page_host::StopMode
 struct page_host::Stopped
 fn page_host::Stopped::relaunch
+# host-only-writer P2 (DESIGN §3.1/3.1a, 38 -> 47): one host operation (`apply` of a `HostOp`
+# with its fields, `Expected` bytes, `Effect`, `ApplyRefusal`) replaces a writer's reservation
+# window. `reserve`/`rename` cannot carry an op's expected bytes and effects: `reserve` fences
+# pages for the caller to write itself, `rename` is one fixed move. `reserve` goes in P4.
+struct page_host::HostOp
+field page_host::HostOp.pages
+field page_host::HostOp.moved
+field page_host::HostOp.policy
+field page_host::HostOp.kinds
+fn page_host::PageHost::apply
+enum page_host::Expected
+enum page_host::Effect
+enum page_host::ApplyRefusal
 ## Re-exports (ceiling: 10)
 use crate::tine_outline::edit_kind
-use crate::page_host::{DiskToken,DraftStatus,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
+use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostOp,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}
