@@ -73,6 +73,20 @@ jobs:
           $version = ([xml](Get-Content msix-stage/x64/AppxManifest.xml)).Package.Identity.Version
           @{ sourceSha = $sha; version = $version; architectures = @('x64', 'arm64'); winapp = (winapp --version | Out-String).Trim(); virtualization = 'disabled; pending maintainer approval' } | ConvertTo-Json | Set-Content msix-output/receipt.json
           Get-ChildItem msix-output -File -Exclude SHA256SUMS | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content msix-output/SHA256SUMS
+      - name: Windows App Certification Kit (x64 runner)
+        continue-on-error: true
+        run: |
+          $appcert = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\App Certification Kit\appcert.exe' -ErrorAction SilentlyContinue
+          if (-not $appcert) { Get-ChildItem 'C:\Program Files (x86)\Windows Kits' -Recurse -Filter appcert.exe -ErrorAction SilentlyContinue | Select-Object -First 1 -OutVariable appcert }
+          if (-not $appcert) { throw 'appcert.exe not present on this runner image' }
+          Write-Host "appcert: $($appcert.FullName)"
+          Import-Certificate -FilePath msix-output/TineOutline-test.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
+          $bundle = (Resolve-Path msix-output/TineOutline-test-signed.msixbundle).Path
+          $report = Join-Path (Resolve-Path msix-output).Path 'wack-report.xml'
+          & $appcert.FullName reset
+          & $appcert.FullName test -appxpackagepath $bundle -reportoutputpath $report
+          Write-Host "appcert exit $LASTEXITCODE"
+          if (Test-Path $report) { Select-String -Path $report -Pattern 'OVERALL_RESULT|Result="FAIL|Result="WARNING' | ForEach-Object { $_.Line.Trim() } }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: TineOutline-msix-proof
