@@ -58,15 +58,17 @@ production packages are signed by Microsoft. Test with the exact bundle recorded
 in the SHA-256 sums. WebView2 Evergreen must be present; MSIX does not run the
 NSIS bootstrapper. Verify a clean Windows 10 machine separately.
 
-## Data virtualization: proposed, pending confirmation
+## Data virtualization: disabled (decided 2026-10-12)
 
-The current proposal disables filesystem and registry write virtualization using
-`desktop6` properties and `unvirtualizedResources`. Martin's confirmation and
-Partner Center restricted-capability approval are pending. Change the single
+The package disables filesystem and registry write virtualization using
+`desktop6` properties and `unvirtualizedResources` (Martin, 2026-10-12).
+Partner Center approval of the restricted capability is pending; if certification
+refuses it, the fallback keeps virtualization and moves backups to a user folder
+when packaged, which is a new decision for Martin. Change the single
 `unvirtualized` constant in `scripts/stage-msix.mjs` to flip both properties and
 the capability together; reconsider data safety before shipping that alternative.
 
-With the proposed opt-out, Store and GitHub stable installs share the same
+With the opt-out, Store and GitHub stable installs share the same
 `%APPDATA%\page.tine.Tine` and `%LOCALAPPDATA%\page.tine.Tine` data. Settings,
 plugins, drafts, launch checkpoints and backup zips survive Store uninstall.
 Default virtualization instead redirects new AppData writes to a per-package

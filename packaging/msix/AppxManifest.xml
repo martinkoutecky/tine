@@ -11,7 +11,7 @@
     <DisplayName>TineOutline</DisplayName>
     <PublisherDisplayName>Martin Koutecký</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
-    <!-- Pending maintainer/Store approval; controlled by unvirtualized in stage-msix.mjs. -->
+    <!-- Decided 2026-10-12 (keeps backups on uninstall); Store approval pending. Controlled by unvirtualized in stage-msix.mjs. -->
     <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
     <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
   </Properties>

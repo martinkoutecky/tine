@@ -69,7 +69,7 @@ jobs:
           if (-not $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $cert.Thumbprint) { throw 'Test signature missing or wrong' }
           $sha = git rev-parse HEAD
           $version = ([xml](Get-Content msix-stage/x64/AppxManifest.xml)).Package.Identity.Version
-          @{ sourceSha = $sha; version = $version; architectures = @('x64', 'arm64'); winapp = (winapp --version | Out-String).Trim(); virtualization = 'disabled; pending maintainer approval' } | ConvertTo-Json | Set-Content msix-output/receipt.json
+          @{ sourceSha = $sha; version = $version; architectures = @('x64', 'arm64'); winapp = (winapp --version | Out-String).Trim(); virtualization = 'disabled' } | ConvertTo-Json | Set-Content msix-output/receipt.json
           $files = @(Get-ChildItem msix-output -File | Where-Object Name -ne 'SHA256SUMS')
           if ($files.Count -lt 4) { throw "expected 4 artifacts to hash, found $($files.Count)" }
           $files | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content msix-output/SHA256SUMS

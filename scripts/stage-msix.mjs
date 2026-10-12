@@ -4,7 +4,7 @@ import { msixVersion } from "./lib/msix-version.mjs";
 import { releaseChannel, STABLE_CHANNEL } from "./release-policy.mjs";
 import { IDENTITIES, SHIP } from "./lib/app-identity.mjs";
 
-// Proposed data-preservation policy, pending Martin's confirmation. One edit
+// Data-preservation policy (Martin 2026-10-12): Store and GitHub installs share AppData. One edit
 // changes both virtualization properties and their restricted capability.
 const unvirtualized = true;
 const conf = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
