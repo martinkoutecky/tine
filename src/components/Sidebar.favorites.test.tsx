@@ -29,7 +29,12 @@ beforeEach(async () => {
   await bindTestHost();
   saved = [];
   configWrites = [];
-  vi.spyOn(backend(), "getPage").mockResolvedValue(null);
+  // The store holds what the page host took (it publishes every take), at the
+  // revision the host answers an Open with.
+  vi.spyOn(backend(), "getPage").mockImplementation(async (name: string) => {
+    const page = saved.findLast((s) => s.page.name === name)?.page;
+    return page ? { ...page, id: `pages/${name}.md`, rev: page.rev ?? "mock-rev" } : null;
+  });
   vi.spyOn(backend(), "resolvePage").mockImplementation(async (name: string) => ({ kind: "absent", id: `pages/${name}.md` }));
   const submit = backend().pageSubmit.bind(backend());
   vi.spyOn(backend(), "pageSubmit").mockImplementation(async (...args) => {
