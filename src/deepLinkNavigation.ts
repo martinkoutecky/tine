@@ -9,9 +9,16 @@ import { backend, isTauri } from "./backend";
 import { captureBinding, stillBound } from "./binding";
 import { loadGraphPath } from "./graph";
 import { graphMeta } from "./graphSession";
-import { focusedRouter } from "./panes";
+import { focusedRouter, focusedPaneId } from "./panes";
 import { pushToast } from "./toasts";
-import { parseTineLink } from "./deepLinks";
+import { parseTineLink, parseAppRoute, type AppRoute } from "./deepLinks";
+import { admitPageFile, captureEmptyPage, pageByName, reportPageLoadRefusal } from "./document";
+import { journalTitle, appNow } from "./journal";
+import { openSwitcher } from "./ui";
+import { platformKind } from "./nativeChrome";
+import { activeElement, isElementTag, isHTMLElementNode, nextFrame } from "./windowRealm";
+import { focusPageTrailing } from "./components/pageTrailing";
+import { resolvedTarget, refreshPageIndex } from "./pageIndex";
 import { chooseLinkGraph } from "./components/DeepLinkGraphChoice";
 
 export interface LinkTarget {
@@ -35,6 +42,8 @@ export async function openTineLink(delivery: LinkDelivery, alive: () => boolean 
   try {
     const api = backend();
     let target: LinkTarget;
+    const app = delivery.kind === "url" ? parseAppRoute(delivery.url) : null;
+    if (app) return await openAppRoute(app, current);
     if (delivery.kind === "url") {
       const request = parseTineLink(delivery.url);
       if (!api.tineLinks?.scanKnownGraphs) throw new Error("External links are available in the Tine app");
@@ -91,6 +100,66 @@ export async function openTineLink(delivery: LinkDelivery, alive: () => boolean 
   } catch (error) {
     if (alive()) pushToast(`Couldn't open Tine link: ${String(error)}`, "error");
   }
+}
+
+/** Open a current-graph route (ADR 0073) in the focused pane. Never creates
+ * a page: an unknown page name is an error, and today's journal stays the
+ * usual phantom day until the user types. O(1) backend reads. */
+async function openAppRoute(app: AppRoute, current: () => boolean): Promise<void> {
+  if (!graphMeta()) throw new Error("open a graph first");
+  const owner = ownedWhen(current);
+  const router = focusedRouter();
+  if (app.route === "search") {
+    openSwitcher(app.query ? { prefill: app.query } : undefined);
+    await showKeyboardForFocusedInput(current);
+    return;
+  }
+  const today = journalTitle(appNow());
+  if (app.route === "page") {
+    // The one frontend name answerer (pageIndex.ts); a cold launch waits for it.
+    const fileId = () => (["page", "journal"] as const).map((kind) => resolvedTarget(app.page, kind))
+      .map((target) => target?.kind === "existing" ? target.id : target?.kind === "alias" ? target.owners[0] : null)
+      .find((id) => !!id);
+    if (!fileId()) await refreshPageIndex();
+    if (!current()) return;
+    const id = fileId();
+    const read = id ? await readOwned(owner, backend().getPageByPath(id)) : null;
+    if (read?.kind === "stale") return;
+    if (!read?.value) throw new Error(`the page "${app.page}" doesn't exist in the open graph`);
+    router.openInNewTab({ kind: "page", name: read.value.name, pageKind: read.value.kind, path: read.value.id }, true);
+    return;
+  }
+  router.openPage(today, "journal");
+  if (app.route === "today") return;
+  // Quick capture: the same "continue writing below" as the page's trailing
+  // target, in the pane that shows the journal.
+  const admitted = await admitPageFile(today, "journal", owner, captureEmptyPage(today, "journal"));
+  if (admitted && admitted !== "stale") reportPageLoadRefusal(admitted, "Nothing was opened for writing.");
+  if (admitted || !owner()) return;
+  const pane = focusedPaneId();
+  if (focusPageTrailing(pageByName(today), pane === "main" ? "main" : `pane:${pane}`)) await showKeyboardForFocusedInput(current);
+}
+
+const ROUTE_FOCUS_FRAMES = 60;
+
+function editableFocused(): boolean {
+  const active = activeElement();
+  return isElementTag(active, "input") || isElementTag(active, "textarea")
+    || (isHTMLElementNode(active) && active.isContentEditable);
+}
+
+/** A route's focus is script-made, so Android leaves the keyboard down until
+ * the user taps the input. Ask the host for it once the routed input holds
+ * focus (it is focused after a render: wait at most ~1 s of frames). */
+async function showKeyboardForFocusedInput(current: () => boolean): Promise<void> {
+  const show = backend().tineLinks?.showKeyboard;
+  if (platformKind !== "android" || !show) return;
+  for (let frame = 0; frame < ROUTE_FOCUS_FRAMES && !editableFocused(); frame++) {
+    await nextFrame();
+  }
+  if (!current() || !editableFocused()) return;
+  try { await show(); }
+  catch { console.warn("[tine] couldn't show the keyboard"); }
 }
 
 export async function installTineLinks(alive: () => boolean): Promise<() => void> {

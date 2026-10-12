@@ -14,6 +14,7 @@ PublishedNeed  # why: backend wire type of the page host protocol; batch-og-s3b
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
 admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
 appendFeed
+appendToJournalDay  # why: the share inbox appends into the exact day it recorded and records its recovery state inside the admitted read (ADR 0073); batchNativeIntegrations
 appendToTodayJournal
 applyGraphChange
 applyGraphChangesBulk  # why: a checkout-sized watcher batch (graph-changed-bulk) is applied once (family 10); batch22a
@@ -30,6 +31,7 @@ blockSubtreeMarkdown
 blockWritable
 buildClipboardPayload
 canIndentBlock  # why: the swipe indent cue asks the kernel indent verb instead of restating its depth rule (outline kernel twin 14); batch-outline-kernel
+captureEmptyPage  # why: the tine://capture route admits today's journal exactly as the capture append does (ADR 0073); batchNativeIntegrations
 captureScratchPage
 captureToPage
 carryTodayPage

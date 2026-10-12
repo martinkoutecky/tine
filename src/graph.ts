@@ -195,7 +195,7 @@ export async function loadGraphPath(
     if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
     if (prepared.status !== "ready") {
       pushToast(
-        "TineOutline can only open folders inside On My iPhone or iCloud Drive → TineOutline.",
+        "TineOutline can only open folders inside On My iPhone → TineOutline or iCloud Drive → TineOutline.",
         "error",
         { sticky: true }
       );
@@ -655,7 +655,7 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
     }
     if (platform === "ios" && result.status === "refused") {
       pushToast(
-        "Choose a folder inside On My iPhone or iCloud Drive → TineOutline. Other Files providers aren't supported yet.",
+        "Choose a folder inside On My iPhone → TineOutline or iCloud Drive → TineOutline. Other apps' folders and Files providers aren't supported yet.",
         "info"
       );
     }
@@ -695,7 +695,7 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     if (picked.kind === "stale") return { kind: "aborted" };
     if (picked.value.status === "refused") {
       pushToast(
-        "Choose a folder inside On My iPhone or iCloud Drive → TineOutline. Other Files providers aren't supported yet.",
+        "Choose a folder inside On My iPhone → TineOutline or iCloud Drive → TineOutline. Other apps' folders and Files providers aren't supported yet.",
         "info"
       );
       return { kind: "aborted" };
@@ -721,7 +721,7 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     }
     if (prepared.status !== "ready") {
       pushToast(
-        "TineOutline can only create graphs inside On My iPhone or iCloud Drive → TineOutline.",
+        "TineOutline can only create graphs inside On My iPhone → TineOutline or iCloud Drive → TineOutline.",
         "error",
         { sticky: true }
       );

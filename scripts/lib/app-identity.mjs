@@ -54,5 +54,12 @@ export function deriveIdentityFiles(root, ship) {
   const applicationId = /^(\s*applicationId = )"[^"]*"$/m;
   if (!applicationId.test(gradle)) throw new Error(`${gradleFile}: no applicationId line`);
   out[gradleFile] = gradle.replace(applicationId, `$1"${identity.androidApplicationId}"`);
+
+  // Launcher shortcuts name their target package explicitly (ADR 0073).
+  const shortcutsFile = "src-tauri/gen/android/app/src/main/res/xml/shortcuts.xml";
+  const shortcuts = read(shortcutsFile);
+  const targetPackage = /(android:targetPackage=)"[^"]*"/g;
+  if (!targetPackage.test(shortcuts)) throw new Error(`${shortcutsFile}: no android:targetPackage`);
+  out[shortcutsFile] = shortcuts.replace(targetPackage, `$1"${identity.androidApplicationId}"`);
   return out;
 }

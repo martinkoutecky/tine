@@ -5,8 +5,8 @@
 // any other version (or after the file changed since the Open) is a stale
 // conflict that writes nothing, a discard rereads the file, a barrier on a conflicted
 // or failed page (or whose file lacks the barrier's witness) fails, and such a
-// page stays owed. Not a
-// test file itself.
+// page stays owed; with `retryFailed`, a failed write is retried first, as the
+// host's backoff does. Not a test file itself.
 
 import { vi } from "vitest";
 import { backend } from "./backend";
@@ -21,9 +21,20 @@ export interface FakeDisk {
   write(key: string, dto: PageDto, kinds: EditKinds): string;
 }
 
-interface Held { name: string; version: number; rev: string | null; conflict: boolean; failed: boolean }
+interface Held {
+  name: string; version: number; rev: string | null; conflict: boolean; failed: boolean;
+  /** The text a failed write still owes its file (what the host retries). */
+  owed?: { dto: PageDto; kinds: EditKinds };
+}
 
-export function installDiskHost(host: TestHost, disk: FakeDisk) {
+export interface DiskHostOptions {
+  /** Model the host's background retry of a failed write (its save backoff):
+   *  a barrier on the page finds that retry already run, against the disk as
+   *  it is now. Off, a failed page stays failed. */
+  retryFailed?: boolean;
+}
+
+export function installDiskHost(host: TestHost, disk: FakeDisk, options: DiskHostOptions = {}) {
   const b = backend();
   const held = new Map<string, Held>();
   let version = 0;
@@ -39,6 +50,18 @@ export function installDiskHost(host: TestHost, disk: FakeDisk) {
   const took = (id: number, key: string, state: Held) => later(() => host.deliver({ key, page: view(key, state, null, "unchanged"),
     answer: { id, version: state.version, took: true, outcome: { kind: "applied" } },
     notice: { conflictReported: state.conflict, saveError: state.failed, failures: state.failed ? 3 : 0 } }));
+  // The host's retry of a failed write: as a submit would, a file changed
+  // since the page's version conflicts instead of being written over.
+  const retry = (key: string) => {
+    const state = held.get(key);
+    if (!state?.failed || !state.owed) return;
+    if (rev(key, state.name) !== state.rev) { state.conflict = true; return; }
+    try {
+      state.rev = disk.write(key, state.owed.dto, state.owed.kinds);
+      state.failed = false;
+      state.owed = undefined;
+    } catch { /* still failing: the host keeps retrying */ }
+  };
   const spies = {
     open: vi.spyOn(b, "pageOpen").mockImplementation(async (_session, id, page) => {
       let key = page.path;
@@ -67,7 +90,7 @@ export function installDiskHost(host: TestHost, disk: FakeDisk) {
       state.version = ++version;
       if (stale) state.conflict = true;
       else {
-        try { state.rev = disk.write(key, dto, kinds); state.conflict = false; } catch { state.failed = true; }
+        try { state.rev = disk.write(key, dto, kinds); state.conflict = false; } catch { state.failed = true; state.owed = { dto, kinds }; }
       }
       took(id, key, state);
       return null;
@@ -89,7 +112,7 @@ export function installDiskHost(host: TestHost, disk: FakeDisk) {
         const state = half.state!;
         state.version = ++version;
         if (rev(half.key, state.name) !== state.rev) state.conflict = true;
-        else try { state.rev = disk.write(half.key, half.dto, kinds); } catch { state.failed = true; }
+        else try { state.rev = disk.write(half.key, half.dto, kinds); } catch { state.failed = true; state.owed = { dto: half.dto, kinds }; }
       }
       for (const half of halves) took(id, half.key, half.state!);
       return null;
@@ -111,7 +134,7 @@ export function installDiskHost(host: TestHost, disk: FakeDisk) {
     }),
     // A witness (a block-ref target's id) must be in the published file's text.
     wait: vi.spyOn(b, "pageWait").mockImplementation(async (_session, needs) =>
-      needs.every((need) => {
+      needs.map((need) => (options.retryFailed ? retry(need.key) : null, need)).every((need) => {
         const state = held.get(need.key);
         if (state && (state.conflict || state.failed)) return false;
         return !need.witness || JSON.stringify(state ? disk.read(need.key, state.name) : null).includes(need.witness);

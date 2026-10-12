@@ -15,6 +15,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Deleting referenced blocks shows how many references are now broken, with **Undo** to restore the blocks and their ids (GH #635).
 - Merging blocks with Backspace/Delete shows how many references now point to the surviving block, or broke when both blocks had ids, with **Undo** (GH #652).
 - Linked and Unlinked References: click a breadcrumb ancestor to show its subtree inline while keeping your place; Shift+click opens it in the right sidebar. Inline context resets when the reference group closes (GH #526).
+- Android: Tine appears in the share sheet. Shared text, links and images become a new block at the bottom of today's journal, the same place quick capture files to, with the same "Captured to today's journal" notice. If an item can't be added yet, for example because no graph is open or saving fails, Tine keeps it and retries the next time it opens. A retry never loses the item; it can add it twice only if Tine is closed or crashes right after the journal was saved, or when an old share is reopened from Android's recent apps after Tine was closed. A share Tine can't save whole (more than 32 images, a file over 64 MiB, a non-image file, a file from Tine itself) is refused with a message instead of being saved in part (GH #608, REG-GH608-SHARE-INBOX-EXACTLY-ONCE).
+- Android: long-press the launcher icon for **Today**, **Quick capture** and **Search**. A **Quick capture** Quick Settings tile (with the Tine mark) opens today's journal with an empty block ready for typing (REG-GH608-ANDROID-SHARE-TARGET). Search and quick capture open with the keyboard already up (UI-ANDROID-ROUTE-KEYBOARD).
+- iOS: a **Tine** share extension saves text, web pages, links and up to five images ("Saved to Tine"), and they land at the bottom of today's journal the next time you open Tine. Pages of the open graph appear in Spotlight search; hidden pages never do. The Shortcuts app and Siri offer **Add to Tine journal**, **Search Tine** and **Open page**, and the Home Screen icon has **Today's journal**, **Quick capture** and **Search** quick actions (REG-IOS-NATIVE-INTEGRATIONS).
+- Shared items are shaped like Logseq's mobile share on each platform, using Logseq's `:quick-capture-templates` from `config.edn`. On Android links become titled links, video links become `{{video}}` embeds and posts on X become `{{twitter}}` embeds; on iOS the shared text and link are kept as they are (REG-GH608-SHARE-SHAPE-OG).
+- `tine://today`, `tine://capture`, `tine://search?q=…` and `tine://page/<name>` open those places in the current graph. They only navigate and never write (REG-NATIVE-APP-ROUTES).
 
 ### Changed
 
@@ -44,6 +49,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - A block opened in the right sidebar now shows its source page name in the header (GH #640).
 - Outline editing (GH #632): Tab and Shift+Tab indent and outdent blocks starting with a Markdown list marker when the caret is on the first body line. List items on later lines keep their in-block indentation.
 - Embeds (GH #642): Enter at the end of a collapsed embed creates a sibling after its host, including at the end of a page, without changing the embedded source. Undo removes the new sibling.
+- iOS (discussion #421): the folder-choice message now names both places a graph can live, On My iPhone → TineOutline and iCloud Drive → TineOutline. It said "inside On My iPhone", which read as if another app's folder there (such as Logseq's) would work.
 
 ## [0.7.0-beta.3] - 2026-10-08
 

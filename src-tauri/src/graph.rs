@@ -349,6 +349,9 @@ pub(crate) async fn load_graph(
                 .write()
                 .unwrap()
                 .release_binding(&label, binding_generation);
+            if released.is_some() {
+                crate::spotlight::released(&app, &label, Some(binding_generation));
+            }
             // Closed (and its ~200 ms Store teardown) outside the lock.
             drop(released);
         }
@@ -575,6 +578,9 @@ pub(crate) fn load_graph_for_label(
     };
     // The replaced graph's Store closes here, after the registry lock is
     // released, so other graph commands do not wait on its teardown.
+    // The previous binding's pages leave Spotlight; this graph's reindex
+    // follows its warm.
+    crate::spotlight::bound(app, window_label, &slot);
     drop(displaced);
     state.note_focused(window_label);
     crate::concord_ledger::attach(app.path().app_data_dir().ok(), &slot);
@@ -682,6 +688,7 @@ pub(crate) fn open_graph_window_blocking(
             }
             Err(error) => {
                 let _ = crate::state::release_window_graph(&state.graphs, &label);
+                crate::spotlight::released(app, &label, None);
                 return Err(format!("couldn't create graph window: {error}"));
             }
         }
@@ -866,6 +873,10 @@ pub(crate) fn warm_cache_async(
                 });
                 if still_current && current.unwrap().finish_startup_warm(warm_generation) {
                     let _ = app.emit_to(&window_label, "warm-cache-done", ());
+                }
+                if still_current {
+                    // The graph is warm: (re)build its Spotlight index (iOS).
+                    crate::spotlight::reindex(&app, &window_label, &slot);
                 }
             },
         );

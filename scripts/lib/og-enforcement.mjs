@@ -82,8 +82,10 @@ export const PERSISTED_FORMATS = Object.freeze([
   "backup-graph-text-copy",
   "launch-checkpoint",
   "graph-link-identity",
+  // Martin 2026-10-10 (Rule 8 new persisted format: share-inbox); docs/adr/0073.
+  "share-inbox",
 ]);
-export const PINNED_FORMAT_COUNT = 29;
+export const PINNED_FORMAT_COUNT = 30;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({
@@ -98,8 +100,6 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   // by 3a40f0ca1 through the audited atomic_write_with_check, which this census
   // did not see until it learned that name (2026-10-02).
   "crates/tine-store/src/transaction/move_file.rs": { sites: 1, approval: "graph text via the audited save path; 3a40f0ca1 crash-durable rewritten moves" },
-  // Compiled executable resource in a private temporary directory, removed on
-  // exit; no durable layout or graph state. Uses the existing audited writer.
   // Not a new format: rename_replace's one rename gained a Windows arm
   // (MoveFileExW with WRITE_THROUGH, falling back to std's rename; REVIEW-2b F10).
   "crates/tine-store/src/atomic_file.rs": { sites: 1, approval: "storage s3 step 2b (Martin 2026-10-08/09 delegation); same graph-text rename, per-platform arm" },
@@ -107,6 +107,11 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   // path, never read back by Tine, absent in normal use (docs/bench-storage-ab.md
   // on og-storage-perf-ab). Not a persisted format.
   "crates/tine-store/src/bench_events.rs": { sites: 1, approval: "Martin 2026-10-11 (\"ok\" to approved-writer, not a format); storage s3 gate-2 A/B" },
+  // The one prepared.json write of the share inbox; producers are native
+  // code outside this census, and they never write the graph.
+  "src-tauri/src/share_inbox.rs": { sites: 2, approval: "Martin 2026-10-10 (Rule 8 new persisted format: share-inbox); docs/adr/0073. Second site: the commit tombstone inside that format (review round 2, manager-specified)" },
+  // Compiled executable resource in a private temporary directory, removed on
+  // exit; no durable layout or graph state. Uses the existing audited writer.
   "src-tauri/src/youtube_identity.rs": { sites: 1, approval: "Martin's OG-QBY native YouTube identity task; temporary bundled WebProcess module, no new persisted format" },
 });
 

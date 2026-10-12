@@ -1,0 +1,12 @@
+[package]
+name = "tine-ios-native-integrations"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+links = "tine-ios-native-integrations"
+
+[dependencies]
+tauri = { version = "2" }
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

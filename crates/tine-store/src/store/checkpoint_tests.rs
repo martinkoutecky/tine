@@ -848,7 +848,7 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
     use tine_core::config::Config;
     const BASE: &str = ":preferred-format :markdown";
     // (field, the edited config's entries, keyed)
-    let cases: [(&str, String, bool); 35] = [
+    let cases: [(&str, String, bool); 37] = [
         (
             "default_journal_queries",
             format!("{BASE} :default-queries {{:journals [{{:query (task TODO)}}]}}"),
@@ -975,6 +975,16 @@ fn a_config_edit_while_closed_rebuilds_only_for_a_setting_the_build_reads() {
         (
             "mobile_gestures_disabled_in_block_with_tags",
             format!("{BASE} :mobile {{:gestures/disabled-in-block-with-tags [\"kanban\"]}}"),
+            false,
+        ),
+        (
+            "quick_capture_template_text",
+            format!("{BASE} :quick-capture-templates {{:text \"{{text}}\"}}"),
+            false,
+        ),
+        (
+            "quick_capture_template_media",
+            format!("{BASE} :quick-capture-templates {{:media \"{{url}}\"}}"),
             false,
         ),
         (
