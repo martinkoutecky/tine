@@ -113,6 +113,7 @@ pub mod reference_rule {
         "explicit_tag",
         "explicit_embed",
         "explicit_property_key",
+        "explicit_task_marker",
         "implicit_linkable_property",
     ];
     pub fn serialize<S: Serializer>(value: &&'static str, s: S) -> Result<S::Ok, S::Error> {
@@ -683,7 +684,38 @@ pub fn project_with_config(
     config: &crate::query::atom::ParseConfig,
 ) -> ReferenceSourceProjection {
     let mut projection = ReferenceSourceProjection::default();
-    walk_blocks(blocks, SpanMapper::block(raw), raw, is_org, &mut projection);
+    let mapper = SpanMapper::block(raw);
+    walk_blocks(blocks, mapper, raw, is_org, &mut projection);
+    // OG 0.10.9 graph-parser/block.cljs `with-page-refs` includes the BLOCK's
+    // marker, not task-looking headings nested in its body. The first parser
+    // header owns that marker, just as it owns the DTO's task facet.
+    if let Some(
+        Block::Heading {
+            marker: Some(marker),
+            span: Some(span),
+            ..
+        }
+        | Block::Bullet {
+            marker: Some(marker),
+            span: Some(span),
+            ..
+        },
+    ) = blocks.first()
+    {
+        if let Some(range) = mapper.map(&Span(span.0.max(mapper.prefix), span.1), raw.len()) {
+            let header = raw[range.clone()].lines().next().unwrap_or_default();
+            if let Some(offset) = header.find(marker) {
+                let start = range.start + offset;
+                push_explicit_range(
+                    &mut projection,
+                    marker.to_owned(),
+                    start..start + marker.len(),
+                    raw.len(),
+                    "explicit_task_marker",
+                );
+            }
+        }
+    }
     let regions = crate::block_regions::from_blocks(raw, is_org, blocks);
     for property in regions.properties.iter().filter(|p| p.applicable) {
         let key = &property.key;
@@ -1110,6 +1142,14 @@ mod tests {
         assert!(plains
             .iter()
             .all(|hit| &raw[hit.span.start..hit.span.end] == "Target"));
+    }
+
+    #[test]
+    fn task_reference_belongs_to_the_blocks_own_header() {
+        let own = evidence("TODO call Alice", &["TODO"]);
+        assert!(own.iter().any(|hit| hit.kind == ReferenceKind::Explicit));
+        let body = evidence("ordinary body\n# TODO a secondary heading", &["TODO"]);
+        assert!(body.iter().all(|hit| hit.kind != ReferenceKind::Explicit));
     }
 
     #[test]

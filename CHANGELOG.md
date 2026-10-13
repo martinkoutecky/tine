@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Task-marker pages include their tasks in editable Linked References (GH #487).
+- Reference headers place copy beside filter; Unlinked References has independent text and facet filters (GH #398).
+- Read-only hover previews show the source title and page properties and offer source-page and block navigation (GH #363, GH #417, GH #674).
+- Fine-tuning offers optional block embed breadcrumbs, off by default (GH #440).
+- Favorites page block-reference rows appear in the sidebar and can be added from the block menu after saving their source ID (GH #570).
+- Journal feed backlinks refresh on published feed-source edits while keeping editors inside reference results stable (GH #481).
+
 - A page merge, rename or deletion that waited the full 10 seconds for another rename to finish could report "Couldn't confirm the merge yet; Tine keeps trying to finish it" for an operation that would never run; it now reports that another rename is still finishing and nothing changed (REG-PAGEHOST-ADMISSION-DEADLINE-RACE).
 
 ## [0.8.0-beta.1] - 2026-10-13

@@ -16,3 +16,5 @@ settings-graph-folder-search-description = show in folder reveal file manager Fi
 
 ## Graph creation
 graph-wsl-rootfs-refused = Cannot create a graph here: Windows access to a WSL1 rootfs can corrupt Linux files. Choose \\wsl.localhost\<distro>\… instead.
+settings-embed-breadcrumbs = Block embed breadcrumbs
+settings-embed-breadcrumbs-hint = Show the source page and parent trail above embedded blocks. Off by default.

@@ -307,6 +307,30 @@ mod journal_guide_tests {
 
     #[test]
     fn tab_and_sidebar_actions_are_documented() {
+        let favorites = include_str!("templates/find-and-revisit.md");
+        for detail in [
+            "**Favourite block**",
+            "a `((uuid))` row",
+            "clicking zooms into that block",
+            "never add `favorite::` properties",
+        ] {
+            assert!(
+                favorites.contains(detail),
+                "missing block favorites guidance: {detail}"
+            );
+        }
+        let previews = include_str!("templates/pages-links-references-search.md");
+        for detail in [
+            "read-only preview",
+            "**Open source**",
+            "source page's title and page properties",
+            "Block embed breadcrumbs",
+        ] {
+            assert!(
+                previews.contains(detail),
+                "missing reference guidance: {detail}"
+            );
+        }
         let context = include_str!("templates/keep-context-visible.md");
         for detail in [
             "**Close others**, **Collapse others**",

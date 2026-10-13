@@ -17,6 +17,10 @@ import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, pageB
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { PageEmbedHeader } from "./PageEmbedHeader";
+import { InlineText, PageRef } from "../render/inline";
+import { styleKnobValues } from "../styleKnobs";
+import { PeekContext } from "../render/PeekPopup";
+import { RefBlocks } from "./RefBlocks";
 import { QueryGroups } from "./QueryGroup";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { CrossingNotice } from "./CrossingNotice";
@@ -1433,6 +1437,7 @@ export function ZoteroMacro(props: { body: string }): JSX.Element {
 
 // A {{embed ((uuid))}} or {{embed [[Page]]}} block.
 export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Element {
+  const insidePeek = useContext(PeekContext);
   const linkDepth = useContext(LinkDepthContext);
   if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
 
@@ -1480,7 +1485,19 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
       </Show>
       <Show when={!selfPageEmbed()}>
         <Show when={embedded()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
-          <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
+          <Show when={!pageTarget() && styleKnobValues()["embed-breadcrumbs"] === true}>
+            <div class="embed-source-breadcrumb">
+              <PageRef name={embedded()!.page} />
+              <For each={embedded()!.blocks[0]?.breadcrumb ?? []}>{label => <><span class="ref-crumb-sep">›</span><InlineText text={label} /></>}</For>
+            </div>
+          </Show>
+          <Show when={!insidePeek} fallback={
+            <LinkDepthContext.Provider value={linkDepth + 1}>
+              <RefBlocks page={embedded()!.page} pageKind={embedded()!.kind} blocks={embedded()!.blocks} readOnly />
+            </LinkDepthContext.Provider>
+          }>
+            <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
+          </Show>
         </Show>
       </Show>
     </div>

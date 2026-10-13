@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, onCl
 import { pageIconPrefix } from "../pageIconBatch";
 import { t } from "../i18n";
 import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
-import { openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
+import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
 import { openRouteInOtherPane } from "../panes";
@@ -17,6 +17,7 @@ import { navigationName } from "../pageIndex";
 import { SidebarTitle } from "./SidebarTitle";
 import { NamespaceTree } from "./Namespace";
 import { SidebarFavorites } from "./SidebarFavorites";
+import { favoriteCount } from "../favorites";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 import { writeClipboardText } from "../clipboard";
@@ -153,7 +154,7 @@ export function Sidebar(props: {
           <span>Journals</span>
         </div>
 
-        <Show when={favorites().length > 0}>
+        <Show when={favoriteCount() > 0}>
           <div class="nav-section">
             <button
               type="button"
@@ -165,10 +166,11 @@ export function Sidebar(props: {
             >
               <span class="nav-toggle-caret" classList={{ open: favoritesSectionExpanded() }}>▸</span>
               FAVORITES
-              <span class="nav-section-count">{favorites().length}</span>
+              <span class="nav-section-count">{favoriteCount()}</span>
             </button>
             <Show when={favoritesSectionExpanded()}>
               <SidebarFavorites
+                onActiveNavigationComplete={props.onActiveNavigationComplete}
                 isActive={(name) => isActive(name)}
                 targetName={(name, kind) => sidebarPageTarget(name, kind).name}
                 open={(name, kind, gesture, point) =>

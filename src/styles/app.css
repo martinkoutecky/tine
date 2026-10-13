@@ -6741,6 +6741,13 @@ img.emoji {
 }
 .reference-export-toggle:disabled { opacity: .4; cursor: default; }
 
+.peek-popup-title { display: flex; align-items: center; gap: 12px; }
+.peek-source-title { color: inherit; font: inherit; text-align: left; }
+.peek-open-source { margin-left: auto; color: var(--link-color); white-space: nowrap; }
+.peek-page-properties { padding: 8px 16px; color: var(--text-secondary); }
+.embed-source-breadcrumb { display: none; color: var(--text-secondary); font-size: .85em; padding: 4px 8px; }
+.tine-embed-breadcrumbs .embed-source-breadcrumb { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+
 .ref-export-actions { display: flex; gap: 8px; }
 .ref-export-actions button {
   padding: 3px 12px;

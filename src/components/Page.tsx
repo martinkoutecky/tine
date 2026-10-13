@@ -721,7 +721,7 @@ function JournalLinkedReferences(props: { name: string }): JSX.Element {
   return <div ref={el} class="journal-linked-references">
     <Show when={near()}>
       <FailureBoundary region="Linked References">
-        <LinkedReferences name={props.name} />
+        <LinkedReferences name={props.name} journalFeed />
       </FailureBoundary>
     </Show>
   </div>;
