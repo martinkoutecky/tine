@@ -45,7 +45,9 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 9 (GH #422, D-18): a memoized answer to a bare `(task)` / `(priority)` or a
 /// blank `{{query}}` changed meaning (OG's "no condition"), while its memo key
 /// — the source text, or for a blank query the unchanged IR — did not.
-pub(crate) const FORMAT: u32 = 9;
+/// 10 (Kalem K1): namespace ancestors join reference candidates, path refs
+/// and memoized query/backlink answers. Old indexes and answers must rebuild.
+pub(crate) const FORMAT: u32 = 10;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.8";

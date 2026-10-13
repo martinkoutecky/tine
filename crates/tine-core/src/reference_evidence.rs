@@ -725,9 +725,10 @@ fn projected_reference_matches(
                     == crate::doc::property_key_norm(&reference.name)
             });
     }
-    names_norm
-        .iter()
-        .any(|name| refs::same_page(name, &reference.name))
+    let key = refs::page_key(&reference.name);
+    let matched =
+        refs::namespace_refs(&key).any(|reference| names_norm.iter().any(|name| name == reference));
+    matched
 }
 
 /// The page names of one query, with the plain-text matcher's per-name folding
