@@ -12,7 +12,8 @@ const extensions = new Set([".rs", ".ts", ".tsx", ".css"]);
 export function isProduction(file) {
   if (!roots.some((root) => file.startsWith(`${root}/`))) return false;
   if (!extensions.has(path.extname(file))) return false;
-  if (/(^|\/)(tests|examples|fixtures|vendor|target|gen)\//.test(file)) return false;
+  // `x_tests/` is a test directory module (`#[cfg(test)] mod x_tests;` with `x_tests/mod.rs`).
+  if (/(^|\/)(tests|examples|fixtures|vendor|target|gen|[^/]*_tests)\//.test(file)) return false;
   if (/(^|\/)([^/]*\.test\.[^/]+|[^/]*_tests\.rs|tests\.rs|test_[^/]*\.rs)$/.test(file)) return false;
   return true;
 }
