@@ -409,6 +409,14 @@ impl Live {
         }
     }
 
+    fn until_recoverable(&self, pages: &[(String, u64)]) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !self.host.pages_recoverable(pages) {
+            assert!(Instant::now() < deadline, "never recoverable: {pages:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// The watcher left `key`'s index to the publication consumer.
     fn held(&self, key: &str) -> bool {
         self.store.watch.holds(&self.root.join(key))
@@ -466,7 +474,11 @@ fn open_submit_and_mail_round_trip_through_a_real_store() {
     assert_eq!(page.disk, Some(DiskToken::NoFile));
     live.submit(&key, "- made\n", page.version, None).unwrap();
     live.until_disk(&key, "- made\n");
-    assert!(live.host.pages_recoverable(&[(key, page.version + 1)]));
+    // The file is visible at rename, before directory sync and the host's
+    // Published transition. Wait for the recovery query itself as well.
+    let needs = [(key, page.version + 1)];
+    live.until_recoverable(&needs);
+    assert!(live.host.pages_recoverable(&needs));
     live.host.stop();
 }
 
