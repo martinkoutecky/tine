@@ -334,52 +334,6 @@
     "supported": false,
     "tine_only": []
   },
-  "logseq-md/query/22": {
-    "logseq_only": [
-      [
-        "kalem"
-      ]
-    ],
-    "report": {
-      "ignored": [],
-      "ran": [
-        "page-property"
-      ],
-      "supported": true
-    },
-    "source": "[:find (pull ?p [*]) :where (page-property ?p :type \"Program\")]",
-    "supported": true,
-    "tine_only": [
-      [
-        "kalem",
-        "# a heading block"
-      ],
-      [
-        "kalem",
-        "```rust"
-      ],
-      [
-        "kalem",
-        "a link with a label: [the plugins]([[project/plugins]]) and a url https://example.com/#anchor"
-      ],
-      [
-        "kalem",
-        "alias:: editor, [[the editor]]"
-      ],
-      [
-        "kalem",
-        "its keys are doom's: `[[not a link]]` in code"
-      ],
-      [
-        "kalem",
-        "its parts"
-      ],
-      [
-        "kalem",
-        "kalem is an editor of [[org]] and [[markdown]] files #software"
-      ]
-    ]
-  },
   "logseq-md/query/23": {
     "logseq_only": [
       [
@@ -578,22 +532,6 @@
       "supported": true
     },
     "source": "[[meeting]]",
-    "supported": true,
-    "tine_only": []
-  },
-  "logseq-org/query/11": {
-    "logseq_only": [
-      [
-        "project/plugins",
-        "the plugins of [[kalem]] :plugins:"
-      ]
-    ],
-    "report": {
-      "ignored": [],
-      "ran": [],
-      "supported": true
-    },
-    "source": "[[plugins]]",
     "supported": true,
     "tine_only": []
   },
