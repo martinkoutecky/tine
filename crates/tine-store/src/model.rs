@@ -532,7 +532,7 @@ impl ReadSnapshot {
                         None,
                         &pages,
                         &[],
-                        crate::query::document_aliases,
+                        crate::query::document_alias_spellings,
                         None,
                     )
                 });
@@ -606,7 +606,7 @@ impl ReadSnapshot {
         } else {
             carry_projection(
                 old.and_then(|old| old.alias_index.get().map(|index| (index, &old.pages))),
-                crate::query::document_aliases,
+                crate::query::document_alias_spellings,
             )
         };
         let referenced_name_index = carry_projection(
@@ -735,7 +735,8 @@ impl ReadSnapshot {
             return false;
         };
         let aliases_unchanged = edits.iter().all(|(_, previous, current)| {
-            crate::query::document_aliases(previous) == crate::query::document_aliases(current)
+            crate::query::document_alias_spellings(previous)
+                == crate::query::document_alias_spellings(current)
         });
         if !aliases_unchanged {
             return false;
@@ -1075,38 +1076,47 @@ impl ReadSnapshot {
     pub(crate) fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         self.aliases
             .get_or_init(|| {
-                let index = self.alias_index.get_or_init(|| {
-                    SnapshotPageDerivedIndex::capture(
-                        None,
-                        &self.pages,
-                        &[],
-                        crate::query::document_aliases,
-                        None,
-                    )
-                });
-                let mut owned = Vec::new();
-                for (entry, _) in self.pages.iter() {
-                    if let Some(projection) = index.get(&entry.path) {
-                        for alias in projection {
-                            owned.push((
-                                entry.path.clone(),
-                                alias.clone(),
-                                entry.name.clone(),
-                                entry.rel_path_str().to_owned(),
-                            ));
-                        }
-                    }
-                }
-                owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
                 Arc::new(
-                    owned
+                    self.page_alias_spellings_with_owners()
                         .into_iter()
-                        .map(|(_, alias, owner, path)| (alias, owner, path))
+                        .map(|(alias, owner, path)| {
+                            (tine_core::refs::page_key(&alias), owner, path)
+                        })
                         .collect(),
                 )
             })
             .as_ref()
             .clone()
+    }
+
+    pub(crate) fn page_alias_spellings_with_owners(&self) -> Vec<(String, String, String)> {
+        let index = self.alias_index.get_or_init(|| {
+            SnapshotPageDerivedIndex::capture(
+                None,
+                &self.pages,
+                &[],
+                crate::query::document_alias_spellings,
+                None,
+            )
+        });
+        let mut owned = Vec::new();
+        for (entry, _) in self.pages.iter() {
+            if let Some(projection) = index.get(&entry.path) {
+                for alias in projection {
+                    owned.push((
+                        entry.path.clone(),
+                        alias.clone(),
+                        entry.name.clone(),
+                        entry.rel_path_str().to_owned(),
+                    ));
+                }
+            }
+        }
+        owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        owned
+            .into_iter()
+            .map(|(_, alias, owner, path)| (alias, owner, path))
+            .collect()
     }
     pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
         Arc::clone(&self.observed_mtimes)
@@ -4949,6 +4959,34 @@ mod tests {
             1
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn alias_completion_case_only_save_refreshes_live_and_reloaded_spelling() {
+        let dir = scratch("gh675-case-save");
+        fs::write(dir.join("pages/Owner.md"), "alias:: SSE\n- body\n").unwrap();
+        let store = model_store(&dir);
+        let before = published_snapshot(&store);
+        before.page_aliases_with_owners();
+        assert_eq!(crate::query::quick_switch(&before, "sse", 8)[0].name, "SSE");
+        save_model_page(&store, "Owner", |page| {
+            page.pre_block = Some("alias:: Sse".into())
+        });
+        let after = published_snapshot(&store);
+        assert_eq!(crate::query::quick_switch(&after, "SSE", 8)[0].name, "Sse");
+        assert_eq!(crate::query::quick_switch(&before, "sse", 8)[0].name, "SSE");
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("sSE", false),
+            crate::store::Resolved::Alias { .. }
+        ));
+        store.close();
+        let reopened = model_store(&dir);
+        assert_eq!(
+            crate::query::quick_switch(&published_snapshot(&reopened), "sse", 8)[0].name,
+            "Sse"
+        );
+        reopened.close();
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -373,6 +373,18 @@ fn is_properties_only(raw: &str) -> bool {
 /// lets cache invalidation compare sorted, deduplicated normalized alias sets
 /// instead of treating an unchanged `alias::` line as a change.
 pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
+    let mut aliases: Vec<_> = document_alias_spellings(doc)
+        .into_iter()
+        .map(|alias| refs::page_key(&alias))
+        .collect();
+    aliases.sort_unstable();
+    aliases.dedup();
+    aliases
+}
+
+/// Authored spellings for display/insertion. Identity consumers use
+/// `document_aliases` or `page_key`; case-only edits must refresh this projection.
+pub(crate) fn document_alias_spellings(doc: &Document) -> Vec<String> {
     let alias_text: Option<&str> = match &doc.pre_block {
         Some(pre) => Some(pre.as_str()),
         // No pre-block: a properties-only FIRST block is the page-properties
@@ -397,15 +409,15 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
             for alias in v.split(tine_core::refs::is_linkable_property_separator) {
                 let alias = strip_ref(alias.trim());
                 if !alias.is_empty() {
-                    aliases.push(refs::page_key(&alias));
+                    aliases.push(alias);
                 }
             }
         }
     }
-    // Ordering and duplicate spelling do not alter alias resolution. Comparing
-    // the semantic set avoids graph-wide invalidation for harmless formatting.
+    // Collapse duplicate identities while retaining a deterministic spelling.
     aliases.sort_unstable();
-    aliases.dedup();
+    let mut seen = std::collections::HashSet::new();
+    aliases.retain(|alias| seen.insert(refs::page_key(alias)));
     aliases
 }
 

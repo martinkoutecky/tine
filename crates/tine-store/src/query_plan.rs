@@ -86,6 +86,8 @@ pub(crate) struct QueryPlan {
     page_match_scope: FriendlyPageMatchScope,
     page_view: Option<ViewSettings>,
     block_view: Option<ViewSettings>,
+    // Inline completion lists spellings, while graph search lists identities.
+    separate_aliases: bool,
 }
 
 impl QueryPlan {
@@ -185,6 +187,7 @@ impl QueryPlan {
             page_match_scope,
             page_view: None,
             block_view: None,
+            separate_aliases: false,
         }
     }
 
@@ -253,6 +256,7 @@ impl QueryPlan {
             page_match_scope: FriendlyPageMatchScope::Names,
             page_view: None,
             block_view: None,
+            separate_aliases: false,
         }
     }
 
@@ -307,6 +311,7 @@ impl QueryPlan {
             page_match_scope: FriendlyPageMatchScope::Names,
             page_view: None,
             block_view: None,
+            separate_aliases: false,
         }
     }
 
@@ -345,6 +350,7 @@ impl QueryPlan {
             page_match_scope: FriendlyPageMatchScope::Names,
             page_view: None,
             block_view: None,
+            separate_aliases: false,
         }
     }
 
@@ -356,7 +362,7 @@ impl QueryPlan {
     /// Test-only default-policy shorthand; production passes the graph policy.
     #[cfg(test)]
     pub(crate) fn legacy_page_search(query: &str, limit: usize) -> Self {
-        Self::page_name_fuzzy(query, limit)
+        Self::legacy_page_search_with_policy(query, limit, true)
     }
 
     /// Page picker with the graph's explicit accent policy.
@@ -365,7 +371,9 @@ impl QueryPlan {
         limit: usize,
         remove_accents: bool,
     ) -> Self {
-        Self::page_name_fuzzy_with_policy(query, limit, remove_accents)
+        let mut plan = Self::page_name_fuzzy_with_policy(query, limit, remove_accents);
+        plan.separate_aliases = true;
+        plan
     }
 
     pub(crate) fn explanation(&self) -> QueryExplanation {
@@ -1024,6 +1032,64 @@ mod tests {
     use std::cell::Cell;
     use std::fs;
     use std::path::PathBuf;
+
+    #[test]
+    fn alias_completion_preserves_case_and_lists_every_matching_name() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("tine-gh675-{nonce}"));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/Tine.md"),
+            "alias:: TineOutline, [[Tine Outliner]], SSE\n- body\n",
+        )
+        .unwrap();
+        let graph = snapshot_for_dir(&dir);
+        let entries = crate::query::quick_switch(&graph, "tin", 100);
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"Tine"), "{names:?}");
+        assert!(names.contains(&"TineOutline"), "{names:?}");
+        assert!(names.contains(&"Tine Outliner"), "{names:?}");
+        assert!(entries.iter().all(|e| e.rel_path_str() == "pages/Tine.md"));
+        assert_eq!(
+            crate::query::quick_switch(&graph, "sse", 100)[0].name,
+            "SSE"
+        );
+        assert_eq!(crate::query::quick_switch(&graph, "tin", 1).len(), 1);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn alias_completion_preserves_authored_case() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("tine-gh675-case-{nonce}"));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        for (name, content) in [
+            ("Owner.md", "alias:: SSE\n- body\n"),
+            ("Bullet.md", "- aliases:: BulletAlias\n- body\n"),
+            ("Org.org", "#+ALIAS: OrgAlias\n* body\n"),
+            ("Drawer.org", ":PROPERTIES:\n:alias: DrawerAlias\n:END:\n"),
+        ] {
+            fs::write(dir.join("pages").join(name), content).unwrap();
+        }
+        let graph = snapshot_for_dir(&dir);
+        assert_eq!(
+            crate::query::quick_switch(&graph, "sse", 100)[0].name,
+            "SSE"
+        );
+        for name in ["BulletAlias", "OrgAlias", "DrawerAlias"] {
+            assert_eq!(
+                crate::query::quick_switch(&graph, &name.to_lowercase(), 100)[0].name,
+                name
+            );
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn graph_search_obeys_og_accent_switch_on_real_pages_and_blocks() {

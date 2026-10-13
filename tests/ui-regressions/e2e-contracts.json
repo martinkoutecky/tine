@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-alias-autocomplete.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Page and hashtag completion display every matching alias alongside its owner page and insert the selected alias with its authored casing.","blocking":true}],
+      "acceptableVariations":["Popup geometry, highlighting, fonts and timing may vary while the ordered choices and inserted spelling remain correct."],
+      "nonRequirements":["Exact pixels, incidental DOM nesting or platform certification outside Linux WebKitGTK.","Graph search continues to present one result per page identity."],
+      "stability":"stable"
+    },
     "scripts/e2e-youtube-seek.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A timestamp clicked in the main view seeks the last played YouTube player in the right sidebar without editing the page.","blocking":true}],
       "acceptableVariations":["Pane layout and iframe loading timing may vary while the seek reaches the selected player."],
