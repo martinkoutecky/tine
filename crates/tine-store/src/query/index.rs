@@ -142,7 +142,7 @@ impl PageFacts {
         let page_property_block = doc
             .pre_block
             .as_deref()
-            .and_then(|pre| super::page_property_block(entry, pre));
+            .and_then(|pre| super::page_property_block_with_config(entry, pre, config));
         if let Some(block) = &page_property_block {
             refs.extend(
                 block

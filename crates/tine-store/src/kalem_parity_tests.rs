@@ -19,7 +19,6 @@ use crate::{IrAnswer, IrRequest, PageId, Store};
 // (a) bug, (b) documented divergence, (c) capture quirk, (d) out of scope.
 const EXPECTED_DIFFERENCES: &[(&str, &str)] = &[
     ("logseq-md/query/06", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
-    ("logseq-md/query/08", "(a) separated bare property values must contribute refs; page_properties::property_projection"),
     ("logseq-md/query/14", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
     ("logseq-md/query/15", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
     ("logseq-md/query/16", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
@@ -33,7 +32,6 @@ const EXPECTED_DIFFERENCES: &[(&str, &str)] = &[
     ("logseq-md/backlinks/whiteboards/Design.edn", "(d) whiteboards are not graph text pages; store.rs::validated_page"),
     ("logseq-md/graph_view", "(d) no production graph-view builder; docs/BACKLOG.md Graph view"),
     ("logseq-org/query/07", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
-    ("logseq-org/query/08", "(a) Org alias header must contribute refs; page_properties::property_projection"),
     ("logseq-org/query/09", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
     ("logseq-org/query/10", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),
     ("logseq-org/query/12", "(b) OG UI parity: filter-top-level-blocks suppresses children of matching parents (ADR 0042); Kalem captures unfiltered API hits"),

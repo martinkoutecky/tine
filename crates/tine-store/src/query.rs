@@ -27,9 +27,7 @@ pub(crate) mod page_properties;
 mod sample_seed_tests;
 pub(crate) use page_properties::page_facets;
 use page_properties::{page_document_is_org, page_property_lines};
-pub(crate) use tine_core::page_properties::{
-    document_page_property_block, page_property_raw, property_projection,
-};
+pub(crate) use tine_core::page_properties::{document_page_property_block, page_property_raw};
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoundedGroups {
@@ -373,6 +371,18 @@ fn is_properties_only(raw: &str) -> bool {
 /// lets cache invalidation compare sorted, deduplicated normalized alias sets
 /// instead of treating an unchanged `alias::` line as a change.
 pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
+    let mut aliases: Vec<_> = document_alias_spellings(doc)
+        .into_iter()
+        .map(|alias| refs::page_key(&alias))
+        .collect();
+    aliases.sort_unstable();
+    aliases.dedup();
+    aliases
+}
+
+/// Authored spellings for display/insertion. Identity consumers use
+/// `document_aliases` or `page_key`; case-only edits must refresh this projection.
+pub(crate) fn document_alias_spellings(doc: &Document) -> Vec<String> {
     let alias_text: Option<&str> = match &doc.pre_block {
         Some(pre) => Some(pre.as_str()),
         // No pre-block: a properties-only FIRST block is the page-properties
@@ -397,15 +407,15 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
             for alias in v.split(tine_core::refs::is_linkable_property_separator) {
                 let alias = strip_ref(alias.trim());
                 if !alias.is_empty() {
-                    aliases.push(refs::page_key(&alias));
+                    aliases.push(alias);
                 }
             }
         }
     }
-    // Ordering and duplicate spelling do not alter alias resolution. Comparing
-    // the semantic set avoids graph-wide invalidation for harmless formatting.
+    // Collapse duplicate identities while retaining a deterministic spelling.
     aliases.sort_unstable();
-    aliases.dedup();
+    let mut seen = std::collections::HashSet::new();
+    aliases.retain(|alias| seen.insert(refs::page_key(alias)));
     aliases
 }
 
@@ -582,12 +592,21 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
 }
 
 fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
+    page_property_block_with_config(entry, pre, &tine_core::query::atom::ParseConfig::default())
+}
+
+fn page_property_block_with_config(
+    entry: &PageEntry,
+    pre: &str,
+    config: &tine_core::query::atom::ParseConfig,
+) -> Option<DocBlock> {
     let is_org = Format::from_path(&entry.path) == Format::Org;
     let raw = page_property_raw(pre, is_org);
     if raw.is_empty() {
         return None;
     }
-    let mut block = property_projection(&raw, is_org);
+    let mut block =
+        tine_core::page_properties::property_projection_with_config(&raw, is_org, config);
     block.uuid = format!(
         "page-property:{:?}:{}",
         entry.kind,
@@ -611,7 +630,11 @@ fn page_property_referrer(entry: &PageEntry, pre: &str, uuid: &str) -> Option<Bl
 /// cached page. This is the projection used by the reconstructible candidate
 /// index; query-time occurrence verification still uses the full evidence
 /// engine below and remains authoritative.
-pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Document) -> Vec<String> {
+pub(crate) fn document_explicit_reference_names(
+    entry: &PageEntry,
+    doc: &Document,
+    config: &tine_core::config::Config,
+) -> Vec<String> {
     fn collect(blocks: &[DocBlock], names: &mut Vec<String>) {
         for block in blocks {
             names.extend(
@@ -628,11 +651,13 @@ pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Documen
     }
 
     let mut names = Vec::new();
-    if let Some(block) = doc
-        .pre_block
-        .as_deref()
-        .and_then(|pre| page_property_block(entry, pre))
-    {
+    if let Some(block) = doc.pre_block.as_deref().and_then(|pre| {
+        page_property_block_with_config(
+            entry,
+            pre,
+            &tine_core::query::atom::ParseConfig::from_config(config),
+        )
+    }) {
         names.extend(
             block
                 .projection()
@@ -739,7 +764,13 @@ fn collect_reference_occurrences_bounded(
                 .pre_block
                 .as_deref()
                 .filter(|_| candidate_pages.admits(page, 0))
-                .and_then(|pre| page_property_block(entry, pre))
+                .and_then(|pre| {
+                    page_property_block_with_config(
+                        entry,
+                        pre,
+                        &tine_core::query::atom::ParseConfig::from_config(config),
+                    )
+                })
             {
                 if budget.closed() {
                     if block_has_reference(&block, &needles, kind, config) {
@@ -1020,7 +1051,11 @@ pub(crate) fn backlink_filter_context(
                 continue;
             };
             if let Some(pre) = document.pre_block.as_deref() {
-                if let Some(block) = page_property_block(page, pre) {
+                if let Some(block) = page_property_block_with_config(
+                    page,
+                    pre,
+                    &tine_core::query::atom::ParseConfig::from_config(graph.config()),
+                ) {
                     if ids.contains(&block.uuid) {
                         let entry = backlink_filter_entry(
                             &page.name,
@@ -1208,16 +1243,19 @@ pub(crate) fn page_affects_backlinks(
     target: &str,
     entry: &PageEntry,
     doc: &Document,
+    config: &tine_core::config::Config,
 ) -> bool {
     let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
     widen_for_journal_day(&mut names_norm, journal, target);
-    // Scoped invalidation has no Graph/config parameter. Default-enabled matching
-    // is conservative for disabled/excluded property pages (it may evict an
-    // unaffected cache entry, but cannot retain a stale one).
-    let config = tine_core::config::Config::default();
+    // Invalidation shares the live graph's property-reference policy with reads.
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_property_block(entry, pre).is_some_and(|block| {
+        page_property_block_with_config(
+            entry,
+            pre,
+            &tine_core::query::atom::ParseConfig::from_config(config),
+        )
+        .is_some_and(|block| {
             block_reference_evidence(
                 &block,
                 &canonical,
@@ -1251,13 +1289,18 @@ pub(crate) fn page_affects_unlinked(
     target: &str,
     entry: &PageEntry,
     doc: &Document,
+    config: &tine_core::config::Config,
 ) -> bool {
     let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
     widen_for_journal_day(&mut names_norm, journal, target);
-    let config = tine_core::config::Config::default();
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_property_block(entry, pre).is_some_and(|block| {
+        page_property_block_with_config(
+            entry,
+            pre,
+            &tine_core::query::atom::ParseConfig::from_config(config),
+        )
+        .is_some_and(|block| {
             block_reference_evidence(&block, &canonical, &needles, ReferenceKind::Plain, &config)
                 .is_some()
         })

@@ -235,7 +235,11 @@ pub(super) fn execute_pages(
         }
     }
     let mut aliases_by_owner: HashMap<String, Vec<String>> = HashMap::new();
-    for (alias, _, owner_rel_path) in graph.page_aliases_with_owners() {
+    for (alias, _, owner_rel_path) in if plan.separate_aliases {
+        graph.page_alias_spellings_with_owners()
+    } else {
+        graph.page_aliases_with_owners()
+    } {
         aliases_by_owner
             .entry(owner_rel_path)
             .or_default()
@@ -249,6 +253,10 @@ pub(super) fn execute_pages(
     } else {
         usize::MAX
     };
+    let mut completion_names: HashSet<String> = file_pages
+        .iter()
+        .map(|page| identity_fold(&page.name))
+        .collect();
     for (index, page) in file_pages.iter().enumerate() {
         if cancelled() {
             return None;
@@ -258,7 +266,14 @@ pub(super) fn execute_pages(
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         let name_match = include_names
-            .then(|| best_page_match(plan, &branch.predicate, &page.name, aliases))
+            .then(|| {
+                best_page_match(
+                    plan,
+                    &branch.predicate,
+                    &page.name,
+                    if plan.separate_aliases { &[] } else { aliases },
+                )
+            })
             .flatten();
         let content_match = content_by_path.get(page.rel_path_str());
         if let Some((base_score, match_class, matched_text, matched_alias, content_text)) =
@@ -292,11 +307,35 @@ pub(super) fn execute_pages(
                 },
             );
         }
+        if plan.separate_aliases {
+            for alias in aliases {
+                // A physical page wins over an alias with the same identity.
+                if !completion_names.insert(identity_fold(alias)) {
+                    continue;
+                }
+                if let Some((base_score, match_class, matched_text, _)) =
+                    best_page_match(plan, &branch.predicate, alias, &[])
+                {
+                    has_more |= heap.len() >= selection_limit;
+                    push_page(
+                        &mut heap,
+                        selection_limit,
+                        ScoredPage {
+                            from_content: false,
+                            score: base_score - alias.len() as i32,
+                            match_class,
+                            matched_text,
+                            matched_alias: Some(alias.clone()),
+                            tie_key: format!("{}:{}", identity_fold(alias), page.rel_path_str()),
+                            candidate: PageCandidate::File(index),
+                            content_text: None,
+                        },
+                    );
+                }
+            }
+        }
     }
-    let mut have: HashSet<String> = file_pages
-        .iter()
-        .map(|page| identity_fold(&page.name))
-        .collect();
+    let mut have = completion_names;
     // GH #353 / #623: an alias of a file page names THAT page. The owner carries
     // the identity (with `matched_alias` as display context), so the alias text
     // must never also appear as a referenced, path-less page candidate: selecting

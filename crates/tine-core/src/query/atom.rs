@@ -53,6 +53,11 @@ pub struct ParseConfig {
 }
 
 impl ParseConfig {
+    pub(crate) fn default_ref() -> &'static Self {
+        static DEFAULT: std::sync::OnceLock<ParseConfig> = std::sync::OnceLock::new();
+        DEFAULT.get_or_init(Self::default)
+    }
+
     /// The parse-relevant slice of `config`. O(configured keys).
     pub fn from_config(config: &crate::config::Config) -> ParseConfig {
         ParseConfig {
@@ -177,14 +182,14 @@ fn contains_config_key(list: &[String], key: &str) -> bool {
 }
 
 /// OG `separated-by-commas?` (`text.cljs:141-146`).
-fn separated_by_commas(key: &str, config: &ParseConfig) -> bool {
+pub(crate) fn separated_by_commas(key: &str, config: &ParseConfig) -> bool {
     contains_key(EDITABLE_LINKABLE_BUILT_IN_PROPERTIES, key)
         || contains_config_key(&config.separated_by_commas, key)
 }
 
 /// Step 1's key test: OG `parse-property`'s first `cond` branch
 /// (`text.cljs:169-176`).
-fn reference_parsing_suppressed(key: &str, config: &ParseConfig) -> bool {
+pub(crate) fn reference_parsing_suppressed(key: &str, config: &ParseConfig) -> bool {
     contains_key(UNPARSED_BUILT_IN_PROPERTIES, key)
         || contains_config_key(&config.ignored_page_references_keywords, key)
 }

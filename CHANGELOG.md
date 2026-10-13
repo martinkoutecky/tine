@@ -58,11 +58,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Linkable page-property values, including Org aliases and graph-configured comma-separated properties, appear in page-reference queries and Linked References (Kalem parity).
+
 - Org headline tags now appear in page-reference queries and Linked References (Kalem parity).
 - Advanced `page-property` queries return the bound pages; queries for blocks on those pages keep returning blocks (Kalem parity).
 - Backlinks and queries now include references through namespace children, matching Logseq.
 - Template insertion and new-journal templates preserve each block's saved collapsed state (GH #670).
 - Following a PDF backlink navigates once and leaves scrolling free; following the same target again still navigates to it (GH #672).
+- Page and tag autocomplete preserve authored alias casing and offer matching aliases alongside their page (GH #675, GH #676).
 
 - Representable Windows graph paths display without verbatim prefixes; stored canonical paths retain existing graph identity (REG-WIN-GRAPH-PATH).
 - Cold launches from a Tine link restore the last graph before handling the link (UI-WIN-LINK-COLD-START).

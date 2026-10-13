@@ -56,6 +56,43 @@ function accept(textarea: HTMLTextAreaElement, key: "Enter" | "Tab" = "Enter") {
 }
 
 describe("reference authoring", () => {
+  it.each(["page", "tag"] as const)("displays and inserts authored aliases beside their matching owner in %s completion (GH #675, GH #676)", async (kind) => {
+    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+      entry("Tine"),
+      { ...entry("Tine"), name: "TineOutline" },
+      { ...entry("Tine"), name: "Tine Outliner" },
+    ]);
+    vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [
+      { key: "tine", name: "Tine", is_journal: false, day: null, target: { kind: "existing", id: "pages/Tine.md", others: [] } },
+      ...["TineOutline", "Tine Outliner"].map((name) => ({ key: name.toLowerCase(), name, is_journal: false, day: null, target: { kind: "alias" as const, owners: ["pages/Tine.md"] } })),
+    ] });
+    await refreshPageIndex();
+    const input = kind === "page" ? "[[tin" : "#tin";
+    loadSingle(page(input));
+    startEditing("reference-authoring", input.length);
+    const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, input, input.length);
+      const labels = () => [...document.body.querySelectorAll(".autocomplete .ac-label")].map((row) => row.textContent);
+      const prefix = kind === "tag" ? "#" : "";
+      await vi.waitFor(() => expect(labels()).toContain(`${prefix}TineOutline`));
+      expect(labels().filter((label) => !label?.startsWith("Create"))).toEqual([`${prefix}Tine`, `${prefix}TineOutline`, `${prefix}Tine Outliner`]);
+      const row = [...document.body.querySelectorAll(".autocomplete .ac-label")].find((row) => row.textContent === `${prefix}TineOutline`)!.parentElement!;
+      expect(row.querySelector(".ac-sub")?.textContent).toBe("alias of Tine");
+      if (kind === "tag") {
+        const index = labels().indexOf(`${prefix}TineOutline`);
+        for (let i = 0; i < index; i++) textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true }));
+        accept(textarea);
+      } else {
+        row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      }
+      await vi.waitFor(() => expect(textarea.value.trim()).toBe(kind === "page" ? "[[TineOutline]]" : "#TineOutline"));
+    } finally {
+      dispose();
+    }
+  });
+
   it("renders PDF annotation navigation with the authored highlight id", () => {
     const authoredId = "7b6704f8-a337-4336-a711-2ba6bc14fbf2";
     loadSingle({

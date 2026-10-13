@@ -2917,9 +2917,13 @@ impl WholeGraph {
             .iter()
             .filter(|(entry, doc)| {
                 candidates.indexed
-                    || crate::query::document_explicit_reference_names(entry, doc)
-                        .iter()
-                        .any(|name| keys.contains(name))
+                    || crate::query::document_explicit_reference_names(
+                        entry,
+                        doc,
+                        self.graph.config(),
+                    )
+                    .iter()
+                    .any(|name| keys.contains(name))
             })
             .map(|(entry, _)| PageId::from(entry.rel_path_str()))
             .collect();
