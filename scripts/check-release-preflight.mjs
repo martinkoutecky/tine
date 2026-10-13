@@ -43,7 +43,11 @@ const versions = new Map([
 const expected = tauri.version;
 const problems = [];
 
-const benchPolicy = spawnSync(process.execPath, [path.join(root, "scripts", "check-bench-policy.mjs"), "--expected-previous", "v0.6.5"], {
+// Structure and the immutable pin only: currency against GitHub's latest
+// release is the full-CI gate's job ("Performance baseline policy is
+// current"), which every release candidate needs green on its exact SHA.
+const benchPreviousRef = JSON.parse(fs.readFileSync(path.join(root, "scripts", "bench-policy.json"), "utf8")).previousRelease?.ref ?? "";
+const benchPolicy = spawnSync(process.execPath, [path.join(root, "scripts", "check-bench-policy.mjs"), "--expected-previous", benchPreviousRef], {
   encoding: "utf8",
   env: process.env,
 });

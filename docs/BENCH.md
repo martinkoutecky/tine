@@ -75,11 +75,18 @@ evidence; every attempt uploads its complete distribution.
 
 `scripts/bench-policy.json` is the contract:
 
-- `v0.4.7` is the immutable pre-Sheets/pre-split-view anchor. It does not advance
-  merely because a slower release shipped, so repeated small regressions cannot
-  ratchet the allowed performance downward.
-- `previousRelease.ref` advances during release preparation to the latest already
-  published version. It catches a large one-release jump.
+- `v0.7.2` is the immutable anchor (Martin, 2026-10-13; before that `v0.4.7`,
+  whose own round-to-round scroll variance kept failing reliability). It does not
+  advance merely because a slower release shipped, so repeated small regressions
+  cannot ratchet the allowed performance downward. Only Martin moves it.
+- `previousRelease.ref` is the latest published stable release (GitHub
+  `releases/latest`, enforced by full CI) and advances after each stable release.
+  It catches a large one-release jump.
+- One disturbed round per version may be re-measured
+  (`reliability.maxDisturbedRoundReruns`, at most 1): when a metric's round
+  spread exceeds its limit, the round furthest from the median is measured
+  again and replaces it. Limits are unchanged; the replaced round stays in
+  `rounds/` and the manifest's `reruns`.
 - Budgets are metric-specific: large-page load is allowed 25% over the immutable
   anchor and 15% over the previous release; scroll is allowed 30% and 20% because
   its browser scheduling noise differs. Round-spread limits are 30% for the
