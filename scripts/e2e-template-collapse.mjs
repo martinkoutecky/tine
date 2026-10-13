@@ -1,3 +1,4 @@
+import os from "node:os";
 // GH #670: native slash-template insertion, save, and cold reopen.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -8,7 +9,7 @@ import { openPageByName } from "./lib/e2e-navigation.mjs";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
 const DRIVER = process.env.TAURI_DRIVER || path.join(process.env.CARGO_HOME || "", "bin/tauri-driver");
-const artifacts = path.join(ROOT, ".artifacts/gh670");
+const artifacts = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(os.tmpdir(), "tine-e2e-gh670"));
 fs.mkdirSync(artifacts, { recursive: true });
 const TMP = fs.mkdtempSync(path.join(artifacts, "run-"));
 const GRAPH = path.join(TMP, "graph");
