@@ -165,6 +165,26 @@ describe("B1: a TQL block executes through query_run", () => {
       dispose();
     }
   });
+  it("renders an advanced page-property pull as a page link", async () => {
+    const source = '[:find (pull ?p [*]) :where (page-property ?p :type "Program")]';
+    load(`#+BEGIN_QUERY\n{:query ${source}}\n#+END_QUERY`);
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+      query: { anchor: "page", filter: { kind: "true" }, source: { kind: "advanced", original: source, og_options: "" } },
+      view: {},
+    });
+    vi.spyOn(backend(), "queryRun").mockResolvedValue({
+      anchor: "page", pages: [{ path: "pages/Kalem.md", name: "Kalem", kind: "page", properties: [["type", "Program"]] }],
+      diagnostics: [], report: { supported: true, ran: ["page-property"], ignored: [] }, total: 1, exceeded: false,
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await vi.waitFor(() => expect(root.querySelector(".query-page-link")?.textContent).toContain("Kalem"));
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+      expect(root.querySelector(".query-group")).toBeNull();
+      (root.querySelector(".query-page-link") as HTMLButtonElement).click();
+      expect(route()).toMatchObject({ kind: "page", name: "Kalem", path: "pages/Kalem.md" });
+    } finally { dispose(); }
+  });
   it("uses the exact page count and physical path returned by the shared page reader", async () => {
     load("{{tine-query @page and journal = false}}");
     const answer: QueryResult = {

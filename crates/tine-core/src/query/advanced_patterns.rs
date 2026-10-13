@@ -709,7 +709,13 @@ fn advanced_pred_inner(
         }
     }
     let groups = flatten_single_branch_groups(where_groups(vector));
-    if !joins::rules_target_result(&groups, advanced_find_var(query_src).as_deref().unwrap()) {
+    let find = advanced_find_var(query_src).unwrap();
+    let anchor = if joins::page_property_result(&groups, &find) {
+        Anchor::Page
+    } else {
+        Anchor::Block
+    };
+    if !joins::rules_target_result(&groups, &find, anchor) {
         return (None, ran, vec!["rule result binding".into()]);
     }
     // Authored rules may replace even familiar rule names. Never execute or
@@ -730,9 +736,17 @@ fn advanced_pred_inner(
             (None, Vec::new(), ignored)
         };
     }
-    let (lowered_page_properties, consumed_patterns) = lower_page_property_patterns(&groups);
+    // Existing attribute/property-map lowerers describe blocks and their page.
+    // Page-entity queries only lower their supported rules; unrelated patterns
+    // stay visible as unsupported instead of being interpreted as block facts.
+    let block_groups = if anchor == Anchor::Block {
+        &groups[..]
+    } else {
+        &[]
+    };
+    let (lowered_page_properties, consumed_patterns) = lower_page_property_patterns(block_groups);
     let (lowered_current_pages, current_page_patterns) =
-        lower_current_page_patterns(&groups, &inputs, advanced_find_var(query_src).as_deref());
+        lower_current_page_patterns(block_groups, &inputs, Some(&find));
     let consumed_patterns = consumed_patterns
         .into_iter()
         .chain(current_page_patterns)
@@ -744,7 +758,7 @@ fn advanced_pred_inner(
         .chain(lowered_page_properties.keys().copied())
         .collect::<std::collections::HashSet<_>>();
     let (mut lowered_attributes, mut attribute_patterns) = lower_attribute_patterns(
-        &groups,
+        block_groups,
         &taken,
         advanced_find_var(query_src).as_deref(),
         &inputs,
@@ -753,7 +767,7 @@ fn advanced_pred_inner(
     // its predicates into each branch before OR, retaining existential
     // semantics when a block has both dates (one outside, one inside).
     let (date_or, date_or_patterns) = lower_date_disjunctions(
-        &groups,
+        block_groups,
         &taken,
         advanced_find_var(query_src).as_deref(),
         &inputs,
@@ -780,7 +794,7 @@ fn advanced_pred_inner(
                 return None;
             }
             let ignored_before = ignored.len();
-            let lowered = parse_adv_group(group, &inputs, today, &mut ran, &mut ignored, 0);
+            let lowered = parse_adv_group(group, &inputs, today, &mut ran, &mut ignored, anchor, 0);
             if lowered.is_none() && ignored.len() == ignored_before {
                 // Every clause that does not lower is named: refusing is the
                 // contract (below), so a silent drop would be a silent widening.
@@ -822,7 +836,7 @@ fn advanced_pred_inner(
     // already folded into the lowered clauses above, and the caller keeps
     // `ran`/`ignored`/`supported`.
     let query = Query::new(
-        Anchor::Block,
+        anchor,
         filter,
         Source::Advanced {
             original: query_src.to_string(),
@@ -912,6 +926,7 @@ fn parse_adv_group(
     today: JournalDate,
     ran: &mut Vec<String>,
     ignored: &mut Vec<String>,
+    anchor: Anchor,
     depth: usize,
 ) -> Option<Filter> {
     if depth > QUERY_NESTING_MAX {
@@ -935,7 +950,7 @@ fn parse_adv_group(
             let ignored_before = ignored.len();
             let kids: Vec<Filter> = scan_groups(inner)
                 .iter()
-                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored, depth + 1))
+                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored, anchor, depth + 1))
                 .collect();
             // GH #542: dropping a clause Tine does not understand only ever
             // WIDENS a conjunction. Under `not` it narrows the answer, and an
@@ -1002,7 +1017,7 @@ fn parse_adv_group(
                 let val = adv_strings(inner).into_iter().next();
                 ran.push(head.clone());
                 let leaf = og::property_leaf(og::normalize_prop_key(&k), val);
-                if head == "property" {
+                if head == "property" || anchor == Anchor::Page {
                     leaf
                 } else {
                     Filter::rel(Rel::Page, Quant::Any, leaf)

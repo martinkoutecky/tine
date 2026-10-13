@@ -58,6 +58,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Advanced `page-property` queries return the bound pages; queries for blocks on those pages keep returning blocks (Kalem parity).
+
 - Representable Windows graph paths display without verbatim prefixes; stored canonical paths retain existing graph identity (REG-WIN-GRAPH-PATH).
 - Cold launches from a Tine link restore the last graph before handling the link (UI-WIN-LINK-COLD-START).
 - New graphs refuse Windows access to WSL1 backing rootfs folders; existing graphs warn and remain openable, with advice to use `\\wsl.localhost\<distro>\…` (UI-WIN-WSL-ROOTFS).
