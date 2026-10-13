@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Bullet threading's "Active ancestry only" mode now emphasizes the edited block's connectors in the accent color, as the original Logseq plugin does (GH #614).
 - GH #524: Added regression coverage for dragging a block into an empty page in the right sidebar; current Beta already supports the move.
 - GH #499: Added regression coverage for splitting the lower pane beneath an existing top row; the reported sequence already preserves the layout on current Beta.
 - GH #593: Workspace and tab overflow menus support stable hover opening and delayed dismissal while crossing the menu gap.
