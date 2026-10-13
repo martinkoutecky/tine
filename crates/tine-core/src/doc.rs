@@ -69,6 +69,9 @@ pub struct DocBlock {
     /// parse time. `#[serde(default)]` → false on any legacy deserialize.
     #[serde(default)]
     pub(crate) is_org: bool,
+    /// Graph property parsing policy for synthetic page-header blocks only.
+    #[serde(skip)]
+    pub(crate) property_ref_config: Option<Box<crate::query::atom::ParseConfig>>,
     /// Derived projection of the current block body.
     // set_raw clears this memo; cloning starts with an empty memo.
     #[serde(skip)]
@@ -289,6 +292,7 @@ impl Clone for DocBlock {
             children: self.children.clone(),
             uuid: self.uuid.clone(),
             is_org: self.is_org,
+            property_ref_config: self.property_ref_config.clone(),
             proj: std::sync::OnceLock::new(),
         }
     }
@@ -301,6 +305,7 @@ impl DocBlock {
             children: Vec::new(),
             uuid: String::new(),
             is_org: false,
+            property_ref_config: None,
             proj: std::sync::OnceLock::new(),
         }
     }
@@ -329,6 +334,12 @@ impl DocBlock {
         }
     }
 
+    /// Set the graph policy used to project a synthetic page-property block.
+    pub fn set_property_ref_config(&mut self, config: &crate::query::atom::ParseConfig) {
+        self.property_ref_config = Some(Box::new(config.clone()));
+        self.proj = std::sync::OnceLock::new();
+    }
+
     /// Visible text, references, and facets derived from the current raw body.
     /// [`Self::set_raw`] clears this cache when the body changes.
     pub fn projection(&self) -> &BlockProjection {
@@ -350,16 +361,21 @@ impl DocBlock {
                 .expect("parsed regions");
             let regions = shared_regions(regions);
             let visible_lower = crate::search_query::canonical_fold(&visible);
-            let reference_source =
-                crate::reference_evidence::project(&self.raw, self.is_org, &proj.blocks);
-            // OG 0.10.9 with-page-refs includes headline :tags. lsdoc's
-            // inline refs omit these because they live on the header AST.
-            // Reuse the same parser-owned tag evidence that backlinks consume.
+            let reference_source = crate::reference_evidence::project_with_config(
+                &self.raw,
+                self.is_org,
+                &proj.blocks,
+                self.property_ref_config
+                    .as_deref()
+                    .unwrap_or_else(|| crate::query::atom::ParseConfig::default_ref()),
+            );
+            // OG 0.10.9 with-page-refs includes headline tags and linkable
+            // property atoms. Queries use the same evidence as backlinks.
             let mut refs_page = proj.refs.page;
             let tag_refs = reference_source
                 .explicit
                 .iter()
-                .filter(|r| r.rule == "explicit_tag");
+                .filter(|r| r.rule == "explicit_tag" || r.rule == "implicit_linkable_property");
             if tag_refs.clone().next().is_some() {
                 refs_page.extend(tag_refs.map(|r| r.name.clone()));
                 refs_page.sort();
@@ -1548,6 +1564,7 @@ impl CheckpointBlock {
             children: children.into_iter().map(Self::into_block).collect(),
             uuid: String::new(),
             is_org,
+            property_ref_config: None,
             proj,
         }
     }

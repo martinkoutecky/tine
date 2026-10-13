@@ -69,6 +69,17 @@ pub fn property_projection(raw: &str, is_org: bool) -> DocBlock {
     block
 }
 
+/// The page-header block under the graph's property-reference policy.
+pub fn property_projection_with_config(
+    raw: &str,
+    is_org: bool,
+    config: &crate::query::atom::ParseConfig,
+) -> DocBlock {
+    let mut block = property_projection(raw, is_org);
+    block.set_property_ref_config(config);
+    block
+}
+
 /// The header pre-block as a block, from the document alone (no page entry).
 /// I-12: the one projection of "the pre-block is a real block with `:block/refs`"
 /// for the walkers that have only a `Document` (block-ref badge counts, scoped

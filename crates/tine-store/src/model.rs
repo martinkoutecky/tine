@@ -512,8 +512,8 @@ impl ReadSnapshot {
         // names were first-use work there, so their OnceLocks remain cold.
         let initial = old.is_none().then(|| {
             std::thread::scope(|scope| {
-                let explicit =
-                    scope.spawn(|| SnapshotExplicitIndex::capture(None, &pages, &[], None));
+                let explicit = scope
+                    .spawn(|| SnapshotExplicitIndex::capture(None, &pages, &[], None, &config));
                 let signatures = scope.spawn(|| {
                     SnapshotReferenceCandidateIndex::capture(None, &pages, &[], cache_generation)
                 });
@@ -567,10 +567,16 @@ impl ReadSnapshot {
             index.clone()
         } else {
             SnapshotExplicitIndex::capture(
-                old.map(|old| (&old.explicit_index, &old.pages)),
+                old.filter(|old| {
+                    old.config.separated_by_commas == config.separated_by_commas
+                        && old.config.ignored_page_references_keywords
+                            == config.ignored_page_references_keywords
+                })
+                .map(|old| (&old.explicit_index, &old.pages)),
                 &pages,
                 changed_paths,
                 position_pair,
+                &config,
             )
         };
         let block_index = std::sync::OnceLock::new();
@@ -1557,6 +1563,7 @@ impl SnapshotExplicitIndex {
         pages: &Arc<Pages>,
         changed_paths: &[String],
         positions: Option<(&SharedMap<String, usize>, &SharedMap<String, usize>)>,
+        config: &Config,
     ) -> Self {
         if let Some((previous, previous_pages)) = old.filter(|(_, previous_pages)| {
             !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
@@ -1571,10 +1578,14 @@ impl SnapshotExplicitIndex {
                 let after =
                     snapshot_page_by_rel(pages, positions.map(|(_, after)| after), rel_path);
                 let old_names = before
-                    .map(|(entry, doc)| crate::query::document_explicit_reference_names(entry, doc))
+                    .map(|(entry, doc)| {
+                        crate::query::document_explicit_reference_names(entry, doc, config)
+                    })
                     .unwrap_or_default();
                 let new_names = after
-                    .map(|(entry, doc)| crate::query::document_explicit_reference_names(entry, doc))
+                    .map(|(entry, doc)| {
+                        crate::query::document_explicit_reference_names(entry, doc, config)
+                    })
                     .unwrap_or_default();
                 if let Some(path) = after.or(before).map(|(entry, _)| entry.path.as_path()) {
                     index.update(path, &old_names, &new_names);
@@ -1584,7 +1595,7 @@ impl SnapshotExplicitIndex {
         } else {
             let mut index = Self::empty();
             for (entry, doc) in pages.iter() {
-                let names = crate::query::document_explicit_reference_names(entry, doc);
+                let names = crate::query::document_explicit_reference_names(entry, doc, config);
                 index.update(&entry.path, &[], &names);
             }
             index
@@ -3213,6 +3224,7 @@ impl SnapshotMemos {
                         target,
                         entry,
                         candidate,
+                        graph.config(),
                     ),
                     Some(("u", target)) => crate::query::page_affects_unlinked(
                         &real_pages,
@@ -3221,6 +3233,7 @@ impl SnapshotMemos {
                         target,
                         entry,
                         candidate,
+                        graph.config(),
                     ),
                     Some(("br", uuid)) => {
                         crate::query::page_affects_block_referrers(uuid, candidate)
@@ -3233,6 +3246,7 @@ impl SnapshotMemos {
                             target,
                             entry,
                             candidate,
+                            graph.config(),
                         )
                     }),
                     Some(("U", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|target| {
@@ -3243,6 +3257,7 @@ impl SnapshotMemos {
                             target,
                             entry,
                             candidate,
+                            graph.config(),
                         )
                     }),
                     Some(("R", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|uuid| {
@@ -5056,6 +5071,7 @@ mod tests {
                         target,
                         entry,
                         doc,
+                        graph.config(),
                     ),
                     ReferenceKind::Plain => crate::query::page_affects_unlinked(
                         &real_pages,
@@ -5064,6 +5080,7 @@ mod tests {
                         target,
                         entry,
                         doc,
+                        graph.config(),
                     ),
                 })
                 .map(|(entry, _)| entry.rel_path.clone())

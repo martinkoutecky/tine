@@ -167,6 +167,24 @@ describe("buildFullMarkedSegments", () => {
 });
 
 describe("occurrence jumps land on a selection, not a collapsed caret", () => {
+  it("highlights a bare page-property atom with native source evidence (Kalem parity)", () => {
+    const raw = "related:: Alpha，Beta";
+    const item: ReferenceBlockEvidence = {
+      block_id: "page-property:Page:source",
+      occurrences: [{ matched_name: "Beta", canonical: "beta", kind: "explicit",
+        span: { start: 16, end: 20 }, rule: "implicit_linkable_property" }],
+    };
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <ReferenceExcerptBlocks
+      blocks={[{ id: item.block_id, raw, page_property: true, children: [] } as unknown as BlockDto]}
+      evidence={[item]} page="Source" kind="page" />, host);
+    try {
+      expect(host.querySelector(".reference-excerpt-text")?.textContent).toBe(raw);
+      expect(marks(host).map(mark => mark.textContent)).toEqual(["Beta"]);
+    } finally { dispose(); }
+  });
+
   it("shows an Org headline tag as an explicit reference and highlights its source name (Kalem parity)", () => {
     const raw = "Headline :Plugins:";
     const item: ReferenceBlockEvidence = {

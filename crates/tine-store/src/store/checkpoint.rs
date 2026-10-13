@@ -49,7 +49,7 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// indexes/answers now include those tags as page refs.
 /// 11 (Kalem K1): namespace ancestors join reference candidates, path refs
 /// and memoized query/backlink answers. Old indexes and answers must rebuild.
-pub(crate) const FORMAT: u32 = 11;
+pub(crate) const FORMAT: u32 = 12;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.8";

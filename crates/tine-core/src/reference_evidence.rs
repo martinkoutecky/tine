@@ -469,10 +469,12 @@ fn project_implicit_linkable_property(
     value_offset: usize,
     value: &str,
     raw_len: usize,
+    nodes: &[Inline],
+    config: &crate::query::atom::ParseConfig,
 ) {
-    if !(key.eq_ignore_ascii_case("tags")
-        || key.eq_ignore_ascii_case("alias")
-        || key.eq_ignore_ascii_case("aliases"))
+    let key = crate::doc::property_key_norm(key);
+    if !crate::query::atom::separated_by_commas(&key, config)
+        || crate::query::atom::reference_parsing_suppressed(&key, config)
     {
         return;
     }
@@ -480,35 +482,50 @@ fn project_implicit_linkable_property(
         return;
     }
 
-    let mut segment_start = 0;
-    for (index, separator) in value
-        .char_indices()
-        .filter(|(_, ch)| refs::is_linkable_property_separator(*ch))
-        .map(|(index, ch)| (index, ch.len_utf8()))
-        .chain(std::iter::once((value.len(), 0)))
-    {
-        let segment = &value[segment_start..index];
-        let leading = segment.len() - segment.trim_start().len();
-        let name = segment.trim();
-        // Wrapped page refs and tags are already parser-owned explicit
-        // occurrences. Mixed syntax is likewise left to the parser rather than
-        // inventing a second interpretation for one property member.
-        if !name.is_empty()
-            && !name.contains("[[")
-            && !name.contains("]]")
-            && !name.starts_with('#')
+    // OG extract-refs-by-commas reads only top-level Plain nodes. lsdoc owns
+    // syntax and spans, so code, emphasis and link labels cannot become atoms.
+    for node in nodes {
+        let Inline::Plain {
+            text,
+            span: Some(span),
+            ..
+        } = node
+        else {
+            continue;
+        };
+        let Some(range) = SpanMapper::direct(value_offset).map(&span, raw_len) else {
+            continue;
+        };
+        let mut segment_start = 0;
+        for (index, separator) in text
+            .char_indices()
+            .filter(|(_, ch)| refs::is_linkable_property_separator(*ch))
+            .map(|(index, ch)| (index, ch.len_utf8()))
+            .chain(std::iter::once((text.len(), 0)))
         {
-            let start = value_offset + segment_start + leading;
-            let end = start + name.len();
-            push_explicit_range(
-                projection,
-                name.to_string(),
-                start..end,
-                raw_len,
-                "implicit_linkable_property",
-            );
+            let segment = &text[segment_start..index];
+            let leading = segment.len() - segment.trim_start().len();
+            let name = segment.trim();
+            // Wrapped page refs and tags are already parser-owned explicit
+            // occurrences. Mixed syntax is likewise left to the parser rather than
+            // inventing a second interpretation for one property member.
+            if !name.is_empty()
+                && !name.contains("[[")
+                && !name.contains("]]")
+                && !name.starts_with('#')
+            {
+                let start = range.start + segment_start + leading;
+                let end = start + name.len();
+                push_explicit_range(
+                    projection,
+                    name.to_string(),
+                    start..end,
+                    raw_len,
+                    "implicit_linkable_property",
+                );
+            }
+            segment_start = index + separator;
         }
-        segment_start = index + separator;
     }
 }
 
@@ -650,6 +667,21 @@ fn plain_search_ranges(
 /// one block source. Work and allocation are bounded by that source's spans;
 /// malformed ranges are omitted, and no graph state or files are touched.
 pub fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProjection {
+    project_with_config(
+        raw,
+        is_org,
+        blocks,
+        crate::query::atom::ParseConfig::default_ref(),
+    )
+}
+
+/// Shared evidence projection using the graph's linkable-property policy.
+pub fn project_with_config(
+    raw: &str,
+    is_org: bool,
+    blocks: &[Block],
+    config: &crate::query::atom::ParseConfig,
+) -> ReferenceSourceProjection {
     let mut projection = ReferenceSourceProjection::default();
     walk_blocks(blocks, SpanMapper::block(raw), raw, is_org, &mut projection);
     let regions = crate::block_regions::from_blocks(raw, is_org, blocks);
@@ -665,16 +697,26 @@ pub fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProj
                 .push(key_range.start..property.value_range.1);
             continue;
         }
-        if let Some(parsed) = crate::render::parse_text_bounded(value, is_org) {
-            walk_blocks(
-                &parsed.blocks,
+        if let Some(nodes) =
+            crate::render::parse_inline_bounded(value, if is_org { "org" } else { "markdown" })
+        {
+            walk_inlines(
+                &nodes,
                 SpanMapper::direct(offset),
-                raw,
+                raw.len(),
                 is_org,
                 &mut projection,
             );
+            project_implicit_linkable_property(
+                &mut projection,
+                key,
+                offset,
+                value,
+                raw.len(),
+                &nodes,
+                config,
+            );
         }
-        project_implicit_linkable_property(&mut projection, key, offset, value, raw.len());
     }
 
     projection.explicit.sort_by(|a, b| {

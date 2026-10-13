@@ -58,6 +58,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Linkable page-property values, including Org aliases and graph-configured comma-separated properties, appear in page-reference queries and Linked References (Kalem parity).
+
 - Org headline tags now appear in page-reference queries and Linked References (Kalem parity).
 - Advanced `page-property` queries return the bound pages; queries for blocks on those pages keep returning blocks (Kalem parity).
 - Backlinks and queries now include references through namespace children, matching Logseq.
