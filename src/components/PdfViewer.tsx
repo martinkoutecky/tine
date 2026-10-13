@@ -1,4 +1,4 @@
-import { createEffect, createSignal, createUniqueId, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
 import { sanitizeOutlineItems, type PdfOutlineItem } from "./pdfOutline";
 import { PdfViewerView } from "./pdfViewerView";
@@ -949,9 +949,13 @@ export function PdfViewer(props: {
   }));
   // A new intent within the same asset must navigate without remounting the
   // PDF. Asset switches are handled by KeyedPdfViewer's filename key.
+  // Route updates also report scrolling/zooming. Memo equality keeps those
+  // updates from replaying an unchanged intent; a fresh serial still navigates
+  // even when its destination is identical to the previous one.
+  const navigationKey = createMemo(() => props.navigationKey?.() ?? "none");
   createEffect(
     on(
-      () => props.navigationKey?.() ?? "none",
+      navigationKey,
       () => {
         const target = untrack(() => props.navigation?.());
         if (viewStateReady && target?.filename === props.filename) {
