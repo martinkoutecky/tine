@@ -1,0 +1,1 @@
+- A page named by a property: [[Kalem]] is one

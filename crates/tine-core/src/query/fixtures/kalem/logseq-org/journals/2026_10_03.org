@@ -1,0 +1,3 @@
+* Met about [[Project/Plugins]] #meeting
+** Decided: the graph plugin first
+* TODO Write to [[Editor]]

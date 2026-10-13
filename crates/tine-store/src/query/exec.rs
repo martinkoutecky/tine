@@ -1016,8 +1016,16 @@ pub(crate) fn query_ir(
     graph: &crate::model::ReadSnapshot,
     request: crate::IrRequest<'_>,
 ) -> Result<crate::IrAnswer, StatisticsResourceLimit> {
+    query_ir_on_day(graph, request, tine_core::date::JournalDate::today())
+}
+
+/// Same production entry body, with the sampled day explicit for conformance.
+pub(crate) fn query_ir_on_day(
+    graph: &crate::model::ReadSnapshot,
+    request: crate::IrRequest<'_>,
+    today: tine_core::date::JournalDate,
+) -> Result<crate::IrAnswer, StatisticsResourceLimit> {
     use crate::query::memo::Answer;
-    let today = tine_core::date::JournalDate::today();
     let (query, view, context) = match request {
         crate::IrRequest::Registry => {
             let index = graph.query_index();

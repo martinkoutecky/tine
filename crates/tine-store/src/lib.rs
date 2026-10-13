@@ -76,6 +76,8 @@ mod journal_format_cost_tests;
 #[cfg(test)]
 mod journal_reference_tests;
 #[cfg(test)]
+mod kalem_parity_tests;
+#[cfg(test)]
 mod legacy_graph_writer_guard_tests;
 pub mod model;
 #[cfg(test)]
