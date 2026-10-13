@@ -64,6 +64,8 @@ const INITIAL = [
   "",
 ].join("\n");
 fs.writeFileSync(QUERIES_FILE, INITIAL);
+// Kalem parity K4: an advanced pull returns the page entity, not its blocks.
+fs.writeFileSync(`${GRAPH}/pages/Advanced Pages.md`, '- #+BEGIN_QUERY\n  {:query [:find (pull ?p [*]) :where (page-property ?p :type "book")]}\n  #+END_QUERY\n');
 
 const env = {
   ...process.env,
@@ -78,6 +80,8 @@ const env = {
 };
 
 async function withApp(index, fn) {
+  // Allow the bounded Kalem regression to run without the unrelated builder journeys.
+  if (process.env.E2E_KALEM_K4_ONLY === "1" && index < 6) return;
   const driverPort = DRIVER_BASE + index * 2;
   const nativePort = NATIVE_BASE + index * 2;
   const log = fs.openSync(`${TMP}/tauri-driver-${index}.log`, "w");
@@ -92,8 +96,8 @@ async function withApp(index, fn) {
       connectionRetryCount: 1, connectionRetryTimeout: 60_000,
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     });
-    await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
     try {
+      await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
       await fn(browser);
     } catch (error) {
       const state = await browser.execute(() => ({
@@ -440,5 +444,27 @@ await withApp(5, async (browser) => {
   try { await browser.saveScreenshot(`${ARTIFACTS}/item8-edit-from-row.png`); } catch {}
 });
 
-console.log(`PASS query sheet journey (${createdLine})`);
+// The same authored advanced query returns page links before and after restart.
+for (const index of [6, 7]) {
+  await withApp(index, async (browser) => {
+    await openPageByName(browser, "Advanced Pages");
+    await browser.waitUntil(() => browser.execute(() => {
+      const links = [...document.querySelectorAll(".page-blocks .query-page-link")].map((link) => link.textContent.trim()).sort();
+      return JSON.stringify(links) === JSON.stringify(["Book A", "Library"]);
+    }), { timeout: 15_000, interval: 150, timeoutMsg: "advanced page-property pull did not return the two page links" });
+    const blockRows = await browser.$$(".page-blocks .query-group");
+    if (blockRows.length) throw new Error("advanced page-property pull rendered block rows");
+    const state = await browser.execute(() => ({
+      pages: [...document.querySelectorAll(".page-blocks .query-page-link")].map((link) => ({
+        name: link.textContent.trim(), path: link.getAttribute("data-page-path"),
+      })),
+      count: document.querySelector(".page-blocks .query-count")?.textContent,
+      blockGroups: document.querySelectorAll(".page-blocks .query-group").length,
+    }));
+    fs.writeFileSync(`${ARTIFACTS}/kalem-k4-pages-${index}.json`, JSON.stringify(state, null, 2));
+  });
+}
+console.log(process.env.E2E_KALEM_K4_ONLY === "1"
+  ? "PASS Kalem K4 page pulls before and after restart"
+  : `PASS query sheet journey (${createdLine}; Kalem K4 page pulls)`);
 fs.rmSync(TMP, { recursive: true, force: true });

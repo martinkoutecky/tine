@@ -869,6 +869,104 @@ fn advanced_query(source: &str) -> Query {
 }
 
 #[test]
+fn advanced_page_property_returns_the_bound_entity() {
+    let fixture = open(&[
+        (
+            "pages/Alpha.md",
+            "type:: Program\nstatus:: active\n\n- TODO alpha body\n- other body\n",
+        ),
+        (
+            "pages/Beta.org",
+            "#+type: Program\n#+status: archived\n\n* TODO beta body\n",
+        ),
+        ("pages/Other.md", "type:: Book\n\n- TODO unrelated\n"),
+    ]);
+    for (clauses, expected) in [
+        ("(page-property ?entity :type \"Program\")", vec!["Alpha", "Beta"]),
+        ("(and (page-property ?entity :type \"Program\") (page-property ?entity :status \"active\"))", vec!["Alpha"]),
+        ("(or (page-property ?entity :status \"active\") (page-property ?entity :status \"archived\"))", vec!["Alpha", "Beta"]),
+        ("(page-property ?entity :type \"Program\") (not (page-property ?entity :status \"archived\"))", vec!["Alpha"]),
+    ] {
+        for projection in ["?entity", "(pull ?entity [*])"] {
+            let source = format!("[:find {projection} :where {clauses}]");
+            let result = run_ir(&fixture.graph, &advanced_query(&source), &ViewSettings::default(), &ExecutionContext::none());
+            assert!(result.report.supported, "{source}: {:?}", result.report);
+            assert_eq!(page_names(&result), expected, "{source}");
+        }
+    }
+    for clauses in [
+        "[?b :block/page ?p] (page-property ?p :type \"Program\") (task ?b \"TODO\")",
+        "(task ?b \"TODO\") (page-property ?p :type \"Program\") [?b :block/page ?p]",
+    ] {
+        let source = format!("[:find (pull ?b [*]) :where {clauses}]");
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(&source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(result.report.supported, "{source}: {:?}", result.report);
+        assert_eq!(
+            block_lines(&result),
+            vec!["TODO alpha body", "TODO beta body"]
+        );
+    }
+    for clauses in [
+        "(page-property ?p :type \"Program\") (task ?p \"TODO\")",
+        "(page-property ?other :type \"Program\")",
+        "(not (page-property ?p :type \"Program\"))",
+    ] {
+        let source = format!("[:find (pull ?p [*]) :where {clauses}]");
+        let result = run_ir(
+            &fixture.graph,
+            &advanced_query(&source),
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        );
+        assert!(!result.report.supported, "{source}");
+    }
+}
+
+#[test]
+fn advanced_page_property_refreshes_after_save_and_reopen() {
+    let dir = TempDir::new();
+    std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+    write(
+        dir.path(),
+        "pages/Alpha.md",
+        "type:: Program\n\n- alpha body\n",
+    );
+    let (store, _, _) = Store::open(dir.path(), OpenOptions::default()).unwrap();
+    let query = advanced_query("[:find (pull ?p [*]) :where (page-property ?p :type \"Program\")]");
+    let answer = |store: &Store| {
+        run_ir(
+            &store.whole_graph().unwrap(),
+            &query,
+            &ViewSettings::default(),
+            &ExecutionContext::none(),
+        )
+    };
+    assert_eq!(page_names(&answer(&store)), vec!["Alpha"]);
+    let id = tine_store::PageId::from("pages/Alpha.md");
+    let read = store.page(&id).unwrap();
+    let mut doc = read.doc;
+    doc.pre_block = Some("type:: Book".into());
+    assert!(matches!(
+        store.save(
+            tine_store::EditKind::SaveBlock,
+            &id,
+            tine_store::SaveBase::Existing(read.rev),
+            &doc
+        ),
+        tine_store::SaveOutcome::Saved(_)
+    ));
+    assert!(page_names(&answer(&store)).is_empty());
+    drop(store);
+    let (reopened, _, _) = Store::open(dir.path(), OpenOptions::default()).unwrap();
+    assert!(page_names(&answer(&reopened)).is_empty());
+}
+
+#[test]
 fn one_parse_answers_differently_on_two_current_pages() {
     let fixture = binding_graph();
     let graph = &fixture.graph;

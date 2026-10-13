@@ -425,11 +425,7 @@ fn eval_block_leaf(
                     .map(String::as_str)
                     .chain(block.marker())
                     .chain(block.priority())
-                    .flat_map(|name| {
-                        name.match_indices('/')
-                            .map(move |(at, _)| &name[..at])
-                            .chain(std::iter::once(name))
-                    });
+                    .flat_map(refs::namespace_refs);
                 quantify(*quant, names, |name| eval_name_element(pred, name))
             }
             Rel::Tags => quantify(*quant, block.projection().tags().iter(), |tag| {

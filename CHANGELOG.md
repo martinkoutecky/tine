@@ -58,6 +58,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Org headline tags now appear in page-reference queries and Linked References (Kalem parity).
+- Advanced `page-property` queries return the bound pages; queries for blocks on those pages keep returning blocks (Kalem parity).
+- Backlinks and queries now include references through namespace children, matching Logseq.
 - Template insertion and new-journal templates preserve each block's saved collapsed state (GH #670).
 
 - Representable Windows graph paths display without verbatim prefixes; stored canonical paths retain existing graph identity (REG-WIN-GRAPH-PATH).

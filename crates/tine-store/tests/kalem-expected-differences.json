@@ -5,19 +5,6 @@
       "unavailable": "InvalidTarget(\"assets/readme.md\")"
     }
   },
-  "logseq-md/backlinks/pages/Project___Plugins.md": {
-    "logseq": [
-      "kalem",
-      "oct 10th, 2026",
-      "oct 3rd, 2026",
-      "project/plugins/graph"
-    ],
-    "tine": [
-      "kalem",
-      "oct 3rd, 2026",
-      "project/plugins/graph"
-    ]
-  },
   "logseq-md/backlinks/pages/contents.md": {
     "logseq": [],
     "tine": {
@@ -209,22 +196,6 @@
     "supported": true,
     "tine_only": []
   },
-  "logseq-md/query/09": {
-    "logseq_only": [
-      [
-        "oct 10th, 2026",
-        "now start [[project/plugins/graph]]"
-      ]
-    ],
-    "report": {
-      "ignored": [],
-      "ran": [],
-      "supported": true
-    },
-    "source": "(and [[Project/Plugins]] (task NOW LATER TODO DOING))",
-    "supported": true,
-    "tine_only": []
-  },
   "logseq-md/query/14": {
     "logseq_only": [
       [
@@ -363,52 +334,6 @@
     "supported": false,
     "tine_only": []
   },
-  "logseq-md/query/22": {
-    "logseq_only": [
-      [
-        "kalem"
-      ]
-    ],
-    "report": {
-      "ignored": [],
-      "ran": [
-        "page-property"
-      ],
-      "supported": true
-    },
-    "source": "[:find (pull ?p [*]) :where (page-property ?p :type \"Program\")]",
-    "supported": true,
-    "tine_only": [
-      [
-        "kalem",
-        "# a heading block"
-      ],
-      [
-        "kalem",
-        "```rust"
-      ],
-      [
-        "kalem",
-        "a link with a label: [the plugins]([[project/plugins]]) and a url https://example.com/#anchor"
-      ],
-      [
-        "kalem",
-        "alias:: editor, [[the editor]]"
-      ],
-      [
-        "kalem",
-        "its keys are doom's: `[[not a link]]` in code"
-      ],
-      [
-        "kalem",
-        "its parts"
-      ],
-      [
-        "kalem",
-        "kalem is an editor of [[org]] and [[markdown]] files #software"
-      ]
-    ]
-  },
   "logseq-md/query/23": {
     "logseq_only": [
       [
@@ -432,10 +357,6 @@
       [
         "kalem",
         "this one: [[project/plugins/graph]]"
-      ],
-      [
-        "oct 10th, 2026",
-        "now start [[project/plugins/graph]]"
       ],
       [
         "oct 3rd, 2026",
@@ -614,22 +535,6 @@
     "supported": true,
     "tine_only": []
   },
-  "logseq-org/query/11": {
-    "logseq_only": [
-      [
-        "project/plugins",
-        "the plugins of [[kalem]] :plugins:"
-      ]
-    ],
-    "report": {
-      "ignored": [],
-      "ran": [],
-      "supported": true
-    },
-    "source": "[[plugins]]",
-    "supported": true,
-    "tine_only": []
-  },
   "logseq-org/query/12": {
     "logseq_only": [
       [
@@ -653,16 +558,8 @@
   "logseq-org/query/13": {
     "logseq_only": [
       [
-        "kalem",
-        "its plugins: [[project/plugins]]"
-      ],
-      [
         "oct 3rd, 2026",
         "decided: the graph plugin first"
-      ],
-      [
-        "oct 3rd, 2026",
-        "met about [[project/plugins]] #meeting"
       ]
     ],
     "report": {
