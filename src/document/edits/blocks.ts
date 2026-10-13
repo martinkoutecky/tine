@@ -21,6 +21,7 @@ import { blockExternalId, existingBlockId, isBlockRefUuid } from "./identity";
 import { captureReferenceChangeCount, pushReferenceChangeNotice, pushToast } from "../../toasts";
 import { graphEpoch } from "../../graphSession";
 import { blockRefsInText } from "../../render/pageRefs";
+import { blockRegions } from "../../render/parse";
 
 let referenceEditSeq = 0;
 /** Capture the edit's targets before mutation, then publish against its existing
@@ -84,7 +85,11 @@ function createOutline(
     const imported = outlineRaw(outline.raw, format, incoming);
     const source = host ? joinProps(imported, host.hidden, format) : imported;
     const raw = rawWithInheritedOrderListType(source, format, inheritFrom);
-    state.byId[id] = { id, raw, collapsed: false, parent, page, children };
+    // Imported raw owns persistent collapse state, just as on page reload.
+    // Ask lsdoc so property-looking text in code never folds a block.
+    const collapsed = blockRegions(raw, format).properties
+      .find((p) => p.primary && p.key.toLowerCase() === "collapsed")?.value === "true";
+    state.byId[id] = { id, raw, collapsed, parent, page, children };
     return id;
   };
   return nodes.map((outline, index) => create(outline, parent, index === 0 ? reuse : undefined));
