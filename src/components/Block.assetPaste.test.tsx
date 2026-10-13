@@ -386,6 +386,7 @@ describe("asset paste durability", () => {
     startEditing(id, 0);
     vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: 0, truncated: false });
     const save = vi.spyOn(backend(), "saveAsset");
+    const nativeImage = vi.spyOn(backend(), "readClipboardImage");
     const arrayBuffer = vi.fn();
     const huge = {
       name: "image.png",
@@ -402,11 +403,68 @@ describe("asset paste durability", () => {
       textarea.dispatchEvent(imagePasteEvent(huge));
       await settle();
       expect(arrayBuffer).not.toHaveBeenCalled();
+      expect(nativeImage).not.toHaveBeenCalled();
       expect(save).not.toHaveBeenCalled();
       expect(doc.byId[id].raw).toBe("");
     } finally {
       dispose();
     }
+  });
+
+  it.each(["empty", "unreadable"])("pastes a content-URI image through native bytes when WebView bytes are %s", async (kind) => {
+    loadSingle(page("Assets", [blk("asset-uri", "")]));
+    const id = pageByName("Assets")!.roots[0];
+    startEditing(id, 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    vi.spyOn(backend(), "readClipboardImage").mockResolvedValue(new Uint8Array([1, 2, 3]));
+    vi.spyOn(backend(), "saveAsset").mockResolvedValue("uri.png");
+    vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:asset"), revokeObjectURL: vi.fn() });
+    const { root, dispose } = mount(() => <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
+    try {
+      const file = new File([], "image.png", { type: "image/png" });
+      if (kind === "unreadable") Object.defineProperty(file, "arrayBuffer", { value: () => Promise.reject(new Error("URI unavailable in WebView")) });
+      root.querySelector("textarea")!.dispatchEvent(imagePasteEvent(file));
+      await settle();
+      await vi.waitFor(() => expect(doc.byId[id].raw).toBe("![](../assets/uri.png)"));
+      expect(toasts().some((toast) => toast.message.startsWith("Skipped "))).toBe(false);
+    } finally { dispose(); }
+  });
+
+  it("does not save fallback clipboard bytes after the selected editor changes", async () => {
+    loadSingle(page("Assets", [blk("uri-first", ""), blk("uri-second", "")]));
+    const [first, second] = pageByName("Assets")!.roots;
+    startEditing(first, 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    let finish!: (bytes: Uint8Array) => void;
+    const read = vi.spyOn(backend(), "readClipboardImage").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const save = vi.spyOn(backend(), "saveAsset");
+    const { root, dispose } = mount(() => <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
+    try {
+      root.querySelector("textarea")!.dispatchEvent(imagePasteEvent(new File([], "image.png", { type: "image/png" })));
+      await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+      startEditing(second, 0);
+      finish(new Uint8Array([1, 2, 3]));
+      await settle();
+      expect(save).not.toHaveBeenCalled();
+      expect(doc.byId[first].raw).toBe("");
+      expect(doc.byId[second].raw).toBe("");
+    } finally { dispose(); }
+  });
+
+  it("pastes an image when a content-URI File omits its MIME type", async () => {
+    loadSingle(page("Assets", [blk("asset-untyped-uri", "")]));
+    const id = pageByName("Assets")!.roots[0];
+    startEditing(id, 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    vi.spyOn(backend(), "readClipboardImage").mockResolvedValue(new Uint8Array([1, 2, 3]));
+    vi.spyOn(backend(), "saveAsset").mockResolvedValue("untyped-uri.png");
+    vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:asset"), revokeObjectURL: vi.fn() });
+    const { root, dispose } = mount(() => <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>);
+    try {
+      root.querySelector("textarea")!.dispatchEvent(filePasteEvent([new File([], "image.png")]));
+      await vi.waitFor(() => expect(doc.byId[id].raw).toBe("![](../assets/untyped-uri.png)"));
+      expect(toasts().some((toast) => toast.message.startsWith("Skipped "))).toBe(false);
+    } finally { dispose(); }
   });
 
   it("keeps mixed copied files on the generic native-file path", async () => {
@@ -533,11 +591,12 @@ describe("asset paste durability", () => {
     }
   });
 
-  it("saves a byte-only clipboard file and inserts its asset link", async () => {
+  it.each(["application/pdf", ""])("saves a byte-only clipboard file with MIME %s and inserts its asset link", async (type) => {
     loadSingle(page("Assets", [blk("asset-bytes", "")]));
     const id = pageByName("Assets")!.roots[0];
     startEditing(id, 0);
     vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    vi.spyOn(backend(), "readClipboardImage").mockResolvedValue(null);
     vi.spyOn(backend(), "saveAsset").mockResolvedValue("notes.pdf");
 
     const { root, dispose } = mount(() => (
@@ -545,7 +604,7 @@ describe("asset paste durability", () => {
     ));
     try {
       const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
-      textarea.dispatchEvent(filePasteEvent([new File([new Uint8Array([1, 2, 3])], "notes.pdf", { type: "application/pdf" })]));
+      textarea.dispatchEvent(filePasteEvent([new File([new Uint8Array([1, 2, 3])], "notes.pdf", { type })]));
       await settle();
 
       expect(backend().saveAsset).toHaveBeenCalledOnce();

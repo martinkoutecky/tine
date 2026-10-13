@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Android image paste can read content-URI clipboard bytes when the WebView exposes an empty file, while retaining the 64 MiB limit (GH #654); selecting text in another block on mobile opens its editor with the selection and docked formatting toolbar (GH #375).
 - A page merge, rename or deletion that waited the full 10 seconds for another rename to finish could report "Couldn't confirm the merge yet; Tine keeps trying to finish it" for an operation that would never run; it now reports that another rename is still finishing and nothing changed (REG-PAGEHOST-ADMISSION-DEADLINE-RACE).
 
 ## [0.8.0-beta.1] - 2026-10-13
