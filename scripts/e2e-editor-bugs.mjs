@@ -8,7 +8,7 @@ import { openPageByName } from "./lib/e2e-navigation.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
-const ARTIFACT = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "evidence/editor-bugs/native"));
+const ARTIFACT = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "artifacts/editor-bugs-native"));
 fs.mkdirSync(ARTIFACT, { recursive: true });
 const TMP = fs.mkdtempSync(path.join(ARTIFACT, "journey-"));
 const GRAPH = path.join(TMP, "graph");
