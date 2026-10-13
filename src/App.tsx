@@ -103,6 +103,7 @@ import { installBackgroundFlush } from "./backgroundFlush";
 import { installSessionActivity } from "./sessionActivity";
 import { initSettingsLayout } from "./settingsLayout";
 import { initCodeDisplay } from "./codeDisplay";
+import { initStickyParents } from "./stickyParents";
 import { initContentWidths } from "./contentWidth";
 import { MAIN_WINDOW_ID, isElementNode, isHTMLElementNode, isNodeValue, mainWindow, newResizeObserver, registeredWindows, requestFrame, useWindowId, windowOf } from "./windowRealm";
 
@@ -867,7 +868,7 @@ export function App(): JSX.Element {
   onMount(() => void initRefCompletionSettings());
   onMount(() => void initNavSettings());
   onMount(() => void initSettingsLayout());
-  onMount(() => { void initContentWidths(); void initCodeDisplay(); });
+  onMount(() => { void initContentWidths(); void initCodeDisplay(); void initStickyParents(); });
   // Load the local-file images opt-in (Settings → Editing). Default off.
   onMount(() => void initLocalFileSettings());
   // A conflict copy appearing/vanishing on disk (watcher) refreshes the list.

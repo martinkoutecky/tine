@@ -35,6 +35,7 @@ import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { parseImageMetaBrace } from "./imageMeta";
 import { AstBody } from "./body";
+import { codeFences } from "../editor/fences";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
@@ -1303,6 +1304,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   };
   // Parse the referenced block's text with ITS page's format (org refs render org).
   const fmt = () => liveTarget() ? formatForBlock(props.id) : formatForPage(grp()?.page);
+  const hasCodeBody = createMemo(() => props.label === undefined && codeFences(targetRaw() ?? "", fmt()).some(f => f.closed));
   const annotation = () => {
     const block = grp()?.blocks[0];
     return block ? annotationInfoForBlock(block, fmt()) : null;
@@ -1402,14 +1404,16 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
                 <span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}
               </>}
             </Show>
-            <For each={lines()!}>
+            <Show when={hasCodeBody()} fallback={<For each={lines()!}>
               {(line, index) => (
                 <>
                   <Show when={index() > 0}><br /></Show>
                   <InlineText text={line} format={fmt()} preserveMarker={props.label === undefined} />
                 </>
               )}
-            </For>
+            </For>}>
+              <AstBody raw={lines()!.join("\n")} format={fmt()} />
+            </Show>
           </LinkDepthContext.Provider>
         </Show>
       </span>

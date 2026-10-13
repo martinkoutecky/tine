@@ -1,6 +1,15 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-editor-context.mjs": {
+      "contracts": [
+        {"class":"stateful-ux","userOutcome":"Editing an embedded mixed-code region leaves surrounding prose visible, and Select embedding block leaves that source editor and selects its macro host.","blocking":true},
+        {"class":"stateful-ux","userOutcome":"Scrolling a nested outline exposes pinned offscreen ancestors, clicking one returns to it, and the device setting turns pinning off and on.","blocking":true}
+      ],
+      "acceptableVariations":["Fonts, theme, observer delivery and geometry may vary while code stays in its region, surrounding content remains visible and ancestors remain reachable."],
+      "nonRequirements":["Exact pixels, certification beyond Linux WebKitGTK, or changing source Move Up/Down semantics."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-template-collapse.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Inserting a template hides children of blocks saved collapsed, shows children of expanded blocks, and preserves that state and all children after save and cold reopen.","blocking":true}],
       "acceptableVariations":["Focus, styling and save latency may vary while the saved collapse state controls child visibility."],

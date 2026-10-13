@@ -284,7 +284,6 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
             </Show>
           </div>
         </Show>
-        <p class="dp-help">Done or click outside to apply. Escape cancels.</p>
         <div class="dp-foot">
           <button class="dp-btn" onClick={commitDraft}>Done</button>
           <button class="dp-btn" onClick={pickToday}>Today</button>

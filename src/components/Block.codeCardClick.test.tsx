@@ -107,6 +107,15 @@ describe("clicking a code block places the caret where clicked (GH #489)", () =>
       expect(ta.value).toBe("const x = 1;");
       expect(ta.selectionStart).toBe(0);
       expect(ta.classList.contains("code-edit")).toBe(true);
+      expect(root.querySelector(".mixed-code-before")?.textContent).toContain("paragraph");
+    } finally { dispose(); }
+  });
+  it("clicking surrounding prose returns to source editing without discarding the code body", () => {
+    const raw = "paragraph\n```js\nconst x = 1;\n```\nafter";
+    const { root, dispose } = clickCode(raw, code => ({ node: textNodeContaining(code, "const x"), offset: 0 }), { name: "Mixed context click" });
+    try {
+      root.querySelector<HTMLElement>(".mixed-code-before")!.dispatchEvent(new MouseEvent("mousedown", {button:0,bubbles:true,cancelable:true}));
+      expect(root.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(raw);
     } finally { dispose(); }
   });
 

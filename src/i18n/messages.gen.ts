@@ -35,6 +35,7 @@ export interface MessageArgs {
   "command-editor-select-all": {};
   "command-editor-select-block-down": {};
   "command-editor-select-block-up": {};
+  "command-editor-select-embedding-block": {};
   "command-editor-strike-through": {};
   "command-editor-toggle-undo-redo-mode": {};
   "command-editor-undo": {};
@@ -117,6 +118,8 @@ export interface MessageArgs {
   "pages-all-open-more": { "count": string | number };
   "pages-all-show-journals": {};
   "pages-all-title": {};
+  "setting-sticky-parents": {};
+  "setting-sticky-parents-hint": {};
   "settings-about-store-updates": {};
   "settings-graph-folder-label": {};
   "settings-graph-folder-reveal": {};
@@ -128,6 +131,8 @@ export interface MessageArgs {
   "shell-tray-capture": {};
   "shell-tray-open": {};
   "shell-tray-quit": {};
+  "sticky-parents-load-error": {};
+  "sticky-parents-save-error": {};
   "toast-copied": {};
   "toast-copy": {};
   "toast-copy-failed": {};

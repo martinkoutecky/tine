@@ -370,7 +370,6 @@
 "src/components/DatePicker.tsx\tjsx-text\tPicker\tClear",
 "src/components/DatePicker.tsx\tjsx-text\tPicker\tDaily",
 "src/components/DatePicker.tsx\tjsx-text\tPicker\tDone",
-"src/components/DatePicker.tsx\tjsx-text\tPicker\tDone or click outside to apply. Escape cancels.",
 "src/components/DatePicker.tsx\tjsx-text\tPicker\tMonthly",
 "src/components/DatePicker.tsx\tjsx-text\tPicker\tNo repeat",
 "src/components/DatePicker.tsx\tjsx-text\tPicker\tTime",
