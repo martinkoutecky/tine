@@ -369,7 +369,7 @@ describe("I-20 owned backend completion syntax", () => {
     }
   });
   it("keeps durable backend writes out of readOwned", () => {
-    const backendSource = ts.createSourceFile("src/backend.ts", readFileSync("src/backend.ts", "utf8"), ts.ScriptTarget.Latest, true);
+    const backendSource = ts.createSourceFile("src/backendInterface.ts", readFileSync("src/backendInterface.ts", "utf8"), ts.ScriptTarget.Latest, true);
     const api = backendSource.statements.find((statement): statement is ts.InterfaceDeclaration =>
       ts.isInterfaceDeclaration(statement) && statement.name.text === "Backend");
     const methods = api?.members.filter(ts.isMethodSignature).map((method) => method.name.getText(backendSource)) ?? [];
