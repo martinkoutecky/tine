@@ -850,7 +850,8 @@ pub fn write_highlights(
             PAGE_CHANGED,
             unsaved,
             plan,
-        )?;
+        )
+        .map_err(|error| crate::after_partial("The highlights were saved", error))?;
         Ok((!remerge).then_some((merged, old)))
     })?;
     let source_key = if old.is_some() { &legacy } else { &key };

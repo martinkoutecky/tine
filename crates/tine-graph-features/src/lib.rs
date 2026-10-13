@@ -149,6 +149,19 @@ fn why_error(why: Why) -> io::Error {
     }
 }
 
+/// A failure after part of an operation already completed. The error keeps
+/// its kind, which callers branch on, and its message leads with what was
+/// saved, so the user is not told the whole operation failed (P3 review #7).
+fn after_partial(done: &str, error: io::Error) -> io::Error {
+    let text = error.to_string();
+    let mut chars = text.chars();
+    let rest: String = chars
+        .next()
+        .map(|first| first.to_lowercase().chain(chars).collect())
+        .unwrap_or_default();
+    io::Error::new(error.kind(), format!("{done}, but {rest}"))
+}
+
 fn is_conflict(outcome: &TxOutcome) -> bool {
     matches!(outcome, TxOutcome::NotCommitted {
         why: Why::Conflict { .. }, rollback, publication_errors, ..

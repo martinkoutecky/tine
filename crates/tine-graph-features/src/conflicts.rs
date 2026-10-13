@@ -807,7 +807,15 @@ fn fold_pair(
         _ => error,
     })?;
     // Scenario: sync-service delivery changed the copy after the review.
-    trash_copy(store, conf, rev)?.ok_or_else(|| changed("conflict copy"))
+    let kept = || {
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "the conflict copy changed on disk and was kept",
+        )
+    };
+    trash_copy(store, conf, rev)
+        .and_then(|trashed| trashed.ok_or_else(kept))
+        .map_err(|error| crate::after_partial("The merge was saved", error))
 }
 
 /// The pair's fold as the review decided it, from the texts read now.

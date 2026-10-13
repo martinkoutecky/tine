@@ -268,7 +268,12 @@ fn a_sync_copy_changed_after_the_plan_is_never_trashed() {
         fs::write(root.join(COPY), "- theirs, delivered again\n").unwrap();
     });
     let error = result.expect_err("the changed copy is reported");
-    assert!(error.to_string().contains("conflict copy"), "{error}");
+    // The winner's write completed: the error says so (P3 review #7).
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists, "{error}");
+    assert_eq!(
+        error.to_string(),
+        "The merge was saved, but the conflict copy changed on disk and was kept"
+    );
     assert_eq!(
         fs::read(root.join(COPY)).unwrap(),
         b"- theirs, delivered again\n"
