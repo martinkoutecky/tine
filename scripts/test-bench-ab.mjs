@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { disturbedRound } from "./lib/bench-rerun.mjs";
 
 const root = process.cwd();
 const policy = JSON.parse(readFileSync(path.join(root, "scripts", "bench-policy.json"), "utf8"));
@@ -62,8 +63,8 @@ try {
   // flipped run 29395811537. Its median comparison is harmless, but reliability
   // must fail independently.
   const unstableImmutable = measurement("immutable", [100, 101, 99], [75.4, 100, 100.2]);
-  // Candidate stays above the anchor after scrollBig's one-frame allowance,
-  // so the favorable-candidate waiver cannot mask the anchor's spread.
+  // Candidate stays above the anchor, so the favorable-candidate waiver
+  // cannot mask the anchor's spread.
   const unfavorableCandidate = measurement("candidate", [110, 111, 109], [130, 131, 129]);
   const unstable = check(unfavorableCandidate, unstableImmutable, stablePrevious);
   assert.notEqual(unstable.status, 0);
@@ -95,22 +96,37 @@ try {
   assert.notEqual(regressed.status, 0);
   assert.match(`${regressed.stdout}\n${regressed.stderr}`, /slower than immutable/);
 
-  // scrollBig carries a one-frame allowance (ADR 0072): one extra frame
-  // passes, anything more still fails against the unchanged anchors.
-  assert.equal(policy.metrics.scrollBig.allowanceMs, 17);
+  // The ADR 0072 one-frame scrollBig allowance was for anchors older than
+  // large-page windowing. Both anchors are v0.7.2 now (2026-10-13), which
+  // already carry that frame: an allowance here would hide 17 ms of new cost.
+  assert.equal(policy.metrics.scrollBig.allowanceMs, undefined, "scrollBig allowance against post-ADR-0072 anchors");
   const oneFrame = check(
     measurement("candidate", [110, 111, 109], [117, 118, 116]),
     stableImmutable,
     stablePrevious,
   );
   assert.equal(oneFrame.status, 0, oneFrame.stderr || oneFrame.stdout);
-  const beyondFrame = check(
-    measurement("candidate", [110, 111, 109], [150, 151, 149]),
+  const beyondBudget = check(
+    measurement("candidate", [110, 111, 109], [130, 131, 129]),
     stableImmutable,
     stablePrevious,
   );
-  assert.notEqual(beyondFrame.status, 0);
-  assert.match(`${beyondFrame.stdout}\n${beyondFrame.stderr}`, /scrollBig: .*slower than/);
+  assert.notEqual(beyondBudget.status, 0);
+  assert.match(`${beyondBudget.stdout}\n${beyondBudget.stderr}`, /scrollBig: .*slower than/);
+
+  // Disturbed-round rerun: the hosted shape (one fast v0.4.7 round, 39.8 vs
+  // ~46 ms, 16.3% > 15%) picks that round; a steady version picks none.
+  const rounds = (scroll, load = [100, 100, 100]) =>
+    scroll.map((value, index) => ({ metrics: { bigLoad: { rawMin: load[index] }, scrollBig: { rawMin: value } } }));
+  assert.deepEqual(
+    disturbedRound(rounds([39.8, 46, 46.3]), policy.metrics),
+    { round: 0, metric: "scrollBig", spreadPct: (46.3 / 39.8 - 1) * 100 },
+  );
+  assert.equal(disturbedRound(rounds([62.9, 62.9, 62.8]), policy.metrics), null);
+  // A slow outlier is picked the same way; the checker still judges the
+  // re-measured distribution against unchanged budgets.
+  assert.equal(disturbedRound(rounds([46, 60, 46.2]), policy.metrics)?.round, 1);
+  assert.equal(policy.reliability.maxDisturbedRoundReruns, 1);
 
   assert.equal(policy.reliability.rounds, 3);
   console.log("Performance A/B multi-round reliability fixtures passed.");

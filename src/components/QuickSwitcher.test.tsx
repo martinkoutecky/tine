@@ -23,6 +23,39 @@ afterEach(() => {
 });
 
 describe("QuickSwitcher search syntax help", () => {
+  it("GH #663 switches an open current-page search to unrestricted page-name search", async () => {
+    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Origin", pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
+    const search = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({ hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher({ mode: "current-page" });
+    const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+    input.value = "needle"; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => expect(search.mock.calls.at(-1)?.[5]).toMatchObject({ name: "Origin" }));
+    openSwitcher({ mode: "pages" });
+    await vi.waitFor(() => {
+      expect(search.mock.calls.at(-1)?.[1]).toBe(100);
+      expect(search.mock.calls.at(-1)?.[5]).toBeUndefined();
+    });
+    openSwitcher({ mode: "current-page" });
+    await vi.waitFor(() => expect(search.mock.calls.at(-1)?.[5]).toMatchObject({ name: "Origin" }));
+    dispose(); search.mockRestore();
+  });
+  it.each(["pages", "content"] as const)("GH #663 limits %s search to the requested result kind", async (mode) => {
+    const search = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({ hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher({ mode } as Parameters<typeof openSwitcher>[0]);
+    const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+    input.value = "needle";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => expect(search).toHaveBeenCalled());
+    const call = search.mock.calls.at(-1)!;
+    expect(call[mode === "pages" ? 2 : 1]).toBe(0);
+    expect(root.textContent).not.toContain("Create page:");
+    expect(root.textContent).not.toContain("Commands");
+    dispose(); search.mockRestore();
+  });
   it("Ctrl-click opens a result in a background tab and keeps Search open", async () => {
     setRecentPages([{ name: "Clickable", kind: "page", path: "pages/Clickable.md" }]);
     const root = document.createElement("div");
