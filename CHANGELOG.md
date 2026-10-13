@@ -38,6 +38,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- YouTube timestamps seek the matching video across panes and the right sidebar, or the last played video when no preceding embed identifies one; with no playback history they keep Logseq's preceding-player fallback.
+
 - Links to the web or a file are underlined (as in Logseq) while links to pages are not, so the two kinds read differently at a glance. The line is the new `--tine-external-link-underline` token (GH #430, UI-GH430-EXTERNAL-LINK-UNDERLINE).
 - Links to pages that do not exist yet are easier to read: a dimmed link tint instead of pale grey, still dotted, now at least 4.5:1 contrast on the built-in light and dark palettes. Restyle it with the new `--tine-missing-page-color` token (GH #432, UI-GH432-MISSING-PAGE-LINK-READABLE).
 - Arrows and dashes (`->`, `<-`, `=>`, `--`, `---`) now show as you typed them, as in Logseq. **Typographic replacements** in Settings is off by default; a device that never chose keeps the typed characters, and one that had relied on the old default (nothing was stored) needs to pick **On (while reading)** again (GH #583, UI-GH583-ARROWS-RENDER-AS-TYPED).

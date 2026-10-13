@@ -210,7 +210,6 @@ export function moduleCollections(sources: Sources = repoSources()): Collection[
 const LEGACY_COLLECTIONS = new Set([
   "src/assetRefresh.ts#pending",
   "src/binding.ts#scopedClears",
-  "src/components/Macro.tsx#youtubePlayers",
   "src/conflictQueue.ts#arrivalNotices",
   // Moved unchanged out of the save engine (step 3b P2b, engine.ts deleted).
   "src/document/instance.ts#pageInstanceGenerations",
@@ -258,7 +257,7 @@ const LEGACY_COLLECTIONS = new Set([
   "src/transientLayers.ts#layers",
   "src/themes/manager.ts#[revokedThemeVersions, setRevokedThemeVersions]",
 ]);
-const LEGACY_COLLECTION_COUNT = 46;
+const LEGACY_COLLECTION_COUNT = 45;
 function unownedCollections(sources: Sources): string[] {
   return moduleCollections(sources).filter((c) => !c.scoped && !c.fixed && !BOUNDED_COLLECTIONS[c.key]).map((c) => c.key);
 }

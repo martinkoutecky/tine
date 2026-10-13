@@ -1,4 +1,7 @@
 import { FailureBoundary } from "./FailureBoundary";
+import { msg, render as renderMessage } from "../i18n";
+import { youtubePlayerForTarget, registerYoutubePlayer, recordYoutubePlayback, unregisterYoutubePlayer, type YoutubePlayer } from "../youtubePlayer";
+export { youtubePlayerForTarget } from "../youtubePlayer";
 import { TableWrap } from "./TableWrap";
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { setBoardGroupBy } from "../sheet/mutations";
@@ -66,7 +69,7 @@ import {
 } from "./queryMacroSupport";
 export { boundedFeature, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY };
 import { QueryLegacyTable } from "./QueryLegacyTable";
-import { documentOf, mainWindow } from "../windowRealm";
+import { mainWindow } from "../windowRealm";
 
 const QUERY_VIEW_LABEL: Record<QueryView, string> = {
   search: "Search",
@@ -1177,14 +1180,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   );
 }
 
-interface YoutubePlayer {
-  seekTo(seconds: number, allowSeekAhead: boolean): void;
-  getCurrentTime(): number;
-  destroy?(): void;
-}
-
 interface YoutubeApi {
-  Player: new (iframeId: string, options: { events?: { onReady?: () => void } }) => YoutubePlayer;
+  Player: new (iframeId: string, options: { events?: { onReady?: () => void; onStateChange?: (event: { data: number }) => void } }) => YoutubePlayer;
 }
 
 type YoutubeWindow = Window & {
@@ -1192,7 +1189,6 @@ type YoutubeWindow = Window & {
   onYouTubeIframeAPIReady?: () => void;
 };
 
-const youtubePlayers = new Map<string, YoutubePlayer>();
 let youtubeApiLoading: Promise<YoutubeApi | null> | null = null;
 const YOUTUBE_API_SCRIPT_ID = "tine-youtube-iframe-api";
 
@@ -1234,19 +1230,6 @@ function loadYoutubeApi(): Promise<YoutubeApi | null> {
   return youtubeApiLoading;
 }
 
-// OG's get-player selects the last YouTube iframe whose DOM position precedes
-// the target (compareDocumentPosition(..., target) has FOLLOWING set), then
-// looks up that iframe's registered handle (og-1.0.0 6e7afa8eb,
-// extensions/video/youtube.cljs:85-101).
-export function youtubePlayerForTarget(target: Node): YoutubePlayer | undefined {
-  if (typeof document === "undefined" || typeof Node === "undefined") return undefined;
-  // Players before the target in the TARGET's own window (OG-MULTIWINDOW P1).
-  const iframe = Array.from(documentOf(target).getElementsByTagName("iframe"))
-    .filter((node) => node.src.includes("youtube.com"))
-    .filter((node) => (node.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)
-    .at(-1);
-  return iframe ? youtubePlayers.get(iframe.id) : undefined;
-}
 
 // The OG generator floors getCurrentTime before it formats the macro; with no
 // registered/ready player it produces NOTHING — the command is a no-op, no
@@ -1323,20 +1306,25 @@ export function VideoMacro(props: { body: string }): JSX.Element {
     void loadYoutubeApi().then((api) => {
       if (!mounted || !api) return;
       try {
-        const registered = new api.Player(iframeId, { events: { onReady: () => undefined } });
+        const registered = new api.Player(iframeId, { events: {
+          onReady: () => undefined,
+          onStateChange: (event) => {
+            if (mounted && event.data === 1) recordYoutubePlayback(iframeId);
+          },
+        } });
         if (!mounted) {
           registered.destroy?.();
           return;
         }
         player = registered;
-        youtubePlayers.set(iframeId, registered);
+        registerYoutubePlayer(iframeId, registered);
       } catch {
         // Offline, blocked, or malformed API responses leave the timestamp label usable.
       }
     });
     onCleanup(() => {
       mounted = false;
-      if (youtubePlayers.get(iframeId) === player) youtubePlayers.delete(iframeId);
+      unregisterYoutubePlayer(iframeId, player);
       player?.destroy?.();
     });
   });
@@ -1373,7 +1361,7 @@ export function TweetMacro(props: { body: string }): JSX.Element {
   );
 }
 
-// `{{youtube-timestamp <seconds>}}` seeks the OG-selected on-page YouTube player.
+// `{{youtube-timestamp <seconds>}}` seeks the shared selected YouTube player.
 export function YoutubeTimestamp(props: { body: string }): JSX.Element {
   const secs = () => {
     const raw = props.body.replace(/^youtube-timestamp\s*/i, "").trim();
@@ -1391,7 +1379,7 @@ export function YoutubeTimestamp(props: { body: string }): JSX.Element {
   return (
     <a
       class="youtube-ts"
-      title="Seek the preceding YouTube video"
+      title={renderMessage(msg("media-youtube-timestamp-seek"))}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();

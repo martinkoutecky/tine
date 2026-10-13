@@ -741,7 +741,6 @@
 "src/components/Macro.tsx\tattr:title\tQueryMacroContent\tExpand results | Collapse results",
 "src/components/Macro.tsx\tattr:title\tQueryMacroContent\tExport query results",
 "src/components/Macro.tsx\tattr:title\tVideoMacro\tvideo",
-"src/components/Macro.tsx\tattr:title\tYoutubeTimestamp\tSeek the preceding YouTube video",
 "src/components/Macro.tsx\tattr:title\tZoteroMacro\tZotero integration isn't supported in Tine",
 "src/components/Macro.tsx\tjsx-text\tQueryMacroContent\t, and a partial answer would be wrong.",
 "src/components/Macro.tsx\tjsx-text\tQueryMacroContent\t: query contains unsupported clauses.",
