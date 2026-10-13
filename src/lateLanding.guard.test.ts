@@ -34,6 +34,8 @@ const EXEMPT: Record<string, string> = {
   "src/plugins/registry.ts#loadSafetyReport": "process-wide safety cache owns its publication",
   "src/refCompletionSettings.ts#initRefCompletionSettings": "preference revision gates the device-local signal",
   "src/spellcheckSettings.ts#apply": "device spellcheck operation reports its own failure",
+  "src/i18n/preference.ts#activate": "native shell relabel has no UI landing; only the latest language operation reports; failure logs fixed text",
+  "src/i18n/preference.ts#setUiLanguage": "durable device-local write; a failure toasts and, if still the latest operation, re-reads the settings file",
   "src/spellcheckSettings.ts#initSpellcheckSettings": "preference revision gates each device-local signal",
   "src/themes/manager.ts#persist": "process-wide theme setting write reports failure",
   "src/themes/manager.ts#initThemePackages": "process-wide theme setting read has no graph owner",
@@ -78,6 +80,8 @@ const EXEMPT_CALLS: Record<string, string[]> = {
   "src/plugins/registry.ts#loadSafetyReport": ["setAppString", "getAppString"],
   "src/refCompletionSettings.ts#initRefCompletionSettings": ["getAppBool"],
   "src/spellcheckSettings.ts#apply": ["applySpellcheck"],
+  "src/i18n/preference.ts#activate": ["setUiLocale"],
+  "src/i18n/preference.ts#setUiLanguage": ["setAppString"],
   "src/spellcheckSettings.ts#initSpellcheckSettings": ["getAppBool", "getAppString"],
   "src/themes/manager.ts#persist": ["setAppString"],
   "src/themes/manager.ts#initThemePackages": ["getAppString"],
@@ -119,7 +123,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
   "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setWatchMode", "restoreBackup",
-  "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck",
+  "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck", "setUiLocale",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
   "saveGraphVerificationReport", "addDefenderExclusion", "dismissDefenderHint",
 ]);
@@ -131,7 +135,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "graphBindingGeneration", "inspectGraphAccess", "loadGraph", "openGraphWindow", "startupGraphPath",
   "captureTarget", "bindCaptureGraph", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
   "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "suggestGraphName",
-  "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "journalFeedPage", "journalContentDays",
+  "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "pageModified", "journalFeedPage", "journalContentDays",
   "getPage", "resolvePage", "graphSourceFiles",
   // The page host's reads and controls: opening a page takes custody and writes
   // nothing; the mail and graph-open events, the publication barrier and debt
@@ -141,7 +145,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "getBacklinkFilterContext", "getUnlinkedRefs", "warmDone", "getBlockRefCounts", "getBlockReferrers",
   "pagePrintHtml", "sheetExportInputs", "exportQuerySubtrees", "parseQuery", "printQuery", "queryOgExpressible", "queryRegistry",
   "queryRun", "queryExplainEmpty", "queryFacets", "publishQueryPlan", "pageIcons",
-  "readCustomCss", "openExternal", "openAsset", "openPageFile", "detectMediaEditor", "listOrphanAssets",
+  "readCustomCss", "openExternal", "openAsset", "openGraphFile", "openPageFile", "detectMediaEditor", "listOrphanAssets",
   "assetTrashStats", "listJournalConflicts", "listJournalFilenameMigrations", "readJournalFile", "getPageByPath", "listSyncConflicts",
   "syncConflictDiff", "duplicateJournalDiff", "conflictInventory", "vcsMarkerConflictDiff", "liveConflictDiff", "onConflictsChanged", "search", "runGraphSearch", "quickSwitch", "captureQuickSwitch",
   "listTemplates", "resolveBlock", "resolveBlocks", "previewBlock", "readAsset", "streamAsset",
@@ -365,7 +369,7 @@ describe("I-20 owned backend completion syntax", () => {
     }
   });
   it("keeps durable backend writes out of readOwned", () => {
-    const backendSource = ts.createSourceFile("src/backend.ts", readFileSync("src/backend.ts", "utf8"), ts.ScriptTarget.Latest, true);
+    const backendSource = ts.createSourceFile("src/backendInterface.ts", readFileSync("src/backendInterface.ts", "utf8"), ts.ScriptTarget.Latest, true);
     const api = backendSource.statements.find((statement): statement is ts.InterfaceDeclaration =>
       ts.isInterfaceDeclaration(statement) && statement.name.text === "Backend");
     const methods = api?.members.filter(ts.isMethodSignature).map((method) => method.name.getText(backendSource)) ?? [];

@@ -41,6 +41,10 @@ pub struct HostOp {
     /// (the receiver, then the other pages, then the source's deletion).
     /// One move per operation in P2.
     pub moved: Option<(PageId, PageId)>,
+    /// Transaction creation preconditions: page, optional DTO name, optional
+    /// move source. In-memory admission metadata; no persisted format changes.
+    /// Hand-built operations use an empty vector and the raw-create checks.
+    pub(crate) creation_checks: Vec<(PageId, Option<String>, Option<crate::FileId>)>,
 }
 
 /// Why a host operation did not apply, or did not finish.
@@ -151,10 +155,28 @@ impl PageHost {
         let mut deadline = std::time::Instant::now() + OPERATION_WAIT;
         let shared = Arc::downgrade(&self.driver.shared);
         let effects = Arc::new(effects);
+        let store = self.store.clone();
+        let creations: Vec<_> = op
+            .pages
+            .iter()
+            .filter_map(|(page, effect, expected)| {
+                if !matches!((effect, expected), (Effect::Write(_), Expected::Absent)) {
+                    return None;
+                }
+                let check = op.creation_checks.iter().find(|(id, ..)| id == page);
+                let name = check.and_then(|(_, name, _)| name.clone());
+                // Slot rules belong to the original transaction step. Move
+                // ordering declared by a feature cannot replace a Save's rules.
+                let source = check.and_then(|(_, _, source)| source.clone());
+                Some((page.file(), name, source))
+            })
+            .collect();
         let slot = loop {
             let (effects, keys, moved) = (effects.clone(), keys.clone(), moved.clone());
             let kinds = kinds.clone();
             let shared = shared.clone();
+            let store = store.clone();
+            let creations = creations.clone();
             let admit = move |state: &mut HostState| {
                 let host = &state.progress.host;
                 if !host.alive {
@@ -163,6 +185,20 @@ impl PageHost {
                 let unsaved = retained::unsaved(host, &keys);
                 if !unsaved.is_empty() {
                     return Wait::Ready(Ok(Admitted::Unsaved(keys.clone(), unsaved)));
+                }
+                // C3 is a binding pre-admission refusal (s33 stutter). Run
+                // under the same path locks, before Host::apply can record it.
+                if !creations.is_empty() {
+                    if state.progress.host.lacks_locks(&keys) {
+                        return Wait::Until(None);
+                    }
+                    let tx = store.transaction(None);
+                    if creations.iter().any(|(file, name, source)| {
+                        tx.admission_slot(file, name.as_deref(), source.as_ref())
+                            .is_err()
+                    }) {
+                        return Wait::Ready(Err(ApplyRefusal::Changed));
+                    }
                 }
                 let (disposition, reply) = state.progress.with_host(|host| {
                     let moved = moved.as_ref().map(|(d, s)| (d.as_str(), s.as_str()));

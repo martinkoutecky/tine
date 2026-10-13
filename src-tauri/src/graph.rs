@@ -55,13 +55,6 @@ pub(crate) fn usable_last_graph_path(path: Option<String>) -> Option<String> {
 
 #[tauri::command]
 pub(crate) fn startup_graph_path(app: tauri::AppHandle) -> Option<String> {
-    #[cfg(desktop)]
-    if matches!(
-        crate::cli::launch_request_env(),
-        crate::cli::LaunchRequest::Link(_)
-    ) {
-        return None;
-    }
     resolve_root("").or_else(|| usable_last_graph_path(crate::settings::last_graph_path(&app)))
 }
 
@@ -254,7 +247,10 @@ pub(crate) fn forget_launch_checkpoint(app_data: Option<&Path>, root: &str) {
 #[derive(serde::Serialize)]
 pub(crate) struct GraphAccessInspection {
     graph_root: String,
+    display_graph_root: String,
+    wsl_rootfs: bool,
     external_assets_path: Option<String>,
+    display_external_assets_path: Option<String>,
     approved: bool,
 }
 
@@ -274,7 +270,16 @@ pub(crate) fn inspect_graph_access(
         || approved_external_assets(&app, &root)
             .is_some_and(|path| inspection.approves_external_assets(&path).unwrap_or(false));
     Ok(GraphAccessInspection {
+        wsl_rootfs: cfg!(target_os = "windows")
+            && tine_core::graph_paths::is_windows_wsl_rootfs(&root.to_string_lossy()),
         graph_root: root.display().to_string(),
+        display_graph_root: tine_core::graph_paths::normalize_graph_path(
+            &root.display().to_string(),
+        ),
+        display_external_assets_path: inspection
+            .external_assets
+            .as_ref()
+            .map(|path| tine_core::graph_paths::normalize_graph_path(&path.display().to_string())),
         external_assets_path: inspection
             .external_assets
             .map(|path| path.display().to_string()),
@@ -737,7 +742,9 @@ pub(crate) fn open_graph_window_blocking(
         .initialization_script(format!(
             "window.__GRAPH_PATH__ = {};",
             serde_json::to_string(&meta.root).unwrap_or_else(|_| "\"\"".to_string())
-        ));
+        ))
+        // Its boot card in the language current now, not at process start (tine#107).
+        .initialization_script(crate::i18n_shell::window_boot_text_script(app));
         #[cfg(target_os = "macos")]
         let builder = builder
             .decorations(true)
@@ -828,9 +835,21 @@ impl LoadGraphResult {
 /// `dir`, reusing only an empty directory. Does NOT load the graph — the frontend
 /// calls `load_graph` with the returned path (matching the "open existing" flow).
 #[tauri::command]
-pub(crate) async fn create_graph(dir: String, name: String) -> Result<String, String> {
+pub(crate) async fn create_graph(dir: String, name: String) -> Result<CreatedGraph, String> {
     // Writes and fsyncs every demo page (R3): off the main thread.
-    crate::state::off_ui(move || create_graph_blocking(dir, name)).await
+    crate::state::off_ui(move || {
+        create_graph_blocking(dir, name).map(|root| CreatedGraph {
+            display_root: tine_core::graph_paths::normalize_graph_path(&root),
+            root,
+        })
+    })
+    .await
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct CreatedGraph {
+    root: String,
+    display_root: String,
 }
 
 #[tauri::command]

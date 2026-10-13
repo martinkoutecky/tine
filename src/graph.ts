@@ -33,6 +33,7 @@ import { reportUiFailure } from "./uiFailure";
 import { reportGraphOpenFailure } from "./graphOpenFailure";
 import { activeElement, isHTMLElementNode } from "./windowRealm";
 import { askGraphName } from "./graphNamePrompt";
+import { msg } from "./i18n";
 export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
 
 const GRAPH_KEY = "tine.graphPath";
@@ -116,16 +117,20 @@ export async function authorizeGraphAccess(path: string): Promise<boolean> {
   const inspected = await readOwned(owner, backend().inspectGraphAccess(path));
   if (inspected.kind === "stale") return false;
   const access = inspected.value;
+  if (access.wsl_rootfs) {
+    pushToast(msg("toast-wsl-rootfs-warning"), "warn", { sticky: true });
+  }
   const external = access.external_assets_path;
+  const displayExternal = access.display_external_assets_path ?? external;
   if (!external || access.approved) return true;
   const confirmation = await readOwned(owner, backend().confirm(
-    `This graph's assets folder points outside the graph to:\n\n${external}\n\nAllow Tine to read and write assets in this directory? This approval is stored only on this device.`,
+    `This graph's assets folder points outside the graph to:\n\n${displayExternal}\n\nAllow Tine to read and write assets in this directory? This approval is stored only on this device.`,
     "Allow external assets directory?"
   ));
   if (confirmation.kind === "stale") return false;
   if (!confirmation.value) {
     pushToast(
-      `Graph not opened: its external assets directory was not approved (${external}).`,
+      `Graph not opened: its external assets directory was not approved (${displayExternal}).`,
       "error",
       { sticky: true }
     );
@@ -268,7 +273,7 @@ export async function loadGraphPath(
   // PROTOCOL §4.5), showing its progress as it changes.
   const stopOwnerWaiting = await backend().onGraphOpenOwnerWaiting((progress) => {
     if (waitingToast !== null) dismissToast(waitingToast);
-    waitingToast = pushToast(`Finishing the command line's work on this graph (${progress})…`, "info", { sticky: true });
+    waitingToast = pushToast(msg("toast-graph-open-owner-waiting", { progress }), "info", { sticky: true });
   }).catch(() => () => {});
   try {
     result = await backend().loadGraph(path);
@@ -737,6 +742,7 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     dir = prepared.path ?? dir;
   }
   let root: string;
+  let displayRoot: string | undefined;
   try {
     const suggested = await readOwned(owner, backend().suggestGraphName(dir));
     if (suggested.kind === "stale") return { kind: "aborted" };
@@ -744,7 +750,10 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     const created = await askGraphName(suggested.value, async name => {
       if (!owner()) return null;
       const result = await writeOwned(owner, backend().createGraph(parent, name));
-      return result.kind === "stale" ? null : result.value;
+      if (result.kind === "stale") return null;
+      if (typeof result.value === "string") return result.value;
+      displayRoot = result.value.display_root;
+      return result.value.root;
     });
     if (created === null || !owner()) return { kind: "aborted" };
     root = created;
@@ -759,26 +768,26 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     loaded = await loadGraphPath(root);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    pushToast(`Created the graph at ${root}, but couldn't open it. (${detail})`, "error", {
+    pushToast(`Created the graph at ${displayRoot ?? root}, but couldn't open it. (${detail})`, "error", {
       action: openAction,
     });
     return { kind: "aborted" };
   }
   if (loaded.kind === "aborted") {
-    pushToast(`Created the graph at ${root}, but it wasn't opened. You can open this folder again.`, "info", {
+    pushToast(`Created the graph at ${displayRoot ?? root}, but it wasn't opened. You can open this folder again.`, "info", {
       sticky: true, action: openAction,
     });
     return loaded;
   }
   if (loaded.kind === "focused_existing") {
-    pushToast(`Created the graph at ${root} and focused its existing window.`, "success");
+    pushToast(`Created the graph at ${displayRoot ?? root} and focused its existing window.`, "success");
     return loaded;
   }
   if (loaded.kind === "already_current") {
-    pushToast(`Created the graph at ${loaded.root}. It is already open.`, "success");
+    pushToast(`Created the graph at ${graphMeta()?.display_root ?? displayRoot ?? loaded.root}. It is already open.`, "success");
     return loaded;
   }
-  pushToast(`Created and opened the graph at ${loaded.root}.`, "success");
+  pushToast(`Created and opened the graph at ${graphMeta()?.display_root ?? displayRoot ?? loaded.root}.`, "success");
   // Keep demo seeding scoped to the created root, as before; the message
   // describes the load outcome even when the backend returns a different path.
   if (loaded.root !== root) return loaded;

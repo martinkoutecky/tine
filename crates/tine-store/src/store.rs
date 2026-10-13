@@ -1001,7 +1001,7 @@ impl Store {
             return Err(failed(parent, std::io::Error::new(std::io::ErrorKind::InvalidInput,
                 "Choose a non-empty graph name without path separators, control characters or <>:\"/\\|?*. Names cannot be . or .., end with a dot or space, or use a Windows device name (CON, NUL, COM1, etc.).")));
         }
-        let root = parent.join(name.trim());
+        let root = crate::path_identity::new_graph_root(parent, name.trim())?;
         match fs::create_dir(&root) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -2835,6 +2835,24 @@ impl WholeGraph {
     /// `Removed` event is inferred from a failed listing. Cost O(1).
     pub fn unreadable_files(&self) -> &[(FileId, String)] {
         &self.unreadable
+    }
+
+    /// Last-modified time, in Unix seconds, of each page file this view holds,
+    /// keyed by graph-relative path (the `id` of an inventory `existing`
+    /// target), in path order. The times are the ones captured with this
+    /// view's page table (the launch stamp pass, then each save or watcher
+    /// reconcile), the same ones `(sort-by modified)` reads: a copy of data
+    /// already in memory, with no stat, no file read and no persisted record.
+    /// A file with no recorded time, or one before 1970, is absent. Cost O(P).
+    pub fn page_modified(&self) -> Vec<(String, i64)> {
+        self.graph
+            .observed_page_mtimes()
+            .iter()
+            .filter_map(|(path, time)| {
+                let elapsed = time.duration_since(std::time::UNIX_EPOCH).ok()?;
+                Some((path.clone(), i64::try_from(elapsed.as_secs()).ok()?))
+            })
+            .collect()
     }
 
     /// Return an owned `Corpus` of pages in this view for evaluation. Cost

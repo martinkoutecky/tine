@@ -1,4 +1,4 @@
-// Read-only rendering of a BlockDto tree. Shared by Linked References, query
+// Rendering of a BlockDto tree (read-only text; a task checkbox ticks the source block, GH #518). Shared by Linked References, query
 // results, and embeds. Mirrors the rendered (non-editing) block look.
 // Visits at most 64 ancestor levels per branch and shows a message below that;
 // cost is O(rendered blocks), bounded by the supplied result tree.
@@ -17,6 +17,8 @@ import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from ".
 import { PagePropertyValue } from "./PagePropertyValue";
 import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
 import { blockDtoExternalId } from "../blockIdentity";
+import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
+import { isElementNode } from "../windowRealm";
 
 const MAX_REF_BLOCK_DEPTH = 64;
 
@@ -26,7 +28,12 @@ export function RefBlocks(props: {
   blocks: BlockDto[];
   page?: string;
   pageKind?: "journal" | "page";
+  /** Exact source file, when the caller knows it (a reference group does). */
+  path?: string;
   depth?: number;
+  /** GH #486: a click on a page-property row edits that page's properties
+   *  (the caller owns the source page's edit path). Absent: read-only row. */
+  onEditPageProperties?: (event: MouseEvent) => void;
 }): JSX.Element {
   return <RefBlocksAtDepth {...props} treeDepth={1} />;
 }
@@ -35,7 +42,9 @@ function RefBlocksAtDepth(props: {
   blocks: BlockDto[];
   page?: string;
   pageKind?: "journal" | "page";
+  path?: string;
   depth?: number;
+  onEditPageProperties?: (event: MouseEvent) => void;
   treeDepth: number;
 }): JSX.Element {
   return (
@@ -45,6 +54,8 @@ function RefBlocksAtDepth(props: {
           block={b}
           page={props.page}
           pageKind={props.pageKind}
+          path={props.path}
+          onEditPageProperties={props.onEditPageProperties}
           depth={props.depth ?? b.breadcrumb?.length ?? 0}
           treeDepth={props.treeDepth}
         />
@@ -57,6 +68,8 @@ function RefBlock(props: {
   block: BlockDto;
   page?: string;
   pageKind?: "journal" | "page";
+  path?: string;
+  onEditPageProperties?: (event: MouseEvent) => void;
   depth: number;
   treeDepth: number;
 }): JSX.Element {
@@ -85,6 +98,7 @@ function RefBlock(props: {
     uuid: blockDtoExternalId(props.block),
     page: props.page ?? "",
     pageKind: (props.pageKind ?? "page") as "journal" | "page",
+    ...(props.path ? { path: props.path } : {}),
   });
   const openRefRoute = (open: (route: Route) => unknown): void => {
     const t = refTarget();
@@ -132,16 +146,19 @@ function RefBlock(props: {
           <div
             class="block-content"
             classList={{ done: facets().done, [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
+            onClick={(event) => {
+              // GH #486: the same gesture as the source page's properties area
+              // (Page.tsx editPageHeader); links and buttons keep their own click.
+              if (!props.block.page_property || !props.onEditPageProperties) return;
+              if (isElementNode(event.target) && event.target.closest("a, button, .page-ref, .tag")) return;
+              event.stopPropagation();
+              props.onEditPageProperties(event);
+            }}
           >
-            <Show when={taskCheckboxState(facets().marker) !== null}>
-              {/* Read-only here (references/embeds/query results aren't edited in
-                  place); it mirrors the live block's checkbox look. */}
-              <span
-                class="block-task-checkbox"
-                classList={{ checked: taskCheckboxState(facets().marker) === true }}
-                role="checkbox"
-                aria-checked={taskCheckboxState(facets().marker) === true}
-              />{" "}
+            <Show when={taskCheckboxState(facets().marker) !== null && !props.block.page_property}>
+              {/* GH #518: ticks the SOURCE block through its own checkbox path
+                  (OG block-checkbox on a referenced block). */}
+              <SourceTaskCheckbox marker={facets().marker} target={refTarget} />{" "}
             </Show>
             <Show when={facets().marker}>
               <span class={`block-marker marker-${facets().marker?.toLowerCase()}`}>
@@ -202,7 +219,8 @@ function RefBlock(props: {
       <Show when={props.block.children.length && props.treeDepth < MAX_REF_BLOCK_DEPTH}>
         <div class="block-children-container">
           <div class="block-children">
-            <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind}
+            <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind} path={props.path}
+              onEditPageProperties={props.onEditPageProperties}
               depth={props.depth + 1} treeDepth={props.treeDepth + 1} />
           </div>
         </div>

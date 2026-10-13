@@ -32,7 +32,7 @@ describe("read_asset size boundary (L-1)", () => {
   });
 
   it("requires the cap in the Backend interface and every implementation", () => {
-    for (const [path, count] of [["src/backend.ts", 2], ["src/mock.ts", 1], ["src/publishedBackend.ts", 1]] as const) {
+    for (const [path, count] of [["src/backendInterface.ts", 1], ["src/backend.ts", 1], ["src/mock.ts", 1], ["src/publishedBackend.ts", 1]] as const) {
       const signatures = source(path).match(/readAsset\(name: string, maxBytes: number\)/g);
       expect(signatures, RULE).toHaveLength(count);
     }

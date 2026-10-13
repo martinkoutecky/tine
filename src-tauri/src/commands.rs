@@ -15,7 +15,9 @@ use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 mod discovery;
-use discovery::{page_inventory_wire, resolve_name, PageInventoryWire};
+use discovery::{
+    page_inventory_wire, page_modified_wire, resolve_name, PageInventoryWire, PageModifiedWire,
+};
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
@@ -324,6 +326,22 @@ pub(crate) async fn page_inventory(state: GraphContext<'_>) -> Result<PageInvent
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))
             .map(|view| page_inventory_wire(&view))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Last-modified time of every page file, for the All pages view's Updated
+/// column: a one-shot read of times the store already holds (no stat, no
+/// persisted record). Graph-wide off-thread.
+#[tauri::command]
+pub(crate) async fn page_modified(state: GraphContext<'_>) -> Result<PageModifiedWire, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        slot.store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))
+            .map(|view| page_modified_wire(&view))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1505,6 +1523,30 @@ fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<Str
     const MAX_BYTES: u64 = 10 * 1024 * 1024;
     let bytes = crate::device_io::read_regular_file_bounded(&resolved, MAX_BYTES)?;
     String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
+/// Open a graph-relative file or folder that a file link resolved to
+/// (GH #457) in the OS default app. `crate::platform::graph_relative_target`
+/// refuses a path that leaves the graph folder, including through a symlink,
+/// and a missing target. Read-only OS handoff on the blocking pool (I-21);
+/// iOS/Android refuse, as for `open_asset`.
+#[tauri::command]
+pub(crate) async fn open_graph_file(path: String, state: GraphContext<'_>) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = crate::platform::graph_relative_target(&slot.root_key, &path)?;
+        #[cfg(desktop)]
+        {
+            open_page_source(&target)
+        }
+        #[cfg(not(desktop))]
+        {
+            let _ = target;
+            Err("opening files from links is available on desktop only".to_string())
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Open an `assets/`-relative file, directory, or (empty name) the assets root (GH #367)

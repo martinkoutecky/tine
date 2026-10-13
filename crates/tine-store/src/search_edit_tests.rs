@@ -1324,6 +1324,46 @@ fn crlf_files_round_trip_without_churn() {
 }
 
 #[test]
+fn page_modified_lists_each_page_file_with_the_mtime_the_view_observed() {
+    // GH #335: the All pages view's "Updated" column. One answer for every page file,
+    // from the times captured with the page table; a later mtime-only change does not
+    // move a held view's answer, and a newly saved page carries its new time.
+    let root = mk("pagemodified");
+    let a = root.join("pages").join("A.md");
+    let j = root.join("journals").join("2026_03_01.md");
+    std::fs::write(&a, "- a\n").unwrap();
+    std::fs::write(&j, "- j\n").unwrap();
+    let t0 = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+    let set = |p: &std::path::Path, t: std::time::SystemTime| {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(t)
+            .unwrap()
+    };
+    set(&a, t0);
+    set(&j, t0 + std::time::Duration::from_secs(7));
+    let store = store_at(&root);
+    let held = store.whole_graph().unwrap();
+    assert_eq!(
+        held.page_modified(),
+        vec![
+            ("journals/2026_03_01.md".to_string(), 1_600_000_007),
+            ("pages/A.md".to_string(), 1_600_000_000),
+        ],
+        "one row per page file, graph-relative path, Unix seconds"
+    );
+    set(&a, t0 + std::time::Duration::from_secs(500));
+    assert_eq!(
+        held.page_modified()[1].1,
+        1_600_000_000,
+        "a held view keeps the mtimes it observed, it does not re-stat"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn held_view_recency_uses_its_observed_mtimes_not_a_later_stat() {
     // A held `WholeGraph` answers `(sort-by modified …)` from the mtimes captured
     // with its page table; a later mtime-only change on disk must not reorder it.

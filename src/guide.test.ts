@@ -21,6 +21,22 @@ afterEach(() => {
 });
 
 describe("guide announcement", () => {
+  it("replaces an undismissed old-graph announcement and dismisses only the current graph's", async () => {
+    const setFlag = vi.spyOn(backend(), "setGuideAnnounced").mockResolvedValue();
+    await seedMeta("/mock/guide-visible-old");
+    maybeShowGuideAnnouncement();
+    maybeShowGuideAnnouncement();
+    expect(toasts()).toHaveLength(1);
+    const meta = graphMeta()!;
+    resetStore();
+    setGraphMeta({ ...meta, root: "/mock/guide-visible-new", guide_announced: false });
+    maybeShowGuideAnnouncement();
+    expect(toasts()).toHaveLength(1);
+    expect(setFlag).not.toHaveBeenCalled();
+    dismissToast(toasts()[0].id);
+    expect(setFlag).toHaveBeenCalledOnce();
+    expect(graphMeta()?.guide_announced).toBe(true);
+  });
   it("starts a fresh Guide read when the old graph's pending read is retired", async () => {
     let finish!: (pages: GuidePage[]) => void;
     const read = vi.spyOn(backend(), "guidePages")

@@ -1,3 +1,4 @@
+import { initStyleKnobs } from "../styleKnobs";
 import { initThemeGallery } from "../themeGallery";
 import { initThemePackages } from "../themes/manager";
 import { platformKind } from "../platform";
@@ -52,6 +53,7 @@ export async function startCommunityExtensions(
   const liveRefresh = refreshCommunityRegistry({ timeoutMs: options.networkTimeoutMs });
   await initThemePackages(initialRevocations);
   await initThemeGallery();
+  await initStyleKnobs();
 
   return { initialRevocations, pluginInitialization, liveRefresh };
 }

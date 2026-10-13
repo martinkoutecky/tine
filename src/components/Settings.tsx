@@ -57,6 +57,9 @@ import { ContentWidthFields } from "./ContentWidthFields";
 import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
+import { LanguageSetting } from "./LanguageSetting";
+import { GraphFolderSetting } from "./GraphFolderSetting";
+import { render, renderEnglish } from "../i18n";
 import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
@@ -109,7 +112,8 @@ export function Settings(): JSX.Element {
     setTab(entry.tab);
     queueMicrotask(() => {
       const fields = queryAllWindowsAll<HTMLElement>("[data-setting-label]");
-      fields.find((field) => field.dataset.settingLabel === entry.label)?.scrollIntoView({ block: "center" });
+      const label = typeof entry.label === "string" ? entry.label : renderEnglish(entry.label);
+      fields.find((field) => field.dataset.settingLabel === label)?.scrollIntoView({ block: "center" });
     });
   };
 
@@ -234,7 +238,7 @@ export function Settings(): JSX.Element {
                     <For each={matches()}>
                       {(entry) => (
                         <button type="button" class="settings-search-result" onClick={() => openSearchResult(entry)}>
-                          <span>{entry.label}</span>
+                          <span>{typeof entry.label === "string" ? entry.label : render(entry.label)}</span>
                           <small>{TABS.find((candidate) => candidate.id === entry.tab)?.label}{entry.level === "advanced" ? " › Advanced" : ""}</small>
                         </button>
                       )}
@@ -258,6 +262,7 @@ export function Settings(): JSX.Element {
                 <BackupsTab />
               </Show>
               <Show when={tab() === "graph"}>
+                <GraphFolderSetting />
                 <HomePageSetting />
                 <GraphPublish /><QueryExportLimitSetting />
               </Show>
@@ -403,6 +408,8 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 
   return (
     <>
+      <LanguageSetting />
+
       <div class="settings-row">
         <span class="settings-label">Mode</span>
         <ThemeChoice />
@@ -468,7 +475,7 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </Field>
       <Field
         label="Typographic replacements"
-        hint="Show arrows and dashes as glyphs — `->` → →, `-->` → ⟶, `--` → – (en dash), `---` → — (em dash). “While reading” keeps your Markdown as ASCII and only changes the rendered view (like `\Delta` → Δ); “While typing” rewrites the source itself as you type. A Tine touch, not Logseq."
+        hint="Show arrows and dashes as glyphs — `->` → →, `-->` → ⟶, `--` → – (en dash), `---` → — (em dash). “While reading” keeps your Markdown as ASCII and only changes the rendered view (like `\Delta` → Δ); “While typing” rewrites the source itself as you type. Off by default, as in Logseq: text renders as you typed it."
       >
         <select
           class="settings-select"

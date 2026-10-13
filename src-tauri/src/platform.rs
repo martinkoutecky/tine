@@ -305,6 +305,33 @@ pub(crate) struct GpuEnv {
     software_forced: bool,
     appimage: bool,
     flatpak: bool,
+    packaged: Option<bool>,
+}
+
+/// Package identity is a runtime property, shared by Store and sideloaded MSIX.
+/// None preserves a failed probe so only the installer can fail closed.
+#[cfg(target_os = "windows")]
+fn packaged() -> Option<bool> {
+    use windows_sys::Win32::Foundation::{APPMODEL_ERROR_NO_PACKAGE, ERROR_INSUFFICIENT_BUFFER};
+    use windows_sys::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+    let mut length = 0;
+    // SAFETY: length is writable; a null buffer requests only the required size.
+    let result = unsafe { GetCurrentPackageFullName(&mut length, std::ptr::null_mut()) };
+    match result as u32 {
+        ERROR_INSUFFICIENT_BUFFER => Some(true),
+        APPMODEL_ERROR_NO_PACKAGE => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "android"
+))]
+fn packaged() -> Option<bool> {
+    Some(false)
 }
 
 /// Whether the process runs inside a Flatpak sandbox: Flatpak sets `FLATPAK_ID`
@@ -323,6 +350,7 @@ pub(crate) fn gpu_env() -> GpuEnv {
             || set("WEBKIT_DISABLE_COMPOSITING_MODE")
             || std::env::var("TINE_GPU").as_deref() == Ok("0"),
         appimage: set("APPIMAGE"),
+        packaged: packaged(),
         flatpak: in_flatpak(
             set("FLATPAK_ID"),
             std::path::Path::new("/.flatpak-info").exists(),
@@ -349,6 +377,55 @@ pub(crate) fn file_url_to_path(url: &str) -> Option<std::path::PathBuf> {
     (path.as_os_str().len() > 0).then_some(path)
 }
 
+/// The OS path of `relative` (a `/`-separated graph-relative path that a file
+/// link resolved to as OG does, GH #457, src/render/relativeFileLink.ts) inside
+/// the graph at `root`. Refusal scenario (in scope: malformed or imported
+/// Markdown, a synced note): a link in a note is untrusted content, so a path
+/// that leaves the graph folder, lexically (`..` above the root, an absolute or
+/// drive component) or through a symlink, is refused rather than handed to the
+/// OS opener. That is an intentional difference from OG, which opens absolute
+/// paths and lets its path join climb out of the graph. A missing target
+/// is reported instead of opening an unrelated window. Read-only; Cost
+/// O(path components) plus two canonicalizations.
+pub(crate) fn graph_relative_target(
+    root: &std::path::Path,
+    relative: &str,
+) -> Result<std::path::PathBuf, String> {
+    const OUTSIDE: &str = "that link points outside the graph folder";
+    if relative.starts_with(['/', '\\']) {
+        return Err(OUTSIDE.into());
+    }
+    let mut clean = std::path::PathBuf::new();
+    for part in relative.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if !clean.pop() {
+                    return Err(OUTSIDE.into());
+                }
+            }
+            part => {
+                let component = std::path::Path::new(part);
+                if part.contains(':') || component.has_root() {
+                    return Err(OUTSIDE.into());
+                }
+                clean.push(component);
+            }
+        }
+    }
+    let graph = root
+        .canonicalize()
+        .map_err(|error| format!("the graph folder could not be read: {error}"))?;
+    let target = root
+        .join(&clean)
+        .canonicalize()
+        .map_err(|_| format!("{} could not be found", clean.display()))?;
+    if !target.starts_with(&graph) {
+        return Err(OUTSIDE.into());
+    }
+    Ok(target)
+}
+
 /// Where a clicked link is headed, decided before anything is spawned so the
 /// routing decision is testable on its own — the spawn that follows is not.
 #[derive(Debug, PartialEq, Eq)]
@@ -357,6 +434,27 @@ pub(crate) enum ExternalOpen {
     LocalPath(std::path::PathBuf),
     /// http(s) or mailto: the URL opener handles it.
     Url,
+    /// Another app's scheme (`zotero:`, `obsidian:`, `shortcuts:` …) that the
+    /// user confirmed for this click (GH #503): the URL opener hands it to the
+    /// OS, which picks the registered app.
+    CustomScheme,
+}
+
+/// Schemes no outbound link ever opens, confirmed or not: they run code or
+/// carry inline content in whatever receives them (I-22). `file:` and `tine:`
+/// have their own routes and are not custom schemes either.
+const NEVER_OPENED_SCHEMES: &[&str] = &["javascript", "vbscript", "data", "blob", "about"];
+
+/// The RFC 3986 scheme of `url`, lowercased, or `None` when it has none. A
+/// single letter is a Windows drive (`C:\notes`), not a scheme.
+pub(crate) fn url_scheme(url: &str) -> Option<String> {
+    let (scheme, _) = url.split_once(':')?;
+    let mut chars = scheme.chars();
+    let first = chars.next()?;
+    (scheme.len() > 1
+        && first.is_ascii_alphabetic()
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
+    .then(|| scheme.to_ascii_lowercase())
 }
 
 /// OG parity for `file:` (og-1.0.0 `electron/window.cljs` `open-default-app!`):
@@ -366,8 +464,20 @@ pub(crate) enum ExternalOpen {
 /// user's own content, and a link that silently does nothing (GH #444, where
 /// this gate rejected `file:` outright and the frontend then discarded the
 /// rejection) is worse for the honest case than the parity behaviour is for the
-/// hostile one. Every other scheme stays refused, which is stricter than OG.
-pub(crate) fn external_open_plan(url: &str) -> Result<ExternalOpen, String> {
+/// hostile one.
+///
+/// Any other scheme (GH #503: `zotero://`, `obsidian://`, `shortcuts://` …) OG
+/// also hands to the OS silently. Tine opens it only when `confirmed_scheme`
+/// names that exact scheme, which the frontend supplies after the user
+/// confirmed a prompt naming the scheme and the full target. Refusal scenario
+/// (in scope: malformed or imported Markdown, a synced note from another
+/// device): a link in a note is untrusted content, and an unconfirmed click
+/// must not launch an arbitrary registered handler. `javascript:`/`data:`-like
+/// schemes are refused even when confirmed (I-22).
+pub(crate) fn external_open_plan(
+    url: &str,
+    confirmed_scheme: Option<&str>,
+) -> Result<ExternalOpen, String> {
     if url.starts_with("file:") {
         let path = file_url_to_path(url)
             .ok_or_else(|| "that file link does not name a local file".to_string())?;
@@ -376,22 +486,37 @@ pub(crate) fn external_open_plan(url: &str) -> Result<ExternalOpen, String> {
     if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
         return Ok(ExternalOpen::Url);
     }
-    Err("unsupported url scheme".into())
+    let Some(scheme) = url_scheme(url) else {
+        return Err("unsupported url scheme".into());
+    };
+    if NEVER_OPENED_SCHEMES.contains(&scheme.as_str()) || scheme == "tine" {
+        return Err(format!("{scheme}: links are never opened"));
+    }
+    if confirmed_scheme.map(str::to_ascii_lowercase).as_deref() != Some(scheme.as_str()) {
+        return Err(format!("opening a {scheme}: link needs your confirmation"));
+    }
+    Ok(ExternalOpen::CustomScheme)
 }
 
-/// Open a web/mail URL, or a local `file:` link, in the user's default external
-/// application. The URL is passed as a single argument (no shell), so it can't
+/// Open a web/mail URL, a local `file:` link, or a user-confirmed custom-scheme
+/// link (GH #503) in the user's default external application. The URL is passed as a single argument (no shell), so it can't
 /// inject commands.
 /// Starting the opener (PATH search, exec) runs on the blocking pool, off the
 /// UI thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+pub(crate) async fn open_external(
+    app: tauri::AppHandle,
+    url: String,
+    confirmed_scheme: Option<String>,
+) -> Result<(), String> {
     if url.starts_with("tine:") {
         crate::deep_links::receive_url(&app, url);
         return Ok(());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        if let ExternalOpen::LocalPath(path) = external_open_plan(&url)? {
+        if let ExternalOpen::LocalPath(path) =
+            external_open_plan(&url, confirmed_scheme.as_deref())?
+        {
             // Every OS opener accepts a path that is not there — `explorer.exe` even
             // opens an unrelated window for one — so without this check a stale link
             // reproduces the reported "clicking does nothing" from the other side.
@@ -904,7 +1029,7 @@ mod tests {
 
 #[cfg(test)]
 mod file_url_tests {
-    use super::{external_open_plan, file_url_to_path, ExternalOpen};
+    use super::{external_open_plan, file_url_to_path, url_scheme, ExternalOpen};
 
     /// The three shapes GH #444 reported, plus the ordinary POSIX one. On
     /// Windows all four resolve to a real local path; elsewhere the drive-letter
@@ -939,7 +1064,7 @@ mod file_url_tests {
     #[test]
     fn a_file_link_is_routed_to_the_os_default_application() {
         for url in ["file://D:\\test.txt", "file:///D:\\test.txt"] {
-            match external_open_plan(url) {
+            match external_open_plan(url, None) {
                 Ok(ExternalOpen::LocalPath(path)) => {
                     assert!(path.to_string_lossy().ends_with("test.txt"), "{url}");
                 }
@@ -948,7 +1073,7 @@ mod file_url_tests {
         }
         // A directory is the same route; OG hands it to the file manager too.
         assert!(matches!(
-            external_open_plan("file:///home/user/notes/"),
+            external_open_plan("file:///home/user/notes/", None),
             Ok(ExternalOpen::LocalPath(_))
         ));
     }
@@ -956,25 +1081,76 @@ mod file_url_tests {
     #[test]
     fn web_and_mail_links_keep_their_own_route_and_everything_else_stays_refused() {
         assert_eq!(
-            external_open_plan("https://example.com/a"),
+            external_open_plan("https://example.com/a", None),
             Ok(ExternalOpen::Url)
         );
         assert_eq!(
-            external_open_plan("http://example.com/a"),
+            external_open_plan("http://example.com/a", None),
             Ok(ExternalOpen::Url)
         );
         assert_eq!(
-            external_open_plan("mailto:a@example.com"),
+            external_open_plan("mailto:a@example.com", None),
             Ok(ExternalOpen::Url)
         );
-        // Stricter than OG, which hands every unknown scheme to the OS.
+        // Stricter than OG, which hands every unknown scheme to the OS: without
+        // the user's confirmation nothing else opens.
         for url in [
             "javascript:alert(1)",
             "smb://host/share",
             "data:text/html,x",
+            "zotero://select/items/ABC",
         ] {
-            assert!(external_open_plan(url).is_err(), "{url} must stay refused");
+            assert!(
+                external_open_plan(url, None).is_err(),
+                "{url} must stay refused"
+            );
         }
+    }
+
+    /// GH #503: another app's link opens once the user confirmed its scheme;
+    /// the confirmation is for that scheme only, and code-carrying schemes are
+    /// never opened, confirmed or not (I-22).
+    #[test]
+    fn a_confirmed_custom_scheme_opens_and_nothing_else_does() {
+        for (url, scheme) in [
+            ("shortcuts://run-shortcut?name=abc", "shortcuts"),
+            ("zotero://select/items/ABC", "zotero"),
+            ("obsidian://open?vault=v&file=f", "obsidian"),
+            ("Zotero://select/items/ABC", "ZOTERO"),
+            ("tel:+420123456", "tel"),
+        ] {
+            assert_eq!(
+                external_open_plan(url, Some(scheme)),
+                Ok(ExternalOpen::CustomScheme),
+                "{url}"
+            );
+        }
+        // A confirmation of one scheme does not open another.
+        assert!(external_open_plan("zotero://x", Some("obsidian")).is_err());
+        for url in [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            "vbscript:x",
+            "data:text/html,x",
+            "blob:https://x/y",
+            "about:blank",
+            "tine://today",
+        ] {
+            let scheme = url_scheme(url).expect("a scheme");
+            assert!(
+                external_open_plan(url, Some(&scheme)).is_err(),
+                "{url} must never open"
+            );
+        }
+        // A Windows drive path or a bare word is not a scheme.
+        assert_eq!(url_scheme("C:\\notes\\a.txt"), None);
+        assert_eq!(url_scheme("notes/a.txt"), None);
+        assert_eq!(url_scheme("-x:y"), None);
+        // http(s), mailto and file keep their routes whatever is confirmed.
+        assert_eq!(
+            external_open_plan("https://example.com", Some("zotero")),
+            Ok(ExternalOpen::Url)
+        );
     }
 
     #[test]
@@ -1117,5 +1293,101 @@ mod clipboard_tool_tests {
         }
         assert!(!lingers(pid), "opener {pid} stayed a zombie");
         assert!(spawn_reaped(&mut std::process::Command::new("/nonexistent/tine-opener")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod reveal_platform_arms {
+    /// The body of `fn name` in `source`, from its signature to the next
+    /// top-level item. Test-only source slicing; O(source bytes).
+    fn body<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("fn {name} not found"));
+        let rest = &source[start..];
+        let end = rest.find("\n}\n").map_or(rest.len(), |end| end + 3);
+        &rest[..end]
+    }
+
+    /// I-16 (GH #447): "show the graph folder" names all five shipped targets.
+    /// tauri-build defines `desktop` as "target_os is neither ios nor android"
+    /// (tauri-build 2.6 `cfg_alias("desktop", !mobile)`), so Linux, Windows and
+    /// macOS each need their own reveal arm, and iOS/Android must reach the
+    /// `not(desktop)` refusal that the frontend's `canRevealInFileManager`
+    /// hides. Dropping any arm, or the refusal, fails here.
+    #[test]
+    fn reveal_names_linux_windows_macos_and_refuses_ios_android() {
+        let platform = include_str!("platform.rs");
+        let reveal = body(platform, "reveal_page_source");
+        for os in ["linux", "windows", "macos"] {
+            assert_eq!(
+                reveal
+                    .matches(&format!("#[cfg(target_os = \"{os}\")]"))
+                    .count(),
+                1,
+                "I-16: reveal_page_source needs exactly one {os} arm; exemplar platform.rs"
+            );
+        }
+        let settings = include_str!("settings.rs");
+        let command = body(settings, "reveal_known_graph");
+        assert!(command.contains("#[cfg(desktop)]"));
+        assert!(
+            command.contains("#[cfg(not(desktop))]"),
+            "I-16: iOS/Android must get reveal_known_graph's explicit refusal"
+        );
+    }
+}
+
+#[cfg(test)]
+mod graph_relative_target_tests {
+    use super::graph_relative_target;
+
+    /// GH #457: a resolved file link opens the file inside the graph, and a
+    /// path that leaves the graph folder, lexically or through a symlink, is
+    /// refused (a note's link is untrusted content).
+    #[test]
+    fn opens_inside_the_graph_and_refuses_what_leaves_it() {
+        let base = std::env::temp_dir().join(format!("tine-457-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let graph = base.join("graph");
+        std::fs::create_dir_all(graph.join("files")).unwrap();
+        std::fs::create_dir_all(base.join("outside")).unwrap();
+        std::fs::write(graph.join("files/a b.txt"), "x").unwrap();
+        std::fs::write(base.join("outside/secret.txt"), "x").unwrap();
+
+        let opened = graph_relative_target(&graph, "files/a b.txt").expect("inside");
+        assert_eq!(opened, graph.join("files/a b.txt").canonicalize().unwrap());
+        assert_eq!(
+            graph_relative_target(&graph, "pages/../files/a b.txt").unwrap(),
+            opened
+        );
+        assert_eq!(
+            graph_relative_target(&graph, "").unwrap(),
+            graph.canonicalize().unwrap()
+        );
+        for escaping in [
+            "../outside/secret.txt",
+            "files/../../outside/secret.txt",
+            "/etc/passwd",
+            "C:/Windows/win.ini",
+        ] {
+            assert!(
+                graph_relative_target(&graph, escaping)
+                    .unwrap_err()
+                    .contains("outside the graph folder"),
+                "{escaping} must be refused"
+            );
+        }
+        assert!(graph_relative_target(&graph, "files/missing.txt")
+            .unwrap_err()
+            .contains("could not be found"));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(base.join("outside"), graph.join("link")).unwrap();
+            assert!(graph_relative_target(&graph, "link/secret.txt")
+                .unwrap_err()
+                .contains("outside the graph folder"));
+        }
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

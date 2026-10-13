@@ -35,6 +35,7 @@ mod graph_verification;
 mod host_retirement;
 #[cfg(test)]
 mod host_slot_guard_tests;
+mod i18n_shell;
 #[cfg(target_os = "ios")]
 mod ios_folder_picker;
 #[cfg(target_os = "linux")]
@@ -76,15 +77,16 @@ use commands::{
     get_backlink_filter_context, get_backlinks, get_page, get_page_by_path, get_unlinked_refs,
     graph_source_files, guide_pages, import_asset, import_native_capture, journal_content_days,
     journal_feed_page, list_journal_conflicts, list_journal_filename_migrations,
-    list_orphan_assets, list_templates, load_workspaces, merge_pages, open_asset, open_page_file,
-    open_pdf, page_icons, page_inventory, page_print_html, preview_block, publish_html,
-    query_facets, quick_switch, read_asset, read_custom_css, read_highlights, read_journal_file,
-    read_local_image, read_text_file, rename_file_to_page, rename_page, resolve_block,
-    resolve_blocks, resolve_page, run_graph_search, save_asset, save_pdf_area_image,
-    save_workspaces, search, set_default_journal_template, set_doc_mode_enter_for_new_block,
-    set_guide_announced, set_journal_title_format, set_logical_outdenting, set_preferred_format,
-    set_preferred_workflow, set_show_brackets, set_start_of_week, set_timetracking_enabled,
-    stream_asset_path, tine_open_devtools, trash_asset, trash_journal_file, write_highlights,
+    list_orphan_assets, list_templates, load_workspaces, merge_pages, open_asset, open_graph_file,
+    open_page_file, open_pdf, page_icons, page_inventory, page_modified, page_print_html,
+    preview_block, publish_html, query_facets, quick_switch, read_asset, read_custom_css,
+    read_highlights, read_journal_file, read_local_image, read_text_file, rename_file_to_page,
+    rename_page, resolve_block, resolve_blocks, resolve_page, run_graph_search, save_asset,
+    save_pdf_area_image, save_workspaces, search, set_default_journal_template,
+    set_doc_mode_enter_for_new_block, set_guide_announced, set_journal_title_format,
+    set_logical_outdenting, set_preferred_format, set_preferred_workflow, set_show_brackets,
+    set_start_of_week, set_timetracking_enabled, stream_asset_path, tine_open_devtools,
+    trash_asset, trash_journal_file, write_highlights,
 };
 use concord::{
     conflict_inventory, duplicate_journal_diff, list_sync_conflicts, live_conflict_diff,
@@ -775,6 +777,9 @@ pub fn run() {
         "globalThis.__TINE_LOCAL_CLOCK__ = {{ offset_minutes: {offset_minutes}, unix_ms: {unix_ms} }};"
     ));
 
+    // The boot card in the last resolved UI language (tine#107).
+    let builder = builder.append_invoke_initialization_script(i18n_shell::boot_text_script());
+
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let builder = builder.append_invoke_initialization_script(format!(
         "globalThis.__TINE_NATIVE_FRAME__ = {native_frame_active};"
@@ -1035,6 +1040,7 @@ pub fn run() {
             android_media::cancel_recording,
             android_system_bars::set_system_bar_appearance,
             page_inventory,
+            page_modified,
             journal_feed_page,
             get_page,
             graph_source_files,
@@ -1086,6 +1092,7 @@ pub fn run() {
             copy_image_to_clipboard,
             clipboard_files,
             open_asset,
+            open_graph_file,
             open_page_file,
             edit_asset_external,
             detect_media_editor,
@@ -1178,6 +1185,7 @@ pub fn run() {
             set_app_bool,
             get_app_string,
             set_app_string,
+            i18n_shell::set_ui_locale,
             apply_spellcheck,
             list_spellcheck_dictionaries,
             debug_info,

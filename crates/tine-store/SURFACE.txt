@@ -88,7 +88,7 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 16)
+## Reads (ceiling: 15)
 const model::PARSE_INPUT_MAX_BYTES
 fn model::parse_input_depth_within_limit
 field store::PageRead.doc
@@ -102,10 +102,6 @@ fn store::Store::page_named
 # A-V4b: a write parses the exact bytes its revision guards; `page` reads the
 # file itself, and for a page a host holds answers the host's bytes (A-V4).
 fn store::Store::page_of
-# host-only-writer P2 (DESIGN §3.1a, 15 -> 16): a feature planning a host operation needs the
-# bytes a save of its doc would write before admission; `page_of` goes bytes -> doc and every
-# existing doc -> bytes path writes the file, so no item answers this with a parameter.
-fn store::Store::page_bytes
 # test-oracle: tests hold a page as a page host does, with no host running (A-V4b).
 fn store::Store::hold_page
 fn store::Store::read
@@ -130,7 +126,7 @@ enum store::SaveBase
 enum store::SaveOutcome
 enum store::StoreError
 
-## Transaction steps (ceiling: 28)
+## Transaction steps (ceiling: 30)
 enum transaction::Content
 enum transaction::Refusal
 enum transaction::StepResult
@@ -146,6 +142,9 @@ field transaction::Rollback.kept_external
 field transaction::Rollback.undo_failed
 fn transaction::Store::transaction
 fn transaction::Transaction::commit
+# DESIGN §3.1c C1/C5: no existing step plans without publishing; commit publishes.
+# Replaces Store::page_bytes with commit's full preflight and staged effects.
+fn transaction::Transaction::plan
 fn transaction::Transaction::create
 fn transaction::Transaction::create_unique
 # Read-only revision dependency for a later step; avoids mutating sidecars to force a guard.
@@ -161,6 +160,12 @@ fn transaction::Transaction::replace
 # moved page's title rebind too (og-surface row 6).
 fn transaction::Transaction::rewrite_refs
 fn transaction::Transaction::save_page
+# host-only-writer P3 W8 (28 -> 29): a VCS-marker resolution run as a host operation
+# must stage the marker bytes' conflict-trash copy before the operation, with no
+# transaction to commit. `Transaction::trash` moves an existing file (removing it);
+# no item writes a given byte copy into the conflict trash and keeps the source, and
+# a mode parameter on `trash` would give one step two opposite effects.
+fn store::Store::stage_marker_copy
 fn transaction::Transaction::trash
 struct transaction::IoError
 struct transaction::RenameMap
@@ -233,7 +238,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 16)
+## WholeGraph: Names (ceiling: 17)
 enum store::InventoryScope
 enum store::Resolved
 field store::InventoryEntry.name
@@ -249,6 +254,13 @@ fn store::WholeGraph::journal_content_days
 fn store::WholeGraph::resolve
 fn store::WholeGraph::rev
 fn store::WholeGraph::unreadable_files
+# GH #335 (All pages "Updated" column): `inventory` answers per NAME (aliases,
+# reference-only names, one entry per spelling) and is re-read on every page-index
+# refresh; a last-modified time is per FILE and wanted once, when the view opens.
+# A field on `InventoryEntry` would put ~10 bytes per entry on every refresh and
+# cover only the canonical file of a spelling twin, and no `InventoryScope` makes
+# it per-file, so this is one read of the mtimes the view already holds.
+fn store::WholeGraph::page_modified
 struct store::Inventory
 struct store::InventoryEntry
 struct store::WholeGraph

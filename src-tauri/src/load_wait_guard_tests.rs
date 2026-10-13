@@ -387,6 +387,7 @@ const ORDERED_WRITES: &[&str] = &[
     "store_plugin_registry_cache",
     "diagnostic_session_active",
     "clear_diagnostics",
+    "set_ui_locale",
 ];
 
 fn all_commands() -> Vec<(String, String, bool, String)> {

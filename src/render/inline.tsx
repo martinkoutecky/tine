@@ -1,4 +1,5 @@
 import { urlDest } from "./urlDest";
+import { t } from "../i18n";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
@@ -15,7 +16,7 @@ import { isJournalTitle } from "../journal";
 import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
-import { reportLinkOpenFailure } from "../components/ExternalLink";
+import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import { mime_from_path } from "./wasm/lsdoc_wasm";
@@ -23,8 +24,8 @@ import type { Inline, MacroInline, TimestampInline, EmailValue, Block as AstBloc
 import type { PageKind } from "../types";
 import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
-import { rawHtmlPresentation } from "./htmlSanitize";
-import { allowLocalFileImages } from "../localFileSettings";
+import { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
+export { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
 import { resolvedTarget } from "../pageIndex";
 import { pageIcon } from "../pageIconBatch";
 import { typographic } from "./typography";
@@ -38,14 +39,15 @@ import { backend } from "../backend";
 import { captureBinding } from "../binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { writeClipboardText } from "../clipboard";
-import { acquireAssetBlob, acquireLocalImageBlob, assetVersion } from "../assetCache";
+import { acquireAssetBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
-import { setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode } from "../document";
+import { SourceTaskCheckbox } from "../components/SourceTaskCheckbox";
+import { blockRef, setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane, openPdf } from "../panes";
 import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
@@ -58,6 +60,8 @@ import { createLongPress } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
+import { fileLinkTarget } from "./relativeFileLink";
+import { RelativeFileLink } from "./RelativeFileLink";
 import { galleryFor } from "../imageGallery";
 import { queryMacroRenderRun } from "./queryMacroRender";
 import { windowOf } from "../windowRealm";
@@ -475,6 +479,20 @@ function renderLink(
       return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     if (!externalPdf) return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
+  // GH #457: a plain path to a file outside `assets/` names a file in the
+  // graph folder, resolved as OG does (relativeFileLink.ts); an asset link
+  // keeps the asset routes below and a bare `x.pdf` keeps the reader route.
+  const fileTarget = assetLinkRel(dest) === null ? fileLinkTarget(dest) : null;
+  if (fileTarget !== null && (!/\.pdf$/i.test(dest) || /[/\\]/.test(dest))) {
+    return (
+      <span class="link-copy-wrap">
+        <RelativeFileLink dest={dest} target={fileTarget} spanAttrs={spanAttrs}>
+          <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
+        </RelativeFileLink>
+        <CopyButton text={dest} title={t("links-copy-title")} class="copy-inline" />
+      </span>
+    );
+  }
   if (!externalPdf && /\.pdf$/i.test(dest)) {
     const labelStr = s.label && s.label.length ? astText(s.label) : pdfFilenameFromDest(dest);
     return <PdfAssetLink dest={dest} label={labelStr} spanAttrs={spanAttrs} />;
@@ -503,12 +521,12 @@ function renderLink(
           if (unsafeHref) return;
           const rel = assetLinkRel(dest);
           if (rel !== null) void readOwned(graphOwner(), backend().openAsset(rel, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(dest, error));
-          else void readOwned(graphOwner(), backend().openExternal(dest)).catch((error) => reportLinkOpenFailure(dest, error));
+          else void openOutboundLink(dest);
         }}
       >
         <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode, macroExpansion, format)}</Show>
       </a>
-      <CopyButton text={dest} title="Copy link" class="copy-inline" />
+      <CopyButton text={dest} title={t("links-copy-title")} class="copy-inline" />
     </span>
   );
 }
@@ -542,78 +560,6 @@ function renderTimestamp(s: TimestampInline): JSX.Element {
       {text}
     </span>
   );
-}
-
-// Video-embed hosts (youtube/vimeo/loom/bilibili) that reject an embed when it
-// arrives with no referrer — YouTube in particular fails with error 153. For
-// those we send the app origin (`strict-origin-when-cross-origin`), matching OG
-// (og-1.0.0 youtube.cljs:63). Every other pasted `<iframe>` keeps `no-referrer`
-// so an arbitrary third-party embed still can't see where it was opened from.
-const EMBED_REFERRER_HOSTS =
-  /(?:^|\.)(?:youtube\.com|youtube-nocookie\.com|youtu\.be|vimeo\.com|loom\.com|bilibili\.com)$/i;
-function embedReferrerPolicy(src: string): "strict-origin-when-cross-origin" | "no-referrer" {
-  // Extract the host with a regex rather than `new URL()` — the referrer decision
-  // must not depend on a global others can shim, and a malformed src stays private.
-  const host = /^https?:\/\/([^/?#]+)/i.exec(src)?.[1]?.replace(/^[^@]*@/, "").replace(/:.*$/, "") ?? "";
-  return EMBED_REFERRER_HOSTS.test(host) ? "strict-origin-when-cross-origin" : "no-referrer";
-}
-
-// Sandboxed-iframe rendering, reused for inline `inline_html` and block `raw_html`.
-function renderIframe(src: string, width?: string, height?: string, spanAttrs?: SpanDomAttrs): JSX.Element {
-  return (
-    <span class="embed-iframe-wrap" style={{ ...(width ? { width } : {}), ...(height ? { "aspect-ratio": "auto", height } : {}) }} {...(spanAttrs ?? {})}>
-      <iframe class="embed-iframe" src={src} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy={embedReferrerPolicy(src)} title="embed" />
-    </span>
-  );
-}
-// Raw HTML (inline_html / raw_html): the https `<iframe>` subset renders as a
-// SANDBOXED iframe (a deliberate embed feature, kept above the allowlist); all
-// other raw HTML is sanitized to the shared allowlist (html_sanitize.ts, mirrored
-// by the Rust export) and rendered LIVE. Handlers/`style`/`<script>` are stripped,
-// so `innerHTML` is XSS-safe here. See ADR 0019.
-export function renderRawHtml(text: string, spanAttrs?: SpanDomAttrs): JSX.Element {
-  return <RawHtmlContent text={text} spanAttrs={spanAttrs} allowIframe />;
-}
-
-/** The sanitizer-only HTML insertion path. Unlike `renderRawHtml`, this helper
- * never performs iframe dispatch; macro-expanded Hiccup must enter here. */
-export function renderSanitizedHtml(text: string, spanAttrs?: SpanDomAttrs): JSX.Element {
-  return <RawHtmlContent text={text} spanAttrs={spanAttrs} />;
-}
-
-// Renders sanitized raw HTML, and — when the user has opted into local-file images
-// (Settings → "Load local-file images") — swaps a blob URL into any `<img>` whose
-// `src` was a local path (the sanitizer strips those, so we re-attach them by
-// document-order match to the scanned paths). Off by default; see ADR 0019.
-function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs; allowIframe?: boolean }): JSX.Element {
-  const presentation = createMemo(() => rawHtmlPresentation(props.text, props.allowIframe));
-  let host: HTMLSpanElement | undefined;
-  createEffect(() => {
-    const shown = presentation(); // one projection for HTML, iframe and local resources
-    if (!host || !allowLocalFileImages()) return;
-    const locals = shown.localImages;
-    if (!locals.some(Boolean)) return;
-    let active = true;
-    const releases: (() => void)[] = [];
-    host.querySelectorAll("img").forEach((img, idx) => {
-      const path = locals[idx];
-      if (path) void acquireLocalImageBlob(path).then((lease) => {
-        if (!active) {
-          lease.release();
-          return;
-        }
-        releases.push(lease.release);
-        if (lease.url) img.src = lease.url;
-      });
-    });
-    onCleanup(() => {
-      active = false;
-      releases.forEach((release) => release());
-    });
-  });
-  return <Show when={presentation().iframe} fallback={<span ref={host} class="raw-html" innerHTML={presentation().html} {...(props.spanAttrs ?? {})} />}>
-    {(frame) => renderIframe(frame().src, frame().width, frame().height, props.spanAttrs)}
-  </Show>;
 }
 
 function renderEmail(text: EmailValue, spanAttrs?: SpanDomAttrs): JSX.Element {
@@ -1082,7 +1028,7 @@ function MediaEmbed(props: {
     e.stopPropagation();
     const r = rel();
     if (r && !external) void readOwned(graphOwner(), backend().openAsset(r, backend().graphBindingGeneration())).catch((error) => reportLinkOpenFailure(props.url, error));
-    else void readOwned(graphOwner(), backend().openExternal(props.url)).catch((error) => reportLinkOpenFailure(props.url, error));
+    else void openOutboundLink(props.url);
   };
   let tryingBlobFallback = false;
   let blobLease: MediaBlobLease | null = null;
@@ -1348,6 +1294,13 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
     const raw = targetRaw();
     return raw ? leadingMarker(raw) : null;
   };
+  // Where the checkbox writes: the same exact owner the click navigates to.
+  const checkboxTarget = () => {
+    const g = grp();
+    if (g) return blockRefTarget(props.id, g);
+    // Still resolving, but painted from the loaded node: that node's owner.
+    return liveTarget() ? blockRef(props.id) : null;
+  };
   // Parse the referenced block's text with ITS page's format (org refs render org).
   const fmt = () => liveTarget() ? formatForBlock(props.id) : formatForPage(grp()?.page);
   const annotation = () => {
@@ -1441,7 +1394,13 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         <Show when={lines() !== undefined} fallback={<>(({props.id}))</>}>
           <LinkDepthContext.Provider value={linkDepth + 1}>
             <Show when={marker()}>
-              {(m) => <><span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}</>}
+              {(m) => <>
+                {/* GH #518: OG's block-checkbox inside a reference ticks the
+                    referenced block (block.cljs build-block-title). No text node
+                    before the chip, so the reference's text stays the source's. */}
+                <SourceTaskCheckbox marker={m()} target={checkboxTarget} style={{ "margin-right": "0.3em" }} />
+                <span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}
+              </>}
             </Show>
             <For each={lines()!}>
               {(line, index) => (

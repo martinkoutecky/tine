@@ -10,6 +10,14 @@ import {
   setInPageFindQuery,
   stepInPageFind,
 } from "../inpageFind";
+import {
+  inPageReplaceOpen,
+  inPageReplaceText,
+  replaceActiveInPageFindMatch,
+  replaceAllInPageFindMatches,
+  setInPageReplaceOpen,
+  setInPageReplaceText,
+} from "../inpageReplace";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { onEachWindow } from "../windowRealm";
 
@@ -18,6 +26,7 @@ const FIND_QUERY_DEBOUNCE_MS = 110;
 export function InPageFind(): JSX.Element {
   let root: HTMLDivElement | undefined;
   let inputEl: HTMLInputElement | undefined;
+  let replaceEl: HTMLInputElement | undefined;
   let queryTimer: ReturnType<typeof setTimeout> | undefined;
   const [draftQuery, setDraftQuery] = createSignal(inPageFindQuery());
   const matchCount = () => inPageFindMatches().length;
@@ -38,6 +47,24 @@ export function InPageFind(): JSX.Element {
     setDraftQuery(q);
     cancelScheduledQuery();
     queryTimer = setTimeout(() => commitQuery(q), FIND_QUERY_DEBOUNCE_MS);
+  };
+  // GH #208: replace acts on the committed query, never on a debounced draft.
+  const replaceOne = () => {
+    if (queryTimer) commitQuery();
+    replaceActiveInPageFindMatch(inPageReplaceText());
+  };
+  const replaceAll = () => {
+    if (queryTimer) commitQuery();
+    replaceAllInPageFindMatches(inPageReplaceText());
+  };
+  const toggleReplace = () => {
+    const open = !inPageReplaceOpen();
+    setInPageReplaceOpen(open);
+    queueMicrotask(() => (open ? replaceEl : inputEl)?.focus());
+  };
+  const escapeKey = (e: KeyboardEvent) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (dismissTopTransient("escape")) e.preventDefault();
   };
   const closeFind = () => {
     cancelScheduledQuery();
@@ -95,49 +122,92 @@ export function InPageFind(): JSX.Element {
   return (
     <Show when={inPageFindOpen()}>
       <div ref={root} class="inpage-find-bar" role="search">
-        <input
-          ref={inputEl}
-          class="inpage-find-input"
-          placeholder="Find in page"
-          value={draftQuery()}
-          onInput={(e) => scheduleQuery(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              if (queryTimer) commitQuery();
-              stepInPageFind(e.shiftKey ? -1 : 1);
-            } else if (e.key === "Escape") {
-              if (e.isComposing || e.keyCode === 229) return;
-              if (dismissTopTransient("escape")) e.preventDefault();
-            }
-          }}
-        />
-        <span class="inpage-find-count">{countText()}</span>
-        <button
-          class="icon-btn"
-          title="Previous match (Shift+Enter)"
-          disabled={!matchCount()}
-          onClick={() => stepInPageFind(-1)}
-        >
-          <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-            <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </button>
-        <button
-          class="icon-btn"
-          title="Next match (Enter)"
-          disabled={!matchCount()}
-          onClick={() => stepInPageFind(1)}
-        >
-          <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-            <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </button>
-        <button class="icon-btn" title="Close (Esc)" onClick={closeFind}>
-          <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-          </svg>
-        </button>
+        <div class="inpage-find-row">
+          <input
+            ref={inputEl}
+            class="inpage-find-input"
+            placeholder="Find in page"
+            value={draftQuery()}
+            onInput={(e) => scheduleQuery(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                if (queryTimer) commitQuery();
+                stepInPageFind(e.shiftKey ? -1 : 1);
+              } else if (e.key === "Escape") {
+                escapeKey(e);
+              }
+            }}
+          />
+          {/* After the input in focus order (a dismissed layer above Find refocuses
+              Find's first control); CSS shows it first. */}
+          <button
+            type="button"
+            class="icon-btn inpage-replace-toggle"
+            title="Find and replace"
+            aria-label="Find and replace"
+            aria-expanded={inPageReplaceOpen()}
+            onClick={toggleReplace}
+          >
+            <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
+              <path d={inPageReplaceOpen() ? "M6 9l6 6 6-6" : "M9 6l6 6-6 6"} fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <span class="inpage-find-count">{countText()}</span>
+          <button
+            class="icon-btn"
+            title="Previous match (Shift+Enter)"
+            disabled={!matchCount()}
+            onClick={() => stepInPageFind(-1)}
+          >
+            <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
+              <path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <button
+            class="icon-btn"
+            title="Next match (Enter)"
+            disabled={!matchCount()}
+            onClick={() => stepInPageFind(1)}
+          >
+            <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
+              <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <button class="icon-btn" title="Close (Esc)" onClick={closeFind}>
+            <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+        <Show when={inPageReplaceOpen()}>
+          <div class="inpage-find-row inpage-replace-row">
+            <input
+              ref={replaceEl}
+              class="inpage-replace-input"
+              placeholder="Replace with"
+              aria-label="Replace with"
+              value={inPageReplaceText()}
+              onInput={(e) => setInPageReplaceText(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  if (e.isComposing || e.keyCode === 229) return;
+                  e.preventDefault();
+                  if (e.ctrlKey || e.metaKey) replaceAll();
+                  else replaceOne();
+                } else if (e.key === "Escape") {
+                  escapeKey(e);
+                }
+              }}
+            />
+            <button type="button" class="inpage-replace-btn" title="Replace this match (Enter)" disabled={!matchCount()} onClick={replaceOne}>
+              Replace
+            </button>
+            <button type="button" class="inpage-replace-btn" title="Replace every match on this page (Ctrl/Cmd+Enter)" disabled={!matchCount()} onClick={replaceAll}>
+              Replace all
+            </button>
+          </div>
+        </Show>
       </div>
     </Show>
   );

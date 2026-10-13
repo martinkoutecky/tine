@@ -414,6 +414,10 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       }));
       return { rev: "0", entries, unreadable: [] };
     },
+    // A published export carries no file times: the Updated column shows dashes.
+    async pageModified() {
+      return { rev: "0", modified: [] };
+    },
     async resolvePage(name: string, kind: "journal" | "page") {
       const snapshot = await load();
       const page = pageByName(snapshot, name);
@@ -657,7 +661,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return [];
     },
     async gpuEnv() {
-      return { software_forced: false, appimage: false, flatpak: false };
+      return { software_forced: false, appimage: false, flatpak: false, packaged: false };
     },
     // A published export has no backend clock; the browser's is the authority.
     async localClock() {
@@ -689,6 +693,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async setAppString(key: string, value: string) {
       appStrings.set(key, value);
     },
+    async setUiLocale() {},
     async loadSession() {
       return session;
     },
@@ -896,6 +901,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
  *  `Backend` method to be in exactly one. */
 export const PUBLISHED_ANSWERED_METHODS = [
   "pageInventory",
+  "pageModified",
   "resolvePage",
   "loadGraph",
   "inspectGraphAccess",
@@ -984,6 +990,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "getWatchMode",
   "listSpellcheckDictionaries",
   "applySpellcheck",
+  "setUiLocale",
   "setSystemBarAppearance",
   "closeGraphWindow",
   "trayApply",
@@ -1075,6 +1082,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "setDefaultJournalTemplate",
   "setStartOfWeek",
   "openPageFile",
+  "openGraphFile",
   "editCustomCss",
   "editAssetExternal",
   "trashAsset",

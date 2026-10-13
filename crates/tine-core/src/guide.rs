@@ -221,6 +221,16 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn the_language_setting_says_where_it_is_and_what_it_never_translates() {
+        let places = include_str!("templates/where-things-are.md");
+        assert!(places.contains("**Language** is the first item under Settings → **Appearance**"));
+        assert!(places.contains("**System default** follows your system's language"));
+        assert!(
+            places.contains("Your notes, page names, properties and queries are never translated")
+        );
+    }
+
+    #[test]
     fn search_workspace_and_find_explain_visible_views_and_destinations() {
         let reference = include_str!("templates/pages-links-references-search.md");
         let tips = include_str!("templates/tips.md");
@@ -230,6 +240,27 @@ mod journal_guide_tests {
         assert!(reference.contains("Page results offer the same right-click menu"));
         assert!(tips.contains("**Enter** / **Shift+Enter** move forward / backward"));
         assert!(tips.contains("In a Search tab, clicking a result opens a new tab"));
+    }
+
+    #[test]
+    fn find_and_replace_is_documented() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        let revisit = include_str!("templates/find-and-revisit.md");
+        let tips = include_str!("templates/tips.md");
+        for detail in [
+            "**Replace with**",
+            "**Replace all**",
+            "as one **Undo** step",
+            "a link's address and hidden properties such as `id::` are never changed",
+            "**⋯** menu → **Find in page**",
+        ] {
+            assert!(
+                reference.contains(detail),
+                "missing find/replace detail: {detail}"
+            );
+        }
+        assert!(revisit.contains("**⋯** menu → **Find in page**"));
+        assert!(tips.contains("**Replace** and **Replace all**"));
     }
 
     #[test]
@@ -832,6 +863,34 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn graph_folder_guide_names_the_settings_entry_and_its_reveal() {
+        // GH #447: Settings → Graph names the graph folder and, on desktop,
+        // shows it in the file manager.
+        let guide = include_str!("templates/bring-existing-graph.md");
+        assert!(guide.contains("**Graph folder** shows the current graph path"));
+        assert!(guide.contains("**Show in folder**"));
+    }
+
+    #[test]
+    fn custom_scheme_link_guide_says_it_asks_before_opening_another_app() {
+        // GH #503: another app's link opens after a confirm; the Guide must not
+        // still say every non-web link is refused.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("A link to another app"));
+        assert!(search.contains("first asks whether to open it"));
+        assert!(!search.contains("or any other kind of link, is reported"));
+    }
+
+    #[test]
+    fn relative_file_link_guide_names_its_base_and_the_graph_boundary() {
+        // GH #457: a file link resolves from the graph folder as Logseq does and
+        // opens a path outside the graph.
+        let search = include_str!("templates/pages-links-references-search.md");
+        assert!(search.contains("is read from the graph folder as Logseq reads it"));
+        assert!(search.contains("points outside the graph folder, such as an absolute"));
+    }
+
+    #[test]
     fn empty_html_export_names_the_public_page_rule_in_the_guide() {
         // GH #560 (master 350efef1f): a zero-page export is explained, not silent.
         let files = include_str!("templates/files-external-edits-backups.md");
@@ -1188,6 +1247,13 @@ mod customize_look_guide_tests {
             "--tine-content-width",
             "--tine-content-font",
             "Nord, Solarized, Gruvbox",
+            // Style knobs (GH #610 item 3): the Fine-tuning section and its
+            // three first rows, named as Settings shows them.
+            "**Fine-tuning**",
+            "**Embedded blocks**",
+            "**Links to the web or a file**",
+            "**Links to pages that do not exist yet**",
+            "style.knobs.v1",
         ] {
             assert!(page.contains(needed), "the page must mention {needed}");
         }
@@ -1224,6 +1290,24 @@ mod og_20d_guide_tests {
             assert!(
                 map.contains(detail),
                 "missing where-things-are detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
+    fn where_things_are_documents_the_full_all_pages_view() {
+        // GH #335: the sidebar list is capped; the full view is how a large graph is browsed.
+        let map = page("Start/Where things are");
+        for detail in [
+            "**Open the full list…**",
+            "**Updated** column shows when each page",
+            "**Page** (name)",
+            "**Show journals**",
+            "**Journal date**",
+        ] {
+            assert!(
+                map.contains(detail),
+                "missing All pages view detail: {detail}"
             );
         }
     }

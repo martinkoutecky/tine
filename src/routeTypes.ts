@@ -48,6 +48,8 @@ export type Route =
   | { kind: "journals" }
   /** The Concord overview: a view of the derived conflict queue, never a file. */
   | { kind: "conflicts" }
+  /** The full All Pages list: a view of the page inventory, never a file. */
+  | { kind: "all-pages" }
   | QueryRoute
   | PdfRoute
   | InvalidRoute

@@ -2208,6 +2208,22 @@ html[data-system-insets="native-viewport"] {
   font-size: 13px;
   color: var(--text-secondary);
 }
+/* Fine-tuning (style knobs): a group label between settings rows. */
+.settings-subsection {
+  margin-top: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.knob-slider,
+.knob-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.knob-reset {
+  margin-left: 8px;
+}
 .theme-gallery-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
@@ -4320,9 +4336,14 @@ html[data-system-insets="native-viewport"] {
 }
 
 /* Deliberate Martin-approved OG divergence: missing page refs are muted
-   and dotted, but still navigate/create; tags are exempt. OG dims only untitled pages. */
+   and dotted, but still navigate/create; tags are exempt. OG dims only untitled pages.
+   The colour is a link tint pulled toward the secondary text colour (GH #432): a link
+   to a page that does not exist yet stays above plain text in the emphasis order,
+   below a real link, and readable (>= 4.5:1 on the built-in palettes; a muted grey was
+   2.8:1 in light). Hover restores the full link colour. --tine-missing-page-color
+   overrides it. */
 [data-missing-page] {
-  color: var(--text-muted);
+  color: var(--tine-missing-page-color, color-mix(in srgb, var(--link-color) 55%, var(--text-secondary)));
   text-decoration: underline dotted;
   text-underline-offset: 2px;
 }
@@ -4331,13 +4352,21 @@ html[data-system-insets="native-viewport"] {
   text-decoration: underline dotted;
 }
 
+/* External links carry a solid underline, page refs none (OG common.css `.external-link`:
+   `border-bottom: 1px solid`, GH #430): a link that leaves the graph reads differently from
+   one that stays in it, with no second link colour. --tine-external-link-underline replaces
+   the underline (any border-bottom value, or `none`). */
 .external-link {
   color: var(--link-color);
   text-decoration: none;
+  border-bottom: var(--tine-external-link-underline, 1px solid);
 }
 
-.external-link:hover {
-  text-decoration: underline;
+/* GH #457: a file link whose path leaves the graph folder is never opened. */
+.external-link[data-broken-file-link] {
+  color: var(--ls-secondary-text-color, inherit);
+  text-decoration: line-through;
+  opacity: 0.75;
 }
 
 .inline-code {
@@ -6926,8 +6955,21 @@ img.emoji {
 }
 
 .reference-excerpt-bullet {
+  align-self: flex-start;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
   color: var(--bullet-color, var(--text-muted));
   line-height: 1.55;
+  cursor: pointer;
+}
+.reference-excerpt-bullet:hover,
+.reference-excerpt-bullet:focus-visible {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
 }
 
 .reference-excerpt-content {
@@ -6991,6 +7033,12 @@ img.emoji {
   border-radius: 10px;
   font-size: 10px;
   cursor: pointer;
+}
+
+/* The numbered circle whose mention the excerpt currently highlights. */
+.reference-occurrence-jump.selected {
+  color: var(--bg-primary);
+  background: var(--accent-color);
 }
 
 .reference-live-evidence {
@@ -7446,6 +7494,13 @@ img.emoji {
   margin: 2px 0;
 }
 
+/* Style knob "Embedded blocks" = accent line and dot only (src/styleKnobs.ts,
+   class on <html>): the shade goes, the accent bullet and guide stay. It sits
+   above --tine-embed-bg on purpose, since the user chose it in Settings. */
+html.tine-embed-shading-accent .embed-block {
+  background: none;
+}
+
 /* A whole-block block embed is visually the referenced outline, not an empty
    parent followed by another root. Block.tsx removes only the macro host's
    controls; the referenced root keeps its real interactive bullet, collapse
@@ -7466,6 +7521,47 @@ img.emoji {
 .block-embed-host .embed-block > .live-ref-group > .ls-block > .block-children-container > .block-children {
   border-left-width: 2px;
   border-left-color: var(--tine-embed-accent, var(--block-embed-accent));
+}
+
+/* GH #439: a whole-page embed. The host's bullet row carries a header naming the
+   page (OG block.cljs `page-embed`: page icon + page link in `.embed-header`);
+   the page's roots then sit on the host's own children grid, one indent step in,
+   under a guide in the embed accent, instead of in an inset tinted box whose
+   roots landed ~26px off the outline column. `--page-embed-controls` is the
+   host's control column (fold arrow + bullet, 40px on desktop): the embed starts
+   after it, while the children grid starts one indent from the host's left edge,
+   so the group is pulled back by (controls - indent). */
+.embed-block.embed-page {
+  background: none;
+  border-left: 0;
+  padding-left: 0;
+  margin: 0;
+  --page-embed-controls: 40px;
+}
+.embed-page-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: calc(var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y));
+}
+.embed-page-glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  color: var(--text-muted);
+}
+.embed-block.embed-page > .live-ref-group {
+  margin-left: calc(var(--ls-block-indent) - var(--page-embed-controls) - 3px);
+  padding-left: 1px;
+  border-left: 2px solid var(--tine-embed-accent, var(--block-embed-accent));
+}
+/* The phone layout takes the fold arrow out of the control column (see the
+   coarse-pointer block above), leaving the bullet column alone: 21px. */
+@media (max-width: 640px) and (pointer: coarse) {
+  .embed-block.embed-page {
+    --page-embed-controls: 21px;
+  }
 }
 
 /* video / iframe embeds */
@@ -7802,16 +7898,55 @@ img.emoji {
 .inpage-find-bar {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
   padding: 6px 14px;
   border-bottom: 1px solid var(--border-color);
   background: var(--bg-secondary);
 }
-.inpage-find-input {
+.inpage-find-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+/* At phone width the inputs shrink, never the toggle or the buttons (GH #338). */
+.inpage-find-row > * {
+  flex: 0 0 auto;
+}
+.inpage-find-row > .inpage-find-input,
+.inpage-find-row > .inpage-replace-input {
+  flex: 0 1 240px;
+  min-width: 72px;
+}
+/* GH #208: the replace row sits under the find input (toggled in the bar). */
+.inpage-replace-toggle {
+  order: -1;
+}
+.inpage-replace-btn {
+  padding: 3px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.inpage-replace-btn:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+.inpage-replace-btn:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+.inpage-find-input,
+.inpage-replace-input {
   width: 240px;
-  max-width: min(48vw, 240px);
+  max-width: 240px;
   padding: 4px 8px;
   font-size: 13px;
   border: 1px solid var(--border-color);
@@ -7819,7 +7954,8 @@ img.emoji {
   background-color: var(--bg-primary);
   color: var(--text-primary);
 }
-.inpage-find-input:focus {
+.inpage-find-input:focus,
+.inpage-replace-input:focus {
   border-color: var(--link-color);
   outline: none;
 }

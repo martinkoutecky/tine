@@ -8,7 +8,7 @@ import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
 import { mockPageHost } from "./mockPageHost";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { previewDtoSubtree } from "./previewProjection";
 import { hlsPageName } from "./pdf";
@@ -460,6 +460,30 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
       title: "Block embed regression",
       pre_block: null,
       blocks: [b("{{embed ((ui-block-embed-root))}}")],
+    },
+    {
+      // GH #439: a whole-page embed among ordinary siblings and children.
+      name: "Page embed regression",
+      kind: "page",
+      title: "Page embed regression",
+      pre_block: null,
+      blocks: [
+        b("Ordinary parent", [
+          b("{{embed [[Page embed source regression]]}}"),
+          b("Ordinary sibling"),
+        ]),
+        b("{{embed [[Page embed source regression]]}}"),
+      ],
+    },
+    {
+      name: "Page embed source regression",
+      kind: "page",
+      title: "Page embed source regression",
+      pre_block: null,
+      blocks: [
+        b("Source root one", [b("Source child", [b("Source grandchild")])]),
+        b("Source root two"),
+      ],
     },
   );
 }
@@ -1111,6 +1135,11 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async readCustomCss(): Promise<string> {
       return (globalThis as unknown as { __tineMockCustomCss?: string }).__tineMockCustomCss ?? "";
     },
+    async pageModified(): Promise<PageModified> {
+      // Deterministic, distinct times: the first mock page is the newest.
+      const base = Date.UTC(2026, 5, 15, 12, 0, 0) / 1000;
+      return { rev: "0", modified: all.map((p, i) => [mockPagePath(p), base - i * 3600] as [string, number]) };
+    },
     async pageIcons(names: string[]): Promise<Record<string, string>> {
       const out: Record<string, string> = {};
       for (const name of names) {
@@ -1375,6 +1404,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async openPageFile(): Promise<void> {
       // no OS file manager in the browser mock
     },
+    async openGraphFile(): Promise<void> {
+      // no OS opener in the browser mock
+    },
     async editAssetExternal(): Promise<void> {
       // no external editor in the browser mock
     },
@@ -1536,7 +1568,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       mockWorkspaces = data; return "durable";
     },
     async gpuEnv(): Promise<GpuEnv> {
-      return { software_forced: false, appimage: false, flatpak: false };
+      return { software_forced: false, appimage: false, flatpak: false, packaged: false };
     },
     async takeDataHomeFallbackNotice(): Promise<string | null> {
       return null;
@@ -1568,6 +1600,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setAppString(key: string, value: string): Promise<void> {
       mockAppStrings[key] = value;
     },
+    async setUiLocale(): Promise<void> { /* no native shell in the mock */ },
     async applySpellcheck(): Promise<void> { /* no native webview in the mock */ },
     // A representative set so the picker renders in the browser mock / harness.
     async listSpellcheckDictionaries(): Promise<string[]> { return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"]; },

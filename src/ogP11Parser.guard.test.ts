@@ -191,7 +191,8 @@ describe("OG-P12B one answerer for page headers, fences and task markers", () =>
     expect(store).not.toMatch(/fn page_header_property_line|fn page_header_properties_only/);
     const query = readFileSync("crates/tine-store/src/query.rs", "utf8");
     expect(query).toContain("tine_core::block_regions::page_header_only(");
-    const conflicts = readFileSync("crates/tine-graph-features/src/conflicts.rs", "utf8");
+    const conflicts = readFileSync("crates/tine-graph-features/src/conflicts.rs", "utf8")
+      + readFileSync("crates/tine-graph-features/src/conflicts/queue.rs", "utf8");
     expect(conflicts, "I-12: conflict preambles are read through block_regions::parse_document").toContain("tine_core::block_regions::parse_document(");
     expect(conflicts).not.toMatch(/fn pre_property\(/);
   });

@@ -195,7 +195,7 @@ describe("GH #161 successful left-navigation boundary", () => {
       await expectCompleted(before);
       expect(route()).toMatchObject({ kind: "page", name: "Namespace" });
 
-      // Disclosures and search are not navigation completion. Namespace-node
+      // Disclosures are not navigation completion. Namespace-node
       // disclosure is exercised separately from its adjacent page label.
       armLeft();
       before = completion.mock.calls.length;
@@ -212,10 +212,13 @@ describe("GH #161 successful left-navigation boundary", () => {
       const namespaceToggle = await vi.waitFor(() => root.querySelector<HTMLElement>(".ns-node-toggle")!);
       dispatch(namespaceToggle);
       const more = await vi.waitFor(() => root.querySelector<HTMLElement>(".nav-page-more")!);
+      expect(more.textContent).toContain("open the full list");
+      // GH #335: the "+N more" row now means the full All pages view, a navigation.
+      armLeft();
+      before = completion.mock.calls.length;
       dispatch(more);
-      await expectNotCompleted(before);
-      expect(sidebarOpen()).toBe(true);
-      closeSwitcher();
+      await expectCompleted(before);
+      expect(route()).toMatchObject({ kind: "all-pages" });
 
       // Modified rows preserve the semantic surface they opened: Shift replaces
       // the left drawer with the right drawer; middle/new-tab and context menu

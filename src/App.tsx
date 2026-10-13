@@ -7,6 +7,7 @@ import { Sidebar } from "./components/Sidebar";
 import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
+import { AllPages } from "./components/AllPages";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
 const KeyedPdfViewer = lazy(() =>
@@ -298,6 +299,9 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
       </Match>
       <Match when={props.router.route().kind === "conflicts"}>
         <ConflictOverview router={props.router} />
+      </Match>
+      <Match when={props.router.route().kind === "all-pages"}>
+        <AllPages router={props.router} />
       </Match>
     </Switch>
   );
@@ -761,7 +765,7 @@ export function App(): JSX.Element {
     const graphPath = injected || startup || persistedGraphPath();
     dbg(`loading graph: ${graphPath || "(default/configured)"}`);
     try {
-      if (!(window as any).__TINE_LINK_LAUNCH__ || injected) await loadGraphPath(graphPath);
+      await loadGraphPath(graphPath);
       dbg("graph load call returned");
     } catch (e) {
       // No graph configured (fresh install), or it failed to open. Fall through to

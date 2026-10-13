@@ -1,5 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
-import { openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { pageIconPrefix } from "../pageIconBatch";
+import { t } from "../i18n";
+import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
@@ -213,7 +215,7 @@ export function Sidebar(props: {
                           openPageContextMenu(e.clientX, e.clientY, target());
                         }}
                       >
-                        <SidebarTitle text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
+                        <SidebarTitle text={pageIconPrefix(r.name) + (r.name.startsWith("hls__") ? r.name.slice(5) : r.name)} fullTitle={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
                       </div>
                     );
                   }}
@@ -235,6 +237,12 @@ export function Sidebar(props: {
             </Show>
           </div>
           <Show when={showAll() && allGraphPages()}>
+            <div
+              class="nav-item nav-all-pages-open"
+              onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}
+            >
+              {t("pages-all-open-full-list")}
+            </div>
             <For each={allPages().slice(0, ALL_PAGES_CAP)}>
               {(p) => (
                 <div
@@ -254,13 +262,13 @@ export function Sidebar(props: {
                     openPageContextMenu(e.clientX, e.clientY, { name: p.name, pageKind: "page", path: p.path });
                   }}
                 >
-                  <SidebarTitle text={pageLabel()(p)} />
+                  <SidebarTitle text={pageIconPrefix(p.name) + pageLabel()(p)} fullTitle={pageLabel()(p)} />
                 </div>
               )}
             </For>
             <Show when={allPages().length > ALL_PAGES_CAP}>
-              <div class="nav-page nav-page-more" onClick={() => openSwitcher()}>
-                +{allPages().length - ALL_PAGES_CAP} more — search to open…
+              <div class="nav-page nav-page-more" onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}>
+                {t("pages-all-open-more", { count: allPages().length - ALL_PAGES_CAP })}
               </div>
             </Show>
           </Show>
@@ -291,7 +299,7 @@ export function Sidebar(props: {
 // Display name for the active graph = basename of its root folder (OG shows the
 // same). Falls back to "No graph" when none is loaded (e.g. mock/first run).
 function graphDisplayName(): string {
-  const root = graphMeta()?.root;
+  const root = graphMeta()?.display_root ?? graphMeta()?.root;
   if (!root) return "No graph";
   const base = root.replace(/[/\\]+$/, "").split(/[/\\]/).pop();
   return base || root;
@@ -357,7 +365,7 @@ export function GraphSwitcher(props: {
     <div class="graph-switch">
       <button
         class="graph-switch-btn"
-        title={graphMeta()?.root ?? undefined}
+        title={graphMeta()?.display_root ?? graphMeta()?.root ?? undefined}
         onClick={() => setOpen(!open())}
       >
         <svg viewBox="0 0 24 24" class="graph-switch-icon">
@@ -384,7 +392,7 @@ export function GraphSwitcher(props: {
               <div
                 class="ctx-item graph-switch-row"
                 classList={{ active: graph.path === graphMeta()?.root }}
-                title={graph.path}
+                title={graph.display_path ?? graph.path}
                 onContextMenu={(event) => {
                   event.preventDefault();
                   event.stopPropagation();

@@ -164,6 +164,13 @@ export interface PageInventory {
   unreadable?: string[];
 }
 
+/** `page_modified` result: `[graph-relative path, Unix seconds]` for each page
+ *  file whose last-modified time the store holds. A file with no time is absent. */
+export interface PageModified {
+  rev: string;
+  modified: [string, number][];
+}
+
 /** One authoritative Journals-feed transaction.  Cursor fields are ordinal
  * journal days, never counts of returned DTOs (a selected file may vanish). */
 export interface JournalFeedPage {
@@ -512,6 +519,8 @@ export interface GraphMeta {
   scheduled_future_days?: number | null;
   journal_config_diagnostics?: string[];
   root: string;
+  /** Presentation only; root remains the canonical graph identity. */
+  display_root?: string;
   journals_dir: string;
   pages_dir: string;
   preferred_workflow: string; // "now" | "todo"

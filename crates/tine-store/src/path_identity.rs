@@ -9,6 +9,26 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// Refuse Windows-created files in WSL1's backing rootfs: those writes bypass
+/// Linux metadata and can corrupt it. Inspect the resolved parent too, so a
+/// directory junction cannot bypass the refusal. Existing graphs stay openable.
+pub(crate) fn new_graph_root(parent: &Path, name: &str) -> Result<PathBuf, crate::OpenError> {
+    #[cfg(windows)]
+    {
+        let resolved =
+            canonical_existing_path(parent).map_err(|error| crate::OpenError::Io(error.into()))?;
+        if tine_core::graph_paths::is_windows_wsl_rootfs(&parent.to_string_lossy())
+            || tine_core::graph_paths::is_windows_wsl_rootfs(&resolved.to_string_lossy())
+        {
+            return Err(crate::OpenError::CreateFailed {
+                path: parent.to_path_buf(),
+                cause: io::Error::new(io::ErrorKind::InvalidInput, "wsl-rootfs").into(),
+            });
+        }
+    }
+    Ok(parent.join(name))
+}
+
 pub(crate) fn canonical_existing_path(path: &Path) -> io::Result<PathBuf> {
     canonical_existing_path_with(path, |path| fs::canonicalize(path))
 }

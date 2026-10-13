@@ -12,9 +12,8 @@ use tine_core::refs;
 #[cfg(any(test, feature = "test-faults"))]
 use tine_store::SaveOutcome;
 use tine_store::{
-    Area, FileId, FileRev, HostEffect, HostExpected, HostOp, Input, LoadError, PageHost, PageId,
-    PageOperation, PageRead, RenameMap, RenameRefusal, Resolved, RewriteEffect, SaveBase, Store,
-    StoreError, TitleRebind,
+    Area, FileId, FileRev, Input, LoadError, PageHost, PageId, PageOperation, PageRead, RenameMap,
+    RenameRefusal, Resolved, RewriteEffect, SaveBase, Store, StoreError, TitleRebind,
 };
 
 /// A page read or OS source selection failed at the load, identity, or file step.
@@ -1146,9 +1145,9 @@ pub enum RenameOutcome {
 
 /// Rescue a stray page or journal file into a uniquely named normal page.
 /// Its bytes are unchanged and inbound references are not rewritten, matching
-/// v0.6.5 model.rs 1779. A retained writer (STEP3 §7) of the source and the
-/// target: their unsaved input is saved first. Cost O(P + source bytes) per
-/// try; four tries maximum.
+/// v0.6.5 model.rs 1779. With a host, one host operation of the source and
+/// the target (DESIGN §3.1): their unsaved input is saved first. Cost O(P +
+/// source bytes) per try; four tries maximum.
 pub fn rename_file_to_page(
     store: &Store,
     host: Option<&PageHost>,
@@ -1167,34 +1166,76 @@ pub fn rename_file_to_page(
         ext
     );
     let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
-    let discover = || Ok(crate::retained::pages(store, [&src, &to]));
-    crate::retained::reserved(
-        host,
+    // A retained non-portable legacy filename (`pages/A:B.md`) is not a view
+    // claimant but OG loads it as that page: refuse like a live claimant
+    // (external-editor / multi-device graph; master 46a0e8c27).
+    let unclaimed = || {
+        if !existing(refreshed_view(store)?.resolve(name, false)).is_empty()
+            || retained_legacy_page_identity_exists(store, name)?
+        {
+            return Err(error(
+                io::ErrorKind::AlreadyExists,
+                "a page with that name already exists",
+            ));
+        }
+        Ok(())
+    };
+    let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
+    let transaction = |rev| {
+        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+        tx.move_file(&src, rev, &to, None);
+        tx
+    };
+    let Some(running) = host else {
+        // No host: the transaction under the retained-writer route, as before P3.
+        let discover = || Ok(crate::retained::pages(store, [&src, &to]));
+        return crate::retained::reserved(
+            host,
+            Input::Flush,
+            discover,
+            crate::retained::unsaved,
+            |_| {
+                crate::retry_on_conflict("page changed repeatedly during rescue", || {
+                    unclaimed()?;
+                    let (_, rev) = store.read(&src, max).map_err(store_error)?;
+                    Ok(crate::commit_retry(transaction(rev).commit())?.then_some(()))
+                })
+            },
+        );
+    };
+    let mut cleanup_rev = None;
+    let plan = || {
+        unclaimed()?;
+        let (_, rev) = store.read(&src, max).map_err(store_error)?;
+        if store.as_page(&src).is_none() {
+            // C2: destination through the host, source retained until Applied.
+            cleanup_rev = Some(rev.clone());
+        }
+        crate::retained::plan(transaction(rev)).map(Some)
+    };
+    let touched = crate::retained::pages(store, [&src, &to]);
+    crate::retained::operation(
+        running,
         Input::Flush,
-        discover,
+        &touched,
+        "renaming the file",
+        "page changed repeatedly during rescue",
         crate::retained::unsaved,
-        |_| {
-            crate::retry_on_conflict("page changed repeatedly during rescue", || {
-                // A retained non-portable legacy filename (`pages/A:B.md`) is not a view
-                // claimant but OG loads it as that page: refuse like a live claimant
-                // (external-editor / multi-device graph; master 46a0e8c27).
-                if !existing(refreshed_view(store)?.resolve(name, false)).is_empty()
-                    || retained_legacy_page_identity_exists(store, name)?
-                {
-                    return Err(error(
-                        io::ErrorKind::AlreadyExists,
-                        "a page with that name already exists",
-                    ));
-                }
-                let (_, rev) = store
-                    .read(&src, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-                    .map_err(store_error)?;
-                let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-                tx.move_file(&src, rev, &to, None);
-                Ok(crate::commit_retry(tx.commit())?.then_some(()))
-            })
-        },
-    )
+        plan,
+    )?;
+    if let Some(rev) = cleanup_rev {
+        trash_rescue_source(store, &src, rev)?;
+    }
+    Ok(())
+}
+
+/// Post-Applied non-page cleanup. A crash keeps both copies; a changed
+/// source stays recoverable at its original name.
+fn trash_rescue_source(store: &Store, src: &FileId, rev: FileRev) -> io::Result<()> {
+    debug_assert!(store.as_page(src).is_none());
+    let mut tx = store.transaction(None);
+    tx.trash(src, rev, tine_store::TrashIf::Any);
+    crate::tx_error(tx.commit()).map(drop)
 }
 
 /// Merge one source into a survivor, as [`rename_or_merge_page`] merges pages
@@ -1224,6 +1265,20 @@ pub fn merge_pages(
     let dst_id = store
         .as_page(&dst)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
+    let transaction = |survivor: &Survivor| {
+        let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
+        tx.save_page(
+            &[
+                tine_store::EditKind::InsertBlocks,
+                tine_store::EditKind::DeletePage,
+            ],
+            &dst_id,
+            SaveBase::Existing(survivor.dst_rev.clone()),
+            &survivor.doc,
+        );
+        tx.trash(&src, survivor.src_rev.clone(), tine_store::TrashIf::Any);
+        tx
+    };
     let Some(running) = host else {
         // No host: the transaction under the retained-writer route, as before P2.
         let discover = || Ok(vec![src_id.clone(), dst_id.clone()]);
@@ -1235,18 +1290,7 @@ pub fn merge_pages(
             |_| {
                 crate::retry_on_conflict("pages changed repeatedly during merge", || {
                     let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
-                    let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
-                    tx.save_page(
-                        &[
-                            tine_store::EditKind::InsertBlocks,
-                            tine_store::EditKind::DeletePage,
-                        ],
-                        &dst_id,
-                        SaveBase::Existing(survivor.dst_rev),
-                        &survivor.doc,
-                    );
-                    tx.trash(&src, survivor.src_rev, tine_store::TrashIf::Any);
-                    Ok(crate::commit_retry(tx.commit())?.then_some(()))
+                    Ok(crate::commit_retry(transaction(&survivor).commit())?.then_some(()))
                 })
             },
         );
@@ -1257,31 +1301,9 @@ pub fn merge_pages(
     // deletion at relaunch rather than appending the blocks twice.
     let plan = || {
         let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
-        let old = survivor.dst_text.as_bytes();
-        let bytes = store
-            .page_bytes(&dst_id, &survivor.doc, Some(old))
-            .map_err(crate::why_error)?;
-        let expected = |text: String| HostExpected::Bytes(text.into_bytes().into());
-        Ok(Some(HostOp {
-            pages: vec![
-                (
-                    dst_id.clone(),
-                    HostEffect::Write(bytes.into()),
-                    expected(survivor.dst_text),
-                ),
-                (
-                    src_id.clone(),
-                    HostEffect::Delete,
-                    expected(survivor.src_text),
-                ),
-            ],
-            kinds: vec![
-                tine_store::EditKind::InsertBlocks,
-                tine_store::EditKind::DeletePage,
-            ],
-            policy: Input::Flush,
-            moved: Some((dst_id.clone(), src_id.clone())),
-        }))
+        let mut op = crate::retained::plan(transaction(&survivor))?;
+        op.moved = Some((dst_id.clone(), src_id.clone()));
+        Ok(Some(op))
     };
     crate::retained::operation(
         running,
@@ -1298,9 +1320,6 @@ struct Survivor {
     doc: PageDto,
     src_rev: FileRev,
     dst_rev: FileRev,
-    /// The bytes each revision names, which the survivor was computed from.
-    src_text: String,
-    dst_text: String,
 }
 
 /// The survivor page after appending `src`, with `renames` applied to both.
@@ -1359,8 +1378,6 @@ fn merged_survivor(
         doc,
         src_rev,
         dst_rev,
-        src_text,
-        dst_text,
     })
 }
 

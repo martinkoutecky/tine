@@ -12,6 +12,7 @@ icon:: 📂
 	- Choose **Create a new graph** on Welcome, or **New graph…** in the sidebar graph menu. Choose its parent folder on desktop or iOS; Android uses its default graph location.
 	- Enter a **Graph name**. Tine suggests the first unused name: `notes`, `notes-2`, `notes-3`, and so on. The graph is always a child folder of that name, even when the parent is empty. Cancel creates nothing.
 	- An existing empty child folder can be used. A nonempty folder is refused without replacing its files; the name prompt stays open so you can choose another name. Names must be one portable folder name, without path separators, Windows device names, invalid characters, or a trailing dot or space.
+	- On Windows, use `\\wsl.localhost\<distro>\…` for a graph in WSL: Windows access through a distro package's `LocalState\rootfs` can corrupt Linux files, so Tine refuses new graphs there and warns when opening an existing one.
 - ## What Tine reads
 	- The usual layout is `pages/`, `journals/`, `assets/`, and `logseq/config.edn`, but Tine also finds eligible `.md`, `.markdown`, and `.org` pages elsewhere inside the graph.
 	- Root-level and nested pages are named from their file names (or their `title::`) and save back to their exact existing paths. Tine skips hidden/internal trees, assets, publish output, and sync-provider conflict copies; `:hidden` prefixes in `config.edn` are honored too.
@@ -27,7 +28,7 @@ icon:: 📂
 	- If a page changes on disk while you have unsaved edits, Tine overwrites nothing — a banner offers **Review**, which compares your draft with the disk version on the page. The mechanics are in [[Reference/Files, external edits, and backups]].
 	- Syncthing and Dropbox keep working on the folder as before; Tine detects their conflict copies, shows an **N conflicts** badge in the left sidebar, and helps you merge them — also in [[Reference/Files, external edits, and backups]].
 - ## First safety checks
-	- 1. Confirm you opened the graph root: Settings (**t s**) → **Graph** shows the current graph path. In a standard Logseq graph, this is the folder containing `pages/`, `journals/`, and `logseq/config.edn`.
+	- 1. Confirm you opened the graph root: Settings (**t s**) → **Graph** → **Graph folder** shows the current graph path; on desktop, **Show in folder** beside it opens that folder in Finder, File Explorer or your file manager. In a standard Logseq graph, this is the folder containing `pages/`, `journals/`, and `logseq/config.edn`.
 	- 2. Skim [[Reference/Files, external edits, and backups]] now — know where snapshots, conflict copies, and the trash live before you need them.
 	- 3. What you should see: no conflict banner, your existing pages in their original locations, and edits from Tine landing in the same files Logseq reads.
 - ## Where next
