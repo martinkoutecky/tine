@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tine_store::{Input, PageHost, PageId, Store};
 
-use super::client::{open, Conn, Failure};
+use super::client::{dial, Conn, Failure};
 use super::endpoint::{After, Endpoint, Gate, Handler, YieldRequest};
 use super::lease::{hello, Claimed};
 use super::lock::OwnerLock;
@@ -87,7 +87,7 @@ impl Graph {
     }
 
     fn connect(&self) -> Conn {
-        open(&self.paths().socket, &self.root)
+        dial(&self.paths().socket, &self.root)
             .unwrap()
             .expect("an endpoint")
     }
@@ -246,7 +246,7 @@ fn a_handshake_for_another_graph_or_protocol_is_refused() {
     let (_endpoint, _gate) = endpoint(&graph, Arc::new(graph.slot()));
     let other = graph.root.join("pages");
     assert!(matches!(
-        open(&graph.paths().socket, &other),
+        dial(&graph.paths().socket, &other),
         Err(OwnerError::Mismatch(_))
     ));
     let reply = raw(
@@ -292,7 +292,7 @@ fn closing_the_endpoint_removes_its_path_and_drops_its_connections() {
         conn.call("pages", Value::Null),
         Err(Failure::Lost(_))
     ));
-    assert!(open(&graph.paths().socket, &graph.root).unwrap().is_none());
+    assert!(dial(&graph.paths().socket, &graph.root).unwrap().is_none());
 }
 
 #[test]
@@ -672,13 +672,13 @@ fn the_client_checks_the_owners_hello_and_each_replys_id() {
     let socket = graph.paths().socket;
     fake_owner(&socket, owner_hello("/elsewhere", Some("serve")), None);
     assert!(matches!(
-        open(&socket, &graph.root),
+        dial(&socket, &graph.root),
         Err(OwnerError::Mismatch(_))
     ));
     std::fs::remove_file(&socket).unwrap();
     fake_owner(&socket, owner_hello(&root, None), None);
     assert!(matches!(
-        open(&socket, &graph.root),
+        dial(&socket, &graph.root),
         Err(OwnerError::Protocol(_))
     ));
     std::fs::remove_file(&socket).unwrap();
@@ -687,7 +687,7 @@ fn the_client_checks_the_owners_hello_and_each_replys_id() {
         owner_hello(&root, Some("serve")),
         Some(json!({ "id": 99, "ok": {} })),
     );
-    let mut conn = open(&socket, &graph.root).unwrap().unwrap();
+    let mut conn = dial(&socket, &graph.root).unwrap().unwrap();
     assert!(matches!(
         conn.call("pages", Value::Null),
         Err(Failure::Lost(_))
@@ -839,7 +839,7 @@ fn a_connection_accepted_after_a_yields_sweep_is_closed() {
     let mut yielding = graph.connect();
     assert!(yielding.call("owner.yield", Value::Null).is_ok());
     finished.recv_timeout(Duration::from_secs(5)).unwrap();
-    let served = match open(&graph.paths().socket, &graph.root) {
+    let served = match dial(&graph.paths().socket, &graph.root) {
         Ok(Some(mut late)) => late.call("ping", Value::Null).is_ok(),
         _ => false,
     };

@@ -72,13 +72,13 @@ mod unix {
     }
 
     /// `Ok(None)`: no endpoint listens there (none, or a dead one's path).
-    pub(crate) fn open(socket: &Path, root: &Path) -> Result<Option<Conn>, OwnerError> {
-        open_with(socket, root, IO_TIMEOUT, None)
+    pub(crate) fn dial(socket: &Path, root: &Path) -> Result<Option<Conn>, OwnerError> {
+        dial_with(socket, root, IO_TIMEOUT, None)
     }
 
-    /// [`open`] with the handshake bounded by `io` and each reply by
+    /// [`dial`] with the handshake bounded by `io` and each reply by
     /// `replies` (`None`: a reply waits for the work, however long).
-    pub(crate) fn open_with(
+    pub(crate) fn dial_with(
         socket: &Path,
         root: &Path,
         io: Duration,
@@ -195,15 +195,15 @@ impl Conn {
 }
 
 #[cfg(windows)]
-pub(crate) fn open(_socket: &Path, _root: &Path) -> Result<Option<Conn>, OwnerError> {
+pub(crate) fn dial(_socket: &Path, _root: &Path) -> Result<Option<Conn>, OwnerError> {
     Err(OwnerError::Unsupported)
 }
 
 #[cfg(unix)]
-pub(crate) use unix::{open, open_with};
+pub(crate) use unix::{dial, dial_with};
 
 #[cfg(windows)]
-pub(crate) fn open_with(
+pub(crate) fn dial_with(
     _socket: &Path,
     _root: &Path,
     _io: Duration,
@@ -215,7 +215,7 @@ pub(crate) fn open_with(
 /// Reach `root`'s owner, starting `tine serve` when nobody answers (§3.4).
 pub(crate) fn connect(root: &Path) -> Result<Conn, OwnerError> {
     let paths = Namespace::resolve()?.graph(root)?;
-    if let Some(conn) = open(&paths.socket, root)? {
+    if let Some(conn) = dial(&paths.socket, root)? {
         return Ok(conn);
     }
     spawn_serve(root, &paths)?;
@@ -223,7 +223,7 @@ pub(crate) fn connect(root: &Path) -> Result<Conn, OwnerError> {
     let mut pause = Duration::from_millis(100);
     loop {
         std::thread::sleep(pause);
-        if let Some(conn) = open(&paths.socket, root)? {
+        if let Some(conn) = dial(&paths.socket, root)? {
             return Ok(conn);
         }
         if Instant::now() >= deadline {
@@ -246,7 +246,7 @@ pub(crate) fn connect(root: &Path) -> Result<Conn, OwnerError> {
 /// Reach `root`'s owner if one answers; never starts one.
 pub(crate) fn connect_existing(root: &Path) -> Result<Option<Conn>, OwnerError> {
     let paths = Namespace::resolve()?.graph(root)?;
-    open(&paths.socket, root)
+    dial(&paths.socket, root)
 }
 
 /// Start `tine serve <root>` detached from this terminal, its output to the
@@ -303,7 +303,7 @@ pub(crate) fn take_over(
         let spawned = std::thread::Builder::new()
             .name("tine-owner-yield".into())
             .spawn(move || {
-                let result = match open(&socket, &root) {
+                let result = match dial(&socket, &root) {
                     Ok(Some(mut conn)) => conn
                         .call("owner.yield", json!({ "drafts": drafts }))
                         .map(|_| ()),
@@ -403,7 +403,7 @@ fn probe_status(socket: &Path, root: &Path) -> Option<std::sync::mpsc::Receiver<
 /// The owner's `owner.status` state, if one answers within `bound` (each
 /// of the handshake and the reply).
 fn status(socket: &Path, root: &Path, bound: Duration) -> Option<String> {
-    let mut conn = open_with(socket, root, bound, Some(bound)).ok()??;
+    let mut conn = dial_with(socket, root, bound, Some(bound)).ok()??;
     let status = conn.call("owner.status", Value::Null).ok()?;
     conn.shutdown();
     status

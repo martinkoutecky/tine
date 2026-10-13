@@ -24,7 +24,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 use tine_store::{PageHost, Store};
 
-use super::client::open;
+use super::client::dial;
 use super::endpoint::Gate;
 use super::lease::{hello, Claimed};
 use super::lock::OwnerLock;
@@ -145,7 +145,7 @@ impl Fixture {
             )
         };
         let status = |paths: &GraphPaths| {
-            open(&paths.socket, &self.root)
+            dial(&paths.socket, &self.root)
                 .unwrap()
                 .expect("an endpoint")
                 .call("owner.status", Value::Null)
