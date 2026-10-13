@@ -102,6 +102,21 @@ pub(crate) trait Handler: Send + Sync + 'static {
 pub(crate) struct Gate {
     state: Mutex<GateState>,
     changed: Condvar,
+    #[cfg(test)]
+    lifecycle_hook: Mutex<Option<Arc<dyn Fn(LifecycleBoundary) + Send + Sync>>>,
+    #[cfg(test)]
+    close_wait_hook: Mutex<Option<Arc<dyn Fn(&std::sync::mpsc::Receiver<()>) + Send + Sync>>>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LifecycleBoundary {
+    SealWaiting,
+    Sealed,
+    ReplyReady,
+    ReplyWrite,
+    CloseWaiting,
+    BeforeLeaseRelease,
 }
 
 struct GateState {
@@ -139,7 +154,43 @@ impl Gate {
                 progress: None,
             }),
             changed: Condvar::new(),
+            #[cfg(test)]
+            lifecycle_hook: Mutex::new(None),
+            #[cfg(test)]
+            close_wait_hook: Mutex::new(None),
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observe_lifecycle(
+        &self,
+        hook: impl Fn(LifecycleBoundary) + Send + Sync + 'static,
+    ) {
+        *self.lifecycle_hook.lock().unwrap() = Some(Arc::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lifecycle_boundary(&self, boundary: LifecycleBoundary) {
+        let hook = self.lifecycle_hook.lock().unwrap().clone();
+        if let Some(hook) = hook {
+            hook(boundary);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn observe_close_wait(
+        &self,
+        hook: impl Fn(&std::sync::mpsc::Receiver<()>) + Send + Sync + 'static,
+    ) {
+        *self.close_wait_hook.lock().unwrap() = Some(Arc::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn yielder_close_wait(&self, closed: &std::sync::mpsc::Receiver<()>) {
+        let hook = self.close_wait_hook.lock().unwrap().clone();
+        if let Some(hook) = hook {
+            hook(closed);
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, GateState> {
@@ -379,6 +430,8 @@ mod unix {
         pub(crate) fn seal(&self, except: Option<u64>) {
             let (ack, sealed) = mpsc::channel();
             if self.commands.send(Command::Seal { except, ack }).is_ok() {
+                #[cfg(test)]
+                self.gate.lifecycle_boundary(LifecycleBoundary::SealWaiting);
                 let _ = sealed.recv();
             }
         }
@@ -431,6 +484,8 @@ mod unix {
                             .unwrap_or_else(|e| e.into_inner())
                             .seal(except);
                         listener.take();
+                        #[cfg(test)]
+                        shared.gate.lifecycle_boundary(LifecycleBoundary::Sealed);
                         let _ = ack.send(());
                     }
                     Command::Shutdown => {
@@ -631,6 +686,12 @@ mod unix {
                 },
                 Err(body) => error(request.id, body),
             };
+            #[cfg(test)]
+            if after == After::Close {
+                shared
+                    .gate
+                    .lifecycle_boundary(LifecycleBoundary::ReplyWrite);
+            }
             let sent = send(&mut writer, &reply);
             if after == After::Close {
                 #[cfg(test)]

@@ -1,8 +1,10 @@
 //! Lifecycle transition boundaries; this is an out-of-line test module.
+use super::super::endpoint::LifecycleBoundary;
 use super::*;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
+use std::sync::Mutex;
 use std::time::Instant;
 
 pub(super) fn wait_for(mut condition: impl FnMut() -> bool) {
@@ -125,6 +127,19 @@ fn i_b_yield_waits_for_accepted_registration_and_closes_all_peers() {
     }
     let (accepted, resume) = serving.lease.pause_next_accept();
     let gate = serving.gate.clone();
+    let (progress, progressed) = mpsc::channel();
+    let seal_completed = Mutex::new(false);
+    gate.observe_lifecycle(move |boundary| match boundary {
+        LifecycleBoundary::SealWaiting => {
+            progress.send(boundary).unwrap();
+        }
+        LifecycleBoundary::Sealed => *seal_completed.lock().unwrap() = true,
+        LifecycleBoundary::ReplyReady | LifecycleBoundary::ReplyWrite => assert!(
+            *seal_completed.lock().unwrap(),
+            "yield reply crossed the accept thread's seal barrier"
+        ),
+        _ => {}
+    });
     let finished = serving.run();
     let mut mid_hello = UnixStream::connect(graph.paths().socket).unwrap();
     mid_hello.write_all(b"{\"tine\":").unwrap();
@@ -140,11 +155,16 @@ fn i_b_yield_waits_for_accepted_registration_and_closes_all_peers() {
         "stopping",
         "status must remain available until the accept thread seals"
     );
-    // A reply cannot cross the accepted-but-unregistered boundary.
-    let early = reply.recv_timeout(Duration::from_millis(200));
+    // Accept is still paused, so its seal ack cannot exist. This event
+    // establishes coordinator progress, rather than inferring it from time.
+    assert_eq!(
+        progressed.recv_timeout(Duration::from_secs(5)).unwrap(),
+        LifecycleBoundary::SealWaiting
+    );
+    let early = reply.try_recv();
     resume.send(()).unwrap();
     assert!(
-        matches!(early, Err(mpsc::RecvTimeoutError::Timeout)),
+        matches!(early, Err(mpsc::TryRecvError::Empty)),
         "yield replied before accepted registration completed: {early:?}"
     );
     assert!(reply.recv_timeout(Duration::from_secs(3)).unwrap().is_ok());
@@ -162,6 +182,36 @@ fn i_c_yielding_transport_is_closed_when_serve_returns_and_unlocks() {
     let serving = Serving::new(&graph);
     let (written, resume) = serving.lease.pause_yielder_close();
     let gate = serving.gate.clone();
+    let (progress, progressed) = mpsc::channel();
+    let written = Mutex::new(written);
+    gate.observe_close_wait(move |closed| {
+        // Make even an early acknowledgement visible: the worker has
+        // reached its close pause before main probes the real ack channel.
+        written
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            matches!(closed.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "main received close ack before yielder shutdown"
+        );
+        progress.send(LifecycleBoundary::CloseWaiting).unwrap();
+    });
+    let slot = serving.slot.clone();
+    let observed_gate = Arc::downgrade(&gate);
+    gate.observe_lifecycle(move |boundary| match boundary {
+        LifecycleBoundary::ReplyWrite => assert!(
+            !matches!(&*slot.host.read().unwrap(), PageHostSlot::Running(_)),
+            "host still running at yield reply-write boundary"
+        ),
+        LifecycleBoundary::BeforeLeaseRelease => assert_eq!(
+            observed_gate.upgrade().unwrap().in_flight(),
+            0,
+            "main reached lease release before yielder closure"
+        ),
+        _ => {}
+    });
     let finished = serving.run();
     let mut peer = UnixStream::connect(graph.paths().socket).unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
@@ -186,7 +236,10 @@ fn i_c_yielding_transport_is_closed_when_serve_returns_and_unlocks() {
     writeln!(peer, "{}", json!({"id":1, "verb":"owner.yield", "args":{}})).unwrap();
     let reply: Value = serde_json::from_slice(&read_line(&mut peer)).unwrap();
     assert_eq!(reply["ok"]["yielded"], true);
-    written.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(
+        progressed.recv_timeout(Duration::from_secs(5)).unwrap(),
+        LifecycleBoundary::CloseWaiting
+    );
     assert_eq!(
         gate.in_flight(),
         1,
@@ -237,4 +290,40 @@ fn i_d_idle_endpoint_drop_never_allocates_a_wake_socket() {
         .recv_timeout(Duration::from_secs(1))
         .expect("idle accept join hung");
     assert!(start.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn disconnected_yielder_does_not_strand_coordinator() {
+    use super::super::endpoint::{Stop, YieldHandle};
+    let graph = Graph::new();
+    let mut serving = Serving::new(&graph);
+    let slot = serving.slot.clone();
+    let (stop, stopped) = mpsc::channel();
+    serving.stopped = stopped;
+    let (verdict, reply) = mpsc::channel();
+    let (closed, ack) = mpsc::channel();
+    assert!(serving.gate.claim_stop());
+    // Model a worker dying after submitting its handle: its close-ack
+    // sender disappears without ever acknowledging closure.
+    drop(closed);
+    stop.send(Stop {
+        yielder: Some(YieldHandle {
+            id: 0,
+            verdict,
+            closed: ack,
+        }),
+    })
+    .unwrap();
+    let finished = serving.run();
+    assert!(reply.recv_timeout(Duration::from_secs(5)).unwrap().is_ok());
+    finished
+        .recv_timeout(Duration::from_secs(5))
+        .expect("dead yielder stranded main");
+    assert!(!matches!(
+        &*slot.host.read().unwrap(),
+        PageHostSlot::Running(_)
+    ));
+    let _next = OwnerLock::try_take(&graph.paths().lock, "next")
+        .unwrap()
+        .expect("dead yielder retained the lease");
 }

@@ -169,13 +169,19 @@ fn stop_sequence(slot: &GraphSlot, gate: &Gate, lease: lease::Lease, yielder: Op
     stop_host(slot, gate);
     lease.seal(yielder.as_ref().map(|yielder| yielder.id));
     if let Some(yielder) = yielder {
+        #[cfg(test)]
+        gate.lifecycle_boundary(super::endpoint::LifecycleBoundary::ReplyReady);
         let _ = yielder
             .verdict
             .send(Ok(ok("yield", json!({ "yielded": true }))));
         // The worker's bounded write, explicit shutdown, registry removal
         // and admission release precede this acknowledgement.
+        #[cfg(test)]
+        gate.yielder_close_wait(&yielder.closed);
         let _ = yielder.closed.recv();
     }
+    #[cfg(test)]
+    gate.lifecycle_boundary(super::endpoint::LifecycleBoundary::BeforeLeaseRelease);
     slot.store.close();
     drop(lease);
 }
