@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tine_core::pdf::{self, Highlight};
 use tine_graph_features::pdf as features_pdf;
@@ -400,7 +400,16 @@ fn an_annotation_page_changed_after_the_plan_is_not_overwritten() {
             )
         },
         || {
-            let saved = fs::read_to_string(root.join("assets/paper.edn")).unwrap();
+            // `while_held`'s timeout only proves the writer has not returned;
+            // under load it may not have reached the sidecar save yet.
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let saved = loop {
+                let saved = fs::read_to_string(root.join("assets/paper.edn")).unwrap();
+                if saved.contains(B) || Instant::now() >= deadline {
+                    break saved;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            };
             assert!(
                 saved.contains(B),
                 "§3.4 pre: the sidecar is saved before the page's operation"
