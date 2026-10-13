@@ -475,6 +475,20 @@
     },
     {
         "type": "file",
+        "url": "https://registry.npmjs.org/@fluent/bundle/-/bundle-0.19.1.tgz",
+        "sha512": "49624b66b3da9833ec265145396d679203748f4adb3db9927662b45c0a17972a8a89e2ed315978bf39e0dda479a702a8531d2c72e83cf98636a1cb777dd7f2f4",
+        "dest-filename": "4b66b3da9833ec265145396d679203748f4adb3db9927662b45c0a17972a8a89e2ed315978bf39e0dda479a702a8531d2c72e83cf98636a1cb777dd7f2f4",
+        "dest": "flatpak-node/npm-cache/_cacache/content-v2/sha512/49/62"
+    },
+    {
+        "type": "file",
+        "url": "https://registry.npmjs.org/@fluent/syntax/-/syntax-0.19.0.tgz",
+        "sha512": "e43daa56966b8298eda94e1e34e7161a9d609d40a08df33ebca184db2d3790a37acf910186dc74a9d4456e0f10b8d363f305cda17f77289a186fe36aa31b3099",
+        "dest-filename": "aa56966b8298eda94e1e34e7161a9d609d40a08df33ebca184db2d3790a37acf910186dc74a9d4456e0f10b8d363f305cda17f77289a186fe36aa31b3099",
+        "dest": "flatpak-node/npm-cache/_cacache/content-v2/sha512/e4/3d"
+    },
+    {
+        "type": "file",
         "url": "https://registry.npmjs.org/@fontsource-variable/noto-emoji/-/noto-emoji-5.2.12.tgz",
         "sha512": "6e028a55dd4469373e13ca3a5205d6db78951018f6cc29d1aea5e926e21f590a7dc78689e0d2a6ed2e850f15aee0edd28efc1836be45d9d7e08aaa8cc45c0fc9",
         "dest-filename": "8a55dd4469373e13ca3a5205d6db78951018f6cc29d1aea5e926e21f590a7dc78689e0d2a6ed2e850f15aee0edd28efc1836be45d9d7e08aaa8cc45c0fc9",
@@ -3389,6 +3403,12 @@
     },
     {
         "type": "inline",
+        "contents": "0ac2ba59e77a2467df453e6ad64626c0b97dd372\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/@fluent/syntax/-/syntax-0.19.0.tgz\", \"integrity\": \"sha512-5D2qVpZrgpjtqU4eNOcWGp1gnUCgjfM+vKGE2y03kKN6z5EBhtx0qdRFbg8QuNNj8wXNoX93KJoYb+NqoxswmQ==\", \"time\": 0, \"size\": 31018, \"metadata\": {\"url\": \"https://registry.npmjs.org/@fluent/syntax/-/syntax-0.19.0.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
+        "dest-filename": "b3c68d6faa13bea27fed08b26586ae396d0667fbb279d4ac72c123ac4aad",
+        "dest": "flatpak-node/npm-cache/_cacache/index-v5/b8/b9"
+    },
+    {
+        "type": "inline",
         "contents": "0b4aa97ceb87a4f2fa0e83d6bbb75c1911ccb2a1\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/@napi-rs/canvas-linux-arm64-gnu/-/canvas-linux-arm64-gnu-0.1.100.tgz\", \"integrity\": \"sha512-rDxgxRu69RvDlX/bh9o22DxLsGr8EqsNgotL9+RwQE1S0b0cqeatqsw6aW45mukm0B42DIAaAacKaYQ8cqS1nw==\", \"time\": 0, \"size\": 12639500, \"metadata\": {\"url\": \"https://registry.npmjs.org/@napi-rs/canvas-linux-arm64-gnu/-/canvas-linux-arm64-gnu-0.1.100.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
         "dest-filename": "1eb0f2f3746a99bde07a808fd5bd5fffe3c78652fb5dc044389ca6babc16",
         "dest": "flatpak-node/npm-cache/_cacache/index-v5/a0/b3"
@@ -4220,6 +4240,12 @@
         "contents": "60c3c20e861fd0e6997075e2e391ec83ce85555b\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/std-env/-/std-env-3.10.0.tgz\", \"integrity\": \"sha512-5GS12FdOZNliM5mAOxFRg7Ir0pWz8MdpYm6AY6VPkGpbA7ZzmbzNcBJQ0GPvvyWgcY7QAhCgf9Uy89I03faLkg==\", \"time\": 0, \"size\": 6483, \"metadata\": {\"url\": \"https://registry.npmjs.org/std-env/-/std-env-3.10.0.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
         "dest-filename": "946b615093c0934b0885f755ce9896b1659ae82a6d29fdb3bf5508540f8d",
         "dest": "flatpak-node/npm-cache/_cacache/index-v5/16/57"
+    },
+    {
+        "type": "inline",
+        "contents": "612e7687701ea71a96b88d726f9b1cf538ad7391\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/@fluent/bundle/-/bundle-0.19.1.tgz\", \"integrity\": \"sha512-SWJLZrPamDPsJlFFOW1nkgN0j0rbPbmSdmK0XAoXlyqKieLtMVl4vzng3aR5pwKoUx0scug8+YY2oct3fdfy9A==\", \"time\": 0, \"size\": 33539, \"metadata\": {\"url\": \"https://registry.npmjs.org/@fluent/bundle/-/bundle-0.19.1.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
+        "dest-filename": "2b1ad9143a53258f37d107839418a1840ed06d479739f4a78983b5338af8",
+        "dest": "flatpak-node/npm-cache/_cacache/index-v5/69/09"
     },
     {
         "type": "inline",
