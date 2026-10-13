@@ -56,7 +56,7 @@ import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
 import { annotationInfoForBlock, pdfAssetFile, pdfFileFromPreBlock } from "../editor/annotation";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { createLongPress } from "./longPress";
+import { createLongPress, isLongPressContextMenu } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
@@ -254,6 +254,7 @@ const PEEK_BLOCK_CAP = 50;
 
 function createPeekBridge(disabled: () => boolean) {
   const [open, setOpen] = createSignal(false);
+  let touchOpen = false;
   let openT: ReturnType<typeof setTimeout> | undefined;
   let closeT: ReturnType<typeof setTimeout> | undefined;
   const clearOpen = () => {
@@ -278,6 +279,7 @@ function createPeekBridge(disabled: () => boolean) {
     openT = setTimeout(() => setOpen(true), PEEK_OPEN_MS);
   };
   const anchorLeave = () => {
+    if (touchOpen) return;
     clearOpen();
     if (disabled()) return;
     clearClose();
@@ -288,11 +290,13 @@ function createPeekBridge(disabled: () => boolean) {
     clearClose();
   };
   const popupLeave = () => {
+    if (touchOpen) return;
     if (disabled()) return;
     clearClose();
     closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
   };
   const dismiss = () => {
+    touchOpen = false;
     clearOpen();
     clearClose();
     setOpen(false);
@@ -301,7 +305,14 @@ function createPeekBridge(disabled: () => boolean) {
     clearOpen();
     clearClose();
   });
-  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss };
+  const hold = () => {
+    if (disabled()) return;
+    clearOpen();
+    clearClose();
+    touchOpen = true;
+    setOpen(true);
+  };
+  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold };
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
@@ -346,10 +357,9 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
   // guide pages and links already inside a peek never arm another preview.
   const peek = createPeekBridge(() => insidePeek || isGuidePageName(targetName()));
-  // Mobile: a deliberate long-press raises the same context menu desktop
-  // right-click gives (GH #231). Quick tap, scroll, and text selection behave
-  // as before; the recognizer cancels on movement/release/cancel and only
-  // arms on primary touch/pen pointers.
+  // GH #655: native mobile holds open the shared page preview. Reuse the
+  // deliberate-hold recognizer and its compatibility-click ownership; desktop
+  // right-click and touch on desktop still use the page context menu.
   const longPress = createLongPress(() => anchorEl);
   onCleanup(longPress.dispose);
   const [previewResource] = createResource(
@@ -386,7 +396,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
-          if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
+          if (isMobilePlatform && isLongPressContextMenu(e)) peek.hold();
+          else if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
         }}
       >
         <Show when={icon()}>

@@ -1,6 +1,9 @@
 ## Commands: the command table (keybindings.ts). A command's message id is
 ## `command-` + its id with `/` replaced by `-` (D4).
 command-go-search = Search / quick switch
+navigation-sidebar-title = Toggle sidebar (t l)
+navigation-search-title = Search (Ctrl+K)
+navigation-search = Search
 command-go-search-current-page = Search blocks in current page
 command-guide-open = Open Guide
 command-go-find-in-page = Find in page

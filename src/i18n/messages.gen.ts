@@ -104,6 +104,9 @@ export interface MessageArgs {
   "links-open-custom-scheme-title": { "scheme": string | number };
   "links-outside-graph-title": {};
   "media-youtube-timestamp-seek": {};
+  "navigation-search": {};
+  "navigation-search-title": {};
+  "navigation-sidebar-title": {};
   "pages-all-column-journal-date": {};
   "pages-all-column-page": {};
   "pages-all-column-updated": {};
