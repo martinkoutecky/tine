@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use tine_store::{Input, PageHost, PageId, Store};
 
 use super::client::{open, Conn, Failure};
-use super::endpoint::{After, Endpoint, Gate, Handler};
+use super::endpoint::{After, Endpoint, Gate, Handler, YieldRequest};
 use super::lease::{hello, Claimed};
 use super::lock::OwnerLock;
 use super::namespace::GraphPaths;
@@ -21,6 +21,9 @@ use super::OwnerError;
 use crate::state::{GraphRegistry, GraphSlot, PageHostSlot};
 
 const UUID: &str = "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f";
+
+#[path = "owner_tests/lifecycle_tests.rs"]
+mod lifecycle;
 
 struct Graph {
     _dir: tempfile::TempDir,
@@ -94,7 +97,11 @@ impl Graph {
 struct Owner(Arc<GraphSlot>);
 
 impl Handler for Owner {
-    fn answer_request(&self, request: &Request) -> (Result<Value, ErrorBody>, After) {
+    fn answer_request(
+        &self,
+        request: &Request,
+        _yielder: &mut YieldRequest,
+    ) -> (Result<Value, ErrorBody>, After) {
         (super::verbs::answer_verb(&self.0, request), After::Continue)
     }
 
@@ -110,7 +117,6 @@ fn endpoint(graph: &Graph, slot: Arc<GraphSlot>) -> (Endpoint, Arc<Gate>) {
         hello(&graph.root, "serve"),
         gate.clone(),
         Arc::new(Owner(slot)),
-        None,
     )
     .unwrap();
     (endpoint, gate)
@@ -312,6 +318,11 @@ fn the_app_lease_follows_the_host_through_retirement_and_adoption() {
     registry.bind("graph-1".into(), old.clone()).unwrap();
     let mut conn = graph.connect();
     assert!(conn.call("pages", Value::Null).is_ok());
+    assert_eq!(code(conn.call("owner.yield", Value::Null)), "refused");
+    assert!(
+        conn.call("pages", Value::Null).is_ok(),
+        "the app never claims a yield stop"
+    );
 
     // A reservation keeps the host from stopping until it is adopted.
     let reservation = match &*old.host.read().unwrap() {
@@ -359,7 +370,7 @@ fn the_app_lease_follows_the_host_through_retirement_and_adoption() {
             std::time::Instant::now() < deadline,
             "the lease is never released"
         );
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::yield_now();
     };
     assert!(
         !paths.socket.exists(),
@@ -373,54 +384,41 @@ fn the_app_lease_follows_the_host_through_retirement_and_adoption() {
 /// the host stopped, then the reply, then the owner exits.
 #[test]
 fn serve_yields_only_into_its_own_draft_namespace() {
-    use super::serve::ServeOwner;
     use super::wire::Drafts;
     let graph = Graph::new();
-    let slot = Arc::new(graph.slot());
     let drafts = Drafts {
         app_data: graph.app_data.display().to_string(),
         graph_id: "test-graph".into(),
     };
-    let owner = ServeOwner {
-        slot: slot.clone(),
-        gate: Gate::new(),
-        root: graph.root.clone(),
-        drafts: drafts.clone(),
-    };
-    let ask = |args: Value| {
-        owner.answer_request(&Request {
-            id: 1,
-            verb: "owner.yield".into(),
-            args,
-        })
-    };
+    let serving = lifecycle::Serving::new(&graph);
+    let slot = serving.slot.clone();
+    let gate = serving.gate.clone();
+    let finished = serving.run();
+    let mut conn = graph.connect();
     let elsewhere = json!({ "drafts": { "app_data": "/elsewhere", "graph_id": "test-graph" } });
-    let (refused, after) = ask(elsewhere);
-    let body = refused.unwrap_err();
+    let Err(Failure::Owner(body)) = conn.call("owner.yield", elsewhere) else {
+        panic!("expected refusal")
+    };
     assert_eq!(body.code, "refused");
     assert_eq!(body.detail.unwrap()["reason"], "draft-namespace");
-    assert!(matches!(after, After::Continue));
-    assert_eq!(
-        owner.gate.state(),
-        "serving",
-        "a refused yield keeps serving"
-    );
+    assert_eq!(gate.state(), "serving", "a refused yield keeps serving");
     assert!(matches!(
         &*slot.host.read().unwrap(),
         PageHostSlot::Running(_)
     ));
     // Args are an object; fields this owner does not know are ignored (§2.4).
-    let (bad, _) = ask(json!([drafts]));
-    assert_eq!(bad.unwrap_err().code, "bad-args");
+    assert_eq!(code(conn.call("owner.yield", json!([drafts]))), "bad-args");
 
-    let (yielded, after) = ask(json!({ "drafts": drafts }));
-    assert_eq!(yielded.unwrap()["yielded"], true);
-    assert!(matches!(after, After::Exit));
+    let yielded = conn
+        .call("owner.yield", json!({ "drafts": drafts }))
+        .unwrap();
+    assert_eq!(yielded["yielded"], true);
+    finished.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(
         !matches!(&*slot.host.read().unwrap(), PageHostSlot::Running(_)),
         "the host stopped before the reply"
     );
-    assert_eq!(owner.gate.state(), "stopping", "admits nothing more");
+    assert_eq!(gate.state(), "stopping", "admits nothing more");
 }
 
 /// §1: the namespace is a private directory of this account, and a path
@@ -533,20 +531,22 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
     );
 }
 
-/// An owner whose `slow` request holds until released and whose `exit`
-/// yields, as `tine serve`'s `owner.yield` does.
+/// An owner whose `slow` request holds until released.
 struct Holding {
     release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
 impl Handler for Holding {
-    fn answer_request(&self, request: &Request) -> (Result<Value, ErrorBody>, After) {
+    fn answer_request(
+        &self,
+        request: &Request,
+        _yielder: &mut YieldRequest,
+    ) -> (Result<Value, ErrorBody>, After) {
         match request.verb.as_str() {
             "slow" => {
                 let _ = self.release.lock().unwrap().recv();
                 (Ok(json!({})), After::Continue)
             }
-            "exit" => (Ok(json!({})), After::Exit),
             _ => (Ok(json!({})), After::Continue),
         }
     }
@@ -566,7 +566,6 @@ fn holding(graph: &Graph) -> (Endpoint, Arc<Gate>, std::sync::mpsc::Sender<()>) 
         Arc::new(Holding {
             release: std::sync::Mutex::new(released),
         }),
-        None,
     )
     .unwrap();
     (endpoint, gate, release)
@@ -579,33 +578,31 @@ fn a_stop_settles_admitted_work_and_only_resumed_admission_cuts_it_short() {
     let (_endpoint, gate, release) = holding(&graph);
     let mut conn = graph.connect();
     let slow = std::thread::spawn(move || conn.call("slow", Value::Null).is_ok());
-    while gate.in_flight() == 0 {
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    lifecycle::wait_for(|| gate.in_flight() == 1);
     gate.pause();
     let settling = {
         let gate = gate.clone();
         std::thread::spawn(move || gate.settle(0))
     };
-    std::thread::sleep(Duration::from_millis(300));
+    lifecycle::wait_for(|| gate.is_settling());
     assert!(!settling.is_finished(), "settled with work in flight");
     release.send(()).unwrap();
+    lifecycle::wait_for(|| settling.is_finished());
     settling.join().unwrap();
     assert!(slow.join().unwrap());
     // An adoption resumes admission: a settle in progress returns.
     gate.resume();
     let mut conn = graph.connect();
     let slow = std::thread::spawn(move || conn.call("slow", Value::Null).is_ok());
-    while gate.in_flight() == 0 {
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    lifecycle::wait_for(|| gate.in_flight() == 1);
     gate.pause();
     let settling = {
         let gate = gate.clone();
         std::thread::spawn(move || gate.settle(0))
     };
-    std::thread::sleep(Duration::from_millis(100));
+    lifecycle::wait_for(|| gate.is_settling());
     gate.resume();
+    lifecycle::wait_for(|| settling.is_finished());
     settling.join().unwrap();
     release.send(()).unwrap();
     assert!(slow.join().unwrap());
@@ -615,13 +612,14 @@ fn a_stop_settles_admitted_work_and_only_resumed_admission_cuts_it_short() {
 fn a_yield_closes_the_other_connections_before_it_replies() {
     // Review CODE-1 F1 / PROTOCOL §4.3.
     let graph = Graph::new();
-    let (_endpoint, _gate, _release) = holding(&graph);
+    let finished = lifecycle::Serving::new(&graph).run();
     let mut other = graph.connect();
-    assert!(other.call("ping", Value::Null).is_ok());
+    assert!(other.call("pages", Value::Null).is_ok());
     let mut yielding = graph.connect();
-    assert!(yielding.call("exit", Value::Null).is_ok());
+    assert!(yielding.call("owner.yield", Value::Null).is_ok());
+    finished.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(matches!(
-        other.call("ping", Value::Null),
+        other.call("pages", Value::Null),
         Err(Failure::Lost(_))
     ));
 }
@@ -759,6 +757,7 @@ fn a_second_yield_is_refused_so_the_first_settles() {
     use super::serve::ServeOwner;
     let graph = Graph::new();
     let slot = Arc::new(graph.slot());
+    let (stops, stopped) = std::sync::mpsc::channel();
     let owner = Arc::new(ServeOwner {
         slot: slot.clone(),
         gate: Gate::new(),
@@ -767,6 +766,7 @@ fn a_second_yield_is_refused_so_the_first_settles() {
             app_data: graph.app_data.display().to_string(),
             graph_id: "test-graph".into(),
         },
+        stops,
     });
     let yield_request = || Request {
         id: 1,
@@ -780,18 +780,32 @@ fn a_second_yield_is_refused_so_the_first_settles() {
     {
         let (owner, request) = (owner.clone(), yield_request());
         std::thread::spawn(move || {
-            let (result, after) = owner.answer_request(&request);
+            let mut yielder = YieldRequest::new(0);
+            let (result, after) = owner.answer_request(&request, &mut yielder);
             drop(first);
-            let _ = done.send((result.is_ok(), after == After::Exit));
+            yielder.acknowledge_closed();
+            let _ = done.send((result.is_ok(), after == After::Close));
         });
     }
-    while owner.gate.state() == "serving" {
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    let (refused, after) = owner.answer_request(&yield_request());
+    let stop = stopped.recv_timeout(Duration::from_secs(5)).unwrap();
+    let (refused, after) = owner.answer_request(&yield_request(), &mut YieldRequest::new(1));
     assert_eq!(refused.unwrap_err().code, "busy");
     assert_eq!(after, After::Continue);
     drop(second);
+    owner.gate.settle(1);
+    let yielder = stop.yielder.unwrap();
+    yielder
+        .verdict
+        .send(Ok(json!({ "yielded": true })))
+        .unwrap();
+    yielder.closed.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(
+        matches!(
+            stopped.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ),
+        "a competing yield scheduled another stop sequence"
+    );
     assert_eq!(
         finished.recv_timeout(Duration::from_secs(30)),
         Ok((true, true)),
@@ -821,9 +835,10 @@ fn a_stop_is_claimed_once_and_never_reopened() {
 fn a_connection_accepted_after_a_yields_sweep_is_closed() {
     // Review CODE-2 #3: the sweep seals registration.
     let graph = Graph::new();
-    let (_endpoint, _gate, _release) = holding(&graph);
+    let finished = lifecycle::Serving::new(&graph).run();
     let mut yielding = graph.connect();
-    assert!(yielding.call("exit", Value::Null).is_ok());
+    assert!(yielding.call("owner.yield", Value::Null).is_ok());
+    finished.recv_timeout(Duration::from_secs(5)).unwrap();
     let served = match open(&graph.paths().socket, &graph.root) {
         Ok(Some(mut late)) => late.call("ping", Value::Null).is_ok(),
         _ => false,

@@ -9,7 +9,7 @@ use std::sync::{Arc, RwLock, Weak};
 
 use serde_json::{json, Value};
 
-use super::endpoint::{busy, After, Endpoint, Gate, Handler};
+use super::endpoint::{busy, After, Endpoint, Gate, Handler, YieldRequest};
 use super::lock::OwnerLock;
 use super::namespace::{GraphPaths, Namespace};
 use super::wire::{ok, Drafts, ErrorBody, Hello, Request, PROTOCOL};
@@ -68,15 +68,8 @@ impl Claimed {
     /// Open the endpoint, after the host started. A bind failure keeps the
     /// lock (still the owner, so no second host) and opens no endpoint:
     /// no endpoint, no serving (§3.5).
-    pub(crate) fn serve(
-        self,
-        hello: Hello,
-        gate: Arc<Gate>,
-        handler: Arc<dyn Handler>,
-        exit: Option<std::sync::mpsc::Sender<()>>,
-    ) -> Lease {
-        let endpoint = match Endpoint::bind(&self.paths.socket, hello, gate.clone(), handler, exit)
-        {
+    pub(crate) fn serve(self, hello: Hello, gate: Arc<Gate>, handler: Arc<dyn Handler>) -> Lease {
+        let endpoint = match Endpoint::bind(&self.paths.socket, hello, gate.clone(), handler) {
             Ok(endpoint) => Some(endpoint),
             Err(error) => {
                 crate::debug::diag_private("owner-endpoint-unavailable", &error.to_string());
@@ -98,19 +91,37 @@ impl Claimed {
             route: route.clone(),
             root: slot.root_key.clone(),
         });
-        let mut lease = self.serve(hello(&slot.root_key, "app"), Gate::new(), handler, None);
+        let mut lease = self.serve(hello(&slot.root_key, "app"), Gate::new(), handler);
         lease.route = Some(route);
         lease
     }
 }
 
 impl Lease {
+    #[cfg(all(test, unix))]
+    pub(crate) fn pause_yielder_close(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        self.endpoint.as_ref().unwrap().pause_yielder_close()
+    }
+    #[cfg(all(test, unix))]
+    pub(crate) fn pause_next_accept(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        self.endpoint.as_ref().unwrap().pause_next_accept()
+    }
     pub(crate) fn gate(&self) -> &Arc<Gate> {
         &self.gate
     }
 
     pub(crate) fn has_endpoint(&self) -> bool {
         self.endpoint.is_some()
+    }
+
+    pub(crate) fn seal(&self, except: Option<u64>) {
+        if let Some(endpoint) = &self.endpoint {
+            endpoint.seal(except);
+        }
     }
 
     /// Requests now go to `slot` (an adoption moved the host there), and
@@ -134,7 +145,11 @@ struct AppOwner {
 }
 
 impl Handler for AppOwner {
-    fn answer_request(&self, request: &Request) -> (Result<Value, ErrorBody>, After) {
+    fn answer_request(
+        &self,
+        request: &Request,
+        _yielder: &mut YieldRequest,
+    ) -> (Result<Value, ErrorBody>, After) {
         if request.verb == "owner.yield" {
             let mut body = ErrorBody::new(
                 "refused",

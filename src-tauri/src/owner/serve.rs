@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tine_store::{OpenOptions, Store};
 
-use super::endpoint::{After, Gate, Handler};
+use super::endpoint::{After, Gate, Handler, Stop, YieldHandle, YieldRequest};
 use super::lease::{self, Claim};
 use super::wire::{ok, Drafts, ErrorBody, Request};
 use super::OwnerError;
@@ -111,7 +111,7 @@ pub(crate) fn serve_graph(graph: &Path) -> Result<(), ServeFailure> {
     let host = crate::graph::launch_host(&slot.store, &app_data, &root, |_mail| {})?;
     *slot.host.write().unwrap() = PageHostSlot::Running(host);
     let gate = Gate::new();
-    let (exit, exited) = mpsc::channel();
+    let (stops, stopped) = mpsc::channel();
     let owner = Arc::new(ServeOwner {
         slot: slot.clone(),
         gate: gate.clone(),
@@ -120,41 +120,64 @@ pub(crate) fn serve_graph(graph: &Path) -> Result<(), ServeFailure> {
             app_data: app_data.display().to_string(),
             graph_id,
         },
+        stops,
     });
-    let lease = claimed.serve(
-        lease::hello(&root, "serve"),
-        gate.clone(),
-        owner,
-        Some(exit),
-    );
+    let lease = claimed.serve(lease::hello(&root, "serve"), gate.clone(), owner);
     if !lease.has_endpoint() {
         stop_host(&slot, &gate);
         slot.store.close();
         return Err("cannot open the command endpoint".into());
     }
     eprintln!("tine serve: owning {}", root.display());
-    loop {
-        match exited.recv_timeout(Duration::from_secs(5)) {
-            // Yielded: the host has stopped and the reply went out.
-            Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+    serve_until_stop(&slot, &gate, lease, stopped, IDLE_EXIT);
+    eprintln!("tine serve: released {}", root.display());
+    Ok(())
+}
+
+pub(super) fn serve_until_stop(
+    slot: &GraphSlot,
+    gate: &Gate,
+    lease: lease::Lease,
+    stopped: mpsc::Receiver<Stop>,
+    idle: Duration,
+) {
+    let yielder = loop {
+        match stopped.recv_timeout(Duration::from_secs(5)) {
+            Ok(stop) => break stop.yielder,
+            Err(RecvTimeoutError::Disconnected) => {
+                if gate.claim_stop() {
+                    break None;
+                }
+            }
             Err(RecvTimeoutError::Timeout) => {
                 bound_start_log();
                 // Claimed only with nothing admitted, in one step: no
                 // request runs past this, and a yield's stop is never
                 // reopened (review CODE-2 #2).
-                if gate.claim_idle_stop(IDLE_EXIT) {
-                    stop_host(&slot, &gate);
-                    break;
+                if gate.claim_idle_stop(idle) {
+                    break None;
                 }
             }
         }
+    };
+    stop_sequence(slot, gate, lease, yielder);
+}
+
+fn stop_sequence(slot: &GraphSlot, gate: &Gate, lease: lease::Lease, yielder: Option<YieldHandle>) {
+    gate.set_progress("finishing requests");
+    gate.settle(usize::from(yielder.is_some()));
+    stop_host(slot, gate);
+    lease.seal(yielder.as_ref().map(|yielder| yielder.id));
+    if let Some(yielder) = yielder {
+        let _ = yielder
+            .verdict
+            .send(Ok(ok("yield", json!({ "yielded": true }))));
+        // The worker's bounded write, explicit shutdown, registry removal
+        // and admission release precede this acknowledgement.
+        let _ = yielder.closed.recv();
     }
-    // The host stopped; close the Store, then release the endpoint and,
-    // last, the lock (§3.2).
     slot.store.close();
     drop(lease);
-    eprintln!("tine serve: released {}", root.display());
-    Ok(())
 }
 
 /// Stop the host as retirement does, retrying while a draft cannot be
@@ -184,6 +207,7 @@ pub(super) struct ServeOwner {
     pub(super) gate: Arc<Gate>,
     pub(super) root: PathBuf,
     pub(super) drafts: Drafts,
+    pub(super) stops: mpsc::Sender<Stop>,
 }
 
 #[derive(serde::Deserialize)]
@@ -193,7 +217,11 @@ struct YieldArgs {
 }
 
 impl Handler for ServeOwner {
-    fn answer_request(&self, request: &Request) -> (Result<Value, ErrorBody>, After) {
+    fn answer_request(
+        &self,
+        request: &Request,
+        yielder: &mut YieldRequest,
+    ) -> (Result<Value, ErrorBody>, After) {
         if request.verb != "owner.yield" {
             return (
                 super::verbs::answer_verb(&self.slot, request),
@@ -221,12 +249,7 @@ impl Handler for ServeOwner {
         if !self.gate.claim_stop() {
             return (Err(super::endpoint::busy()), After::Continue);
         }
-        // Every admitted request but this one settles first, however long
-        // it takes; `owner.status` reports it meanwhile.
-        self.gate.set_progress("finishing requests");
-        self.gate.settle(1);
-        stop_host(&self.slot, &self.gate);
-        (Ok(ok("yield", json!({ "yielded": true }))), After::Exit)
+        (yielder.stop(&self.stops), After::Close)
     }
 
     fn status(&self, gate: &Gate) -> Value {

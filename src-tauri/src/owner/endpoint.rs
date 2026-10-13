@@ -26,14 +26,72 @@ pub(crate) const IO_TIMEOUT: Duration = Duration::from_secs(30);
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum After {
     Continue,
-    /// Tell the owner's main thread to exit (a `tine serve` yield).
-    Exit,
+    /// The main thread supplied the verdict; close and acknowledge it.
+    Close,
+}
+
+/// Main's side of a yielding connection. Admission stays with the worker
+/// until it has written the verdict and explicitly closed its transport.
+pub(crate) struct YieldHandle {
+    pub(crate) id: u64,
+    pub(crate) verdict: std::sync::mpsc::Sender<Result<Value, ErrorBody>>,
+    pub(crate) closed: std::sync::mpsc::Receiver<()>,
+}
+
+pub(crate) struct Stop {
+    pub(crate) yielder: Option<YieldHandle>,
+}
+
+pub(crate) struct YieldRequest {
+    id: u64,
+    closed: Option<std::sync::mpsc::Sender<()>>,
+}
+
+impl YieldRequest {
+    #[cfg(test)]
+    pub(crate) fn acknowledge_closed(&mut self) {
+        if let Some(closed) = self.closed.take() {
+            closed.send(()).unwrap();
+        }
+    }
+    pub(crate) fn new(id: u64) -> Self {
+        Self { id, closed: None }
+    }
+
+    pub(crate) fn stop(
+        &mut self,
+        stops: &std::sync::mpsc::Sender<Stop>,
+    ) -> Result<Value, ErrorBody> {
+        let (verdict, reply) = std::sync::mpsc::channel();
+        let (closed, ack) = std::sync::mpsc::channel();
+        self.closed = Some(closed);
+        stops
+            .send(Stop {
+                yielder: Some(YieldHandle {
+                    id: self.id,
+                    verdict,
+                    closed: ack,
+                }),
+            })
+            .map_err(|_| ErrorBody::new("internal", "owner stop coordinator unavailable", false))?;
+        reply.recv().unwrap_or_else(|_| {
+            Err(ErrorBody::new(
+                "internal",
+                "owner stop verdict unavailable",
+                false,
+            ))
+        })
+    }
 }
 
 /// The owner's answers. `answer` runs for an admitted request on its
 /// connection's thread; `status` for `owner.status`, unadmitted.
 pub(crate) trait Handler: Send + Sync + 'static {
-    fn answer_request(&self, request: &Request) -> (Result<Value, ErrorBody>, After);
+    fn answer_request(
+        &self,
+        request: &Request,
+        yielder: &mut YieldRequest,
+    ) -> (Result<Value, ErrorBody>, After);
     fn status(&self, gate: &Gate) -> Value;
 }
 
@@ -47,6 +105,8 @@ pub(crate) struct Gate {
 }
 
 struct GateState {
+    #[cfg(test)]
+    settling: usize,
     admitting: bool,
     stopping: bool,
     in_flight: usize,
@@ -70,6 +130,8 @@ impl Gate {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(GateState {
+                #[cfg(test)]
+                settling: 0,
                 admitting: true,
                 stopping: false,
                 in_flight: 0,
@@ -145,8 +207,21 @@ impl Gate {
     pub(crate) fn settle(&self, except: usize) {
         let mut state = self.lock();
         while state.in_flight > except && !state.admitting {
+            #[cfg(test)]
+            {
+                state.settling += 1;
+            }
             state = self.changed.wait(state).unwrap_or_else(|e| e.into_inner());
+            #[cfg(test)]
+            {
+                state.settling -= 1;
+            }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_settling(&self) -> bool {
+        self.lock().settling > 0
     }
 
     #[cfg(test)]
@@ -189,8 +264,7 @@ mod unix {
     use std::collections::HashMap;
     use std::io::{BufReader, Write};
     use std::os::unix::net::{UnixListener, UnixStream};
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::sync::mpsc::Sender;
+    use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 
     use crate::owner::wire::{self, FrameError, PROTOCOL, REPLY_CAP, REQUEST_CAP};
 
@@ -203,39 +277,49 @@ mod unix {
     pub(crate) struct Endpoint {
         socket: PathBuf,
         gate: Arc<Gate>,
+        #[cfg(test)]
         shared: Arc<Shared>,
+        commands: Sender<Command>,
         accept: Option<std::thread::JoinHandle<()>>,
     }
 
-    /// The open connections. Sealed by a yield's sweep or the endpoint's
-    /// close: a connection registered after it is closed at once, so the
-    /// sweep cannot miss one accepted meanwhile (review CODE-2 #3).
+    /// Only the accept thread inserts streams and seals this registry.
     #[derive(Default)]
     struct Connections {
         open: HashMap<u64, UnixStream>,
-        sealed: bool,
     }
 
     impl Connections {
         /// Close every connection but `except` and take no more.
         fn seal(&mut self, except: Option<u64>) {
-            self.sealed = true;
-            for (id, connection) in self.open.drain() {
-                if Some(id) != except {
+            self.open.retain(|id, connection| {
+                if Some(*id) != except {
                     let _ = connection.shutdown(std::net::Shutdown::Both);
+                    false
+                } else {
+                    true
                 }
-            }
+            });
         }
     }
 
     struct Shared {
-        closed: AtomicBool,
+        #[cfg(test)]
+        accept_pause: Mutex<Option<(Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+        #[cfg(test)]
+        yield_close_pause: Mutex<Option<(Sender<()>, std::sync::mpsc::Receiver<()>)>>,
         connections: Mutex<Connections>,
-        next: AtomicU64,
         hello: Hello,
         handler: Arc<dyn Handler>,
         gate: Arc<Gate>,
-        exit: Mutex<Option<Sender<()>>>,
+    }
+
+    enum Command {
+        Seal {
+            except: Option<u64>,
+            ack: Sender<()>,
+        },
+        Shutdown,
     }
 
     impl Endpoint {
@@ -246,7 +330,6 @@ mod unix {
             hello: Hello,
             gate: Arc<Gate>,
             handler: Arc<dyn Handler>,
-            exit: Option<Sender<()>>,
         ) -> Result<Self, OwnerError> {
             match std::fs::remove_file(socket) {
                 Ok(()) => {}
@@ -261,26 +344,59 @@ mod unix {
             let listener = UnixListener::bind(socket).map_err(|e| {
                 OwnerError::Start(format!("cannot listen on {}: {e}", socket.display()))
             })?;
+            listener
+                .set_nonblocking(true)
+                .map_err(|e| OwnerError::Start(format!("cannot poll the endpoint: {e}")))?;
+            let (commands, commanded) = mpsc::channel();
             let shared = Arc::new(Shared {
-                closed: AtomicBool::new(false),
+                #[cfg(test)]
+                accept_pause: Mutex::new(None),
+                #[cfg(test)]
+                yield_close_pause: Mutex::new(None),
                 connections: Mutex::new(Connections::default()),
-                next: AtomicU64::new(0),
                 hello,
                 handler,
                 gate: gate.clone(),
-                exit: Mutex::new(exit),
             });
             let accepting = shared.clone();
             let accept = std::thread::Builder::new()
                 .name("tine-owner-endpoint".into())
-                .spawn(move || accept_loop(listener, accepting))
+                .spawn(move || accept_loop(listener, accepting, commanded))
                 .map_err(|e| OwnerError::Start(format!("cannot start the endpoint: {e}")))?;
             Ok(Self {
                 socket: socket.to_owned(),
                 gate,
+                #[cfg(test)]
                 shared,
+                commands,
                 accept: Some(accept),
             })
+        }
+
+        /// Completion barrier: the accept thread registers each accepted
+        /// stream before checking commands, closes peers and drops its
+        /// listener before acknowledging (CODE-3 RN1).
+        pub(crate) fn seal(&self, except: Option<u64>) {
+            let (ack, sealed) = mpsc::channel();
+            if self.commands.send(Command::Seal { except, ack }).is_ok() {
+                let _ = sealed.recv();
+            }
+        }
+
+        #[cfg(test)]
+        pub(crate) fn pause_next_accept(&self) -> (std::sync::mpsc::Receiver<()>, Sender<()>) {
+            let (accepted, seen) = std::sync::mpsc::channel();
+            let (resume, resumed) = std::sync::mpsc::channel();
+            *self.shared.accept_pause.lock().unwrap() = Some((accepted, resumed));
+            (seen, resume)
+        }
+
+        #[cfg(test)]
+        pub(crate) fn pause_yielder_close(&self) -> (std::sync::mpsc::Receiver<()>, Sender<()>) {
+            let (written, seen) = mpsc::channel();
+            let (resume, resumed) = mpsc::channel();
+            *self.shared.yield_close_pause.lock().unwrap() = Some((written, resumed));
+            (seen, resume)
         }
     }
 
@@ -293,43 +409,73 @@ mod unix {
             if std::thread::current().name() != Some(CONNECTION_THREAD) {
                 self.gate.settle(0);
             }
-            self.shared.closed.store(true, Ordering::SeqCst);
-            // Wake the accept loop; it sees `closed` and ends.
-            let _ = UnixStream::connect(&self.socket);
+            let _ = self.commands.send(Command::Shutdown);
             if let Some(accept) = self.accept.take() {
                 let _ = accept.join();
             }
-            (self.shared.connections.lock())
-                .unwrap_or_else(|e| e.into_inner())
-                .seal(None);
             let _ = std::fs::remove_file(&self.socket);
         }
     }
 
-    fn accept_loop(listener: UnixListener, shared: Arc<Shared>) {
-        for stream in listener.incoming() {
-            if shared.closed.load(Ordering::SeqCst) {
-                return;
-            }
-            let stream = match stream {
-                Ok(stream) => stream,
-                Err(_) => {
-                    // Out of descriptors and the like: do not spin.
-                    std::thread::sleep(Duration::from_millis(50));
-                    continue;
+    fn accept_loop(listener: UnixListener, shared: Arc<Shared>, commands: Receiver<Command>) {
+        let mut listener = Some(listener);
+        let mut next = 0;
+        let mut pending = None;
+        loop {
+            if let Some(command) = pending.take().or_else(|| commands.try_recv().ok()) {
+                match command {
+                    Command::Seal { except, ack } => {
+                        shared
+                            .connections
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .seal(except);
+                        listener.take();
+                        let _ = ack.send(());
+                    }
+                    Command::Shutdown => {
+                        shared
+                            .connections
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .seal(None);
+                        return;
+                    }
                 }
+            }
+            let stream = listener
+                .as_ref()
+                .and_then(|listener| listener.accept().ok());
+            let Some((stream, _)) = stream else {
+                // Includes EMFILE: cancellation is a channel operation and
+                // needs no new descriptor (CODE-3 RN2).
+                match commands.recv_timeout(Duration::from_millis(50)) {
+                    Ok(command) => pending = Some(command),
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => {
+                        shared
+                            .connections
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .seal(None);
+                        return;
+                    }
+                }
+                continue;
             };
-            let id = shared.next.fetch_add(1, Ordering::Relaxed);
+            let id = next;
+            next += 1;
+            #[cfg(test)]
+            if let Some((accepted, resumed)) = shared.accept_pause.lock().unwrap().take() {
+                accepted.send(()).unwrap();
+                resumed.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
             {
                 let mut connections =
                     (shared.connections.lock()).unwrap_or_else(|e| e.into_inner());
                 let Ok(clone) = stream.try_clone() else {
                     continue;
                 };
-                if connections.sealed {
-                    let _ = stream.shutdown(std::net::Shutdown::Both);
-                    continue;
-                }
                 connections.open.insert(id, clone);
             }
             let serving = shared.clone();
@@ -343,6 +489,15 @@ mod unix {
                         .remove(&id);
                 });
             if spawned.is_err() {
+                if let Some(stream) = shared
+                    .connections
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .open
+                    .remove(&id)
+                {
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                }
                 crate::debug::diag("owner-connection-spawn-failed");
             }
         }
@@ -466,15 +621,8 @@ mod unix {
                 }
                 continue;
             };
-            let (result, after) = shared.handler.answer_request(&request);
-            if after == After::Exit {
-                // Yielded: close every other connection, and any accepted
-                // after this, before the reply, which goes out while the
-                // lock is still held (§4.3).
-                (shared.connections.lock())
-                    .unwrap_or_else(|e| e.into_inner())
-                    .seal(Some(id));
-            }
+            let mut yielder = YieldRequest::new(id);
+            let (result, after) = shared.handler.answer_request(&request, &mut yielder);
             let reply = match result {
                 Ok(ok) => Reply {
                     id: request.id,
@@ -484,13 +632,26 @@ mod unix {
                 Err(body) => error(request.id, body),
             };
             let sent = send(&mut writer, &reply);
-            drop(admitted);
-            if after == After::Exit {
-                if let Some(exit) = shared.exit.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                    let _ = exit.send(());
+            if after == After::Close {
+                #[cfg(test)]
+                if let Some((written, resumed)) = shared.yield_close_pause.lock().unwrap().take() {
+                    written.send(()).unwrap();
+                    resumed.recv_timeout(Duration::from_secs(5)).unwrap();
+                }
+                let _ = writer.shutdown(std::net::Shutdown::Both);
+                shared
+                    .connections
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .open
+                    .remove(&id);
+                drop(admitted);
+                if let Some(closed) = yielder.closed.take() {
+                    let _ = closed.send(());
                 }
                 return;
             }
+            drop(admitted);
             if !sent {
                 return;
             }
@@ -522,8 +683,9 @@ impl Endpoint {
         _hello: super::wire::Hello,
         _gate: Arc<Gate>,
         _handler: Arc<dyn Handler>,
-        _exit: Option<std::sync::mpsc::Sender<()>>,
     ) -> Result<Self, OwnerError> {
         Err(OwnerError::Unsupported)
     }
+
+    pub(crate) fn seal(&self, _except: Option<u64>) {}
 }

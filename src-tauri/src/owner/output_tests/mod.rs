@@ -163,9 +163,9 @@ impl Fixture {
                 app_data: "a".into(),
                 graph_id: "g".into(),
             },
+            stops: std::sync::mpsc::channel().0,
         });
-        let _serve_lease =
-            claim(&serve, "serve").serve(hello(&self.root, "serve"), gate, owner, None);
+        let _serve_lease = claim(&serve, "serve").serve(hello(&self.root, "serve"), gate, owner);
         vec![status(&app), status(&serve)]
     }
 
