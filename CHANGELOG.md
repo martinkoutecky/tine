@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.0-beta.1] - 2026-10-13
+
 ### Added
 
 - Command line on Linux and macOS: read pages (including open unsaved edits), journals, blocks and linked references, search, run queries, list pages and check the graph's owner, with text or `--json` output. Read commands use the app when it has the graph open; otherwise they start `tine serve`, which hands over when the app opens it. These commands do not edit notes. On Windows the owner endpoint is unavailable: reads and `serve` report `unsupported` and exit 5; the app still opens graphs normally. The Guide's **Command line** page explains usage and scripting output.
