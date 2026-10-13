@@ -135,7 +135,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "graphBindingGeneration", "inspectGraphAccess", "loadGraph", "openGraphWindow", "startupGraphPath",
   "captureTarget", "bindCaptureGraph", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
   "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "suggestGraphName",
-  "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "journalFeedPage", "journalContentDays",
+  "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "pageModified", "journalFeedPage", "journalContentDays",
   "getPage", "resolvePage", "graphSourceFiles",
   // The page host's reads and controls: opening a page takes custody and writes
   // nothing; the mail and graph-open events, the publication barrier and debt

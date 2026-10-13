@@ -23,6 +23,24 @@ pub(crate) struct PageInventoryEntryWire {
     target: ResolvedWire,
 }
 
+/// Last-modified times for the All pages view: `[graph-relative path, Unix
+/// seconds]` per page file, from the times the store already holds with its
+/// page table (no stat, no file read, nothing persisted). Fetched once when the
+/// view opens, never per row.
+#[derive(Serialize)]
+pub(crate) struct PageModifiedWire {
+    /// The `GraphRev` the times were read at.
+    rev: String,
+    modified: Vec<(String, i64)>,
+}
+
+pub(super) fn page_modified_wire(view: &WholeGraph) -> PageModifiedWire {
+    PageModifiedWire {
+        rev: view.rev().into(),
+        modified: view.page_modified(),
+    }
+}
+
 // One unreadable file never blocks name answers for the rest of the graph
 // (I-22): readable claims resolve and a miss is `Absent`. The unreadable paths
 // travel on the inventory so the frontend reports them (I-2).
@@ -128,6 +146,43 @@ mod inventory_adapter_tests {
                 r#"{"key":"shared","name":"Shared","is_journal":false,"day":null,"target":{"kind":"alias","owners":["pages/Alpha.md","pages/Beta.org"]}}"#,
                 r#"{"key":"team/child","name":"Team/Child","is_journal":false,"day":null,"target":{"kind":"existing","id":"pages/Team%2FChild.md","others":[]}}"#,
             ]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// GH #335: the All pages view's Updated column. One wire of
+    /// `[path, unix seconds]` pairs at the view's rev, read from the times the
+    /// store already holds; it adds no stat and nothing persisted.
+    #[test]
+    fn page_modified_wire_lists_each_page_file_with_its_time() {
+        let root = temp_root("modified");
+        let store = open(
+            &root,
+            &[
+                ("pages/Alpha.md", "- a\n"),
+                ("journals/2026_06_26.md", "- j\n"),
+            ],
+        );
+        for (path, secs) in [
+            ("pages/Alpha.md", 1_700_000_000u64),
+            ("journals/2026_06_26.md", 1_700_000_100),
+        ] {
+            std::fs::File::options()
+                .write(true)
+                .open(root.join(path))
+                .unwrap()
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+                .unwrap();
+        }
+        drop(store);
+        let (store, _, _) =
+            tine_store::Store::open(&root, tine_store::OpenOptions::default()).unwrap();
+        let view = store.whole_graph().unwrap();
+        let wire = page_modified_wire(&view);
+        assert_eq!(wire.rev, String::from(view.rev()));
+        assert_eq!(
+            serde_json::to_string(&wire.modified).unwrap(),
+            r#"[["journals/2026_06_26.md",1700000100],["pages/Alpha.md",1700000000]]"#
         );
         std::fs::remove_dir_all(root).unwrap();
     }

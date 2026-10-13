@@ -124,6 +124,9 @@ export interface Backend {
    *  `pageIndex.ts` holds the full inventory; `store.ts` separately indexes
    *  loaded pages in its working set. */
   pageInventory(): Promise<import("./types").PageInventory>;
+  /** Last-modified time of every page file, read once when the All pages view
+   *  opens: times the store already holds (no stat, nothing persisted). */
+  pageModified(): Promise<import("./types").PageModified>;
   journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;
@@ -870,6 +873,9 @@ class TauriBackend implements Backend {
   suggestGraphName(dir: string) { return this.call<string>("suggest_graph_name", { dir }); }
   pageInventory() {
     return this.call<import("./types").PageInventory>("page_inventory");
+  }
+  pageModified() {
+    return this.call<import("./types").PageModified>("page_modified");
   }
   journalFeedPage(limit: number, beforeDay: number | null) {
     return this.call<import("./types").JournalFeedPage>("journal_feed_page", { limit, beforeDay });

@@ -31,6 +31,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - The Ctrl/Cmd+Shift+V "paste as plain text" key is now listed in the shortcut reference and the Guide (GH #513).
 - Right sidebar: each item has a ⋯ menu with **Close**, **Close others**, **Close all**, **Collapse**/**Expand**, **Collapse others**, **Collapse all**, **Expand all**, and **Open as page** for a page item, as in Logseq (GH #462).
 - Find in page can replace: the arrow at the left of the find bar opens **Replace with**, with **Replace** (the highlighted match) and **Replace all** (every match on the page you opened Find in, as one Undo step). It edits the text you see, as typing would, so link addresses and hidden properties are never changed (GH #208). Find in page is also in each page's **⋯** menu, so phones can open it (GH #338).
+- **All pages** view: the sidebar's All pages section now ends in **Open the full list…**, which opens every page of the graph in the main pane as a scrolling table (a graph of tens of thousands of pages stays quick: only the visible rows are drawn). It opens with the most recently changed pages first and shows each page file's **Updated** time (one read when the view opens; nothing is stored). Sort by name, by updated time, or journals by day; filter by name; tick **Show journals** to include daily pages. Rows open with the usual click, Shift-click, Ctrl/Cmd- or middle-click and Alt-click gestures. Created and backlink-count columns, multi-select and delete are not part of this view yet (GH #335).
 
 ### Changed
 
