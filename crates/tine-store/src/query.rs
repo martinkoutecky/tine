@@ -620,7 +620,8 @@ pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Documen
                     .reference_source()
                     .explicit
                     .iter()
-                    .map(|reference| refs::page_key(&reference.name)),
+                    .flat_map(|reference| refs::namespace_refs(&reference.name))
+                    .map(refs::page_key),
             );
             collect(&block.children, names);
         }
@@ -638,7 +639,8 @@ pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Documen
                 .reference_source()
                 .explicit
                 .iter()
-                .map(|reference| refs::page_key(&reference.name)),
+                .flat_map(|reference| refs::namespace_refs(&reference.name))
+                .map(refs::page_key),
         );
     }
     collect(&doc.roots, &mut names);
@@ -1431,7 +1433,7 @@ fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
     BlockDto {
         id: String::new(),
         raw,
-        collapsed: false,
+        collapsed: b.collapsed(),
         children: b.children.iter().map(|c| template_dto(c, false)).collect(),
         breadcrumb: Vec::new(),
         ..Default::default()
@@ -1444,6 +1446,29 @@ fn template_copy_drops_markdown_and_org_ids_regardless_of_case() {
     let block = DocBlock::new("body\nID:: md-id\n:PROPERTIES:\n:Id: org-id\n:END:\nkeep:: yes");
     let copied = template_dto(&block, false);
     assert_eq!(copied.raw, "body\n:PROPERTIES:\n:END:\nkeep:: yes");
+}
+
+#[cfg(test)]
+#[test]
+fn template_copy_preserves_collapsed_state() {
+    for (raw, expected) in [
+        ("section\ncollapsed:: true", true),
+        ("section\ncollapsed:: false", false),
+        ("section", false),
+        ("section\n:PROPERTIES:\n:collapsed: true\n:END:", true),
+        ("```\ncollapsed:: true\n```", false),
+    ] {
+        let mut block = DocBlock::new(raw);
+        block.set_org(raw.contains(":PROPERTIES:"));
+        block
+            .children
+            .push(DocBlock::new("nested\ncollapsed:: true"));
+        let copied = template_dto(&block, false);
+        assert_eq!(copied.collapsed, expected, "{raw}");
+        assert_eq!(copied.raw, raw);
+        assert!(copied.children[0].collapsed);
+        assert!(copied.id.is_empty());
+    }
 }
 
 /// Distinct property keys (each with its sorted distinct values) used across the
@@ -3683,6 +3708,49 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn namespace_queries_backlinks_and_refresh_share_membership() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+        let path = dir.path().join("pages/Source.md");
+        std::fs::write(
+            &path,
+            "- Parent [[A/B/C]]\n  - TODO child\n    - TODO grandchild\n- [[A/BB]]\n",
+        )
+        .unwrap();
+        let (store, _, _) = crate::Store::open(dir.path(), Default::default()).unwrap();
+        let graph = store.whole_graph().unwrap().test_read_snapshot();
+        for name in ["a", "a/b", "a/b/c"] {
+            let rows = run_query(&graph, &format!("(and [[{name}]] (task TODO))"));
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].blocks.len(), 1);
+            assert!(rows[0].blocks[0].raw.contains("TODO child"));
+            let links = backlinks_bounded(&graph, name, 100, usize::MAX);
+            assert_eq!(links.groups.len(), 1);
+            let expected = if name == "a" { 2 } else { 1 };
+            assert_eq!(links.groups[0].blocks.len(), expected);
+            assert_eq!(links.groups[0].evidence[0].occurrences.len(), 1);
+        }
+        assert!(run_query(&graph, "[[a/bb/c]]").is_empty());
+        assert!(backlinks_bounded(&graph, "a/bb/c", 100, usize::MAX)
+            .groups
+            .is_empty());
+        std::fs::write(&path, "- Parent [[Other]]\n  - TODO child\n").unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
+        let next = store.whole_graph().unwrap().test_read_snapshot();
+        assert!(run_query(&next, "(and [[a/b]] (task TODO))").is_empty());
+        assert!(backlinks_bounded(&next, "a/b", 100, usize::MAX)
+            .groups
+            .is_empty());
+        assert_eq!(
+            run_query(&next, "(and [[other]] (task TODO))")[0]
+                .blocks
+                .len(),
+            1
+        );
+        store.close();
     }
 
     /// OG's graph parser materializes `:block/path-refs` from every ancestor's

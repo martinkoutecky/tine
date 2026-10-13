@@ -552,7 +552,7 @@ export async function ensureJournalTemplateForDay(
       if (!templateOwnerCurrent(owner)) return "stale";
       if (!canWrite()) return "deferred";
       const resolve = (b: BlockDto): BlockDto => ({
-        id: "", raw: applyTemplateVars(b.raw, owner.title), collapsed: false,
+        id: "", raw: applyTemplateVars(b.raw, owner.title), collapsed: b.collapsed,
         children: b.children.map(resolve),
       });
       const resolution = existing?.id ? null : await readOwned(graphOwner(), backend().resolvePage(owner.title, "journal"));

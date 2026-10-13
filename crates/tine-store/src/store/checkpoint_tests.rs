@@ -84,6 +84,24 @@ fn write_checkpoint(root: &Path, cp: &Path) {
     store.close();
 }
 
+#[test]
+fn pre_headline_tag_checkpoints_rebuild_org_page_references() {
+    let root = graph();
+    fs::write(root.path().join("pages/C.org"), "* headline :Plugins:\n").unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 9 can retain projections, indexes and query/backlink answers
+    // built before Org headline tags contributed page references.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&9_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert_eq!(graph.backlinks("plugins").unwrap().len(), 1);
+    store.close();
+}
+
 fn publisher(store: &Store) -> Publisher {
     Publisher {
         path: PathBuf::new(),
@@ -785,7 +803,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (9, GOLDEN),
+        (11, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

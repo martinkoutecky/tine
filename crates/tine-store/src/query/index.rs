@@ -128,7 +128,13 @@ impl PageFacts {
                 for (ordinal, (key, value)) in projection.properties().iter().enumerate() {
                     note(&block.uuid, ordinal, key, value, false);
                 }
-                refs.extend(projection.refs_norm().iter().cloned());
+                refs.extend(
+                    projection
+                        .refs_norm()
+                        .iter()
+                        .flat_map(|name| tine_core::refs::namespace_refs(name))
+                        .map(str::to_owned),
+                );
                 blocks(&block.children, note, refs);
             }
         }
@@ -138,7 +144,14 @@ impl PageFacts {
             .as_deref()
             .and_then(|pre| super::page_property_block(entry, pre));
         if let Some(block) = &page_property_block {
-            refs.extend(block.projection().refs_norm().iter().cloned());
+            refs.extend(
+                block
+                    .projection()
+                    .refs_norm()
+                    .iter()
+                    .flat_map(|name| tine_core::refs::namespace_refs(name))
+                    .map(str::to_owned),
+            );
         }
         blocks(&doc.roots, &mut note, &mut refs);
         refs.sort_unstable();

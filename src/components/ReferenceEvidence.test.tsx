@@ -167,6 +167,24 @@ describe("buildFullMarkedSegments", () => {
 });
 
 describe("occurrence jumps land on a selection, not a collapsed caret", () => {
+  it("shows an Org headline tag as an explicit reference and highlights its source name (Kalem parity)", () => {
+    const raw = "Headline :Plugins:";
+    const item: ReferenceBlockEvidence = {
+      block_id: "org-headline",
+      occurrences: [{ matched_name: "Plugins", canonical: "plugins", kind: "explicit",
+        span: { start: 10, end: 17 }, rule: "explicit_tag" }],
+    };
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <ReferenceExcerptBlocks
+      blocks={[{ id: "org-headline", raw, children: [] } as unknown as BlockDto]}
+      evidence={[item]} page="Source" kind="page" />, host);
+    try {
+      expect(host.querySelector(".reference-excerpt-text")?.textContent).toBe(raw);
+      expect(marks(host).map(mark => mark.textContent)).toEqual(["Plugins"]);
+    } finally { dispose(); }
+  });
+
   // iOS paints no caret for a programmatic focus, so jump 1 and jump 4 looked
   // identical there; a selection is drawn everywhere (master GH #200).
   it("selects the whole mention in visible offsets", () => {

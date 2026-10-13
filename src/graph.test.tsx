@@ -50,7 +50,7 @@ async function loadHarness(
     createGraph: vi.fn(async (): Promise<string | { root: string; display_root: string }> => META.root),
     getPage: vi.fn(async () => existing),
     resolvePage: vi.fn(async () => ({ kind: "absent" as const, id: "journals/2026_07_10.md" })),
-    listTemplates: vi.fn(async () => [
+    listTemplates: vi.fn(async (): Promise<import("./types").TemplateDto[]> => [
       {
         name: "Daily",
         page: "Templates",
@@ -470,6 +470,20 @@ describe("GH #630 Android picker outcomes", () => {
 });
 
 describe("default journal template graph bind", () => {
+  it("retains collapsed flags and raw properties through the journal template save door", async () => {
+    const { loadGraphPath, ensureJournalTemplateForDay, api, createPage } = await loadHarness(null);
+    await loadGraphPath(META.root);
+    api.listTemplates.mockResolvedValue([{ name: "Daily", page: "Templates", kind: "page", blocks: [{
+      id: "template", raw: "Folded\ncollapsed:: true", collapsed: true,
+      children: [{ id: "nested", raw: "Nested\ncollapsed:: true", collapsed: true, children: [] }],
+    }] }]);
+    expect(await ensureJournalTemplateForDay(new Date())).toBe("ready");
+    const saved = createPage.mock.calls.at(-1)![1].blocks[0];
+    expect(saved.collapsed).toBe(true);
+    expect(saved.children[0].collapsed).toBe(true);
+    expect(saved.raw).toBe("Folded\ncollapsed:: true");
+    expect(saved.id).toBe("");
+  });
   // Master 5bb8ce020 (GH #266): graph open does not await the optional
   // default-journal template (a getPage + listTemplates that can wait for the
   // whole-graph parse). The visible Journals surface owns materialization and
