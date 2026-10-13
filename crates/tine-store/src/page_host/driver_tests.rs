@@ -561,3 +561,42 @@ fn a_retained_writer_and_a_saving_driver_never_deadlock() {
     }
     d.join();
 }
+
+/// A wait whose caller's deadline falls while the driver is asking it
+/// (the admission's own last ask, made at that deadline). `last` runs as
+/// the ask that spans the deadline; earlier asks re-ask just before it.
+fn ask_across_the_deadline<R: Send + 'static>(
+    last: impl FnOnce() -> Wait<R> + Send + 'static,
+) -> Result<R, super::driver::Unanswered> {
+    let (mut d, ..) = spawn(host());
+    let deadline = Instant::now() + Duration::from_millis(200);
+    let mut last = Some(last);
+    let answer = d.shared.locked_wait(Deadline::At(deadline), move |_| {
+        if Instant::now() + Duration::from_millis(100) < deadline {
+            return Wait::Until(Some(deadline - Duration::from_millis(50)));
+        }
+        // Mid-ask at the caller's deadline.
+        std::thread::sleep(deadline + Duration::from_millis(100) - Instant::now());
+        match last.take() {
+            Some(last) => last(),
+            None => Wait::Until(None),
+        }
+    });
+    d.join();
+    answer
+}
+
+/// M6 (CI 38436208770): an ask that spans the caller's deadline and does
+/// not admit drops the request, so it never takes effect: the caller hears
+/// Withdrawn (Busy), not Late (Uncertain, "keeps trying to finish it").
+#[test]
+fn an_unadmitted_ask_across_the_deadline_is_withdrawn_not_late() {
+    let answer = ask_across_the_deadline(|| Wait::<()>::Until(None));
+    assert_eq!(answer, Err(super::driver::Unanswered::Withdrawn));
+}
+
+/// The same ask answering takes effect, so the caller gets that answer.
+#[test]
+fn an_answer_given_across_the_deadline_reaches_the_caller() {
+    assert_eq!(ask_across_the_deadline(|| Wait::Ready(7)), Ok(7));
+}

@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- A page merge, rename or deletion that waited the full 10 seconds for another rename to finish could report "Couldn't confirm the merge yet; Tine keeps trying to finish it" for an operation that would never run; it now reports that another rename is still finishing and nothing changed (REG-PAGEHOST-ADMISSION-DEADLINE-RACE).
+
 ## [0.8.0-beta.1] - 2026-10-13
 
 ### Added

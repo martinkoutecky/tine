@@ -211,7 +211,14 @@ once the write succeeds. The order is memory only:
   finishing is bounded (M6): `OPERATION_WAIT` after the writer started, one
   deadline across its rediscoveries and flushes, it is refused `Busy`
   ("Another rename of these pages is still finishing; try again in a
-  moment.") with nothing reserved. A rename still finishing is a running
+  moment.") with nothing reserved. A wait that ends while the host is asking it
+  takes that ask's outcome, waiting for it up to `ASK_GRACE` (1 s): an ask
+  that admits is the caller's answer; one that does not admit is dropped,
+  and the caller is refused `Busy`, never told `Uncertain` about an
+  operation that will not run (CI 38436208770; proof `driver_tests.rs`
+  `an_unadmitted_ask_across_the_deadline_is_withdrawn_not_late`,
+  `an_answer_given_across_the_deadline_reaches_the_caller`). A rename
+  still finishing is a running
   order, or a rename's operation from its admission: before its order
   installs (its draft still being made durable) and, for a
   references-only rename (the source has no file), through its operation
@@ -245,7 +252,8 @@ once the write succeeds. The order is memory only:
   newer input typed into it stays. The caller hears `Superseded`.
 - A caller's wait ends `Uncertain`, never success, when its window session
   changes or the host fails, or when the operation makes no progress for
-  `OPERATION_WAIT` (no answer, then no further page published); the
+  `OPERATION_WAIT` (no answer, then no further page published), or when an
+  ask in flight at its deadline has not finished within `ASK_GRACE`; the
   operation still completes once it can. The bound is on a stall, not on
   the operation: a rename that keeps publishing its referrers is waited for
   however many it has (a thousand on hosted Windows outlast 10 s; Beta had

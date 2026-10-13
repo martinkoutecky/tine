@@ -224,11 +224,12 @@ pub(super) enum Wait<R> {
 /// Why a caller got no answer from the driver (§3.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Unanswered {
-    /// The deadline passed before the driver started the request: it never
-    /// runs.
+    /// The deadline passed before the driver started the request, or while
+    /// it was asking and that ask did not answer: it never takes effect.
     Withdrawn,
-    /// The driver started the request and had not answered at the deadline;
-    /// what it started keeps going, and the driver stops asking.
+    /// The driver was asking at the deadline and had not finished that ask
+    /// within `ASK_GRACE`; what it started keeps going, and the driver stops
+    /// asking.
     Late,
     /// The driver ended: nothing will answer.
     Ended,
@@ -243,6 +244,11 @@ const RUNNING: u8 = 1;
 const LEFT: u8 = 2;
 const PARKED: u8 = 3;
 const DONE: u8 = 4;
+
+/// How long a caller past its deadline waits for an ask in flight to finish
+/// (M6): one step under the state mutex, normally milliseconds; one inside a
+/// disk call that outlasts it is `Late`.
+const ASK_GRACE: Duration = Duration::from_secs(1);
 
 /// How long a caller waits for its answer.
 #[derive(Clone)]
@@ -315,7 +321,7 @@ impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
 
     /// Send a request and wait for its answer until `deadline`. Past it,
     /// a request between asks is withdrawn and never takes effect; one the
-    /// driver is running is `Late`.
+    /// driver is asking gets that ask's outcome, or `Late` past `ASK_GRACE`.
     fn request<R: Send + 'static>(
         &self,
         deadline: Deadline,
@@ -356,8 +362,15 @@ impl<F: HostIo + 'static, C: Clock + 'static> Shared<F, C> {
                 Err(RecvTimeoutError::Timeout) => {
                     return match claim.swap(LEFT, Ordering::SeqCst) {
                         QUEUED | PARKED => Err(Unanswered::Withdrawn),
-                        // An answer sent meanwhile is still the caller's.
-                        _ => answer.try_recv().map_err(|_| Unanswered::Late),
+                        // Mid-ask: its outcome decides, for up to ASK_GRACE.
+                        // An answer is the caller's; a reply dropped
+                        // unanswered (the ask did not admit and cannot park
+                        // now, or the driver is stopping) took no effect.
+                        _ => match answer.recv_timeout(ASK_GRACE) {
+                            Ok(answer) => Ok(answer),
+                            Err(RecvTimeoutError::Disconnected) => Err(Unanswered::Withdrawn),
+                            Err(RecvTimeoutError::Timeout) => Err(Unanswered::Late),
+                        },
                     };
                 }
             }
