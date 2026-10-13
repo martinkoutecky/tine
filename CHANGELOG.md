@@ -60,6 +60,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Android: the native library is aligned for 16 KB memory pages, which Google Play requires and newer Android devices can use; release builds also produce the app bundle Google Play takes.
 - Linkable page-property values, including Org aliases and graph-configured comma-separated properties, appear in page-reference queries and Linked References (Kalem parity).
 
 - Org headline tags now appear in page-reference queries and Linked References (Kalem parity).

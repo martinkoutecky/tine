@@ -735,6 +735,26 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn mobile_guide_names_each_store_as_its_update_channel() {
+        // Store builds ship this Guide, so it must not claim a store listing is missing,
+        // and each store install updates through its store (the in-app updater is off).
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "a Google Play install updates through Google Play",
+            "An App Store install updates through the App Store",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing store-update Guide outcome: {outcome}"
+            );
+        }
+        assert!(
+            !platforms.contains("no App Store listing"),
+            "the App Store build ships this Guide; it must not say there is no listing"
+        );
+    }
+
+    #[test]
     fn desktop_guide_documents_the_beta_flatpak_download() {
         // The bundle is a manual-update download: the install command, the way to find the app
         // id, side-by-side coexistence and the update path must be on the page.

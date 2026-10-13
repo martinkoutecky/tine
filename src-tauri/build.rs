@@ -14,6 +14,14 @@ fn main() {
     let release = &switch["identities"]["release"];
     let conf = read("tauri.conf.json");
     let android = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android");
+    if android {
+        // Google Play requires 16 KB page-size support for apps targeting
+        // Android 15+. NDK 26.3 (pinned for F-Droid reproducibility) links with
+        // 4 KB LOAD alignment by default. The flag lives here, not in RUSTFLAGS,
+        // so F-Droid's rebuild from source gets the same layout; release.yml
+        // verifies the alignment of the shipped library.
+        println!("cargo:rustc-link-arg=-Wl,-z,max-page-size=16384");
+    }
     let android_namespace = if android {
         println!("cargo:rerun-if-changed=gen/android/app/build.gradle.kts");
         let gradle =

@@ -721,7 +721,7 @@ jobs:
         # commit-time __BUILD_TIME__ (vite.config.ts).
         run: |
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=/build --remap-path-prefix=$HOME/.cargo=/cargo"
-          npx tauri android build --target aarch64 --apk
+          npx tauri android build --target aarch64 --apk --aab
 
       - name: Prepare canonical Android APK
         if: steps.sign.outputs.enabled == 'true'
@@ -746,6 +746,42 @@ jobs:
             exit 1
           fi
           readelf --dyn-syms --wide "$RUNNER_TEMP/libtine_lib.so" | grep -F 'syscall@' >/dev/null
+
+      # Google Play requires 16 KB page-size support (Android 15+ targets).
+      # src-tauri/build.rs passes -z max-page-size=16384; check the linked .so.
+      - name: Verify Android 16 KB page alignment
+        if: steps.sign.outputs.enabled == 'true'
+        run: |
+          unzip -p "$RELEASE_APK" lib/arm64-v8a/libtine_lib.so > "$RUNNER_TEMP/libtine_lib.so"
+          aligns=$(readelf -lW "$RUNNER_TEMP/libtine_lib.so" | awk '$1 == "LOAD" { print $NF }' | sort -u)
+          echo "LOAD alignments: $aligns"
+          for a in $aligns; do
+            if [ $((a)) -lt 16384 ]; then
+              echo "::error::libtine_lib.so has a LOAD segment aligned to $a (< 16 KB); Google Play rejects it."
+              exit 1
+            fi
+          done
+
+      # The Play Console takes an app bundle, not an APK. The bundle is a
+      # workflow artifact only; GitHub Releases keep shipping the APK.
+      - name: Upload Android app bundle (Google Play)
+        if: steps.sign.outputs.enabled == 'true'
+        run: |
+          aab=$(find src-tauri/gen/android/app/build/outputs/bundle -name '*-release.aab' | head -1)
+          if [ -z "$aab" ]; then echo "no signed AAB found"; exit 1; fi
+          mkdir -p "$RUNNER_TEMP/aab"
+          cp "$aab" "$RUNNER_TEMP/aab/tine-${{ github.sha }}.aab"
+          (cd "$RUNNER_TEMP/aab" && sha256sum *.aab > SHA256SUMS)
+
+      - name: Upload Android app bundle artifact
+        if: steps.sign.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-app-bundle
+          path: ${{ runner.temp }}/aab
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
       - name: Stage immutable Android artifact
         if: steps.sign.outputs.enabled == 'true'

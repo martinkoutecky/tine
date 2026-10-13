@@ -1248,6 +1248,38 @@
     },
     {
       "section": "Fixed",
+      "text": "Android: the native library is aligned for 16 KB memory pages, which Google Play requires and newer Android devices can use; release builds also produce the app bundle Google Play takes.",
+      "userVisible": true,
+      "regressions": [
+        "REG-ANDROID-PLAY-BUNDLE-16KB"
+      ],
+      "regressionEvidence": {
+        "status": "needs-revalidation",
+        "reason": "Proven by release.yml's alignment check and AAB staging on the next release build; no device check.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The Guide names Google Play as an update channel.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
       "text": "Org headline tags now appear in page-reference queries and Linked References (Kalem parity).",
       "userVisible": true,
       "regressions": [
