@@ -412,6 +412,15 @@ try {
   const pageProbe = async (query, expectedActive, expectedAccepted, check) => {
     await clearActiveEditor(browser);
     await typeKeys(browser, `[[${query}`);
+    if (query === "Fz") {
+      // Force the formerly timing-sensitive case: the block's own completed
+      // reference is on disk before another lookup in this same lifecycle.
+      await browser.waitUntil(async () => fs.readFileSync(TEST_PAGE, "utf8").includes("[[Fz]]"), {
+        timeout: 10_000, timeoutMsg: "Fz draft did not autosave with its picker open",
+      });
+      await typeKeys(browser, "z");
+      await browser.keys(["Backspace"]);
+    }
     await waitForActiveAutocomplete(browser, expectedActive, `page probe ${query} had the wrong active row`);
     const snapshot = await popupSnapshot(browser);
     check(snapshot);

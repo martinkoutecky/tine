@@ -3292,8 +3292,26 @@ impl WholeGraph {
     /// and rank or sort matches, returning at most `limit` entries. Once an
     /// index has been built, a later publication carries it forward by updating
     /// changed pages; the first completion after every save does not rescan B.
-    pub fn complete_page_names(&self, text: &str, limit: usize) -> Vec<PageEntry> {
-        crate::query::quick_switch(&self.graph, text, limit)
+    /// An inline editor can supply its (page, block, pre-completion text) to
+    /// retain the reference baseline while its live draft autosaves. This
+    /// examines that page's blocks in addition to the name candidates above.
+    pub fn complete_page_names(
+        &self,
+        text: &str,
+        limit: usize,
+        editor: Option<(&str, &str, &str)>,
+    ) -> Vec<PageEntry> {
+        match editor {
+            Some((page, block, original)) => crate::query::quick_switch_for_editor(
+                &self.graph,
+                text,
+                limit,
+                page,
+                block,
+                original,
+            ),
+            None => crate::query::quick_switch(&self.graph, text, limit),
+        }
     }
 
     /// Literal `((` block search, O(B) per call, at most `limit` blocks.
@@ -5257,7 +5275,7 @@ mod rev5_tests {
                 "complete_page_names",
                 format!(
                     "{:?}",
-                    view.complete_page_names("", 20)
+                    view.complete_page_names("", 20, None)
                         .iter()
                         .map(|entry| &entry.name)
                         .collect::<Vec<_>>()

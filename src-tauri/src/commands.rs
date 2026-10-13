@@ -991,13 +991,23 @@ pub(crate) async fn search(
 pub(crate) async fn quick_switch(
     query: String,
     limit: usize,
+    editor_block_id: Option<String>,
+    editor_original_raw: Option<String>,
+    editor_page_name: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<PageEntry>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         slot.store
             .whole_graph()
-            .map(|view| view.complete_page_names(&query, limit))
+            .map(
+                |view| match (editor_page_name, editor_block_id, editor_original_raw) {
+                    (Some(page), Some(id), Some(original)) => {
+                        view.complete_page_names(&query, limit, Some((&page, &id, &original)))
+                    }
+                    _ => view.complete_page_names(&query, limit, None),
+                },
+            )
             .map_err(|e| format!("graph load failed: {e:?}"))
     })
     .await
@@ -1017,7 +1027,7 @@ fn capture_quick_switch_for(
         .store
         .whole_graph()
         .map_err(|e| format!("graph load failed: {e:?}"))?;
-    Ok(view.complete_page_names(query, limit.min(8)))
+    Ok(view.complete_page_names(query, limit.min(8), None))
 }
 
 /// The sole graph-backed capability exposed to Quick Capture. It is deliberately
@@ -1037,7 +1047,7 @@ pub(crate) async fn capture_quick_switch(
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        Ok(view.complete_page_names(&query, limit.min(8)))
+        Ok(view.complete_page_names(&query, limit.min(8), None))
     })
     .await
     .map_err(|error| error.to_string())?

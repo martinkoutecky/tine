@@ -56,6 +56,28 @@ function accept(textarea: HTMLTextAreaElement, key: "Enter" | "Tab" = "Enter") {
 }
 
 describe("reference authoring", () => {
+  it.each(["page", "tag"] as const)("keeps Create active when autosave echoes the new %s reference", async (kind) => {
+    const quickSwitch = vi.spyOn(backend(), "quickSwitch").mockImplementation(async (_query, _limit, editor) => {
+      // The native store probe covers this projection. At the UI boundary,
+      // emulate the autosaved self-reference when no baseline is supplied.
+      return editor?.originalRaw === "" ? [entry("Fuzzy Existing")] : [
+        { ...entry("Fz"), path: "" }, entry("Fuzzy Existing"),
+      ];
+    });
+    loadSingle(page(""));
+    startEditing("reference-authoring", 0);
+    const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, kind === "page" ? "[[Fz]]" : "#Fz", kind === "page" ? 4 : 3);
+      const expected = kind === "page" ? 'Create "Fz"' : "Create #Fz";
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe(expected));
+      expect(quickSwitch).toHaveBeenLastCalledWith("Fz", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "" });
+      accept(textarea);
+      expect(textarea.value.trim()).toBe(kind === "page" ? "[[Fz]]" : "#Fz");
+    } finally { dispose(); }
+  });
+
   it.each(["page", "tag"] as const)("displays and inserts authored aliases beside their matching owner in %s completion (GH #675, GH #676)", async (kind) => {
     vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
       entry("Tine"),
@@ -154,7 +176,7 @@ describe("reference authoring", () => {
       const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
       inputAt(textarea, "[[P]]", 3);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target"));
-      expect(quickSwitch).toHaveBeenLastCalledWith("P", 100);
+      expect(quickSwitch).toHaveBeenLastCalledWith("P", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "[[P]]" });
 
       // Type the rest and accept immediately, before the 90 ms backend debounce.
       // The visible row is still legitimate, but replacement must use the live

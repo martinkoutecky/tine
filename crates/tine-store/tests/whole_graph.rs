@@ -127,7 +127,7 @@ fn all_whole_graph_questions_use_the_public_view() {
             > 0
     );
     assert!(view
-        .complete_page_names("Source", 10)
+        .complete_page_names("Source", 10, None)
         .iter()
         .any(|p| p.name == "Source"));
     assert!(!view

@@ -1172,9 +1172,50 @@ impl ReadSnapshot {
             })
             .clone()
     }
+
+    /// Completion sees the editing block's reference baseline, even when its
+    /// live text has already autosaved. Other owners keep their cached facts.
+    pub(crate) fn referenced_page_names_for_editor(
+        &self,
+        owner: &str,
+        id: &str,
+        original: &str,
+    ) -> Vec<String> {
+        let index = self.referenced_name_index.get_or_init(|| {
+            #[cfg(test)]
+            self.referenced_name_full_builds
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            SnapshotPageDerivedIndex::capture(
+                None,
+                &self.pages,
+                &[],
+                collect_document_referenced_names,
+                None,
+            )
+        });
+        let mut seen = HashMap::new();
+        for (entry, doc) in self.pages.iter() {
+            let names = if entry.name == owner {
+                collect_document_referenced_names_with_baseline(doc, Some((id, original)))
+            } else {
+                index.get(&entry.path).cloned().unwrap_or_default()
+            };
+            for name in names {
+                seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
+            }
+        }
+        seen.into_values().collect()
+    }
 }
 
 pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
+    collect_document_referenced_names_with_baseline(doc, None)
+}
+
+fn collect_document_referenced_names_with_baseline(
+    doc: &Document,
+    baseline: Option<(&str, &str)>,
+) -> Vec<String> {
     fn add(seen: &mut HashMap<String, String>, name: String) {
         if !name.is_empty() {
             seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
@@ -1189,13 +1230,21 @@ pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
             add(seen, name.to_owned());
         }
     }
-    fn visit(block: &DocBlock, seen: &mut HashMap<String, String>) {
-        for name in block.projection().refs_page() {
+    fn visit(block: &DocBlock, seen: &mut HashMap<String, String>, baseline: Option<(&str, &str)>) {
+        let replacement = baseline
+            .filter(|(id, _)| *id == block.uuid)
+            .map(|(_, raw)| {
+                let mut replacement = DocBlock::new(raw);
+                replacement.set_org(block.is_org());
+                replacement
+            });
+        let reference_block = replacement.as_ref().unwrap_or(block);
+        for name in reference_block.projection().refs_page() {
             add(seen, name.clone());
         }
-        property_refs(seen, block);
+        property_refs(seen, reference_block);
         for child in &block.children {
-            visit(child, seen);
+            visit(child, seen, baseline);
         }
     }
     let mut seen = HashMap::new();
@@ -1205,7 +1254,7 @@ pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
         property_refs(&mut seen, &block);
     }
     for block in &doc.roots {
-        visit(block, &mut seen);
+        visit(block, &mut seen, baseline);
     }
     seen.into_values().collect()
 }
@@ -5209,6 +5258,59 @@ mod tests {
             ),
             crate::store::SaveOutcome::Saved(_)
         ));
+    }
+
+    #[test]
+    fn completion_reference_baseline_survives_live_save_and_reload() {
+        for (extension, before, after) in [
+            ("md", "- start\n", "[[Fz]]"),
+            ("org", "* start\n", "[[Fz]]"),
+        ] {
+            let dir = scratch(&format!("fz-baseline-{extension}"));
+            fs::write(dir.join(format!("pages/Notes.{extension}")), before).unwrap();
+            fs::write(dir.join("pages/Fuzzy Existing.md"), "- body\n").unwrap();
+            let store = model_store(&dir);
+            let before = published_snapshot(&store);
+            // Warm both indexes so save must refresh carried facts correctly.
+            before.referenced_page_names();
+            let id = before.with_pages(|pages| {
+                pages
+                    .iter()
+                    .find(|(p, _)| p.name == "Notes")
+                    .unwrap()
+                    .1
+                    .roots[0]
+                    .uuid
+                    .clone()
+            });
+            save_model_page(&store, "Notes", |page| page.blocks[0].raw = after.into());
+            let live = published_snapshot(&store);
+            assert_eq!(crate::query::quick_switch(&live, "Fz", 8)[0].name, "Fz");
+            assert_eq!(
+                crate::query::quick_switch_for_editor(&live, "Fz", 8, "Notes", &id, "start")[0]
+                    .name,
+                "Fuzzy Existing"
+            );
+            assert_eq!(
+                crate::query::quick_switch(&before, "Fz", 8)[0].name,
+                "Fuzzy Existing"
+            );
+            store.close();
+            let reopened = model_store(&dir);
+            let snapshot = published_snapshot(&reopened);
+            assert_eq!(
+                crate::query::quick_switch_for_editor(&snapshot, "Fz", 8, "Notes", &id, "start")[0]
+                    .name,
+                "Fuzzy Existing"
+            );
+            assert_eq!(
+                crate::query::quick_switch_for_editor(&snapshot, "Fz", 8, "Notes", &id, after)[0]
+                    .name,
+                "Fz"
+            );
+            reopened.close();
+            let _ = fs::remove_dir_all(dir);
+        }
     }
 
     fn advanced_result(snapshot: &ReadSnapshot, source: &str) -> tine_core::query::AdvancedResult {

@@ -348,7 +348,11 @@ pub(super) fn execute_pages(
             .map(|alias| identity_fold(alias)),
     );
     for name in if include_names {
-        graph.referenced_page_names()
+        if let Some((owner, id, original)) = &plan.editor_reference_baseline {
+            graph.referenced_page_names_for_editor(owner, id, original)
+        } else {
+            graph.referenced_page_names()
+        }
     } else {
         Vec::new()
     } {

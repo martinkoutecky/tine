@@ -646,6 +646,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   });
   const isCalc = editingCalc;
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
+  let completionOriginalRaw: string | null = null;
+  let rawBeforeLastCommit = node().raw;
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
     // A disposed editor whose block was replaced never writes (see shownNode).
     if (replacedUnderEditor()) return;
@@ -675,6 +677,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         ? captureEditorScrollAnchor(ref, nearestScrollableY(ref)) : null;
     }
     autosize();
+    rawBeforeLastCommit = node().raw;
     setRaw(props.id, next, setRawOpts);
   };
 
@@ -764,6 +767,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   });
 
   const closeAc = () => {
+    completionOriginalRaw = null;
     setAc(null);
     setAcBlockState(null);
     setAcItems([]);
@@ -957,7 +961,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       setAcItems([]);
       return;
     }
-    const result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100));
+    completionOriginalRaw ??= node().raw;
+    const result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, {
+      pageName: node().page, blockId: props.id, originalRaw: completionOriginalRaw,
+    }));
     if (result.kind === "stale") return;
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
@@ -1901,6 +1908,12 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // Rows survive refinement of the same trigger, never a new family/location
     // or a now-blank page/tag lifecycle.
     const previous = ac();
+    // OG save-current-block! withholds references while page-search is active.
+    // Preserve autosave and give the read-only picker its pre-trigger baseline.
+    if ((next.kind === "page" || next.kind === "tag") &&
+        (!previous || previous.kind !== next.kind || previous.start !== next.start)) {
+      completionOriginalRaw = rawBeforeLastCommit;
+    }
     setAc(next);
     setAcIndex(0);
     setAcBlockState(next.kind === "block" ? "pending" : null);

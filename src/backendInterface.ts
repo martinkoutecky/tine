@@ -407,7 +407,7 @@ export interface Backend {
     pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope,
     views?: { page: ViewSettings; block: ViewSettings }
   ): Promise<QueryExecution>;
-  quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
+  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string }): Promise<PageEntry[]>;
   /** Capture-only page/tag completion capability. It is intentionally not the
    * general graph command route used by the main WebView. */
   captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]>;

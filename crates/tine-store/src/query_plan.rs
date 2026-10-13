@@ -87,7 +87,8 @@ pub(crate) struct QueryPlan {
     page_view: Option<ViewSettings>,
     block_view: Option<ViewSettings>,
     // Inline completion lists spellings, while graph search lists identities.
-    separate_aliases: bool,
+    pub(crate) separate_aliases: bool,
+    pub(crate) editor_reference_baseline: Option<(String, String, String)>,
 }
 
 impl QueryPlan {
@@ -188,6 +189,7 @@ impl QueryPlan {
             page_view: None,
             block_view: None,
             separate_aliases: false,
+            editor_reference_baseline: None,
         }
     }
 
@@ -257,6 +259,7 @@ impl QueryPlan {
             page_view: None,
             block_view: None,
             separate_aliases: false,
+            editor_reference_baseline: None,
         }
     }
 
@@ -312,6 +315,7 @@ impl QueryPlan {
             page_view: None,
             block_view: None,
             separate_aliases: false,
+            editor_reference_baseline: None,
         }
     }
 
@@ -351,6 +355,7 @@ impl QueryPlan {
             page_view: None,
             block_view: None,
             separate_aliases: false,
+            editor_reference_baseline: None,
         }
     }
 

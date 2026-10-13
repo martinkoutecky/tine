@@ -101,7 +101,7 @@ fn alias_reference_is_never_a_phantom_alias_page() {
         let names: Vec<_> = store
             .whole_graph()
             .unwrap()
-            .complete_page_names(query, 100)
+            .complete_page_names(query, 100, None)
             .into_iter()
             .filter(|entry| entry.rel_path.is_none())
             .map(|entry| entry.name.to_lowercase())

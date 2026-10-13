@@ -501,8 +501,8 @@ class TauriBackend implements Backend {
       has_more: execution.has_more ?? { pages: false, blocks: false },
     };
   }
-  quickSwitch(query: string, limit: number) {
-    return this.call<PageEntry[]>("quick_switch", { query, limit });
+  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string }) {
+    return this.call<PageEntry[]>("quick_switch", { query, limit, editorPageName: editor?.pageName, editorBlockId: editor?.blockId, editorOriginalRaw: editor?.originalRaw });
   }
   captureQuickSwitch(query: string, limit: number) {
     return this.call<PageEntry[]>("capture_quick_switch", { query, limit });

@@ -1796,6 +1796,27 @@ pub(crate) fn quick_switch(graph: &ReadSnapshot, query: &str, limit: usize) -> V
     crate::query_plan::page_hits_to_entries(execution.hits)
 }
 
+pub(crate) fn quick_switch_for_editor(
+    graph: &ReadSnapshot,
+    query: &str,
+    limit: usize,
+    page_name: &str,
+    block_id: &str,
+    original_raw: &str,
+) -> Vec<PageEntry> {
+    let mut plan = crate::query_plan::QueryPlan::legacy_page_search_with_policy(
+        query,
+        limit,
+        graph.config().enable_search_remove_accents,
+    );
+    plan.editor_reference_baseline = Some((
+        page_name.to_owned(),
+        block_id.to_owned(),
+        original_raw.to_owned(),
+    ));
+    crate::query_plan::page_hits_to_entries(plan.execute(graph, || false).hits)
+}
+
 /// Resolve many `((uuid))` block references in a single graph pass — the real
 /// batch behind `Graph::resolve_blocks` (a page full of refs/embeds is one IPC,
 /// and now one scan rather than U independent `resolve_block` calls, each of which
@@ -3337,6 +3358,70 @@ mod tests {
             })
             .collect();
         crate::model::ReadSnapshot::from_page_snapshot(pages)
+    }
+
+    #[test]
+    fn completion_does_not_promote_its_own_new_reference_after_autosave() {
+        let graph = graph_from_page_snapshot(&[
+            ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
+            ("Fuzzy Existing", "pages/Fuzzy Existing.md", "- body\n"),
+        ]);
+        let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+        // A context-free lookup correctly includes the now-saved reference.
+        assert_eq!(quick_switch(&graph, "Fz", 8)[0].name, "Fz");
+        let results = quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "");
+        assert_eq!(
+            results.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["Fuzzy Existing"]
+        );
+        // Saved references present before this lifecycle still exist, as in OG.
+        assert_eq!(
+            quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "[[Fz]]")[0].name,
+            "Fz"
+        );
+        // Context is local to the request; the shared snapshot is unchanged.
+        assert_eq!(quick_switch(&graph, "Fz", 8)[0].name, "Fz");
+        let mut pre_alias_plan = crate::query_plan::QueryPlan::legacy_page_search("Fz", 8);
+        pre_alias_plan.separate_aliases = false;
+        assert_eq!(
+            crate::query_plan::page_hits_to_entries(pre_alias_plan.execute(&graph, || false).hits)
+                [0]
+            .name,
+            "Fz"
+        );
+    }
+
+    #[test]
+    fn completion_baseline_preserves_other_referrers_files_and_aliases() {
+        for source in ["- [[Fz]]\n- #Fz\n", "- [[Fz]]\n  - [[Fz]]\n"] {
+            let graph = graph_from_page_snapshot(&[("Notes", "pages/Notes.md", source)]);
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            assert_eq!(
+                quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "")[0].name,
+                "Fz"
+            );
+        }
+        for sibling in ["- [[Fz]]\n", "- parent\n  - #Fz\n", "tags:: Fz\n- body\n"] {
+            let graph = graph_from_page_snapshot(&[
+                ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
+                ("Other", "pages/Other.md", sibling),
+            ]);
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            assert_eq!(
+                quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "")[0].name,
+                "Fz"
+            );
+        }
+        for (name, raw) in [("Fz", "- body\n"), ("Owner", "alias:: Fz\n- body\n")] {
+            let graph = graph_from_page_snapshot(&[
+                ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
+                (name, "pages/Owner.md", raw),
+            ]);
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            let results = quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "");
+            assert_eq!(results[0].name, "Fz");
+            assert_eq!(results[0].rel_path_str(), "pages/Owner.md");
+        }
     }
 
     fn persisted_dto_id(block: BlockDto) -> String {
