@@ -169,7 +169,7 @@ try {
   const expectedIds = [
     "open", "open-sidebar", "open-new-tab", "open-new-window", "favorite-toggle",
     "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
-    "show-in-folder", "open-default-app", "page-properties",
+    "show-in-folder", "open-default-app", "find-in-page", "page-properties",
     "rename-page", "delete-page",
   ];
   if (JSON.stringify(ids) !== JSON.stringify(expectedIds)) {
