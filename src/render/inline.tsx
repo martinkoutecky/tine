@@ -61,7 +61,7 @@ import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
 import { fileLinkTarget } from "./relativeFileLink";
-import { RelativeFileLink } from "./RelativeFileLink";
+import { RelativeFileLink } from "./RelativeFileLinkView";
 import { galleryFor } from "../imageGallery";
 import { queryMacroRenderRun } from "./queryMacroRender";
 import { windowOf } from "../windowRealm";
