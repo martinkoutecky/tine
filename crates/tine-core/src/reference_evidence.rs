@@ -518,6 +518,48 @@ fn structural_property(key: &str, raw: &str, is_org: bool) -> bool {
         || key.to_ascii_lowercase().starts_with("logseq.")
 }
 
+// lsdoc has already recognized and removed these tags from the inline title.
+// Locate only that accepted suffix inside its header span; this does not
+// recognize tag syntax in arbitrary content or reparse the document.
+fn project_headline_tags(
+    tags: &[String],
+    span: Option<&Span>,
+    mapper: SpanMapper,
+    raw: &str,
+    projection: &mut ReferenceSourceProjection,
+) {
+    if tags.is_empty() {
+        return;
+    }
+    let Some(span) = span else { return };
+    // The first header starts before the synthetic "* " prefix. Its source
+    // begins at raw byte zero; later headers use their ordinary mapped span.
+    let Some(range) = mapper.map(&Span(span.0.max(mapper.prefix), span.1), raw.len()) else {
+        return;
+    };
+    let header = raw[range.clone()]
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim_end();
+    let suffix = format!(":{}:", tags.join(":"));
+    let Some(before) = header.strip_suffix(&suffix) else {
+        return;
+    };
+    let mut start = range.start + before.len() + 1;
+    for tag in tags {
+        let end = start + tag.len();
+        push_explicit_range(
+            projection,
+            tag.clone(),
+            start..end,
+            raw.len(),
+            "explicit_tag",
+        );
+        start = end + 1;
+    }
+}
+
 fn walk_blocks(
     blocks: &[Block],
     mapper: SpanMapper,
@@ -527,10 +569,22 @@ fn walk_blocks(
 ) {
     for block in blocks {
         match block {
-            Block::Paragraph { inline, .. }
-            | Block::Heading { inline, .. }
-            | Block::Bullet { inline, .. }
-            | Block::FootnoteDef { inline, .. } => {
+            Block::Heading {
+                inline,
+                htags,
+                span,
+                ..
+            }
+            | Block::Bullet {
+                inline,
+                htags,
+                span,
+                ..
+            } => {
+                walk_inlines(inline, mapper, raw.len(), is_org, projection);
+                project_headline_tags(htags, span.as_ref(), mapper, raw, projection);
+            }
+            Block::Paragraph { inline, .. } | Block::FootnoteDef { inline, .. } => {
                 walk_inlines(inline, mapper, raw.len(), is_org, projection)
             }
             Block::Quote { children, .. } | Block::Custom { children, .. } => {

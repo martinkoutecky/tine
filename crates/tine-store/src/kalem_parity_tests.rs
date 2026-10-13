@@ -39,7 +39,6 @@ const EXPECTED_DIFFERENCES: &[(&str, &str)] = &[
     ("logseq-org/query/08", "(a) Org alias header must contribute refs; page_properties::property_projection"),
     ("logseq-org/query/09", "(b) ADR 0042: suppress children of matching parents; capture is raw API hits"),
     ("logseq-org/query/10", "(b) ADR 0042: suppress children of matching parents; capture is raw API hits"),
-    ("logseq-org/query/11", "(a) Org headline tags must contribute refs; doc.rs::BlockProjection"),
     ("logseq-org/query/12", "(b) ADR 0042: suppress children of matching parents; capture is raw API hits"),
     ("logseq-org/query/13", "(a) namespace prefixes missing from path refs; query/eval.rs::eval_refs"),
     ("logseq-org/query/18", "(b) ADR 0042: suppress children of matching parents; capture is raw API hits"),

@@ -195,7 +195,7 @@ impl BlockProjection {
         self.refs_norm().iter().any(|r| r == normalized)
     }
 
-    /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
+    /// Normalized page references (`[[..]]` / `#tag` / Org headline tags).
     pub fn refs_norm(&self) -> &[String] {
         self.extra().map_or(&[], |e| &e.refs_norm)
     }
@@ -350,13 +350,25 @@ impl DocBlock {
                 .expect("parsed regions");
             let regions = shared_regions(regions);
             let visible_lower = crate::search_query::canonical_fold(&visible);
-            let refs_page = proj.refs.page;
+            let reference_source =
+                crate::reference_evidence::project(&self.raw, self.is_org, &proj.blocks);
+            // OG 0.10.9 with-page-refs includes headline :tags. lsdoc's
+            // inline refs omit these because they live on the header AST.
+            // Reuse the same parser-owned tag evidence that backlinks consume.
+            let mut refs_page = proj.refs.page;
+            let tag_refs = reference_source
+                .explicit
+                .iter()
+                .filter(|r| r.rule == "explicit_tag");
+            if tag_refs.clone().next().is_some() {
+                refs_page.extend(tag_refs.map(|r| r.name.clone()));
+                refs_page.sort();
+                refs_page.dedup();
+            }
             let refs_norm = refs_page
                 .iter()
                 .map(|r| crate::refs::normalize(r))
                 .collect();
-            let reference_source =
-                crate::reference_evidence::project(&self.raw, self.is_org, &proj.blocks);
             let mut plain_ranges = reference_source.plain_ranges;
             plain_ranges.shrink_to_fit();
             let mut extra = ProjectionExtra {

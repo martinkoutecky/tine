@@ -614,22 +614,6 @@
     "supported": true,
     "tine_only": []
   },
-  "logseq-org/query/11": {
-    "logseq_only": [
-      [
-        "project/plugins",
-        "the plugins of [[kalem]] :plugins:"
-      ]
-    ],
-    "report": {
-      "ignored": [],
-      "ran": [],
-      "supported": true
-    },
-    "source": "[[plugins]]",
-    "supported": true,
-    "tine_only": []
-  },
   "logseq-org/query/12": {
     "logseq_only": [
       [
