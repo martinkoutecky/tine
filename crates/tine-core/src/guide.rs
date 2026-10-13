@@ -310,6 +310,9 @@ mod journal_guide_tests {
         let context = include_str!("templates/keep-context-visible.md");
         for detail in [
             "**Close others**, **Collapse others**",
+            // GH #462: the per-item menu's own entries, named as the menu shows them.
+            "**Close** it, **Collapse** or **Expand** it",
+            "for a page, **Open as page**",
             "Drag the sidebar's left edge to resize it",
             "Tabs stretch to fill the strip",
             "a tab zoomed into a block is named for that block",
@@ -708,6 +711,27 @@ mod rename_guide_tests {
                 "missing system-tray Guide outcome: {outcome}"
             );
         }
+    }
+
+    #[test]
+    fn desktop_guide_says_a_store_install_updates_through_the_store() {
+        // GH #307: an MSIX install is updated by the Microsoft Store; the About text is quoted.
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "**Installed from the Microsoft Store (MSIX)?**",
+            "\"Updates come from the Microsoft Store.\"",
+            "Tine's own update checker and installer stay off",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing Store-update Guide outcome: {outcome}"
+            );
+        }
+        let about = include_str!("../../../src/i18n/locales/en/settings.ftl");
+        assert!(
+            about.contains("settings-about-store-updates = Updates come from the Microsoft Store."),
+            "the Guide quotes Settings → About's Store line; keep them in step"
+        );
     }
 
     #[test]
@@ -1254,6 +1278,10 @@ mod customize_look_guide_tests {
             "**Links to the web or a file**",
             "**Links to pages that do not exist yet**",
             "style.knobs.v1",
+            // GH #583: arrows render as typed unless the user opts in.
+            "**Typographic replacements**",
+            "It is **Off** by default",
+            "**On (while reading)**",
         ] {
             assert!(page.contains(needed), "the page must mention {needed}");
         }
