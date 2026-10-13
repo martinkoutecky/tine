@@ -12,7 +12,8 @@ const extensions = new Set([".rs", ".ts", ".tsx", ".css"]);
 export function isProduction(file) {
   if (!roots.some((root) => file.startsWith(`${root}/`))) return false;
   if (!extensions.has(path.extname(file))) return false;
-  if (/(^|\/)(tests|examples|fixtures|vendor|target|gen)\//.test(file)) return false;
+  // `x_tests/` is a test directory module (`#[cfg(test)] mod x_tests;` with `x_tests/mod.rs`).
+  if (/(^|\/)(tests|examples|fixtures|vendor|target|gen|[^/]*_tests)\//.test(file)) return false;
   if (/(^|\/)([^/]*\.test\.[^/]+|[^/]*_tests\.rs|tests\.rs|test_[^/]*\.rs)$/.test(file)) return false;
   return true;
 }
@@ -112,6 +113,14 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   "src-tauri/src/share_inbox.rs": { sites: 2, approval: "Martin 2026-10-10 (Rule 8 new persisted format: share-inbox); docs/adr/0073. Second site: the commit tombstone inside that format (review round 2, manager-specified)" },
   // Compiled executable resource in a private temporary directory, removed on
   // exit; no durable layout or graph state. Uses the existing audited writer.
+  // CLI slice 1: none is a persisted format. Martin 2026-10-13 ("ok" to TM3.1).
+  // A reply line on the owner's local socket (IPC, never stored).
+  "src-tauri/src/owner/wire.rs": { sites: 1, approval: "Martin 2026-10-13: CLI owner socket reply, not a persisted format" },
+  "src-tauri/src/owner/endpoint.rs": { sites: 1, approval: "Martin 2026-10-13: CLI owner socket reply, not a persisted format" },
+  // The command's answer on stdout.
+  "src-tauri/src/owner/terminal.rs": { sites: 1, approval: "Martin 2026-10-13: CLI stdout output, not a persisted format" },
+  // The detached serve's stderr capture, emptied past 1 MiB (serve.rs bound_start_log); read only to report a failed start.
+  "src-tauri/src/owner/client.rs": { sites: 1, approval: "Martin 2026-10-13: tine serve start log, bounded diagnostic, not a persisted format" },
   "src-tauri/src/youtube_identity.rs": { sites: 1, approval: "Martin's OG-QBY native YouTube identity task; temporary bundled WebProcess module, no new persisted format" },
 });
 

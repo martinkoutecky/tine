@@ -47,6 +47,7 @@ mod migrate_identifier;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 mod native_integrations;
 mod native_mouse_history;
+mod owner;
 mod page_commands;
 mod pdf_crop_rollback;
 mod platform;

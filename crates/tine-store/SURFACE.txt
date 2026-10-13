@@ -305,7 +305,7 @@ fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 48)
+## Page host (ceiling: 54)
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
 # for its retained-writer callers (census writers in tine-graph-features, backup restore in
 # src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
@@ -377,9 +377,19 @@ enum page_host::ApplyRefusal
 # as absent and the plan fails "not found" before `apply` could flush it. `apply` cannot carry it:
 # it needs the plan, and the plan needs the saved bytes.
 fn page_host::PageHost::flush_input
+# CLI slice 1 (48 -> 54, CLI PROTOCOL §5): `read`, a page as its host holds it (a held page's
+# buffer, unsaved input included, with its host version; else the file), with `HostRead` and its
+# fields and `HostReadError`. The command line's `page show` must show what the window shows;
+# `Store::read` answers saved bytes only and cannot see a held buffer.
+fn page_host::PageHost::read
+struct page_host::HostRead
+field page_host::HostRead.page
+field page_host::HostRead.bytes
+field page_host::HostRead.revision
+enum page_host::HostReadError
 ## Re-exports (ceiling: 10)
 use crate::tine_outline::edit_kind
-use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostOp,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
+use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}

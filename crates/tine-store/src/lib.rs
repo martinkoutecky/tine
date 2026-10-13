@@ -99,8 +99,8 @@ mod page_host;
 pub use page_host::faults as host_faults;
 pub use page_host::{
     ApplyRefusal, DiskToken, DraftStatus, Effect as HostEffect, Expected as HostExpected, HostOp,
-    Input, Opened, PageHost, PageMail, PageOperation, PageRefusal, Reloaded, RenameRefusal,
-    Reservation, ReserveRefusal, StopMode, StopState, Stopped,
+    HostRead, HostReadError, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
+    Reloaded, RenameRefusal, Reservation, ReserveRefusal, StopMode, StopState, Stopped,
 };
 #[cfg(test)]
 mod page_state;

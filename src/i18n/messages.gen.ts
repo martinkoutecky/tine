@@ -133,6 +133,7 @@ export interface MessageArgs {
   "toast-copy-title": {};
   "toast-dismiss": {};
   "toast-graph-folder-reveal-failed": { "error": string | number };
+  "toast-graph-open-owner-waiting": { "progress": string | number };
   "toast-language-load-failed": {};
   "toast-language-save-failed": {};
   "toast-link-outside-graph": { "dest": string | number };

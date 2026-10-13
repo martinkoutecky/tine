@@ -486,7 +486,7 @@ mod tests {
         let mut registry = GraphRegistry::default();
         registry.bind("graph-1".into(), old.clone()).unwrap();
         assert!(registry.remove("graph-1").is_none(), "retiring");
-        let (adopted, host) = registry.retirement.adopt(&canonical).unwrap();
+        let (adopted, host, _) = registry.retirement.adopt(&canonical).unwrap();
         let mut fresh = GraphSlot::new(adopted, canonical);
         *fresh.host.get_mut().unwrap() = host;
         let mut entered = false;

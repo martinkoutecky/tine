@@ -1309,6 +1309,9 @@ mod publication;
 #[path = "binding_launch.rs"]
 mod launch;
 
+#[path = "binding_read.rs"]
+mod read;
+pub use read::{HostRead, HostReadError};
 #[path = "binding_apply.rs"]
 mod apply;
 pub use apply::{ApplyRefusal, Effect, Expected, HostOp};

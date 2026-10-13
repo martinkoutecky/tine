@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-refs 1  "refs " 
+.SH NAME
+tine\-refs \- Show the linked references of a page, or of a block with \-\-block
+.SH SYNOPSIS
+\fBtine refs\fR [\fB\-\-block\fR] [\fB\-\-debug\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPAGE|UUID\fR> 
+.SH DESCRIPTION
+Show the linked references of a page, or of a block with \-\-block
+.SH OPTIONS
+.TP
+\fB\-\-block\fR
+TARGET is a block\*(Aqs id:: UUID
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+.TP
+\fB\-\-json\fR
+Print the typed result (schema tine.cli/1) as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPAGE|UUID\fR>
+

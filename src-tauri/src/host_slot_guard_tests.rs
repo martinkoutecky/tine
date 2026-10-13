@@ -20,7 +20,16 @@ fn production_files(dir: &Path, out: &mut Vec<(String, String)>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
-            production_files(&path, out);
+            // A `*_tests/` directory is a test module's tree (as a
+            // `*_tests.rs` file is): its helpers are not call paths.
+            if !path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with("_tests")
+            {
+                production_files(&path, out);
+            }
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();

@@ -27,7 +27,16 @@ struct GraphChange {
 }
 
 pub(crate) fn watch_mode(app: &tauri::AppHandle) -> WatchMode {
-    let selected = settings_path(app)
+    watch_mode_from(settings_path(app))
+}
+
+/// `watch_mode` for a process without a Tauri handle (`tine serve`).
+pub(crate) fn watch_mode_in(app_data: &std::path::Path) -> WatchMode {
+    watch_mode_from(Some(crate::settings::settings_path_in(app_data)))
+}
+
+fn watch_mode_from(settings: Option<std::path::PathBuf>) -> WatchMode {
+    let selected = settings
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|source| serde_json::from_str::<serde_json::Value>(&source).ok())
         .and_then(|settings| settings.get("watch_mode")?.as_str().map(str::to_owned));

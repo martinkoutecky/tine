@@ -143,6 +143,9 @@ export interface Backend {
   onPageMail(cb: (mail: PageMail) => void): Promise<() => void>;
   /** The graph being opened overlaps one that is still saving its pages (F6). */
   onGraphOpenWaiting(cb: (saving: string) => void): Promise<() => void>;
+  /** The graph being opened waits for the command line's owner (`tine serve`)
+   * to finish and hand it over; each call carries serve's changed progress. */
+  onGraphOpenOwnerWaiting(cb: (progress: string) => void): Promise<() => void>;
   /** The v1 crash-draft file of this graph when one exists (D-1: left untouched
    * as a backup); read-only, never its content. */
   legacyDraftsFile(): Promise<string | null>;

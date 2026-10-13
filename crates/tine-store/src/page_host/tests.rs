@@ -944,7 +944,9 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
             named && (!gated || (i > 0 && lines[i - 1] == "#[cfg(test)]"))
         })
     }
-    fn visit(root: &std::path::Path, dir: &std::path::Path) {
+    /// `in_test`: `dir` is a directory module declared under `#[cfg(test)]`
+    /// (`mod x;` gated, with `x/mod.rs`), so all of it is test code.
+    fn visit(root: &std::path::Path, dir: &std::path::Path, in_test: bool) {
         let paths: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -956,7 +958,12 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
             .collect();
         for path in paths {
             if path.is_dir() {
-                visit(root, &path);
+                let module = format!("{}.rs", path.file_name().unwrap().to_string_lossy());
+                let gated = in_test
+                    || siblings
+                        .iter()
+                        .any(|parent| declares(parent, &module, true));
+                visit(root, &path, gated);
                 continue;
             }
             if path.extension().is_none_or(|ext| ext != "rs") {
@@ -982,7 +989,8 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
             let name = path.file_name().unwrap().to_string_lossy();
             // Test code: a file a sibling declares under `#[cfg(test)]`, and a
             // top-level `#[cfg(test)] mod … {` up to its closing `}`.
-            let mut test_code = siblings.iter().any(|parent| declares(parent, &name, true));
+            let mut test_code =
+                in_test || siblings.iter().any(|parent| declares(parent, &name, true));
             let test_file = test_code;
             let lines: Vec<&str> = source.lines().collect();
             for (i, line) in lines.iter().enumerate() {
@@ -1001,13 +1009,14 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
                 // The retained-writer surface (approved by Martin 2026-10-10) is named only
                 // where a census writer reserves from a host or the binding
                 // keeps one (STEP3 §7). Exactly one production path starts a
-                // host: every graph-window binding (`load_graph_for_label`,
-                // step 3b P2b). A second would be a second driver on the
-                // graph's drafts.
+                // host, `graph.rs` `launch_host`: the graph-window binding
+                // (`load_graph_for_label`, step 3b P2b) and the command-line
+                // owner (`owner::serve`, one per graph by the owner lock) both
+                // call it. A second would be a second driver on the graph's drafts.
                 if !test_code && line.contains("PageHost::start(") {
                     assert_eq!(
                         relative, "src-tauri/src/graph.rs",
-                        "a page host starts outside the graph-window binding: {relative}: {line}"
+                        "a page host starts outside graph.rs launch_host: {relative}: {line}"
                     );
                     PRODUCTION_STARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     // Its kinds sink is the app's edit-kinds log (N1, OG-RULES
@@ -1081,12 +1090,12 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
             }
         }
     }
-    visit(&root, &root.join("crates"));
-    visit(&root, &root.join("src-tauri/src"));
+    visit(&root, &root.join("crates"), false);
+    visit(&root, &root.join("src-tauri/src"), false);
     assert_eq!(
         PRODUCTION_STARTS.load(std::sync::atomic::Ordering::Relaxed),
         1,
-        "every graph-window binding starts its page host in one place (graph.rs load_graph_for_label)"
+        "every production page host starts in one place (graph.rs launch_host)"
     );
     let runtime = [
         ("mod.rs", include_str!("mod.rs")),
@@ -1099,6 +1108,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
         ),
         ("binding_apply.rs", include_str!("binding_apply.rs")),
         ("binding_launch.rs", include_str!("binding_launch.rs")),
+        ("binding_read.rs", include_str!("binding_read.rs")),
         ("draft_worker.rs", include_str!("draft_worker.rs")),
         ("drafts.rs", include_str!("drafts.rs")),
         ("driver.rs", include_str!("driver.rs")),

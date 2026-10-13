@@ -347,6 +347,7 @@ class TauriBackend implements Backend {
   }
   onPageMail(cb: (mail: PageMail) => void) { return this.on("page-mail", cb); }
   onGraphOpenWaiting(cb: (saving: string) => void) { return this.on("graph-open-waiting", cb); }
+  onGraphOpenOwnerWaiting(cb: (progress: string) => void) { return this.on("graph-open-owner-waiting", cb); }
   legacyDraftsFile() {
     return this.call<string | null>("legacy_drafts_file");
   }

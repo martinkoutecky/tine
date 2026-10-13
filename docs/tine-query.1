@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-query 1  "query " 
+.SH NAME
+tine\-query \- Run a query: an OG simple or advanced query, or TQL with \-\-tql
+.SH SYNOPSIS
+\fBtine query\fR [\fB\-\-tql\fR] [\fB\-\-debug\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIQUERY\fR> 
+.SH DESCRIPTION
+Run a query: an OG simple or advanced query, or TQL with \-\-tql
+.SH OPTIONS
+.TP
+\fB\-\-tql\fR
+QUERY is TQL, as in {{tine\-query …}}
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+.TP
+\fB\-\-json\fR
+Print the typed result (schema tine.cli/1) as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIQUERY\fR>
+

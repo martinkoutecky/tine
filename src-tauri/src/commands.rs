@@ -239,7 +239,7 @@ fn refuse_bound_graph_path(
     Ok(resolved)
 }
 
-mod query_error_wire;
+pub(crate) mod query_error_wire;
 use query_error_wire::{query_error, reference_error};
 
 #[tauri::command]
@@ -259,7 +259,7 @@ pub(crate) async fn save_workspaces(
     crate::settings::save_workspaces(data, app, state).await
 }
 
-fn feature_search_error(error: tine_graph_features::search::SearchError) -> String {
+pub(crate) fn feature_search_error(error: tine_graph_features::search::SearchError) -> String {
     match error {
         tine_graph_features::search::SearchError::Load(error) => {
             format!("graph load failed: {error:?}")

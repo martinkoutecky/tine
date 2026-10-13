@@ -58,7 +58,7 @@ pub type PreparedRewrite =
     dyn Fn(&PageId, &[u8], tine_core::config::FileNameFormat) -> Option<Vec<u8>> + Send + Sync;
 
 type HostShared = Shared<ProductionIo, SystemClock>;
-type HostState = State<ProductionIo, SystemClock>;
+pub(super) type HostState = State<ProductionIo, SystemClock>;
 
 /// The longest a host operation's caller waits for admission, then for its
 /// answer and every page's publication (Finding B, R1).

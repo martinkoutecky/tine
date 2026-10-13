@@ -874,6 +874,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     },
     onPageMail: unsubscribed,
     onGraphOpenWaiting: unsubscribed,
+    onGraphOpenOwnerWaiting: unsubscribed,
     async legacyDraftsFile() {
       return null;
     },
@@ -1029,6 +1030,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "pageOwed",
   "onPageMail",
   "onGraphOpenWaiting",
+  "onGraphOpenOwnerWaiting",
   "legacyDraftsFile",
 ] as const;
 

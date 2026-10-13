@@ -1459,6 +1459,46 @@ mod og_20d_guide_tests {
         assert!(page("Tine Guide").contains("[[Reference/Command line]]"));
     }
 
+    #[test]
+    fn command_line_guide_teaches_read_commands_ownership_and_script_results() {
+        let cli = page("Reference/Command line");
+        for command in [
+            "tine status",
+            "tine page show",
+            "tine journal",
+            "tine block show",
+            "tine refs",
+            "tine search",
+            "tine query",
+            "tine pages",
+        ] {
+            assert!(cli.contains(command), "Guide must teach {command}");
+        }
+        // Check connected concepts within a teaching block, not exact prose.
+        let blocks: Vec<_> = cli.lines().map(str::to_lowercase).collect();
+        for concepts in [
+            vec!["read-only", "edit", "notes"],
+            vec!["unsaved", "app", "page"],
+            vec!["--graph", "tine_graph", "working directory", "logseq/"],
+            vec!["id::", "uuid", "descendants"],
+            vec!["--namespace", "existing", "pages"],
+            vec!["app", "automatically", "tine serve", "30", "idle"],
+            vec!["handover", "60", "timeout", "--stop"],
+            vec!["windows", "unsupported", "exit 5", "app", "opens"],
+            vec!["android", "ios", "no command-line"],
+            vec!["--json", "stdout", "tine.cli/1"],
+            vec!["stderr", "exit", "diagnostics", "truncation"],
+            vec!["cli-output.md", "fields", "exit-code"],
+        ] {
+            assert!(
+                blocks
+                    .iter()
+                    .any(|block| concepts.iter().all(|concept| block.contains(concept))),
+                "Command-line onboarding must connect {concepts:?}"
+            );
+        }
+    }
+
     /// og 21a: a live-draft conflict is merged at the page and survives a
     /// restart; a rename leaves a mid-merge referrer alone and says so.
     #[test]

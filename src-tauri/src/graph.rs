@@ -228,8 +228,7 @@ pub(crate) fn checkpoint_app_data(app: &tauri::AppHandle) -> Option<std::path::P
 /// The graph's launch checkpoint (ADR 0070): one file under `app_data`, never
 /// under the graph root, keyed like the session and drafts files.
 pub(crate) fn launch_checkpoint_path(app_data: &Path, root: &Path) -> std::path::PathBuf {
-    let id = crate::settings::session_id(root);
-    let stem = id.strip_suffix(".json").unwrap_or(&id);
+    let stem = crate::settings::host_graph_id(root);
     app_data
         .join("launch-checkpoints")
         .join(format!("{stem}.bin"))
@@ -470,15 +469,79 @@ fn start_host(
         .path()
         .app_data_dir()
         .map_err(|error| format!("no app data directory for crash drafts: {error}"))?;
-    let id = crate::settings::session_id(root_key);
-    let graph_id = id.strip_suffix(".json").unwrap_or(&id);
-    tine_store::PageHost::start(
+    launch_host(
         store,
         &app_data,
-        graph_id,
-        crate::page_commands::log_edit_kinds,
+        root_key,
         crate::page_commands::page_mail_sink(app.clone(), window_label.to_string()),
     )
+}
+
+/// Start a graph's page host, the only writer of its page edits: crash drafts
+/// under `<app data>/drafts-v2/<graph id>`, the app's edit-kinds log as its
+/// kinds sink (OG-RULES Rule 8). Every production host starts here: the
+/// graph-window binding (`start_host`) and the command-line owner
+/// (`owner::serve`). The owner lock (CLI PROTOCOL §3) admits one of them per
+/// graph across processes, so a graph's drafts have one driver.
+pub(crate) fn launch_host(
+    store: &Arc<Store>,
+    app_data: &Path,
+    root_key: &Path,
+    mail: impl FnMut(tine_store::PageMail) + Send + 'static,
+) -> Result<tine_store::PageHost, String> {
+    let graph_id = crate::settings::host_graph_id(root_key);
+    tine_store::PageHost::start(
+        store,
+        app_data,
+        &graph_id,
+        crate::page_commands::log_edit_kinds,
+        mail,
+    )
+}
+
+/// How the binding came by its owner lease.
+enum Owner {
+    Adopted(crate::owner::lease::Lease),
+    Claimed(crate::owner::lease::Claimed),
+}
+
+/// How long an open waits for `tine serve` to hand the graph over.
+const OWNER_HANDOVER_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The owner lock for a fresh host (CLI PROTOCOL §3.5, §4): taken, or
+/// handed over by a `tine serve` that owns the graph. `None` opens the
+/// graph without a command endpoint (no arbitration on this platform or
+/// filesystem); an open never refuses over the lock, it only waits for a
+/// handover, and fails when that does not finish in time.
+fn claim_owner(
+    app: &tauri::AppHandle,
+    window_label: &str,
+    root_key: &Path,
+) -> Result<Option<crate::owner::lease::Claimed>, String> {
+    let Ok(app_data) = app.path().app_data_dir() else {
+        // `start_host` refuses this open with the reason.
+        return Ok(None);
+    };
+    let drafts = crate::owner::wire::Drafts {
+        app_data: app_data.display().to_string(),
+        graph_id: crate::settings::host_graph_id(root_key),
+    };
+    // The window hears each change of serve's progress (§4.5), not only the start.
+    let mut told: Option<String> = None;
+    crate::owner::lease::claim_for_app(root_key, drafts, OWNER_HANDOVER_WAIT, |progress| {
+        if told.as_deref() == Some(progress) {
+            return;
+        }
+        if told.is_none() {
+            crate::debug::diag("graph-open-waits-for-the-command-line-owner");
+        }
+        told = Some(progress.to_string());
+        let _ = app.emit_to(
+            window_label,
+            "graph-open-owner-waiting",
+            progress.to_string(),
+        );
+    })
 }
 
 /// How long an open waits for an overlapping graph that is still saving.
@@ -536,8 +599,8 @@ pub(crate) fn load_graph_for_label(
     // and host (plan v3 §3, S2): a fresh binding (lease, background work,
     // session on `page_window_reloaded`) and page mail to this window.
     let retirement = state.graphs.read().unwrap().retirement.clone();
-    let (slot, meta) = match retirement.adopt(&root_key) {
-        Some((store, host)) => {
+    let (slot, meta, lease) = match retirement.adopt(&root_key) {
+        Some((store, host, lease)) => {
             let mut slot = GraphSlot::new(store, root_key);
             if let PageHostSlot::Running(host) = &host {
                 host.retarget(crate::page_commands::page_mail_sink(
@@ -547,7 +610,7 @@ pub(crate) fn load_graph_for_label(
             }
             *slot.host.get_mut().unwrap() = host;
             let meta = graph_meta(&slot);
-            (slot, meta)
+            (slot, meta, lease.map(Owner::Adopted))
         }
         None => {
             let root = root_key.display().to_string();
@@ -562,13 +625,26 @@ pub(crate) fn load_graph_for_label(
                 ),
             }?;
             let mut slot = GraphSlot::new(store, root_key);
-            // On failure the dropped slot closes the Store.
+            // The owner lock before the host (CLI PROTOCOL §3.2); a
+            // command-line owner yields first (§4).
+            let claimed = claim_owner(app, window_label, &slot.root_key)?;
+            // On failure the dropped slot closes the Store, and the dropped
+            // claim releases the lock.
             let host = start_host(app, window_label, &slot.store, &slot.root_key)?;
             *slot.host.get_mut().unwrap() = PageHostSlot::Running(host);
-            (slot, meta)
+            (slot, meta, claimed.map(Owner::Claimed))
         }
     };
     let slot = Arc::new(slot);
+    let lease = match lease {
+        Some(Owner::Adopted(lease)) => {
+            lease.adopted_by(&slot);
+            Some(lease)
+        }
+        Some(Owner::Claimed(claimed)) => Some(claimed.serve_app(&slot)),
+        None => None,
+    };
+    *slot.owner.lock().unwrap() = lease;
     let warm_generation = begin_warm_cache(&slot);
     let displaced = {
         let mut registry = state.graphs.write().unwrap();

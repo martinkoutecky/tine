@@ -2738,3 +2738,39 @@ fn the_kinds_sink_runs_outside_the_store_writer() {
     );
     live.host.stop();
 }
+
+/// CLI PROTOCOL §5: the host read returns a held page's buffer, unsaved
+/// input included, while its file still has the old bytes; a page the host
+/// does not hold reads from its file with no revision; no file reads absent.
+#[cfg(unix)]
+#[test]
+fn the_host_read_returns_the_held_buffer_not_the_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- bee\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let pages = live.root.join("pages");
+    // The save cannot publish: the typed text stays unsaved in the buffer.
+    fs::set_permissions(&pages, fs::Permissions::from_mode(0o555)).unwrap();
+    live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.wait(&key, "save error", |mail| mail.notice.save_error);
+    let read = live.host.read(&PageId::from("pages/a.md")).unwrap();
+    fs::set_permissions(&pages, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(fs::read_to_string(live.root.join(&key)).unwrap(), "- one\n");
+    assert_eq!(read.bytes.as_deref(), Some(&b"- two\n"[..]));
+    let (incarnation, version) = read.revision.expect("a held page has a revision");
+    assert!(
+        incarnation >= 1 && version > page.version,
+        "{:?}",
+        read.revision
+    );
+    let unheld = live.host.read(&PageId::from("pages/b.md")).unwrap();
+    assert_eq!(unheld.bytes.as_deref(), Some(&b"- bee\n"[..]));
+    assert_eq!(
+        unheld.revision, None,
+        "no version is invented for an unheld page"
+    );
+    let absent = live.host.read(&PageId::from("pages/none.md")).unwrap();
+    assert_eq!((absent.bytes, absent.revision), (None, None));
+    live.until_disk(&key, "- two\n");
+    live.host.stop();
+}

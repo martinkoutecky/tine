@@ -14,5 +14,23 @@ icon:: ⌨️
 	- A live export opens on the configured home page when it is exported, then **Welcome to Tine**, then the first exported page. Use `--home "Page name"` to choose explicitly; a home page that is not exported is refused.
 - ## Check a graph
 	- `tine doctor GRAPH` reads and parses the graph, reports how many pages and journals it found and the configured home page, names every unreadable page and every page name claimed by more than one file, and does not change the graph. It exits with status 1 when it finds a problem.
+- ## Read your graph from a terminal
+	- On Linux and macOS, the graph read commands are read-only: they do not edit notes. They ask the graph's owner, so `tine page show` and `tine journal` include unsaved edits when the app holds that page; other reads use the graph's indexed view.
+	- Choose a graph with `--graph GRAPH` (or `-g GRAPH`) on each read command. Otherwise Tine uses `TINE_GRAPH`, then the nearest folder around your working directory with a `logseq/` subfolder. Example: `tine page show "Project notes" --graph ~/notes`.
+	- `tine status` shows whether the app or `serve` owns the graph and what it is doing.
+	- `tine page show "Page name"` reads a page's outline. `tine journal` reads today; `tine journal 2026-10-13` reads a specific day that already exists.
+	- `tine block show UUID` reads a block and its descendants using its persisted `id::` UUID. `tine refs "Page name"` shows linked references; `tine refs UUID --block` finds references to a persisted block id.
+	- `tine search "meeting"` searches page names and block text as the app does. `--pages N` and `--blocks N` set the result limits; `0` switches that category off.
+	- `tine query '(task TODO)'` runs the text inside a Logseq simple or advanced query macro. `tine query "task = 'TODO'" --tql` runs the text inside a Tine query macro. [[Features/Queries]] explains the query forms and their supported scope; read diagnostics when a query cannot run whole.
+	- `tine pages` lists existing pages, including journals. `tine pages --namespace Projects` limits it to that namespace and its descendants; aliases and names that only appear in references are not listed.
+- ## Who owns the graph?
+	- When the app has the graph open, it answers these commands. With no app holding the graph, a read command automatically starts `tine serve GRAPH` in the background. You can also run that command yourself in a terminal; it owns the graph without opening a window and exits after 30 idle minutes.
+	- When you open that graph in the app, `serve` finishes admitted work, stops and hands over ownership. The app shows **Finishing the command line's work on this graph…** while it waits. If the handover has not finished after 60 seconds, opening fails and names `tine serve GRAPH --stop`; the app does not take ownership on a timeout. Read commands retry through a busy handover for up to 30 seconds.
+	- `tine serve GRAPH --stop` asks the command-line owner to finish and exit. It cannot stop an app owner.
+	- On Windows, the owner endpoint is unavailable in this Beta: graph read commands report `unsupported` (with `--json`, a JSON error on stderr), and reads and `tine serve` exit 5. The app still opens graphs normally without that endpoint. The launch, capture, doctor and export commands above remain available on desktop; Android and iOS have no command-line interface.
+- ## Output for people and scripts
+	- Read commands print text to stdout by default, with outline addresses such as `1.2` for a second child. Add `--json` for a single JSON result on stdout with schema `tine.cli/1`, for example `tine pages --graph ~/notes --json`.
+	- Successful commands exit 0. Failed reads print errors to stderr; `--json` makes owner and connection errors a JSON error envelope there. Invalid usage exits 2, a missing or ambiguous page/block exits 3, a still-busy owner exits 4, and endpoint/startup failures exit 5. Check the exit status and read any diagnostics or truncation notices before treating results as complete.
+	- The [command-line output contract](https://github.com/martinkoutecky/tine/blob/og/docs/contracts/cli-output.md) documents JSON fields, limits, error codes and the full exit-code table.
 - ## Full reference
 	- Every command and subcommand has `--help`, for example `tine export live --help`. Linux `.deb` and `.rpm` packages also install the same generated reference for `man tine`.
