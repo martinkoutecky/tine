@@ -85,14 +85,14 @@ const EDN_SECOND = `{:highlights [{:id #uuid "${SECOND_FIRST_ID}"
 // A self-contained, two-page PDF with nested bookmarks. The parent has an
 // explicit page-reference destination; its child resolves a named destination.
 // The filled red/green/blue rectangles make outline navigation easy to inspect.
-function makeNamedOutlinePdf() {
+function makeNamedOutlinePdf(label = "Outline fixture page one") {
   const firstPageContent = [
     "q",
     "1 0 0 rg", "360 560 160 48 re f",
     "0 0.62 0 rg", "360 490 160 48 re f",
     "0 0.25 1 rg", "360 420 160 48 re f",
     "Q",
-    "BT /F1 22 Tf 72 720 Td (Outline fixture page one) Tj ET",
+    `BT /F1 22 Tf 72 720 Td (${label}) Tj ET`,
     "BT /F1 13 Tf 72 690 Td (Select this deterministic text for a highlight.) Tj ET",
     "BT /F1 13 Tf 72 668 Td (Explicit and named outline destinations are real.) Tj ET",
   ].join("\n");
@@ -149,10 +149,7 @@ fs.writeFileSync(MARKDOWN_PAGE, "- Markdown upload target\n");
 fs.writeFileSync(ORG_PAGE, "* Org upload target\n");
 fs.writeFileSync(PASTE_PAGE, "- Paste target\n");
 fs.writeFileSync(path.join(GRAPH, "assets", "logseq-sample.pdf"), Buffer.from(PDF, "base64"));
-const secondPdf = Buffer.from(PDF, "base64");
-const pdfLabelOffset = secondPdf.indexOf(Buffer.from("Tine PDF viewer"));
-if (pdfLabelOffset < 0) throw new Error("PDF fixture label was not found");
-Buffer.from("Second PDF test").copy(secondPdf, pdfLabelOffset); // same byte length: xref stays valid
+const secondPdf = makeNamedOutlinePdf("Second PDF test");
 fs.writeFileSync(path.join(GRAPH, "assets", "logseq-second.pdf"), secondPdf);
 const sidecar = path.join(GRAPH, "assets", "logseq-sample.edn");
 fs.writeFileSync(sidecar, EDN);
@@ -1539,6 +1536,24 @@ try {
   if (fs.readFileSync(secondSidecar, "utf8") !== originalSecondSidecar) {
     throw new Error("same-PDF highlight navigation rewrote the sidecar");
   }
+
+  // GH #672: scrolling reports a new page into the route. That report must
+  // not replay the backlink intent, while clicking the same ref again must.
+  await browser.execute(() => {
+    const scroll = document.querySelector(".pdf-scroll");
+    const page = document.querySelector('.pdf-page[data-page="2"]');
+    if (!(scroll instanceof HTMLElement) || !(page instanceof HTMLElement)) throw new Error("missing PDF page two");
+    scroll.scrollTop = page.offsetTop;
+    scroll.dispatchEvent(new Event("scroll"));
+  });
+  await sleep(500);
+  if (await browser.$(".pdf-page-input").getValue() !== "2") {
+    throw new Error("GH #672: scrolling after a backlink replayed its page-one target");
+  }
+  await browser.$(`[data-block-ref="${SECOND_SECOND_ID}"]`).click();
+  await browser.waitUntil(async () => await browser.$(".pdf-page-input").getValue() === "1", {
+    timeout: 10_000, timeoutMsg: "GH #672: repeating the same backlink did not navigate again",
+  });
 
   // OG direct-link parity: reopening the already-current resource without a
   // page/highlight intent is a no-op, not an implicit jump to page 1. The exact
