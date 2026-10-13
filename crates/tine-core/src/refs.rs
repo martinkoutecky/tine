@@ -20,6 +20,16 @@ pub fn normalize(name: &str) -> String {
     page_key(name)
 }
 
+/// OG's page-reference closure: the name and each nonempty namespace ancestor.
+/// Inputs retain their spelling; callers fold page identity before comparing.
+/// Work and output depend only on this name, never on graph size.
+pub fn namespace_refs(name: &str) -> impl Iterator<Item = &str> {
+    name.match_indices('/')
+        .map(move |(at, _)| &name[..at])
+        .chain(std::iter::once(name))
+        .filter(|name| !name.is_empty())
+}
+
 /// Pages whose text is never a reference source: the target page itself (OG
 /// excludes a page from its own references) and Tine's Favorites arrangement
 /// page (`:tine/favorites-page`), whose `[[links]]` are a sidebar layout, not a

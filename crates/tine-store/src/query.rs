@@ -27,9 +27,7 @@ pub(crate) mod page_properties;
 mod sample_seed_tests;
 pub(crate) use page_properties::page_facets;
 use page_properties::{page_document_is_org, page_property_lines};
-pub(crate) use tine_core::page_properties::{
-    document_page_property_block, page_property_raw, property_projection,
-};
+pub(crate) use tine_core::page_properties::{document_page_property_block, page_property_raw};
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoundedGroups {
@@ -594,12 +592,21 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
 }
 
 fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
+    page_property_block_with_config(entry, pre, &tine_core::query::atom::ParseConfig::default())
+}
+
+fn page_property_block_with_config(
+    entry: &PageEntry,
+    pre: &str,
+    config: &tine_core::query::atom::ParseConfig,
+) -> Option<DocBlock> {
     let is_org = Format::from_path(&entry.path) == Format::Org;
     let raw = page_property_raw(pre, is_org);
     if raw.is_empty() {
         return None;
     }
-    let mut block = property_projection(&raw, is_org);
+    let mut block =
+        tine_core::page_properties::property_projection_with_config(&raw, is_org, config);
     block.uuid = format!(
         "page-property:{:?}:{}",
         entry.kind,
@@ -623,7 +630,11 @@ fn page_property_referrer(entry: &PageEntry, pre: &str, uuid: &str) -> Option<Bl
 /// cached page. This is the projection used by the reconstructible candidate
 /// index; query-time occurrence verification still uses the full evidence
 /// engine below and remains authoritative.
-pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Document) -> Vec<String> {
+pub(crate) fn document_explicit_reference_names(
+    entry: &PageEntry,
+    doc: &Document,
+    config: &tine_core::config::Config,
+) -> Vec<String> {
     fn collect(blocks: &[DocBlock], names: &mut Vec<String>) {
         for block in blocks {
             names.extend(
@@ -632,25 +643,29 @@ pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Documen
                     .reference_source()
                     .explicit
                     .iter()
-                    .map(|reference| refs::page_key(&reference.name)),
+                    .flat_map(|reference| refs::namespace_refs(&reference.name))
+                    .map(refs::page_key),
             );
             collect(&block.children, names);
         }
     }
 
     let mut names = Vec::new();
-    if let Some(block) = doc
-        .pre_block
-        .as_deref()
-        .and_then(|pre| page_property_block(entry, pre))
-    {
+    if let Some(block) = doc.pre_block.as_deref().and_then(|pre| {
+        page_property_block_with_config(
+            entry,
+            pre,
+            &tine_core::query::atom::ParseConfig::from_config(config),
+        )
+    }) {
         names.extend(
             block
                 .projection()
                 .reference_source()
                 .explicit
                 .iter()
-                .map(|reference| refs::page_key(&reference.name)),
+                .flat_map(|reference| refs::namespace_refs(&reference.name))
+                .map(refs::page_key),
         );
     }
     collect(&doc.roots, &mut names);
@@ -749,7 +764,13 @@ fn collect_reference_occurrences_bounded(
                 .pre_block
                 .as_deref()
                 .filter(|_| candidate_pages.admits(page, 0))
-                .and_then(|pre| page_property_block(entry, pre))
+                .and_then(|pre| {
+                    page_property_block_with_config(
+                        entry,
+                        pre,
+                        &tine_core::query::atom::ParseConfig::from_config(config),
+                    )
+                })
             {
                 if budget.closed() {
                     if block_has_reference(&block, &needles, kind, config) {
@@ -1030,7 +1051,11 @@ pub(crate) fn backlink_filter_context(
                 continue;
             };
             if let Some(pre) = document.pre_block.as_deref() {
-                if let Some(block) = page_property_block(page, pre) {
+                if let Some(block) = page_property_block_with_config(
+                    page,
+                    pre,
+                    &tine_core::query::atom::ParseConfig::from_config(graph.config()),
+                ) {
                     if ids.contains(&block.uuid) {
                         let entry = backlink_filter_entry(
                             &page.name,
@@ -1218,16 +1243,19 @@ pub(crate) fn page_affects_backlinks(
     target: &str,
     entry: &PageEntry,
     doc: &Document,
+    config: &tine_core::config::Config,
 ) -> bool {
     let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
     widen_for_journal_day(&mut names_norm, journal, target);
-    // Scoped invalidation has no Graph/config parameter. Default-enabled matching
-    // is conservative for disabled/excluded property pages (it may evict an
-    // unaffected cache entry, but cannot retain a stale one).
-    let config = tine_core::config::Config::default();
+    // Invalidation shares the live graph's property-reference policy with reads.
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_property_block(entry, pre).is_some_and(|block| {
+        page_property_block_with_config(
+            entry,
+            pre,
+            &tine_core::query::atom::ParseConfig::from_config(config),
+        )
+        .is_some_and(|block| {
             block_reference_evidence(
                 &block,
                 &canonical,
@@ -1261,13 +1289,18 @@ pub(crate) fn page_affects_unlinked(
     target: &str,
     entry: &PageEntry,
     doc: &Document,
+    config: &tine_core::config::Config,
 ) -> bool {
     let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
     widen_for_journal_day(&mut names_norm, journal, target);
-    let config = tine_core::config::Config::default();
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_property_block(entry, pre).is_some_and(|block| {
+        page_property_block_with_config(
+            entry,
+            pre,
+            &tine_core::query::atom::ParseConfig::from_config(config),
+        )
+        .is_some_and(|block| {
             block_reference_evidence(&block, &canonical, &needles, ReferenceKind::Plain, &config)
                 .is_some()
         })
@@ -1443,7 +1476,7 @@ fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
     BlockDto {
         id: String::new(),
         raw,
-        collapsed: false,
+        collapsed: b.collapsed(),
         children: b.children.iter().map(|c| template_dto(c, false)).collect(),
         breadcrumb: Vec::new(),
         ..Default::default()
@@ -1456,6 +1489,29 @@ fn template_copy_drops_markdown_and_org_ids_regardless_of_case() {
     let block = DocBlock::new("body\nID:: md-id\n:PROPERTIES:\n:Id: org-id\n:END:\nkeep:: yes");
     let copied = template_dto(&block, false);
     assert_eq!(copied.raw, "body\n:PROPERTIES:\n:END:\nkeep:: yes");
+}
+
+#[cfg(test)]
+#[test]
+fn template_copy_preserves_collapsed_state() {
+    for (raw, expected) in [
+        ("section\ncollapsed:: true", true),
+        ("section\ncollapsed:: false", false),
+        ("section", false),
+        ("section\n:PROPERTIES:\n:collapsed: true\n:END:", true),
+        ("```\ncollapsed:: true\n```", false),
+    ] {
+        let mut block = DocBlock::new(raw);
+        block.set_org(raw.contains(":PROPERTIES:"));
+        block
+            .children
+            .push(DocBlock::new("nested\ncollapsed:: true"));
+        let copied = template_dto(&block, false);
+        assert_eq!(copied.collapsed, expected, "{raw}");
+        assert_eq!(copied.raw, raw);
+        assert!(copied.children[0].collapsed);
+        assert!(copied.id.is_empty());
+    }
 }
 
 /// Distinct property keys (each with its sorted distinct values) used across the
@@ -3695,6 +3751,49 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn namespace_queries_backlinks_and_refresh_share_membership() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+        let path = dir.path().join("pages/Source.md");
+        std::fs::write(
+            &path,
+            "- Parent [[A/B/C]]\n  - TODO child\n    - TODO grandchild\n- [[A/BB]]\n",
+        )
+        .unwrap();
+        let (store, _, _) = crate::Store::open(dir.path(), Default::default()).unwrap();
+        let graph = store.whole_graph().unwrap().test_read_snapshot();
+        for name in ["a", "a/b", "a/b/c"] {
+            let rows = run_query(&graph, &format!("(and [[{name}]] (task TODO))"));
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].blocks.len(), 1);
+            assert!(rows[0].blocks[0].raw.contains("TODO child"));
+            let links = backlinks_bounded(&graph, name, 100, usize::MAX);
+            assert_eq!(links.groups.len(), 1);
+            let expected = if name == "a" { 2 } else { 1 };
+            assert_eq!(links.groups[0].blocks.len(), expected);
+            assert_eq!(links.groups[0].evidence[0].occurrences.len(), 1);
+        }
+        assert!(run_query(&graph, "[[a/bb/c]]").is_empty());
+        assert!(backlinks_bounded(&graph, "a/bb/c", 100, usize::MAX)
+            .groups
+            .is_empty());
+        std::fs::write(&path, "- Parent [[Other]]\n  - TODO child\n").unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
+        let next = store.whole_graph().unwrap().test_read_snapshot();
+        assert!(run_query(&next, "(and [[a/b]] (task TODO))").is_empty());
+        assert!(backlinks_bounded(&next, "a/b", 100, usize::MAX)
+            .groups
+            .is_empty());
+        assert_eq!(
+            run_query(&next, "(and [[other]] (task TODO))")[0]
+                .blocks
+                .len(),
+            1
+        );
+        store.close();
     }
 
     /// OG's graph parser materializes `:block/path-refs` from every ancestor's

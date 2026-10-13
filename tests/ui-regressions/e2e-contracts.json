@@ -1,11 +1,29 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-template-collapse.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Inserting a template hides children of blocks saved collapsed, shows children of expanded blocks, and preserves that state and all children after save and cold reopen.","blocking":true}],
+      "acceptableVariations":["Focus, styling and save latency may vary while the saved collapse state controls child visibility."],
+      "nonRequirements":["Exact geometry or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-linkable-page-property-refs.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A graph-configured bare page-property value finds its header in page-reference queries and Linked References; changing and restoring the atom updates the visible answers live.","blocking":true}],
+      "acceptableVariations":["Result order, pane layout, typography and watcher delivery latency may vary while answer membership remains correct."],
+      "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-org-headline-refs.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"An Org headline tag finds its block in page-reference queries and Linked References; removing or restoring the tag updates the visible answers live.","blocking":true}],
+      "acceptableVariations":["Result order, pane layout, typography and watcher delivery latency may vary while answer membership remains correct."],
+      "nonRequirements":["Exact pixels, incidental DOM nesting, or certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-alias-autocomplete.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Page and hashtag completion display every matching alias alongside its owner page and insert the selected alias with its authored casing.","blocking":true}],
       "acceptableVariations":["Popup geometry, highlighting, fonts and timing may vary while the ordered choices and inserted spelling remain correct."],
       "nonRequirements":["Exact pixels, incidental DOM nesting or platform certification outside Linux WebKitGTK.","Graph search continues to present one result per page identity."],
-      "stability":"stable"
+      "stability":"burn-in"
     },
     "scripts/e2e-youtube-seek.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A timestamp clicked in the main view seeks the last played YouTube player in the right sidebar without editing the page.","blocking":true}],

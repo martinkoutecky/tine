@@ -84,6 +84,75 @@ fn write_checkpoint(root: &Path, cp: &Path) {
     store.close();
 }
 
+#[test]
+fn pre_headline_tag_checkpoints_rebuild_org_page_references() {
+    let root = graph();
+    fs::write(root.path().join("pages/C.org"), "* headline :Plugins:\n").unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 9 can retain projections, indexes and query/backlink answers
+    // built before Org headline tags contributed page references.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&9_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let graph = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert_eq!(graph.backlinks("plugins").unwrap().len(), 1);
+    store.close();
+}
+
+#[test]
+fn configured_page_property_references_survive_a_warm_checkpoint() {
+    let root = graph();
+    let cp = root.path().join("launch.bin");
+    fs::write(
+        root.path().join("logseq/config.edn"),
+        "{:property/separated-by-commas #{:related}}",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("pages/A.md"),
+        "related:: Target，Other\n\n- body\n",
+    )
+    .unwrap();
+    let written = open_cp(root.path(), &cp);
+    let check = |store: &Store| {
+        let graph = store.whole_graph_reconciled().unwrap();
+        let crate::QueryResult::Simple(groups) = graph
+            .query("[[Target]]", crate::QueryDialect::Simple)
+            .unwrap()
+        else {
+            panic!("simple rows")
+        };
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].blocks[0].page_property);
+        assert_eq!(graph.backlinks("Target").unwrap().len(), 1);
+    };
+    check(&written);
+    assert!(matches!(
+        written.write_checkpoint_now(),
+        Some(CheckpointWrite::Written { .. })
+    ));
+    written.close();
+    let loaded = open_cp(root.path(), &cp);
+    check(&loaded);
+    // This query was never memoized before close: the loaded header projection
+    // itself must retain the configured reference meaning.
+    let graph = loaded.whole_graph_reconciled().unwrap();
+    let crate::QueryResult::Simple(groups) = graph
+        .query("[[Other]]", crate::QueryDialect::Simple)
+        .unwrap()
+    else {
+        panic!("simple rows")
+    };
+    assert_eq!(groups.len(), 1);
+    assert!(groups[0].blocks[0].page_property);
+    assert_eq!(graph.backlinks("Other").unwrap().len(), 1);
+    assert_eq!(load_outcome(&loaded), "loaded");
+    loaded.close();
+}
+
 fn publisher(store: &Store) -> Publisher {
     Publisher {
         path: PathBuf::new(),
@@ -381,7 +450,7 @@ fn rewrite_body(cp: &Path, root: &Path, edit: impl FnOnce(&mut Body<PagesOut>)) 
 #[test]
 fn an_unusable_checkpoint_falls_back_to_a_full_build() {
     type Damage = fn(&Path, &Path);
-    let cases: [(&str, &str, Damage); 10] = [
+    let cases: [(&str, &str, Damage); 11] = [
         ("missing", "missing", |cp, _| fs::remove_file(cp).unwrap()),
         ("empty", "format", |cp, _| fs::write(cp, b"").unwrap()),
         ("torn inside the preamble", "format", |cp, _| {
@@ -406,6 +475,11 @@ fn an_unusable_checkpoint_falls_back_to_a_full_build() {
         ("format version", "format", |cp, _| {
             let mut bytes = fs::read(cp).unwrap();
             bytes[8..12].copy_from_slice(&(FORMAT + 1).to_le_bytes());
+            fs::write(cp, bytes).unwrap()
+        }),
+        ("previous reference projection", "format", |cp, _| {
+            let mut bytes = fs::read(cp).unwrap();
+            bytes[8..12].copy_from_slice(&11u32.to_le_bytes());
             fs::write(cp, bytes).unwrap()
         }),
         ("parser", "parser", |cp, _| {
@@ -785,7 +859,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (10, GOLDEN),
+        (13, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

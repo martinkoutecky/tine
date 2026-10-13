@@ -45,9 +45,14 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 9 (GH #422, D-18): a memoized answer to a bare `(task)` / `(priority)` or a
 /// blank `{{query}}` changed meaning (OG's "no condition"), while its memo key
 /// — the source text, or for a blank query the unchanged IR — did not.
-// GH #675: alias_index now retains authored spelling. Older derived caches
-// contain folded aliases and must be rebuilt from the unchanged graph files.
-pub(crate) const FORMAT: u32 = 10;
+/// 10 (Kalem parity): retained Org headline-tag projections and reference
+/// indexes/answers now include those tags as page refs.
+/// 11 (Kalem K1): namespace ancestors join reference candidates, path refs
+/// and memoized query/backlink answers. Old indexes and answers must rebuild.
+/// 12 (Kalem K2): linkable page-property values join reference candidates.
+/// 13 (GH #675): `alias_index` retains authored spelling; older derived caches
+/// hold folded aliases and must be rebuilt from the unchanged graph files.
+pub(crate) const FORMAT: u32 = 13;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.8";

@@ -1468,6 +1468,57 @@ describe("PdfViewer OG state and reference behavior", () => {
     }
   });
 
+  it.each([false, true])("does not replay navigation on scroll or route updates (highlight=%s)", async (withHighlight) => {
+    vi.useFakeTimers();
+    const id = "11111111-1111-4111-8111-111111111111";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    vi.spyOn(backend(), "readHighlights").mockResolvedValue(withHighlight ? [{
+      id, page: 1, position: { page: 1, bounding: rect, rects: [rect] },
+      color: "yellow", text: "target", image: null,
+    }] : []);
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792), page(612, 792)])) });
+    const initial = makePdfRoute("paper.pdf", "Paper", { page: 1 });
+    const [route, setRoute] = createSignal<PdfRoute | null>(initial);
+    const intent = { page: 1, ...(withHighlight ? { highlightId: id } : {}) };
+    publishPdfNavigationIntent(initial.viewId, intent);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <OwnedKeyedPdfViewer route={route} owner={testPdfOwner}
+      onViewState={(state) => setRoute((current) => current ? { ...current, ...state } : null)} />, host);
+    try {
+      await flush();
+      await vi.advanceTimersByTimeAsync(150);
+      await flush();
+      const scrollIntoView = vi.mocked(HTMLElement.prototype.scrollIntoView);
+      expect(scrollIntoView).toHaveBeenCalled();
+      scrollIntoView.mockClear();
+      const scroll = host.querySelector(".pdf-scroll") as HTMLElement;
+      for (const [index, element] of [...host.querySelectorAll(".pdf-page")].entries()) {
+        Object.defineProperty(element, "offsetTop", { configurable: true, value: index * 800 });
+      }
+      scroll.scrollTop = 900;
+      scroll.dispatchEvent(new Event("scroll"));
+      await vi.advanceTimersByTimeAsync(50);
+      await flush();
+      expect(route()?.page).toBe(2);
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      setRoute((current) => current ? { ...current, scale: 1.5 } : null);
+      window.dispatchEvent(new Event("resize"));
+      await flush();
+      expect(scrollIntoView).not.toHaveBeenCalled();
+      publishPdfNavigationIntent(initial.viewId, intent);
+      await flush();
+      expect(route()?.page).toBe(1);
+      expect(scrollIntoView).toHaveBeenCalled();
+      expect(getDocumentMock).toHaveBeenCalledOnce();
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps one PDF mounted and scrolls repeated references to the exact highlight", async () => {
     const firstId = "11111111-1111-4111-8111-111111111111";
     const secondId = "22222222-2222-4222-8222-222222222222";
