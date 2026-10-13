@@ -26,7 +26,6 @@ const EXPECTED_DIFFERENCES: &[(&str, &str)] = &[
     ("logseq-md/query/16", "(b) ADR 0042: suppress children of matching parents; capture is raw API hits"),
     ("logseq-md/query/19", "(b) ADR 0042: suppress children of matching parents; capture is raw API hits"),
     ("logseq-md/query/21", "(b) BACKLOG Advanced Datalog queries: page journal pull is outside the bounded subset; optional page-anchor extension"),
-    ("logseq-md/query/22", "(a) page-property pull must return page identity, not blocks; query/advanced_patterns.rs"),
     ("logseq-md/query/23", "(b) ADR 0042: suppress matching grandchild when immediate parent matches"),
     ("logseq-md/query/24", "(a) namespace prefix refs missing, plus ADR 0042 suppression; query/eval.rs::eval_refs"),
     ("logseq-md/query/25", "(b) BACKLOG Advanced Datalog queries: root-parent page join is outside the bounded subset; optional roots extension"),
