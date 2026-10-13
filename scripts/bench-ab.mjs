@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { disturbedRound } from "./lib/bench-rerun.mjs";
 
 function arg(name) {
   const index = process.argv.indexOf(name);
@@ -34,6 +35,22 @@ mkdirSync(path.join(outputDir, "rounds"), { recursive: true });
 
 const measurements = new Map(versions.map(({ label }) => [label, []]));
 const orderLog = [];
+function measure(version, destination, port) {
+  const run = spawnSync(
+    process.execPath,
+    [
+      path.join(root, "scripts", "bench.mjs"),
+      "--update",
+      "--app-dir", version.dir,
+      "--runs", String(runsPerRound),
+      "--port", String(port),
+      "--output", destination,
+    ],
+    { cwd: root, encoding: "utf8", stdio: "inherit" },
+  );
+  if (run.status !== 0) process.exit(run.status ?? 1);
+  return JSON.parse(readFileSync(destination, "utf8"));
+}
 for (let round = 0; round < rounds; round++) {
   // Rotate the three-version order each round. With three rounds every version
   // occupies the first, middle, and last position exactly once.
@@ -44,20 +61,26 @@ for (let round = 0; round < rounds; round++) {
     const destination = path.join(outputDir, "rounds", `${version.label}-r${round + 1}.json`);
     const port = 5260 + round * versions.length + position;
     console.log(`\nround ${round + 1}/${rounds}: ${version.label} (position ${position + 1})`);
-    const run = spawnSync(
-      process.execPath,
-      [
-        path.join(root, "scripts", "bench.mjs"),
-        "--update",
-        "--app-dir", version.dir,
-        "--runs", String(runsPerRound),
-        "--port", String(port),
-        "--output", destination,
-      ],
-      { cwd: root, encoding: "utf8", stdio: "inherit" },
-    );
-    if (run.status !== 0) process.exit(run.status ?? 1);
-    measurements.get(version.label).push(JSON.parse(readFileSync(destination, "utf8")));
+    measurements.get(version.label).push(measure(version, destination, port));
+  }
+}
+
+// A runner hiccup in one round (seen on hosted runners in the anchors'
+// scrollBig) is re-measured, at most maxDisturbedRoundReruns times per
+// version; the replaced round stays on disk and in the manifest.
+const maxReruns = policy.reliability?.maxDisturbedRoundReruns ?? 0;
+const reruns = [];
+for (const [index, version] of versions.entries()) {
+  for (let attempt = 0; attempt < maxReruns; attempt++) {
+    const samples = measurements.get(version.label);
+    const disturbed = disturbedRound(samples, policy.metrics);
+    if (!disturbed) break;
+    const destination = path.join(outputDir, "rounds", `${version.label}-r${disturbed.round + 1}-rerun${attempt + 1}.json`);
+    console.log(`\nrerun: ${version.label} round ${disturbed.round + 1} (${disturbed.metric} spread ${disturbed.spreadPct.toFixed(1)}%)`);
+    const before = samples[disturbed.round].metrics[disturbed.metric].rawMin;
+    samples[disturbed.round] = measure(version, destination, 5290 + index * maxReruns + attempt);
+    const after = samples[disturbed.round].metrics[disturbed.metric].rawMin;
+    reruns.push({ label: version.label, round: disturbed.round + 1, metric: disturbed.metric, before, after });
   }
 }
 
@@ -99,6 +122,6 @@ for (const { label } of versions) {
 
 writeFileSync(
   path.join(outputDir, "manifest.json"),
-  JSON.stringify({ schemaVersion: 1, rounds, runsPerRound, order: orderLog }, null, 2) + "\n",
+  JSON.stringify({ schemaVersion: 1, rounds, runsPerRound, order: orderLog, reruns }, null, 2) + "\n",
 );
 console.log(`\ninterleaved A/B measurements written to ${outputDir}`);

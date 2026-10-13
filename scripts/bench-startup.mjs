@@ -16,7 +16,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { remote } from "webdriverio";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const IMMUTABLE_BASELINE = "v0.4.7";
+// Moved from v0.4.7 with the A/B anchor (Martin 2026-10-13).
+const IMMUTABLE_BASELINE = "v0.7.2";
 const baselineCache = path.join(ROOT, "test-results", "startup-baseline", IMMUTABLE_BASELINE);
 const defaultBaseline = path.join(baselineCache, "root", "usr", "bin", "tine");
 
@@ -34,7 +35,7 @@ async function ensureDefaultBaseline() {
   const extracted = path.join(baselineCache, "root");
   fs.rmSync(extracted, { recursive: true, force: true });
   const result = spawnSync("dpkg-deb", ["-x", deb, extracted], { stdio: "inherit" });
-  if (result.status !== 0 || !fs.existsSync(defaultBaseline)) throw new Error("could not extract immutable v0.4.7 startup baseline");
+  if (result.status !== 0 || !fs.existsSync(defaultBaseline)) throw new Error(`could not extract immutable ${IMMUTABLE_BASELINE} startup baseline`);
 }
 
 if (!process.env.TINE_STARTUP_BASELINE) await ensureDefaultBaseline();
@@ -197,6 +198,6 @@ console.log(JSON.stringify({ baseline: summary.baseline, candidate: summary.cand
 console.log(`artifacts: ${OUT}`);
 const regressed = Object.values(summary.delta).some((delta) => delta > 30);
 if (regressed) {
-  console.error("REGRESSED: a native startup median/p95 exceeds the immutable v0.4.7 baseline by more than 30%");
+  console.error(`REGRESSED: a native startup median/p95 exceeds the immutable ${IMMUTABLE_BASELINE} baseline by more than 30%`);
   process.exitCode = 1;
 }

@@ -4,6 +4,7 @@ import { bindingOwner, readOwned, writeOwned } from "../owned";
 import { EmojiText } from "../render/emoji";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { pushToast } from "../toasts";
+import { hoverIntent } from "./hoverIntent";
 import {
   activeWorkspaceId,
   createWorkspace,
@@ -21,6 +22,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
   let root: HTMLDivElement | undefined;
   let editInput: HTMLInputElement | undefined;
   const [hoverOpen, setHoverOpen] = createSignal(false);
+  const hover = hoverIntent(() => setHoverOpen(false));
   const [menuOpen, setMenuOpen] = createSignal(false);
   // The edit's identity and its typed text are separate signals on purpose. The
   // form renders under a keyed <Show>; keying it on a state object rebuilt on
@@ -94,15 +96,15 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
       data-workspace-switcher
       data-workspace-switcher-compact={props.compact ? "true" : undefined}
       ref={root}
-      onMouseEnter={() => { if (!menuOpen() && workspaces().length) setHoverOpen(true); }}
-      onMouseLeave={() => setHoverOpen(false)}
+      onMouseEnter={() => { hover.enter(); if (!menuOpen() && workspaces().length) setHoverOpen(true); }}
+      onMouseLeave={hover.leave}
     >
       <button
         type="button"
         class="workspace-switcher-btn"
         aria-label={`Workspace: ${active() ? workspaceDisplayName(active()!) : "loading"}`}
         aria-haspopup="menu"
-        aria-expanded={menuOpen()}
+        aria-expanded={menuOpen() || hoverOpen()}
         disabled={!workspaces().length}
         onClick={() => {
           setHoverOpen(false);

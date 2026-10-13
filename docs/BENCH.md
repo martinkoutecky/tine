@@ -75,11 +75,18 @@ evidence; every attempt uploads its complete distribution.
 
 `scripts/bench-policy.json` is the contract:
 
-- `v0.4.7` is the immutable pre-Sheets/pre-split-view anchor. It does not advance
-  merely because a slower release shipped, so repeated small regressions cannot
-  ratchet the allowed performance downward.
-- `previousRelease.ref` advances during release preparation to the latest already
-  published version. It catches a large one-release jump.
+- `v0.7.2` is the immutable anchor (Martin, 2026-10-13; before that `v0.4.7`,
+  whose own round-to-round scroll variance kept failing reliability). It does not
+  advance merely because a slower release shipped, so repeated small regressions
+  cannot ratchet the allowed performance downward. Only Martin moves it.
+- `previousRelease.ref` is the latest published stable release (GitHub
+  `releases/latest`, enforced by full CI) and advances after each stable release.
+  It catches a large one-release jump.
+- One disturbed round per version may be re-measured
+  (`reliability.maxDisturbedRoundReruns`, at most 1): when a metric's round
+  spread exceeds its limit, the round furthest from the median is measured
+  again and replaces it. Limits are unchanged; the replaced round stays in
+  `rounds/` and the manifest's `reruns`.
 - Budgets are metric-specific: large-page load is allowed 25% over the immutable
   anchor and 15% over the previous release; scroll is allowed 30% and 20% because
   its browser scheduling noise differs. Round-spread limits are 30% for the
@@ -103,8 +110,8 @@ source scripts/env.sh
 npm run bench:startup
 ```
 
-This downloads and caches the published Linux v0.4.7 binary under ignored
-`test-results/` (never under the home directory), then launches v0.4.7 and the
+This downloads and caches the published Linux v0.7.2 binary (before 2026-10-13: v0.4.7) under ignored
+`test-results/` (never under the home directory), then launches v0.7.2 and the
 candidate in alternating order. Every sample gets fresh XDG state and a private
 D-Bus session so Tine's single-instance forwarding cannot contaminate the
 measurement. The graph is deterministic: 80 pages derived from the public
@@ -112,7 +119,7 @@ kitchen-sink fixture plus a 120-block journal.
 
 The report records native session creation and first visible journal content,
 using eight measured samples per binary. Any median or p95 more than 30% slower
-than the immutable v0.4.7 anchor fails. Separate, unmeasured visual trials retain
+than the immutable v0.7.2 anchor fails. Separate, unmeasured visual trials retain
 frames at session attach, first content, +100 ms, +300 ms, and +1 s; inspect them
 for new blank/intermediate/corrupt paints even when the final timing is within
 budget. Override binaries or output with `TINE_STARTUP_BASELINE`,
