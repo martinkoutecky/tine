@@ -5,10 +5,14 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { resetStore } from "../document";
+import { pageByName, resetStore } from "../document";
+import { doc } from "../document/model";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { answerOpensFromDocument } from "../document/host/documentHost.test.support";
+import { Block } from "./Block";
 import { loadSingle } from "../document/workingSet";
 import { route, openJournals } from "../router";
-import { applySidebarSession, rightSidebar, setRightSidebar } from "../ui";
+import { applySidebarSession, openPageInSidebar, openBlockInSidebar, rightSidebar, setRightSidebar } from "../ui";
 import { rowReorderClickSuppressed } from "./rowReorder";
 import { RightSidebar } from "./RightSidebar";
 import type { PageDto } from "../types";
@@ -84,6 +88,51 @@ function mountThreePages() {
 }
 
 describe("right-sidebar drag reorder (GH #211)", () => {
+  it("GH #524 drops a main-pane block as the first root of an empty sidebar page", async () => {
+    loadSingle({ ...pageDto("Source"), id: "pages/Source.md" });
+    loadSingle({ ...pageDto("Empty"), id: "pages/Empty.md", blocks: [] });
+    applySidebarSession({ right: true, items: [{ kind: "page", name: "Empty", pageKind: "page" }] });
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <><div data-pane-id="main"><Block id="Source-root" /></div><RightSidebar /></>, root);
+    try {
+      const target = await vi.waitFor(() => {
+        const el = root.querySelector<HTMLElement>(".right-sidebar .ls-block");
+        expect(el).not.toBeNull(); return el!;
+      });
+      answerOpensFromDocument(await bindTestHost());
+      root.querySelector<HTMLElement>('[data-pane-id="main"] .bullet-container')!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 0, clientY: 0 }));
+      const previous = document.elementFromPoint;
+      document.elementFromPoint = () => target;
+      setRect(target, 0, 20, 400, 40);
+      setRect(target.querySelector(".block-main"), 0, 20, 400, 40);
+      try {
+        document.dispatchEvent(new MouseEvent("mousemove", { clientX: 10, clientY: 25 }));
+        document.dispatchEvent(new MouseEvent("mouseup"));
+      } finally { document.elementFromPoint = previous; }
+      await vi.waitFor(() => expect(pageByName("Empty")?.roots[0]).toBe("Source-root"));
+      expect(doc.byId["Source-root"]).toMatchObject({ page: "Empty", parent: null });
+      expect(pageByName("Source")?.roots).not.toContain("Source-root");
+      expect(root.querySelector('.right-sidebar [data-block-id="Source-root"]')?.textContent).toContain("Source body");
+    } finally { dispose(); }
+  });
+  it("GH #677 reopening a page or block promotes and focuses one existing card", async () => {
+    const { root, dispose, names } = mountThreePages();
+    openPageInSidebar("Gamma");
+    await vi.waitFor(() => expect(document.activeElement?.closest(".rs-item")).toBe(root.querySelector(".rs-item")));
+    expect(names()).toEqual(["Gamma", "Alpha", "Beta"]);
+    expect(root.querySelectorAll(".rs-item")).toHaveLength(3);
+    expect(document.activeElement?.closest(".rs-item")).toBe(root.querySelector(".rs-item"));
+    openBlockInSidebar({ uuid: "Alpha-root", page: "Alpha", pageKind: "page" });
+    openPageInSidebar("Beta");
+    openBlockInSidebar({ uuid: "Alpha-root", page: "Alpha", pageKind: "page" });
+    await vi.waitFor(() => expect(document.activeElement?.closest(".rs-item")).toBe(root.querySelector(".rs-item")));
+    expect(rightSidebar()[0]).toMatchObject({ kind: "block", uuid: "Alpha-root", collapsed: false });
+    expect(rightSidebar().filter((item) => item.kind === "block")).toHaveLength(1);
+    expect(document.activeElement?.closest(".rs-item")).toBe(root.querySelector(".rs-item"));
+    dispose();
+  });
   it("PROBE: plain title click navigates without any drag", () => {
     const { dispose, rows } = mountThreePages();
     const first = rows()[0]!;

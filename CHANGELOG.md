@@ -10,6 +10,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- GH #524: Added regression coverage for dragging a block into an empty page in the right sidebar; current Beta already supports the move.
+- GH #499: Added regression coverage for splitting the lower pane beneath an existing top row; the reported sequence already preserves the layout on current Beta.
+- GH #593: Workspace and tab overflow menus support stable hover opening and delayed dismissal while crossing the menu gap.
+- GH #639: Alt-clicking a bullet keeps its block zoom when creating a destination pane.
+- GH #677: Reopening a right-sidebar page or block brings its existing card to the top, expands it and focuses it.
+- GH #663: Added unbound commands for page-name-only and block-content-only search.
+- GH #428: Added an unbound Edit selected block command, remappable to Escape, while preserving the default selection ladder.
+- GH #587: Added bindable commands to activate tabs 1–8 and the last tab in the focused pane; unbound by default because Ctrl/Cmd+1–9 already focus panes.
+
 - A page merge, rename or deletion that waited the full 10 seconds for another rename to finish could report "Couldn't confirm the merge yet; Tine keeps trying to finish it" for an operation that would never run; it now reports that another rename is still finishing and nothing changed (REG-PAGEHOST-ADMISSION-DEADLINE-RACE).
 
 ## [0.8.0-beta.1] - 2026-10-13

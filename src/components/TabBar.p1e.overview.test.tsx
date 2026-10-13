@@ -146,6 +146,25 @@ afterEach(() => {
 });
 
 describe("GH #161 P1E-O TabBar overview transient ownership", () => {
+  it("GH #593 opens tab overflow on hover and keeps it open across the pointer gap", () => {
+    const { trigger, dispose } = mountOverflow();
+    trigger.click(); // close the click-opened menu
+    vi.useFakeTimers();
+    try {
+      trigger.dispatchEvent(new MouseEvent("mouseenter"));
+      expect(document.querySelector(".tab-overview")).not.toBeNull();
+      trigger.dispatchEvent(new MouseEvent("mouseleave"));
+      vi.advanceTimersByTime(80);
+      const menu = document.querySelector<HTMLElement>(".tab-overview")!;
+      expect(menu).not.toBeNull();
+      menu.dispatchEvent(new MouseEvent("mouseenter"));
+      vi.advanceTimersByTime(400);
+      expect(document.querySelector(".tab-overview")).toBe(menu);
+      menu.dispatchEvent(new MouseEvent("mouseleave"));
+      vi.advanceTimersByTime(400);
+      expect(document.querySelector(".tab-overview")).toBeNull();
+    } finally { vi.useRealTimers(); dispose(); }
+  });
   it("keeps one Escape above a lower transient and out of the pane ladder", () => {
     const lower = vi.fn(() => true);
     const unregisterLower = registerTransientLayer({ id: "p1e-o-lower-sentinel", dismiss: lower });

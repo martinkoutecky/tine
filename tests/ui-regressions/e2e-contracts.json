@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-panes-keys.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Remapped tab, editing and search commands reach their intended surface; reopening sidebar cards promotes one card; Alt bullet zoom and empty sidebar drops preserve their block target.","blocking":true},{"class":"flexible-presentation-heuristic","userOutcome":"Hovering workspace and tab menus allows pointer travel into the menu before choosing an item.","blocking":false}],
+      "acceptableVariations":["Hover delays, menu geometry, focus styling and save latency may vary while the semantic journeys complete."],
+      "nonRequirements":["Exact pixels, menu dimensions, the specific delay value, or native platform certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-template-collapse.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Inserting a template hides children of blocks saved collapsed, shows children of expanded blocks, and preserves that state and all children after save and cold reopen.","blocking":true}],
       "acceptableVariations":["Focus, styling and save latency may vary while the saved collapse state controls child visibility."],

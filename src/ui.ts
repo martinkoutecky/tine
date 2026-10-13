@@ -979,6 +979,11 @@ function loadRsItems(): SidebarItem[] {
 }
 const [rightSidebar, setRightSidebarRaw] = createSignal<SidebarItem[]>(loadRsItems());
 export { rightSidebar };
+export const [rightSidebarFocusRequest, setRightSidebarFocusRequest] = graphScopedSignal<{ key: string }>();
+function focusOpenedSidebarItem() {
+  const item = rightSidebar()[0];
+  if (item) setRightSidebarFocusRequest({ key: sidebarItemKey(item) });
+}
 
 // The right sidebar has its own open/closed state (persisted), independent of
 // whether it currently holds items — so it can be toggled (icon / `t r`) and
@@ -1104,13 +1109,16 @@ export function openPageInSidebar(
     const replaced = rightSidebar().map((item, i) =>
       i === existing ? { ...item, name, pageKind, path, collapsed: false } : item
     );
-    setRightSidebar(replaced.filter((item, i) => {
+    const compatible = replaced.filter((item, i) => {
       if (i === existing) return true;
       const sameOwnerName = item.kind === "page"
         ? item.name === name && item.pageKind === pageKind
         : item.page === name && item.pageKind === pageKind;
       return !sameOwnerName || item.path === path;
-    }));
+    });
+    const promoted = replaced[existing];
+    setRightSidebar([promoted, ...compatible.filter((item) => item !== promoted)]);
+    focusOpenedSidebarItem();
     return;
   }
   const compatible = rightSidebar().filter((item) => {
@@ -1120,6 +1128,7 @@ export function openPageInSidebar(
     return !sameOwnerName || item.path === path;
   });
   setRightSidebar([{ kind: "page", name, pageKind, path }, ...compatible]);
+  focusOpenedSidebarItem();
 }
 export function openBlockInSidebar(ref: {
   uuid: string;
@@ -1133,13 +1142,16 @@ export function openBlockInSidebar(ref: {
     const updated = rightSidebar().map((item, i) =>
       i === existing ? { ...item, ...ref, collapsed: false } : item
     );
-    setRightSidebar(updated.filter((item, i) => {
+    const compatible = updated.filter((item, i) => {
       if (i === existing) return true;
       const sameOwnerName = item.kind === "page"
         ? item.name === ref.page && item.pageKind === ref.pageKind
         : item.page === ref.page && item.pageKind === ref.pageKind;
       return !sameOwnerName || item.path === ref.path;
-    }));
+    });
+    const promoted = updated[existing];
+    setRightSidebar([promoted, ...compatible.filter((item) => item !== promoted)]);
+    focusOpenedSidebarItem();
     return;
   }
   // A pathful duplicate selection must evict incompatible same-name items. The
@@ -1154,6 +1166,7 @@ export function openBlockInSidebar(ref: {
     return itemPath === ref.path;
   });
   setRightSidebar([{ kind: "block", ...ref }, ...compatible]);
+  focusOpenedSidebarItem();
 }
 
 /** Restored desktop state can contain both panels.  Entering drawer mode has a
@@ -1452,14 +1465,14 @@ export const [switcherOpen, setSwitcherOpen] = createSignal(false);
 export const [switcherPluginBlock, setSwitcherPluginBlock] = createSignal<OwnedPluginBlockSnapshot | null>(null);
 // "all" = full Ctrl-K (pages/create/commands/blocks); "commands" = command
 // palette (⌘⇧P), commands only.
-export type SwitcherMode = "all" | "commands" | "current-page";
+export type SwitcherMode = "all" | "commands" | "current-page" | "pages" | "content";
 export const [switcherMode, setSwitcherMode] = createSignal<SwitcherMode>("all");
 export const [switcherEmbryo, setSwitcherEmbryo] =
   createSignal<{ paneId: string; prefill: string } | null>(null);
 /** The query an ordinary switcher opens with (`tine://search?q=`, ADR 0073). */
 export const [switcherPrefill, setSwitcherPrefill] = createSignal("");
-export function openSwitcher(opts?: { mode?: "embryo" | "current-page"; paneId?: string; prefill?: string; pluginBlock?: OwnedPluginBlockSnapshot | null }) {
-  setSwitcherMode(opts?.mode === "current-page" ? "current-page" : "all");
+export function openSwitcher(opts?: { mode?: "embryo" | "current-page" | "pages" | "content"; paneId?: string; prefill?: string; pluginBlock?: OwnedPluginBlockSnapshot | null }) {
+  setSwitcherMode(opts?.mode && opts.mode !== "embryo" ? opts.mode : "all");
   setSwitcherPrefill(opts?.mode === "embryo" ? "" : opts?.prefill ?? "");
   setSwitcherPluginBlock(opts?.pluginBlock ?? null);
   setSwitcherEmbryo(opts?.mode === "embryo" && opts.paneId
