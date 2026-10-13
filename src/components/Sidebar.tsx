@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { pageIconPrefix } from "../pageIconBatch";
-import { openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { t } from "../i18n";
+import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, favorites, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
@@ -236,6 +237,12 @@ export function Sidebar(props: {
             </Show>
           </div>
           <Show when={showAll() && allGraphPages()}>
+            <div
+              class="nav-item nav-all-pages-open"
+              onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}
+            >
+              {t("pages-all-open-full-list")}
+            </div>
             <For each={allPages().slice(0, ALL_PAGES_CAP)}>
               {(p) => (
                 <div
@@ -260,8 +267,8 @@ export function Sidebar(props: {
               )}
             </For>
             <Show when={allPages().length > ALL_PAGES_CAP}>
-              <div class="nav-page nav-page-more" onClick={() => openSwitcher()}>
-                +{allPages().length - ALL_PAGES_CAP} more — search to open…
+              <div class="nav-page nav-page-more" onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}>
+                {t("pages-all-open-more", { count: allPages().length - ALL_PAGES_CAP })}
               </div>
             </Show>
           </Show>

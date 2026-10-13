@@ -15,7 +15,9 @@ use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 mod discovery;
-use discovery::{page_inventory_wire, resolve_name, PageInventoryWire};
+use discovery::{
+    page_inventory_wire, page_modified_wire, resolve_name, PageInventoryWire, PageModifiedWire,
+};
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
@@ -324,6 +326,22 @@ pub(crate) async fn page_inventory(state: GraphContext<'_>) -> Result<PageInvent
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))
             .map(|view| page_inventory_wire(&view))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Last-modified time of every page file, for the All pages view's Updated
+/// column: a one-shot read of times the store already holds (no stat, no
+/// persisted record). Graph-wide off-thread.
+#[tauri::command]
+pub(crate) async fn page_modified(state: GraphContext<'_>) -> Result<PageModifiedWire, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        slot.store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))
+            .map(|view| page_modified_wire(&view))
     })
     .await
     .map_err(|error| error.to_string())?

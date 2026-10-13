@@ -147,6 +147,7 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
   const o = r as Record<string, unknown>;
   if (o.kind === "journals") return { kind: "journals" };
   if (o.kind === "conflicts") return { kind: "conflicts" };
+  if (o.kind === "all-pages") return { kind: "all-pages" };
   if (o.kind === "query") {
     const presentation = normalizeQueryPresentation(o.presentation);
     if (!(typeof o.id === "string" && o.id.length > 0 && o.id.length <= 128
