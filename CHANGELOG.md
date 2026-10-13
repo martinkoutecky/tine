@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- config.edn reader discards (`#_`) are accepted as legal EDN; the GH #332 `:graph-view {:layout : grid}` shape has a graph-open regression keeping pages and journals readable (GH #332).
+- Journals navigation uses the same notebook icon in the sidebar and topbar (GH #673).
+- Markdown horizontal rules align with the centre of their outline bullets (GH #678).
+- Markdown quote and callout collapse metadata stays outside quoted content (GH #684).
+- Clicking an in-block Markdown task list checkbox toggles its item without entering edit mode (GH #683).
 - A page merge, rename or deletion that waited the full 10 seconds for another rename to finish could report "Couldn't confirm the merge yet; Tine keeps trying to finish it" for an operation that would never run; it now reports that another rename is still finishing and nothing changed (REG-PAGEHOST-ADMISSION-DEADLINE-RACE).
 
 ## [0.8.0-beta.1] - 2026-10-13

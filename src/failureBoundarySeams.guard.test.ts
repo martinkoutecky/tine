@@ -93,6 +93,8 @@ function mountCount(file: string, source: string, component: string): number {
 const APP_SHELLS = new Set(["Show", "Suspense", "FailureBoundary", "DrawerBackground",
   "MobileDrawerPanel", "MobileDrawerController", "PaneTree", "PaneEdgeHighlights",
   "PaneSelectHint", "ResizeGrips", "Toasts",
+  // Static SVG only; no independently loaded state or failure surface.
+  "JournalsIcon",
   // Context providers carry a value; their children are judged as the root's own.
   "WindowContext.Provider"]);
 /** Shells that are pure containers of top-level surfaces: the scan follows the

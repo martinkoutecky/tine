@@ -38,6 +38,19 @@ function click(el: Element): MouseEvent {
 // bind too, so bind through the helper first to let later tests deliver mail.
 beforeAll(async () => { await bindTestHost(); });
 
+it("Journals navigation uses the same glyph in the sidebar and topbar (GH #673)", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const dispose = render(() => <App />, host);
+  try {
+    const top = host.querySelector('button[title="Journals"] svg');
+    const side = [...host.querySelectorAll(".left-sidebar .nav-item")].find(el => el.textContent === "Journals")?.querySelector("svg");
+    expect(top).not.toBeNull();
+    expect(side).toBeDefined();
+    expect(side!.innerHTML).toBe(top!.innerHTML);
+  } finally { dispose(); }
+});
+
 afterEach(() => {
   document.body.innerHTML = "";
   vi.restoreAllMocks();

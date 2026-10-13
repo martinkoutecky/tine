@@ -3,8 +3,9 @@
 
 import { displayMathOpenAfter, closesDisplayMath, fenceExitTrim } from "./fences";
 import type { Format } from "../render/ast";
-import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, hidePolicyHides, parserReady, rawByteOfEditor } from "../render/parse";
+import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, hidePolicyHides, parserReady, rawByteOfEditor, parseBlock } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
+import { rebulletedSourceByteToRawByte } from "../render/spans";
 import { reportUiFailure } from "../uiFailure";
 
 import { property_line_json, page_regions_json, page_header_json } from "../render/wasm/lsdoc_wasm.js";
@@ -205,6 +206,20 @@ export function visibleOffsetToRawByte(raw: string, visibleOffset: number, hide:
  *  into a `:PROPERTIES:` drawer at OG's canonical spot. A metadata-only block
  *  (empty visible) is just its hidden lines. */
 export function joinProps(visible: string, hidden: string, format: PropFormat = "md"): string {
+  // OG property/insert-property prepends metadata to a titleless quote. A
+  // trailing unquoted line is a lazy continuation of its quoted paragraph.
+  // A title above the quote keeps its properties between title and quote.
+  // Only an accepted trailing quote can consume appended metadata; inline
+  // greater-than signs and literal containers retain the normal policy.
+  if (format === "md" && hidden && visible.includes(">") && parserReady()) {
+    const last = parseBlock(visible, false).filter(b => b.kind !== "properties").at(-1);
+    if (last?.kind === "quote" && last.span) {
+      const at = utf8ToUtf16Cursor(visible)(rebulletedSourceByteToRawByte(visible, last.span[0]));
+      const lineStart = visible.lastIndexOf("\n", at - 1) + 1;
+      const payload = hidden.endsWith("\r") ? hidden.slice(0, -1) : hidden;
+      return `${visible.slice(0, lineStart)}${payload}\n${visible.slice(lineStart)}`;
+    }
+  }
   return editorTextJoin(visible, hidden, format);
 }
 
