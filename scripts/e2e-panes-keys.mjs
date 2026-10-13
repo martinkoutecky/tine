@@ -1,5 +1,5 @@
-// Native semantic journeys for R2 panes/keys; built-frontend hover screenshots
-// are captured by evidence/panes-keys-hover.mjs (native screenshot API times out).
+// Native semantic journeys for R2 panes/keys.
+import os from "node:os";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,9 +8,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
-const out = path.join(root, "evidence", `panes-keys-native-${process.pid}`);
+const out = process.env.E2E_ARTIFACT_DIR ?? path.join(root, "artifacts", `panes-keys-native-${process.pid}`);
 fs.mkdirSync(out, { recursive: true });
-const graph = path.join(root, `.pk-${process.pid}`);
+const graph = fs.mkdtempSync(path.join(os.tmpdir(), "tine-pk-"));
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(graph, "xdg", dir), { recursive: true });
 const names = Array.from({ length: 10 }, (_, i) => `Pane keyboard page ${i + 1}`);
@@ -76,7 +76,7 @@ try {
       { type: "pointerMove", duration: 60, origin: "viewport", x: points.x, y: points.inside }, { type: "pause", duration: 350 },
     ] }]);
     check(await browser.$(menuSelector).isExisting(), "menu closed while crossing its gap");
-    console.log(`Native hover visibility verified (${file}); screenshot coverage is in evidence/panes-keys-hover.`);
+    console.log(`Native hover visibility verified (${file}); screenshot saved in the artifacts directory.`);
     // Use the same physical pointer source throughout the journey and cleanup.
     const outside = await browser.execute(() => ({ x: innerWidth - 20, y: innerHeight - 30 }));
     await browser.performActions([{ type: "pointer", id: "hover", parameters: { pointerType: "mouse" }, actions: [
