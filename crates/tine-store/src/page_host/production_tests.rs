@@ -2226,3 +2226,33 @@ fn probe_deletion_step_timing() {
         );
     }
 }
+
+/// GH #685: the drafts listing syncs only the chain Tine owns. An OS-owned
+/// ancestor above app data that is traversable but unreadable (Android's
+/// `/data/user/0`) must not switch crash recovery off.
+#[cfg(unix)]
+#[test]
+fn gh685_unreadable_os_ancestor_keeps_drafts_on() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let os_owned = root.path().join("data");
+    let app = os_owned.join("page.tine.beta");
+    let graph = root.path().join("graph");
+    let trash = graph.join("logseq/.tine-trash/pages");
+    fs::create_dir_all(&app).unwrap();
+    fs::create_dir_all(&trash).unwrap();
+    fs::set_permissions(&os_owned, fs::Permissions::from_mode(0o311)).unwrap();
+    let unreadable = fs::read_dir(&os_owned).is_err();
+    let io = ProductionIo::attach(&graph, &app, "g", &trash);
+    let status = io.draft_status();
+    fs::set_permissions(&os_owned, fs::Permissions::from_mode(0o755)).unwrap();
+    if !unreadable {
+        // Running as root: the ancestor stays readable, nothing to prove.
+        return;
+    }
+    assert_eq!(
+        status.unavailable, None,
+        "GH #685: crash recovery must stay on"
+    );
+    assert!(app.join("drafts-v2/g").is_dir());
+}
