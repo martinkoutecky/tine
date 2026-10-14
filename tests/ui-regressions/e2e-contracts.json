@@ -7,6 +7,12 @@
       "nonRequirements":["Exact pixels, incidental DOM structure, or native certification outside Linux WebKitGTK.","Creating groups by dropping onto a condition or merging All pages, Search and Query."],
       "stability":"burn-in"
     },
+    "scripts/e2e-page-icons.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Page icons appear in sidebar lists from an existing header, follow live property typing and external file edits, and can be set or removed from the page menu through guarded saves.","blocking":true}],
+      "acceptableVariations":["Emoji rendering, layout and save latency may vary while the icon text, page identity and stored property remain correct."],
+      "nonRequirements":["Image icons, reference thumbnails, GIFs, adjustable sizes or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-journal-sections.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Customize seeds and opens an ordinary sections page from config queries and agenda, preserves an existing default-name page, reflects an edited query under today's journal without reload, and restores config sections on deletion in Markdown and Org graphs. Journals settings identifies and opens the active page without resetting the dialog.","blocking":true}],
       "acceptableVariations":["Query layout, page filename casing, focus, and save or watcher latency may vary while answer membership and persisted content remain correct."],

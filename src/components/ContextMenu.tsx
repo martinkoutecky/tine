@@ -12,6 +12,7 @@ import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, page
 import { focusedRouter, removePageTargetAcrossPanes } from "../panes";
 import "../graph"; // installs the document rename's navigation refresh handler
 import { backend } from "../backend";
+import { readPageProperty, setPageProperty } from "../document";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
@@ -936,6 +937,7 @@ function PageMenu(props: {
     <>
       <For each={items}>
         {(it) => (
+          <>
           <button
             type="button"
             class="ctx-item ctx-page-item"
@@ -947,6 +949,10 @@ function PageMenu(props: {
           >
             {it.label}
           </button>
+          <Show when={it.id === "page-properties" && !openedPage?.guide}>
+            <PageIconMenu name={props.name} close={props.close} />
+          </Show>
+          </>
         )}
       </For>
       {/* Rename is page-only. It expands into an inline input (like MakeTemplate)
@@ -972,6 +978,44 @@ function PageMenu(props: {
 
 export function pageMenuAvailability(pageKind: PageKind): { rename: boolean; delete: boolean } {
   return { rename: pageKind === "page", delete: true };
+}
+
+function PageIconMenu(props: { name: string; close: (restoreFocus?: boolean) => void }): JSX.Element {
+  const subject = pageByName(props.name);
+  const owner = graphOwner(() => !!subject && pageByName(props.name) === subject);
+  const [editing, setEditing] = createSignal(false);
+  const [value, setValue] = createSignal(readPageProperty(props.name, "icon") ?? "");
+  let input: HTMLInputElement | undefined;
+  let trigger: HTMLButtonElement | undefined;
+  const write = (value: string | null) => {
+    if (!owner()) pushToast(msg("page-icon-stale"), "error");
+    else setPageProperty(props.name, "icon", value);
+    props.close();
+  };
+  createEffect(() => { if (editing()) queueMicrotask(() => input?.focus()); });
+  return <>
+    <Show when={editing()} fallback={
+      <button ref={trigger} class="ctx-item ctx-page-item" role="menuitem" tabIndex={-1} data-page-action-id="set-page-icon"
+        onClick={() => setEditing(true)}>{t("page-icon-set")}</button>
+    }>
+      <div class="ctx-rename-form" onClick={e => e.stopPropagation()}>
+        <input ref={input} class="ctx-rename-name" data-page-icon-input aria-label={t("page-icon-label")}
+          value={value()} onInput={e => setValue(e.currentTarget.value)}
+          onKeyDown={e => {
+            e.stopPropagation();
+            if (e.isComposing || e.keyCode === 229) return;
+            if (e.key === "Enter") { e.preventDefault(); write(value().trim() || null); }
+            else if (e.key === "Escape") { e.preventDefault(); setEditing(false); queueMicrotask(() => trigger?.focus()); }
+          }} />
+        <div class="pp-hint">{t("page-icon-hint")}</div>
+        <button class="ctx-item" onClick={() => write(value().trim() || null)}>{t("page-icon-save")}</button>
+      </div>
+    </Show>
+    <Show when={readPageProperty(props.name, "icon")}>
+      <button class="ctx-item ctx-page-item" role="menuitem" tabIndex={-1} data-page-action-id="remove-page-icon"
+        onClick={() => write(null)}>{t("page-icon-remove")}</button>
+    </Show>
+  </>;
 }
 
 export function deletePageMenuLabel(pageKind: PageKind): string {

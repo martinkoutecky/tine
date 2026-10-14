@@ -40,9 +40,10 @@ function stubRouter() {
   };
 }
 
-/** Graph calls apart from the shared inventory/metadata reads and ownership
- * stamp. The router's debounced saveSession may land from test navigation or
- * teardown; it persists tabs and cannot read or write a page row. */
+/** Graph calls apart from the shared inventory/metadata reads, the ownership
+ * stamp and the windowed icon batch (checked separately). The router's
+ * debounced saveSession may land from test navigation or teardown; it persists
+ * tabs and cannot read or write a page row. */
 function spyOnEverythingElse() {
   const spies: { name: string; spy: ReturnType<typeof vi.fn> }[] = [];
   const target = backend() as unknown as Record<string, unknown>;
@@ -50,7 +51,7 @@ function spyOnEverythingElse() {
   for (let proto: object | null = target; proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto))
     for (const key of Object.getOwnPropertyNames(proto)) names.add(key);
   for (const key of names) {
-    if (key === "constructor" || key === "pageInventory" || key === "pageModified" || key === "pageBacklinkCounts" || key === "graphBindingGeneration" || key === "saveSession" || typeof target[key] !== "function") continue;
+    if (key === "constructor" || key === "pageInventory" || key === "pageModified" || key === "pageBacklinkCounts" || key === "graphBindingGeneration" || key === "saveSession" || key === "pageIcons" || typeof target[key] !== "function") continue;
     spies.push({ name: key, spy: vi.spyOn(target as never, key as never) as never });
   }
   return () => spies.flatMap(({ name, spy }) => spy.mock.calls.map(() => name));
@@ -63,13 +64,15 @@ async function mountAllPages(entries = inventory(), modified: [string, number][]
   else readModified.mockResolvedValue({ rev: "1", modified });
   const readCounts = vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue(backlinks);
   const otherCalls = spyOnEverythingElse();
+  const icons = vi.spyOn(backend(), "pageIcons").mockImplementation(async (names: string[]) =>
+    Object.fromEntries(names.filter((name) => name === "Page 00001").map((name) => [name, "🚩"])));
   bumpGraphEpoch();
   const router = stubRouter();
   const host = document.createElement("div");
   document.body.append(host);
   const dispose = render(() => <AllPages router={router} />, host);
   await vi.waitFor(() => expect(host.querySelector(".all-pages-open")).not.toBeNull());
-  return { host, router, read, readModified, readCounts, otherCalls, dispose };
+  return { host, router, read, readModified, readCounts, otherCalls, icons, dispose };
 }
 
 afterEach(() => {
@@ -132,7 +135,9 @@ describe("the All Pages view", () => {
     } finally { dispose(); }
   });
   it("lists a graph of thousands of pages with a screenful of rows and one inventory read, whatever the user does", async () => {
-    const { host, read, readModified, otherCalls, dispose } = await mountAllPages();
+    const { host, read, readModified, otherCalls, icons, dispose } = await mountAllPages();
+    // GH #346, as OG's all-pages table (page.cljs:1245): a row shows its page's icon.
+    await vi.waitFor(() => expect(rowNames(host)[1]).toBe("🚩 Page 00001"));
     // The count is the full graph (pages only: the two journals are hidden)...
     expect(host.querySelector(".all-pages-count")!.textContent).toBe(`${TOTAL} pages`);
     // ...but only a window of rows exists. An unwindowed list has TOTAL rows here.
@@ -158,6 +163,9 @@ describe("the All Pages view", () => {
     expect(read).toHaveBeenCalledTimes(1);
     expect(readModified).toHaveBeenCalledTimes(1);
     expect(otherCalls()).toEqual([]);
+    // Icons are one coalesced read per rendered window, never per row or per graph page.
+    for (const [names] of icons.mock.calls) expect(names.length).toBeLessThan(60);
+    expect(icons.mock.calls.length).toBeLessThanOrEqual(4);
     dispose();
   });
 

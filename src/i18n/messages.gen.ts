@@ -979,6 +979,12 @@ export interface MessageArgs {
   "navigation-search": {};
   "navigation-search-title": {};
   "navigation-sidebar-title": {};
+  "page-icon-hint": {};
+  "page-icon-label": {};
+  "page-icon-remove": {};
+  "page-icon-save": {};
+  "page-icon-set": {};
+  "page-icon-stale": {};
   "page-props-add": {};
   "page-props-add-a-property": {};
   "page-props-any-key-you-like-written-to-the-file": {};

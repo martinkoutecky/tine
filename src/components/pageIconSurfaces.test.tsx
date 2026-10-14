@@ -4,8 +4,9 @@ import "../graph";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
 import { bindTestHost } from "../document/host/wiring.test.support";
-import { loadSingle } from "../document/workingSet";
-import { resetStore } from "../document";
+import { loadSingle, reloadPage } from "../document/workingSet";
+import { resetStore, setPageProperty, setRaw } from "../document";
+import { bumpDataRev } from "../graphSession";
 import { applySidebarSession, seedFavorites, setRecentPages, setRightSidebar } from "../ui";
 import { openJournals } from "../router";
 import { installPageIndex, refreshPageIndex, resetPageIndex } from "../pageIndex";
@@ -46,6 +47,47 @@ const logical = (n: Node): string => n.nodeType === 3 ? n.textContent ?? "" : (n
 const labels = (root: Element, selector: string) => [...root.querySelectorAll(selector)].map((n) => logical(n).trim());
 
 describe("left sidebar rows carry the page icon", () => {
+  it("AAA's exact header fixture, live header typing, removal and external reload update Favorites and Recent", async () => {
+    const page = (pre_block: string | null): PageDto => ({ name: "AAA", kind: "page", title: "AAA", pre_block,
+      blocks: [{ id: "aaa-1", raw: "", collapsed: false, children: [] }, { id: "aaa-2", raw: "", collapsed: false, children: [] }] });
+    loadSingle(page("icon:: 🚩\n\n"));
+    vi.mocked(backend().pageIcons).mockResolvedValue({ AAA: "🚩" });
+    seedFavorites(["AAA"]);
+    setRecentPages([{ name: "AAA", kind: "page" }]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Sidebar />, root);
+    const both = () => [...labels(root, "#sidebar-favorites-list .nav-page-label"), ...labels(root, "#sidebar-recent-list .nav-page-label")];
+    try {
+      await expect.poll(both).toEqual(["🚩 AAA", "🚩 AAA"]);
+      setPageProperty("AAA", "icon", null);
+      await expect.poll(both).toEqual(["⭐ AAA", "AAA"]);
+      setRaw("aaa-1", "icon:: 🚩");
+      await expect.poll(both).toEqual(["🚩 AAA", "🚩 AAA"]);
+      reloadPage(page("icon:: AB\n\n"));
+      await expect.poll(both).toEqual(["AB AAA", "AB AAA"]);
+    } finally { dispose(); }
+  });
+
+  it("published changes refresh cached icons for unloaded pages, including removal", async () => {
+    vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
+    const icons = vi.mocked(backend().pageIcons).mockResolvedValue({ Published: "🚩" });
+    seedFavorites(["Published"]);
+    setRecentPages([{ name: "Published", kind: "page" }]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Sidebar />, root);
+    const both = () => [...labels(root, "#sidebar-favorites-list .nav-page-label"), ...labels(root, "#sidebar-recent-list .nav-page-label")];
+    try {
+      await expect.poll(both).toEqual(["🚩 Published", "🚩 Published"]);
+      icons.mockResolvedValue({ Published: "AB" });
+      bumpDataRev();
+      await expect.poll(both).toEqual(["AB Published", "AB Published"]);
+      icons.mockResolvedValue({});
+      bumpDataRev();
+      await expect.poll(both).toEqual(["⭐ Published", "Published"]);
+    } finally { dispose(); }
+  });
   it("Favorites: an iconed page shows its icon instead of the star; others keep the star", async () => {
     seedFavorites(["IconFav", "PlainFav"]);
     const root = document.createElement("div");
@@ -88,7 +130,7 @@ describe("the All pages sidebar navigation", () => {
 });
 
 describe("right sidebar page item carries the page icon", () => {
-  const page = (name: string): PageDto => ({ name, kind: "page", title: name, pre_block: null, blocks: [{ id: `${name}-b`, raw: "text", collapsed: false, children: [] }] });
+  const page = (name: string): PageDto => ({ name, kind: "page", title: name, pre_block: name.startsWith("Icon") ? "icon:: 🏁" : null, blocks: [{ id: `${name}-b`, raw: "text", collapsed: false, children: [] }] });
 
   it("shows the icon before the page name, and nothing extra for a page without one", async () => {
     loadSingle(page("IconSide"));
