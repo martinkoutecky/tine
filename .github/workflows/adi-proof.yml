@@ -1,0 +1,38 @@
+# One-off: sign the Android developer verification ownership-proof APK for page.tine.app
+# with the release key (41:B7…86:B5). Input: adi-proof/adi-proof-unsigned.apk (minimal,
+# no code; assets/adi-registration.properties holds the Play Console token).
+name: ADI ownership proof
+on:
+  push:
+    branches: [exp/play-pepk]
+    paths: [adi-proof/**, .github/workflows/adi-proof.yml]
+permissions:
+  contents: read
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - name: Sign
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          ks="$RUNNER_TEMP/release.jks"
+          echo "$KS_B64" | base64 -d > "$ks"
+          bt=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          mkdir -p out
+          "$bt/apksigner" sign --ks "$ks" --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass env:KS_PASS --key-pass env:KEY_PASS \
+            --out out/adi-proof.apk adi-proof/adi-proof-unsigned.apk
+          rm -f "$ks"
+          "$bt/apksigner" verify --print-certs out/adi-proof.apk
+          sha256sum out/adi-proof.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: adi-proof, path: out/, retention-days: 3 }
