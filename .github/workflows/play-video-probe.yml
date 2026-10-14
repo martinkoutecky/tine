@@ -1,0 +1,41 @@
+# Proof-only: which x86 emulator images can install the arm64-only Tine APK?
+name: Play video ABI probe
+on:
+  push:
+    branches: [exp/play-pepk]
+    paths: [.github/workflows/play-video-probe.yml]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { api: 30, target: google_apis, arch: x86 }
+          - { api: 30, target: google_apis, arch: x86_64 }
+          - { api: 31, target: google_apis, arch: x86_64 }
+          - { api: 34, target: google_apis, arch: x86_64 }
+          - { api: 34, target: google_apis_playstore, arch: x86_64 }
+          - { api: 35, target: google_apis, arch: x86_64 }
+          - { api: 35, target: google_apis_playstore, arch: x86_64 }
+    steps:
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Get the released APK
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: gh release download v0.7.2 -R martinkoutecky/tine -p 'Tine_0.7.2_android-arm64.apk' -O tine.apk
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          target: ${{ matrix.target }}
+          arch: ${{ matrix.arch }}
+          profile: Nexus 5
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            adb shell getprop ro.product.cpu.abilist
+            adb install -r tine.apk || true
