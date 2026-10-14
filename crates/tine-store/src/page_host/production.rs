@@ -217,9 +217,17 @@ fn list(drafts: &Path) -> io::Result<BTreeMap<String, (PathBuf, Vec<u8>)>> {
     // stop the graph from opening (REVIEW-2b-r2 V1). The listing creates it.
     durability::create_dir_all_with_sync(drafts, durability::sync_private_directory)?;
     // Also cover a directory chain left readable by an interrupted earlier
-    // creation attempt.
+    // creation attempt: the chain Tine creates, up to and including the
+    // app-data directory (`drafts` is `<app_data>/drafts-v2/<graph id>`).
+    // Directories above app data belong to the OS and are not ours to sync;
+    // Android's `/data/user/0` is traversable but unreadable, so opening it
+    // failed with EACCES and switched crash recovery off (GH #685).
+    let app_data = drafts.parent().and_then(Path::parent);
     for dir in drafts.ancestors().filter(|dir| !dir.as_os_str().is_empty()) {
         durability::sync_private_directory(dir)?;
+        if Some(dir) == app_data {
+            break;
+        }
     }
     let mut found = BTreeMap::new();
     for entry in fs::read_dir(drafts)? {

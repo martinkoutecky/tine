@@ -195,5 +195,6 @@ export interface GraphAnswersChange {
 /** `graph-custom-css-changed`: an outside actor created, replaced or deleted
  *  `logseq/custom.css`. Carries only the binding; the window re-reads it. */
 export interface CustomCssChange {
+  global?: boolean;
   binding_generation?: number;
 }

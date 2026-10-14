@@ -1,0 +1,12 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import { releaseLayout } from "./release-layout.mjs";
+const layout = releaseLayout("0.8.0-beta.1");
+const mac = layout.lanes["macos-universal"];
+assert.ok(mac.assets.some((name) => name.endsWith(".app.tar.gz")), "macOS must stage an updater archive");
+assert.ok(mac.assets.some((name) => name.endsWith(".app.tar.gz.sig")), "macOS must require its updater signature");
+assert.deepEqual(mac.platforms["darwin-aarch64"], mac.platforms["darwin-x86_64"]);
+assert.ok(mac.platforms["darwin-aarch64"]);
+const conf = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
+assert.ok(conf.bundle.targets.includes("app"), "macOS must build the app updater bundle as well as the DMG");
+console.log("macOS signed universal updater contract passed");
