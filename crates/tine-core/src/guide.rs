@@ -1428,10 +1428,10 @@ mod og_20d_guide_tests {
 
     #[test]
     fn where_things_are_documents_the_full_all_pages_view() {
-        // GH #335: the sidebar list is capped; the full view is how a large graph is browsed.
+        // GH #335: the sidebar entry navigates directly to the full view.
         let map = page("Start/Where things are");
         for detail in [
-            "**Open the full list…**",
+            "**All pages** entry opens",
             "**Updated** column shows when each page",
             "**Page** (name)",
             "**Show journals**",

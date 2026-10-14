@@ -1315,6 +1315,8 @@ html[data-system-insets="native-viewport"] {
 .nav-section-toggle:hover {
   color: var(--text-secondary);
 }
+.nav-all-pages-open { width: 100%; text-align: left; background: transparent; border: 0; cursor: pointer; }
+.nav-all-pages-open:hover, .nav-all-pages-open.active { color: var(--text-primary); background: var(--bg-tertiary); }
 .nav-toggle-caret {
   display: inline-block;
   transition: transform 0.1s ease;
@@ -6756,6 +6758,8 @@ img.emoji {
 .peek-popup-title { display: flex; align-items: center; gap: 12px; }
 .peek-source-title { color: inherit; font: inherit; text-align: left; }
 .peek-open-source { margin-left: auto; color: var(--link-color); white-space: nowrap; }
+.peek-page-actions { flex-shrink: 0; min-width: 36px; min-height: 36px; border-radius: 4px; }
+.peek-page-actions:hover, .peek-page-actions:focus-visible { background: var(--bg-tertiary); }
 .peek-page-properties { padding: 8px 16px; color: var(--text-secondary); }
 .embed-source-breadcrumb { display: none; color: var(--text-secondary); font-size: .85em; padding: 4px 8px; }
 .tine-embed-breadcrumbs .embed-source-breadcrumb { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
