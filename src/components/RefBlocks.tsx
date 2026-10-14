@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 // Rendering of a BlockDto tree (read-only text; a task checkbox ticks the source block, GH #518). Shared by Linked References, query
 // results, and embeds. Mirrors the rendered (non-editing) block look.
 // Visits at most 64 ancestor levels per branch and shows a message below that;
@@ -127,7 +128,7 @@ function RefBlock(props: {
         <div class="block-controls">
           <span
             class="bullet-container"
-            title={props.block.page_property ? "Page property reference" : "Shift-click → sidebar; ctrl/cmd-click or middle-click → new tab; alt-click → other pane"}
+            title={props.block.page_property ? t("macro-ref-blocks-page-property-reference") : t("macro-ref-blocks-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new")}
             onMouseDown={(e) => {
               // GH #207's other half: suppress shift-range selection and
               // middle-button autoscroll / PRIMARY-paste for the gestures this
@@ -244,7 +245,7 @@ function RefBlock(props: {
         </div>
       </Show>
       <Show when={props.block.children.length && props.treeDepth >= MAX_REF_BLOCK_DEPTH}>
-        <div class="ref-block-depth-warning">More nested blocks are available on the page</div>
+        <div class="ref-block-depth-warning">{t("macro-ref-blocks-more-nested-blocks-are-available-on-the-page")}</div>
       </Show>
     </div>
   );

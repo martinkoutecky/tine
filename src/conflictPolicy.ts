@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Concord P5 "always ask" (master; family 10). Tine's only silent adoption of
 // external bytes is freshness: a page you have loaded, with nothing unsaved,
 // changes on disk and Tine shows the new content (what VS Code and IntelliJ
@@ -30,7 +31,7 @@ export function setConflictPolicyAlwaysAsk(on: boolean): void {
   setAlwaysAsk(on);
   if (!on) clearHeldExternalChanges();
   void writeOwned(revisionOwner(preferenceKey, revision), backend().setAppBool(KEY, on))
-    .catch((error) => pushToast(`Could not remember “Always ask”: ${String(error)}`, "error"));
+    .catch((error) => pushToast(msg("ui-conflict-policy-could-not-remember-always-ask", { value1: String(error) }), "error"));
 }
 
 /** Load the persisted preference. Default off (silent freshness); a failed
@@ -41,7 +42,7 @@ export async function initConflictPolicy(): Promise<void> {
     const loaded = await readOwned(owner, backend().getAppBool(KEY, false));
     if (loaded.kind === "current") setAlwaysAsk(loaded.value);
   } catch (error) {
-    pushToast(`Could not load “Always ask”: ${String(error)}`, "error");
+    pushToast(msg("ui-conflict-policy-could-not-load-always-ask", { value1: String(error) }), "error");
   }
 }
 

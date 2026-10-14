@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 import { formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnly, withUndoUnit, node as docNode } from "../document";
 import { facetsFromDto, facetsOf, inlineText, parseBody, tagIdentityKey, type Facets } from "../render/facets";
 import { isRenderHiddenProp } from "../render/block";
@@ -303,7 +304,7 @@ export function writeFieldVisibly(id: string, field: FieldId, value: string): bo
   const written = writeField(id, field, value);
   if (!written) {
     const shown = value.trim().slice(0, 60);
-    pushToast(`Couldn't change that cell${shown ? ` to “${shown}”` : ""}: the page is read-only, the row is gone, or the value doesn't fit the column.`, "error");
+    pushToast(msg("sheet-cell-refused", { value: shown, hasValue: shown ? 1 : 0 }), "error");
   }
   return written;
 }

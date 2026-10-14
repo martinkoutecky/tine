@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { stepMonth } from "./primitives";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { datePicker, closeDatePicker, firstDayOfWeek, type DatePickerTarget } from "../ui";
@@ -151,7 +152,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
   const isToday = (d: number) =>
     view().y === today.getFullYear() && view().m === today.getMonth() && d === today.getDate();
   const isSel = (d: number) => chosen().y === view().y && chosen().m === view().m && chosen().d === d;
-  const label = () => isScheduleTarget(props.which) ? props.which : "insertJournal" in props.which ? "journal" : fieldLabel(props.which.field);
+  const label = () => isScheduleTarget(props.which) ? t("date-target-label", { target: props.which }) : "insertJournal" in props.which ? t("date-target-label", { target: "journal" }) : fieldLabel(props.which.field);
 
   // Keep the popup on-screen. Reactive to the window size so it stays visible
   // even when the host window resizes after the picker opens — the quick-capture
@@ -183,7 +184,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
   return (
     <div class="dp-overlay" onClick={commitDraft} onContextMenu={(e) => { e.preventDefault(); commitDraft(); }}>
       <div ref={root} class="date-picker" style={{ left: `${left()}px`, top: `${top()}px` }} onClick={(e) => e.stopPropagation()}
-        role="dialog" aria-label={`Choose ${label()} date`}
+        role="dialog" aria-label={t("date-date-picker-choose-date", { value1: label() })}
         onKeyDown={(e) => {
           if (e.isComposing || e.keyCode === 229) return;
           if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
@@ -197,11 +198,11 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
           if (delta !== undefined) { e.preventDefault(); e.stopPropagation(); moveDay(delta); }
         }}>
         <div class="dp-head">
-          <button class="dp-nav" onClick={() => step(-1)} title="Previous month">‹</button>
+          <button class="dp-nav" onClick={() => step(-1)} title={t("date-date-picker-previous-month")}>‹</button>
           <span class="dp-title">
             {MONTHS[view().m]} {view().y} <span class="dp-which">· {label()}</span>
           </span>
-          <button class="dp-nav" onClick={() => step(1)} title="Next month">›</button>
+          <button class="dp-nav" onClick={() => step(1)} title={t("date-date-picker-next-month")}>›</button>
         </div>
         <div class="dp-grid dp-dow">
           <For each={DOW()}>{(d) => <span class="dp-dowcell">{d}</span>}</For>
@@ -225,45 +226,44 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
           </For>
         </div>
         <Show when={isScheduleTarget(props.which)}>
-          <div class="dp-time" title="Optional clock time. Done or clicking outside applies the date, time and repeat.">
+          <div class="dp-time" title={t("date-date-picker-optional-clock-time-done-or-clicking-outside-applies-the-date")}>
             <Show
               when={time() !== null}
               fallback={
                 <button class="dp-addtime" onClick={() => setTime(nowHHmm())}>
-                  + Add time
-                </button>
+                  {t("date-date-picker-add-time")}</button>
               }
             >
-              <span class="dp-time-label">Time</span>
+              <span class="dp-time-label">{t("date-date-picker-time")}</span>
               <input
                 class="dp-time-input"
                 classList={{ invalid: !!time() && !/^\d{1,2}:\d{2}$/.test(time()!) }}
                 type="text"
                 inputmode="numeric"
-                placeholder="HH:mm"
+                placeholder={t("date-date-picker-hh-mm")}
                 maxlength="5"
                 value={time()!}
                 onInput={(e) => setTime(e.currentTarget.value || null)}
               />
-              <button class="dp-time-clear" title="Remove time" onClick={() => setTime(null)}>
+              <button class="dp-time-clear" title={t("date-date-picker-remove-time")} onClick={() => setTime(null)}>
                 ×
               </button>
             </Show>
           </div>
-          <div class="dp-repeat" title="Done or clicking outside applies the repeat. On completion, a repeating task advances to its next date and reopens.">
+          <div class="dp-repeat" title={t("date-date-picker-done-or-clicking-outside-applies-the-repeat-on-completion-a")}>
             <select
               class="settings-select dp-rep-unit"
               value={repUnit()}
               onChange={(e) => setRepUnit(e.currentTarget.value)}
             >
-              <option value="">No repeat</option>
-              <option value="d">Daily</option>
-              <option value="w">Weekly</option>
-              <option value="m">Monthly</option>
-              <option value="y">Yearly</option>
+              <option value="">{t("date-date-picker-no-repeat")}</option>
+              <option value="d">{t("date-date-picker-daily")}</option>
+              <option value="w">{t("date-date-picker-weekly")}</option>
+              <option value="m">{t("date-date-picker-monthly")}</option>
+              <option value="y">{t("date-date-picker-yearly")}</option>
             </select>
             <Show when={repUnit()}>
-              <span class="dp-rep-every">every</span>
+              <span class="dp-rep-every">{t("date-date-picker-every")}</span>
               <input
                 class="dp-rep-num"
                 type="number"
@@ -273,21 +273,20 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
               />
               <label
                 class="dp-rep-fromdone"
-                title="Next due date is measured from the day you complete the task, not the scheduled date."
+                title={t("date-date-picker-next-due-date-is-measured-from-the-day-you-complete")}
               >
                 <input
                   type="checkbox"
                   checked={repMode() === ".+"}
                   onChange={(e) => setRepMode(e.currentTarget.checked ? ".+" : "+")}
                 />
-                from completion
-              </label>
+                {t("date-date-picker-from-completion")}</label>
             </Show>
           </div>
         </Show>
         <div class="dp-foot">
-          <button class="dp-btn" onClick={commitDraft}>Done</button>
-          <button class="dp-btn" onClick={pickToday}>Today</button>
+          <button class="dp-btn" onClick={commitDraft}>{t("date-date-picker-done")}</button>
+          <button class="dp-btn" onClick={pickToday}>{t("date-date-picker-today")}</button>
           <Show when={sel}>
             <button
               class="dp-btn dp-clear"
@@ -300,8 +299,7 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
                 close();
               }}
             >
-              Clear
-            </button>
+              {t("date-date-picker-clear")}</button>
           </Show>
         </div>
       </div>

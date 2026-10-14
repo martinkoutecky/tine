@@ -16,12 +16,13 @@ import { safeClose } from "./App";
 import { UnsavedRecovery } from "./components/UnsavedRecovery";
 import { closeUnsavedRecovery, unsavedRecoveryOpen } from "./unsavedRecovery";
 import { setToasts, toasts } from "./toasts";
+import { render as renderMessage } from "./i18n";
 import type { BlockDto } from "./types";
 
 const PATH = "pages/P.md";
 const block = (id: string, raw: string, children: BlockDto[] = []): BlockDto => ({ id, raw, collapsed: false, children });
 const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
-const reviewToasts = () => toasts().filter((t) => t.action?.label === "Review unsaved");
+const reviewToasts = () => toasts().filter((t) => t.action && (typeof t.action.label === "string" ? t.action.label : renderMessage(t.action.label)) === "Review unsaved");
 
 let failing = true;
 let host: TestHost;

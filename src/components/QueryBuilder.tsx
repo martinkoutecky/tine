@@ -47,7 +47,8 @@ import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
 import { queryTextOpen, setQueryTextOpen as rememberTextOpen } from "../navSettings";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { QueryDisplay } from "./QueryDisplay";
-import { t } from "../i18n";
+import { t, msg } from "../i18n";
+import { Rich } from "../i18n/Rich";
 import { QueryLivePreview } from "./QueryLivePreview";
 import { readLatestOr } from "../resourceRead";
 import { activeWindow, newResizeObserver, queryAllWindows, registeredWindows, requestFrame, viewportOf, windowOf } from "../windowRealm";
@@ -287,7 +288,7 @@ function QueryTextPane(props: {
   return (
     <div class="query-text-pane">
       <label class="query-text-pane-label" for={undefined}>
-        {props.dialect === "tql" ? "Query text" : "Raw query DSL"}
+        {props.dialect === "tql" ? t("query-query-builder-query-text") : t("query-query-builder-raw-query-dsl")}
       </label>
       <textarea
         ref={textarea}
@@ -295,7 +296,7 @@ function QueryTextPane(props: {
         classList={{ "query-text-pane-invalid": !!error() }}
         rows={3}
         spellcheck={false}
-        aria-label={props.dialect === "tql" ? "Query text (TQL)" : "Query expression"}
+        aria-label={props.dialect === "tql" ? t("query-query-builder-query-text-tql") : t("query-query-builder-query-expression")}
         aria-invalid={error() ? "true" : undefined}
         value={text()}
         disabled={!!refusal()}
@@ -310,7 +311,7 @@ function QueryTextPane(props: {
           <span class="query-text-pane-error" role="alert">{error()}</span>
         </Show>
         <Show when={pending() && !error()}>
-          <span class="query-text-pane-pending">Checking…</span>
+          <span class="query-text-pane-pending">{t("query-query-builder-checking")}</span>
         </Show>
         <button
           type="button"
@@ -318,8 +319,7 @@ function QueryTextPane(props: {
           disabled={!savable()}
           onClick={() => { const q = good(); if (q) props.onCommit(q); }}
         >
-          Save query text
-        </button>
+          {t("query-query-builder-save-query-text")}</button>
       </div>
       {/* The structured half of §4.3.2: the kind, the span, the parser's own
           alternatives, and whether the diagnostic is inside an `off` subtree. */}
@@ -334,7 +334,7 @@ function QueryTextPane(props: {
               >
                 <span class="query-text-pane-diagnostic-message">{diagnostic.message}</span>
                 <Show when={diagnostic.disabled}>
-                  <span class="query-text-pane-diagnostic-off"> (in a disabled condition — the query still runs)</span>
+                  <span class="query-text-pane-diagnostic-off"> {t("query-query-builder-in-a-disabled-condition-the-query-still-runs")}</span>
                 </Show>
                 <Show when={spanFor(diagnostic)}>
                   {(span) => (
@@ -343,8 +343,7 @@ function QueryTextPane(props: {
                       class="query-text-pane-locate"
                       onClick={() => select(span(), diagnostics()!.text)}
                     >
-                      Show me
-                    </button>
+                      {t("query-query-builder-show-me")}</button>
                   )}
                 </Show>
                 <Show when={diagnostic.suggestions?.length}>
@@ -361,7 +360,7 @@ function QueryTextPane(props: {
                 </Show>
                 <Show when={vocabularyNear(diagnostic).length}>
                   <span class="query-text-pane-diagnostic-alts">
-                    Properties in this graph: <For each={vocabularyNear(diagnostic)}>
+                    {t("query-query-builder-properties-in-this-graph")}<For each={vocabularyNear(diagnostic)}>
                       {(key, index) => (
                         <>
                           <Show when={index() > 0}>, </Show>
@@ -375,8 +374,7 @@ function QueryTextPane(props: {
                     route: the vocabulary above and the Guide's TQL reference. */}
                 <Show when={diagnostic.kind === "syntax" && !diagnostic.suggestions?.length}>
                   <span class="query-text-pane-diagnostic-alts">
-                    The fields and properties this graph has are in the picker above; the
-                    query language is in the Guide under <em>Find and revisit → Query text (TQL)</em>.
+                    <Rich message={msg("query-text-vocabulary-guide")} />
                   </span>
                 </Show>
               </li>
@@ -857,8 +855,7 @@ export function QueryBuilder(props: {
         aria-expanded={textOpen()}
         onClick={() => setTextOpen(!textOpen())}
       >
-        Edit as text
-      </button></Show>
+        {t("query-query-sheet-edit-as-text")}</button></Show>
       <Show when={textOpen()} fallback={<Show when={props.notice}>{(render) => render()()}</Show>}>
         <QueryTextPane
           session={props.session}
@@ -931,7 +928,7 @@ export function QueryBuilder(props: {
           <Show when={previewError()}>
             {(message) => (
               <div class="qs-preview-error" role="alert">
-                The anchor wasn't changed: {message()}
+                {t("query-anchor-unchanged", { detail: message() })}
               </div>
             )}
           </Show>

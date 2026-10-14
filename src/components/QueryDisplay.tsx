@@ -69,9 +69,9 @@ export function QueryDisplay(props: {
   };
   const listRow = (label: string, index: number, length: number, moveRow: (to: number) => void, remove: () => void, extra?: JSX.Element) =>
     <div class="qd-row"><span>{label}</span>{extra}
-      <button type="button" aria-label={`Move ${label} up`} disabled={index === 0} onClick={() => moveRow(index - 1)}>↑</button>
-      <button type="button" aria-label={`Move ${label} down`} disabled={index === length - 1} onClick={() => moveRow(index + 1)}>↓</button>
-      <button type="button" aria-label={`Remove ${label}`} onClick={remove}>×</button>
+      <button type="button" aria-label={t("query-query-display-move-up", { value1: label })} disabled={index === 0} onClick={() => moveRow(index - 1)}>↑</button>
+      <button type="button" aria-label={t("query-query-display-move-down", { value1: label })} disabled={index === length - 1} onClick={() => moveRow(index + 1)}>↓</button>
+      <button type="button" aria-label={t("query-query-display-remove", { value1: label })} onClick={remove}>×</button>
     </div>;
   const sample = () => {
     const text = sampleText().trim();
@@ -85,29 +85,29 @@ export function QueryDisplay(props: {
   };
   return <div class="qd-root">
     <Show when={!props.inline}><button ref={trigger} type="button" class="qd-trigger" aria-expanded={open()} aria-controls={id}
-      onClick={openPanel}>{props.rowKind() === "page" ? "Display pages" : "Display"}</button></Show>
+      onClick={openPanel}>{props.rowKind() === "page" ? t("query-query-display-display-pages") : t("query-query-display-display")}</button></Show>
     <Show when={open()}><div ref={panel} id={id} class="qd-panel" role="dialog"
-      aria-label={props.rowKind() === "page" ? "Page display" : "Block display"}
+      aria-label={props.rowKind() === "page" ? t("query-query-display-page-display") : t("query-query-display-block-display")}
       onClick={(event) => event.stopPropagation()}>
-      <section><h4>View</h4><div role="group" aria-label="Query view">
+      <section><h4>{t("query-query-display-view")}</h4><div role="group" aria-label={t("query-query-display-query-view")}>
         <For each={VIEW_KINDS}>{(kind) =>
           <button type="button" classList={{ active: (view().view ?? "list") === kind }}
-            onClick={() => apply({ view: kind })}>{kind}</button>}</For>
+            onClick={() => apply({ view: kind })}>{viewLabel(kind)}</button>}</For>
       </div></section>
-      <section><h4>Group by</h4><span>{view().group_by || "No grouping"}</span>
-        <button type="button" onClick={() => apply({ group_by: "" })}>None</button>
-        {fieldPicker("group", "Change")}
+      <section><h4>{t("query-query-display-group-by")}</h4><span>{view().group_by || t("query-query-display-no-grouping")}</span>
+        <button type="button" onClick={() => apply({ group_by: "" })}>{t("query-query-display-none")}</button>
+        {fieldPicker("group", t("query-display-change"))}
       </section>
-      <section><h4>Sort</h4>
+      <section><h4>{t("query-query-display-sort")}</h4>
         <For each={view().sort ?? []}>{([field, dir], index) => listRow(field, index(), view().sort?.length ?? 0,
           (to) => apply({ sort: move(view().sort ?? [], index(), to) }),
           () => apply({ sort: (view().sort ?? []).filter((_, i) => i !== index()) }),
-          <button type="button" aria-label={`Sort ${field} ${dir === "asc" ? "descending" : "ascending"}`}
+          <button type="button" aria-label={t("query-sort-direction", { field, direction: dir })}
             onClick={() => apply({ sort: (view().sort ?? []).map(([f, d], i) => i === index() ? [f, d === "asc" ? "desc" : "asc"] : [f, d]) })}>
-            {dir === "asc" ? "Asc" : "Desc"}</button>)}
-        </For>{fieldPicker("sort", "+ sort")}
+            {dir === "asc" ? t("query-query-display-asc") : t("query-query-display-desc")}</button>)}
+        </For>{fieldPicker("sort", t("query-display-add-sort"))}
       </section>
-      <section aria-label={t("query-calm-columns")}><h4>Columns</h4>
+      <section aria-label={t("query-calm-columns")}><h4>{t("query-query-display-columns")}</h4>
         <Show when={view().view === "table"}><label class="qd-row">
           <input type="checkbox" checked disabled />{t("query-calm-title-column")}
         </label></Show>
@@ -118,28 +118,44 @@ export function QueryDisplay(props: {
             apply({ columns: event.currentTarget.checked ? [...columns(), field] : columns().filter((column) => column !== field) })} />
           {field}
         </label>}</For>
-        {fieldPicker("column", "+ column")}
+        {fieldPicker("column", t("query-display-add-column"))}
       </section>
-      <section><h4>Summarize</h4>
-        <For each={view().aggregates ?? []}>{([field, fn], index) => listRow(field || "Whole result", index(), view().aggregates?.length ?? 0,
+      <section><h4>{t("query-query-display-summarize")}</h4>
+        <For each={view().aggregates ?? []}>{([field, fn], index) => listRow(field || t("query-display-whole-result"), index(), view().aggregates?.length ?? 0,
           (to) => apply({ aggregates: move(view().aggregates ?? [], index(), to) }),
           () => apply({ aggregates: (view().aggregates ?? []).filter((_, i) => i !== index()) }),
           <button type="button" onClick={() => {
             const cycle: AggFn[] = ["count", "sum", "avg"];
             apply({ aggregates: (view().aggregates ?? []).map(([f, a], i) => i === index()
               ? [f, cycle[(cycle.indexOf(a) + 1) % cycle.length]] : [f, a]) });
-          }}>{fn}</button>)}
+          }}>{aggregateLabel(fn)}</button>)}
         </For>
-        <button type="button" onClick={() => apply({ aggregates: [...view().aggregates ?? [], ["", "count"]] })}>+ count</button>
-        {fieldPicker("aggregate", "+ property")}
+        <button type="button" onClick={() => apply({ aggregates: [...view().aggregates ?? [], ["", "count"]] })}>{t("query-query-display-count")}</button>
+        {fieldPicker("aggregate", t("query-display-add-property"))}
       </section>
-      <section><h4>Sample</h4><input aria-label="Sample size" inputmode="numeric" placeholder="No limit"
+      <section><h4>{t("query-query-display-sample")}</h4><input aria-label={t("query-query-display-sample-size")} inputmode="numeric" placeholder={t("query-query-display-no-limit")}
         value={sampleText()} onInput={(event) => setSampleText(event.currentTarget.value)}
         onBlur={commitSample} onKeyDown={(event) => { if (event.key === "Enter") commitSample(); }} />
-        <Show when={!sample().valid}><div role="alert">A sample is a whole number up to 4294967295.</div></Show>
-        <Show when={sample().valid && sample().value === 0}><div>No results (sample 0)</div></Show>
+        <Show when={!sample().valid}><div role="alert">{t("query-query-display-a-sample-is-a-whole-number-up-to-4294967295")}</div></Show>
+        <Show when={sample().valid && sample().value === 0}><div>{t("query-query-display-no-results-sample-0")}</div></Show>
       </section>
-      <Show when={!props.inline}><button type="button" onClick={() => setOpen(false)}>Done</button></Show>
+      <Show when={!props.inline}><button type="button" onClick={() => setOpen(false)}>{t("query-query-display-done")}</button></Show>
     </div></Show>
   </div>;
+}
+
+function viewLabel(kind: typeof VIEW_KINDS[number]): string {
+  switch (kind) {
+    case "search": return t("query-display-view-search");
+    case "list": return t("query-display-view-list");
+    case "table": return t("query-display-view-table");
+    case "board": return t("query-display-view-board");
+  }
+}
+function aggregateLabel(fn: AggFn): string {
+  switch (fn) {
+    case "count": return t("query-display-aggregate-count");
+    case "sum": return t("query-display-aggregate-sum");
+    case "avg": return t("query-display-aggregate-avg");
+  }
 }

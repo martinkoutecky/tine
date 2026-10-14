@@ -1,3 +1,4 @@
+import { t, msg, render } from "../i18n";
 import { sheetSourceRows } from "../sheet/sheetRows";
 import { QueryResultTask, openQueryResult } from "./QueryResultTask";
 import { sheetClickOffset, sheetCellMenu, displayLimitThrough } from "../sheet/interactions";
@@ -469,7 +470,7 @@ export function SheetTable(props: {
     if (props.queryDisplay) {
       const columns = reorderedQueryColumns(fields(), field, drop.field, drop.before);
       if (columns) props.queryDisplay.apply({ ...props.queryDisplay.view, columns });
-      else pushToast("This order cannot be saved while a computed column is visible.", "info");
+      else pushToast(msg("sheet-sheet-table-this-order-cannot-be-saved-while-a-computed-column-is"), "info");
       return;
     }
     if (!schemaHome()) declareFreshSchema();
@@ -576,7 +577,7 @@ export function SheetTable(props: {
     if (!owner || home?.kind !== "block") return false;
     const rowNodes = owner.children.map((id) => docNode(id)).filter((row): row is NonNullable<typeof row> => !!row);
     if (rowNodes.length !== owner.children.length) {
-      pushToast("Some direct rows are not loaded; no fields were renamed.", "error");
+      pushToast(msg("sheet-sheet-table-some-direct-rows-are-not-loaded-no-fields-were-renamed"), "error");
       return false;
     }
     const page = props.schemaPage ? pageByName(props.schemaPage) : undefined;
@@ -624,13 +625,11 @@ export function SheetTable(props: {
       const home = name ? formulaHomes().get(name) ?? null : null;
       openActionContextMenu(e.clientX, e.clientY, [
         {
-          label: props.rowSource === "children"
-            ? "Rename field… (formula columns cannot be renamed here)"
-            : "Rename field… (only children-backed tables can rename fields)",
+          get label() { return render(props.rowSource === "children" ? msg("sheet-sheet-table-rename-field-formula-columns-cannot-be-renamed-here") : msg("sheet-sheet-table-rename-field-only-children-backed-tables-can-rename-fields")); },
           disabled: true,
         },
         {
-          label: "Edit formula…",
+          get label() { return render(msg("sheet-sheet-table-edit-formula")); },
           disabled: !name || !formulaWriteAllowed(home),
           run: () => {
             if (!name) return;
@@ -648,8 +647,8 @@ export function SheetTable(props: {
             });
           },
         },
-        { label: "Remove formula", disabled: !formulaWriteAllowed(home), run: () => removeFormula(field) },
-        { label: "Add formula…", disabled: !schemaWriteAllowed(), run: () => addFormula(e.clientX, e.clientY) },
+        { get label() { return render(msg("sheet-sheet-table-remove-formula")); }, disabled: !formulaWriteAllowed(home), run: () => removeFormula(field) },
+        { get label() { return render(msg("sheet-sheet-table-add-formula")); }, disabled: !schemaWriteAllowed(), run: () => addFormula(e.clientX, e.clientY) },
       ]);
       return;
     }
@@ -658,35 +657,35 @@ export function SheetTable(props: {
     const actions: ContextMenuAction[] = [];
     const renameReason = renameDisabledReason(field, declared);
     actions.push({
-      label: renameReason ? `Rename field… (${renameReason})` : "Rename field…",
+      get label() { return render(msg("sheet-rename-field", { reason: renameReason ?? "", hasReason: renameReason ? 1 : 0 })); },
       disabled: !!renameReason,
       run: () => startFieldRename(field, declared),
     });
     if (!schemaHome()) {
-      if (field.startsWith("prop:")) actions.push({ label: "Declare field (text)", disabled, run: declareFreshSchema });
+      if (field.startsWith("prop:")) actions.push({ get label() { return render(msg("sheet-sheet-table-declare-field-text")); }, disabled, run: declareFreshSchema });
     } else if (!declared) {
-      actions.push({ label: "Declare field (text)", disabled, run: () => declareField(field) });
+      actions.push({ get label() { return render(msg("sheet-sheet-table-declare-field-text")); }, disabled, run: () => declareField(field) });
     } else if (declared.field.startsWith("prop:")) {
       actions.push({
-        label: "Type →",
+        get label() { return render(msg("sheet-sheet-table-type")); },
         disabled,
         children: SCHEMA_PROP_TYPES.map((type) => ({
-          label: type,
+          get label() { return render(schemaTypeMessage(type)); },
           disabled,
           run: () => changeFieldType(field, type),
         })),
       });
-      actions.push({ label: "Remove from schema", disabled, run: () => removeFieldFromSchema(field) });
+      actions.push({ get label() { return render(msg("sheet-sheet-table-remove-from-schema")); }, disabled, run: () => removeFieldFromSchema(field) });
     } else {
-      actions.push({ label: "Remove from schema", disabled, run: () => removeFieldFromSchema(field) });
+      actions.push({ get label() { return render(msg("sheet-sheet-table-remove-from-schema")); }, disabled, run: () => removeFieldFromSchema(field) });
     }
     // A column added via "Add column" but never declared lives only in extraFields
     // (no schema entry to "Remove from schema"). Give it its own removal so it isn't
     // stuck on screen until restart.
     if (!declared && extraFields().includes(field)) {
-      actions.push({ label: "Remove column", run: () => setExtraFields((cur) => cur.filter((f) => f !== field)) });
+      actions.push({ get label() { return render(msg("sheet-sheet-table-remove-column")); }, run: () => setExtraFields((cur) => cur.filter((f) => f !== field)) });
     }
-    actions.push({ label: "Add formula…", disabled, run: () => addFormula(e.clientX, e.clientY) });
+    actions.push({ get label() { return render(msg("sheet-sheet-table-add-formula")); }, disabled, run: () => addFormula(e.clientX, e.clientY) });
     if (actions.length) openActionContextMenu(e.clientX, e.clientY, actions);
   };
 
@@ -819,14 +818,14 @@ export function SheetTable(props: {
       when={rows().length > 0 || !!editingProp()}
       fallback={
         <div class="sheet-table sheet-empty">
-          <span>empty table</span>
+          <span>{t("sheet-sheet-table-empty-table")}</span>
           <Show when={props.rowSource === "children" || props.addRow}>
             <button
               class="sheet-add-row-ghost sheet-add-row-empty"
-              title={props.addRowLabel ?? "Add row"}
+              title={props.addRowLabel ?? t("sheet-sheet-table-add-row")}
               onClick={runAddRow}
             >
-              <span class="sheet-ghost-sticky"><span class="sheet-ghost-plus">+</span><span>{props.addRowLabel ?? "Add row"}</span></span>
+              <span class="sheet-ghost-sticky"><span class="sheet-ghost-plus">+</span><span>{props.addRowLabel ?? t("sheet-sheet-table-add-row")}</span></span>
             </button>
           </Show>
         </div>
@@ -848,16 +847,15 @@ export function SheetTable(props: {
         onContextMenu={openSheetMenu}
       >
         <div class="sheet-cell sheet-header-cell sheet-title-header sheet-sticky-left" onClick={() => sortHeader(0)}>
-          Block{sortArrow(0)}
+          {t("sheet-sheet-table-block")}{sortArrow(0)}
           <Show when={tableOnlySortLabel()}>
-            {(label) => <button type="button" class="sheet-table-only-sort" title="Clear table-only sort"
+            {(label) => <button type="button" class="sheet-table-only-sort" title={t("sheet-sheet-table-clear-table-only-sort")}
               onClick={(event) => { event.stopPropagation(); setSort(null); }}>{label()} ×</button>}
           </Show>
           <Show when={filterError()}>
             {(err) => (
               <span class="sheet-filter-error" title={err()}>
-                Filter disabled
-              </span>
+                {t("sheet-sheet-table-filter-disabled")}</span>
             )}
           </Show>
           {tableWidths.handle("title", "Block")}
@@ -916,7 +914,7 @@ export function SheetTable(props: {
                   class="sheet-prop-input sheet-header-rename-input"
                   autofocus
                   value={renamingField()?.value ?? ""}
-                  aria-label={`Rename ${fieldLabel(field)} field`}
+                  aria-label={t("sheet-sheet-table-rename-field-3", { value1: fieldLabel(field) })}
                   onClick={(e) => e.stopPropagation()}
                   onInput={(e) => setRenamingField({ field, value: e.currentTarget.value })}
                   onKeyDown={(e) => {
@@ -944,7 +942,7 @@ export function SheetTable(props: {
                 >
                   <button
                     class="sheet-add-column-ghost"
-                    title="Add column"
+                    title={t("sheet-sheet-table-add-column")}
                     onPointerDown={(e) => e.stopPropagation()}
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
@@ -953,7 +951,7 @@ export function SheetTable(props: {
                     }}
                   >
                     <span class="sheet-ghost-plus">+</span>
-                    <span class="sheet-ghost-label">Add column</span>
+                    <span class="sheet-ghost-label">{t("sheet-sheet-table-add-column")}</span>
                   </button>
                 </Show>
               }
@@ -961,7 +959,7 @@ export function SheetTable(props: {
               <input
                 class="sheet-prop-input sheet-add-field-input"
                 autofocus
-                placeholder="property"
+                placeholder={t("sheet-sheet-table-property")}
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => {
                   e.stopPropagation();
@@ -1057,8 +1055,7 @@ export function SheetTable(props: {
               setRenderLimit((limit) => limit + SHEET_RENDER_PAGE);
             }}
           >
-            Load {Math.min(SHEET_RENDER_PAGE, sortedRows().length - displayedRows().length)} more rows
-            ({displayedRows().length} of {sortedRows().length})
+            {t("sheet-load-more", { kind: "rows", count: Math.min(SHEET_RENDER_PAGE, sortedRows().length - displayedRows().length), shown: displayedRows().length, total: sortedRows().length })}
           </button>
         </Show>
         <Show when={showFooter()}>
@@ -1082,7 +1079,7 @@ export function SheetTable(props: {
         <Show when={hasActionColumn()}>
           <button
             class="sheet-add-row-ghost"
-            title={props.addRowLabel ?? "Add row"}
+            title={props.addRowLabel ?? t("sheet-sheet-table-add-row")}
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
@@ -1090,7 +1087,7 @@ export function SheetTable(props: {
               runAddRow();
             }}
           >
-            <span class="sheet-ghost-sticky"><span class="sheet-ghost-plus">+</span><span class="sheet-ghost-label">{props.addRowLabel ?? "Add row"}</span></span>
+            <span class="sheet-ghost-sticky"><span class="sheet-ghost-plus">+</span><span class="sheet-ghost-label">{props.addRowLabel ?? t("sheet-sheet-table-add-row")}</span></span>
           </button>
         </Show>
         <Show when={!sheetOverlay && showFooterToggle()}>
@@ -1194,7 +1191,7 @@ function TitleCell(props: {
       <Show when={props.near && liveFormulaRowNode(props.row, "mount")}>
         <button
           class="sheet-cell-handle"
-          title="Cell menu"
+          title={t("sheet-sheet-table-cell-menu")}
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1300,7 +1297,7 @@ function FieldCell(props: {
         label,
         run: () => write(label),
       })),
-      { label: "Clear", run: () => write("") },
+      { get label() { return render(msg("sheet-sheet-table-clear")); }, run: () => write("") },
     ]);
   };
 
@@ -1389,7 +1386,7 @@ function FieldCell(props: {
       <Show when={props.near && editable()}>
         <button
           class="sheet-cell-handle"
-          title="Cell menu"
+          title={t("sheet-sheet-table-cell-menu")}
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -1471,4 +1468,18 @@ function FieldCell(props: {
       </Show>
     </div>
   );
+}
+
+// Values passed to changeFieldType remain the persisted tine.fields:: tokens.
+// Labels are deferred; changeFieldType still receives the original persisted token.
+function schemaTypeMessage(type: typeof SCHEMA_PROP_TYPES[number]) {
+  switch (type) {
+    case "text": return msg("sheet-type-text");
+    case "number": return msg("sheet-type-number");
+    case "date": return msg("sheet-type-date");
+    case "datetime": return msg("sheet-type-datetime");
+    case "checkbox": return msg("sheet-type-checkbox");
+    case "list": return msg("sheet-type-list");
+    case "ref": return msg("sheet-type-ref");
+  }
 }

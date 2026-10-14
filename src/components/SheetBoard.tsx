@@ -1,3 +1,4 @@
+import { t, msg } from "../i18n";
 import { sheetSourceRows } from "../sheet/sheetRows";
 import { QueryResultTask, openQueryResult } from "./QueryResultTask";
 import { displayLimitThrough, sheetCellMenu } from "../sheet/interactions";
@@ -160,13 +161,13 @@ export function SheetBoard(props: {
     if (!pending) return;
     if (queryRowsVersion() === pending.groups) return;
     if (!allRows().some((row) => row.id === pending.id)) {
-      pushToast("Moved out of this query's results", "info");
+      pushToast(msg("sheet-sheet-board-moved-out-of-this-query-s-results"), "info");
     }
     setPendingEjection(null);
   });
 
   const baseColumns = createMemo<BoardColumn[]>(() => {
-    if (ungrouped()) return [{ key: null, label: "All results", rows: rows() }];
+    if (ungrouped()) return [{ key: null, label: t("sheet-sheet-board-all-results"), rows: rows() }];
     const now = appNow();
     return buildBoardColumns(rows(), groupBy(), schemaFields(), {
       formulas: formulas(),
@@ -412,7 +413,7 @@ export function SheetBoard(props: {
     const exists = columns().some((col) => col.key === tag);
     if (!isBareTagName(tag) || exists) {
       setTagInputInvalid(true);
-      if (tag && !exists) pushToast("Invalid tag name", "warn");
+      if (tag && !exists) pushToast(msg("sheet-sheet-board-invalid-tag-name"), "warn");
       return false;
     }
     addEmptyTagColumn(props.ownerId, tag);
@@ -425,17 +426,17 @@ export function SheetBoard(props: {
     <div class="sheet-board-wrap">
       <Show when={props.rowSource !== "query" && !blockPageReadOnly(props.ownerId)}>
         <div class="sheet-board-toolbar">
-          <span>Group by</span>
+          <span>{t("sheet-sheet-board-group-by")}</span>
           <select
             class="sheet-board-groupby"
             value={ungrouped() ? "" : groupBy()}
-            aria-label="Group by"
+            aria-label={t("sheet-sheet-board-group-by")}
             onPointerDown={(e) => e.stopPropagation()}
             onMouseDown={(e) => e.stopPropagation()}
             onChange={(e) => setBoardGroupBy(props.ownerId, e.currentTarget.value as FieldId | "")}
           >
             <Show when={props.rowSource === "query"}>
-              <option value="">No grouping</option>
+              <option value="">{t("sheet-sheet-board-no-grouping")}</option>
             </Show>
             <For each={groupByOptions()}>
               {(field) => <option value={field}>{fieldLabel(field)}</option>}
@@ -443,7 +444,7 @@ export function SheetBoard(props: {
           </select>
         </div>
       </Show>
-      <Show when={columns().length > 0} fallback={<div class="sheet-board sheet-empty">empty board</div>}>
+      <Show when={columns().length > 0} fallback={<div class="sheet-board sheet-empty">{t("sheet-sheet-board-empty-board")}</div>}>
         <div
           ref={boardElement}
           class="sheet-board"
@@ -455,8 +456,7 @@ export function SheetBoard(props: {
           <Show when={filterError()}>
             {(err) => (
               <span class="sheet-filter-error" title={err()}>
-                Filter disabled
-              </span>
+                {t("sheet-sheet-table-filter-disabled")}</span>
             )}
           </Show>
           <For each={displayedColumns()}>
@@ -507,7 +507,7 @@ export function SheetBoard(props: {
                 fallback={
                   <button
                     class="sheet-board-add-tag-ghost"
-                    title="Add tag column"
+                    title={t("sheet-sheet-board-add-tag-column")}
                     onClick={(e) => {
                       e.stopPropagation();
                       setAddingTag(true);
@@ -515,7 +515,7 @@ export function SheetBoard(props: {
                     }}
                   >
                     <span class="sheet-ghost-plus">+</span>
-                    <span>new tag</span>
+                    <span>{t("sheet-sheet-board-new-tag")}</span>
                   </button>
                 }
               >
@@ -523,7 +523,7 @@ export function SheetBoard(props: {
                   class="sheet-board-add-tag-input"
                   classList={{ "sheet-input-invalid": tagInputInvalid() }}
                   autofocus
-                  placeholder="new-tag"
+                  placeholder={t("sheet-sheet-board-new-tag-2")}
                   onPointerDown={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
                   onInput={() => setTagInputInvalid(false)}
@@ -553,8 +553,7 @@ export function SheetBoard(props: {
             setRenderLimit((limit) => limit + SHEET_RENDER_PAGE);
           }}
         >
-          Load {Math.min(SHEET_RENDER_PAGE, rows().length - displayedRows().length)} more cards
-          ({displayedRows().length} of {rows().length})
+          {t("sheet-load-more", { kind: "cards", count: Math.min(SHEET_RENDER_PAGE, rows().length - displayedRows().length), shown: displayedRows().length, total: rows().length })}
         </button>
       </Show>
     </div>
@@ -851,7 +850,7 @@ function BoardCard(props: {
       <Show when={near() && liveFormulaRowNode(props.row, "mount")}>
         <button
           class="sheet-cell-handle sheet-card-handle"
-          title="Card menu"
+          title={t("sheet-sheet-board-card-menu")}
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();

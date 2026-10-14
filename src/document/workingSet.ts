@@ -23,6 +23,7 @@ import { isBlockMoving } from "./edits/moves";
 import { journalTitle, appNow } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToastUnique } from "../toasts";
+import { renderEnglish } from "../i18n";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import { dbg } from "../debug";
 import { reportUiFailure } from "../uiFailure";
@@ -214,18 +215,21 @@ function slotRefusal(dto: PageDto & { id?: string }): PageLoadRefusal | null {
 
 /** Say why a page could not be loaded or written. Pure; O(1). */
 export function pageLoadRefusalMessage(refusal: PageLoadRefusal): string {
-  const holder = refusal.holder ?? "a new page that is not saved yet";
-  const requested = refusal.requested ?? "the page";
-  return `“${refusal.page}” is open from ${holder} with unsaved work, so ${requested} was not loaded. Finish or save that edit first.`;
+  return renderEnglish(msg("document-load-refused", pageLoadRefusalArgs(refusal)));
+}
+
+function pageLoadRefusalArgs(refusal: PageLoadRefusal, after = "") {
+  return { page: refusal.page, holder: refusal.holder ?? "", hasHolder: refusal.holder === null ? 0 : 1,
+    requested: refusal.requested ?? "", hasRequested: refusal.requested === null ? 0 : 1, after, hasAfter: after ? 1 : 0 };
 }
 
 /** Show `pageLoadRefusalMessage` as a sticky error (the user must act), once
  * while an identical one is visible. `after` is appended (what the refusal
  * stopped). Returns the message. O(visible toasts). */
 export function reportPageLoadRefusal(refusal: PageLoadRefusal, after?: string): string {
-  const message = after ? `${pageLoadRefusalMessage(refusal)} ${after}` : pageLoadRefusalMessage(refusal);
-  pushToastUnique(message, "error");
-  return message;
+  const message = msg("document-load-refused", pageLoadRefusalArgs(refusal, after));
+  pushToastUnique(msg("document-load-refused", pageLoadRefusalArgs(refusal, after)), "error");
+  return renderEnglish(message);
 }
 
 /** Load a page into the working set if it isn't already there (used by

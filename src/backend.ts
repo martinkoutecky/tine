@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 // Backend abstraction. In the Tauri app we call Rust via `invoke`. In a plain
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
@@ -669,11 +670,11 @@ class TauriBackend implements Backend {
   }
   async confirm(message: string, title?: string): Promise<boolean> {
     const { ask } = await import("@tauri-apps/plugin-dialog");
-    return ask(message, { title: title ?? "Tine", kind: "warning" });
+    return ask(message, { title: title ?? t("backend-backend-tine"), kind: "warning" });
   }
   async pickFolder(title?: string, defaultPath?: string): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const res = await open({ directory: true, multiple: false, title: title ?? "Open graph folder", defaultPath });
+    const res = await open({ directory: true, multiple: false, title: title ?? t("backend-backend-open-graph-folder"), defaultPath });
     return typeof res === "string" ? res : null;
   }
   revealExport(path: string) { return this.call<void>("reveal_export", { path }); }
@@ -699,7 +700,7 @@ class TauriBackend implements Backend {
   }
   async pickFile(): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const res = await open({ multiple: false, title: "Choose a file" });
+    const res = await open({ multiple: false, title: t("backend-backend-choose-a-file") });
     return typeof res === "string" ? res : null;
   }
   async writeText(text: string): Promise<void> {

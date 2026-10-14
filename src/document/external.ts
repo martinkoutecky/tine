@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 import { applyGraphAnswers } from "../graphAnswers";
 import { beginResultsChange } from "../queryResultsEpoch";
 import { backend, type GraphChange, type GraphAnswersChange } from "../backend";
@@ -88,7 +89,7 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
   }
   if (!bindingCurrent(binding)) return;
   if (restart || (ui?.journalsOpen && changes.some((c) => c.kind === "journal"))) ui?.restartJournalFeed();
-  pushToast(`${changes.length} pages updated externally${conflicts ? ` · ${conflicts} conflict${conflicts === 1 ? "" : "s"} to review` : ""}`, "info");
+  pushToast(msg("document-external-updates", { pages: changes.length, conflicts }), "info");
   } finally { finish(); }
 }
 

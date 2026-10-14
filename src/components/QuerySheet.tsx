@@ -77,7 +77,7 @@ import {
   ListboxOption,
 } from "./querySheetParts";
 import { documentOf, listen } from "../windowRealm";
-import { t } from "../i18n";
+import { t, msg, render } from "../i18n";
 
 export {
   QuerySentence,
@@ -326,7 +326,7 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
       class="qs-sheet"
       classList={{ "qs-sheet-stale": props.stale }}
       role="group"
-      aria-label="Query filter"
+      aria-label={t("query-query-sheet-query-filter")}
       onClick={stop}
     >
       <AnchorLine
@@ -360,7 +360,7 @@ export function QuerySheet(props: QuerySheetProps): JSX.Element {
       </Show>
       <Show when={isEmpty() && props.suggestions().length > 0}>
         <div class="qs-try">
-          <span class="qs-try-label">Try:</span>
+          <span class="qs-try-label">{t("query-query-sheet-try")}</span>
           <For each={props.suggestions()}>
             {(key) => (
               <button
@@ -405,7 +405,7 @@ function NodeList(props: {
             <div
               class="qs-rows"
               role="list"
-              aria-label={props.isRoot ? "Query conditions" : `Conditions, ${group.header}`}
+              aria-label={props.isRoot ? t("query-query-sheet-query-conditions") : t("query-query-sheet-conditions", { value1: group.header })}
             >
               <For each={group.children}>
                 {(child, index) => {
@@ -479,7 +479,7 @@ function GroupHeader(props: {
       <button
         type="button"
         class="qs-group-op"
-        title="Switch between all of / any of"
+        title={t("query-query-sheet-switch-between-all-of-any-of")}
         onClick={(e) => {
           stop(e);
           cycle();
@@ -492,7 +492,7 @@ function GroupHeader(props: {
           ref={menuTrigger}
           type="button"
           class="qs-row-menu"
-          aria-label="Group actions"
+          aria-label={t("query-query-sheet-group-actions")}
           aria-haspopup="listbox"
           aria-expanded={open() ? "true" : "false"}
           aria-controls={menuId}
@@ -516,12 +516,12 @@ function GroupHeader(props: {
               rootRef={rootRef}
               options={[
                 ...moveOptions(props.pos),
-                { key: "none", label: props.group.negated ? "Remove none of" : "None of" },
+                { key: "none", label: props.group.negated ? t("query-query-sheet-remove-none-of") : t("query-query-sheet-parts-none-of") },
                 // A group inside a `not`/`off` has no list to splice its rows into, and inventing one is a De Morgan rewrite …
                 ...(unwrapAt(root(), props.group.opLoc) !== root()
-                  ? [{ key: "ungroup", label: "Ungroup" }]
+                  ? [{ key: "ungroup", label: t("query-query-sheet-ungroup") }]
                   : []),
-                { key: "remove", label: "Remove" },
+                { key: "remove", label: t("query-query-sheet-remove") },
               ]}
               onPick={(key) => {
                 props.sheet.setOpenMenu(null);
@@ -610,13 +610,13 @@ function AdvancedChip(props: {
       <SelectBox pos={props.pos} label="Select condition" controls={props.controls} />
       <Show
         when={props.sheet.onEditText}
-        fallback={<span class="qs-advanced" title="edit in the query text below">{phrase()}</span>}
+        fallback={<span class="qs-advanced" title={t("query-query-sheet-edit-in-the-query-text-below")}>{phrase()}</span>}
       >
         <button
           type="button"
           class="qs-advanced qs-advanced-open"
-          title="Edit this part in the query text below"
-          aria-label={`Edit in the query text: ${filterLabel(props.node.filter)}`}
+          title={t("query-query-sheet-edit-this-part-in-the-query-text-below")}
+          aria-label={t("query-query-sheet-edit-in-the-query-text", { value1: filterLabel(props.node.filter) })}
           onClick={(e) => {
             stop(e);
             props.sheet.onEditText?.();
@@ -639,8 +639,8 @@ function AdvancedChip(props: {
       <button
         type="button"
         class="qs-row-remove"
-        aria-label="Remove condition"
-        title="Remove"
+        aria-label={t("query-query-sheet-remove-condition")}
+        title={t("query-query-sheet-remove")}
         onClick={(e) => {
           stop(e);
           props.sheet.apply(removeAt(props.sheet.root(), props.node.loc));
@@ -671,7 +671,7 @@ function AdvancedMenu(props: {
           ref={trigger}
           type="button"
           class="qs-row-menu"
-          aria-label="Row actions"
+          aria-label={t("query-query-sheet-row-actions")}
           aria-haspopup="listbox"
           aria-expanded={open() ? "true" : "false"}
           aria-controls={menuId}
@@ -730,7 +730,7 @@ function QueryRow(props: {
     // A scheduled/deadline/journal-date range names its date, not the generic "Between dates" (GH #619 item 5).
     const dated = betweenRowField(core());
     if (dated && dated !== "any") return BETWEEN_FIELD_LABEL[dated];
-    return k ? FIELD_LABELS[k] : "Condition";
+    return k ? render(FIELD_LABELS[k]) : t("query-filter-condition");
   };
   const operatorLabel = () => {
     const test = property();
@@ -741,11 +741,11 @@ function QueryRow(props: {
       const op = filter.leaf.op;
       const symbol = { gt: ">", ge: "≥", eq: "=", lt: "<", le: "≤" }[op as "gt" | "ge" | "eq" | "lt" | "le"];
       if (symbol) return props.node.negated ? `not ${symbol}` : symbol;
-      if (op === "is_not_set") return props.node.negated ? KIND_PHRASE[k].positive : KIND_PHRASE[k].negative;
+      if (op === "is_not_set") return render(props.node.negated ? KIND_PHRASE[k].positive : KIND_PHRASE[k].negative);
     }
     if (!k) return props.node.negated ? "not" : "matches";
     const phrase = KIND_PHRASE[k];
-    return props.node.negated ? phrase.negative : phrase.positive;
+    return render(props.node.negated ? phrase.negative : phrase.positive);
   };
   const diagnostic = () => {
     const leaf = raw();
@@ -881,12 +881,12 @@ function QueryRow(props: {
             {/* A retained leaf: the decoded text, the diagnostic, and a ×. */}
             <span class="qs-raw-text">{raw()!.text}</span>
             <span class="qs-raw-message" role={props.node.disabled ? undefined : "alert"}>
-              {diagnostic()?.message ?? "This condition was not understood."}
+              {diagnostic()?.message ?? t("query-query-sheet-this-condition-was-not-understood")}
             </span>
             <Show when={diagnostic()?.suggestions?.length}>
               {/* Rust's OWN alternatives (§4.3.2). */}
               <span class="qs-raw-suggestions">
-                Did you mean{" "}
+                {t("query-query-sheet-did-you-mean")}{" "}
                 <For each={diagnostic()!.suggestions!.slice(0, 4)}>
                   {(suggestion, index) => (
                     <>
@@ -909,8 +909,7 @@ function QueryRow(props: {
                   props.sheet.onEditText?.();
                 }}
               >
-                Edit as text
-              </button>
+                {t("query-query-sheet-edit-as-text")}</button>
             </Show>
           </>
         }
@@ -1004,10 +1003,10 @@ function QueryRow(props: {
                         { key: "negate", label: props.node.negated ? comparisonSymbols[comparison.op as keyof typeof comparisonSymbols]
                           : t("query-calm-negated-operator", { operator: comparisonSymbols[comparison.op as keyof typeof comparisonSymbols] }), active: props.node.negated },
                       ];
-                      const phrase = k ? KIND_PHRASE[k] : { positive: "matches", negative: "does not match" };
+                      const phrase = k ? KIND_PHRASE[k] : { positive: msg("query-filter-matches"), negative: msg("query-filter-does-not-match") };
                       return [
-                        { key: "positive", label: phrase.positive, active: !props.node.negated },
-                        { key: "negative", label: phrase.negative, active: props.node.negated },
+                        { key: "positive", label: render(phrase.positive), active: !props.node.negated },
+                        { key: "negative", label: render(phrase.negative), active: props.node.negated },
                       ];
                     })()}
                     onPick={(picked) => {
@@ -1066,7 +1065,7 @@ function QueryRow(props: {
                   type="button"
                   class="qs-value"
                   disabled={props.node.disabled}
-                  aria-label="Condition value"
+                  aria-label={t("query-query-sheet-condition-value")}
                   onClick={(e) => {
                     stop(e);
                     const k = kind();
@@ -1123,7 +1122,7 @@ function QueryRow(props: {
           ref={rowMenuTrigger}
           type="button"
           class="qs-row-menu"
-          aria-label="Row actions"
+          aria-label={t("query-query-sheet-row-actions")}
           aria-haspopup="listbox"
           aria-expanded={menuOpen("row") ? "true" : "false"}
           aria-controls={rowMenuId}
@@ -1145,7 +1144,7 @@ function QueryRow(props: {
               id={rowMenuId}
               label="Row actions"
               rootRef={rootRef}
-              options={[...moveOptions(props.pos), { key: "remove", label: "Remove" }]}
+              options={[...moveOptions(props.pos), { key: "remove", label: t("query-query-sheet-remove") }]}
               onPick={(picked) => {
                 props.sheet.setOpenMenu(null);
                 if (pickMoveOption(picked, props.pos, props.node, props.sheet, props.controls)) return;
@@ -1158,8 +1157,8 @@ function QueryRow(props: {
       <button
         type="button"
         class="qs-row-remove"
-        aria-label="Remove condition"
-        title="Remove"
+        aria-label={t("query-query-sheet-remove-condition")}
+        title={t("query-query-sheet-remove")}
         onClick={(e) => {
           stop(e);
           props.sheet.apply(removeAt(root(), props.node.loc));
