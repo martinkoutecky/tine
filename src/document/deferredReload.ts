@@ -24,7 +24,8 @@
  * Cost: O(deferred pages + waiters) per editing/move/pin/save transition;
  * nothing at all until the first deferral. Callers need not know which trigger
  * fired. */
-import { createEffect, createRoot, on } from "solid-js";
+import { createEffect, createRoot, createSignal, on } from "solid-js";
+import { installResultsPendingGate } from "../queryResultsEpoch";
 import type { GraphChange } from "../backend";
 import { captureBinding, clearOnBindingInvalidated, bindingCurrent, type Binding } from "../binding";
 import { editingId } from "../editorController";
@@ -36,6 +37,8 @@ interface Deferred { change: GraphChange; binding: Binding }
 interface Replay { ready(page: string): boolean; run(change: GraphChange): void }
 
 const deferred = new Map<string, Deferred>();
+const [deferredCount, setDeferredCount] = createSignal(0);
+installResultsPendingGate(() => deferredCount() > 0);
 const waiters = new Map<string, Map<string, { run: () => void; binding: Binding }>>();
 let replay: Replay | null = null;
 
@@ -46,6 +49,7 @@ export function installDeferredReloadReplay(next: Replay): void { replay = next;
 /** Record `change` for replay once loaded page `page` is replaceable. */
 export function deferExternalReload(page: string, change: GraphChange): void {
   deferred.set(page, { change, binding: captureBinding() });
+  setDeferredCount(deferred.size);
   watchTransitions();
 }
 
@@ -80,9 +84,10 @@ export function replayDeferredExternalReloads(): void {
     // Fire and forget like a live watcher event; a decline re-defers.
     replay.run(entry.change);
   }
+  setDeferredCount(deferred.size);
 }
 
-clearOnBindingInvalidated(() => { deferred.clear(); waiters.clear(); });
+clearOnBindingInvalidated(() => { deferred.clear(); waiters.clear(); setDeferredCount(0); });
 
 // Editing ending (or moving to another block), a move settling, a save
 // settling (the data revision) and the page host letting go of a page (its

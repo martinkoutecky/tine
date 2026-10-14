@@ -14,7 +14,7 @@ import { computeSheetExport } from '../sheet/staticExport';
 import type { QueryHit } from '../types';
 import { toasts, setToasts } from '../toasts';
 import { openQueryResultsCopy } from './queryResultsCopy';
-import { samePagePropertyResult, sameQueryResult } from './queryResultIdentity';
+import { samePagePropertyResult, resolveResultRow } from './queryResultIdentity';
 beforeAll(async () => { await initParser(); });
 afterEach(() => { resetStore(); closeExportModal(); setToasts([]); vi.restoreAllMocks(); document.body.replaceChildren(); });
 function load(raw: string) {
@@ -35,7 +35,7 @@ it('does not bulk-fold a replacement at a stale result runtime locator', async (
   expect(blockProperty('same', 'collapsed')).toBeNull();
   expect(toasts().map(toast => toast.message)).toEqual(['1 results changed since the query ran; run it again']);
 });
-it('copies only unchanged selected roots after source hydration and reports one skipped count', async () => {
+it('refuses the whole selection when positional provenance is unavailable', async () => {
   vi.spyOn(backend(), 'getPageByPath').mockResolvedValue({
     id: 'pages/Source.md', name: 'Source', title: 'Source', kind: 'page', pre_block: null,
     blocks: [
@@ -47,18 +47,20 @@ it('copies only unchanged selected roots after source hydration and reports one 
     { id: 'same', raw: 'Old match', collapsed: false, children: [] },
     { id: 'kept', raw: 'Selected', collapsed: false, children: [] },
   ] }]);
-  expect(JSON.stringify(exportModal())).toContain('Selected');
-  expect(JSON.stringify(exportModal())).toContain('Child');
+  expect(exportModal()).toBeNull();
   expect(JSON.stringify(exportModal())).not.toContain('Replacement');
-  expect(toasts().map(toast => toast.message)).toEqual(['1 results changed since the query ran; run it again']);
+  expect(toasts().map(toast => toast.message)).toEqual(['2 results changed since the query ran; run it again']);
 });
 it('retains authored identity across content edits and locator changes, in Markdown and Org', () => {
   const uuid = '4e719cb2-ec4b-4ff7-9fd9-8f3ae6dfffea';
   for (const format of ['md', 'org'] as const) {
     const property = format === 'md' ? `\nid:: ${uuid}` : `\n:PROPERTIES:\n:id: ${uuid}\n:END:`;
-    expect(sameQueryResult({ id: 'old', raw: 'Original' + property }, { id: 'new', raw: 'Edited' + property }, format)).toBe(true);
-    expect(sameQueryResult({ id: 'old', raw: 'Original' + property }, { id: 'old', raw: 'Original' }, format)).toBe(false);
-    expect(sameQueryResult({ id: 'old', raw: 'Original' }, { id: 'new', raw: 'Original' }, format)).toBe(false);
+    const dto = { id: 'old', raw: 'Original' + property, collapsed: false, children: [] };
+    const source = { name: 'Source', kind: 'page' as const, title: 'Source', pre_block: null, format, blocks: [{ ...dto, id: 'new', raw: 'Edited' + property }] };
+    const row = { id: 'old', dto, page: 'Source', kind: 'page' as const };
+    expect(resolveResultRow(row, 'action', source)?.id).toBe('new');
+    expect(resolveResultRow(row, 'action', { ...source, blocks: [{ ...dto, raw: 'Original' }] })).toBeNull();
+    expect(resolveResultRow({ ...row, dto: { ...dto, raw: 'Original' } }, 'action', source)).toBeNull();
   }
 });
 it('validates read-only page-property selections against the hydrated header', () => {

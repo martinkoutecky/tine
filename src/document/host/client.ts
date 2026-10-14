@@ -250,6 +250,9 @@ export class HostClient {
     return !!page && (page.editSeq > page.sentSeq || page.phase.kind !== "idle" || page.stash.length > 0);
   }
 
+  /** Incoming host text not yet installed in the frontend working set. */
+  holdsContent(name: string): boolean { return !!this.pages.get(name)?.held; }
+
   conflicted(name: string): boolean {
     return !!this.pages.get(name)?.observed?.conflict;
   }
@@ -625,6 +628,7 @@ export class HostClient {
     if (!page) return;
     this.reevaluate(page, acceptPush);
     this.maybeClose(page);
+    this.onChange();
   }
 
   // ------------------------------------------------------------- internals

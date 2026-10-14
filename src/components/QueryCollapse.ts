@@ -1,6 +1,5 @@
-import { blockWritable, collapseEpochOf, node, setCollapsedDeep, withUndoUnit, formatForPage, resolveBlockRef } from "../document";
-import { existingBlockId } from "../blockIdentity";
-import { noticeChangedResults, sameQueryResult } from "./queryResultIdentity";
+import { blockWritable, collapseEpochOf, node, setCollapsedDeep, withUndoUnit } from "../document";
+import { noticeChangedResults, resolveResultRow } from "./queryResultIdentity";
 import { loadSourcePage } from "../sourcePage";
 import { graphOwner } from "../owned";
 import { t } from "../i18n";
@@ -17,16 +16,14 @@ export async function collapseQueryResults(groups: RefGroup[], collapsed: boolea
   const selected = new Set<string>();
   let changed = 0;
   for (const group of groups) {
-    const format = formatForPage(group.page);
     for (const block of group.blocks.filter(block => !block.page_property)) {
-      const durable = existingBlockId(block.raw, format);
-      const id = durable ? resolveBlockRef({ uuid: durable, page: group.page, pageKind: group.kind, path: group.path }) : block.id;
-      const source = id ? node(id) : undefined;
-      if (!source || source.page !== group.page || !sameQueryResult(block, source, format)) changed++;
+      const source = resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path });
+      if (!source) changed++;
       else selected.add(source.id);
     }
   }
   noticeChangedResults(changed);
+  if (changed) return null;
   const roots = [...selected].filter(id => {
     if (!node(id)?.children.length) return false;
     let parent = node(id)?.parent;

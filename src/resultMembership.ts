@@ -6,6 +6,7 @@ import { graphOwner, readOwned } from "./owned";
 import { readOr, readLatestOr } from "./resourceRead";
 import { bindingIdentity } from "./binding";
 import type { BlockDto, RefGroup } from "./types";
+import { adoptResults, captureResultsTicket, resultsEpoch, resultsSettled } from "./queryResultsEpoch";
 
 export function blocksContainEdit(blocks: BlockDto[], id: string): boolean {
   return blocks.some((block) => block.id === id || blocksContainEdit(block.children, id));
@@ -27,10 +28,12 @@ export function createMembershipResource<S, T>(
   load: (source: S) => Promise<T>,
   contains: (value: T, id: string) => boolean,
   invalidate: Accessor<boolean> = () => true,
+  guardResults = false,
 ) {
   let snapshot: T | undefined;
   let scope = "";
-  let retained: { id: string; page?: string } | undefined;
+  let retained: { id: string; page?: string; epoch: number } | undefined;
+  let snapshotEpoch = -1;
   let release = 0;
   let alive = true;
   let resolvedScope = "";
@@ -41,23 +44,26 @@ export function createMembershipResource<S, T>(
     const nextScope = currentScope();
     const input = inputs();
     const revision = invalidate() ? dataRev() : 0;
+    const epoch = guardResults ? resultsEpoch() : 0;
+    const settled = !guardResults || resultsSettled();
     const id = editingId();
     if (scope !== nextScope) {
       scope = nextScope;
       snapshot = undefined;
       retained = undefined;
     }
-    if (id && snapshot !== undefined && untrack(() => contains(snapshot!, id))) {
-      retained = { id, page: untrack(() => docNode(id)?.page) };
+    if (retained && guardResults && retained.epoch !== epoch) { retained = undefined; release++; }
+    if (id && snapshot !== undefined && (!guardResults || snapshotEpoch === epoch) && untrack(() => contains(snapshot!, id))) {
+      retained = { id, page: untrack(() => docNode(id)?.page), epoch };
     }
     if (retained) {
       const page = retained.page;
       const unsettled = page && (isDirty(page) || isSaving(page) || isConflicted(page) || pendingDataRevision());
-      if (id === retained.id || unsettled) return { input, scope, revision, release, held: true };
+      if (id === retained.id || unsettled) return { input, scope, revision, epoch, settled, release, held: true };
       retained = undefined;
       release++;
     }
-    return { input, scope, revision, release, held: false };
+    return { input, scope, revision, epoch, settled, release, held: false };
   });
   // Holding never starts another scan. Keep a stable source token during the
   // session, even across many autosave revisions; release starts exactly once.
@@ -66,18 +72,21 @@ export function createMembershipResource<S, T>(
     if (next.held && previous?.scope === next.scope) return previous;
     return next;
   }, undefined, { equals: (a, b) => a?.scope === b?.scope && a?.input === b?.input
-    && a?.revision === b?.revision && a?.release === b?.release });
+    && a?.revision === b?.revision && a?.release === b?.release && a?.epoch === b?.epoch && a?.settled === b?.settled });
   const [resource, actions] = createResource(
-    () => runnable()?.input ? runnable() : undefined,
+    () => runnable()?.input && runnable()?.settled ? runnable() : undefined,
     async (started) => {
       const owner = graphOwner(() => alive && request().scope === started.scope
         && !request().held && runnable() === started);
       if (request().held) return snapshot;
+      const ticket = captureResultsTicket();
       const result = await readOwned(owner, load(started.input as S));
       if (result.kind === "stale") return request().scope === started.scope && request().held ? snapshot : undefined;
       if (request().held) return snapshot;
       if (runnable() !== started) return undefined;
+      if (guardResults && adoptResults(result.value, ticket) === undefined) return undefined;
       snapshot = result.value;
+      snapshotEpoch = ticket.epoch;
       resolvedScope = started.scope;
       return result.value;
     },

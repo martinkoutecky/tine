@@ -29,6 +29,6 @@ export function openQueryResult(row: FormulaEvalRow, event: MouseEvent): void {
 
 export function QueryResultTask(props: { row: FormulaEvalRow }): JSX.Element {
   return <span onPointerDown={(event) => event.stopPropagation()}>
-    <SourceTaskCheckbox marker={recordFacets(props.row)?.marker} target={() => queryResultTarget(props.row)} />
+    <SourceTaskCheckbox marker={recordFacets(props.row)?.marker} target={() => queryResultTarget(props.row)} result={props.row} />
   </span>;
 }

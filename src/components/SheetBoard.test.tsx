@@ -1,9 +1,9 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { createSignal, type JSX } from "solid-js";
+import { createMemo, createSignal, untrack, type ComponentProps, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
-import { __sheetBoardTestHooks, SheetBoard } from "./SheetBoard";
+import { __sheetBoardTestHooks, SheetBoard as ActualSheetBoard } from "./SheetBoard";
 import * as resultActions from "./QueryResultTask";
 import { initParser } from "../render/parse";
 import { blockProperty, hasSelection, resetStore, setRaw, undo } from "../document";
@@ -18,8 +18,26 @@ import { backend } from "../backend";
 import { installKeybindings } from "../keybindings";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { clearTransientLayersForTest, registerTransientLayer } from "../transientLayers";
+import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
+
+const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
+vi.mock("../document/host/wiring", () => new Proxy({}, {
+  get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty
+    : key === "persistTransfer" ? saveFixture.persistTransfer : saveFixture.actual?.[key as string],
+  has: () => true,
+}));
+// These widget fixtures supply engine answers directly and isolate publication.
+function SheetBoard(props: ComponentProps<typeof ActualSheetBoard>): JSX.Element {
+  const groups = createMemo(() => {
+    const next = props.groups;
+    if (next) untrack(() => adoptResults(next, captureResultsTicket()));
+    return next;
+  });
+  return <ActualSheetBoard {...props} groups={groups()} />;
+}
 
 beforeAll(async () => {
+  saveFixture.actual = await vi.importActual("../document/host/wiring");
   await initParser();
 });
 
@@ -144,7 +162,7 @@ function tick(): Promise<void> {
 }
 
 function queryGroups(ids: string[]): RefGroup[] {
-  return [{
+  const groups: RefGroup[] = [{
     page: "Sheet",
     kind: "page",
     blocks: ids.map((id) => ({
@@ -154,6 +172,7 @@ function queryGroups(ids: string[]): RefGroup[] {
       children: [],
     })),
   }];
+  return adoptResults(groups, captureResultsTicket()) ?? groups;
 }
 
 function boardColumnBlockIds(root: ParentNode, col: number): string[] {
@@ -179,6 +198,7 @@ describe("SheetBoard", () => {
       { page: "Twin", kind: "page", blocks: [{ id: shared, raw: "TODO Page DTO", collapsed: false, children: [] }] },
       { page: "Twin", kind: "journal", blocks: [{ id: shared, raw: "DOING Journal DTO", marker: "DOING", collapsed: false, children: [] }] },
     ];
+    adoptResults(groups, captureResultsTicket());
     const { root, dispose } = mount(() => (
       <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups} />
     ));

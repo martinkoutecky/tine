@@ -186,7 +186,7 @@ export function SheetTable(props: {
   };
 
   const defaultFields = createMemo<FieldId[]>(() => {
-    const loadedIds = rows().filter((r) => liveFormulaRowNode(r)).map((r) => r.id);
+    const loadedIds = rows().filter((r) => liveFormulaRowNode(r, "mount")).map((r) => r.id);
     const observed = loadedIds.length === rows().length
       ? fieldIdsForBlocks(loadedIds, { includePage: props.rowSource === "query" })
       : fieldIdsForRecords(rows(), props.rowSource === "query");
@@ -300,7 +300,7 @@ export function SheetTable(props: {
       __sheetTableTestHooks.onIndexRow?.(row.id);
       const rowKey = formulaRowKey(row);
       byRowKey.set(rowKey, index);
-      if (liveFormulaRowNode(row)) {
+      if (liveFormulaRowNode(row, "mount")) {
         if (byBlockId.has(row.id)) byBlockId.set(row.id, null);
         else byBlockId.set(row.id, { row: index, rowKey });
       }
@@ -1172,7 +1172,7 @@ function TitleCell(props: {
       onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
     >
-      <Show when={props.near && liveFormulaRowNode(props.row)}>
+      <Show when={props.near && liveFormulaRowNode(props.row, "mount")}>
         <button
           class="sheet-cell-handle"
           title="Cell menu"

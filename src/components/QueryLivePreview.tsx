@@ -19,6 +19,7 @@ import { bothFamilies } from "../queryTwin";
 import { SearchResultRow } from "./SearchResultRow";
 import type { ExecutionContext, PageRow, Query, ViewSettings } from "../editor/queryIr";
 import type { RefGroup } from "../types";
+import { captureResultsTicket, resultsEpoch, resultsSettled, resultsTicketCurrent } from "../queryResultsEpoch";
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
@@ -83,11 +84,11 @@ export function QueryLivePreview(props: {
 function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]): JSX.Element {
   const request = createMemo<PreviewRequest | undefined>(() => {
     const query = props.query();
-    if (!query) return undefined;
+    if (!query || !resultsSettled()) return undefined;
     const view = props.view();
     const context = props.context?.();
     const both = props.both?.() === true;
-    return { query, view, context, both, key: JSON.stringify([query, view, context ?? null, both]) };
+    return { query, view, context, both, key: JSON.stringify([query, view, context ?? null, both, resultsEpoch(), dataRev()]) };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
 
   const [settled, setSettled] = createSignal<PreviewRequest | undefined>(untrack(request));
@@ -103,12 +104,14 @@ function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]):
     const owner = latestOwner(owners, "preview", graphOwner());
     const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
     const revision = untrack(dataRev);
+    const ticket = captureResultsTicket();
+    if (!ticket.settled) return undefined;
     const landed = await readOwned(owner, sharedQueryResult(
       scope,
       `ir-preview\0${req.key}\0${revision}`,
       () => backend().queryRun(req.query, req.view, req.context),
     ));
-    if (landed.kind === "stale") return undefined;
+    if (landed.kind === "stale" || !resultsTicketCurrent(ticket)) return undefined;
     const result = landed.value;
     const diagnostics = (result.diagnostics ?? []).filter((d) => !d.disabled).map((d) => d.message);
     if (req.both) {
@@ -116,7 +119,7 @@ function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]):
         scope, key: `preview\0${req.key}\0${revision}`, query: req.query, view: req.view,
         context: req.context, own: result, hostBlockId: props.hostBlockId,
       });
-      if (!twin) return undefined;
+      if (!twin || !resultsTicketCurrent(ticket)) return undefined;
       const blocks = previewBlocks(twin.blockGroups);
       return {
         key: req.key, anchor: result.anchor, blocks, pages: twin.both.pages,

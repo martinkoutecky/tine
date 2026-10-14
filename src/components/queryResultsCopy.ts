@@ -1,6 +1,6 @@
-import { exportNodesFor, formatForPage, node, pageByName, resolveBlockRef } from "../document";
-import { existingBlockId } from "../blockIdentity";
-import { noticeChangedResults, samePagePropertyResult, sameQueryResult } from "./queryResultIdentity";
+import { exportNodesFor, formatForPage, pageByName } from "../document";
+import { noticeChangedResults, samePagePropertyResult, resolveResultRow } from "./queryResultIdentity";
+import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
 import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
 import { pushToast } from "../toasts";
@@ -37,6 +37,7 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
   const forest: ExportNode[] = pages.map(page => ({ raw: page.name, children: [] }));
   let changed = 0;
   let count = pages.length;
+  const validators: (() => boolean)[] = [];
   try {
     for (const group of groups) {
       if (!owner()) return;
@@ -48,15 +49,15 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
         const ids: string[] = [];
         const propertyRoots: BlockDto[] = [];
         for (const block of group.blocks) {
+          validators.push(() => block.page_property ? resultsTicketCurrent(resultTicket(block))
+            : !!resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path }));
           if (block.page_property) {
-            if (samePagePropertyResult(block, loaded!.preBlock, format)) propertyRoots.push(block);
+            if (resultsTicketCurrent(resultTicket(block)) && samePagePropertyResult(block, loaded!.preBlock, format)) propertyRoots.push(block);
             else changed++;
             continue;
           }
-          const durable = existingBlockId(block.raw, format);
-          const id = durable ? resolveBlockRef({ uuid: durable, page: group.page, pageKind: group.kind, path: group.path }) : block.id;
-          const source = id ? node(id) : undefined;
-          if (!source || source.page !== group.page || !sameQueryResult(block, source, format)) changed++;
+          const source = resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path });
+          if (!source) changed++;
           else ids.push(source.id);
         }
         count += ids.length + propertyRoots.length;
@@ -66,22 +67,19 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
         if (result.kind === "stale") return;
         const dto = result.value;
         if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && (!("id" in dto) || dto.id !== group.path))) throw new Error("source unavailable");
-        const byId = new Map<string, BlockDto>();
-        const visit = (blocks: BlockDto[]) => { for (const block of blocks) { byId.set(block.id, block); visit(block.children); } };
-        visit(dto.blocks);
         const sourceFormat = dto.format ?? "md";
         format = sourceFormat;
         const roots: BlockDto[] = [];
         for (const block of group.blocks) {
+          validators.push(() => block.page_property ? resultsTicketCurrent(resultTicket(block))
+            : !!resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path }, "action", dto));
           if (block.page_property) {
-            if (samePagePropertyResult(block, dto.pre_block, sourceFormat)) roots.push(block);
+            if (resultsTicketCurrent(resultTicket(block)) && samePagePropertyResult(block, dto.pre_block, sourceFormat)) roots.push(block);
             else changed++;
             continue;
           }
-          const durable = existingBlockId(block.raw, sourceFormat);
-          const candidates = durable ? [...byId.values()].filter(source => sameQueryResult(block, source, sourceFormat)) : [byId.get(block.id)];
-          const source = candidates.length === 1 ? candidates[0] : undefined;
-          if (!source || !sameQueryResult(block, source, sourceFormat)) changed++;
+          const source = resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path }, "action", dto);
+          if (!source) changed++;
           else roots.push(source);
         }
         count += roots.length;
@@ -90,8 +88,9 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
       if (children.length) forest.push({ raw: group.page, format, children });
     }
     if (owner()) {
+      changed = Math.max(changed, validators.filter(validate => !validate()).length);
       noticeChangedResults(changed);
-      if (forest.length) openExportNodesModal(forest, count);
+      if (!changed && forest.length) openExportNodesModal(forest, count);
     }
   } catch {
     if (owner()) pushToast(t("query-calm-copy-failed"), "error");

@@ -121,7 +121,7 @@ export function boardRowTitle(row: FormulaEvalRow): string {
 
 /** One field's text as the card chips show it, live or from a DTO. O(1). */
 function chipText(row: FormulaEvalRow, field: FieldId): string {
-  if (liveFormulaRowNode(row)) return readField(row.id, field)?.text ?? "";
+  if (liveFormulaRowNode(row, "mount")) return readField(row.id, field)?.text ?? "";
   if (isFormulaField(field)) return "";
   const f = recordFacets(row);
   if (!f) return "";

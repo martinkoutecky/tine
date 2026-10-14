@@ -1105,7 +1105,9 @@ mod query_guide_tests {
             "today±N days",
             "**⋯ → Collapse all / Expand all**",
             "journals use their date titles",
-            "skip results whose source identity changed",
+            "old results stay read-only",
+            "refuses the whole action",
+            "never means a negated date comparison",
             "sortable **Backlinks** column",
         ] {
             assert!(

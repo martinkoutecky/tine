@@ -135,6 +135,7 @@ export interface MessageArgs {
   "query-calm-fold-failed": {};
   "query-calm-is-not-set": {};
   "query-calm-is-set": {};
+  "query-calm-negated-operator": { "operator": string | number };
   "query-calm-none": {};
   "query-calm-relative-date": {};
   "query-calm-results-changed": { "count": string | number };

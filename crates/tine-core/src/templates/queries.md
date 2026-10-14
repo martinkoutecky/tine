@@ -43,7 +43,8 @@ icon:: 🔎
 - ## Copy or revisit results
 	- **⋯ → Copy results** opens the same **Copy / export as…** dialog as an outline selection, with Text, OPML and HTML options. Each result tree sits under its page title; journals use their date titles, and descendants keep their hierarchy. A descendant already inside a selected parent is copied once.
 	- In a Search tab, press **Select results**, tick the results you want (or **Select all / Select none**), then **Copy results** for the same dialog and format.
-	- Copy and bulk folding skip results whose source identity changed since the query ran. A notice says how many changed; run the query again before selecting them.
+	- External changes and structural edits refresh the query after pending changes settle. Until then, old results stay read-only. A task click, copy or bulk fold refuses the whole action when its selected results are no longer current; a notice asks you to run the query again. A block with a unique authored `id::` can still be resolved by that identity.
+	- A saved Scheduled or Deadline comparison offers `>`, `<`, `=`, `≥` and `≤` in its operator menu, plus negation of the current comparison. **Is not set** tests an absent date in the date editor; it never means a negated date comparison.
 	- **⋯ → Open in Search** opens the query in a Search tab. View choices travel with it; results still come from the Rust engine.
 	- The full **All pages** view has a sortable **Backlinks** column: the number of referring blocks computed by the backend. All pages, Search and query blocks remain separate views.
 	- Search and List page results show the page title; press the pencil beside a result to open its full properties. Table columns stay in the Table view.

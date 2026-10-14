@@ -800,6 +800,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       return irToExecution(result.value, explanation?.value);
     },
     (value, id) => value.hits.some((hit) => hit.entity === "block" && hit.block.id === id),
+    () => true,
+    true,
   );
 
   // Failure is drawn from `execution.error` below; a read never throws into render.

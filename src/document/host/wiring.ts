@@ -32,6 +32,7 @@ import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, typ
 import { runSequence, type SequenceStep } from "./planner";
 import type { DiskToken, HostPort, MailNotice, PageMail, PageOperation, PageRefusal } from "./protocol";
 import { settle, unpublishedAfterDrain } from "./settle";
+import { beginResultsChange, installResultsPendingGate, resetResultsEpoch } from "../../queryResultsEpoch";
 
 // ------------------------------------------------------------------ state
 
@@ -59,6 +60,11 @@ const [conflictList, setConflictList] = createSignal<string[]>([]);
 /** Moves whenever a page's busy, conflicted, open or frozen state changes. */
 const [hostRevision, setHostRevision] = createSignal(0);
 let stateKey = "";
+installResultsPendingGate(() => {
+  hostRevision();
+  return pendingDataRevision() || early.size > 0 || transferPages.size > 0
+    || !!client?.names().some(name => client!.busy(name) || client!.owes(name) || client!.conflicted(name) || client!.holdsContent(name));
+});
 
 function host(): HostClient | null {
   return bound ? client : null;
@@ -190,6 +196,7 @@ export async function bindHost(): Promise<void> {
 // binding (store reset: graph switch, restore); the caller settled or reported
 // its input first.
 clearOnBindingInvalidated(() => {
+  resetResultsEpoch();
   // Its outstanding requests settle unanswered ("rebound"), so no caller of
   // the old graph waits forever (I-20).
   const old = client;
@@ -224,7 +231,8 @@ function listen(): void {
   void backend().onPageMail((mail: PageMail) => {
     const c = client;
     if (!c) return;
-    c.receive(mail);
+    const finish = mail.page && mail.page.text.kind !== "unchanged" && !mail.answer ? beginResultsChange() : () => {};
+    try { c.receive(mail); } finally { finish(); }
     const name = mail.session === c.session ? c.nameOfKey(mail.key) : null;
     if (!name || !mail.answer?.took) return;
     notePublication(mail.key, mail.answer.version);
@@ -276,6 +284,7 @@ let dataWaits = 0;
  * edits go quiet (today's 700 ms coalescing). */
 function notePublication(key: string, version: number): void {
   pendingNeeds.set(key, Math.max(version, pendingNeeds.get(key) ?? 0));
+  setHostRevision(value => value + 1);
   if (dataTimer) clearTimeout(dataTimer);
   dataTimer = setTimeout(() => {
     dataTimer = null;
@@ -288,6 +297,7 @@ function notePublication(key: string, version: number): void {
       dataWaits -= 1;
       if (client !== c) return;
       bumpDataRev();
+      setHostRevision(value => value + 1);
       if (inventoryPending) { inventoryPending = false; bumpPageInventoryRev(); }
     });
   }, 700);
@@ -317,7 +327,7 @@ function hostChanged(): void {
   const shown = names.filter((name) => c!.conflicted(name) && c!.notice(name)?.conflictReported);
   const current = conflictList();
   if (shown.length !== current.length || shown.some((name, i) => name !== current[i])) setConflictList(shown);
-  const key = names.map((name) => `${name}\u0000${+c!.busy(name)}${+c!.owes(name)}${+c!.conflicted(name)}${+c!.isOpen(name)}`)
+  const key = names.map((name) => `${name}\u0000${+c!.busy(name)}${+c!.owes(name)}${+c!.conflicted(name)}${+c!.isOpen(name)}${+c!.holdsContent(name)}`)
     .join("\u0001")
     + `\u0002${[...early.keys()].join("\u0001")}`;
   if (key !== stateKey) {
@@ -712,8 +722,11 @@ export async function createPage(name: string, dto: PageDto,
   const generation = pageInstanceGeneration(name);
   deletedPages.delete(name);
   const expected: DiskToken | undefined = options.baseRev ? { kind: "file", rev: options.baseRev } : undefined;
-  const created = await c.createPage(name, dto, { kinds: [expected ? "replace-page" : "create-page"], expected,
-    refusedNow: () => graphRewriteFrozen() ? "graph-rewrite" : null });
+  const finish = beginResultsChange();
+  let created: Awaited<ReturnType<HostClient["createPage"]>>;
+  try { created = await c.createPage(name, dto, { kinds: [expected ? "replace-page" : "create-page"], expected,
+    refusedNow: () => graphRewriteFrozen() ? "graph-rewrite" : null }); }
+  finally { finish(); }
   if (host() !== c) throw new CreatePageRefusal("graph-changed");
   if (created.kind === "exists") throw new Error("conflict");
   if (created.kind === "unpublished") throw new Error(`Couldn't save “${name}” to disk.`);
@@ -751,6 +764,7 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
   }
   const owner = bindingOwner();
   deletedPages.add(name);
+  const finish = beginResultsChange();
   let operation: PageOperation;
   try {
     // A stale delete command deleted nothing the window can count on.
@@ -762,7 +776,7 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
   } catch (error) {
     if (host() === c) deletedPages.delete(name);
     throw error;
-  }
+  } finally { finish(); }
   if (operation === "applied") return true;
   if (host() === c) deletedPages.delete(name);
   const why = {

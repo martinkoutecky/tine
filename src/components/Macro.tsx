@@ -73,6 +73,7 @@ import { QueryLegacyTable } from "./QueryLegacyTable";
 import { mainWindow } from "../windowRealm";
 import { QueryMacroActions } from "./QueryMacroActions";
 import { QueryResultTask } from "./QueryResultTask";
+import { resultsEpoch } from "../queryResultsEpoch";
 
 // Collapsed state for query results, keyed by graph + rendered query identity.
 // A raw query-string key made unrelated dashboards across pages/graphs collide.
@@ -330,7 +331,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const search = friendlySearch();
     const both = search === null && bothKinds();
     const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed(), both]);
-    const key = `${displayKey}\0${collapsed() ? "collapsed" : dataRev()}`;
+    const key = `${displayKey}\0${collapsed() ? "collapsed" : dataRev()}\0${resultsEpoch()}`;
     return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
@@ -399,7 +400,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       matchedTotal: result.matched_total ?? null,
       both,
     };
-  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed());
+  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed(), true);
   /** The last coherent answer; an errored run shows its error, not old rows. */
   const displayed = (): QueryOperation | undefined => {
     const current = runRequest();

@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Query and Search actions refuse stale positional results after external or structural changes and refresh once changes settle; saved planning comparisons offer correctly labelled operators (GH #387, GH #551, GH #585, GH #653).
+
 - Query and Search actions skip changed source results, task clicks retain their graph binding, saved date comparisons reopen intact, exports honor empty columns regardless of property case, and All pages coalesces backlink refreshes (GH #387, GH #585, GH #653, GH #680, GH #681).
 
 - Query blocks now rest with title, count and results, with inline editing and one accessible menu; task actions, result copy with page/date titles and hierarchy, visible column choices, relative date comparisons, bulk List folding and sortable All pages backlinks are available (GH #502, GH #585, GH #387, GH #619, GH #606, GH #680, GH #653, GH #551, GH #681).

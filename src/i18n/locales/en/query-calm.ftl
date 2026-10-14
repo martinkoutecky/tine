@@ -11,6 +11,7 @@ query-calm-columns = Columns
 query-calm-all = Select all
 query-calm-none = Select none
 query-calm-date-comparison = Date comparison
+query-calm-negated-operator = not { $operator }
 query-calm-is-set = Is set
 query-calm-is-not-set = Is not set
 query-calm-date = Date

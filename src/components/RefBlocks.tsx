@@ -34,6 +34,7 @@ export function RefBlocks(props: {
   /** GH #486: a click on a page-property row edits that page's properties
    *  (the caller owns the source page's edit path). Absent: read-only row. */
   onEditPageProperties?: (event: MouseEvent) => void;
+  queryResult?: boolean;
 }): JSX.Element {
   return <RefBlocksAtDepth {...props} treeDepth={1} />;
 }
@@ -46,12 +47,14 @@ function RefBlocksAtDepth(props: {
   depth?: number;
   onEditPageProperties?: (event: MouseEvent) => void;
   treeDepth: number;
+  queryResult?: boolean;
 }): JSX.Element {
   return (
     <For each={props.blocks}>
       {(b) => (
         <RefBlock
           block={b}
+          queryResult={props.queryResult}
           page={props.page}
           pageKind={props.pageKind}
           path={props.path}
@@ -72,6 +75,7 @@ function RefBlock(props: {
   onEditPageProperties?: (event: MouseEvent) => void;
   depth: number;
   treeDepth: number;
+  queryResult?: boolean;
 }): JSX.Element {
   // Header facts (marker/done) off the one lsdoc parse (cache hit if the panel's
   // DTOs were seeded); the visible body lines via the shared body-text extractor.
@@ -158,7 +162,8 @@ function RefBlock(props: {
             <Show when={taskCheckboxState(facets().marker) !== null && !props.block.page_property}>
               {/* GH #518: ticks the SOURCE block through its own checkbox path
                   (OG block-checkbox on a referenced block). */}
-              <SourceTaskCheckbox marker={facets().marker} target={refTarget} />{" "}
+              <SourceTaskCheckbox marker={facets().marker} target={refTarget}
+                result={props.queryResult ? { id: props.block.id, dto: props.block, page: props.page ?? "", kind: props.pageKind, path: props.path } : undefined} />{" "}
             </Show>
             <Show when={facets().marker}>
               <span class={`block-marker marker-${facets().marker?.toLowerCase()}`}>
@@ -220,6 +225,7 @@ function RefBlock(props: {
         <div class="block-children-container">
           <div class="block-children">
             <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind} path={props.path}
+              queryResult={props.queryResult}
               onEditPageProperties={props.onEditPageProperties}
               depth={props.depth + 1} treeDepth={props.treeDepth + 1} />
           </div>

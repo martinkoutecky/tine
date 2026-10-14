@@ -14,6 +14,7 @@ import { backend, type GraphChange } from "./backend";
 import { graphScopedSignal } from "./binding";
 import { advanceRevision, currentRevision, readOwned, revisionOwner, writeOwned } from "./owned";
 import { pushToast } from "./toasts";
+import { installResultsPendingGate } from "./queryResultsEpoch";
 
 const KEY = "concord_always_ask";
 const [alwaysAsk, setAlwaysAsk] = createSignal(false);
@@ -47,6 +48,7 @@ export async function initConflictPolicy(): Promise<void> {
 // Page name -> the newest held change. Graph-scoped: a graph switch drops it,
 // so a held change never applies in another graph.
 const [heldChanges, setHeldChanges] = graphScopedSignal<Record<string, GraphChange>>();
+installResultsPendingGate(() => Object.keys(heldChanges() ?? {}).length > 0);
 
 /** Whether page `name` has an external change waiting for its owner. */
 export function heldExternalChangeFor(name: string | undefined): boolean {

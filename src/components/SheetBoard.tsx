@@ -198,7 +198,7 @@ export function SheetBoard(props: {
         const rowKey = formulaRowKey(candidate);
         membership.set(JSON.stringify([rowKey, columnId]), point);
         if (!first.has(rowKey)) first.set(rowKey, point);
-        if (liveFormulaRowNode(candidate)) {
+        if (liveFormulaRowNode(candidate, "mount")) {
           if (byBlockId.has(candidate.id)) byBlockId.set(candidate.id, null);
           else byBlockId.set(candidate.id, { ...point, rowKey, columnId });
         }
@@ -561,7 +561,7 @@ export function SheetBoard(props: {
 }
 
 function observedFieldsForRows(rows: readonly RowRecord[], includePage: boolean): FieldId[] {
-  const loadedIds = rows.filter((r) => liveFormulaRowNode(r)).map((r) => r.id);
+  const loadedIds = rows.filter((r) => liveFormulaRowNode(r, "mount")).map((r) => r.id);
   if (loadedIds.length === rows.length) return fieldIdsForBlocks(loadedIds, { includePage });
   return fieldIdsForRecords(rows, includePage);
 }
@@ -847,7 +847,7 @@ function BoardCard(props: {
       style={bgColor() ? { background: bgColor() } : undefined}
       ref={observeCard}
     >
-      <Show when={near() && liveFormulaRowNode(props.row)}>
+      <Show when={near() && liveFormulaRowNode(props.row, "mount")}>
         <button
           class="sheet-cell-handle sheet-card-handle"
           title="Card menu"

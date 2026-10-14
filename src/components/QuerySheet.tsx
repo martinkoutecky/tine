@@ -77,6 +77,7 @@ import {
   ListboxOption,
 } from "./querySheetParts";
 import { documentOf, listen } from "../windowRealm";
+import { t } from "../i18n";
 
 export {
   QuerySentence,
@@ -849,6 +850,15 @@ function QueryRow(props: {
     props.sheet.setOpenMenu(null);
   };
 
+  const planningComparison = () => {
+    const filter = core();
+    const k = kind();
+    return (k === "scheduled" || k === "deadline") && filter.kind === "leaf"
+      && filter.leaf.kind === "attr" && filter.leaf.value.kind === "date"
+      && ["eq", "gt", "ge", "lt", "le"].includes(filter.leaf.op) ? filter.leaf : null;
+  };
+  const comparisonSymbols = { eq: "=", gt: ">", ge: "≥", lt: "<", le: "≤" } as const;
+
   return (
     <div
       class="qs-row"
@@ -988,6 +998,12 @@ function QueryRow(props: {
                     rootRef={rootRef}
                     options={(() => {
                       const k = kind();
+                      const comparison = planningComparison();
+                      if (comparison) return [
+                        ...Object.entries(comparisonSymbols).map(([key, label]) => ({ key, label, active: key === comparison.op })),
+                        { key: "negate", label: props.node.negated ? comparisonSymbols[comparison.op as keyof typeof comparisonSymbols]
+                          : t("query-calm-negated-operator", { operator: comparisonSymbols[comparison.op as keyof typeof comparisonSymbols] }), active: props.node.negated },
+                      ];
                       const phrase = k ? KIND_PHRASE[k] : { positive: "matches", negative: "does not match" };
                       return [
                         { key: "positive", label: phrase.positive, active: !props.node.negated },
@@ -995,6 +1011,14 @@ function QueryRow(props: {
                       ];
                     })()}
                     onPick={(picked) => {
+                      const comparison = planningComparison();
+                      if (comparison) {
+                        if (picked === "negate") return toggleNegated();
+                        const filter: Filter = { kind: "leaf", leaf: { ...comparison, op: picked as "eq" | "gt" | "ge" | "lt" | "le" } };
+                        replaceRow(props.node.negated ? { kind: "not", inner: filter } : filter);
+                        props.sheet.setOpenMenu(null);
+                        return;
+                      }
                       if ((picked === "negative") !== props.node.negated) toggleNegated();
                       else props.sheet.setOpenMenu(null);
                     }}
