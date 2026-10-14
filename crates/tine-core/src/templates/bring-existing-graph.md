@@ -3,7 +3,7 @@ icon:: 📂
 - # Bring an existing graph
 	- Tine works directly on the same Markdown/Org files as Logseq — no import, no export, no lock-in.
 - ## Open your graph
-	- 1. On the Welcome screen, choose **Open an existing graph** and pick the graph's top-level folder — usually the one containing `pages/`, `journals/`, and `logseq/`. On Android, grant "All files access" when asked, then tap **Open** again.
+	- 1. On the Welcome screen, choose **Open an existing graph** and pick the graph's top-level folder — usually the one containing `pages/`, `journals/`, and `logseq/`. On Android, grant "All files access" when asked; Tine then continues to the folder picker.
 	- 2. Later, use the graph-name menu at the top of the left sidebar → **Open graph…**, or Settings (**t s**) → **Graph** → **Open another graph…**. Graphs you have opened appear in the same sidebar menu for one-click switching.
 	- 3. On desktop, from the command line, `tine /path/to/graph` (or `tine open /path/to/graph`, or `TINE_GRAPH=/path/to/graph`) opens a graph directly.
 	- 4. What you should see: the same pages and journals Logseq finds. Existing Markdown and Org pages may be at the graph root or in nested folders, not only under `pages/` and `journals/`.
