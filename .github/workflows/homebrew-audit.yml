@@ -19,6 +19,7 @@ jobs:
           brew update-reset "$(brew --repository)" >/dev/null 2>&1 || true
           brew tap homebrew/cask
           brew tap-new --no-git local/tine
+          mkdir -p "$(brew --repository)/Library/Taps/local/homebrew-tine/Casks"
           cp Casks/tine.rb "$(brew --repository)/Library/Taps/local/homebrew-tine/Casks/tine.rb"
       - name: brew style
         run: brew style --cask local/tine/tine
