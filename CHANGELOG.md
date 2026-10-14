@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Cold Tine block links skip loading known graphs that cannot contain the target, while preserving graph-copy choices and missing-target errors (GH #181).
 - Localized rich-text sentences share one renderer that preserves literal graph text, with clearer tags and variables for translators (GH #107).
 - Interface text across the app (shell, settings, help, plugins, editor, PDF, rendering, notices) now comes from the localization catalog, so it can be translated; English wording, graph syntax and English command matching are unchanged (GH #107).
 - Customize today's sections stays bound to the graph where it was clicked, and its Settings note loads without crashing or resetting the dialog (GH #605).

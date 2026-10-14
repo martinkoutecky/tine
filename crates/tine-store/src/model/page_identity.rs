@@ -548,6 +548,61 @@ fn read_effective_page_name(
 }
 
 impl Graph {
+    pub(crate) fn link_target_may_exist(
+        &self,
+        block: Option<&str>,
+        page: Option<&str>,
+    ) -> io::Result<bool> {
+        let config = self.current_config();
+        let format = self.current_journal_format();
+        let journals = self.journals_path();
+        let mut possible = false;
+        let mut failure = None;
+        let errors = walk_graph_page_files(&self.root, &self.root, &config, |path| {
+            if possible || failure.is_some() {
+                return;
+            }
+            let probe = if let Some(id) = block {
+                file_contains_link_id(&path, id)
+            } else if let Some(name) = page {
+                let entry = listed_entry(
+                    self,
+                    (&format, &journals, config.file_name_format),
+                    path.clone(),
+                );
+                match entry {
+                    Some(entry) if entry.kind == PageKind::Journal => {
+                        let lookup = format
+                            .parse(name)
+                            .map(|date| format.title(date))
+                            .unwrap_or_else(|| name.to_owned());
+                        Ok(tine_core::refs::page_key(&entry.name)
+                            == tine_core::refs::page_key(&lookup))
+                    }
+                    Some(_) => effective_page_name(
+                        &path,
+                        path.file_stem().unwrap().to_str().unwrap(),
+                        config.file_name_format,
+                    )
+                    .map(|found| {
+                        tine_core::refs::page_key(&found) == tine_core::refs::page_key(name)
+                    }),
+                    None => Ok(false),
+                }
+            } else {
+                Ok(true)
+            };
+            match probe {
+                Ok(found) => possible |= found,
+                Err(error) => failure = Some(error),
+            }
+        });
+        if let Some(error) = failure.or_else(|| errors.into_iter().next().map(|(_, error)| error)) {
+            return Err(error);
+        }
+        Ok(possible)
+    }
+
     pub(super) fn discover_page_name(
         &self,
         path: &Path,
@@ -572,6 +627,79 @@ impl Graph {
                 Some(decode_page_name(stem, fmt))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod link_prefilter_tests {
+    use super::*;
+    #[test]
+    fn link_id_prefilter_spans_chunks_and_uses_graph_discovery_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let id = "abcdefab-1111-4111-8111-111111111111";
+        fs::create_dir_all(temp.path().join("archive/nested")).unwrap();
+        fs::create_dir(temp.path().join("assets")).unwrap();
+        fs::write(temp.path().join("assets/ignored.md"), id).unwrap();
+        assert!(
+            !crate::Store::read_link_identity_at(
+                temp.path(),
+                crate::link_identity::LinkProbe::Block {
+                    id,
+                    approved_external_assets: None
+                }
+            )
+            .target_possible
+        );
+        let mut source = "x".repeat(64 * 1024 + 20);
+        source.push_str(&id.to_uppercase());
+        fs::write(temp.path().join("archive/nested/Note.MARKDOWN"), source).unwrap();
+        assert!(
+            crate::Store::read_link_identity_at(
+                temp.path(),
+                crate::link_identity::LinkProbe::Block {
+                    id,
+                    approved_external_assets: None
+                }
+            )
+            .target_possible
+        );
+    }
+}
+
+// A substring is deliberately only a prefilter: parser-owned id:: / Org
+// drawers and exact authored spelling remain the full Store lookup's job.
+// Keep one chunk plus the UUID overlap; never allocate a whole page or parse
+// its blocks. Oversize files and read failures make the probe uncertain.
+fn file_contains_link_id(path: &Path, id: &str) -> io::Result<bool> {
+    use std::io::Read;
+    if id.len() != 36 {
+        return Ok(true);
+    }
+    let mut file = fs::File::open(path)?;
+    if file.metadata()?.len() > PARSE_INPUT_MAX_BYTES {
+        return Err(io::Error::other("link prefilter input exceeds parse limit"));
+    }
+    let mut buffer = vec![0; 64 * 1024 + id.len() - 1];
+    let mut carried = 0;
+    let mut total = 0;
+    loop {
+        let read = file.read(&mut buffer[carried..])?;
+        if read == 0 {
+            return Ok(false);
+        }
+        total += read as u64;
+        if total > PARSE_INPUT_MAX_BYTES {
+            return Err(io::Error::other("link prefilter input exceeds parse limit"));
+        }
+        let end = carried + read;
+        if buffer[..end]
+            .windows(id.len())
+            .any(|candidate| candidate.eq_ignore_ascii_case(id.as_bytes()))
+        {
+            return Ok(true);
+        }
+        carried = end.min(id.len() - 1);
+        buffer.copy_within(end - carried..end, 0);
     }
 }
 

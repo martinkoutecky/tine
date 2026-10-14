@@ -41,6 +41,36 @@ fn deterministic_runtime_uuid(namespace: Uuid, name: &[u8]) -> Uuid {
     Uuid::from_bytes(bytes)
 }
 
+/// Whether this UUID could be a deterministic runtime block locator. Such
+/// locators need not appear in file bytes. Version 8 is application-defined,
+/// so this recognizes candidates, not proof that Tine generated the UUID.
+pub fn may_be_runtime_block_id(id: &str) -> bool {
+    Uuid::parse_str(id)
+        .is_ok_and(|id| id.get_version_num() == 8 && id.get_variant() == uuid::Variant::RFC4122)
+}
+
+#[cfg(test)]
+mod runtime_id_tests {
+    use super::*;
+
+    #[test]
+    fn runtime_block_candidates_require_version_8_and_rfc_variant() {
+        let generated = deterministic_runtime_uuid(FILE_BLOCK_RUNTIME_NAMESPACE_V1, b"probe");
+        assert!(may_be_runtime_block_id(&generated.to_string()));
+        assert!(may_be_runtime_block_id(
+            "FDFC8779-86DE-8FCD-9A9E-6E878F60E594"
+        ));
+        for id in [
+            "fdfc8779-86de-4fcd-9a9e-6e878f60e594",
+            "fdfc8779-86de-8fcd-1a9e-6e878f60e594",
+            "fdfc8779-86de-8fcd-da9e-6e878f60e594",
+            "invalid",
+        ] {
+            assert!(!may_be_runtime_block_id(id), "{id}");
+        }
+    }
+}
+
 fn runtime_owner_namespace(domain: &str, owner: &str) -> Uuid {
     let owner = normalized_runtime_owner(owner);
     let mut name = Vec::with_capacity(domain.len() + owner.len() + 16);
