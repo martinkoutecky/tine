@@ -3,7 +3,7 @@ import { backend } from "./backend";
 import type { ObjectiveMatchClass } from "./types";
 import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
 import { pushToast } from "./toasts";
-import { advanceRevision, readOwned, revisionOwner, writeOwned } from "./owned";
+import { advanceRevision, latestOwner, readOwned, revisionOwner, writeOwned } from "./owned";
 import { activeLocale, msg, render } from "./i18n";
 
 const PINYIN_KEY = "pinyin-page-matching";
@@ -29,11 +29,12 @@ export function pinyinDefault(ui = activeLocale(), system = typeof navigator ===
 const [pinyinEnabled, applyPinyinEnabled] = createSignal(pinyinDefault());
 export const pinyinMatchingEnabled = pinyinEnabled;
 
-/** Device preference; a newer local write wins over startup reads. */
+/** Device preference; a newer local write wins over startup reads, and a newer
+ * refresh (Capture show, change broadcast) retires an older one still in flight. */
 export async function initPinyinMatchingSetting(): Promise<void> {
   await listenForPinyinChanges();
   const revision = preferenceRevision(pinyinEnabled);
-  const owner = revisionOwner(pinyinEnabled, revision);
+  const owner = latestOwner(pinyinEnabled, "refresh", revisionOwner(pinyinEnabled, revision));
   try {
     const ui = await readOwned(owner, backend().getAppString("ui_language", ""));
     if (ui.kind === "stale") return;
@@ -45,6 +46,7 @@ export async function initPinyinMatchingSetting(): Promise<void> {
       applyPinyinEnabled(value); seedPreference(pinyinEnabled);
     }
   } catch {
+    if (!owner()) return;
     if (preferenceReadCurrent(pinyinEnabled, revision)) applyPinyinEnabled(pinyinDefault());
     pushToast(msg("toast-pinyin-load-failed"), "error");
   }
