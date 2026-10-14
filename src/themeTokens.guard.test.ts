@@ -58,6 +58,13 @@ const codeFiles = walk("src", (f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.t
 const inCode = new Set(codeFiles.flatMap((f) => [...stripTsComments(readFileSync(f, "utf8")).matchAll(TOKEN)].map((m) => m[0])));
 
 describe("public theme tokens (GH #610)", () => {
+  it("documents the device-before-graph CSS cascade and guarded in-app saves", () => {
+    expect(contract).toContain("global.css");
+    expect(contract).toContain("creation on save");
+    expect(contract).toContain("base revision");
+    expect(contract).toContain("before the graph");
+    expect(readFileSync("src/customCss.ts", "utf8").indexOf("document.head.appendChild(global)")).toBeLessThan(readFileSync("src/customCss.ts", "utf8").indexOf("document.head.appendChild(el)"));
+  });
   it("the contract documents a meaningful set", () => {
     expect(publicTokens.size).toBeGreaterThanOrEqual(10);
     expect(publicTokens.size).toBeLessThanOrEqual(20);

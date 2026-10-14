@@ -1,4 +1,5 @@
 css-editor-title = CSS editor
+css-draft-recovered = Recovered your unsaved CSS draft. Save still checks the original file revision; copy your text before reloading from disk.
 css-global-file = Global CSS (global.css)
 css-graph-file = logseq/custom.css
 css-edit-graph = Edit custom.css

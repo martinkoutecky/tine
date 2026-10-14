@@ -769,7 +769,9 @@ mod rename_guide_tests {
         }
         let platforms = include_str!("templates/platforms-and-mobile.md");
         for outcome in [
-            "Windows, Linux and macOS",
+            "Windows and Linux",
+            "macOS updates remain manual",
+            "signed macOS updater archives",
             "signed and notarized universal application",
             "download and replace the app manually",
         ] {

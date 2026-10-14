@@ -106,6 +106,7 @@ export interface MessageArgs {
   "command-ui-toggle-theme": {};
   "command-ui-toggle-wide-mode": {};
   "command-window-open-in-new-window": {};
+  "css-draft-recovered": {};
   "css-edit-global": {};
   "css-edit-graph": {};
   "css-editor-title": {};

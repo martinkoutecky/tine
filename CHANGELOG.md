@@ -10,9 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- In-app editing of graph custom.css and a device-wide global CSS layer share guarded saves and safe mode (GH #372).
+- In-app graph and global CSS share guarded saves and safe mode; saves reconcile newer disk styles and background flushing retains recoverable conflicting drafts (GH #372).
 - HTML export remembers its destination, offers Show in folder on desktop and is discoverable in the command palette (GH #616).
-- Signed and notarized macOS builds use in-place updates with universal signed updater artifacts and the existing manual failure fallback (GH #405).
+- Releases now ship signed macOS updater archives; macOS updates remain manual pending the updater rollback repair (GH #405).
 - GH #524: Added regression coverage for dragging a block into an empty page in the right sidebar; current Beta already supports the move.
 - GH #499: Added regression coverage for splitting the lower pane beneath an existing top row; the reported sequence already preserves the layout on current Beta.
 - GH #593: Workspace and tab overflow menus support stable hover opening and delayed dismissal while crossing the menu gap.

@@ -323,7 +323,7 @@ describe("update checks", () => {
     expect(pushToastMock).not.toHaveBeenCalled();
   });
 
-  it("installs a signed update in place on macOS after the persistence gate", async () => {
+  it("macOS stays manual: tauri-plugin-updater < 2.13.2 has a destructive install path (review finding 1)", async () => {
     vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)" });
     mockLatest("v0.6.0-beta.1");
     const download = vi.fn(async () => {});
@@ -332,14 +332,13 @@ describe("update checks", () => {
     update.setUpdateExitGuard({ prepare: async () => "accepted", reset: vi.fn() });
 
     await update.checkForUpdate();
-    expect(updaterCheckMock).toHaveBeenCalledOnce();
     const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"));
     offer?.[2]?.action?.run();
-    await vi.waitFor(() => expect(install).toHaveBeenCalledOnce());
-    expect(download).toHaveBeenCalledOnce();
-    expect(relaunchMock).toHaveBeenCalledOnce();
-    expect(openExternalMock).not.toHaveBeenCalled();
-    expect(updaterCheckMock).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(openExternalMock).toHaveBeenCalledOnce());
+    expect(download).not.toHaveBeenCalled();
+    expect(install).not.toHaveBeenCalled();
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(updaterCheckMock).toHaveBeenCalledOnce(); // Notification only; action never asks for an installer.
   });
 
   it("points the manual releases fallback at the beta release page", async () => {

@@ -86,6 +86,14 @@ try {
   await command("safe mode", "Toggle custom CSS");
   assert.equal(await browser.execute(() => document.querySelector("#tine-global-css")?.textContent + document.querySelector("#tine-custom-css")?.textContent), "");
   await command("safe mode", "Toggle custom CSS");
+  journey = "background CSS persistence";
+  await command("custom.css", "Edit custom.css");
+  const backgroundText = ":root { --tine-bullet-color: rgb(60, 70, 80); }";
+  await browser.$('textarea[aria-label="CSS editor"]').setValue(backgroundText);
+  await browser.execute(() => window.dispatchEvent(new Event("pagehide")));
+  await styleSaved(graphCss, backgroundText);
+  await click("Save and close");
+  journey = "desktop CSS editing";
   if (process.env.E2E_PROBE_EXPORT === "1") {
     journey = "native HTML export";
     await command("Export graph", "Export graph as HTML and read-only app");
@@ -96,7 +104,7 @@ try {
     while (!chooser && Date.now() < chooserDeadline) {
       try { chooser = native("search", "--onlyvisible", "--name", "Choose a folder outside").split("\n")[0]; } catch {}
       if (!chooser) {
-        const status = await browser.execute(() => document.querySelector('[role="status"]')?.textContent ?? "");
+        const status = await browser.execute(() => [...document.querySelectorAll('[role="status"]')].find(el => el.textContent?.startsWith("Export failed"))?.textContent ?? "");
         if (status.includes("Export failed")) throw new Error(`native export picker unavailable: ${status}`);
         await delay(150);
       }
@@ -104,10 +112,10 @@ try {
     if (!chooser) throw new Error("native export folder chooser did not appear in the headless session");
     native("windowfocus", "--sync", chooser);
     native("key", "Return");
-    await browser.waitUntil(() => browser.execute(() => document.querySelector('[role="status"]')?.textContent?.includes("Exported 1 pages")), { timeout: 30000, timeoutMsg: "HTML export did not report its one public page" });
+    await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll('[role="status"]')].some(el => el.textContent?.startsWith("Exported 1 pages"))), { timeout: 30000, timeoutMsg: "HTML export did not report its one public page" });
     const chosen = path.join(exportBase, "previous");
     await browser.waitUntil(() => JSON.parse(fs.readFileSync(path.join(xdg, "data", APP_ID, "tine-settings.json"), "utf8")).html_export_directory === chosen, { timeout: 10000 });
-    const output = await browser.execute(() => document.querySelector('[role="status"]').textContent.slice("Exported 1 pages to ".length));
+    const output = await browser.execute(() => [...document.querySelectorAll('[role="status"]')].find(el => el.textContent?.startsWith("Exported 1 pages to ")).textContent.slice("Exported 1 pages to ".length));
     assert.ok(output === chosen || output.startsWith(chosen + path.sep), "the result must name the chosen destination");
     assert.ok(fs.existsSync(path.join(output, "index.html")), "the result must point to the generated site");
     await click("Show in folder");
@@ -124,6 +132,15 @@ try {
   assert.equal(await browser.$('textarea[aria-label="CSS editor"]').getValue(), mine);
   assert.ok(fs.readFileSync(graphCss, "utf8").includes("green"));
   try { await browser.saveScreenshot(path.join(fixture, "css-editor-conflict.png")); } catch {}
+  journey = "CSS draft recovery after WebView reload";
+  await browser.refresh();
+  await browser.$(".ls-block").waitForExist({ timeout: 30000 });
+  await command("custom.css", "Edit custom.css");
+  assert.equal(await browser.$('textarea[aria-label="CSS editor"]').getValue(), mine);
+  await click("Save");
+  await browser.$('[role="alert"]').waitForExist({ timeout: 10000 });
+  assert.ok(fs.readFileSync(graphCss, "utf8").includes("green"), "recovered draft must retain its original revision");
+  console.log("PASS: background pagehide persists CSS and WebView reload recovers a conflicting draft without rebasing");
   console.log("PASS: native CSS quick-switcher entry, guarded graph/global saves, cascade, safe mode, and external conflict retention");
 } catch (error) {
   try { await browser?.saveScreenshot(path.join(fixture, "failure.png")); } catch {}

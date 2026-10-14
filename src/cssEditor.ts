@@ -7,8 +7,21 @@ import { pushToast } from "./toasts";
 import { t } from "./i18n";
 import { clearOnBindingInvalidated } from "./binding";
 import { isPublishedExport } from "./publishedBackend";
+import { graphMeta } from "./graphSession";
+import { injectCustomCss } from "./graph";
+import { reportUiFailure } from "./uiFailure";
 
-type CssSession = { global: boolean; revision?: string; saved: string; owner: WriteOwner };
+type CssSession = { global: boolean; revision?: string; saved: string; owner: WriteOwner; draftKey: string };
+type CssDraft = { text: string; saved: string; revision?: string };
+let draftWrites: Promise<void> = Promise.resolve();
+function keepDraft(current: CssSession, text: string): Promise<void> {
+  const value = text === current.saved ? "" : JSON.stringify({ text, saved: current.saved, revision: current.revision });
+  // Serialize capsules and their removal, so an older write cannot resurrect a
+  // saved draft. Existing app-settings persistence owns the durable file write.
+  const write = draftWrites.then(() => backend().setAppString(current.draftKey, value));
+  draftWrites = write.catch(error => { reportUiFailure("css-draft", error); });
+  return write;
+}
 const [session, setSession] = createSignal<CssSession | null>(null);
 export const cssEditorSession = session;
 export const [cssEditorText, setCssEditorText] = createSignal("");
@@ -31,6 +44,7 @@ export async function openCssEditor(global: boolean): Promise<void> {
   if (!(await flushCssEditor())) return;
   if (cssEditorBusy()) return;
   const generation = ++opening;
+  const draftKey = global ? "css_draft_global_v1" : `css_draft_graph_v1:${graphMeta()?.root ?? ""}`;
   const baseOwner = global ? ownedWhen(() => true) : bindingOwner();
   const requestOwner = ownedWhen(baseOwner, () => generation === opening);
   // A failed read must not retire the editor it was going to replace. The
@@ -40,9 +54,21 @@ export async function openCssEditor(global: boolean): Promise<void> {
   try {
     const result = await readOwned(requestOwner, backend().readCssFile(global));
     if (result.kind !== "current") return;
-    setCssEditorText(result.value.text);
-    setCssEditorProblem("");
-    setSession({ global, revision: result.value.revision ?? undefined, saved: result.value.text, owner });
+    await draftWrites;
+    const recovery = await readOwned(requestOwner, backend().getAppString(draftKey, ""));
+    if (recovery.kind !== "current") return;
+    let draft: CssDraft | undefined;
+    if (recovery.value) {
+      const value: unknown = JSON.parse(recovery.value);
+      if (value && typeof value === "object" && "text" in value && typeof value.text === "string"
+        && "saved" in value && typeof value.saved === "string"
+        && (!("revision" in value) || typeof value.revision === "string")) draft = value as CssDraft;
+    }
+    // If the guarded save completed before a reap, the capsule is already on disk.
+    if (draft?.text === result.value.text) draft = undefined;
+    setCssEditorText(draft?.text ?? result.value.text);
+    setCssEditorProblem(draft ? t("css-draft-recovered") : "");
+    setSession({ global, draftKey, revision: draft ? draft.revision : result.value.revision ?? undefined, saved: draft?.saved ?? result.value.text, owner });
     closeSettings();
   } catch (error) {
     if (requestOwner()) pushToast(t("css-read-failed", { error: String(error) }), "error");
@@ -61,11 +87,22 @@ export function flushCssEditor(): Promise<boolean> {
   setCssEditorBusy(true);
   saving = (async () => {
     try {
+      // Keep the exact buffer and original revision before attempting a save.
+      // A conflict or a background WebView reap must not erase the user's work.
+      await keepDraft(current, text);
+      if (!owner()) return false;
       const result = await writeOwned(owner, backend().saveCssFile(current.global, text, current.revision ?? null));
       if (result.kind !== "current") return false;
-      setSession({ ...current, revision: result.value, saved: text });
+      const saved = { ...current, revision: result.value, saved: text };
+      setSession(saved);
       setCssEditorProblem("");
       (current.global ? applyGlobalCss : applyCustomCss)(text);
+      // A watcher read started before this IPC reply may contain NEWER bytes.
+      // Retire those reads and start a fresh one after the durable save.
+      await (current.global ? loadGlobalCss() : injectCustomCss(true));
+      await checkCssEditorDisk(current.global, true);
+      if (!owner()) return false;
+      await keepDraft(saved, cssEditorText());
       return true;
     } catch (error) {
       const message = t("css-save-failed", { error: String(error) });
@@ -98,6 +135,7 @@ export async function reloadCssEditor(): Promise<void> {
     if (result.kind !== "current") return;
     setCssEditorText(result.value.text);
     setSession({ ...current, revision: result.value.revision ?? undefined, saved: result.value.text });
+    await keepDraft({ ...current, saved: result.value.text }, result.value.text);
     setCssEditorProblem("");
   } catch (error) { if (current.owner()) setCssEditorProblem(t("css-read-failed", { error: String(error) })); }
   finally { setCssEditorBusy(false); }
@@ -105,9 +143,9 @@ export async function reloadCssEditor(): Promise<void> {
 
 /** Watcher/focus notification: keep the editor's base and buffer on a change.
  * The subsequent Save still has the authoritative guarded revision check. */
-export async function checkCssEditorDisk(global: boolean): Promise<void> {
+export async function checkCssEditorDisk(global: boolean, afterSave = false): Promise<void> {
   const current = session();
-  if (!current || current.global !== global || !current.owner() || cssEditorBusy()) return;
+  if (!current || current.global !== global || !current.owner() || (cssEditorBusy() && !afterSave)) return;
   const owner = ownedWhen(current.owner);
   try {
     const result = await readOwned(owner, backend().readCssFile(global));

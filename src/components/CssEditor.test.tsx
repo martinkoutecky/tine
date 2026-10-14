@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { CssEditor } from "./CssEditor";
 import { openCssEditor, closeCssEditor, setCssEditorText, flushCssEditor, cssEditorText, cssEditorProblem, checkCssEditorDisk, retireGraphCssEditor } from "../cssEditor";
+import { installBackgroundFlush } from "../backgroundFlush";
 
 afterEach(async () => {
   retireGraphCssEditor();
@@ -13,6 +14,32 @@ afterEach(async () => {
 });
 
 describe("in-app stylesheet editor", () => {
+  it.each([false, true])("background flush preserves a recoverable %s global draft with its original revision", async (global) => {
+    const storage = new Map<string, string>();
+    vi.spyOn(backend(), "getAppString").mockImplementation(async key => storage.get(key) ?? "");
+    vi.spyOn(backend(), "setAppString").mockImplementation(async (key, value) => { storage.set(key, value); });
+    const read = vi.spyOn(backend(), "readCssFile").mockResolvedValue({ text: "before", revision: "base" });
+    const save = vi.spyOn(backend(), "saveCssFile").mockRejectedValue(new Error("conflict"));
+    await openCssEditor(global);
+    setCssEditorText("recover me");
+    const stop = installBackgroundFlush({ endEdit: () => {}, flushAll: flushCssEditor, closeInFlight: () => false, isHidden: () => true });
+    document.dispatchEvent(new Event("freeze"));
+    await vi.waitFor(() => expect(save).toHaveBeenCalledWith(global, "recover me", "base"));
+    await vi.waitFor(() => expect(cssEditorProblem()).toContain("could not be saved"));
+    stop();
+    const capsule = [...storage.entries()].find(([, value]) => value.includes("recover me"));
+    expect(capsule).toBeDefined();
+    // Retire the rendering session to model WebView loss; recover from app settings.
+    if (!global) retireGraphCssEditor();
+    else { save.mockResolvedValueOnce("cleanup"); await closeCssEditor(); }
+    // Keep the captured recovery capsule for the simulated restart.
+    storage.set(capsule![0], capsule![1]);
+    read.mockResolvedValue({ text: "external", revision: "changed" });
+    await openCssEditor(global);
+    expect(cssEditorText()).toBe("recover me");
+    await flushCssEditor();
+    expect(save).toHaveBeenLastCalledWith(global, "recover me", "base");
+  });
   it("a failed attempt to open the other file keeps the current editor usable", async () => {
     const read = vi.spyOn(backend(), "readCssFile").mockResolvedValue({ text: "before", revision: "base" });
     await openCssEditor(false);
@@ -24,8 +51,12 @@ describe("in-app stylesheet editor", () => {
     expect(save).toHaveBeenCalledWith(false, "mine", "base");
   });
   it.each([false, true])("reads, edits and guarded-saves the %s global layer", async (global) => {
-    vi.spyOn(backend(), "readCssFile").mockResolvedValue({ text: "before", revision: "base" });
-    const save = vi.spyOn(backend(), "saveCssFile").mockResolvedValue("next");
+    vi.spyOn(backend(), "getAppString").mockResolvedValue("");
+    const read = vi.spyOn(backend(), "readCssFile").mockResolvedValue({ text: "before", revision: "base" });
+    const save = vi.spyOn(backend(), "saveCssFile").mockImplementation(async () => {
+      read.mockResolvedValue({ text: "after", revision: "next" });
+      return "next";
+    });
     await openCssEditor(global);
     const root = document.createElement("div");
     document.body.append(root);

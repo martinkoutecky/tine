@@ -21,6 +21,7 @@
 // INSTALL the user asked for is different: it records a fixed stage/cause in the
 // privacy-safe diagnostic report and says which stage failed (GH #343).
 
+import { browserPlatform } from "./browserPlatform";
 import { APP_PRODUCT_NAME, APP_UPDATE_CHANNEL } from "./appIdentity";
 import { releaseVersion } from "../scripts/release-policy.mjs";
 import { isTauri, backend } from "./backend";
@@ -95,6 +96,9 @@ async function updateMode(installer = false): Promise<UpdateMode> {
     return "unavailable";
   }
   if (resolvePackagedUpdateMode(await isMsixPackaged(), installer) === "unavailable") return "unavailable";
+  // GH #405: the pinned updater predates 2.13.2's macOS rollback repair.
+  // Keep installs manual until the manager upgrades Tauri core and the plugin.
+  if (browserPlatform(typeof navigator !== "undefined" ? navigator.userAgent : "").manualDesktopUpdate) return "manual";
   // A Flatpak's /app is read-only: the in-place install can only fail, so it
   // updates by downloading the new bundle.
   return (await isFlatpak()) ? "manual" : "self";

@@ -16,6 +16,7 @@ import { FailureBoundary } from "./FailureBoundary";
 import { DrawerBackground } from "./MobileDrawerShell";
 import { queryExportRequest, settingsOpen } from "../ui";
 import { overlayWindowId } from "../transientLayers";
+import { t } from "../i18n";
 
 const Settings = lazy(() => import("./Settings").then((module) => ({ default: module.Settings })));
 
@@ -53,7 +54,7 @@ export function WindowOverlays(props: {
         <FailureBoundary region="PDF export"><PdfExportDialog /></FailureBoundary>
         <FailureBoundary region="Query export"><QueryExportDialog request={queryExportRequest} /></FailureBoundary>
         <FailureBoundary region="Graph creation"><GraphNamePrompt /></FailureBoundary>
-        <FailureBoundary region="CSS editor"><CssEditor /></FailureBoundary>
+        <FailureBoundary region={t("css-editor-title")}><CssEditor /></FailureBoundary>
         <Show when={settingsOpen()}>
           <Suspense>
             <FailureBoundary region="Settings"><Settings /></FailureBoundary>

@@ -661,7 +661,10 @@ export function App(): JSX.Element {
   // share it; the capture mini-window owns only an unsaved scratch page.
   onMount(() => onCleanup(installBackgroundFlush({
     endEdit: () => endEdit("graph-switch"),
-    flushAll,
+    flushAll: async () => {
+      const [pagesSaved, cssSaved] = await Promise.all([flushAll(), flushCssEditor()]);
+      return pagesSaved && cssSaved;
+    },
     closeInFlight: safeClose.inFlight,
   })));
   // GH #426: on mobile an OS reap of a hidden app is not an unclean exit.

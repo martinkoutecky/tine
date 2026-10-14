@@ -4,11 +4,35 @@ import { backend } from "./backend";
 import * as css from "./customCss";
 import { GraphPublish } from "./components/GraphPublish";
 import { injectCustomCss } from "./graph";
-import { loadGlobalCss } from "./cssEditor";
+import { loadGlobalCss, openCssEditor, setCssEditorText, flushCssEditor, retireGraphCssEditor } from "./cssEditor";
 import * as published from "./publishedBackend";
 import { setToasts, toasts } from "./toasts";
 
 afterEach(() => { document.body.innerHTML = ""; vi.restoreAllMocks(); });
+
+it("keeps an external revision written after the durable save but before its IPC reply", async () => {
+  vi.spyOn(backend(), "getAppString").mockResolvedValue("");
+  vi.spyOn(backend(), "setAppString").mockResolvedValue();
+  vi.spyOn(backend(), "readCssFile").mockResolvedValue({ text: "a { color: black }", revision: "base" });
+  await openCssEditor(false);
+  setCssEditorText("a { color: red }");
+  let finishSave!: (revision: string) => void;
+  vi.spyOn(backend(), "saveCssFile").mockReturnValue(new Promise(resolve => { finishSave = resolve; }));
+  const saving = flushCssEditor();
+  let finishReload!: (css: string) => void;
+  vi.spyOn(backend(), "readCustomCss")
+    .mockImplementationOnce(() => new Promise(resolve => { finishReload = resolve; }))
+    .mockResolvedValue("a { color: blue }");
+  const reloading = injectCustomCss(true);
+  await vi.waitFor(() => expect(backend().saveCssFile).toHaveBeenCalled());
+  finishSave("red-revision");
+  await saving;
+  finishReload("a { color: blue }");
+  await reloading;
+  const observed = document.querySelector("#tine-custom-css")?.textContent;
+  retireGraphCssEditor();
+  expect(observed).toBe("a { color: blue }");
+});
 
 it("layers device CSS before graph CSS and disables both in safe mode", () => {
   (css as typeof css & { applyGlobalCss: (text: string) => void }).applyGlobalCss("a { color: blue }");
