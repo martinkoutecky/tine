@@ -175,6 +175,8 @@ export interface PageModified {
  * journal days, never counts of returned DTOs (a selected file may vanish). */
 export interface JournalFeedPage {
   pages: PageRead[];
+  /** Referenced future days, nearest first; returned on the first page only. */
+  upcoming?: PageRead[];
   next_before_day: number | null;
   done: boolean;
   as_of_day: number;

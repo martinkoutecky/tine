@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { rawText, renderEnglish, textKey, type UiText } from "./i18n";
+import { msg, rawText, renderEnglish, textKey, type UiText } from "./i18n";
 
 type ReferenceChangeCounter = (ids: readonly string[]) => number | null | undefined | Promise<number | null | undefined>;
 let referenceChangeCounter: ReferenceChangeCounter = () => undefined;
@@ -91,13 +91,8 @@ export function dismissToast(id: number) {
 /** One notice vocabulary for deletion and both keyboard merge directions. */
 export function pushReferenceChangeNotice(count: number | null, transferred: boolean, undo: () => void): number | null {
   if (count === 0) return null;
-  const message = count === null
-    ? transferred ? "References may now point to this block" : "References may now be broken"
-    : transferred
-      ? `${count} ${count === 1 ? "reference now points" : "references now point"} to this block`
-      : `${count} ${count === 1 ? "reference is" : "references are"} now broken`;
   let id = 0;
-  id = pushToast(message, "warn", { sticky: true, action: { label: "Undo", run: () => { undo(); dismissToast(id); } } });
+  id = pushToast(msg("toasts-reference-change", { count: count ?? 0, known: count === null ? 0 : 1, transferred: transferred ? 1 : 0 }), "warn", { sticky: true, action: { label: msg("toasts-undo"), run: () => { undo(); dismissToast(id); } } });
   return id;
 }
 

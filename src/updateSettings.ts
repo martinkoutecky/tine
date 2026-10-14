@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 /** Device-local automatic-update preference in tine-settings.json. O(1) plus
  * backend I/O; one cached startup read. Read failure toasts and disables automatic
  * scheduling for this launch. Writes apply now, persist in order, and roll back
@@ -28,7 +29,7 @@ export function initUpdateSettings(): Promise<boolean> {
       if (result.kind === "current") { setAutomatic(result.value); seedPreference(automatic); }
       return true;
     } catch {
-      pushToast("Could not load automatic update preference.", "error");
+      pushToast(msg("settings-could-not-load-automatic-update-preference"), "error");
       return false;
     }
   })();

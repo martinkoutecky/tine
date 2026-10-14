@@ -1,3 +1,4 @@
+import { msg } from "../../i18n";
 import { type Format } from "../../types";
 import { splitProps, HIDE_ALL, HIDE_ID, joinProps, BUILTIN_HIDE } from "../../editor/properties";
 import { type ClipboardBlock, type ClipboardPayloadSlot, consumeCutGrant } from "../../clipboard";
@@ -187,10 +188,10 @@ function insertClipboardBlocksSync(
   // Same shared ceiling as every other outline inserter (I-22): a deeper page
   // would be refused by save/page admission after the edit appeared to land.
   if (!outlineFits(targetId, blocks)) {
-    pushToast("Pasted outline is too deep", "error");
+    pushToast(msg("paste-pasted-outline-is-too-deep"), "error");
     return null;
   }
-  if (warnCopy) pushToast("Pasted as a copy; references to these blocks will not follow.", "error");
+  if (warnCopy) pushToast(msg("paste-pasted-as-a-copy-references-to-these-blocks"), "error");
   const targetFormat = formatForPage(target.page);
   const prepared = blocks.map(function prepare(block): {
     id: string;

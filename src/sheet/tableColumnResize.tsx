@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { Show, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { blockProperty, blockWritable, node, pageByName, readPageProperty, setBlockProperty, setPageProperty, withUndoUnit } from "../document";
 import { parseTableColumnWidths, serializeTableColumnWidths, TABLE_COLUMN_MAX_WIDTH } from "./config";
@@ -89,8 +90,8 @@ export function createTableColumnResize(ownerId: string, schemaPage?: string): {
   onCleanup(() => cancelActive?.());
   const handle = (column: string, label: string) => <Show when={writable()}>
     <button type="button" class="sheet-table-column-resize-handle"
-      data-sheet-resize-handle={column} aria-label={`Resize ${label} column`}
-      title="Drag to resize; double-click to reset"
+      data-sheet-resize-handle={column} aria-label={t("sheet-resize-column", { label: String(label) })}
+      title={t("sheet-drag-to-resize-double-click-to-reset")}
       onPointerDown={(event) => begin(column, event)}
       onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}
       onDblClick={(event) => reset(column, event)} />

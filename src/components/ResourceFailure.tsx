@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { Show, type JSX } from "solid-js";
 import type { Resource } from "solid-js";
 
@@ -31,11 +32,9 @@ export function ResourceFailure(props: {
   return (
     <Show when={failed()}>
       <div class="resource-failure" role="alert">
-        <span class="resource-failure-text">Couldn’t load {props.what}.</span>
+        <span class="resource-failure-text">{t("resource-failure-load", { what: props.what })}</span>
         <Show when={props.onRetry}>
-          <button type="button" class="resource-failure-retry" onClick={() => props.onRetry?.()}>
-            Retry
-          </button>
+          <button type="button" class="resource-failure-retry" onClick={() => props.onRetry?.()}>{t("resource-failure-retry")}</button>
         </Show>
       </div>
     </Show>

@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 import { createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
 import { sanitizeOutlineItems, type PdfOutlineItem } from "./pdfOutline";
@@ -264,7 +265,7 @@ export function PdfViewer(props: {
 
   const copyCreatedHighlightRef = async (id: string) => {
     await writeClipboardText(`((${id}))`);
-    pushToast("Copied highlight ref", "success");
+    pushToast(msg("pdf-copied-highlight-ref"), "success");
   };
   // An OG/externally-created sidecar can outlive or predate its annotation
   // block. Reuse the paired guarded writer before exposing the id: it upserts
@@ -847,7 +848,7 @@ export function PdfViewer(props: {
     } catch (error) {
       if (!loadOwner()) return;
       highlightState.load([]);
-      pushToast(`Couldn't load PDF annotations. (${String(error)})`, "error");
+      pushToast(msg("pdf-couldn-t-load-pdf-annotations", { detail: String(error) }), "error");
     }
     let bytes: Uint8Array;
     try {
@@ -1186,7 +1187,7 @@ export function PdfViewer(props: {
       renderedPixelRatio[page] ?? 1, renderPage);
     if (!highlightGraphOwner()) return false;
     if (!bytes) {
-      pushToast("Couldn't capture that region — try again.", "error");
+      pushToast(msg("pdf-couldn-t-capture-that-region-try-again"), "error");
       return false;
     }
     const id = crypto.randomUUID();
@@ -1197,7 +1198,7 @@ export function PdfViewer(props: {
         backend().savePdfAreaImage(props.filename, page, id, stamp, bytes, binding.backendGeneration)));
       if (image.kind === "stale") return false;
     } catch (e) {
-      pushToast(`Couldn't save the area image — try again. (${String(e)})`, "error");
+      pushToast(msg("pdf-couldn-t-save-the-area-image-try-again", { detail: String(e) }), "error");
       return false;
     }
     const h: Highlight = {

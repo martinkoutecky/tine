@@ -123,7 +123,7 @@ function ConfigSections(props: { today: string }): JSX.Element {
         <For each={graphMeta()?.default_journal_queries ?? []}>
           {(query) => <div class="default-journal-query">
             <Show when={!query.error} fallback={<div class="query-error" role="alert">{t("journal-query-error", { title: query.title ?? t("journal-query-untitled"), error: query.error ?? "" })}</div>}>
-              <QueryMacro body={query.body} title={query.title ?? undefined} currentPage={props.today} hideWhenEmpty />
+              <QueryMacro body={query.body} title={query.title ?? undefined} currentPage={props.today} hideWhenEmpty configQuery />
             </Show>
           </div>}
         </For>

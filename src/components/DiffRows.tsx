@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 // The block-diff row renderer (og family 8c).
 //
 // ONE renderer for the ONE resolution surface: the in-page resolver
@@ -218,7 +219,7 @@ export function DiffRowView(props: {
     return (
       <>
         <Show when={k > 0}>
-          <span class="sync-merge-elided" title="Earlier lines are the same on both sides">…</span>
+          <span class="sync-merge-elided" title={t("diff-rows-earlier-lines-are-the-same-on-both-sides")}>…</span>
         </Show>
         {line === null ? <span class="sync-merge-absent">—</span> : line}
       </>
@@ -229,7 +230,7 @@ export function DiffRowView(props: {
     const out: { side: "mine" | "theirs" | "merged"; label: string; lines: string[] }[] = [];
     if (r.mine) out.push({ side: "mine", label: props.labels.mine, lines: r.mine.text.split("\n") });
     if (r.theirs) out.push({ side: "theirs", label: props.labels.theirs, lines: r.theirs.text.split("\n") });
-    if (r.merged) out.push({ side: "merged", label: "Merged", lines: r.merged.text.split("\n") });
+    if (r.merged) out.push({ side: "merged", label: t("diff-rows-merged"), lines: r.merged.text.split("\n") });
     return out;
   });
   const expandable = createMemo(() =>
@@ -274,17 +275,15 @@ export function DiffRowView(props: {
           {seg("theirs", "Pull in", "theirs")}
         </Show>
         <Show when={row().kind === "unchanged"}>
-          <span class="sync-merge-unchanged-tag">unchanged</span>
+          <span class="sync-merge-unchanged-tag">{t("diff-rows-unchanged")}</span>
         </Show>
         <Show when={row().suggestion && dec() === row().suggestion}>
-          <span class="sync-merge-suggested-tag" title="Pre-selected from the last version both sides agreed on">
-            suggested
-          </span>
+          <span class="sync-merge-suggested-tag" title={t("diff-rows-pre-selected-from-the-last-version-both-sides")}>{t("diff-rows-suggested")}</span>
         </Show>
         <Show when={expandable()}>
           <button
             class="sync-merge-expand"
-            title={expanded() ? "Hide the full bodies" : `Show all ${lineCount()} lines`}
+            title={expanded() ? t("diff-rows-hide-the-full-bodies") : t("diff-rows-show-all-lines", { line_count: String(lineCount()) })}
             aria-expanded={expanded()}
             onClick={() => setExpanded(!expanded())}
           >
@@ -301,7 +300,7 @@ export function DiffRowView(props: {
             data-source={merged().source}
             title={mergedTitle(merged().source)}
           >
-            <span class="sync-merge-mergedtag">{merged().source === "artifact" ? "Merged (tool)" : "Merged"}</span>
+            <span class="sync-merge-mergedtag">{merged().source === "artifact" ? t("diff-rows-merged-tool") : t("diff-rows-merged")}</span>
             {preview(merged().text)}
           </div>
         )}

@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { pushToast } from "../toasts";
@@ -46,7 +47,7 @@ export function TraySettings(): JSX.Element {
   let toggleMinimize = () => {};
   let toggleStart = () => {};
   onMount(() => {
-    applyTray().then(publish).catch(() => { if (alive) pushToast("Could not read the system tray state.", "error"); });
+    applyTray().then(publish).catch(() => { if (alive) pushToast(msg("settings-could-not-read-the-system-tray-state"), "error"); });
   });
 
   return (

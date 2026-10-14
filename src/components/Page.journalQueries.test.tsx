@@ -89,7 +89,7 @@ it("keeps supported simple and advanced results usable beside an unsupported que
   const dispose = render(() => <PageView />, host);
   try {
     await vi.waitFor(() => expect(host.textContent).toContain("Simple result"));
-    await vi.waitFor(() => expect(host.textContent).toContain("query not run"));
+    await vi.waitFor(() => expect(host.textContent).toContain("Tine can't run this query from config.edn yet"));
     const regions = host.querySelectorAll(".default-journal-query");
     expect(regions[2].textContent).toContain("Advanced");
     expect(regions[2].querySelector(".query-collapse.collapsed")).not.toBeNull();
@@ -145,11 +145,15 @@ it("hides a default journal query with no results, as OG does, but keeps a refus
   const dispose = render(() => <PageView />, host);
   try {
     await vi.waitFor(() => expect(host.textContent).toContain("Kept result"));
-    await vi.waitFor(() => expect(host.textContent).toContain("query not run"));
+    await vi.waitFor(() => expect(host.textContent).toContain("Tine can't run this query from config.edn yet"));
     await vi.waitFor(() => {
       expect(host.textContent).not.toContain("Empty simple");
       expect(host.textContent).not.toContain("Empty advanced");
     });
-    expect(host.textContent).toContain("cannot run these clauses (graph-code)");
+    const refusal = host.querySelector(".query-unsupported")!;
+    expect(refusal.textContent).toContain("Refused");
+    const details = refusal.querySelector("details")!;
+    expect(details.open).toBe(false);
+    expect(details.textContent).toContain("graph-code");
   } finally { dispose(); }
 });

@@ -1,3 +1,4 @@
+import { msg, rawText } from "../../i18n";
 import type { PageDto } from "../../types";
 import { ordered_list_glyph } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
@@ -76,7 +77,7 @@ export function setBlockProperty(id: string, key: string, value: string | null) 
   let raw: string;
   try {
     raw = editBlock(node.raw,formatForBlock(id),{kind:"property",key,value});
-  } catch (e) { pushToast(String(e),"error"); return; }
+  } catch (e) { pushToast(rawText(String(e)),"error"); return; }
   if (raw === node.raw) return;
   pushUndo(`prop:${id}:${key}`, [node.page]);
   setDoc("byId",id,"raw",raw);
@@ -224,7 +225,7 @@ export function reportInvalidPageHeaderOnExit(id: string): void {
   if (!node?.originatedFromPageHeader) return;
   const raw = node.raw.replace(/\n+$/, "");
   if (node.children.length > 0 || (raw !== "" && !isPageHeaderPropertiesOnly(raw)))
-    pushToast("Page-header properties must contain only valid key:: value lines before they can be saved.", "error");
+    pushToast(msg("properties-page-header-properties-must-contain-only-valid-key"), "error");
 }
 
 /** A successful save folded the first root into the file's preamble. Keep the
@@ -479,7 +480,7 @@ export function setSchedule(
   }
   let raw: string;
   try { raw = editBlock(node.raw, formatForBlock(id), {kind:"planning",which:whichKind,value}); }
-  catch (e) { pushToast(String(e), "error"); return; }
+  catch (e) { pushToast(rawText(String(e)), "error"); return; }
   if (raw === node.raw) return;
   pushUndo(`sched:${id}:${which}`, [node.page]);
   setDoc("byId", id, "raw", raw);

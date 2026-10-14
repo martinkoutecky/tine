@@ -1,68 +1,73 @@
-// GH #457: a link to a file by plain path (`[x](../files/report.pdf)`,
-// `[x](files/report.pdf)`, the Org `[[file:../files/a.txt][x]]`,
-// `[x](<my file.txt>)`) opens that file from the graph folder. Read side only:
-// nothing here rewrites a link when a page or file moves.
-//
-// Resolution is OG's (logseq 0.10.9, c67b8b5fa, unchanged in 1.0.0):
-// frontend/components/block.cljs `search-link-cp` (:1082) sends a dest that
-// has a `.` and no protocol to `relative-assets-path->absolute-path` (:1013),
-// which joins `config.cljs:370 get-local-asset-absolute-path` — the dest with
-// every leading `.` and `/` stripped — to the graph folder. So `files/x`,
-// `./files/x` and `../files/x` all name `<graph>/files/x`, from a page in
-// `pages/`, `journals/` or anywhere else; a dest with no `.` is a page
-// reference.
-//
-// Intentional Tine difference (named in the test and the GH #457 receipt): a
-// path that leaves the graph folder is never opened. OG opens an absolute
-// `/x` or `C:\x` as is, and its path join lets `files/../../x` climb out of the
-// graph; Tine shows both as broken links, because a link in a note is
-// untrusted content (imported or malformed Markdown, a synced note). The native
-// opener re-checks containment after symlinks.
-//
-// Links into `assets/` keep their own route (`assetLinkRel`), and a dest with a
-// URL scheme or an anchor is not a file link.
-
-/** Where a file link points: a graph-relative path, or outside the graph
- *  folder (an absolute path, or one that climbs out), which is shown as a
- *  broken link and never opened. */
+// GH #457: OG 0.10.9 block.cljs relative-assets-path->absolute-path joins
+// paths to the graph root, not the page directory. config.cljs
+// get-local-asset-absolute-path strips leading dots/slashes; Tine deliberately
+// preserves parent traversal for non-asset file links (Martin, 2026-10-14).
+// Asset links keep their separate, established OG route.
 export type FileLinkTarget =
   | { kind: "graph"; path: string }
-  | { kind: "outside"; reason: "absolute" | "escapes" };
+  | { kind: "outside"; reason: "absolute" | "escapes"; path: string };
 
-/** The file a link destination names, or null when it is not a plain file
- *  link: a URL scheme (`https:`, `zotero:`), an anchor (`#x`, `*x`), or a
- *  dest with no `.` (OG reads that as a page reference). `file:` without a
- *  slash after it reads as the path that follows (`file:../a.pdf`, the Org
- *  `[[file:…]]` form). Backslashes read as separators and percent escapes are
- *  decoded. O(dest bytes). */
+/** Classify authored paths without touching the filesystem. Schemes and
+ * page-like destinations stay with their existing renderer. O(dest bytes). */
 export function fileLinkTarget(dest: string): FileLinkTarget | null {
   let path = dest.trim();
   if (/^file:(?![/\\])/i.test(path)) path = path.slice("file:".length);
   else if (/^[a-z][a-z0-9+.-]+:/i.test(path)) return null;
-  if (!path || /^[#*]/.test(path) || !path.includes(".")) return null;
+  if (!path || /^[#*]/.test(path)) return null;
   path = path.replace(/\\/g, "/");
-  try {
-    path = decodeURIComponent(path);
-  } catch {
-    // A stray `%` is part of the file name.
+  try { path = decodeURIComponent(path); } catch { /* A stray % is a filename character. */ }
+  if (path.startsWith("/") || /^[a-z]:\//i.test(path)) {
+    return { kind: "outside", reason: "absolute", path };
   }
-  if (path.startsWith("/") || /^[a-z]:\//i.test(path)) return { kind: "outside", reason: "absolute" };
+  if (!path.includes(".")) return null;
   return graphRelative(path);
 }
 
-/** OG's rule: drop every leading `.` and `/`, then the rest is relative to the
- *  graph folder. A `..` later in the path that climbs above the graph folder is
- *  `outside`; the empty path is the graph folder itself. O(path segments). */
+/** Normalize segments, retaining every parent step above the graph root.
+ * This is lexical only: the OS opener owns existence and symlink behavior. */
 export function graphRelative(path: string): FileLinkTarget {
   const segments: string[] = [];
-  for (const part of path.replace(/^[./]*/, "").split("/")) {
+  for (const part of path.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === ".." && segments.length && segments.at(-1) !== "..") segments.pop();
+    else segments.push(part);
+  }
+  const normalized = segments.join("/");
+  return segments[0] === ".."
+    ? { kind: "outside", reason: "escapes", path: normalized }
+    : { kind: "graph", path: normalized };
+}
+
+/** Resolve against a POSIX or Windows graph root without using this device's
+ * URL base or page location. Cost: O(path segments), no filesystem probe. */
+export function resolvedFilePath(target: FileLinkTarget, root: string): string {
+  if (target.kind === "outside" && target.reason === "absolute") return target.path;
+  const base = root.replace(/\\/g, "/");
+  const prefix = base.startsWith("//") ? "//" : base.startsWith("/") ? "/" : "";
+  const segments: string[] = [];
+  for (const part of `${base}/${target.path}`.split("/")) {
     if (!part || part === ".") continue;
     if (part === "..") {
-      if (!segments.length) return { kind: "outside", reason: "escapes" };
-      segments.pop();
-    } else {
-      segments.push(part);
-    }
+      if (segments.length && !/^[a-z]:$/i.test(segments.at(-1)!)) segments.pop();
+    } else segments.push(part);
   }
-  return { kind: "graph", path: segments.join("/") };
+  return prefix + segments.join("/");
+}
+
+/** A path goes through the existing file: gate, never a custom-scheme route.
+ * Encode literal percent/hash/question characters as well as spaces. */
+export function filePathUrl(path: string): string {
+  const encoded = path.split("/").map((part, i) => i === 0 && /^[a-z]:$/i.test(part) ? part : encodeURIComponent(part)).join("/");
+  return path.startsWith("//") ? `file:${encoded}` : `file://${path.startsWith("/") ? "" : "/"}${encoded}`;
+}
+
+/** Display file: URL paths with the same WHATWG parsing used by the native
+ * gate. The original URL still goes to that gate, including remote hosts. */
+export function fileUrlTitle(dest: string): string | undefined {
+  if (!/^file:/i.test(dest)) return undefined;
+  try {
+    const url = new URL(dest);
+    const path = decodeURIComponent(url.pathname);
+    return url.hostname ? `//${url.hostname}${path}` : path.replace(/^\/([a-z]:\/)/i, "$1");
+  } catch { return dest; }
 }

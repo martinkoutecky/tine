@@ -9,6 +9,7 @@ preview-open-source = Open source
 preview-page-actions = Page actions
 favorites-block-action = Favourite block
 references-linked = Linked References
+journals-upcoming = Upcoming
 references-unlinked = Unlinked References
 references-loading = Loading…
 references-copy-linked = Copy / export linked references

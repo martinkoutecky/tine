@@ -81,7 +81,10 @@ describe("Help & diagnostics (GH #343)", () => {
     button(host, "Save report…").click();
     await flush();
     expect(save).toHaveBeenCalledOnce();
-    expect(toast).toHaveBeenCalledWith("Diagnostic report saved", "success");
+    const { renderEnglish } = await import("../i18n");
+    const [text, kind] = toast.mock.calls.at(-1)!;
+    expect(renderEnglish(toasts.toUiText(text))).toBe("Diagnostic report saved");
+    expect(kind).toBe("success");
     toast.mockClear();
     button(host, "Save report…").click();
     await flush();

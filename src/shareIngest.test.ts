@@ -1,3 +1,4 @@
+import { renderEnglish } from "./i18n";
 // S1 (ADR 0073): shared items reach a journal only through the quick-capture
 // writer, leave the inbox only after the write reached disk, are never lost,
 // and are not appended twice across a crash between the write and the
@@ -119,7 +120,7 @@ it("appends a shared item at the bottom of today's journal, then removes it", as
   expect(journal()[0]).toBe("earlier note");
   expect(journal().at(-1)).toMatch(/^\*\*\d\d:\d\d\*\* \[\[quick capture\]\]: from the share sheet$/);
   expect(inbox.size).toBe(0);
-  expect(toasts().map((toast) => toast.message)).toContain(CAPTURED_TOAST);
+  expect(toasts().map((toast) => toast.message)).toContain(renderEnglish(CAPTURED_TOAST));
 });
 
 it("keeps the item and shows an error when the write fails, and does not append it twice on retry", async () => {

@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { setFavorites, setRecentPages } from "../ui";
-import { setToasts, toasts } from "../toasts";
+import { setToasts, toasts, toUiText } from "../toasts";
+import { renderEnglish } from "../i18n";
 import { GraphSwitcher, Sidebar } from "./Sidebar";
 import { openJournals, route } from "../router";
 import { readFileSync } from "node:fs";
@@ -59,7 +60,7 @@ describe("graph open recovery (master 9a9122b1544d)", () => {
       expect(failure.kind).toBe("error");
       expect(failure.message).toContain("graph root is not readable");
       expect(failure.sticky).toBe(true);
-      expect(failure.action?.label).toBe("Retry");
+      expect(renderEnglish(toUiText(failure.action!.label))).toBe("Retry");
 
       failure.action!.run();
       await vi.waitFor(() => expect(openKnown).toHaveBeenCalledTimes(2));

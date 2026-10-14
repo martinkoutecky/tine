@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 /** Device-local asset allowance. A null override delegates the 1 GiB default
  * to Rust's query publisher, the single answerer for that default. Preferences
  * use the shared revision/queued-write door; failed writes roll back and toast. */
@@ -30,6 +31,6 @@ export function initQueryExportBudget(): Promise<void> {
         applyBudget(stored.trim() && Number.isFinite(parsed) ? normalize(parsed) : null);
         seedPreference(budget);
       }
-    } catch { if (preferenceReadCurrent(budget, revision)) pushToast("Could not load query export size limit.", "error"); }
+    } catch { if (preferenceReadCurrent(budget, revision)) pushToast(msg("query-export-budget-could-not-load-query-export-size-limit"), "error"); }
   })();
 }

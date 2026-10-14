@@ -2480,6 +2480,9 @@ pub struct Inventory(pub Vec<InventoryEntry>);
 pub enum InventoryScope<'a> {
     /// Every name: file-claimed names, aliases and reference-only names.
     All,
+    /// Referenced journal dates, including dates without a file, once per day.
+    /// Uses the explicit-reference index; excludes ordinary date-page identity.
+    ReferencedJournals,
     /// Only the file-claimed names whose page key is this key or lies under
     /// `key/` (a page and its namespace descendants): what a rename moves.
     FilesAtOrUnder(&'a str),

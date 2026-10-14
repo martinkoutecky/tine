@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // OS file drag-and-drop → insert as graph assets. Tauri captures the native file
 // drop (so HTML drag events never reach the webview) and hands us the absolute
 // paths + a physical-pixel drop position; we map that to the block under the
@@ -73,7 +74,7 @@ export async function installFileDrop(): Promise<() => void> {
     const order = visibleOrder();
     const afterId = onBlock ?? order[order.length - 1] ?? null;
     if (!afterId || !docNode(afterId)) {
-      pushToast("Drop a file onto a block to insert it.", "error");
+      pushToast(msg("filedrop-drop-a-file-onto-a-block-to-insert"), "error");
       return;
     }
     const binding = captureBinding();
@@ -94,7 +95,7 @@ export async function installFileDrop(): Promise<() => void> {
           const matrix = parseDelimitedText(result.value, kind);
           const cells = delimitedCellCount(matrix);
           if (cells > MAX_DROPPED_CELLS) {
-            pushToast(`"${basename(path)}" has ${cells} cells; CSV/TSV drops are limited to ${MAX_DROPPED_CELLS}.`, "error");
+            pushToast(msg("filedrop-has-cells-csv-tsv-drops-are-limited-to", { fileName: String(basename(path)), cells: String(cells), cellLimit: String(MAX_DROPPED_CELLS) }), "error");
             continue;
           }
           nodes.push(matrixGridNode(titleWithoutExtension(path, kind), matrix));
@@ -120,10 +121,10 @@ export async function installFileDrop(): Promise<() => void> {
         return;
       }
       const inserted = withUndoUnit("file-drop", [dropPage], () => insertOutlineAfter(afterId, nodes));
-      if (!inserted) { pushToast("Dropped files could not be inserted at this outline depth.", "error"); return; }
-      pushToast(`Inserted ${nodes.length} file${nodes.length === 1 ? "" : "s"}`, "success");
+      if (!inserted) { pushToast(msg("filedrop-dropped-files-could-not-be-inserted-at-this"), "error"); return; }
+      pushToast(msg("filedrop-inserted", { count: nodes.length }), "success");
     } catch (e) {
-      pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");
+      pushToast(msg("filedrop-couldn-t-insert-dropped-file", { error: String(e) }), "error");
     }
   });
 

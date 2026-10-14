@@ -1,3 +1,5 @@
+import { Rich } from "../i18n/Rich";
+import { msg, t } from "../i18n";
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingIdentity, captureBinding } from "../binding";
@@ -426,7 +428,7 @@ export function QuickSwitcher(): JSX.Element {
     const binding = captureBinding();
     const owner = bindingOwner();
     const stale = (): Owned<null> => {
-      pushToast("The graph changed before the page was created. Try again.", "warn");
+      pushToast(msg("quick-switcher-the-graph-changed-before-the-page-was-created"), "warn");
       return { kind: "stale" };
     };
     try {
@@ -448,7 +450,7 @@ export function QuickSwitcher(): JSX.Element {
       return saved.kind === "stale" ? stale() : { kind: "current", value: null };
     } catch (error) {
       if (error instanceof CreatePageRefusal && error.reason === "graph-changed") return stale();
-      pushToast(`Could not create “${name}”: ${String(error)}. It will be saved on your first edit.`, "error");
+      pushToast(msg("quick-switcher-could-not-create-it-will-be-saved-on", { name: String(name), error: String(error) }), "error");
       return { kind: "current", value: null };
     }
   };
@@ -461,7 +463,7 @@ export function QuickSwitcher(): JSX.Element {
       if (target) openPageTarget(target);
       else openPage(name, "page");
     } catch (error) {
-      pushToast(`Could not create “${name}”: ${String(error)}`, "error");
+      pushToast(msg("quick-switcher-could-not-create", { name: String(name), error: String(error) }), "error");
     }
   };
 
@@ -533,7 +535,7 @@ export function QuickSwitcher(): JSX.Element {
             ref={inputRef}
             class="switcher-input"
             type="text"
-            placeholder={commandsOnly() ? "Run a command…" : currentPageOnly() ? "Search blocks in current page…" : "Jump to page, search, or run a command…"}
+            placeholder={commandsOnly() ? t("quick-switcher-run-a-command") : currentPageOnly() ? t("quick-switcher-search-blocks-in-current-page") : t("quick-switcher-jump-to-page-search-or-run-a-command")}
             value={query()}
             role="combobox"
             aria-autocomplete="list"
@@ -632,14 +634,10 @@ export function QuickSwitcher(): JSX.Element {
                         e.preventDefault(); // keep input focus; don't close
                         section.loadMore!();
                       }}
-                    >
-                      Load more results…
-                    </div>
+                    >{t("quick-switcher-load-more-results")}</div>
                   </Show>
                   <Show when={section.truncated}>
-                    <div class="switcher-truncated" data-search-truncated={section.truncated}>
-                      More matches exist — narrow your query to see them.
-                    </div>
+                    <div class="switcher-truncated" data-search-truncated={section.truncated}>{t("quick-switcher-more-matches-exist-narrow-your-query-to-see")}</div>
                   </Show>
                 </div>
               )}
@@ -651,14 +649,14 @@ export function QuickSwitcher(): JSX.Element {
             </Show>
             <ResourceFailure of={graphResultsResource} what="search results" onRetry={() => void retrySearch()} />
             <Show when={query().trim() && (graphResultsResource.loading || debouncedQuery() !== query())}>
-              <div class="switcher-empty" role="status">Searching…</div>
+              <div class="switcher-empty" role="status">{t("quick-switcher-searching")}</div>
             </Show>
             <Show when={query().trim() && !graphResultsResource.loading && debouncedQuery() === query() && flat().length === 0 && graphResultsResource.error === undefined && !(graphResults()?.diagnostics.length ?? 0)}>
-              <div class="switcher-empty">No matched results</div>
+              <div class="switcher-empty">{t("quick-switcher-no-matched-results")}</div>
             </Show>
           </div>
           <Show when={syntaxOpen() && !commandsOnly()}>
-            <div id="switcher-search-syntax" class="switcher-syntax" role="region" aria-label="Search syntax">
+            <div id="switcher-search-syntax" class="switcher-syntax" role="region" aria-label={t("quick-switcher-search-syntax")}>
               <For each={SEARCH_SYNTAX}>
                 {(rule) => (
                   <div class="switcher-syntax-row">
@@ -670,9 +668,9 @@ export function QuickSwitcher(): JSX.Element {
             </div>
           </Show>
           <div class="switcher-footer">
-            <span><kbd>↑↓</kbd> navigate</span>
-            <span><kbd>↵</kbd> open</span>
-            <span><kbd>⌘⇧P</kbd> commands</span>
+            <span><kbd>↑↓</kbd>{t("quick-switcher-navigate")}</span>
+            <span><kbd>↵</kbd>{t("quick-switcher-open")}</span>
+            <span><kbd>⌘⇧P</kbd>{t("quick-switcher-commands")}</span>
             <Show when={!commandsOnly()}>
               <Show when={!currentPageOnly()}>
               <button
@@ -681,9 +679,7 @@ export function QuickSwitcher(): JSX.Element {
                 aria-expanded={syntaxOpen()}
                 aria-controls="switcher-search-syntax"
                 onClick={() => setSyntaxOpen((open) => !open)}
-              >
-                Search syntax
-              </button>
+              >{t("quick-switcher-search-syntax")}</button>
               <button
                 type="button"
                 class="switcher-syntax-toggle"
@@ -691,16 +687,14 @@ export function QuickSwitcher(): JSX.Element {
                 onClick={() => {
                   const paneId = originPaneId;
                   if (!paneId || !layoutPaneIds().includes(paneId)) {
-                    pushToast("That pane is no longer available. Close this search and try again.", "error");
+                    pushToast(msg("quick-switcher-that-pane-is-no-longer-available-close-this"), "error");
                     return;
                   }
                   focusPane(paneId);
                   paneRouter(paneId).openQueryInNewTab(query().trim(), "search", true);
                   closeSwitcher();
                 }}
-              >
-                Open search tab
-              </button>
+              >{t("quick-switcher-open-search-tab")}</button>
               </Show>
             </Show>
           </div>
@@ -718,24 +712,24 @@ function Row(props: { item: Item }): JSX.Element {
     case "page":
       return (
         <>
-          <span class="switcher-kind">{it.pageKind === "journal" ? "journal" : "page"}</span>
+          <span class="switcher-kind">{it.pageKind === "journal" ? t("quick-switcher-journal") : t("quick-switcher-page")}</span>
           <span class="switcher-name"><EmojiText text={it.name} /></span>
           {/* GH #353: why did "Research Hub" match "book"? Keep the matched
               alias as display context; navigation still targets the owner. */}
-          <Show when={it.matchedAlias}><span class="switcher-alias">aka {it.matchedAlias}</span></Show>
+          <Show when={it.matchedAlias}><span class="switcher-alias">{t("quick-switcher-alias", { alias: it.matchedAlias! })}</span></Show>
         </>
       );
     case "create":
       return (
         <>
-          <span class="switcher-kind create">new</span>
-          <span class="switcher-name">Create page: <strong><EmojiText text={it.name} /></strong></span>
+          <span class="switcher-kind create">{t("quick-switcher-new")}</span>
+          <span class="switcher-name"><Rich message={msg("quick-switcher-create-named-page", { name: it.name })} slots={{ strong: () => <strong><EmojiText text={it.name} /></strong> }} /></span>
         </>
       );
     case "command":
       return (
         <>
-          <span class="switcher-kind cmd">cmd</span>
+          <span class="switcher-kind cmd">{t("quick-switcher-cmd")}</span>
           <span class="switcher-name"><EmojiText text={it.label} /></span>
           <Show when={it.binding}>
             <span class="switcher-shortcut">{it.binding}</span>
