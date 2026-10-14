@@ -80,6 +80,17 @@ describe("signed plugin registry parsing", () => {
     expect(parsed.plugins[0].versions.map((item) => item.version)).toEqual(["0.1.0"]);
   });
 
+  it("offers every package version whose API this host runs, and hides a newer API", () => {
+    const parsed = parseRegistryIndex({
+      schemaVersion: 1,
+      generatedAt: "2026-10-14T00:00:00Z",
+      plugins: [{ ...plugin, versions: [version, { ...version, version: "0.3.0", apiVersion: "0.3" }, { ...version, version: "0.4.0", apiVersion: "0.4" }] }],
+      themes: [],
+      revocations: [],
+    });
+    expect(parsed.plugins[0].versions.map((item) => [item.version, item.apiVersion])).toEqual([["0.1.0", "0.2"], ["0.3.0", "0.3"]]);
+  });
+
   it("rejects duplicate identities, invalid digests, and non-HTTPS artifacts", () => {
     const root = { schemaVersion: 1, generatedAt: "now", plugins: [plugin, plugin], themes: [], revocations: [] };
     expect(() => parseRegistryIndex(root)).toThrow(/duplicate/);

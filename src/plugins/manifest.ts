@@ -2,7 +2,15 @@ import { isPackageId, isPackageVersion } from "../packageIdentity";
 import { schemaGuards } from "../schemaGuards";
 import { parsePluginSettingDefinitions, type PluginSettingDefinition } from "./settings";
 
-export const PLUGIN_API_VERSION = "0.2" as const;
+/** Plugin API versions this host runs, oldest first; the last is current. A
+ *  version is added when a manifest an older host would refuse becomes valid
+ *  (old hosts parse strictly), so the registry can keep offering older hosts the
+ *  last package version they accept. 0.3 adds the `color` setting type. */
+export const SUPPORTED_PLUGIN_API_VERSIONS = ["0.2", "0.3"] as const;
+export type PluginApiVersion = (typeof SUPPORTED_PLUGIN_API_VERSIONS)[number];
+export const PLUGIN_API_VERSION: PluginApiVersion = "0.3";
+export const isSupportedPluginApiVersion = (value: unknown): value is PluginApiVersion =>
+  (SUPPORTED_PLUGIN_API_VERSIONS as readonly unknown[]).includes(value);
 
 export const PLUGIN_PLATFORMS = ["desktop", "android", "ios"] as const;
 export type PluginPlatform = (typeof PLUGIN_PLATFORMS)[number];
@@ -69,7 +77,7 @@ export interface PluginManifest {
   id: string;
   name: string;
   version: string;
-  apiVersion: typeof PLUGIN_API_VERSION;
+  apiVersion: PluginApiVersion;
   description: string;
   author: string;
   license: string;
@@ -254,8 +262,9 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     "source", "entry", "platforms", "capabilities", "contributions", "settings", "portedFrom", "aiDevelopment",
   ]);
   if (obj.schemaVersion !== 1) throw new PluginManifestError("schemaVersion must be 1");
-  if (obj.apiVersion !== PLUGIN_API_VERSION) {
-    throw new PluginManifestError(`apiVersion must be ${PLUGIN_API_VERSION}`);
+  const apiVersion = obj.apiVersion;
+  if (!isSupportedPluginApiVersion(apiVersion)) {
+    throw new PluginManifestError(`apiVersion must be one of ${SUPPORTED_PLUGIN_API_VERSIONS.join(", ")}`);
   }
   const id = stringField(obj.id, "id", 64);
   if (!isPackageId(id)) throw new PluginManifestError("id must be a lowercase dotted identifier");
@@ -276,7 +285,7 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     id,
     name: stringField(obj.name, "name", 80),
     version,
-    apiVersion: PLUGIN_API_VERSION,
+    apiVersion,
     description: stringField(obj.description, "description", 500),
     author: stringField(obj.author, "author", 160),
     license: stringField(obj.license, "license", 80),
@@ -284,7 +293,7 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     entry,
     platforms: platforms(obj.platforms, "platforms", ["desktop"]),
     capabilities: stringArray(obj.capabilities, "capabilities", PLUGIN_CAPABILITIES),
-    ...(obj.settings === undefined ? {} : { settings: parsePluginSettingDefinitions(obj.settings) }),
+    ...(obj.settings === undefined ? {} : { settings: parsePluginSettingDefinitions(obj.settings, apiVersion) }),
     ...(obj.portedFrom === undefined ? {} : { portedFrom: parsePortedFrom(obj.portedFrom) }),
     ...(contributionsObj
       ? {

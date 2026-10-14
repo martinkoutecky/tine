@@ -120,14 +120,14 @@ describe("installed plugin lifecycle", () => {
     await backend().installPlugin(JSON.stringify(manifest), new Uint8Array([0, 97, 115, 109]));
     const manager = new PluginManager();
     await manager.initialize();
-    const incompatible = installedPlugins().find((plugin) => plugin.error?.includes("apiVersion must be 0.2"));
+    const incompatible = installedPlugins().find((plugin) => plugin.error?.includes("apiVersion must be one of 0.2, 0.3"));
 
     expect(incompatible?.manifest.id).toMatch(/^invalid\./);
     await expect(
       manager.uninstall(incompatible!.manifest.id, incompatible!.manifest.version)
     ).resolves.toBeUndefined();
     await manager.initialize();
-    expect(installedPlugins().some((plugin) => plugin.error?.includes("apiVersion must be 0.2"))).toBe(false);
+    expect(installedPlugins().some((plugin) => plugin.error?.includes("apiVersion must be one of 0.2, 0.3"))).toBe(false);
   });
 
   it("isolates a failed persisted activation while a live revocation disposes an earlier plugin", async () => {

@@ -5,12 +5,16 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license", "source", "entry", "capabilities"],
+  "allOf": [
+    { "if": { "properties": { "apiVersion": { "const": "0.2" } }, "required": ["apiVersion"] },
+      "then": { "properties": { "settings": { "items": { "properties": { "type": { "not": { "const": "color" } } } } } } } }
+  ],
   "properties": {
     "schemaVersion": { "const": 1 },
     "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])$" },
     "name": { "type": "string", "minLength": 1, "maxLength": 80 },
     "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$" },
-    "apiVersion": { "const": "0.2" },
+    "apiVersion": { "enum": ["0.2", "0.3"] },
     "description": { "type": "string", "minLength": 1, "maxLength": 500 },
     "author": { "type": "string", "minLength": 1, "maxLength": 160 },
     "license": { "type": "string", "minLength": 1, "maxLength": 80 },

@@ -4,7 +4,7 @@ import { createSignal } from "solid-js";
 import { backend, type PluginRegistryCacheLoad } from "../backend";
 import { ownedWhen, writeOwned } from "../owned";
 import {
-  PLUGIN_API_VERSION,
+  isSupportedPluginApiVersion,
   PLUGIN_CAPABILITIES,
   PLUGIN_MANIFEST_MAX_BYTES,
   PLUGIN_PLATFORMS,
@@ -206,7 +206,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
       }
       const parsedCapabilities = version.capabilities.map((capability) => {
         if (typeof capability !== "string" || capability.length === 0 || capability.length > 80 ||
-            (apiVersion === PLUGIN_API_VERSION && !PLUGIN_CAPABILITIES.includes(capability as PluginCapability))) {
+            (isSupportedPluginApiVersion(apiVersion) && !PLUGIN_CAPABILITIES.includes(capability as PluginCapability))) {
           throw new Error(`${id} has an invalid capability`);
         }
         return capability as PluginCapability;
@@ -242,7 +242,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
         },
         publishedAt: text(version.publishedAt, `${id}.publishedAt`, 80),
       };
-    }).filter((version) => version.apiVersion === PLUGIN_API_VERSION);
+    }).filter((version) => isSupportedPluginApiVersion(version.apiVersion));
     const ai = item.aiDevelopment;
     if (ai !== "none" && ai !== "assisted" && ai !== "primary") throw new Error(`${id} has invalid AI provenance`);
     return {
