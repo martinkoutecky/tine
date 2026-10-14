@@ -25,6 +25,41 @@ import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
 
+// A single document listener routes native selection to its rendered owner.
+// Long journal feeds must not run one handler per block on every handle move.
+const renderedSelectionOwners = new WeakMap<Document, {
+  roots: Map<HTMLElement, () => void>;
+  listener: () => void;
+}>();
+
+export function registerRenderedSelection(root: HTMLElement, transfer: () => void): () => void {
+  const doc = root.ownerDocument;
+  let owners = renderedSelectionOwners.get(doc);
+  if (!owners) {
+    const roots = new Map<HTMLElement, () => void>();
+    const listener = () => {
+      const selection = doc.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return;
+      const node = selection.getRangeAt(0).startContainer;
+      const element = node.nodeType === 1 ? node as Element : node.parentElement;
+      const owner = element?.closest<HTMLElement>(".block-content");
+      if (owner) roots.get(owner)?.();
+    };
+    owners = { roots, listener };
+    renderedSelectionOwners.set(doc, owners);
+    doc.addEventListener("selectionchange", listener);
+  }
+  const registry = owners;
+  registry.roots.set(root, transfer);
+  return () => {
+    registry.roots.delete(root);
+    if (registry.roots.size === 0) {
+      doc.removeEventListener("selectionchange", registry.listener);
+      renderedSelectionOwners.delete(doc);
+    }
+  };
+}
+
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
 const [dragId, setDragId] = createSignal<string | null>(null);

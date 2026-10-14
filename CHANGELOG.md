@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Bullet threading's "Active ancestry only" mode now emphasizes the edited block's connectors in the accent color, as the original Logseq plugin does (GH #614).
 - GH #524: Added regression coverage for dragging a block into an empty page in the right sidebar; current Beta already supports the move.
 - GH #499: Added regression coverage for splitting the lower pane beneath an existing top row; the reported sequence already preserves the layout on current Beta.
 - GH #593: Workspace and tab overflow menus support stable hover opening and delayed dismissal while crossing the menu gap.
@@ -24,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Markdown horizontal rules align with the centre of their outline bullets (GH #678).
 - Markdown quote and callout collapse metadata stays outside quoted content (GH #684).
 - Clicking an in-block Markdown task list checkbox toggles its item without entering edit mode (GH #683).
+- Android image paste can read content-URI clipboard bytes when the WebView exposes an empty file, while retaining the 64 MiB limit (GH #654); selecting text in another block on mobile opens its editor with the selection and docked formatting toolbar (GH #375).
 - Mobile Search, sidebar and page-history actions are reachable from a bottom navigation row (GH #598, GH #160); holding a page reference or tag opens the shared page preview without navigating (GH #655).
 - A page merge, rename or deletion that waited the full 10 seconds for another rename to finish could report "Couldn't confirm the merge yet; Tine keeps trying to finish it" for an operation that would never run; it now reports that another rename is still finishing and nothing changed (REG-PAGEHOST-ADMISSION-DEADLINE-RACE).
 

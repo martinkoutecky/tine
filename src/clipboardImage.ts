@@ -5,6 +5,12 @@ export const CLIPBOARD_IMAGE_MAX_PIXELS = 32 * 1024 * 1024;
 export const CLIPBOARD_IMAGE_MAX_RGBA_BYTES = 128 * 1024 * 1024;
 export const ASSET_INGRESS_MAX_BYTES = 64 * 1024 * 1024;
 
+// A content provider can report zero or no length. Admit a bounded read in that
+// case; actual bytes must still be checked before the audited asset save.
+export function clipboardSizeAllowed(size: number | null | undefined): boolean {
+  return size == null || size <= ASSET_INGRESS_MAX_BYTES;
+}
+
 type ClipboardImage = {
   size(): Promise<{ width: number; height: number }>;
   rgba(): Promise<Uint8Array>;

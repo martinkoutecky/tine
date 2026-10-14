@@ -539,6 +539,11 @@ class TauriBackend implements Backend {
   }
   async readClipboardImage(): Promise<Uint8Array | null> {
     try {
+      if (await this.appPlatform() === "android") {
+        const buf = await this.call<ArrayBuffer>("read_android_clipboard_image");
+        const bytes = new Uint8Array(buf);
+        return bytes.length ? bytes : null;
+      }
       const { readImage } = await import("@tauri-apps/plugin-clipboard-manager");
       const img = await readImage();
       return await clipboardImageToPng(img);
