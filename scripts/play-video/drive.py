@@ -199,6 +199,12 @@ try:
     h = find(root, "Close navigation sidebar")
     if h:
         tap_bounds(h[0][1]); time.sleep(1.0)
+    for _ in range(3):  # dismiss emulator-only toasts (software rendering) and the Guide teaser
+        root = dump("toasts")
+        ds = find(root, "Dismiss", exact=True)
+        if not ds:
+            break
+        tap_bounds(ds[0][1]); time.sleep(0.7)
     wait_for("Morning review", timeout=60, tag="journal")
     t = now()
     time.sleep(2.2)

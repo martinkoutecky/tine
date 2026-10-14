@@ -38,16 +38,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: false
           script: |
-            adb shell getprop ro.product.cpu.abilist
-            adb shell getprop ro.build.version.release
-            adb shell date
-            adb install -r tine.apk
-            adb shell mkdir -p /sdcard/Documents
-            DEV=$(adb shell date +%Y_%m_%d | tr -d '\r'); DEVY=$(adb shell date -d @$(( $(adb shell date +%s | tr -d '\r') - 86400 )) +%Y_%m_%d | tr -d '\r'); echo "device dates $DEV $DEVY"
-            [ "$DEV" = 2026_10_14 ] || mv "Tine demo/journals/2026_10_14.md" "Tine demo/journals/$DEV.md"
-            [ "$DEVY" = 2026_10_13 ] || mv "Tine demo/journals/2026_10_13.md" "Tine demo/journals/$DEVY.md"
-            adb push "Tine demo" /sdcard/Documents/
-            adb shell ls -R "/sdcard/Documents/Tine\ demo"
+            bash scripts/play-video/prepare-device.sh
             python3 scripts/play-video/drive.py out || echo "DRIVE FAILED $?"
       - name: Post-process
         if: always()
