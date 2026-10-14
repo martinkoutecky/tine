@@ -49,11 +49,13 @@ export async function applyGraphChange(c: GraphChange, bypassPolicy = false): Pr
   if (c.binding_generation !== undefined && c.binding_generation !== binding.backendGeneration) return;
   // The watcher has already updated the backend graph cache. Invalidate even
   // when this page is outside the bounded frontend working set.
-  applyGraphAnswers(c.answers);
-  bumpDataRev();
-  if (c.created || c.removed) bumpPageInventoryRev();
   const finish = beginResultsChange();
-  try { await applyObservedChange(c, captureExternalChangeUi?.(), bypassPolicy); }
+  try {
+    applyGraphAnswers(c.answers);
+    bumpDataRev();
+    if (c.created || c.removed) bumpPageInventoryRev();
+    await applyObservedChange(c, captureExternalChangeUi?.(), bypassPolicy);
+  }
   finally { finish(); }
 }
 

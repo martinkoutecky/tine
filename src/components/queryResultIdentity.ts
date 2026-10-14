@@ -4,7 +4,8 @@ import { t } from "../i18n";
 import type { BlockDto, Format, PageDto, PageKind } from "../types";
 import { blockRegions } from "../render/parse";
 import { formatForPage, node, pageByName, pageRoots, type Node as ReadonlyNode } from "../document";
-import { resultTicket, resultsEpoch, resultsTicketCurrent } from "../queryResultsEpoch";
+import { resultTicket, resultsEpoch, resultsSettled, resultsTicketCurrent } from "../queryResultsEpoch";
+import { bindingCurrent, captureBinding } from "../binding";
 
 export interface ResultRow { id: string; page: string; kind?: PageKind; path?: string; dto?: BlockDto; detached?: boolean }
 const mounted = new WeakMap<BlockDto, { epoch: number; source: ReadonlyNode }>();
@@ -55,8 +56,10 @@ export function resolveResultRow(row: ResultRow, mode: "action" | "mount" = "act
   if (retained && retained.epoch === resultsEpoch() && node(retained.source.id) === retained.source) return retained.source;
   const current = resultsTicketCurrent(ticket);
   let source = current ? node(row.dto.id) : undefined;
-  if (current && !source) return null;
-  const durable = !source && existingBlockId(row.dto.raw, formatForPage(row.page));
+  if (source?.page !== row.page) source = undefined;
+  // Projected results already carry the parser's negative identity fact. Keep
+  // missing positional rows cheap; older/unprojected DTOs still ask the parser.
+  const durable = !source && row.dto.has_id !== false && existingBlockId(row.dto.raw, formatForPage(row.page));
   if (durable) {
     const candidates: ReadonlyNode[] = [];
     const pending = [...pageRoots(row.page)];
@@ -75,6 +78,31 @@ export function resolveResultRow(row: ResultRow, mode: "action" | "mount" = "act
   if (!source || source.page !== row.page) return null;
   if (mode === "mount") mounted.set(row.dto, { epoch: resultsEpoch(), source });
   return source;
+}
+
+/** An already-open property draft owns the exact live block and page instance,
+ * not its old positional result. Hydration/replacement retires that ownership;
+ * unrelated epochs can settle without discarding the user's input. */
+export function captureResultDraft(row: ResultRow): () => ReadonlyNode | null {
+  const source = resolveResultRow(row);
+  const page = pageByName(row.page);
+  const binding = captureBinding();
+  return () => source && bindingCurrent(binding) && resultsSettled()
+    && pageByName(row.page) === page && node(source.id) === source ? source : null;
+}
+
+/** Deferred controls keep the opening descriptor, and resolve again at commit. */
+export function resultWriteTarget(row: ResultRow): () => string | null {
+  const opening = { ...row };
+  const binding = captureBinding();
+  const sourceAtOpen = !opening.dto ? resolveResultRow(opening) : null;
+  const pageAtOpen = !opening.dto ? pageByName(opening.page) : null;
+  return () => {
+    let source = bindingCurrent(binding) ? resolveResultRow(opening) : null;
+    if (!opening.dto && (source !== sourceAtOpen || pageByName(opening.page) !== pageAtOpen)) source = null;
+    if (!source) noticeChangedResults(1);
+    return source?.id ?? null;
+  };
 }
 
 export function noticeChangedResults(count: number): void {

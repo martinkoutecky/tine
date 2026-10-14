@@ -566,6 +566,7 @@ describe("SheetBoard", () => {
     const target = "live-target";
     const blocks = Array.from({ length: 100_000 }, (_, i) => ({
       id: i === 0 ? target : `q${i}`,
+      has_id: false, // Rust query projection's parser-owned absence fact
       raw: `TODO Row ${i}`,
       marker: "TODO",
       collapsed: false,

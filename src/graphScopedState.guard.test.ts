@@ -281,6 +281,7 @@ export function unprovenPopupConsumers(sources: Sources = repoSources()): string
 // Readers of a graph-scoped target that do not prove a binding check, and why
 // each cannot write into another graph. Shrink-only.
 const CLASSIFIED_CONSUMERS: Record<string, string> = {
+  "src/queryResultDrafts.ts#drafts": "read-only result retention leases, not a popup writer; graphScopedSignal clears them at binding invalidation, release checks its captured binding, and captureResultDraft guards the actual cell write",
   "src/components/RightSidebar.tsx#rightSidebarFocusRequest": "scrolls and focuses the mounted card only; no graph write. The queued callback rechecks request identity, and graphScopedSignal clears the request on a graph switch",
   "src/components/ContextMenu.tsx#contextMenu": "menu actions run synchronously on a click while the menu is mounted, and it is mounted only "
     + "while its target is bound (reads null after a switch). Every action that awaits before writing captures bindingOwner() first "

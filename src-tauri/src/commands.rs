@@ -347,14 +347,6 @@ pub(crate) async fn page_modified(state: GraphContext<'_>) -> Result<PageModifie
     .map_err(|error| error.to_string())?
 }
 
-/// Separate graph-wide count read; All pages coalesces it while mounted.
-#[tauri::command]
-pub(crate) async fn page_backlink_counts(
-    state: GraphContext<'_>,
-) -> Result<Vec<(String, usize)>, String> {
-    off_ui_graph_read(&state, |view| Ok(view.page_backlink_counts())).await
-}
-
 #[derive(Serialize)]
 pub(crate) struct JournalFeedPage {
     pages: Vec<PageWire>,
@@ -1247,7 +1239,7 @@ mod capture_quick_switch_tests {
 /// Run a whole-graph read on the blocking pool. `Store::whole_graph` waits for
 /// the initial parse (seconds on a 10k-page graph); a synchronous Tauri command
 /// runs on the main thread and would freeze the webview for that whole wait.
-async fn off_ui_graph_read<T: Send + 'static>(
+pub(crate) async fn off_ui_graph_read<T: Send + 'static>(
     state: &GraphContext<'_>,
     read: impl FnOnce(WholeGraph) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {

@@ -432,6 +432,7 @@ describe("SheetTable", () => {
     const target = "live-target";
     const blocks = Array.from({ length: 100_000 }, (_, i) => ({
       id: i === 0 ? target : `q${i}`,
+      has_id: false, // Rust query projection's parser-owned absence fact
       raw: `Row ${i}`,
       collapsed: false,
       children: [],
@@ -1278,7 +1279,8 @@ describe("SheetTable", () => {
     keydown(input!, "Enter");
 
     expect(doc.byId.r1.raw).toBe("Task\nbody line\nowner:: old");
-    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("typed value"))).toBe(true);
+    expect(toasts().some((toast) => toast.kind === "error")).toBe(true);
+    expect(root.querySelector<HTMLInputElement>("input.sheet-prop-input")?.value).toBe("typed value");
     dispose();
   });
 

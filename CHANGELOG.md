@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Open query date and enum controls recheck their source before saving; refused Table edits keep the typed draft, authored IDs resolve within their page, and clean host settlement avoids duplicate query reads (GH #585, GH #551).
+
 - Query and Search actions refuse stale positional results after external or structural changes and refresh once changes settle; saved planning comparisons offer correctly labelled operators (GH #387, GH #551, GH #585, GH #653).
 
 - Query and Search actions skip changed source results, task clicks retain their graph binding, saved date comparisons reopen intact, exports honor empty columns regardless of property case, and All pages coalesces backlink refreshes (GH #387, GH #585, GH #653, GH #680, GH #681).

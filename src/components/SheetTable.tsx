@@ -4,6 +4,8 @@ import { sheetClickOffset, sheetCellMenu, displayLimitThrough } from "../sheet/i
 import { cellIsSelected } from "../sheet/selection";
 import { formulaReferenceName } from "../sheet/boardColumns";
 import { clearOnBindingInvalidated } from "../binding";
+import { captureResultDraft, noticeChangedResults, resultWriteTarget } from "./queryResultIdentity";
+import { retainResultDraft } from "../queryResultDrafts";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import { blockPageReadOnly, blockProperty, blockWritable, formatForBlock, formatForPage, insertEmptyChildBlock, pageByName, readPageProperty, readPageProperties, setBlockProperty, setPageProperty, setRaw, withUndoUnit, node as docNode, pinPageWhileDrafting } from "../document";
 import { facetsOf } from "../render/facets";
@@ -102,7 +104,10 @@ export function SheetTable(props: {
   const [extraFields, setExtraFields] = createSignal<FieldId[]>([]);
   const [addingColumn, setAddingColumn] = createSignal(false);
   const [renamingField, setRenamingField] = createSignal<{ field: FieldId; value: string } | null>(null);
-  const [editingProp, setEditingProp] = createSignal<{ rowId: string; field: FieldId; initial: string } | null>(null);
+  const [editingProp, setEditingProp] = createSignal<{ rowId: string; field: FieldId; initial: string; rows: RowRecord[]; fields: FieldId[]; resolve: ReturnType<typeof captureResultDraft> } | null>(null);
+  let releaseDraft: (() => void) | undefined;
+  const closePropInput = () => { setEditingProp(null); releaseDraft?.(); releaseDraft = undefined; };
+  onCleanup(() => releaseDraft?.());
   onCleanup(pinPageWhileDrafting(() => { const edit = editingProp(); return edit && docNode(edit.rowId)?.page; })); // K17a: eviction keeps the draft
   const [hovering, setHovering] = createSignal(false);
   const [stableColumns, setStableColumns] = createSignal<string | null>(null);
@@ -194,6 +199,8 @@ export function SheetTable(props: {
   });
   createEffect(() => props.onDefaultColumns?.(defaultFields().map(queryColumnName).filter((field): field is string => field !== null)));
   const fields = createMemo<FieldId[]>(() => {
+    const draft = editingProp();
+    if (draft) return draft.fields;
     const selected = props.rowSource === "query" ? props.queryDisplay?.view.columns : undefined;
     const explicit = props.rowSource === "query" && blockProperty(props.ownerId, "tine.columns") !== null;
     return selected?.length || explicit ? (selected ?? []).map(queryColumnFieldId) : defaultFields();
@@ -270,6 +277,8 @@ export function SheetTable(props: {
   });
 
   const sortedRows = createMemo(() => {
+    const draft = editingProp();
+    if (draft) return draft.rows;
     const s = sort();
     const rs = rows();
     if (!s) return rs;
@@ -684,7 +693,12 @@ export function SheetTable(props: {
   const selected = (row: number, col: number) => cellIsSelected(props.ownerId, row, col, surfaceId);  const inRange = (row: number, col: number) => cellIsInRange(props.ownerId, row, col, surfaceId);
 
   const openPropInput = (rowId: string, field: FieldId, initial?: string) => {
-    setEditingProp({ rowId, field, initial: initial ?? readField(rowId, field)?.text ?? "" });
+    const rows = sortedRows();
+    const row = rows.find(row => row.id === rowId);
+    if (!row || !liveFormulaRowNode(row)) return;
+    releaseDraft?.();
+    releaseDraft = retainResultDraft(rowId);
+    setEditingProp({ rowId, field, initial: initial ?? readField(rowId, field)?.text ?? "", rows, fields: fields(), resolve: captureResultDraft(row) });
   };
   const propUsesInlineInput = (field: FieldId): boolean => {
     const type = fieldTypes().get(field);
@@ -802,7 +816,7 @@ export function SheetTable(props: {
 
   return (
     <Show
-      when={rows().length > 0}
+      when={rows().length > 0 || !!editingProp()}
       fallback={
         <div class="sheet-table sheet-empty">
           <span>empty table</span>
@@ -1016,8 +1030,13 @@ export function SheetTable(props: {
                       near={near()}
                       editing={editingProp()?.rowId === row.id && editingProp()?.field === field}
                       initial={editingProp()?.initial ?? ""}
+                      resolveDraft={() => {
+                        const draft = editingProp();
+                        return draft?.rowId === row.id && draft.field === field ? draft.resolve()?.id ?? null : null;
+                      }}
+                      updateDraft={(initial) => setEditingProp(draft => draft?.rowId === row.id && draft.field === field ? { ...draft, initial } : draft)}
                       openPropInput={openPropInput}
-                      closePropInput={() => setEditingProp(null)}
+                      closePropInput={closePropInput}
                       freezeColumns={captureStableColumns}
                     />
                   )}
@@ -1231,6 +1250,8 @@ function FieldCell(props: {
   near: boolean;
   editing: boolean;
   initial: string;
+  resolveDraft: () => string | null;
+  updateDraft: (value: string) => void;
   openPropInput: (rowId: string, field: FieldId, initial?: string) => void;
   closePropInput: () => void;
   freezeColumns: () => void;
@@ -1263,19 +1284,23 @@ function FieldCell(props: {
       setInputInvalid(true);
       return false;
     }
-    if (editable()) writeFieldVisibly(props.row.id, props.field, value);
+    const target = props.resolveDraft();
+    if (!target) { noticeChangedResults(1); return false; }
+    if (!writeFieldVisibly(target, props.field, value)) return false;
     props.closePropInput();
     setInputInvalid(false);
     return true;
   };
   const openEnumMenu = (e: MouseEvent, values: readonly string[]) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const resolve = resultWriteTarget(props.row);
+    const write = (value: string) => { const target = resolve(); if (target) writeFieldVisibly(target, props.field, value); };
     openActionContextMenu(rect.left, rect.bottom + 4, [
       ...values.map((label): ContextMenuAction => ({
         label,
-        run: () => writeFieldVisibly(props.row.id, props.field, label),
+        run: () => write(label),
       })),
-      { label: "Clear", run: () => writeFieldVisibly(props.row.id, props.field, "") },
+      { label: "Clear", run: () => write("") },
     ]);
   };
 
@@ -1291,7 +1316,7 @@ function FieldCell(props: {
     else if (props.field === "priority") cycleField(props.row.id, "priority");
     else if (props.field === "scheduled" || props.field === "deadline") {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      openDatePicker(props.row.id, props.field, rect.left, rect.bottom + 4);
+      openDatePicker(props.row.id, props.field, rect.left, rect.bottom + 4, resultWriteTarget(props.row));
     }
     else if (props.field.startsWith("prop:")) {
       const type = props.fieldType;
@@ -1300,7 +1325,7 @@ function FieldCell(props: {
         writeFieldVisibly(props.row.id, props.field, cur === "true" ? "false" : "true");
       } else if (type === "date" || type === "datetime") {
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        openDatePicker(props.row.id, { field: props.field as `prop:${string}`, fieldType: type }, rect.left, rect.bottom + 4);
+        openDatePicker(props.row.id, { field: props.field as `prop:${string}`, fieldType: type }, rect.left, rect.bottom + 4, resultWriteTarget(props.row));
       } else if (isEnumFieldType(type)) {
         openEnumMenu(e, type.enum);
       }
@@ -1416,6 +1441,7 @@ function FieldCell(props: {
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           onInput={(e) => {
+            props.updateDraft(e.currentTarget.value);
             if (props.fieldType !== "number") return;
             const trimmed = e.currentTarget.value.trim();
             setInputInvalid(!!trimmed && !isPlainDecimalNumber(trimmed));

@@ -7,6 +7,7 @@ import { readOr, readLatestOr } from "./resourceRead";
 import { bindingIdentity } from "./binding";
 import type { BlockDto, RefGroup } from "./types";
 import { adoptResults, captureResultsTicket, resultsEpoch, resultsSettled } from "./queryResultsEpoch";
+import { resultDrafts } from "./queryResultDrafts";
 
 export function blocksContainEdit(blocks: BlockDto[], id: string): boolean {
   return blocks.some((block) => block.id === id || blocksContainEdit(block.children, id));
@@ -37,6 +38,7 @@ export function createMembershipResource<S, T>(
   let release = 0;
   let alive = true;
   let resolvedScope = "";
+  let answered: { input: S | undefined | null | false; scope: string; revision: number; epoch: number; release: number; guarded: boolean } | undefined;
   onCleanup(() => { alive = false; });
   const inputs = createMemo(source);
   const currentScope = () => `${bindingIdentity()}\0${graphEpoch()}\0${identity()}`;
@@ -54,6 +56,8 @@ export function createMembershipResource<S, T>(
       snapshot = undefined;
       retained = undefined;
     }
+    const draft = snapshot === undefined ? undefined : resultDrafts().find(draft => untrack(() => contains(snapshot!, draft.id)));
+    if (draft) return { input, scope, revision, epoch, settled, guarded, release, held: true };
     if (retained && guarded && retained.epoch !== epoch) { retained = undefined; release++; }
     if (id && snapshot !== undefined && (!guarded || snapshotEpoch === epoch) && untrack(() => contains(snapshot!, id))) {
       retained = { id, page: untrack(() => docNode(id)?.page), epoch };
@@ -78,6 +82,12 @@ export function createMembershipResource<S, T>(
   const [resource, actions] = createResource(
     () => runnable()?.input && runnable()?.settled ? runnable() : undefined,
     async (started) => {
+      // A permission gate (e.g. clean host Open) does not change the question or
+      // its answer. Reuse this resource's current snapshot, without an IPC read.
+      if (answered && snapshot !== undefined && answered.scope === started.scope
+        && answered.input === started.input && answered.revision === started.revision
+        && answered.epoch === started.epoch && answered.release === started.release
+        && answered.guarded === started.guarded) return snapshot;
       const owner = graphOwner(() => alive && request().scope === started.scope
         && !request().held && runnable() === started);
       if (request().held) return snapshot;
@@ -88,6 +98,7 @@ export function createMembershipResource<S, T>(
       if (runnable() !== started) return undefined;
       if (started.guarded && adoptResults(result.value, ticket) === undefined) return undefined;
       snapshot = result.value;
+      answered = started;
       snapshotEpoch = ticket.epoch;
       resolvedScope = started.scope;
       return result.value;

@@ -3,6 +3,7 @@ import { QueryResultTask, openQueryResult } from "./QueryResultTask";
 import { displayLimitThrough, sheetCellMenu } from "../sheet/interactions";
 import { cellIsSelected } from "../sheet/selection";
 import { clearOnBindingInvalidated } from "../binding";
+import { resultWriteTarget } from "./queryResultIdentity";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { blockPageReadOnly, formatForBlock, formatForPage, readPageProperty, readPageProperties, node as docNode } from "../document";
@@ -806,7 +807,7 @@ function BoardCard(props: {
     if (field === "priority") cycleField(props.row.id, "priority");
     else if (field === "scheduled" || field === "deadline") {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      openDatePicker(props.row.id, field, rect.left, rect.bottom + 4);
+      openDatePicker(props.row.id, field, rect.left, rect.bottom + 4, resultWriteTarget(props.row));
     }
   };
   const openCellMenu = (e: MouseEvent) => {
