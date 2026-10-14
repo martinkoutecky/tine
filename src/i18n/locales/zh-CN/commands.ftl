@@ -92,6 +92,7 @@ command-go-search-selection = 搜索选中的文本
 command-select-copy-block-ref = 复制所选块的块引用
 command-editor-duplicate-block = 在下方复制块（含子块）
 command-editor-insert-child-block = 插入子块
+command-editor-select-embedding-block = 选择嵌入所在块
 command-editor-collapse-children = 折叠子块（一层）
 command-editor-expand-children = 展开子块（一层）
 command-editor-paste-as-link = 粘贴为链接

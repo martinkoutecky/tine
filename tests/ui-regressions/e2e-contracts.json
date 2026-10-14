@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-reference-batch.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Aliases preview their source title and properties; task marker pages expose source-backed task toggles; Favorites block rows open their block and derive their star without config block entries.","blocking":true}],
+      "acceptableVariations":["Preview positioning, result order, emoji rendering and publication latency may vary while source identity, saved task state and favorite membership remain correct."],
+      "nonRequirements":["Editing in previews, toolbar deletion, exact pixels, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-panes-keys.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Remapped tab, editing and search commands reach their intended surface; reopening sidebar cards promotes one card; Alt bullet zoom and empty sidebar drops preserve their block target.","blocking":true},{"class":"flexible-presentation-heuristic","userOutcome":"Hovering workspace and tab menus allows pointer travel into the menu before choosing an item.","blocking":false}],
       "acceptableVariations":["Hover delays, menu geometry, focus styling and save latency may vary while the semantic journeys complete."],
@@ -13,10 +19,13 @@
       "nonRequirements":["Exact pixels, native screenshots, Tuta-specific clipboard negotiation or certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
-    "scripts/e2e-reference-batch.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Aliases preview their source title and properties; task marker pages expose source-backed task toggles; Favorites block rows open their block and derive their star without config block entries.","blocking":true}],
-      "acceptableVariations":["Preview positioning, result order, emoji rendering and publication latency may vary while source identity, saved task state and favorite membership remain correct."],
-      "nonRequirements":["Editing in previews, toolbar deletion, exact pixels, or native certification outside Linux WebKitGTK."],
+    "scripts/e2e-editor-context.mjs": {
+      "contracts": [
+        {"class":"stateful-ux","userOutcome":"Editing an embedded mixed-code region leaves surrounding prose visible, and Select embedding block leaves that source editor and selects its macro host.","blocking":true},
+        {"class":"stateful-ux","userOutcome":"Scrolling a nested outline exposes pinned offscreen ancestors, clicking one returns to it, and the device setting turns pinning off and on.","blocking":true}
+      ],
+      "acceptableVariations":["Fonts, theme, observer delivery and geometry may vary while code stays in its region, surrounding content remains visible and ancestors remain reachable."],
+      "nonRequirements":["Exact pixels, certification beyond Linux WebKitGTK, or changing source Move Up/Down semantics."],
       "stability":"burn-in"
     },
     "scripts/e2e-template-collapse.mjs": {

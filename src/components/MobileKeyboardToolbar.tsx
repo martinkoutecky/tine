@@ -198,6 +198,8 @@ export function MobileKeyboardToolbar(): JSX.Element {
     dockTop(); // re-measure when the keyboard/dock moves
     const root = typeof document !== "undefined" ? document.documentElement : null;
     if (!root) return;
+    // The editing dock replaces the bottom navigation row while it is up.
+    root.toggleAttribute("data-mobile-editing-dock", shown);
     if (!shown) {
       root.style.removeProperty("--mobile-kb-toolbar-lift");
       return;
@@ -213,6 +215,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
   onCleanup(() => {
     if (typeof document !== "undefined") {
       document.documentElement.style.removeProperty("--mobile-kb-toolbar-lift");
+      document.documentElement.removeAttribute("data-mobile-editing-dock");
     }
   });
 

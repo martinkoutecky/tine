@@ -36,6 +36,7 @@ export interface MessageArgs {
   "command-editor-select-all": {};
   "command-editor-select-block-down": {};
   "command-editor-select-block-up": {};
+  "command-editor-select-embedding-block": {};
   "command-editor-strike-through": {};
   "command-editor-toggle-undo-redo-mode": {};
   "command-editor-undo": {};
@@ -110,6 +111,9 @@ export interface MessageArgs {
   "links-open-custom-scheme-title": { "scheme": string | number };
   "links-outside-graph-title": {};
   "media-youtube-timestamp-seek": {};
+  "navigation-search": {};
+  "navigation-search-title": {};
+  "navigation-sidebar-title": {};
   "pages-all-column-journal-date": {};
   "pages-all-column-page": {};
   "pages-all-column-updated": {};
@@ -153,6 +157,8 @@ export interface MessageArgs {
   "references-search-unlinked": {};
   "references-summary": { "shown": string | number; "total": string | number };
   "references-unlinked": {};
+  "setting-sticky-parents": {};
+  "setting-sticky-parents-hint": {};
   "settings-about-store-updates": {};
   "settings-embed-breadcrumbs": {};
   "settings-embed-breadcrumbs-hint": {};
@@ -166,6 +172,8 @@ export interface MessageArgs {
   "shell-tray-capture": {};
   "shell-tray-open": {};
   "shell-tray-quit": {};
+  "sticky-parents-load-error": {};
+  "sticky-parents-save-error": {};
   "toast-copied": {};
   "toast-copy": {};
   "toast-copy-failed": {};

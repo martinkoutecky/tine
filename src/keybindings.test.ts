@@ -44,9 +44,11 @@ it("keeps unbound commands in the palette and offers reset zoom and pane control
   expect(defaults["ui/reset-zoom"]).toBe("");
   expect(defaults["pane/toggle-maximize"]).toBe("mod+alt+m");
   expect(defaults["pane/grow-width"]).toBe("");
+  expect(defaults["editor/select-embedding-block"]).toBe("");
   installFakeWindow();
   const dispose = installKeybindings({ "go/home": "false" });
   expect(paletteCommands().find((command) => command.id === "go/home")?.binding).toBe("");
+  expect(paletteCommands().find((command) => command.id === "editor/select-embedding-block")?.label).toBe("Select embedding block");
   dispose();
   restoreFakeGlobals?.();
 });

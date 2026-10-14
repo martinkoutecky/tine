@@ -26,6 +26,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Markdown quote and callout collapse metadata stays outside quoted content (GH #684).
 - Clicking an in-block Markdown task list checkbox toggles its item without entering edit mode (GH #683).
 - Android image paste can read content-URI clipboard bytes when the WebView exposes an empty file, while retaining the 64 MiB limit (GH #654); selecting text in another block on mobile opens its editor with the selection and docked formatting toolbar (GH #375).
+- Mobile Search, sidebar and page-history actions are reachable from a bottom navigation row (GH #598, GH #160); holding a page reference or tag opens the shared page preview without navigating (GH #655).
+- Scrolling nested outlines keeps offscreen ancestors pinned through the root, with a desktop/mobile setting (GH #643).
+- The unbound **Select embedding block** command selects an embed's macro host for ordinary block shortcuts (GH #641).
+- Date pickers omit the redundant apply/cancel help line (GH #667).
+- Editing a code region after a soft break preserves the surrounding layout; bare references render its code cards (GH #510).
 - Task-marker pages include their tasks in editable Linked References (GH #487).
 - Reference headers place copy beside filter; Unlinked References has independent text and facet filters (GH #398).
 - Read-only hover previews show the source title and page properties and offer source-page and block navigation (GH #363, GH #417, GH #674).

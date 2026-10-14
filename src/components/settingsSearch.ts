@@ -31,6 +31,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: "Show brackets", description: "page references config shortcut" },
   { tab: "appearance", label: "Typographic replacements", description: "arrows dashes glyphs" },
   { tab: "appearance", label: "Wrap code lines", description: "code blocks line wrapping long lines" },
+  { tab: "appearance", label: msg("setting-sticky-parents"), description: msg("setting-sticky-parents-hint"), aliases: ["sticky", "ancestors", "bullets", "scroll"] },
   { tab: "appearance", label: "Auto-pair brackets & quotes", description: "closers selections backspace" },
   { tab: "appearance", label: "Space after inserting a reference", description: "page block autocomplete spacing" },
   { tab: "appearance", label: "Dim in focus mode", description: "inactive blocks" },
