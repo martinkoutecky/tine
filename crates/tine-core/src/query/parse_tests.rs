@@ -466,6 +466,35 @@ fn gh542_contains_narrowed_marker_lowers_to_a_task_leaf() {
     assert_eq!(view.sort, vec![(Field::new("priority"), SortDir::Asc)]);
 }
 
+#[test]
+fn gh690_next_lowers_one_direct_journal_reference() {
+    let source = r#"{:query [:find (pull ?h [*]) :in $ ?start ?next :where
+        [?h :block/marker ?marker] [?h :block/ref-pages ?p]
+        [?p :block/journal? true] [?p :block/journal-day ?d]
+        [(> ?d ?start)] [(< ?d ?next)]
+        [(contains? #{"NOW" "LATER" "TODO"} ?marker)]] :inputs [:today :14d-after]}"#;
+    let (query, _, ignored) = advanced_pred(source, None, TODAY);
+    assert!(ignored.is_empty(), "{ignored:?}");
+    assert!(query.unwrap().filter.any_leaf(&mut |leaf| matches!(
+        leaf,
+        crate::query::ir::Leaf::Rel {
+            rel: Rel::DirectRefs,
+            ..
+        }
+    )));
+    for extra in [
+        "[?p :block/name ?name]",
+        "[?other :block/ref-pages ?p]",
+        "[?h :block/scheduled ?d]",
+        "[(unknown ?p)]",
+        "[(unknown ?d)]",
+    ] {
+        let variant = source.replace("[(> ?d ?start)]", &format!("{extra} [(> ?d ?start)]"));
+        let (_, _, ignored) = advanced_pred(&variant, None, TODAY);
+        assert!(!ignored.is_empty(), "must refuse {extra}");
+    }
+}
+
 /// REG-OG-C5-Q-RESULT-TRANSFORM (Martin 2026-10-11): only OG's exact NOW
 /// priority sort is recognised. A transform that changes the result set, its
 /// order otherwise, or the missing-priority default still refuses the query

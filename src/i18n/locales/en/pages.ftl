@@ -19,3 +19,6 @@ pages-all-count = { $count ->
 pages-all-filtered-count = { NUMBER($count, useGrouping: 0) } of { NUMBER($total, useGrouping: 0) } pages
 # $count (number): pages beyond the sidebar's visible limit.
 pages-all-open-more = +{ NUMBER($count, useGrouping: 0) } more — open the full list…
+config-query-title = Query
+config-query-unsupported = Tine can't run this query from config.edn yet.
+config-query-details = Technical details

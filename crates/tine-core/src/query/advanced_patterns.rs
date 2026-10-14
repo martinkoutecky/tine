@@ -12,6 +12,8 @@ use crate::date::JournalDate;
 
 #[path = "advanced_joins.rs"]
 mod joins;
+#[path = "advanced_ref_journals.rs"]
+mod ref_journals;
 use joins::{lower_current_page_patterns, lower_date_disjunctions, lower_named_page_query};
 
 /// Collect balanced `(...)`/`[...]` groups at the top level of `s` (string-aware),
@@ -336,6 +338,11 @@ pub(super) fn lower_attribute_patterns(
     };
     let active: Vec<usize> = (0..groups.len()).filter(|i| !taken.contains(i)).collect();
 
+    let (ref_filters, ref_patterns) =
+        ref_journals::lower_ref_journal_patterns(groups, taken, block, inputs);
+    lowered.extend(ref_filters);
+    consumed.extend(ref_patterns);
+
     // The cookbook's built-in `missing?` is an attribute absence test.
     for &index in &active {
         let Some(body) = edn_body(&groups[index], '[', ']') else {
@@ -388,6 +395,9 @@ pub(super) fn lower_attribute_patterns(
     let mut bindings: std::collections::HashMap<String, (usize, AdvTarget, Attr, &'static str)> =
         std::collections::HashMap::new();
     for &index in &active {
+        if consumed.contains(&index) {
+            continue;
+        }
         let Some([subject, attribute, object]) = triple(&groups[index]) else {
             continue;
         };

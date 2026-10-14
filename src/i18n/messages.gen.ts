@@ -108,6 +108,9 @@ export interface MessageArgs {
   "command-ui-toggle-theme": {};
   "command-ui-toggle-wide-mode": {};
   "command-window-open-in-new-window": {};
+  "config-query-details": {};
+  "config-query-title": {};
+  "config-query-unsupported": {};
   "css-draft-recovered": {};
   "css-edit-global": {};
   "css-edit-graph": {};

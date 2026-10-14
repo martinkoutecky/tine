@@ -401,6 +401,9 @@ mod journal_guide_tests {
             "Config edits apply live",
             "Graph code is never executed",
             "a query with no results shows nothing",
+            "strictly after today and strictly before 14 days ahead",
+            "A reference on a parent block does not include its children",
+            "Technical details",
         ] {
             assert!(
                 text.contains(required),

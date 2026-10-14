@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-gh690-journal-queries.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Today's journal renders OG NOW in priority order, both own-page and older direct-reference NEXT ranges, and a plain titled refusal with closed details; returning to Journals and external task edits keep results current.","blocking":true}],
+      "acceptableVariations":["Layout, glyphs and publication timing may vary while the task membership, priority order and disclosure state remain correct."],
+      "nonRequirements":["Exact pixels, cross-platform native certification or a general Datalog join engine."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh671-journal-startup.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Journals opens with the reporter's daily template on a fresh day, keeps existing journal content, and remains available through routed-day navigation, return and cold reopen.","blocking":true}],
       "acceptableVariations":["Heading classes, startup timing and layout may vary while the expected journal content is visible and existing files remain unchanged."],
