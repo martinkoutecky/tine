@@ -5,7 +5,13 @@ import json, subprocess, sys
 
 OUT = sys.argv[1]
 ev = json.load(open(f"{OUT}/events.json"))
-segs = sorted(ev["segments"], key=lambda s: s["start"])
+raw_d = float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                       "-of", "csv=p=0", f"{OUT}/raw.mp4"], text=True))
+shift = raw_d - 0.3 - ev["t_home"]  # recording clock = event clock + shift (aligned at the Home press)
+print(f"raw duration {raw_d:.2f}s, t_home {ev['t_home']:.2f}s -> shift {shift:+.2f}s")
+segs = sorted(({**s, "start": s["start"] + shift, "end": s["end"] + shift} for s in ev["segments"]),
+              key=lambda s: s["start"])
+segs = [{**s, "start": max(0.0, s["start"])} for s in segs]
 # merge overlaps (keep first caption)
 merged = []
 for s in segs:
@@ -39,8 +45,8 @@ font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 dt = []
 for (a, b, text) in caps:
     t = text.replace(":", "\\:").replace("'", "")
-    dt.append(f"drawtext=fontfile={font}:text='{t}':fontcolor=white:fontsize=30:box=1:boxcolor=black@0.62:"
-              f"boxborderw=14:x=(w-text_w)/2:y=h-130:enable='between(t,{a:.3f},{b:.3f})'")
+    dt.append(f"drawtext=fontfile={font}:text='{t}':fontcolor=white:fontsize=34:box=1:boxcolor=black@0.62:"
+              f"boxborderw=14:x=(w-text_w)/2:y=84:enable='between(t,{a:.3f},{b:.3f})'")
 fc.append(chain)
 fc.append("[cat]" + ",".join(dt) + ",format=yuv420p[out]")
 subprocess.check_call(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{OUT}/raw.mp4",

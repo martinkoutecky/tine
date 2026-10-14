@@ -151,24 +151,20 @@ time.sleep(1.5)
 try:
     sh(f"monkey -p {PKG} -c android.intent.category.LAUNCHER 1")
     # 1. first run: tap "Open an existing graph"
-    step("Open an existing graph", "1  Tine opens: tap Open an existing graph", pre=2.2, post=1.0, tag="welcome")
+    step("Open an existing graph", "1  Open a graph folder", pre=1.6, post=0.9, tag="welcome")
 
     # 2. system All files access page
     node, b = wait_for("Allow access to manage all files", tag="allfiles-settings")
     time.sleep(0.8)
-    t0 = now()
-    sw = [h for h in nodes(dump("settings-switch")) if h[0].get("class", "").endswith("Switch")]
-    if sw:
-        tap_bounds(sw[0][1])
-    else:
-        tap_bounds(b)
-    time.sleep(1.3)
-    keep(t0 - 1.6, now(), "2  Android asks for All files access: switch it on for Tine")
+    t_tap = now()
+    tap_bounds(b)  # the whole row toggles the switch
+    time.sleep(1.8)
+    keep(t_tap - 1.8, now(), "2  Allow \u201cAll files access\u201d")
     sh("input keyevent KEYCODE_BACK")
     time.sleep(1.0)
 
     # 3. back in Tine, open again -> system folder picker
-    step("Open an existing graph", "3  Back in Tine: open again, pick the notes folder", pre=0.8, post=1.5, tag="welcome2")
+    step("Open an existing graph", "3  Pick the notes folder", pre=0.8, post=1.5, tag="welcome2")
 
     # picker navigation
     wait_for("Documents", tag="picker-start", timeout=60)
@@ -179,7 +175,7 @@ try:
             break
         h = find(root, "Documents", exact=True)
         if h:
-            t = now(); tap_bounds(h[0][1]); time.sleep(1.4); keep(t - 0.8, now(), "3  Back in Tine: open again, pick the notes folder")
+            t = now(); tap_bounds(h[0][1]); time.sleep(1.4); keep(t - 0.8, now(), "3  Pick the notes folder")
             continue
         h = find(root, "Show roots")
         if h:
@@ -188,9 +184,9 @@ try:
     root = dump("picker-found")
     h = find(root, "Tine demo", exact=True)
     tap_bounds(h[0][1]); time.sleep(1.5)
-    keep(t - 0.6, now(), "3  Back in Tine: open again, pick the notes folder")
-    step("Use this folder", "3  Back in Tine: open again, pick the notes folder", pre=1.0, post=1.3, tag="use-folder")
-    step("Allow", "3  Back in Tine: open again, pick the notes folder", pre=0.8, post=0.8, tag="allow-dialog", exact=False)
+    keep(t - 0.6, now(), "3  Pick the notes folder")
+    step("Use this folder", "3  Pick the notes folder", pre=1.0, post=1.3, tag="use-folder")
+    step("Allow", "3  Pick the notes folder", pre=0.8, post=0.8, tag="allow-dialog", exact=False)
 
     # 4. graph opens
     wait_for("Tine demo", timeout=150, tag="graph-open")
@@ -208,8 +204,8 @@ try:
     wait_for("Morning review", timeout=60, tag="journal")
     t = now()
     time.sleep(2.2)
-    keep(t - 0.4, now(), "4  Tine opens your notes in place")
-    step("Field Guide", "4  Tine opens your notes in place", pre=0.3, post=2.6, tag="to-page")
+    keep(t - 0.4, now(), "4  Tine opens it in place")
+    step("[[Seed Workshop]]", "4  Tine opens it in place", pre=0.3, post=2.6, tag="to-page", exact=True)
     status = "ok"
 except Exception as e:  # keep the evidence either way
     status = f"FAILED: {e!r}"
@@ -217,7 +213,11 @@ except Exception as e:  # keep the evidence either way
     dump("failure")
     shot("failure")
 
-time.sleep(0.5)
+# End on a visible change (Home) so the recording's last frame time ~ this instant,
+# which lets post.py align the recording clock to ours from the END of the file.
+sh("input keyevent KEYCODE_HOME", check=False)
+t_home = now()
+time.sleep(1.5)
 sh("pkill -2 screenrecord", check=False)
 try:
     rec.wait(timeout=30)
@@ -225,7 +225,7 @@ except subprocess.TimeoutExpired:
     rec.kill()
 time.sleep(1.5)
 adb("pull", "/sdcard/raw.mp4", f"{OUT}/raw.mp4")
-json.dump({"status": status, "segments": segments}, open(f"{OUT}/events.json", "w"), indent=1)
+json.dump({"status": status, "t_home": t_home, "segments": segments}, open(f"{OUT}/events.json", "w"), indent=1)
 sh("logcat -d -s Tine/FolderPicker:I chromium:I | tail -80 > /sdcard/tine.log", check=False)
 with open(f"{OUT}/logcat-tine.txt", "w", errors="replace") as f:
     f.write(subprocess.run(["adb", "logcat", "-d", "-b", "all", "-t", "6000"], capture_output=True, text=True, errors="replace").stdout)
