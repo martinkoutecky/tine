@@ -1,4 +1,9 @@
 css-editor-title = CSS editor
+update-mac-not-restored = The update could not install or restore your previous app. Look for { $bundle } beside the original app or in your home folder; if both folders are unwritable, the updater keeps its temporary backup. Open the previous version to recover, or download and replace the app manually. Opening the releases page.
+update-mac-install-failed = The update could not install. If the previous app could not be restored, look for { $bundle } beside the original app or in your home folder; if both folders are unwritable, the updater keeps its temporary backup. Download and replace the app manually. Opening the releases page.
+update-mac-backup-location = Your previous app was saved at: { $path }
+update-installed-restart = The update is installed. Restart to use the new { $name } version; your changes will be saved before restarting.
+update-restart = Restart
 css-draft-recovered = Recovered your unsaved CSS draft. Save still checks the original file revision; copy your text before reloading from disk.
 css-global-file = Global CSS (global.css)
 css-graph-file = logseq/custom.css

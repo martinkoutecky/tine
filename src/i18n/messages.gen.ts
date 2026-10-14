@@ -1766,9 +1766,14 @@ export interface MessageArgs {
   "update-failure-stage": { "stage": string | number };
   "update-failure-summary": { "phase": string | number; "stage": string | number };
   "update-install-update": {};
+  "update-installed-restart": { "name": string | number };
   "update-is-available-but-automatic-updates-are": { "product": string | number; "version": string | number };
   "update-is-available-the-flatpak-cannot-update": { "product": string | number; "version": string | number };
   "update-is-available-you-re-on": { "current": string | number; "product": string | number; "version": string | number };
+  "update-mac-backup-location": { "path": string | number };
+  "update-mac-install-failed": { "bundle": string | number };
+  "update-mac-not-restored": { "bundle": string | number };
+  "update-restart": {};
   "update-the-update-was-downloaded-but-not-installed": {};
   "welcome-a-fast-local-outliner-for-your-logseq": {};
   "welcome-close-welcome": {};
