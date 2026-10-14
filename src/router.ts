@@ -1,3 +1,4 @@
+import { t as translate } from "./i18n";
 import { revealOutlineBlock } from "./outlineViewport";
 // Tab-based routing with per-tab navigation history. Each tab holds a back/
 // forward stack of routes; the active tab's current route drives the page view.
@@ -931,7 +932,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // this WebKitGTK build, so the tab would close without ever asking. Unpinned
     // tabs skip the await and close synchronously (no behaviour change there).
     if (t?.pinned) {
-      const confirmation = await readOwned(owner, backend().confirm(`Close pinned tab “${routeTitle(tabRoute(t))}”?`));
+      const confirmation = await readOwned(owner, backend().confirm(translate("router-close-pinned-tab", { route_title_tab_route_t: String(routeTitle(tabRoute(t))) })));
       if (confirmation.kind === "stale" || !confirmation.value) return;
     }
     if (!owner()) return;

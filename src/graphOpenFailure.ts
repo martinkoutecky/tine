@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { pushToast } from "./toasts";
 
 /** Keep a graph-open failure visible until the user can retry the exact same
@@ -8,8 +9,8 @@ import { pushToast } from "./toasts";
  * Cost: one toast; no I/O until Retry runs. */
 export function reportGraphOpenFailure(error: unknown, retry: () => void): void {
   const detail = error instanceof Error ? error.message : String(error);
-  pushToast(`Couldn't open the graph. (${detail})`, "error", {
+  pushToast(msg("graph-open-failure-couldn-t-open-the-graph", { detail: String(detail) }), "error", {
     sticky: true,
-    action: { label: "Retry", run: retry },
+    action: { label: msg("graph-open-failure-retry"), run: retry },
   });
 }

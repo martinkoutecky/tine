@@ -1,3 +1,4 @@
+import { msg } from "../../i18n";
 import { blockWritable, pageWritable, rawWithInheritedOrderListType, writeCollapsed } from "./properties";
 import { doc, docHasBlockIdentity, formatForBlock, setDoc, freshId, type DocState, formatForPage, pageByName } from "../model";
 
@@ -124,7 +125,7 @@ export function insertEmptyChildBlock(parentId: string, at: number): string | nu
   if (!parent || !blockWritable(parentId) || at < 0 || at > parent.children.length) return null;
   const change = outlineChange({ verb: "insert_empty_child", parent: parentId, at }, [parent.page]);
   if ("refused" in change) {
-    if (change.refused === "depth_cap") pushToast("Outline is too deep to insert a child", "error");
+    if (change.refused === "depth_cap") pushToast(msg("blocks-outline-is-too-deep-to-insert-a-child"), "error");
     return null;
   }
   pushUndo(`insert-child:${parentId}`, [parent.page]);
@@ -148,7 +149,7 @@ export function replaceChildOrders(nextByParent: Record<string, readonly string[
       const child = doc.byId[childId];
       if (!child || child.page !== parent.page) return false;
       if (!existingSubtreeFits(childId, parentId)) {
-        pushToast("Outline is too deep to move", "error");
+        pushToast(msg("blocks-outline-is-too-deep-to-move"), "error");
         return false;
       }
     }
@@ -218,7 +219,7 @@ export function splitBlock(
   }, [node.page]);
   if ("refused" in change) {
     if (change.refused !== "depth_cap") return;
-    pushToast("Outline is too deep to insert a child", "error");
+    pushToast(msg("blocks-outline-is-too-deep-to-insert-a-child"), "error");
     return false;
   }
   pushUndo("split", [node.page]);
@@ -335,7 +336,7 @@ function absorbInto(survivor: string, absorbed: string, editingSurface: string |
     [doc.byId[survivor].page, pageName],
   );
   if ("refused" in change) {
-    if (change.refused === "depth_cap") pushToast("Outline is too deep to merge", "error");
+    if (change.refused === "depth_cap") pushToast(msg("blocks-outline-is-too-deep-to-merge"), "error");
     return false;
   }
   const transferred = change.notices.some((n) => n.kind === "id_transferred");

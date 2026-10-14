@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { TableWrap } from "./TableWrap";
 import { For, Match, Switch, type JSX } from "solid-js";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
@@ -25,7 +26,7 @@ export function QueryLegacyTable(props: {
         <For each={props.cols}>
           {(c) => (
             <th onClick={() => props.sortBy(c)}>
-              {c === "block" ? "Content" : c === "page" ? "Page" : c}{props.arrow(c)}
+              {c === "block" ? t("query-legacy-table-content") : c === "page" ? t("query-legacy-table-page") : c}{props.arrow(c)}
             </th>
           )}
         </For>

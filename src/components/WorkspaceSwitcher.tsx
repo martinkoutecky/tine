@@ -1,3 +1,4 @@
+import { msg, t } from "../i18n";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingOwner, readOwned, writeOwned } from "../owned";
@@ -80,12 +81,12 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
   const remove = async (workspace: Workspace) => {
     const owner = bindingOwner();
     const name = workspaceDisplayName(workspace);
-    const confirmed = await readOwned(owner, backend().confirm(`Delete workspace “${name}”?`, "Delete workspace"));
+    const confirmed = await readOwned(owner, backend().confirm(t("workspace-switcher-delete-workspace", { name: String(name) }), "Delete workspace"));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
       await writeOwned(owner, deleteWorkspace(workspace.id));
     } catch (error) {
-      pushToast(`Couldn't delete workspace: ${String(error)}`, "error");
+      pushToast(msg("workspace-switcher-couldn-t-delete-workspace", { string_error: String(error) }), "error");
     }
   };
 
@@ -102,7 +103,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
       <button
         type="button"
         class="workspace-switcher-btn"
-        aria-label={`Workspace: ${active() ? workspaceDisplayName(active()!) : "loading"}`}
+        aria-label={t("workspace-switcher-workspace", { value: String(active() ? workspaceDisplayName(active()!) : "loading") })}
         aria-haspopup="menu"
         aria-expanded={menuOpen() || hoverOpen()}
         disabled={!workspaces().length}
@@ -122,7 +123,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
       </button>
 
       <Show when={hoverOpen() && !menuOpen()}>
-        <div class="workspace-quick-menu" role="menu" aria-label="Quick switch workspace">
+        <div class="workspace-quick-menu" role="menu" aria-label={t("workspace-switcher-quick-switch-workspace")}>
           <For each={workspaces()}>
             {(workspace) => (
               <button
@@ -140,7 +141,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
       </Show>
 
       <Show when={menuOpen()}>
-        <div class="workspace-menu" role="menu" aria-label="Workspaces">
+        <div class="workspace-menu" role="menu" aria-label={t("workspace-switcher-workspaces")}>
           <For each={workspaces()}>
             {(workspace) => (
               <div class="workspace-menu-row" classList={{ active: workspace.id === activeWorkspaceId() }}>
@@ -150,21 +151,17 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
                 <button
                   type="button"
                   class="workspace-menu-action"
-                  aria-label={`Rename ${workspaceDisplayName(workspace)}`}
-                  title="Rename"
+                  aria-label={t("workspace-switcher-rename", { value: String(workspaceDisplayName(workspace)) })}
+                  title={t("workspace-switcher-rename-2")}
                   onClick={() => openEdit({ kind: "rename", id: workspace.id, value: workspaceDisplayName(workspace) })}
-                >
-                  Rename
-                </button>
+                >{t("workspace-switcher-rename-2")}</button>
                 <button
                   type="button"
                   class="workspace-menu-action danger"
-                  aria-label={`Delete ${workspaceDisplayName(workspace)}`}
-                  title="Delete"
+                  aria-label={t("workspace-switcher-delete", { value: String(workspaceDisplayName(workspace)) })}
+                  title={t("workspace-switcher-delete-2")}
                   onClick={() => void remove(workspace)}
-                >
-                  Delete
-                </button>
+                >{t("workspace-switcher-delete-2")}</button>
               </div>
             )}
           </For>
@@ -174,9 +171,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
             role="menuitem"
             class="workspace-new-btn"
             onClick={() => openEdit({ kind: "new", value: "" })}
-          >
-            + New workspace
-          </button>
+          >{t("workspace-switcher-new-workspace")}</button>
           <Show when={edit()} keyed>
             {(state) => (
               <form
@@ -189,7 +184,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
                 <input
                   ref={editInput}
                   class="workspace-edit-input"
-                  aria-label={state.kind === "new" ? "New workspace name" : "Workspace name"}
+                  aria-label={state.kind === "new" ? t("workspace-switcher-new-workspace-name") : t("workspace-switcher-workspace-name")}
                   value={state.value}
                   maxlength={80}
                   onInput={(event) => setEditValue(event.currentTarget.value)}
@@ -198,7 +193,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
                     if (event.key === "Escape") setEdit(null);
                   }}
                 />
-                <button type="submit" disabled={!editValue().trim()}>{state.kind === "new" ? "Create" : "Save"}</button>
+                <button type="submit" disabled={!editValue().trim()}>{state.kind === "new" ? t("workspace-switcher-create") : t("workspace-switcher-save")}</button>
               </form>
             )}
           </Show>

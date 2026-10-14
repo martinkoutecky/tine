@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 // The left sidebar's Favorites list (family 22): one flat run of rows in
 // pre-order, indented by depth. The visible index IS `data-row-index`, so a
 // drop found by elementFromPoint needs no translation, and a label row and a
@@ -79,7 +80,7 @@ export function SidebarFavorites(props: {
           const toggle = (
             <Show when={row.node.children.length > 0} fallback={<span class="nav-fav-spacer" />}>
               <button type="button" class="nav-fav-group-toggle" aria-expanded={!row.node.collapsed}
-                aria-label={row.node.collapsed ? "Expand" : "Collapse"}
+                aria-label={row.node.collapsed ? t("sidebar-favorites-expand") : t("sidebar-favorites-collapse")}
                 onClick={() => setFavoriteRowCollapsed(row.path, !row.node.collapsed)}>
                 <span class="nav-toggle-caret" classList={{ open: !row.node.collapsed }}>▸</span>
               </button>
@@ -91,11 +92,11 @@ export function SidebarFavorites(props: {
               onPointerDown={(e) => startDrag(i(), e)}>
               {toggle}
               <input class="nav-fav-group-name" size={Math.max(row.node.raw.length, 4)} value={row.node.raw}
-                aria-label={`Rename group ${row.node.raw}`}
+                aria-label={t("sidebar-favorites-rename-group", { raw: String(row.node.raw) })}
                 onChange={(e) => renameFavoriteGroup(row.path, e.currentTarget.value)} />
               {/* Deleting a group keeps its favorites (they move up), so no confirm. */}
-              <button type="button" class="nav-fav-group-delete" title="Delete this group (what it holds moves up a level)"
-                aria-label={`Delete group ${row.node.raw}`} onClick={() => deleteFavoriteGroup(row.path)}>×</button>
+              <button type="button" class="nav-fav-group-delete" title={t("sidebar-favorites-delete-this-group-what-it-holds-moves-up")}
+                aria-label={t("sidebar-favorites-delete-group", { raw: String(row.node.raw) })} onClick={() => deleteFavoriteGroup(row.path)}>×</button>
             </div>
           );
           const kind = row.node.kind ?? itemKind(name ?? "");
@@ -136,7 +137,7 @@ export function SidebarFavorites(props: {
           );
         }}
       </For>
-      <button type="button" class="nav-fav-add-group" onClick={() => addFavoriteGroup()}>+ New group</button>
+      <button type="button" class="nav-fav-add-group" onClick={() => addFavoriteGroup()}>{t("sidebar-favorites-new-group")}</button>
     </div>
   );
 }

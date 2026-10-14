@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 /** Device-local sidebar widths. Reads and changes are O(1), independent of the graph.
  * Keyboard and pointer resizing share resizeSidebar's bounds; commitSidebarWidth
  * persists the current width using the existing localStorage keys. Load/save
@@ -14,7 +15,7 @@ function loadSidebarWidth(): number {
     const v = Number(localStorage.getItem(SIDEBAR_W_KEY));
     if (v >= 180 && v <= 600) return v;
   } catch {
-    if (typeof localStorage !== "undefined") pushToast("Could not load sidebar width.", "error");
+    if (typeof localStorage !== "undefined") pushToast(msg("sidebar-sizing-could-not-load-sidebar-width"), "error");
   }
   return 246;
 }
@@ -23,7 +24,7 @@ export function persistSidebarWidth() {
   try {
     localStorage.setItem(SIDEBAR_W_KEY, String(sidebarWidth()));
   } catch {
-    pushToast("Could not save sidebar width.", "error");
+    pushToast(msg("sidebar-sizing-could-not-save-sidebar-width"), "error");
   }
 }
 
@@ -57,7 +58,7 @@ function loadRsWidth(): number {
     const v = Number(localStorage.getItem(RS_W_KEY));
     if (v >= RIGHT_MIN && v <= RIGHT_STORED_CAP) return v;
   } catch {
-    if (typeof localStorage !== "undefined") pushToast("Could not load right sidebar width.", "error");
+    if (typeof localStorage !== "undefined") pushToast(msg("sidebar-sizing-could-not-load-right-sidebar-width"), "error");
   }
   return 360;
 }
@@ -66,7 +67,7 @@ export function persistRightSidebarWidth() {
   try {
     localStorage.setItem(RS_W_KEY, String(rightSidebarWidth()));
   } catch {
-    pushToast("Could not save right sidebar width.", "error");
+    pushToast(msg("sidebar-sizing-could-not-save-right-sidebar-width"), "error");
   }
 }
 

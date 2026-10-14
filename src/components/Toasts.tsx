@@ -1,6 +1,6 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { toasts, dismissToast, pushToast, toUiText } from "../toasts";
-import { msg, render, t as tr } from "../i18n";
+import { t, msg, render, t as tr } from "../i18n";
 import { writeClipboardText } from "../clipboard";
 import { lightbox, setLightbox, lightboxGallery, lightboxIndex, setLightboxIndex } from "../ui";
 import { createImageViewerGestures, type Transform } from "../imageViewerGestures";
@@ -83,9 +83,9 @@ export function Lightbox(): JSX.Element {
     if (!src) return;
     try {
       await copyLightboxImage(src);
-      pushToast("Image copied", "success");
+      pushToast(msg("toasts-image-copied"), "success");
     } catch {
-      pushToast("Couldn't copy the image", "error");
+      pushToast(msg("toasts-couldn-t-copy-the-image"), "error");
     }
   };
   createEffect(() => {
@@ -196,8 +196,8 @@ export function Lightbox(): JSX.Element {
         </Show>
         <button
           class="lightbox-close"
-          title="Close"
-          aria-label="Close image viewer"
+          title={t("toasts-close")}
+          aria-label={t("toasts-close-image-viewer")}
           onClick={(e) => {
             e.stopPropagation();
             setMenu(null);
@@ -208,21 +208,19 @@ export function Lightbox(): JSX.Element {
         </button>
         <button
           class="lightbox-copy"
-          title="Copy image to clipboard"
+          title={t("toasts-copy-image-to-clipboard")}
           onClick={(e) => {
             e.stopPropagation();
             void copy();
           }}
-        >
-          Copy
-        </button>
+        >{t("toasts-copy")}</button>
         <Show when={menu()}>
           <div
             class="lightbox-menu"
             style={{ left: `${menu()!.x}px`, top: `${menu()!.y}px` }}
             onClick={(e) => e.stopPropagation()}
           >
-            <button onClick={() => void copy()}>Copy image</button>
+            <button onClick={() => void copy()}>{t("toasts-copy-image")}</button>
           </div>
         </Show>
       </div>

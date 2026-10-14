@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { buildPersistedSession, flushSession, parsePersistedSession, restoreSession, scheduleSessionSave, type PersistedSession } from "./session";
-import { setToasts, toasts } from "./toasts";
+import { setToasts, toasts, toUiText } from "./toasts";
+import { renderEnglish } from "./i18n";
 import { backend } from "./backend";
 import { resetStore } from "./document";
 import { resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "./panes";
@@ -33,7 +34,7 @@ describe("persisted split session", () => {
       await expect(flushSession()).rejects.toThrow("permission denied");
       await expect(flushSession()).rejects.toThrow("permission denied");
       expect(toasts().filter((toast) => toast.message.includes("Could not save session"))).toHaveLength(1);
-      expect(toasts()[0].action?.label).toBe("Retry");
+      expect(renderEnglish(toUiText(toasts()[0].action!.label))).toBe("Retry");
       expect(toasts()[0].message).toContain("permission denied");
       save.mockResolvedValue();
       toasts()[0].action?.run();

@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { sheetClickOffset, sheetCellMenu } from "../sheet/interactions";
 import { cellIsSelected, cellIsInLegacyRange } from "../sheet/selection";
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
@@ -567,9 +568,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                 const capacity = Math.max(1, Math.floor(GRID_RENDER_CELL_LIMIT / Math.max(1, renderedCols())));
                 setRowStart(Math.max(0, rowStart() - capacity));
               }}
-            >
-              Show previous rows
-            </button>
+            >{t("sheet-grid-show-previous-rows")}</button>
           </Show>
           <Show when={rowStart() + renderedRows() < rowIds().length}>
             <button
@@ -587,8 +586,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                 else setRowStart(rowStart() + renderedRows());
               }}
             >
-              {renderedRows() * renderedCols() < GRID_RENDER_CELL_LIMIT ? "Load more rows" : "Show next rows"}
-              ({rowStart() + 1}-{rowStart() + renderedRows()} of {rowIds().length})
+              {t("sheet-grid-more-rows", { load: renderedRows() * renderedCols() < GRID_RENDER_CELL_LIMIT ? 1 : 0, start: String(rowStart() + 1), end: String(rowStart() + renderedRows()), total: String(rowIds().length) })}
             </button>
           </Show>
           <Show when={columnStart() > 0}>
@@ -602,9 +600,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                 const capacity = Math.max(1, Math.floor(GRID_RENDER_CELL_LIMIT / Math.max(1, renderedRows())));
                 setColumnStart(Math.max(0, columnStart() - capacity));
               }}
-            >
-              Show previous columns
-            </button>
+            >{t("sheet-grid-show-previous-columns")}</button>
           </Show>
           <Show when={columnStart() + renderedCols() < fullColumnCount()}>
             <button
@@ -622,8 +618,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                 else setColumnStart(columnStart() + renderedCols());
               }}
             >
-              {renderedCols() * renderedRows() < GRID_RENDER_CELL_LIMIT ? "Load more columns" : "Show next columns"}
-              ({columnStart() + 1}-{columnStart() + renderedCols()} of {fullColumnCount()})
+              {t("sheet-grid-more-columns", { load: renderedCols() * renderedRows() < GRID_RENDER_CELL_LIMIT ? 1 : 0, start: String(columnStart() + 1), end: String(columnStart() + renderedCols()), total: String(fullColumnCount()) })}
             </button>
           </Show>
           <Show when={showFooter()}>
@@ -648,7 +643,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
               type="button"
               class="sheet-grid-add-col"
               classList={{ "sheet-grid-add-visible": sheetHovering() }}
-              title="Add column"
+              title={t("sheet-grid-add-column")}
               onPointerDown={stopGrowPointer}
               onMouseDown={stopGrowPointer}
               onClick={(e) => {
@@ -662,7 +657,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
               type="button"
               class="sheet-grid-add-row"
               classList={{ "sheet-grid-add-visible": sheetHovering() }}
-              title="Add row"
+              title={t("sheet-grid-add-row")}
               onPointerDown={stopGrowPointer}
               onMouseDown={stopGrowPointer}
               onClick={(e) => {
@@ -748,7 +743,7 @@ function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixC
       <Show when={props.cell.blockId}>
         <button
           class="sheet-cell-handle"
-          title="Cell menu"
+          title={t("sheet-grid-cell-menu")}
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();

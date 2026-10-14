@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 import { batch } from "solid-js";
 import { backend } from "../backend";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner } from "../owned";
@@ -76,14 +77,14 @@ export async function renamePageOnDisk(
     try {
       result = await writeOwned(owner, backend().renamePage(from, to, "rename-page", target?.path, mergeInto, prepared));
     } catch (error) {
-      if (!owner()) pushToast(`Rename failed: ${String(error)}`, "error");
+      if (!owner()) pushToast(msg("graph-rewrite-rename-failed", { string_error: String(error) }), "error");
       throw error;
     }
     if (result.kind === "stale") return "uncertain";
     if (result.value.outcome === "unchanged") return "unchanged";
     // og 21a (master a8fd4230d): files mid-merge keep their old references.
     const skipped = result.value.skipped_conflicted_referrers ?? [];
-    if (skipped.length) pushToast(`${skipped.length === 1 ? "One page still mid-merge keeps" : `${skipped.length} pages still mid-merge keep`} ${skipped.length === 1 ? "its" : "their"} references to “${from}”: ${skipped.join(", ")}. Resolve the merge, then update them.`, "warn", { sticky: true });
+    if (skipped.length) pushToast(msg("graph-rewrite-conflicted-referrers", { count: skipped.length, page: from, files: skipped.join(", ") }), "warn", { sticky: true });
     // The rename moved `:default-home` in its own transaction (OG
     // `rename-page-aux`); an own write raises no config event, so take it in.
     const home = result.value.home_page;

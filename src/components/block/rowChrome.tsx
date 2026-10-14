@@ -1,3 +1,4 @@
+import { t } from "../../i18n";
 import { createMemo, type JSX } from "solid-js";
 import { collapsibleDescendantIds, node as docNode, setCollapsedDescendants } from "../../document";
 import type { CollapseSurfaceApi } from "../Block";
@@ -79,10 +80,10 @@ export function CollapseAllBorder(props: { id: string; readOnly: boolean; surfac
     <button
       type="button"
       class="block-children-left-border"
-      aria-label={hasCollapsedDescendant() ? "Expand all descendants" : "Collapse all descendants"}
+      aria-label={hasCollapsedDescendant() ? t("row-chrome-expand-all-descendants") : t("row-chrome-collapse-all-descendants")}
       aria-expanded={!hasCollapsedDescendant()}
       disabled={collapsibleDescendants().length === 0 || (props.readOnly && !collapseSurface)}
-      title={hasCollapsedDescendant() ? "Expand all descendants" : "Collapse all descendants"}
+      title={hasCollapsedDescendant() ? t("row-chrome-expand-all-descendants") : t("row-chrome-collapse-all-descendants")}
       onClick={(event) => {
         event.stopPropagation();
         toggleCollapsedDescendants();

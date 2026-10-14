@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Frontend half of the startup debug trace (see main.rs → "Startup debug
 // logging"). When the backend reports debug mode on (TINE_DEBUG=1 / --debug), we
 // forward the webview's own milestones and uncaught errors into the SAME backend
@@ -27,7 +28,7 @@ const HEARTBEAT_MS = 2_000;
 export function dbg(line: string): void {
   if (enabled) void backend().debugLog(line).catch(() => {
     enabled = false;
-    pushToastUnique("Debug log unavailable.", "error");
+    pushToastUnique(msg("debug-debug-log-unavailable"), "error");
   });
 }
 
@@ -106,10 +107,10 @@ export async function initDebug(): Promise<void> {
   // The persisted recorder found the previous run's session marker: it ended
   // without an orderly exit (og ADR 0058). Its events are in the report.
   if (info.previousExitUnclean) {
-    pushToast("Tine did not close cleanly last time. A privacy-safe diagnostic report is available.", "warn", {
+    pushToast(msg("debug-tine-did-not-close-cleanly-last-time-a"), "warn", {
       sticky: true,
       // ui.ts imports this module's dependents; load it only when clicked.
-      action: { label: "Diagnostics", run: () => void import("./ui").then((ui) => ui.openSettings("diagnostics")) },
+      action: { label: msg("debug-diagnostics"), run: () => void import("./ui").then((ui) => ui.openSettings("diagnostics")) },
     });
   }
   if (!info.enabled) return;
@@ -118,7 +119,7 @@ export async function initDebug(): Promise<void> {
   // on iPadOS (GH #446). Keeping both in one line makes that divergence
   // readable in a bug report.
   dbg(`frontend booted (platform=${platformKind} ua=${navigator.userAgent})`);
-  pushToast(`Debug logging is ON → ${info.path}`, "info");
+  pushToast(msg("debug-debug-logging-is-on", { path: String(info.path) }), "info");
 }
 
 /** Test-only: forget initialization and recorder availability. */

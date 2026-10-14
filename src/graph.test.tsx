@@ -1069,7 +1069,8 @@ describe("graph open failure recovery (master 9a9122b1544d)", () => {
     expect(failures).toHaveLength(1);
     expect(failures[0]!.message).toContain("disk went away");
     expect(failures[0]!.sticky).toBe(true);
-    expect(failures[0]!.action?.label).toBe("Retry");
+    const { renderEnglish } = await import("./i18n");
+    expect(renderEnglish(toastModule.toUiText(failures[0]!.action!.label))).toBe("Retry");
 
     failures[0]!.action!.run();
     await vi.waitFor(() => expect(harness.api.loadGraph).toHaveBeenCalledTimes(2));
