@@ -22,13 +22,10 @@ jobs:
         run: |
           gh release download v0.7.2 -R martinkoutecky/tine -p 'Tine_0.7.2_android-arm64.apk' -O tine.apk
           sha256sum tine.apk
-      - name: Prepare demo graph (journal files dated to the emulator's today)
+      - name: Prepare demo graph
         run: |
           cp -r play-video/graph "Tine demo"
-          today=$(date +%Y_%m_%d); yest=$(date -d yesterday +%Y_%m_%d)
-          mv "Tine demo/journals/2026_10_14.md" "Tine demo/journals/$today.md"
-          mv "Tine demo/journals/2026_10_13.md" "Tine demo/journals/$yest.md"
-          mkdir -p "Tine demo/assets"
+          mkdir -p "Tine demo/assets" out
           find "Tine demo" -type f
       - name: Run the emulator and record
         uses: reactivecircus/android-emulator-runner@v2
@@ -46,6 +43,9 @@ jobs:
             adb shell date
             adb install -r tine.apk
             adb shell mkdir -p /sdcard/Documents
+            DEV=$(adb shell date +%Y_%m_%d | tr -d '\r'); DEVY=$(adb shell date -d @$(( $(adb shell date +%s | tr -d '\r') - 86400 )) +%Y_%m_%d | tr -d '\r'); echo "device dates $DEV $DEVY"
+            [ "$DEV" = 2026_10_14 ] || mv "Tine demo/journals/2026_10_14.md" "Tine demo/journals/$DEV.md"
+            [ "$DEVY" = 2026_10_13 ] || mv "Tine demo/journals/2026_10_13.md" "Tine demo/journals/$DEVY.md"
             adb push "Tine demo" /sdcard/Documents/
             adb shell ls -R "/sdcard/Documents/Tine\ demo"
             python3 scripts/play-video/drive.py out || echo "DRIVE FAILED $?"
