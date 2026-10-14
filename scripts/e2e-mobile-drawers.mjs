@@ -271,10 +271,8 @@ await withApp(0, true, async (browser) => {
   assert(initial.viewport.width >= 370 && initial.viewport.width <= 410, "forced native width missed bounded 390px target", initial.viewport);
   assert(initial.viewport.width < 640 && initial.mode === "true", "forced process was not classified by its actual sub-640 viewport", initial);
 
-  if (initial.scrims) {
-    await browser.$(".mobile-drawer-close, .rs-close").click();
-    await waitNoDrawer(browser);
-  }
+  // UI-MOBILE-LEFT-DRAWER-STARTS-CLOSED: a phone-width launch never opens a drawer over the page.
+  assert(!initial.scrims && !initial.leftRole, "a drawer was open at phone-width launch", initial);
   const closed = await snapshot(browser);
 
   await clickToolbar(browser, "Toggle sidebar");
