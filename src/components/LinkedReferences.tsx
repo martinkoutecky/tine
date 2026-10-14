@@ -23,6 +23,9 @@ import { readOr } from "../resourceRead";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { activeSurface } from "../editorController";
+import { navigationName } from "../pageIndex";
+import { readPageProperty, setPageProperty } from "../document";
+import { parseReferenceFilters, writeReferenceFilters } from "../referenceFilters";
 
 // One identity fold for chips, filters and group merging: the old private `norm`
 // (trim + toLowerCase) split NFC/NFD and boundary-slash spellings of one page
@@ -156,12 +159,27 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
     if (searchTimer !== undefined) clearTimeout(searchTimer);
   });
   // page name -> "in" (must also reference) | "out" (must not reference).
-  const [filters, setFilters] = createSignal<FilterMap>(loadFilters(savedFilterKey()));
+  const [rawFilters, setFilters] = createSignal<FilterMap>(loadFilters(savedFilterKey()));
+  // The existing inventory owns alias precedence and live updates. Resolve at
+  // the shared identity boundary: chips, membership and legacy saved names
+  // must all ask the same answerer, never scan the graph or build an alias map.
+  const filters = createMemo<FilterMap>(() => Object.fromEntries(
+    Object.entries(rawFilters()).map(([name, state]) => [navigationName(name), state])
+  ));
+  createEffect(() => {
+    const property = props.unlinked ? null : readPageProperty(props.name, "filters");
+    setFilters(property === null ? loadFilters(savedFilterKey()) : parseReferenceFilters(property) ?? {});
+  });
+  const persistFilters = (f: FilterMap) => {
+    saveFilters(savedFilterKey(), f);
+    // Unlinked has a separate device filter; OG's page property belongs only
+    // to Linked References. All graph writes use the guarded document intent.
+    if (!props.unlinked) setPageProperty(props.name, "filters", writeReferenceFilters(f));
+  };
   // Reload the saved filter when the page changes.
   createEffect(() => {
     reloadGroupCollapse();
     setCollapsedOverrideSignal(savedCollapse());
-    setFilters(loadFilters(savedFilterKey()));
     setFilterOpen(false);
     setSearchDraft("");
     setSearchQuery("");
@@ -204,6 +222,12 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
   const rootEntry = (group: RefGroup, block: BlockDto) =>
     nativeByRoot().get(filterKey(group.page, group.kind, block.id))
       ?? fallbackByRoot().get(filterKey(group.page, group.kind, block.id))!;
+  const rootFacets = (group: RefGroup, block: BlockDto) => new Map(
+    rootEntry(group, block).facets.map((name) => {
+      const canonical = navigationName(name);
+      return [norm(canonical), canonical] as const;
+    })
+  );
 
   const parsedSearch = createMemo(() => parseSearchQuery(searchQuery(), searchRemoveAccents()));
   const searchError = createMemo(() => {
@@ -230,8 +254,9 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
     const counts = new Map<string, { name: string; count: number }>();
     for (const g of textMatchedGroups()) {
       for (const b of g.blocks) {
-        for (const name of rootEntry(g, b).facets) {
-          const key = norm(name);
+        // Count reference roots, not spellings: two aliases (or an alias and
+        // the canonical name) in one tree contribute once to this page chip.
+        for (const [key, name] of rootFacets(g, b)) {
           const previous = counts.get(key);
           counts.set(key, { name: previous?.name ?? name, count: (previous?.count ?? 0) + 1 });
         }
@@ -269,8 +294,8 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
     if (filterPending()) return mergedGroups();
     if (!ins.length && !outs.length) return textMatchedGroups();
     return filterGroups(textMatchedGroups(), (group, block) => {
-      const facets = new Set(rootEntry(group, block).facets.map(norm));
-      return (ins.length === 0 || ins.some((name) => facets.has(name)))
+      const facets = rootFacets(group, block);
+      return (ins.length === 0 || ins.every((name) => facets.has(name)))
         && outs.every((name) => !facets.has(name));
     });
   });
@@ -286,7 +311,7 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
     if (current === "in") f[name] = "out";
     else if (current !== "out") f[name] = "in";
     setFilters(f);
-    saveFilters(savedFilterKey(), f);
+    persistFilters(f);
   };
   const count = () => shown().reduce((acc, g) => acc + g.blocks.length, 0);
   const totalCount = () => mergedGroups().reduce((acc, g) => acc + g.blocks.length, 0);
@@ -313,7 +338,7 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
     setSearchDraft("");
     setSearchQuery("");
     setFilters({});
-    saveFilters(savedFilterKey(), {});
+    persistFilters({});
   };
 
   return (

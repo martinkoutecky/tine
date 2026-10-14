@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import type { JSX } from "solid-js";
 import { appearancePreference, setAppearancePreference, type ThemePreference } from "../ui";
 
@@ -14,10 +15,10 @@ export function ThemeChoice(): JSX.Element {
   return (
     <div class="theme-switch theme-switch3"
       classList={{ "is-light": appearancePreference() === "light", "is-system": appearancePreference() === "system", "is-dark": appearancePreference() === "dark" }}
-      role="radiogroup" aria-label="Appearance">
-      {option("light", "☀", "Light")}
-      {option("system", "◐", "System")}
-      {option("dark", "☾", "Dark")}
+      role="radiogroup" aria-label={t("settings-appearance")}>
+      {option("light", "☀", t("settings-theme-light"))}
+      {option("system", "◐", t("settings-theme-system"))}
+      {option("dark", "☾", t("settings-theme-dark"))}
       <span class="theme-knob" />
     </div>
   );

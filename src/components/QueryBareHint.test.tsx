@@ -12,7 +12,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
-import { Block } from "./Block";
+import { Block, SurfaceContext } from "./Block";
 import { setToasts } from "../toasts";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
@@ -129,6 +129,55 @@ const press = (shown: HTMLElement, label: string) =>
 const raw = () => doc.byId.query.raw;
 
 describe("GH #422: the on-query hint for Logseq's no-condition forms", () => {
+  it.each(["page", "journal", "org", "template", "collapsed", "sidebar"])("date-window refusal on %s converts with Undo", async (surface) => {
+    const options = surface === "collapsed" ? ' {:collapsed? true}' : "";
+    const original = `{{query (and (task TODO) (between scheduled today +7d))${options}}}`;
+    const output = `@block and task = 'TODO' and scheduled between today and '+7d'${options}`;
+    load(original);
+    if (surface === "journal") setDoc("pages", 0, "kind", "journal");
+    if (surface === "org") setDoc("pages", 0, "format", "org");
+    arrange();
+    const converted = { ...og("", list("task", ["TODO"])), source: { kind: "og" as const, original: "", og_options: options.trim() } };
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+      query: { ...converted, diagnostics: [{ kind: "syntax", message: "date window refusal" }] }, view: {},
+      og_hint: { bare: [], no_conditions: false, date_windows: true, rewrites: [{ rewrite: "convert", query: converted }] },
+    });
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue(output);
+    setDoc("byId", "query", "raw", surface === "template" ? `${original}\ntemplate:: Window` : original);
+    const before = raw();
+    const { root, dispose } = mount(() => <SurfaceContext.Provider value={surface === "sidebar" ? "rs:query" : "main"}><Block id="query" /></SurfaceContext.Provider>);
+    try {
+      const shown = await hint(root);
+      expect(shown.textContent).toContain("Logseq ignores scheduled/deadline date windows");
+      expect(root.querySelector(".query-count")?.textContent ?? "").not.toMatch(/\d/);
+      expect(root.querySelector(".query-group")).toBeNull();
+      if (surface === "collapsed") expect(root.querySelector(".query-collapse")?.classList.contains("collapsed")).toBe(true);
+      expect(raw()).toBe(before);
+      press(shown, "Convert");
+      await vi.waitFor(() => expect(raw()).toBe(before.replace(original, `{{tine-query ${output}}}`)));
+      expect(undo()).toBe(true);
+      expect(raw()).toBe(before);
+    } finally { dispose(); }
+  });
+
+  it.each(["page", "journal", "org", "template", "guide"])("date-window cue on %s cannot rewrite a read-only host", async (surface) => {
+    const original = "{{query (between deadline today +7d)}}";
+    load(original, true);
+    if (surface === "journal") setDoc("pages", 0, "kind", "journal");
+    if (surface === "org") setDoc("pages", 0, "format", "org");
+    if (surface === "guide") setDoc("pages", 0, "guide", true);
+    arrange();
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({ query: og("", list("task", ["TODO"])), view: {}, og_hint: {
+      bare: [], no_conditions: false, date_windows: true, rewrites: [{ rewrite: "convert", query: og("", list("task", ["TODO"])) }],
+    } });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      expect((await hint(root)).textContent).toContain("Logseq ignores scheduled/deadline date windows");
+      expect(buttons(await hint(root))).toEqual([]);
+      expect(raw()).toBe(original);
+    } finally { dispose(); }
+  });
   it("names a bare (task), keeps the results on screen, and rewrites to the open markers in one undo unit", async () => {
     load("{{query (task)}}");
     const { print } = arrange();

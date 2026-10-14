@@ -13,7 +13,7 @@ import { browserPlatform } from "./browserPlatform";
 
 import { openSwitcher, closeSwitcher, openCommandPalette, openDevtools, toggleTheme, toggleSidebar, openSettings, toggleHelpPopup, toggleRightSidebar, toggleWideMode, toggleDocumentMode, toggleFocusMode, toggleDimInactiveBlocks, focusMode, exitFocusMode, carryDays, showBrackets, changeShowBrackets, openPdfExport, dismissMobileDrawer } from "./ui";
 import { pushToast } from "./toasts";
-import { msg, render, renderEnglish, type UiText } from "./i18n";
+import { msg, render, renderEnglish, type UiText, type Msg } from "./i18n";
 import { customCssDisabled, setCustomCssDisabled } from "./customCss";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { zoomReset } from "./zoom";
@@ -384,7 +384,7 @@ const COMMANDS: CommandDef[] = [
     run: () => {
       const r = route();
       if (r.kind === "page") openPdfExport(r.name);
-      else pushToast("Open a page first to export it to PDF", "warn");
+      else pushToast(msg("commands-open-a-page-first-to-export-it"), "warn");
     },
   },
   { id: "ui/toggle-wide-mode", binding: "t w", label: msg("command-ui-toggle-wide-mode"), scope: "global", run: toggleWideMode },
@@ -417,7 +417,7 @@ const COMMANDS: CommandDef[] = [
     binding: "",
     label: msg("command-editor-toggle-undo-redo-mode"),
     scope: "global",
-    run: () => pushToast(`Undo/redo mode: ${toggleUndoRedoMode()}`),
+    run: () => pushToast(msg("commands-undo-redo-mode", { mode: toggleUndoRedoMode() })),
   },
   // Block commands (R2 B1). OG binds none of these, so none has a default key;
   // each acts on the block selection, else on the block being edited.
@@ -434,7 +434,7 @@ const COMMANDS: CommandDef[] = [
     binding: "",
     label: msg("command-editor-paste-as-link"),
     scope: "global",
-    run: () => { if (!dispatchFocusedEditorCommand("editor/paste-as-link")) pushToast("Select text in a block, then use Paste as link", "warn"); },
+    run: () => { if (!dispatchFocusedEditorCommand("editor/paste-as-link")) pushToast(msg("commands-select-text-in-a-block-then-use"), "warn"); },
     global: true,
   },
   // Editor commands (resolved in Block.tsx / selection handler).
@@ -480,8 +480,8 @@ export interface BuiltinKeyDef {
   id: string;
   scope: ShortcutScope;
   binding: string;
-  label: string;
-  details?: string;
+  label: Msg;
+  details?: Msg;
 }
 
 // Hardcoded keys that are intentionally not remappable. Keep this next to
@@ -491,47 +491,47 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
     id: "builtin/global/escape",
     scope: "global",
     binding: "esc",
-    label: "Close overlays or exit focus",
-    details: "Closes Search / Settings first; outside overlays, peels off block selection and focus mode.",
+    label: msg("command-builtin-global-escape"),
+    details: msg("commands-closes-search-settings-first-outside-overlays"),
   },
   {
     id: "builtin/editor/enter",
     scope: "editor",
     binding: "enter",
-    label: "New block (or newline in Document mode)",
-    details: "Normally splits the current block, continues an in-block list, or adds a sibling note under PDF annotations. In Document mode it inserts a newline unless the Document-mode Enter setting keeps this structural behavior.",
+    label: msg("command-builtin-editor-enter"),
+    details: msg("commands-normally-splits-the-current-block-continues-an"),
   },
   {
     id: "builtin/editor/soft-newline",
     scope: "editor",
     binding: "shift+enter",
-    label: "Insert a newline inside the block (or new block in Document mode)",
+    label: msg("command-builtin-editor-soft-newline"),
   },
   {
     id: "builtin/editor/escape",
     scope: "editor",
     binding: "esc",
-    label: "Leave editing and select the block",
+    label: msg("command-builtin-editor-escape"),
   },
   {
     id: "builtin/editor/backspace-start",
     scope: "editor",
     binding: "backspace",
-    label: "Merge at block start",
-    details: "At the start of a block, merges with the previous block or removes an empty block/list marker.",
+    label: msg("command-builtin-editor-backspace-start"),
+    details: msg("commands-at-the-start-of-a-block-merges"),
   },
   {
     id: "builtin/editor/arrow-cross-block",
     scope: "editor",
     binding: "up / down",
-    label: "Move across blocks at visual edges",
-    details: "From the first or last visual row, moves the caret to the previous or next visible block.",
+    label: msg("command-builtin-editor-arrow-cross-block"),
+    details: msg("commands-from-the-first-or-last-visual-row"),
   },
   {
     id: "builtin/editor/copy-block-ref",
     scope: "editor",
     binding: "mod+c",
-    label: "Copy block reference when no text is selected",
+    label: msg("command-builtin-editor-copy-block-ref"),
   },
   // GH #513 / #81. OG: `:editor/paste-text-in-one-block-at-point` (mod+shift+v,
   // handler/paste.cljs editor-on-paste-raw!). Not a remappable command: the key
@@ -541,100 +541,100 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
     id: "builtin/editor/paste-plain",
     scope: "editor",
     binding: "mod+shift+v",
-    label: "Paste as plain text (no formatting conversion)",
-    details: "Inserts the clipboard's plain text as typed, inside the current block: HTML structure is ignored and multiline text is not split into blocks. Ordinary paste keeps converting copied web content and outlines.",
+    label: msg("command-builtin-editor-paste-plain"),
+    details: msg("commands-inserts-the-clipboard-s-plain-text-as-typed"),
   },
   {
     id: "builtin/editor/ac-nav",
     scope: "editor",
     binding: "up / down",
-    label: "Autocomplete: move highlight",
+    label: msg("command-builtin-editor-ac-nav"),
   },
   {
     id: "builtin/editor/ac-accept",
     scope: "editor",
     binding: "enter / tab / shift+tab",
-    label: "Autocomplete: accept highlighted item",
+    label: msg("command-builtin-editor-ac-accept"),
   },
   {
     id: "builtin/editor/ac-close",
     scope: "editor",
     binding: "esc",
-    label: "Autocomplete: close the popup",
+    label: msg("command-builtin-editor-ac-close"),
   },
   {
     id: "builtin/select/escape",
     scope: "select",
     binding: "esc",
-    label: "Clear block selection",
+    label: msg("command-builtin-select-escape"),
   },
   {
     id: "builtin/select/move",
     scope: "select",
     binding: "up / down",
-    label: "Move the selected block range",
+    label: msg("command-builtin-select-move"),
   },
   {
     id: "builtin/select/extend",
     scope: "select",
     binding: "shift+up / shift+down",
-    label: "Extend block selection",
+    label: msg("command-builtin-select-extend"),
   },
   {
     id: "builtin/select/delete",
     scope: "select",
     binding: "backspace / delete",
-    label: "Delete selected blocks",
+    label: msg("command-builtin-select-delete"),
   },
   {
     id: "builtin/select/copy",
     scope: "select",
     binding: "mod+c",
-    label: "Copy selected outline",
+    label: msg("command-builtin-select-copy"),
   },
   {
     id: "builtin/select/cut",
     scope: "select",
     binding: "mod+x",
-    label: "Cut selected outline",
+    label: msg("command-builtin-select-cut"),
   },
   {
     id: "builtin/select/edit",
     scope: "select",
     binding: "enter",
-    label: "Edit the last selected block",
+    label: msg("command-builtin-select-edit"),
   },
   {
     id: "builtin/sheet/select-cell",
     scope: "select",
     binding: "click",
-    label: "Select a sheet cell",
-    details: "Double-click, Enter, or F2 edits the selected cell.",
+    label: msg("command-builtin-sheet-select-cell"),
+    details: msg("commands-double-click-enter-or-f2-edits-the-selected"),
   },
   {
     id: "builtin/sheet/move",
     scope: "select",
     binding: "arrow keys",
-    label: "Move sheet cell selection",
-    details: "Esc leaves a sheet; typing replaces the focused cell.",
+    label: msg("command-builtin-sheet-move"),
+    details: msg("commands-esc-leaves-a-sheet-typing-replaces-the"),
   },
   {
     id: "builtin/sheet/range",
     scope: "select",
     binding: "drag / shift+click / shift+arrows",
-    label: "Select a sheet range",
+    label: msg("command-builtin-sheet-range"),
   },
   {
     id: "builtin/sheet/copy-cut",
     scope: "select",
     binding: "mod+c / mod+x / paste",
-    label: "Copy, cut, or paste sheet cells",
+    label: msg("command-builtin-sheet-copy-cut"),
   },
   {
     id: "builtin/sheet/fill",
     scope: "select",
     binding: "mod+d / mod+r",
-    label: "Fill sheet selection down or right",
+    label: msg("command-builtin-sheet-fill"),
   },
 ];
 
@@ -654,7 +654,7 @@ function pluginCommandDefs(): CommandDef[] {
     run: () => {
       void pluginManager
         .invokeCommand(pluginId, contribution.id, pluginFocusedBlock())
-        .catch((error) => pushToast(`Plugin command failed: ${String(error)}`, "error"));
+        .catch((error) => pushToast(msg("commands-plugin-command-failed", { error: String(error) }), "error"));
     },
   }));
 }
@@ -809,7 +809,7 @@ export function paletteCommands(
     run: () => {
       void pluginManager
         .invokeCommand(pluginId, contribution.id, focusedPluginBlock ?? undefined)
-        .catch((error) => pushToast(`Plugin command failed: ${String(error)}`, "error"));
+        .catch((error) => pushToast(msg("commands-plugin-command-failed", { error: String(error) }), "error"));
     },
   }));
   return [...builtIn, ...plugins];
@@ -902,7 +902,7 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
     const ids = selectedIds();
     const text = selectionMarkdown();
     void copyBlockOutline("copy", text, buildClipboardPayload(ids))
-      .catch(() => pushToast("Couldn't copy selection: clipboard write failed.", "error"));
+      .catch(() => pushToast(msg("commands-couldn-t-copy-selection-clipboard-write-failed"), "error"));
     return true;
   }
   if (mod && e.key.toLowerCase() === "x") {
@@ -912,7 +912,7 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
     void cutBlocks(ids, text, () =>
       JSON.stringify(selectedIds()) === JSON.stringify(ids) ? selectionMarkdown(true) : "",
       () => deleteSelection())
-      .catch(() => pushToast("Couldn't cut selection: clipboard write failed.", "error"));
+      .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"));
     return true;
   }
   if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a") {

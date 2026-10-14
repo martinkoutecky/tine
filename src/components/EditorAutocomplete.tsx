@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { For, Show, createEffect, type JSX } from "solid-js";
 import { FloatingPortal } from "./FloatingPortal";
 
@@ -20,13 +21,13 @@ export function EditorAutocomplete<T extends { label: string; sub?: string }>(pr
   });
   return <FloatingPortal>
     <div class="autocomplete" ref={(element) => { list = element; props.listRef(element); }} data-lenis-prevent style={props.style}>
-      <Show when={props.blockState === "pending"}><div class="ac-item" role="status">Searching…</div></Show>
+      <Show when={props.blockState === "pending"}><div class="ac-item" role="status">{t("editor-autocomplete-searching")}</div></Show>
       <Show when={props.blockState === "error"}>
-        <div class="ac-item" role="alert">Couldn’t load blocks. <button type="button"
-          onMouseDown={(event) => event.preventDefault()} onClick={props.retry}>Retry</button></div>
+        <div class="ac-item" role="alert">{t("editor-autocomplete-couldn-t-load-blocks")}<button type="button"
+          onMouseDown={(event) => event.preventDefault()} onClick={props.retry}>{t("editor-autocomplete-retry")}</button></div>
       </Show>
       <Show when={props.blockState === "ready" && props.items.length === 0}>
-        <div class="ac-item" role="status">No matched blocks</div>
+        <div class="ac-item" role="status">{t("editor-autocomplete-no-matched-blocks")}</div>
       </Show>
       <For each={props.items}>{(item, index) => <div class="ac-item" classList={{ active: index() === props.index }}
         onMouseDown={(event) => { event.preventDefault(); props.select(item); }}>

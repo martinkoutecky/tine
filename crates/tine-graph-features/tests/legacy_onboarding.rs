@@ -463,7 +463,7 @@ fn guide_explains_hierarchy_queries_and_empty_relations() {
 /// closed (Martin 2026-10-03, UI-OG-GH619-SLASH-QUERY-CHOOSER), the query text
 /// sits behind "Edit as text" (UI-OG-GH619-EDIT-AS-TEXT), a condition can be
 /// dragged into another group (UI-OG-GH619-DRAG-BETWEEN-GROUPS), scheduled and
-/// deadline ranges print as OG's `(between scheduled …)`, and the conflicts list
+/// deadline ranges save as `{{tine-query …}}`, and the conflicts list
 /// is remembered in the launch cache.
 #[test]
 fn guide_describes_the_current_query_sheet_and_conflict_list() {
@@ -497,8 +497,9 @@ fn guide_describes_the_current_query_sheet_and_conflict_list() {
     assert!(find.contains("Drop the handle onto another group to move the condition into it"));
     assert!(!find.contains("only ever reorders within one list"));
     let model = page("Reference/Tine query model");
-    assert!(!model.contains("scheduled and deadline ranges,"));
-    assert!(model.contains("Scheduled and deadline *ranges* are not on this list"));
+    assert!(model.contains("**Tine-only features** (scheduled and deadline ranges,"));
+    assert!(model.contains("{{tine-query @block scheduled between today and '+7d'}}"));
+    assert!(!model.contains("Scheduled and deadline *ranges* are not on this list"));
     let tips = page("Features/Tips & shortcuts");
     assert!(!tips.contains("Nothing is stored"));
     assert!(tips.contains("its own disposable launch cache"));

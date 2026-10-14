@@ -1,4 +1,5 @@
 import { BlockList } from "./BlockList";
+import { t } from "../i18n";
 import { reportUiFailure } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
@@ -7,7 +8,7 @@ import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcro
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
-import { captureBinding } from "../binding";
+import { captureBinding, graphScopedSignal } from "../binding";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
 import { blockRef, isConflicted, pageLoadRefusalMessage, reportPageLoadRefusal, whenPageReplaceable, type PageLoadRefusal } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
@@ -33,7 +34,7 @@ import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay, appNow } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
-import type { JournalFeedPage, RefGroup } from "../types";
+import type { JournalFeedPage, PageRead, RefGroup } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
 import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
@@ -72,6 +73,8 @@ let publishedFeedNames: readonly string[] | null = null;
 let feedDone = false;
 let pendingFeedRestart = false;
 const feedOwners = {};
+const [upcomingFeed, setUpcomingFeed] = graphScopedSignal<{ epoch: number; pages: PageRead[] }>();
+const upcomingDays = () => upcomingFeed()?.epoch === graphEpoch() ? upcomingFeed()!.pages : [];
 /** Why the journals feed is withheld (a day's name held by another file with
  * unsaved input), shown in place of the feed until a refresh publishes. */
 const [feedRefusalIn, setFeedRefusal] = createSignal<{ epoch: number; message: string } | null>(null);
@@ -258,6 +261,7 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
       return new FeedWithheld(feedDayRefused(loaded, owner));
     }
     setFeedRefusal(null);
+    setUpcomingFeed({ epoch: owner.graphEpoch, pages: response.upcoming ?? [] });
     publishedFeedEpoch = owner.graphEpoch;
     publishedFeedNames = feedNames();
     journalAsOfDay = response.as_of_day;
@@ -556,11 +560,16 @@ export function PageView(): JSX.Element {
 
   // A deferred watcher/midnight refresh is retried only when the existing edit
   // lifecycle has advanced; it never replaces a dirty feed with a stale window.
+  let previousReferenceRev = dataRev();
   createEffect(() => {
     const route = currentRoute();
     if (route.kind !== "journals") return;
     editingId();
-    dataRev();
+    const revision = dataRev();
+    if (revision !== previousReferenceRev) {
+      previousReferenceRev = revision;
+      pendingFeedRestart = true;
+    }
     // Subscribe to every page-scoped safety gate even before a watcher marks a
     // retry pending.  That makes the corresponding release event sufficient;
     // no unrelated graph change is needed to wake a deferred feed refresh.
@@ -651,6 +660,9 @@ export function PageView(): JSX.Element {
     }>
       <Show when={zoomValid()} fallback={
         <div class="page">
+          <Show when={currentRoute().kind === "journals" && upcomingDays().length > 0}>
+            <UpcomingJournals pages={upcomingDays()} />
+          </Show>
           <For each={pagesToRender()}>
             {(p) => (
               <PageSection page={p}>
@@ -663,7 +675,7 @@ export function PageView(): JSX.Element {
                     <For each={graphMeta()?.default_journal_queries ?? []}>
                       {(query) => <div class="default-journal-query">
                         <Show when={!query.error} fallback={<div class="query-error" role="alert">{query.title ?? "Query"}: {query.error}</div>}>
-                          <QueryMacro body={query.body} title={query.title ?? undefined} currentPage={p.name} hideWhenEmpty />
+                          <QueryMacro body={query.body} title={query.title ?? undefined} currentPage={p.name} hideWhenEmpty configQuery />
                         </Show>
                       </div>}
                     </For>
@@ -731,6 +743,22 @@ export function PageView(): JSX.Element {
     </Show>
     </Show>
   );
+}
+
+function UpcomingJournals(props: { pages: PageRead[] }): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  return <details class="journal-upcoming" onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>{t("journals-upcoming")} ({props.pages.length})</summary>
+    <Show when={open()}>
+      <For each={props.pages}>{day => {
+        const [expanded, setExpanded] = createSignal(false);
+        return <details onToggle={event => setExpanded(event.currentTarget.open)}>
+          <summary><PageRef name={day.name} /></summary>
+          <Show when={expanded()}><JournalLinkedReferences name={day.name} /></Show>
+        </details>;
+      }}</For>
+    </Show>
+  </details>;
 }
 
 // OG journal-cp mounts the same references section after each day's agenda.

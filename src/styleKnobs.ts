@@ -21,7 +21,7 @@
  *  so the user's custom.css still wins. This file is the only writer of that
  *  element and of the knob classes (guarded by styleKnobs.test.ts). */
 import { createSignal } from "solid-js";
-import { t } from "./i18n";
+import { msg, renderEnglish, type Msg } from "./i18n";
 import { backend } from "./backend";
 import { readOwned, revisionOwner } from "./owned";
 import { preferenceReadCurrent, preferenceRevision, seedPreference, writePreference } from "./preferenceWrites";
@@ -33,8 +33,8 @@ export const STYLE_KNOBS_STYLE_ID = "tine-knobs";
 /** Device preference key: JSON `{ knobId: value }`. Unknown ids are kept. */
 export const STYLE_KNOBS_KEY = "style.knobs.v1";
 
-export type KnobOption = { label: string; value: string };
-type KnobBase = { id: string; title: string; description?: string };
+export type KnobOption = { label: string | Msg; value: string };
+type KnobBase = { id: string; title: string | Msg; description?: string | Msg };
 export type StyleKnob =
   | (KnobBase & { type: "heading"; level: 1 | 2 | 3 })
   /** On adds class `tine-<id>`. Off (the CSS default) is the only default. */
@@ -54,46 +54,46 @@ export type KnobOutput = { css: string; classes: string[] };
  *  variable knob's `default` is the value the stylesheet already has (the
  *  fallback in app.css), which styleKnobs.test.ts checks. */
 export const KNOBS: readonly StyleKnob[] = [
-  { id: "knobs-embeds", type: "heading", level: 2, title: "Embeds" },
+  { id: "knobs-embeds", type: "heading", level: 2, title: msg("settings-embeds") },
   {
     id: "embed-breadcrumbs", type: "class-toggle",
-    get title() { return t("settings-embed-breadcrumbs"); },
-    get description() { return t("settings-embed-breadcrumbs-hint"); },
+    title: msg("settings-embed-breadcrumbs"),
+    description: msg("settings-embed-breadcrumbs-hint"),
   },
   {
     id: "embed-shading",
     type: "class-select",
-    title: "Embedded blocks",
-    description: "Shade embedded blocks like Logseq, or show only the accent line and dot.",
+    title: msg("settings-embedded-blocks"),
+    description: msg("settings-shade-embedded-blocks-like-logseq-or-show"),
     default: "shade",
     options: [
-      { label: "Shaded box", value: "shade" },
-      { label: "Accent line and dot only", value: "accent" },
+      { label: msg("settings-shaded-box"), value: "shade" },
+      { label: msg("settings-accent-line-and-dot-only"), value: "accent" },
     ],
   },
-  { id: "knobs-links", type: "heading", level: 2, title: "Links" },
+  { id: "knobs-links", type: "heading", level: 2, title: msg("settings-links") },
   {
     id: "external-link-underline",
     type: "variable-select",
-    title: "Links to the web or a file",
-    description: "The line under a link that leaves the graph. Page links never have one, so the two kinds read differently.",
+    title: msg("settings-links-to-the-web-or-a-file"),
+    description: msg("settings-the-line-under-a-link-that-leaves"),
     default: "1px solid",
     options: [
-      { label: "Solid underline", value: "1px solid" },
-      { label: "Dotted underline", value: "1px dotted" },
-      { label: "No underline", value: "none" },
+      { label: msg("settings-solid-underline"), value: "1px solid" },
+      { label: msg("settings-dotted-underline"), value: "1px dotted" },
+      { label: msg("settings-no-underline"), value: "none" },
     ],
   },
   {
     id: "missing-page-color",
     type: "variable-select",
-    title: "Links to pages that do not exist yet",
-    description: "How strongly the dotted link to a page you have not created stands out.",
+    title: msg("settings-links-to-pages-that-do-not-exist"),
+    description: msg("settings-how-strongly-the-dotted-link-to-a"),
     default: "color-mix(in srgb, var(--link-color) 55%, var(--text-secondary))",
     options: [
-      { label: "Dimmed link color", value: "color-mix(in srgb, var(--link-color) 55%, var(--text-secondary))" },
-      { label: "Stronger", value: "color-mix(in srgb, var(--link-color) 80%, var(--text-secondary))" },
-      { label: "Same as other links", value: "var(--link-color)" },
+      { label: msg("settings-dimmed-link-color"), value: "color-mix(in srgb, var(--link-color) 55%, var(--text-secondary))" },
+      { label: msg("settings-stronger"), value: "color-mix(in srgb, var(--link-color) 80%, var(--text-secondary))" },
+      { label: msg("settings-same-as-other-links"), value: "var(--link-color)" },
     ],
   },
 ];
@@ -108,6 +108,12 @@ const DECLARED_VALUE_RE = /^[A-Za-z0-9 .,%()#+-]+$/;
 const HEX_RE = /^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
 const HEX_ALPHA_RE = /^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
 const UNITS = ["", "px", "em", "rem", "%", "ch", "vw", "vh", "deg", "ms", "s"];
+
+function sourceText(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && "kind" in value && value.kind === "msg" && "id" in value && typeof value.id === "string") return renderEnglish(value as Msg);
+  return null;
+}
 
 function declaredValueProblem(value: unknown): string | null {
   if (typeof value !== "string" || value.length === 0 || value.length > 120) return "must be 1-120 characters";
@@ -128,7 +134,8 @@ function optionProblems(knob: StyleKnob & { options: KnobOption[]; default: stri
   }
   const seen = new Set<string>();
   for (const option of knob.options) {
-    if (!option || typeof option.label !== "string" || !option.label.trim() || option.label.length > 80) problems.push(`${where}: option label must be 1-80 characters`);
+    const label = sourceText(option?.label);
+    if (!label || !label.trim() || label.length > 80) problems.push(`${where}: option label must be 1-80 characters`);
     const bad = classes ? (CLASS_VALUE_RE.test(option?.value ?? "") ? null : "must match [a-z][a-z0-9-]{0,31}") : declaredValueProblem(option?.value);
     if (bad) problems.push(`${where}: option value ${JSON.stringify(option?.value)} ${bad}`);
     if (seen.has(option?.value)) problems.push(`${where}: duplicate option value ${JSON.stringify(option?.value)}`);
@@ -153,8 +160,10 @@ export function validateKnobTable(table: readonly StyleKnob[]): string[] {
     if (!knob || typeof knob.id !== "string" || !ID_RE.test(knob.id)) { problems.push(`${where}: id must match [a-z][a-z0-9-]{0,47}`); continue; }
     if (ids.has(knob.id)) problems.push(`${where}: duplicate id`);
     ids.add(knob.id);
-    if (typeof knob.title !== "string" || !knob.title.trim() || knob.title.length > 80) problems.push(`${where}: title must be 1-80 characters`);
-    if (knob.description !== undefined && (typeof knob.description !== "string" || knob.description.length > 400)) problems.push(`${where}: description must be at most 400 characters`);
+    const title = sourceText(knob.title);
+    const description = sourceText(knob.description);
+    if (!title || !title.trim() || title.length > 80) problems.push(`${where}: title must be 1-80 characters`);
+    if (knob.description !== undefined && (description === null || description.length > 400)) problems.push(`${where}: description must be at most 400 characters`);
     switch (knob.type) {
       case "heading":
         if (![1, 2, 3].includes(knob.level)) problems.push(`${where}: level must be 1-3`);
@@ -351,7 +360,7 @@ export async function initStyleKnobs(): Promise<void> {
     if (result.kind === "stale") return;
     stored = decodeKnobValues(result.value);
   } catch {
-    pushToast("Could not load style settings.", "error");
+    pushToast(msg("settings-could-not-load-style-settings"), "error");
   }
   if (owner()) {
     applyKnobValues(stored);

@@ -34,7 +34,7 @@ import { reportUiFailure } from "./uiFailure";
 import { reportGraphOpenFailure } from "./graphOpenFailure";
 import { activeElement, isHTMLElementNode } from "./windowRealm";
 import { askGraphName } from "./graphNamePrompt";
-import { msg } from "./i18n";
+import { msg, t } from "./i18n";
 export const [graphConfigProblem, setGraphConfigProblem] = createSignal<unknown>(null);
 
 const GRAPH_KEY = "tine.graphPath";
@@ -131,13 +131,13 @@ export async function authorizeGraphAccess(path: string): Promise<boolean> {
   const displayExternal = access.display_external_assets_path ?? external;
   if (!external || access.approved) return true;
   const confirmation = await readOwned(owner, backend().confirm(
-    `This graph's assets folder points outside the graph to:\n\n${displayExternal}\n\nAllow Tine to read and write assets in this directory? This approval is stored only on this device.`,
-    "Allow external assets directory?"
+    t("graph-this-graph-s-assets-folder-points-outside-the", { assetsDirectory: displayExternal ?? external }),
+    t("graph-allow-external-assets-directory")
   ));
   if (confirmation.kind === "stale") return false;
   if (!confirmation.value) {
     pushToast(
-      `Graph not opened: its external assets directory was not approved (${displayExternal}).`,
+      msg("graph-graph-not-opened-its-external-assets-directory", { assetsDirectory: displayExternal ?? external }),
       "error",
       { sticky: true }
     );
@@ -181,7 +181,7 @@ export async function loadGraphPath(
   const cssFlushed = await flushCssEditor();
   if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
   if (hadGraph && (!flushed || !cssFlushed)) {
-    pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
+    pushToast(msg("graph-some-pages-couldn-t-be-saved-resolve"), "error");
     return { kind: "aborted" };
   }
   if (hadGraph) {
@@ -202,13 +202,13 @@ export async function loadGraphPath(
       if (result.kind === "stale") return { kind: "aborted" };
       prepared = result.value;
     } catch (error) {
-      pushToast(`Couldn't prepare the iCloud graph. (${String(error)})`, "error", { sticky: true });
+      pushToast(msg("graph-couldn-t-prepare-the-icloud-graph", { error: String(error) }), "error", { sticky: true });
       return { kind: "aborted" };
     }
     if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
     if (prepared.status !== "ready") {
       pushToast(
-        "TineOutline can only open folders inside On My iPhone → TineOutline or iCloud Drive → TineOutline.",
+        msg("graph-tineoutline-can-only-open-folders-inside-on"),
         "error",
         { sticky: true }
       );
@@ -229,7 +229,7 @@ export async function loadGraphPath(
   // delayed view state plus complete highlight/area mutations under A; only a
   // successful drain permits us to invalidate that authority and unmount it.
   if (rebindsPdfOwner && !(await drainPdfWork())) {
-    pushToast("PDF changes couldn't be saved — the current graph is still open.", "error");
+    pushToast(msg("graph-pdf-changes-couldn-t-be-saved-the"), "error");
     return { kind: "aborted" };
   }
   if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
@@ -252,7 +252,7 @@ export async function loadGraphPath(
     unfreeze = tryFreezeGraphRewrite();
     if (!unfreeze) {
       if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
-      pushToast("A rename is still running — switch graphs once it finishes.", "error");
+      pushToast(msg("graph-a-rename-is-still-running-switch"), "error");
       return { kind: "aborted" };
     }
     endEdit("graph-switch");
@@ -262,7 +262,7 @@ export async function loadGraphPath(
   // working set. Flush once more as the last await before the binding moves.
   if (hadGraph && !(await flushAll())) {
     if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
-    pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
+    pushToast(msg("graph-some-pages-couldn-t-be-saved-resolve"), "error");
     return { kind: "aborted" };
   }
   if (hadGraph && !(await flushCssEditor())) {
@@ -279,7 +279,7 @@ export async function loadGraphPath(
   // open wait for it (F6); say so while it does.
   let waitingToast: number | null = null;
   const stopWaiting = await backend().onGraphOpenWaiting((saving) => {
-    waitingToast ??= pushToast(`Waiting for Tine to finish saving “${saving}” before opening this graph…`, "info", { sticky: true });
+    waitingToast ??= pushToast(msg("graph-waiting-for-tine-to-finish-saving", { saving: saving }), "info", { sticky: true });
   }).catch(() => () => {});
   // `tine serve` owns the graph: the open waits for it to hand over (CLI
   // PROTOCOL §4.5), showing its progress as it changes.
@@ -390,32 +390,32 @@ function reportDraftStatus(status: DraftStatus | null): void {
   const unsaved = status?.unsaved ?? [];
   const recovered = unsaved.filter((page) => page.recovered);
   if (recovered.length) {
-    pushToast(`Recovered unsaved edits on ${recovered.length} page(s) — Tine is saving them: ${recovered.map((page) => page.path).join(", ")}.`,
+    pushToast(msg("graph-recovered-unsaved-edits-on-page-s-tine", { count: recovered.length, pages: recovered.map((page) => page.path).join(", ") }),
       "info", { sticky: true });
   }
   const held = unsaved.filter((page) => !page.recovered);
   if (held.length) {
     const why = (page: (typeof held)[number]) => page.conflict ? " (changed on disk; open it to choose)"
       : page.failing ? " (saving fails)" : "";
-    pushToast(`${held.length} page(s) still have edits that are not on disk; Tine keeps saving them: ${held.map((page) => page.path + why(page)).join(", ")}.`,
+    pushToast(msg("graph-page-s-still-have-edits-that-are", { count: held.length, pages: held.map((page) => page.path + why(page)).join(", ") }),
       held.some((page) => page.conflict || page.failing) ? "error" : "info", { sticky: true });
   }
   if (status?.unreadable.length) {
-    pushToast(`Tine left ${status.unreadable.length} unreadable crash-recovery file(s) in place: ${status.unreadable.join(", ")}.`, "error", { sticky: true });
+    pushToast(msg("graph-tine-left-unreadable-crash-recovery-file-s-in-place", { count: status.unreadable.length, files: status.unreadable.join(", ") }), "error", { sticky: true });
   }
   if (!status?.unavailable) return;
-  const id: number = pushToast(`Crash recovery is off for this graph: ${status.unavailable}. Your edits still save.`, "error",
-    { sticky: true, action: { label: "Retry", run: () => { dismissToast(id); void retryDrafts(); } } });
+  const id: number = pushToast(msg("graph-crash-recovery-is-off-for-this-graph", { unavailable: status.unavailable }), "error",
+    { sticky: true, action: { label: msg("graph-retry"), run: () => { dismissToast(id); void retryDrafts(); } } });
 }
 
 async function retryDrafts(): Promise<void> {
   try {
     if ((await writeOwned(bindingOwner(), backend().pageDraftsRetry())).kind === "stale") return;
-    pushToast("Crash recovery is on again.", "success");
+    pushToast(msg("graph-crash-recovery-is-on-again"), "success");
   } catch (error) {
     const restart = (await platformKind()) === "desktop";
-    pushToast(`Crash recovery is still off: ${String(error)}.`, "error", restart
-      ? { sticky: true, action: { label: "Restart Tine", run: () => void restartTine() } }
+    pushToast(msg("graph-crash-recovery-is-still-off", { error: String(error) }), "error", restart
+      ? { sticky: true, action: { label: msg("graph-restart-tine"), run: () => void restartTine() } }
       : { sticky: true });
   }
 }
@@ -433,7 +433,7 @@ async function reportLegacyDrafts(): Promise<void> {
   const file = read.kind === "current" ? read.value : null;
   if (!file || legacyDraftsReported === file) return;
   legacyDraftsReported = file;
-  pushToast(`Crash-recovery copies from an older Tine are kept untouched in ${file}.`, "info");
+  pushToast(msg("graph-crash-recovery-copies-from-an-older-tine-are", { file: file }), "info");
 }
 
 /** Refresh frontend state after a successful page rename. The backend rename
@@ -484,7 +484,7 @@ export async function renameOrMergePage(
     if (source !== reached[0]) into = reached[0];
   }
   if (into) {
-    const confirmed = await readOwned(owner, backend().confirm(`Page “${to}” already exists. Merge “${from}” into it?`));
+    const confirmed = await readOwned(owner, backend().confirm(t("graph-page-already-exists-merge-into", { to: to, from: from })));
     if (confirmed.kind === "stale" || !confirmed.value) return "cancelled";
   }
   const done = await renamePageOnDisk(from, to, target, into, onRefreshed);
@@ -650,7 +650,7 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
       result = picked.value;
     } catch (e) {
       const platformName = platform === "android" ? "Android" : "iOS";
-      pushToast(`Couldn't open the ${platformName} folder picker. (${String(e)})`, "error");
+      pushToast(msg("graph-couldn-t-open-the-folder-picker", { platform: platformName, error: String(e) }), "error");
       return { kind: "aborted" };
     }
     // Diagnostic breadcrumbs (visible in `adb logcat`, chromium console channel):
@@ -672,7 +672,7 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
     }
     if (platform === "android" && result.status === "local-folder-required") {
       pushToast(
-        "Tine needs a folder on the device's own storage. This provider folder can't be opened directly. Use your provider's sync-to-local-folder feature, then pick that local folder in Open graph.",
+        msg("graph-tine-needs-a-folder-on-the-device-s"),
         "error"
       );
     }
@@ -680,11 +680,11 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
       platform === "android" &&
       (result.status === "permission-requested" || result.status === "permission-needed")
     ) {
-      pushToast('Grant "All files access" for Tine, then tap Open again.', "info");
+      pushToast(msg("graph-grant-all-files-access-for-tine-then"), "info");
     }
     if (platform === "ios" && result.status === "refused") {
       pushToast(
-        "Choose a folder inside On My iPhone → TineOutline or iCloud Drive → TineOutline. Other apps' folders and Files providers aren't supported yet.",
+        msg("graph-choose-a-folder-inside-on-my-iphone"),
         "info"
       );
     }
@@ -724,7 +724,7 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     if (picked.kind === "stale") return { kind: "aborted" };
     if (picked.value.status === "refused") {
       pushToast(
-        "Choose a folder inside On My iPhone → TineOutline or iCloud Drive → TineOutline. Other apps' folders and Files providers aren't supported yet.",
+        msg("graph-choose-a-folder-inside-on-my-iphone"),
         "info"
       );
       return { kind: "aborted" };
@@ -745,12 +745,12 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
       if (result.kind === "stale") return { kind: "aborted" };
       prepared = result.value;
     } catch (error) {
-      pushToast(`Couldn't prepare the iCloud location. (${String(error)})`, "error", { sticky: true });
+      pushToast(msg("graph-couldn-t-prepare-the-icloud-location", { error: String(error) }), "error", { sticky: true });
       return { kind: "aborted" };
     }
     if (prepared.status !== "ready") {
       pushToast(
-        "TineOutline can only create graphs inside On My iPhone → TineOutline or iCloud Drive → TineOutline.",
+        msg("graph-tineoutline-can-only-create-graphs-inside-on"),
         "error",
         { sticky: true }
       );
@@ -775,36 +775,35 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     if (created === null || !owner()) return { kind: "aborted" };
     root = created;
   } catch (e) {
-    const kept = graphMeta() ? " The current graph is still open." : "";
-    pushToast(`Couldn't create the graph.${kept} (${String(e)})`, "error");
+    pushToast(msg("graph-couldn-t-create-the-graph", { graphState: graphMeta() ? "open" : "none", error: String(e) }), "error");
     return { kind: "aborted" };
   }
-  const openAction = { label: "Open graph", run: () => void openPickedGraphPath(root) };
+  const openAction = { label: msg("graph-open-graph"), run: () => void openPickedGraphPath(root) };
   let loaded: LoadGraphPathOutcome;
   try {
     loaded = await loadGraphPath(root);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    pushToast(`Created the graph at ${displayRoot ?? root}, but couldn't open it. (${detail})`, "error", {
+    pushToast(msg("graph-created-the-graph-at-but-couldn-t", { root: displayRoot ?? root, detail: detail }), "error", {
       action: openAction,
     });
     return { kind: "aborted" };
   }
   if (loaded.kind === "aborted") {
-    pushToast(`Created the graph at ${displayRoot ?? root}, but it wasn't opened. You can open this folder again.`, "info", {
+    pushToast(msg("graph-created-the-graph-at-but-it", { root: displayRoot ?? root }), "info", {
       sticky: true, action: openAction,
     });
     return loaded;
   }
   if (loaded.kind === "focused_existing") {
-    pushToast(`Created the graph at ${displayRoot ?? root} and focused its existing window.`, "success");
+    pushToast(msg("graph-created-the-graph-at-and-focused-its", { root: displayRoot ?? root }), "success");
     return loaded;
   }
   if (loaded.kind === "already_current") {
-    pushToast(`Created the graph at ${graphMeta()?.display_root ?? displayRoot ?? loaded.root}. It is already open.`, "success");
+    pushToast(msg("graph-created-the-graph-at-it-is", { root: graphMeta()?.display_root ?? displayRoot ?? loaded.root }), "success");
     return loaded;
   }
-  pushToast(`Created and opened the graph at ${graphMeta()?.display_root ?? displayRoot ?? loaded.root}.`, "success");
+  pushToast(msg("graph-created-and-opened-the-graph-at", { root: graphMeta()?.display_root ?? displayRoot ?? loaded.root }), "success");
   // Keep demo seeding scoped to the created root, as before; the message
   // describes the load outcome even when the backend returns a different path.
   if (loaded.root !== root) return loaded;

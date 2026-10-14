@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 /** "Continue writing below this page": the one implementation behind a page's
  * trailing "+ Add block" target (Page.tsx `PageTypingTarget`) and the
  * `tine://capture` route (deepLinkNavigation.ts). An empty page gets its
@@ -22,6 +23,6 @@ export function focusPageTrailing(page: FeedPage | undefined, surface: string | 
   const roots = page.roots;
   const id = insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
   if (id) startEditing(id, 0, null, surface);
-  else pushToast("Could not add a block to this page.", "error");
+  else pushToast(msg("page-trailing-could-not-add-a-block-to-this-page"), "error");
   return !!id;
 }

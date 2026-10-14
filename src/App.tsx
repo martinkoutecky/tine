@@ -1,3 +1,4 @@
+import { Rich } from "./i18n/Rich";
 import { installTineLinks } from "./deepLinkNavigation";
 import { installShareIngest } from "./shareIngest";
 import { DeepLinkGraphChoice } from "./components/DeepLinkGraphChoice";
@@ -38,7 +39,7 @@ import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
 import { applyCustomCssChange, applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
 import { installPageIndex } from "./pageIndex";
-import { t } from "./i18n";
+import { t, msg } from "./i18n";
 import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { flushCssEditor } from "./cssEditor";
 import { WelcomeLayer } from "./components/Welcome";
@@ -132,13 +133,10 @@ export const safeClose = createSafeCloseCoordinator({
   },
   // GH #540: name the pages at risk; "No" opens the recovery panel.
   confirmDiscard: (reason) => {
-    const explanation = reason === "still-saving"
-      ? "Tine is still writing your changes and is taking longer than expected — a slow or network drive can do this."
-      : "Tine has changes that could not be saved (a conflict or a stuck save).";
-    const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n") || "Pending attachments or storage work; no page draft identified.";
+    const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n");
     return backend().confirm(
-      `${explanation}\n\n${inventory}\n\nChoose No to review, retry saving, or copy your drafts. Close this window anyway and lose them?`,
-      "Unsaved changes",
+      t("app-choose-no-to-review-retry-saving", { reason, inventory: inventory || "empty" }),
+      t("app-unsaved-changes"),
     );
   },
   onDiscardDeclined: openUnsavedRecovery,
@@ -148,13 +146,13 @@ export const safeClose = createSafeCloseCoordinator({
   flushSession,
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {
-    pushToast("Couldn't save pending PDF changes. The graph remains open.", "error");
+    pushToast(msg("app-couldn-t-save-pending-pdf-changes-the-graph"), "error");
   },
   notifyStillSaving: () => {
-    pushToast("Still saving your changes — closing in a moment.", "info");
+    pushToast(msg("app-still-saving-your-changes-closing-in"), "info");
   },
   notifyConfirmationFailure: () => {
-    pushToast("Couldn't confirm closing the window. Your unsaved changes are still open.", "error");
+    pushToast(msg("app-couldn-t-confirm-closing-the-window-your-unsaved"), "error");
   },
 });
 
@@ -166,7 +164,7 @@ setUpdateExitGuard(safeClose);
 const androidRootClose = createAndroidRootCloseCoordinator(safeClose, {
   finishActivity: exitAndroidActivity,
   finishActivityFailed: () => pushToast(
-    "Tine couldn't close the Android activity. Tap Back to retry closing.",
+    msg("app-tine-couldn-t-close-the-android-activity-tap"),
     "error",
   ),
 });
@@ -384,8 +382,7 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
       }>
         {(invalid) => <div class="pane-route-error" role="alert">
           <h2>{invalid().title}</h2>
-          <p>{invalid().message}</p>
-          <button type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>Close tab</button>
+          <p>{invalid().message}</p><button type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>{t("app-close-tab")}</button>
         </div>}
       </Show>
     }>
@@ -474,37 +471,19 @@ export function PaneSelectHint(): JSX.Element {
   const here = paneSelectIsHere();
   return (
     <Show when={here() && paneSel()}>
-      <div class="pane-select-hint">
-        <span class="pane-select-hint-title">Pane select</span>
+      <div class="pane-select-hint"><span class="pane-select-hint-title">{t("app-pane-select")}</span>
         <Show
           when={kind() !== "pane"}
           fallback={
             <span class="pane-select-hint-body">
-              <span>
-                <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move (onto seams &amp; edges) · <kbd>Enter</kbd> enter
-                pane · <kbd>Del</kbd> close pane
-              </span>
-              <span>
-                <kbd>Ctrl+K</kbd> open a page in this pane · <kbd>Esc</kbd> exit
-              </span>
+              <span><Rich message={msg("app-move-onto-seams-edges")} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} /></span>
+              <span><Rich message={msg("app-ctrl-k-open-a-page-in-this-pane")} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} /></span>
             </span>
           }
         >
           <span class="pane-select-hint-body">
-            <span>
-              <kbd>Enter</kbd>{" "}
-              <Show when={kind() === "edge"} fallback={<Show when={kind() === "pane-edge"} fallback={<span>split here (mirrors the pane)</span>}><span>split <span class="pane-select-hint-em">this pane</span></span></Show>}>
-                <span>split the <span class="pane-select-hint-em">whole window</span></span>
-              </Show>{" "}
-              · <span class="pane-select-hint-em">type a page name</span> (or <kbd>Ctrl+K</kbd>) to open it in the new
-              split
-            </span>
-            <span>
-              <Show when={kind() === "pane-edge"}>
-                <span>press outward again to widen the split · </span>
-              </Show>
-              <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Esc</kbd> exit
-            </span>
+            <span><Rich message={msg("app-pane-split-instruction", { kind: kind() ?? "seam" })} slots={{ "kbd": (children) => <kbd>{children}</kbd>, "span": (children) => <span>{children}</span>, "em-hint": (children) => <span class="pane-select-hint-em">{children}</span> }} /></span>
+            <span><Rich message={msg("app-pane-split-navigation", { kind: kind() ?? "seam" })} slots={{ "span": (children) => <span>{children}</span>, "kbd": (children) => <kbd>{children}</kbd> }} /></span>
           </span>
         </Show>
       </div>
@@ -636,14 +615,11 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
       } catch {
         ok = false;
       }
-      if (saveOwner()) pushToast(
-        ok
-          ? title
-            ? `Captured to “${title}”`
-            : "Captured to today's journal"
-          : "Capture couldn't be saved — its text is kept in the capture window",
-        ok ? "info" : "error"
-      );
+      if (saveOwner()) {
+        if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");
+        else if (title) pushToast(msg("app-captured-to", { title }), "info");
+        else pushToast(msg("app-captured-to-today-s-journal"), "info");
+      }
       return ok;
     };
     const promise = save();
@@ -834,7 +810,7 @@ export function App(): JSX.Element {
       const result = await readOwned(ownedWhen(() => alive), invoke<boolean>("take_identifier_migration_notice"));
       if (result.kind === "stale" || !result.value) return;
       pushToast(
-        "Tine was renamed under the hood, so we moved your settings and backups across. A few app-level preferences (e.g. keyboard shortcuts) might need setting again — sorry about that!",
+        msg("app-tine-was-renamed-under-the-hood-so"),
         "info",
         { sticky: true },
       );
@@ -853,7 +829,7 @@ export function App(): JSX.Element {
       const result = await readOwned(ownedWhen(() => alive), backend().takeDataHomeFallbackNotice());
       if (result.kind === "stale" || !result.value) return;
       pushToast(
-        `Tine could not write its usual application-data folder, so this session is keeping settings and backups in ${result.value} instead. Fixing the permissions on that folder restores the normal location.`,
+        msg("app-tine-could-not-write-its-usual-application-data", { fallbackDirectory: result.value }),
         "warn",
         { sticky: true },
       );
@@ -1005,7 +981,7 @@ export function App(): JSX.Element {
     let alive = true, unlisten = () => {};
     onCleanup(() => { alive = false; unlisten(); });
     void installQuickCaptureReceiver(ownedWhen(() => alive)).then((dispose) => { if (alive) unlisten = dispose; else dispose(); })
-      .catch(() => { if (alive) pushToast("Quick Capture could not connect to this graph window.", "error"); });
+      .catch(() => { if (alive) pushToast(msg("app-quick-capture-could-not-connect-to-this"), "error"); });
   });
 
   // Tell the quick-capture mini-window our theme. It can't read the main
@@ -1200,15 +1176,10 @@ export function App(): JSX.Element {
       }}
     >
       <Show when={parserFailed()}>
-        <DrawerBackground class="parser-error-banner" blockedBy="any" role="alert">
-          The block renderer failed to load — text is shown unformatted. Please reload Tine;
-          if this persists, report it.
-        </DrawerBackground>
+        <DrawerBackground class="parser-error-banner" blockedBy="any" role="alert">{t("app-the-block-renderer-failed-to-load")}</DrawerBackground>
       </Show>
       <Show when={graphTransitioning()}>
-        <DrawerBackground class="graph-transition-shield" blockedBy="any" role="status" ariaLive="polite">
-          Finishing graph operation…
-        </DrawerBackground>
+        <DrawerBackground class="graph-transition-shield" blockedBy="any" role="status" ariaLive="polite">{t("app-finishing-graph-operation")}</DrawerBackground>
       </Show>
       <Show when={sidebarOpen()}>
         <MobileDrawerPanel
@@ -1225,8 +1196,7 @@ export function App(): JSX.Element {
             <div class="sidebar-header workspace-sidebar-header" data-workspace-switcher-sidebar>
               <Show when={!isPublishedExport()}><FailureBoundary region="The workspace switcher"><WorkspaceSwitcher /></FailureBoundary></Show>
             </div>
-            <Show when={mobileDrawerMode()}>
-              <button class="mobile-drawer-close" type="button" aria-label="Close navigation sidebar" onClick={() => dismissDrawerAndRestore("explicit")}>Close</button>
+            <Show when={mobileDrawerMode()}><button class="mobile-drawer-close" type="button" aria-label={t("app-close-navigation-sidebar")} onClick={() => dismissDrawerAndRestore("explicit")}>{t("app-close")}</button>
             </Show>
             <FailureBoundary region="The sidebar">
               <Sidebar onActiveNavigationComplete={completeActiveLeftNavigation} />
@@ -1280,10 +1250,10 @@ export function App(): JSX.Element {
           </Show>
           <div class="topbar-right">
             <FailureBoundary region="The calendar"><CalendarJump triggerClass="topbar-optional-action" onOpenReady={(open) => { openCalendarJump = open; }} /></FailureBoundary>
-            <button class="icon-btn topbar-optional-action" title="Journals" data-pane-focus-neutral onClick={topbarActions.journals}>
+            <button class="icon-btn topbar-optional-action" title={t("app-journals")} data-pane-focus-neutral onClick={topbarActions.journals}>
               <JournalsIcon />
             </button>
-            <button class="icon-btn topbar-optional-action" title="Toggle theme (t t)" onClick={topbarActions.theme}>
+            <button class="icon-btn topbar-optional-action" title={t("app-toggle-theme-t-t")} onClick={topbarActions.theme}>
               <Show
                 when={theme() === "light"}
                 fallback={
@@ -1309,7 +1279,7 @@ export function App(): JSX.Element {
             <button
               class="icon-btn topbar-sidebar-action"
               classList={{ active: rightSidebarOpen() }}
-              title="Toggle right sidebar (t r)"
+              title={t("app-toggle-right-sidebar-t-r")}
               onClick={(event) => topbarActions.rightSidebar(event.currentTarget)}
             >
               <svg viewBox="0 0 24 24" class="nav-icon">
@@ -1330,7 +1300,7 @@ export function App(): JSX.Element {
             {/* Settings sits apart at the far right (separated by a divider) so
                 it reads as app-level config, not another content control. */}
             <Show when={!isPublishedExport()}><span class="topbar-sep" />
-            <button class="icon-btn" title="Settings (t s)" onClick={() => openSettings()}>
+            <button class="icon-btn" title={t("app-settings-t-s")} onClick={() => openSettings()}>
               <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
                 <path
                   fill="currentColor"
@@ -1349,8 +1319,7 @@ export function App(): JSX.Element {
           </div>
         </header>
         <FailureBoundary region="The conflict notice"><ConflictBar /></FailureBoundary>
-        <Show when={refreshingFromDisk()}>
-          <div class="focus-refresh-status" role="status" aria-live="polite">Refreshing changes from disk…</div>
+        <Show when={refreshingFromDisk()}><div class="focus-refresh-status" role="status" aria-live="polite">{t("app-refreshing-changes-from-disk")}</div>
         </Show>
         <FailureBoundary region="Find in page"><InPageFind /></FailureBoundary>
         </DrawerBackground>
@@ -1374,7 +1343,7 @@ export function App(): JSX.Element {
       <MobileDrawerController />
       <DrawerBackground class="drawer-floating-background" blockedBy="any">
         <Show when={focusMode()}>
-          <button class="focus-exit" title="Exit focus (Esc)" onClick={() => void exitFocusMode()}>
+          <button class="focus-exit" title={t("app-exit-focus-esc")} onClick={() => void exitFocusMode()}>
             <svg viewBox="0 0 24 24" class="nav-icon">
               <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
             </svg>

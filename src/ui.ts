@@ -496,11 +496,15 @@ export function setAgendaDaysAhead(n: number) {
  * `:block/marker "NIL"` default).
  */
 export function agendaQuery(): string {
+  return `tine-query ${agendaTql()}`;
+}
+
+/** Shared by the journal agenda and persisted agenda sections. */
+export function agendaTql(): string {
   const lo = `-${agendaDaysBack()}d`;
   const ahead = graphMeta()?.scheduled_future_days ?? agendaDaysAhead();
   const hi = `${ahead < 0 ? "" : "+"}${ahead}d`;
-  const window = `(or (between scheduled ${lo} ${hi}) (between deadline ${lo} ${hi}))`;
-  return `query (and ${window} (not (task DONE CANCELED CANCELLED)))`;
+  return `@block and (scheduled between '${lo}' and '${hi}' or deadline between '${lo}' and '${hi}') and not (task in ('DONE', 'CANCELED', 'CANCELLED'))`;
 }
 
 // Block id of a "/Query" block whose QueryBuilder opens its add-filter picker once on mount.

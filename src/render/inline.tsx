@@ -1,6 +1,6 @@
+import { msg, t } from "../i18n";
 import { urlDest } from "./urlDest";
 import { isFavoriteBlock, isFavoritesPage } from "../favorites";
-import { t } from "../i18n";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
@@ -62,7 +62,7 @@ import { createLongPress, isLongPressContextMenu } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
-import { fileLinkTarget } from "./relativeFileLink";
+import { fileLinkTarget, fileUrlTitle } from "./relativeFileLink";
 import { RelativeFileLink } from "./RelativeFileLinkView";
 import { galleryFor } from "../imageGallery";
 import { queryMacroRenderRun } from "./queryMacroRender";
@@ -158,7 +158,7 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
       return (
         <span class="inline-copy-wrap">
           <code class="inline-code" {...((spanMode ? literalSpanAttrs(s.text, s.span) : undefined) ?? {})}>{s.text}</code>
-          <CopyButton text={s.text} title="Copy code" class="copy-inline" />
+          <CopyButton text={s.text} title={t("render-copy-code")} class="copy-inline" />
         </span>
       );
     case "break":
@@ -444,8 +444,8 @@ export function CopyButton(props: { text: string; title: string; class?: string 
     e.preventDefault();
     e.stopPropagation();
     void writeClipboardText(props.text)
-      .then(() => pushToast("Copied to clipboard", "success"))
-      .catch(() => pushToast("Couldn’t copy to clipboard", "error"));
+      .then(() => pushToast(msg("render-copied-to-clipboard"), "success"))
+      .catch(() => pushToast(msg("render-couldn-t-copy-to-clipboard"), "error"));
   };
   return (
     <button
@@ -484,9 +484,10 @@ function renderLink(
     return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} />;
   }
   const dest = urlDest(url);
+  const fileTarget = assetLinkRel(dest) === null ? fileLinkTarget(dest) : null;
   // File URLs use the OS viewer, preserving their full path (GH #577).
   // File URLs must never enter the graph annotation reader.
-  const externalPdf = /^(?:https?:\/\/|file:)/i.test(dest) && /\.pdf$/i.test(dest);
+  const externalPdf = (/^(?:https?:\/\/|file:)/i.test(dest) || fileTarget?.kind === "outside") && /\.pdf$/i.test(dest);
   if (s.image) {
     const { width, height } = parseImageMetaBrace(s.metadata);
     const alt = s.label && s.label.length ? astText(s.label) : "";
@@ -496,10 +497,9 @@ function renderLink(
       return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     if (!externalPdf) return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
-  // GH #457: a plain path to a file outside `assets/` names a file in the
-  // graph folder, resolved as OG does (relativeFileLink.ts); an asset link
+  // GH #457: a plain file path resolves from the graph folder, preserving
+  // authored parent traversal (relativeFileLink.ts); an asset link
   // keeps the asset routes below and a bare `x.pdf` keeps the reader route.
-  const fileTarget = assetLinkRel(dest) === null ? fileLinkTarget(dest) : null;
   if (fileTarget !== null && (!/\.pdf$/i.test(dest) || /[/\\]/.test(dest))) {
     return (
       <span class="link-copy-wrap">
@@ -531,6 +531,7 @@ function renderLink(
       <a
         class="external-link"
         href={unsafeHref ? undefined : dest}
+        title={fileUrlTitle(dest)}
         {...(spanAttrs ?? {})}
         onClick={(e) => {
           e.preventDefault();
@@ -856,8 +857,8 @@ function AssetImage(props: {
     const s = src();
     if (!s) return;
     copyImageFromSrc(s)
-      .then(() => pushToast("Image copied to clipboard", "success"))
-      .catch(() => pushToast("Couldn't copy the image", "error"));
+      .then(() => pushToast(msg("render-image-copied-to-clipboard"), "success"))
+      .catch(() => pushToast(msg("render-couldn-t-copy-the-image"), "error"));
   };
   const onTrashAsset = async (e: MouseEvent) => {
     e.stopPropagation();
@@ -866,7 +867,7 @@ function AssetImage(props: {
     const name = assetRelPath(props.url);
     if (!name || !props.blockId) return;
     const confirmed = await readOwned(owner, backend().confirm(
-      `Move "${name}" to the trash and remove it from this block? It stays recoverable in logseq/.tine-trash.`,
+      t("render-move-to-the-trash-and-remove-it-from-this-block-it-stays-recoverable-in-logseq-tine-trash", { name: String(name) }),
       "Trash asset",
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
@@ -874,7 +875,7 @@ function AssetImage(props: {
     // reference is actually gone: otherwise the block keeps pointing at a file
     // that was moved away (C3 L16).
     if (!removeMediaToken(props.blockId, props.token)) {
-      pushToast("Couldn't find this image in the block's text; nothing was trashed", "error");
+      pushToast(msg("render-couldn-t-find-this-image-in-the-block-s-text-nothing-was-trashed"), "error");
       return;
     }
     // The backend trashes only a file the PUBLISHED graph no longer references,
@@ -888,7 +889,7 @@ function AssetImage(props: {
       saved = flushed?.value === true;
     } catch { /* reported below as an unsaved edit */ }
     if (!saved) {
-      pushToast("Couldn't save this block, so the image file was not moved to the trash.", "error");
+      pushToast(msg("render-couldn-t-save-this-block-so-the-image-file-was-not-moved-to-the-trash"), "error");
       return;
     }
     try {
@@ -897,12 +898,12 @@ function AssetImage(props: {
       if (result.value === "referenced") {
         // Typed outcome: another place still uses the file. The block edit
         // stands and the file stays in assets/.
-        pushToast("Image removed from this block. The file stays in assets because it is still used elsewhere.", "info");
+        pushToast(msg("render-image-removed-from-this-block-the-file-stays-in-assets-because-it-is-still-used-elsewhere"), "info");
         return;
       }
-      pushToast("Asset moved to trash", "success");
+      pushToast(msg("render-asset-moved-to-trash"), "success");
     } catch (err) {
-      pushToast(`Image removed from this block, but its file couldn't be moved to the trash (${String(err)})`, "error");
+      pushToast(msg("render-image-removed-from-this-block-but-its-file-couldn-t-be-moved-to-the-trash", { detail: String(err) }), "error");
     }
   };
 
@@ -922,7 +923,7 @@ function AssetImage(props: {
     const command = await readOwned(owner, resolveMediaEditorCommand(ed));
     if (command.kind === "stale") return;
     void writeOwned(owner, backend().editAssetExternal(name, command.value, binding.backendGeneration))
-      .catch(() => { pushToast(`Couldn't open ${ed.label.replace(/^Edit in /, "")}`, "error"); });
+      .catch(() => { pushToast(msg("render-couldn-t-open", { label: String(ed.label.replace(/^Edit in /, "")) }), "error"); });
     refreshAssetOnReturn(name);
   };
 
@@ -950,13 +951,13 @@ function AssetImage(props: {
                 </svg>
               </button>
             </Show>
-            <button class="asset-action-btn" title="Copy image" onClick={onCopyAsset}>
+            <button class="asset-action-btn" title={t("render-copy-image")} onClick={onCopyAsset}>
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="9" y="9" width="11" height="11" rx="2" />
                 <path d="M5 15V5a2 2 0 0 1 2-2h10" />
               </svg>
             </button>
-            <button class="asset-action-btn asset-action-trash" title="Trash image" onClick={onTrashAsset}>
+            <button class="asset-action-btn asset-action-trash" title={t("render-trash-image")} onClick={onTrashAsset}>
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
               </svg>
@@ -964,7 +965,7 @@ function AssetImage(props: {
           </span>
         </Show>
         <Show when={props.blockId}>
-          <span class="img-resize-grip" title="Drag to resize" onPointerDown={onGripDown} />
+          <span class="img-resize-grip" title={t("render-drag-to-resize")} onPointerDown={onGripDown} />
         </Show>
       </span>
     </Show>
@@ -1106,7 +1107,7 @@ function MediaEmbed(props: {
     <Show
       when={!failed() && src()}
       fallback={
-        <a class="media-chip" classList={{ audio: props.kind === "audio" }} onClick={open} title="Open in the default player">
+        <a class="media-chip" classList={{ audio: props.kind === "audio" }} onClick={open} title={t("render-open-in-the-default-player")}>
           <span class="media-chip-icon">{props.kind === "audio" ? "♪" : "▶"}</span>
           {label()}
         </a>
@@ -1134,23 +1135,22 @@ function MediaEmbed(props: {
           onError={onMediaError}
           onClick={(e: MouseEvent) => e.stopPropagation()}
         />
-        <button class="media-open-external" onClick={open} title="Open in the default player (if playback here is broken)">
+        <button class="media-open-external" onClick={open} title={t("render-open-in-the-default-player-if-playback-here-is-broken")}>
           <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
             <path d="M14 4h6v6M20 4l-8 8M18 13v6a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h6"
               fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
         <Show when={props.kind === "video" && props.blockId}>
-          <span class="img-resize-grip media-resize-grip" title="Drag to resize" onPointerDown={onGripDown} />
+          <span class="img-resize-grip media-resize-grip" title={t("render-drag-to-resize")} onPointerDown={onGripDown} />
         </Show>
         <Show when={props.kind === "audio"}>
           <button
             class="media-audio-widen"
             onClick={(e) => { e.stopPropagation(); setAudioPlayer({ url: props.url, name: label() }); }}
-            title="Open the expanded player — waveform + precise seeking"
+            title={t("render-open-the-expanded-player-waveform-precise-seeking")}
           >
-            ⤢ Expand
-          </button>
+            {t("render-expand")}</button>
         </Show>
       </span>
     </Show>
@@ -1265,7 +1265,7 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
 function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs; blockId?: string }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   if (linkDepth >= MAX_DEPTH_OF_LINKS) {
-    return <span class="link-depth-warning">Reference depth is too deep</span>;
+    return <span class="link-depth-warning">{t("render-reference-depth-is-too-deep")}</span>;
   }
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
@@ -1346,9 +1346,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         class="block-ref"
         classList={{ "block-ref-missing": !grp() }}
         {...(props.spanAttrs ?? {})}
-        title={annotation()
-          ? "Click to open the highlight in its PDF; shift-click → sidebar; right-click for more"
-          : "Click to go to the block; shift-click → sidebar; right-click for more"}
+        title={annotation() ? t("render-click-to-open-the-highlight-in-its-pdf-shift-click-sidebar-right-click-for-more") : t("render-click-to-go-to-the-block-shift-click-sidebar-right-click-for-more")}
         onMouseDown={internalLinkMouseDown}
         onAuxClick={(e) => {
           if (e.button !== 1) return;
@@ -1387,9 +1385,9 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
                 const page = result.value;
                 const file = pdfFileFromPreBlock(page?.pre_block, page?.format);
                 if (file) openPdf(file, file, ann.hlPage, props.id);
-                else pushToast("Couldn't find the PDF for this highlight", "error");
+                else pushToast(msg("render-couldn-t-find-the-pdf-for-this-highlight"), "error");
               })
-              .catch(() => { pushToast("Couldn't open the PDF for this highlight", "error"); });
+              .catch(() => { pushToast(msg("render-couldn-t-open-the-pdf-for-this-highlight"), "error"); });
             return;
           }
           // Shift-click opens the referenced block in the right sidebar, Ctrl/Cmd+click

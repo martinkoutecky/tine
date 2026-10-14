@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { type JSX } from "solid-js";
 import type { Block as AstBlock, Format } from "../render/ast";
 import { parseBody } from "../render/facets";
@@ -48,8 +49,7 @@ export function inspectBeginQuery(
 export function BeginQuery(props: { match: BeginQueryMatch; currentPage?: string }): JSX.Element {
   if (props.match.kind === "unsupported") {
     return (
-      <div class="query-unsupported begin-query-unsupported" role="alert">
-        Unsupported BEGIN_QUERY: {props.match.reason}.
+      <div class="query-unsupported begin-query-unsupported" role="alert">{t("begin-query-unsupported", { reason: props.match.reason })}
       </div>
     );
   }

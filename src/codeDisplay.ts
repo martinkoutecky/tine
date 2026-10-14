@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 /** Device-local code wrapping, shared by every rendered code card and editor.
  * Reads and changes are O(1); startup and changes use the existing app-settings
  * door. Failures report a toast; a delayed startup read cannot undo a user change.
@@ -18,7 +19,7 @@ export async function initCodeDisplay(): Promise<void> {
     const loaded = await readOwned(revisionOwner(slot, currentRevision(slot)), backend().getAppString(key, "0"));
     if (loaded.kind === "current") setWrapping(loaded.value === "1");
   } catch (error) {
-    pushToast(`Could not load code wrapping: ${String(error)}`, "error");
+    pushToast(msg("code-display-could-not-load-code-wrapping", { error: String(error) }), "error");
   }
 }
 
@@ -26,5 +27,5 @@ export function changeCodeWrapping(value: boolean): void {
   setWrapping(value);
   const owner = revisionOwner(slot, advanceRevision(slot));
   void writeOwned(owner, backend().setAppString(key, value ? "1" : "0"))
-    .catch(error => pushToast(`Could not remember code wrapping: ${String(error)}`, "error"));
+    .catch(error => pushToast(msg("code-display-could-not-remember-code-wrapping", { error: String(error) }), "error"));
 }

@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { For, Show, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
@@ -53,12 +54,12 @@ export function BlockReferences(props: { id: string }): JSX.Element {
     <Show when={groups() && groups()!.length > 0}>
       <div class="block-references-inner">
         <div class="block-references-header">
-          {count()} Linked Reference{count() === 1 ? "" : "s"}
+          {t("editor-references-linked-reference", { count: count() })}
         </div>
         <Show when={(groups() ?? []).length > 1}>
-          <div class="reference-bulk-controls" aria-label="Reference page groups">
-            <button type="button" onClick={() => setAllGroups(true)}>Collapse all</button>
-            <button type="button" onClick={() => setAllGroups(false)}>Expand all</button>
+          <div class="reference-bulk-controls" aria-label={t("editor-references-reference-page-groups")}>
+            <button type="button" onClick={() => setAllGroups(true)}>{t("editor-references-collapse-all")}</button>
+            <button type="button" onClick={() => setAllGroups(false)}>{t("editor-references-expand-all")}</button>
           </div>
         </Show>
         <For each={groups()}>
@@ -67,7 +68,7 @@ export function BlockReferences(props: { id: string }): JSX.Element {
               <div class="reference-group-header">
               <button type="button" class="reference-group-disclosure"
                 aria-expanded={!groupCollapsed(g)}
-                aria-label={`${groupCollapsed(g) ? "Expand" : "Collapse"} references from ${g.page}`}
+                aria-label={t("editor-references-references-from", { action: groupCollapsed(g) ? "expand" : "collapse", page: g.page })}
                 onClick={() => setGroupCollapsed(g, !groupCollapsed(g))}
               ><ReferenceDisclosure collapsed={groupCollapsed(g)} /></button>
               <div

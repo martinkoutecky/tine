@@ -7,6 +7,30 @@
       "nonRequirements":["Exact pixels, incidental DOM structure, or native certification outside Linux WebKitGTK.","Creating groups by dropping onto a condition or merging All pages, Search and Query."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh690-journal-queries.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Today's journal renders OG NOW in priority order, both own-page and older direct-reference NEXT ranges, and a plain titled refusal with closed details; returning to Journals and external task edits keep results current.","blocking":true}],
+      "acceptableVariations":["Layout, glyphs and publication timing may vary while the task membership, priority order and disclosure state remain correct."],
+      "nonRequirements":["Exact pixels, cross-platform native certification or a general Datalog join engine."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-outside-file-links.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A file link that leaves the graph folder (../ or absolute) renders as an ordinary link and clicking it hands the resolved path to the system opener.","blocking":true}],
+      "acceptableVariations":["Link styling, hover text wording and the opener used may vary while the resolved path handed to the OS is correct."],
+      "nonRequirements":["A particular viewer launching, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-journal-fileless-days.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Journals shows referenced fileless past days and future Upcoming entries without writing a journal; opening a future day and typing creates only its journal file.","blocking":true}],
+      "acceptableVariations":["Disclosure styling, reference load latency and page layout may vary while counted references, collapsed Upcoming and saved body are correct."],
+      "nonRequirements":["Exact pixels, a fixed horizon, specific DOM shape or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-reference-alias-chips.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Reference filters merge alias chips, count each block once, load legacy alias-named filters and retain canonical include/exclude choices after a guarded save and restart.","blocking":true}],
+      "acceptableVariations":["Chip styling, navigation layout and save latency may vary while canonical labels, block counts, membership and persisted choices remain correct."],
+      "nonRequirements":["Exact pixels, OG alias-inclusive matching, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-pinyin.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Ctrl+K finds and opens a Han title from full Mandarin Pinyin or initials, keeps native matches first, and removes expansions after disabling the device preference.","blocking":true}],
       "acceptableVariations":["Existing deterministic tie order between colliding expansions; layout, glyphs and search latency may vary."],
@@ -393,6 +417,7 @@
     },
     "scripts/e2e-query-sheet.mjs": {
       "contracts": [
+        { "class": "stateful-ux", "userOutcome": "A Logseq scheduled/deadline window visibly refuses without rows or a silent rewrite; Convert preserves its date-window meaning in a Tine query on disk and results appear through restart.", "blocking": true },
         { "class": "stateful-ux", "userOutcome": "A query block rests as one sentence and answers with blocks or, for a page-level filter, pages; a query the engine cannot read shows what it did not understand instead of an empty result, and an empty result explains which condition emptied it.", "blocking": true },
         { "class": "core-operation", "userOutcome": "A query created with /query and saved from the sheet's query text lands in the page file as an ordinary query block without touching the other query blocks, and reopens with the same answers after a restart.", "blocking": true },
         { "class": "stateful-ux", "userOutcome": "While the query sheet is open its results show inside it and follow the conditions as they are edited, before anything is saved, and previewing writes nothing to the page.", "blocking": true },

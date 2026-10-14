@@ -538,6 +538,26 @@ fn graph_equivalent_page_names(
     let Some(journal) = pages.iter().find(|entry| {
         entry.kind == PageKind::Journal && format.parse(&entry.name) == Some(target_day)
     }) else {
+        // A date with no real page is an editable virtual journal. Keep real
+        // ordinary pages and aliases intact; only fileless dates share spellings.
+        if real_page_names(graph)
+            .get(&refs::page_key(&resolved.0))
+            .is_none()
+        {
+            let title = format.title(target_day);
+            let spellings = journal_spelling_keys(&format, target_day, &title);
+            if spellings
+                .iter()
+                .any(|name| real_page_names(graph).get(name).is_some())
+            {
+                return resolved;
+            }
+            resolved.1.extend(spellings);
+            resolved.1.sort();
+            resolved.1.dedup();
+            resolved.0 = title.clone();
+            resolved.2 = title;
+        }
         return resolved;
     };
     resolved
@@ -562,7 +582,7 @@ pub(crate) fn journal_format(config: &tine_core::config::Config) -> JournalForma
 /// master ee7730b48): its own name, the graph's title/file forms, the default
 /// title/file forms and ISO `yyyy-MM-dd`, as page keys. The one definition both
 /// query-time resolution and scoped invalidation use (I-12).
-fn journal_spelling_keys(
+pub(crate) fn journal_spelling_keys(
     format: &JournalFormat,
     day: JournalDate,
     journal_name: &str,
@@ -2469,6 +2489,26 @@ mod tests {
         !hits_on(query, "Journal", Some(day), &block(raw)).is_empty()
     }
 
+    fn selects_tql_on(query: &str, journal: Option<i64>, raw: &str) -> bool {
+        use tine_core::query::{parse_query_text, resolve_for_execution, QueryDialect};
+        let graph = one_page("Test", journal, &block(raw));
+        let (query, view) = parse_query_text(query, QueryDialect::Tql, TODAY);
+        assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+        let resolved = resolve_for_execution(
+            &query,
+            &tine_core::query::ir::ExecutionContext::none(),
+            TODAY,
+        );
+        !exec::run_block_groups(&graph, &resolved, &view, usize::MAX, usize::MAX)
+            .0
+            .groups
+            .is_empty()
+    }
+
+    fn selects_tql(query: &str, raw: &str) -> bool {
+        selects_tql_on(query, None, raw)
+    }
+
     #[test]
     fn query_parsers_fail_closed_past_the_shared_depth_and_size_limits() {
         const DEPTH: usize = 128;
@@ -2746,49 +2786,53 @@ mod tests {
         assert!(selects_on_journal(q, 20260610, "TODO y"));
         assert!(selects_on_journal(q, 20260517, "TODO y"));
         assert!(!selects_on_journal(q, 20260101, "TODO z"));
-        // `between scheduled` ignores the page's journal date.
-        let qs = "(between scheduled -30d today)";
-        assert!(selects(qs, sched));
-        assert!(!selects_on_journal(qs, 20260610, "TODO y"));
-        assert!(selects("(between scheduled -7d +7d)", sched));
-        // `between deadline` only looks at DEADLINE lines.
-        let qd = "(between deadline -30d today)";
-        assert!(selects(qd, "TODO x\nDEADLINE: <2026-06-10 Wed>"));
-        assert!(!selects(qd, sched));
+        // OG date windows refuse; Tine windows ignore the page's journal date.
+        assert!(!selects("(between scheduled -30d today)", sched));
+        assert!(!selects(
+            "(between deadline -30d today)",
+            "TODO x\nDEADLINE: <2026-06-10 Wed>"
+        ));
+        let qs = "scheduled between '-30d' and today";
+        assert!(selects_tql(qs, sched));
+        assert!(!selects_tql_on(qs, Some(20260610), "TODO y"));
+        assert!(selects_tql("scheduled between '-7d' and '+7d'", sched));
+        let qd = "deadline between '-30d' and today";
+        assert!(selects_tql(qd, "TODO x\nDEADLINE: <2026-06-10 Wed>"));
+        assert!(!selects_tql(qd, sched));
     }
 
     #[test]
     fn agenda_query_keys_off_scheduled_deadline_not_journal_date() {
-        // The journal-agenda DSL the app inserts must match on the planning date
+        // The journal-agenda TQL the app inserts must match on the planning date
         // itself, NOT the journal day the block happens to live on.
-        let q = "(or (between scheduled -7d +7d) (between deadline -7d +7d))";
-        assert!(!selects_on_journal(
+        let q = "scheduled between '-7d' and '+7d' or deadline between '-7d' and '+7d'";
+        assert!(!selects_tql_on(
             q,
-            20260616,
+            Some(20260616),
             "TODO old thing\nDEADLINE: <2025-01-01 Wed>"
         ));
-        assert!(selects(q, "TODO pay\nDEADLINE: <2026-06-16 Tue>"));
-        assert!(selects_on_journal(
+        assert!(selects_tql(q, "TODO pay\nDEADLINE: <2026-06-16 Tue>"));
+        assert!(selects_tql_on(
             q,
-            20200101,
+            Some(20200101),
             "TODO meet\nSCHEDULED: <2026-06-18 Thu>"
         ));
-        assert!(!selects_on_journal(q, 20260616, "just a note"));
+        assert!(!selects_tql_on(q, Some(20260616), "just a note"));
     }
 
     #[test]
     fn planning_markers_are_found_anywhere_in_the_block() {
         // TODAY + 20d = 2026-07-06.
-        let q = "(between scheduled +20d +20d)";
-        assert!(selects(q, "TODO x\nSCHEDULED: <2026-07-06 Mon>"));
-        assert!(selects(q, "TODO SCHEDULED: <2026-07-06 Mon> do it"));
-        assert!(selects(
+        let q = "scheduled between '+20d' and '+20d'";
+        assert!(selects_tql(q, "TODO x\nSCHEDULED: <2026-07-06 Mon>"));
+        assert!(selects_tql(q, "TODO SCHEDULED: <2026-07-06 Mon> do it"));
+        assert!(selects_tql(
             q,
             "TODO y\n SCHEDULED: <2026-07-06 Mon> #email students"
         ));
-        assert!(!selects(q, "TODO z\nDEADLINE: <2026-07-06 Mon>"));
-        assert!(selects(
-            "(between deadline +20d +20d)",
+        assert!(!selects_tql(q, "TODO z\nDEADLINE: <2026-07-06 Mon>"));
+        assert!(selects_tql(
+            "deadline between '+20d' and '+20d'",
             "TODO z\nDEADLINE: <2026-07-06 Mon>"
         ));
     }
@@ -2797,19 +2841,19 @@ mod tests {
     fn a_planning_marker_in_a_fence_or_ending_a_longer_word_is_not_planning() {
         // OG-C5-Q L02 eval.rs:154: the inline fallback scanned raw bytes, so
         // documentation of the syntax scheduled the block.
-        let q = "(between scheduled +20d +20d)";
-        assert!(selects(q, "TODO real\nSCHEDULED: <2026-07-06 Mon>"));
-        assert!(!selects(
+        let q = "scheduled between '+20d' and '+20d'";
+        assert!(selects_tql(q, "TODO real\nSCHEDULED: <2026-07-06 Mon>"));
+        assert!(!selects_tql(
             q,
             "TODO doc\n```\nSCHEDULED: <2026-07-06 Mon>\n```"
         ));
-        assert!(!selects(q, "TODO doc UNSCHEDULED: <2026-07-06 Mon>"));
-        assert!(!selects(
-            "(between deadline +20d +20d)",
+        assert!(!selects_tql(q, "TODO doc UNSCHEDULED: <2026-07-06 Mon>"));
+        assert!(!selects_tql(
+            "deadline between '+20d' and '+20d'",
             "TODO doc\n#+BEGIN_SRC org\nDEADLINE: <2026-07-06 Mon>\n#+END_SRC"
         ));
         // The recorded inline-code deviation is unchanged.
-        assert!(selects(q, "TODO doc `SCHEDULED: <2026-07-06 Mon>`"));
+        assert!(selects_tql(q, "TODO doc `SCHEDULED: <2026-07-06 Mon>`"));
     }
 
     #[test]

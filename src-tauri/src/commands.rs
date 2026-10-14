@@ -347,43 +347,8 @@ pub(crate) async fn page_modified(state: GraphContext<'_>) -> Result<PageModifie
     .map_err(|error| error.to_string())?
 }
 
-#[derive(Serialize)]
-pub(crate) struct JournalFeedPage {
-    pages: Vec<PageWire>,
-    next_before_day: Option<i64>,
-    done: bool,
-    as_of_day: i64,
-    /// Journals this page skipped as unreadable (`path: reason`); omitted when
-    /// none.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    unreadable: Vec<String>,
-}
-
-/// Feed-only pagination by ordinal day.
-#[tauri::command]
-pub(crate) async fn journal_feed_page(
-    limit: usize,
-    before_day: Option<i64>,
-    state: GraphContext<'_>,
-) -> Result<JournalFeedPage, String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let feed = tine_graph_features::journals::feed_page(&slot.store, limit, before_day)
-            .map_err(|error| {
-                crate::flight::journal_feed_io_failure(error.kind());
-                error.to_string()
-            })?;
-        Ok(JournalFeedPage {
-            pages: feed.pages.into_iter().map(page_dto).collect(),
-            next_before_day: feed.next_before_day,
-            done: feed.done,
-            as_of_day: feed.as_of_day,
-            unreadable: feed.unreadable,
-        })
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
+mod journals_feed;
+pub(crate) use journals_feed::*;
 #[tauri::command]
 pub(crate) async fn get_page(
     name: String,

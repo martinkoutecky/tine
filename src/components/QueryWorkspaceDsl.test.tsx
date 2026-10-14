@@ -11,7 +11,7 @@ it.each([
 ])("keeps the source dialect of %s in the Search workspace", async (source, argument, dialect) => {
   const parseQuery = vi.fn(async () => ({ query: { anchor: "block" as const, filter: { kind: "true" as const }, diagnostics: [], source: { kind: "og" as const, original: argument } }, view: {} }));
   const deps = { parseQuery, queryRun: async () => blockRunResult([]), queryExplainEmpty: vi.fn(),
-    resolvePage: vi.fn(), createPage: vi.fn(), runGraphSearch: vi.fn() } as QueryWorkspaceDependencies;
+    resolvePage: vi.fn(), createPage: vi.fn(), runGraphSearch: vi.fn(), serializeDsl: vi.fn() } as QueryWorkspaceDependencies;
   const route: QueryRoute = { kind: "query", id: "dialect-proof", sourceKind: "dsl", source, presentation: "list" };
   const router = { route: () => route } as unknown as PaneRouter;
   const root = document.createElement("div"); document.body.append(root);

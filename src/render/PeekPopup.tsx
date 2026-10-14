@@ -1,6 +1,7 @@
 import { For, Show, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openInNewTab } from "../router";
 import { t } from "../i18n";
+import { openPageContextMenu } from "../ui";
 import { PagePropertyValue } from "../components/PagePropertyValue";
 import { FloatingPortal } from "../components/FloatingPortal";
 import { RefBlocks } from "../components/RefBlocks";
@@ -167,6 +168,14 @@ export function PeekPopup(props: {
             <button type="button" class="peek-source-title" onClick={() => openSource()}>{props.title}</button>
             <Show when={props.page}>
               <button type="button" class="peek-open-source" aria-label={t("preview-open-source")} onClick={() => openSource(props.blockId)}>{t("preview-open-source")}</button>
+              <button type="button" class="peek-page-actions" aria-label={t("preview-page-actions")} aria-haspopup="menu"
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const page = props.page!;
+                  const kind = props.pageKind ?? "page";
+                  props.onDismiss();
+                  openPageContextMenu(rect.left, rect.bottom, page, kind);
+                }}>…</button>
             </Show>
           </div>
         </Show>
@@ -179,8 +188,7 @@ export function PeekPopup(props: {
           <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} readOnly onOpenBlock={openSource} />
         </PeekContext.Provider>
         <Show when={(props.truncatedCount?.() ?? 0) > 0}>
-          <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT
-            ? `${MAX_PEEK_COUNT}+ more blocks` : `${props.truncatedCount!()} more blocks`}</div>
+          <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT ? t("render-more-blocks", { count: MAX_PEEK_COUNT }) : t("render-more-blocks-exact", { count: props.truncatedCount!() })}</div>
         </Show>
       </div>
     </FloatingPortal>

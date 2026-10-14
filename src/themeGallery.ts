@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { CUSTOM_CSS_STYLE_ID, LS_SHIM_STYLE_ID, ensureLsShimStyle } from "./lsShim";
@@ -176,7 +177,7 @@ export async function initThemeGallery(): Promise<void> {
       stored = { style: legacy.value, colors: legacy.value };
     }
   } catch {
-    pushToast("Could not load gallery theme.", "error");
+    pushToast(msg("theme-gallery-could-not-load-gallery-theme"), "error");
   }
   if (owner()) {
     applyCompositionLocally(stored);

@@ -190,6 +190,8 @@ export function QueryMacro(props: {
   // with an empty result renders nothing).
   hideWhenEmpty?: boolean;
   builtIn?: boolean;
+  /** App-inserted query from config.edn, with user-facing refusal copy. */
+  configQuery?: boolean;
 }): JSX.Element {
   return <FailureBoundary region="Query results"><QueryMacroContent {...props} /></FailureBoundary>;
 }
@@ -829,6 +831,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
         <Switch>
           <Match when={unsupportedAdvanced()}>
             <div class="query-unsupported" role={props.unsupportedLabel ? "alert" : undefined}>
+              <Show when={props.configQuery} fallback={<>
               <Show
                 when={props.unsupportedLabel}
                 fallback={
@@ -845,6 +848,16 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               </Show>
               <Show when={blockingDiagnostics().length > 0}>
                 <span class="query-diagnostics">{" "}{blockingDiagnostics().map((d) => d.message).join(" · ")}</span>
+              </Show>
+              </>}>
+                <strong>{props.title ?? renderMessage(msg("config-query-title"))}</strong>
+                <p>{renderMessage(msg("config-query-unsupported"))}</p>
+                <details>
+                  <summary>{renderMessage(msg("config-query-details"))}</summary>
+                  <p>{(advInfo()?.ignored ?? []).join(", ")}</p>
+                  <code>{`{{${props.body}}}`}</code>
+                  <p>{blockingDiagnostics().map((d) => d.message).join(" · ")}</p>
+                </details>
               </Show>
             </div>
           </Match>
@@ -910,7 +923,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   );
                 })()}
               </Show>{" "}
-              <span class="query-count">{total()}</span>
+              <Show when={!reading()?.og_hint?.date_windows}><span class="query-count">{total()}</span></Show>
               <Show when={!props.builtIn && !isPublishedExport() && runnable()}>
                 <QueryMacroActions current={runnable} groups={groups} pages={() => pageRows() ?? []}
                   editable={!!props.blockId && blockWritable(props.blockId)} results={!!displayed() && total() > 0}
@@ -988,7 +1001,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 </div>
               )}
             </Show>
-            <Show when={blockingDiagnostics().length > 0}>
+            <Show when={blockingDiagnostics().length > 0 && (!reading()?.og_hint?.date_windows || !reading()?.og_hint?.rewrites.length)}>
               <div class="query-unsupported query-diagnostics" role="alert">
                 <span class="query-diagnostics-lead">
                   Tine didn't understand part of this query, so it returned no results:

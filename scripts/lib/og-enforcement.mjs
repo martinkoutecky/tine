@@ -15,6 +15,9 @@ export function isProduction(file) {
   // `x_tests/` is a test directory module (`#[cfg(test)] mod x_tests;` with `x_tests/mod.rs`).
   if (/(^|\/)(tests|examples|fixtures|vendor|target|gen|[^/]*_tests)\//.test(file)) return false;
   if (/(^|\/)([^/]*\.test\.[^/]+|[^/]*_tests\.rs|tests\.rs|test_[^/]*\.rs)$/.test(file)) return false;
+  // Generated sources (`x.gen.ts`, e.g. the i18n message types) grow with their
+  // input; the seam to split along is the input (the .ftl catalogs), not the output.
+  if (/\.gen\.[^/]+$/.test(file)) return false;
   return true;
 }
 

@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // In-page find & replace (GH #208, #338). Replace edits only the outline blocks of
 // the pane find was opened in: never sidebar items, query/reference rows or the
 // rest of the graph. Every write is the ordinary block edit (`setRaw`, the call
@@ -185,7 +186,7 @@ function applyPlans(byBlock: Map<string, readonly number[] | "all">, query: stri
 }
 
 function reportRefusedUnit(): InPageReplaceOutcome {
-  pushToast("Nothing was replaced: this page cannot be edited right now.", "error");
+  pushToast(msg("inpage-replace-nothing-was-replaced-this-page-cannot-be-edited"), "error");
   return { replaced: 0, skipped: 0, refused: "read-only" };
 }
 
@@ -198,7 +199,7 @@ export function replaceActiveInPageFindMatch(replacement = inPageReplaceText()):
   if (!match) return { replaced: 0, skipped: 0, refused: "no-match" };
   const scopeId = inPageFindPaneScopeId();
   if (!replaceableInScope(match, scopeId)) {
-    pushToast("Replace changes only the page you opened Find in.", "info");
+    pushToast(msg("inpage-replace-replace-changes-only-the-page-you-opened-find"), "info");
     activateInPageFindIndex(index + 1);
     return { replaced: 0, skipped: 1, refused: "other-scope" };
   }
@@ -206,7 +207,7 @@ export function replaceActiveInPageFindMatch(replacement = inPageReplaceText()):
   const outcome = applyPlans(new Map([[match.blockId, [match.ordinalInBlock]]]), query, replacement);
   if (!outcome) return reportRefusedUnit();
   if (!outcome.replaced) {
-    pushToast("This match is inside a link or markup; edit the block to change it.", "info");
+    pushToast(msg("inpage-replace-this-match-is-inside-a-link-or-markup"), "info");
     activateInPageFindIndex(index + 1);
     return outcome;
   }
@@ -231,19 +232,16 @@ export function replaceAllInPageFindMatches(replacement = inPageReplaceText()): 
   }
   if (!byBlock.size) {
     if (readOnly) return reportRefusedUnit();
-    pushToast("No matches on this page to replace.", "info");
+    pushToast(msg("inpage-replace-no-matches-on-this-page-to-replace"), "info");
     return { replaced: 0, skipped: 0, refused: "no-match" };
   }
   const outcome = applyPlans(byBlock, query, replacement);
   if (!outcome) return reportRefusedUnit();
   const skipped = outcome.skipped + readOnly;
-  const plural = (n: number) => (n === 1 ? "match" : "matches");
   if (!outcome.replaced) {
-    pushToast(`Nothing was replaced: ${skipped} ${plural(skipped)} sit inside links or markup.`, "info");
+    pushToast(msg("inpage-replace-skipped", { count: skipped }), "info");
   } else {
-    pushToast(skipped
-      ? `Replaced ${outcome.replaced} ${plural(outcome.replaced)}; ${skipped} inside links, markup or read-only blocks left as they were.`
-      : `Replaced ${outcome.replaced} ${plural(outcome.replaced)}.`, "success");
+    pushToast(msg("inpage-replace-result", { count: outcome.replaced, skipped }), "success");
   }
   activateInPageFindIndex(0);
   return { ...outcome, skipped };

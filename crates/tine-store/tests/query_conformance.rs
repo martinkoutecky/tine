@@ -477,15 +477,109 @@ fn optional_block_attributes_are_two_valued() {
         ],
     );
     case(graph, "(deadline)", &["DEADLINE: <2026-08-01 Sat>"]);
-    case(
-        graph,
-        "(between scheduled 2026-07-29 2026-07-31)",
-        &[
-            "SCHEDULED: <2026-07-29 Wed>",
-            "TODO marked and scheduled",
-            "`SCHEDULED: <2026-07-29 Wed>` inside inline code",
-        ],
-    );
+    case(graph, "(between scheduled 2026-07-29 2026-07-31)", &[]);
+}
+
+#[test]
+fn d18_conversion_and_agenda_keep_the_previous_answers() {
+    use tine_core::query::print::{query_print, PrintDialect};
+    use tine_core::query::registry::Registry;
+    use tine_core::query::wire_parse::{parse_query_pair, QueryTextDialect};
+    let today = JournalDate::today();
+    let date = |n| today.add_days(n).file_stem().replace('_', "-");
+    let mut text = String::new();
+    for n in [-8, -7, -2, -1, 0, 1, 2, 7, 8] {
+        for (marker, fields) in [
+            ("TODO", vec!["SCHEDULED"]),
+            ("DOING", vec!["DEADLINE"]),
+            ("", vec!["SCHEDULED"]),
+            ("TODO", vec!["SCHEDULED", "DEADLINE"]),
+            ("DONE", vec!["SCHEDULED"]),
+            ("CANCELED", vec!["DEADLINE"]),
+            ("CANCELLED", vec!["SCHEDULED"]),
+        ] {
+            text.push_str(&format!("- {marker} item {n} {}\n", fields.join("+")));
+            for field in fields {
+                text.push_str(&format!("  {field}: <{}>\n", date(n)));
+            }
+        }
+    }
+    text.push_str("- TODO unscheduled\n- [#A] unmarked\n");
+    for format in ["md", "org"] {
+        let content = if format == "org" {
+            text.lines()
+                .map(|l| {
+                    if let Some(body) = l.strip_prefix("- ") {
+                        format!("* {body}")
+                    } else {
+                        l.trim_start().to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            text.clone()
+        };
+        let fixture = open(&[(&format!("pages/Windows.{format}"), &content)]);
+        for field in ["scheduled", "deadline"] {
+            let w = format!("(between {field} today +7d)");
+            for source in [
+                w.clone(),
+                format!("(and {w} (task TODO))"),
+                format!("(or {w} (task TODO))"),
+                format!("(not {w})"),
+                format!("(and (task TODO) (or (not {w}) (priority A)))"),
+                format!("(and (task) {w})"),
+            ] {
+                let parsed =
+                    parse_query_pair(&source, QueryTextDialect::MacroQuery, &[], Registry::none());
+                let refused = run_ir(
+                    &fixture.graph,
+                    &parsed.query,
+                    &parsed.view,
+                    &ExecutionContext::none(),
+                );
+                assert!(block_lines(&refused).is_empty());
+                assert!(!refused.diagnostics.is_empty());
+                // Baseline behavior: the original tree without the new refusal.
+                let mut old = parsed.query.clone();
+                old.diagnostics.clear();
+                let before = block_lines(&run_ir(
+                    &fixture.graph,
+                    &old,
+                    &parsed.view,
+                    &ExecutionContext::none(),
+                ));
+                let converted = &parsed.og_hint.unwrap().rewrites[0].query;
+                let printed =
+                    query_print(converted, &parsed.view, PrintDialect::Tql, false).unwrap();
+                assert_eq!(
+                    before,
+                    block_lines(&run_text(&fixture.graph, &printed, QueryDialect::Tql)),
+                    "{format}: {source}"
+                );
+            }
+        }
+        for ahead in [-2, 0, 2] {
+            let hi = format!("{}{ahead}d", if ahead < 0 { "" } else { "+" });
+            let old_source = format!("(and (or (between scheduled -7d {hi}) (between deadline -7d {hi})) (not (task DONE CANCELED CANCELLED)))");
+            let (mut old, view) = parse_query_text(&old_source, QueryDialect::Og, today);
+            old.diagnostics.clear();
+            let before = block_lines(&run_ir(
+                &fixture.graph,
+                &old,
+                &view,
+                &ExecutionContext::none(),
+            ));
+            let tql = format!("@block and (scheduled between '-7d' and '{hi}' or deadline between '-7d' and '{hi}') and not (task in ('DONE', 'CANCELED', 'CANCELLED'))");
+            let after = block_lines(&run_text(&fixture.graph, &tql, QueryDialect::Tql));
+            assert_eq!(before, after, "agenda {format} ahead={ahead}");
+            assert!(!after.is_empty());
+            assert!(after.iter().all(|s| !s.starts_with("DONE")
+                && !s.starts_with("CANCELED")
+                && !s.starts_with("CANCELLED")));
+        }
+    }
 }
 
 #[test]

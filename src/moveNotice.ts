@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { blockRef, node as docNode, type OutlineScope } from "./document";
 import { openPageAtBlock } from "./router";
 import { pushToastUnique } from "./toasts";
@@ -24,9 +25,9 @@ export function noticeMoveOutOfView(id: string, scope: OutlineScope | null | und
     }
   }
   const ref = blockRef(id);
-  pushToastUnique(`Moved in ${ref.page}`, "info", {
+  pushToastUnique(msg("move-notice-moved-in", { page: String(ref.page) }), "info", {
     action: {
-      label: "Show",
+      label: msg("move-notice-show"),
       run: () => openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) }),
     },
   });

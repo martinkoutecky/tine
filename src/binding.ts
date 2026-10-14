@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { createSignal, type Accessor } from "solid-js";
 import { backend } from "./backend";
 import { graphEpoch } from "./graphSession";
@@ -73,7 +74,7 @@ export function invalidateBinding(): void {
     }
   }
   if (failures > 0) {
-    pushToast(`Some state of the previous graph could not be cleared (binding.clear, ${failures} failed).`, "error");
+    pushToast(msg("binding-some-state-of-the-previous-graph-could-not", { failures: String(failures) }), "error");
   }
 }
 
@@ -111,5 +112,5 @@ export function clearOnBindingInvalidated(clear: () => void): void {
 
 /** The visible refusal for a write whose popup outlived its graph. */
 export function refuseStaleWrite(what: string): void {
-  pushToast(`${what} was not saved: it was opened in a graph that is no longer open.`, "error");
+  pushToast(msg("binding-was-not-saved-it-was-opened-in-a", { what: String(what) }), "error");
 }

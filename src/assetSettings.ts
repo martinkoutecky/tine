@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Device-local asset-naming preference (persisted in tine-settings.json via the
 // generic app_string backend for atomic, WebView-independent state). Read once at
 // startup by initAssetSettings(); the signal drives both
@@ -48,6 +49,6 @@ export async function initAssetSettings(): Promise<void> {
       seedPreference(fmt);
     }
   } catch {
-    pushToast("Could not load asset filename format.", "error");
+    pushToast(msg("settings-could-not-load-asset-filename-format"), "error");
   }
 }

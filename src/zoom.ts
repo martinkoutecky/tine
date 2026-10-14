@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Interface zoom (UI scale) — like a browser's Ctrl +/-/0. Scales the WHOLE
 // webview uniformly (fonts, spacing, images, the PDF pane, everything) via the
 // native webview zoom-level where the platform implements it. Wry's Android
@@ -77,7 +78,7 @@ export function applyZoom(): void {
       document.documentElement.style.zoom = "";
       return getCurrentWebview().setZoom(scale);
     })
-    .catch(() => pushToast("Could not apply interface zoom.", "error"));
+    .catch(() => pushToast(msg("zoom-could-not-apply-interface-zoom"), "error"));
 }
 
 /** Apply the stored zoom to workspace window webview `label` (desktop only).
@@ -88,7 +89,7 @@ export function applyZoomToWebview(label: string, scale = interfaceZoom()): void
   if (!isTauri()) return;
   void Webview.getByLabel(label)
     .then((webview) => webview?.setZoom(scale))
-    .catch(() => pushToast("Could not apply interface zoom.", "error"));
+    .catch(() => pushToast(msg("zoom-could-not-apply-interface-zoom"), "error"));
 }
 
 function setZoom(z: number) {
@@ -99,7 +100,7 @@ function setZoom(z: number) {
     if (next === 1) localStorage.removeItem(ZOOM_KEY);
     else localStorage.setItem(ZOOM_KEY, String(next));
   } catch {
-    pushToast("Could not save interface zoom.", "error");
+    pushToast(msg("zoom-could-not-save-interface-zoom"), "error");
   }
   applyZoom();
 }

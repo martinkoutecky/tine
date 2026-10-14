@@ -1,4 +1,5 @@
 import { TableWrap } from "./TableWrap";
+import { t } from "../i18n";
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
 import { pageRowFieldValue, type OgQueryHint, type PageRow, type Query, type QueryStatistics, type ViewKind } from "../editor/queryIr";
 import { openPageTarget, openPageTargetInNewTab } from "../router";
@@ -190,7 +191,7 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onC
   );
 }
 
-const OG_REWRITE_LABEL: Record<OgQueryHint["rewrites"][number]["rewrite"], string> = {
+const OG_REWRITE_LABEL = {
   open_tasks: "Open tasks",
   any_task: "Any task",
   priorities: "A, B or C",
@@ -209,6 +210,7 @@ export function QueryOgHint(props: { hint: OgQueryHint; onRewrite?: (query: Quer
   return (
     <div class="query-og-hint" role="note" onClick={(e) => e.stopPropagation()}>
       <p class="query-og-hint-text">
+        <Show when={props.hint.date_windows}>{t("query-date-window-refusal")}</Show>
         <Show when={has("task")}><code>(task)</code> without markers adds no condition, as in Logseq. </Show>
         <Show when={has("priority")}><code>(priority)</code> without levels adds no condition, as in Logseq. </Show>
         <Show
@@ -231,7 +233,7 @@ export function QueryOgHint(props: { hint: OgQueryHint; onRewrite?: (query: Quer
                   props.onRewrite?.(rewrite.query);
                 }}
               >
-                {OG_REWRITE_LABEL[rewrite.rewrite]}
+                {rewrite.rewrite === "convert" ? t("query-convert") : OG_REWRITE_LABEL[rewrite.rewrite]}
               </button>
             )}
           </For>

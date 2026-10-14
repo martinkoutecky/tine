@@ -240,14 +240,12 @@ describe("the All Pages view", () => {
 });
 
 describe("the sidebar entry", () => {
-  it("opens the full view from the All pages section", async () => {
+  it("opens the full view directly from the All pages entry", async () => {
     vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [existing("Alpha")] });
     bumpGraphEpoch();
     const host = document.createElement("div");
     document.body.append(host);
     const dispose = render(() => <Sidebar />, host);
-    const header = [...host.querySelectorAll<HTMLElement>(".nav-section-header")].find((el) => el.textContent?.includes("ALL PAGES"))!;
-    header.click();
     const entry = await vi.waitFor(() => {
       const el = host.querySelector<HTMLElement>(".nav-all-pages-open");
       expect(el).not.toBeNull();
