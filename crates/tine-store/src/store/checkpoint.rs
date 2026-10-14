@@ -52,7 +52,9 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// 12 (Kalem K2): linkable page-property values join reference candidates.
 /// 13 (GH #675): `alias_index` retains authored spelling; older derived caches
 /// hold folded aliases and must be rebuilt from the unchanged graph files.
-pub(crate) const FORMAT: u32 = 13;
+/// 14 (GH #487): parsed task markers join explicit reference projections,
+/// candidate indexes and cached backlinks; old disposable caches rebuild.
+pub(crate) const FORMAT: u32 = 14;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.8";

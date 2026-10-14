@@ -1,4 +1,7 @@
-import { Show, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { openInNewTab } from "../router";
+import { t } from "../i18n";
+import { PagePropertyValue } from "../components/PagePropertyValue";
 import { FloatingPortal } from "../components/FloatingPortal";
 import { RefBlocks } from "../components/RefBlocks";
 import type { BlockDto } from "../types";
@@ -69,6 +72,9 @@ export function PeekPopup(props: {
   blocks: () => BlockDto[];
   page?: string;
   pageKind?: "journal" | "page";
+  blockId?: string;
+  properties?: [string, string][];
+  format?: "md" | "org";
   truncatedCount?: () => number;
   onPointerEnter: () => void;
   onPointerLeave: () => void;
@@ -78,6 +84,11 @@ export function PeekPopup(props: {
   const ownerWindow = useOwnerWindow();
   const layerId = `peek-popup-${createUniqueId()}`;
   const [style, setStyle] = createSignal<Record<string, string>>({});
+  const openSource = (block?: string) => {
+    if (!props.page) return;
+    openInNewTab({ kind: "page", name: props.page, pageKind: props.pageKind ?? "page", ...(block ? { block } : {}) });
+    props.onDismiss();
+  };
 
   const updatePosition = () => {
     const anchor = props.anchor();
@@ -152,10 +163,20 @@ export function PeekPopup(props: {
         onMouseDown={(e) => e.stopPropagation()}
       >
         <Show when={props.title}>
-          <div class="peek-popup-title">{props.title}</div>
+          <div class="peek-popup-title">
+            <button type="button" class="peek-source-title" onClick={() => openSource()}>{props.title}</button>
+            <Show when={props.page}>
+              <button type="button" class="peek-open-source" aria-label={t("preview-open-source")} onClick={() => openSource(props.blockId)}>{t("preview-open-source")}</button>
+            </Show>
+          </div>
         </Show>
         <PeekContext.Provider value={true}>
-          <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} />
+          <Show when={props.properties?.length}>
+            <div class="peek-page-properties">
+              <For each={props.properties}>{([key, value]) => <div><span class="prop-key">{key}</span>{" "}<PagePropertyValue propertyKey={key} value={value} format={props.format ?? "md"} /></div>}</For>
+            </div>
+          </Show>
+          <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} readOnly onOpenBlock={openSource} />
         </PeekContext.Provider>
         <Show when={(props.truncatedCount?.() ?? 0) > 0}>
           <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT

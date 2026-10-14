@@ -4,6 +4,7 @@ import { backend } from "../backend";
 import { initParser } from "../render/parse";
 import type { BlockDto } from "../types";
 import { EmbedMacro } from "./Macro";
+import { KNOBS, setKnob } from "../styleKnobs";
 
 // GH #439: a whole-page embed names the page it embeds, so it reads as a page and
 // not as unexplained rows (OG block.cljs `page-embed` header). The outline-grid
@@ -31,6 +32,24 @@ async function mountEmbed(body: string): Promise<{ root: HTMLElement; dispose: (
 }
 
 describe("page embed header (GH #439)", () => {
+  it("GH #440: an opt-in breadcrumb identifies a block embed's page and ancestors", async () => {
+    vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([
+      { page: "Source", kind: "page", blocks: [{ ...leaf("b1", "block row"), breadcrumb: ["Parent", "Child"] }] },
+    ] as never);
+    vi.spyOn(backend(), "setAppString").mockResolvedValue(undefined);
+    const { root, dispose } = await mountEmbed("embed ((b1))");
+    try {
+      const knob = KNOBS.find(k => k.id === "embed-breadcrumbs");
+      expect(knob).toBeDefined();
+      expect(document.documentElement.classList.contains("tine-embed-breadcrumbs")).toBe(false);
+      setKnob(knob!, true);
+      expect(document.documentElement.classList.contains("tine-embed-breadcrumbs")).toBe(true);
+      expect(root.querySelector(".embed-source-breadcrumb")?.textContent).toContain("Source");
+      expect(root.querySelector(".embed-source-breadcrumb")?.textContent).toContain("Parent");
+      expect(root.querySelector(".embed-source-breadcrumb")?.textContent).toContain("Child");
+      setKnob(knob!, undefined);
+    } finally { dispose(); }
+  });
   it("names the embedded page with a link to it", async () => {
     vi.spyOn(backend(), "getPage").mockResolvedValue(pageRead("Source", [leaf("s1", "source row")]));
     const { root, dispose } = await mountEmbed("embed [[Source]]");

@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-reference-batch.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Aliases preview their source title and properties; task marker pages expose source-backed task toggles; Favorites block rows open their block and derive their star without config block entries.","blocking":true}],
+      "acceptableVariations":["Preview positioning, result order, emoji rendering and publication latency may vary while source identity, saved task state and favorite membership remain correct."],
+      "nonRequirements":["Editing in previews, toolbar deletion, exact pixels, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-panes-keys.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Remapped tab, editing and search commands reach their intended surface; reopening sidebar cards promotes one card; Alt bullet zoom and empty sidebar drops preserve their block target.","blocking":true},{"class":"flexible-presentation-heuristic","userOutcome":"Hovering workspace and tab menus allows pointer travel into the menu before choosing an item.","blocking":false}],
       "acceptableVariations":["Hover delays, menu geometry, focus styling and save latency may vary while the semantic journeys complete."],

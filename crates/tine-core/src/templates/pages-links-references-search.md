@@ -28,6 +28,8 @@ icon:: 🔗
   - A key does not have to be plain ASCII. `klíč:: hodnota` is an ordinary property: it can be added, changed, and removed again like any other.
   - A read-only page — a bundled Guide page — offers no property editing at all, rather than a form whose writes would be dropped.
 - ## Block references and embeds
+  - Hover a page link or block reference for a read-only preview. An alias shows its source page's title and page properties. Click the title to open that page in a new tab, a block bullet to open that block in a new tab, or **Open source** to open the preview's source. Editing requires opening the source.
+  - **Settings → Appearance → Fine-tuning → Block embed breadcrumbs** optionally shows the source page and parent trail above a block embed. It starts off and is saved on this device.
   - A block embed has a subtle shaded background in both light and dark themes, so you can distinguish the embedded occurrence from an ordinary block.
   - Type `((` while editing: the popup searches blocks, and choosing one inserts a durable `((reference))`. Tine first writes a stable `id::` on the source block, so the reference survives renames, reloads, and restarts.
   - The reference renders as a link-styled copy of the source text and stays in sync: edit the source and every reference updates. A referenced task keeps its marker and checkbox; tick the checkbox inside the reference to complete or reopen the source task. A per-block reference-count badge reveals the referencing blocks.

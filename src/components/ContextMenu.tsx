@@ -18,6 +18,8 @@ import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
 import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
+import { favoriteBlock } from "../favorites";
+import { t } from "../i18n";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
 import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
@@ -1131,6 +1133,7 @@ function blockActions(id: string, x: number, y: number): { label: string; run: (
     { label: "Copy link", run: () => void copyTineLink({ blocks: ids }) },
     { label: multi ? "Copy block refs" : "Copy block ref", run: () => void copyBlockLink(ids, "ref") },
     { label: multi ? "Copy block embeds" : "Copy block embed", run: () => void copyBlockLink(ids, "embed") },
+    ...(!multi ? [{ label: t("favorites-block-action"), run: () => void favoriteBlock(id) }] : []),
     { label: `Copy ${noun}`, run: copy },
     // Open the export modal for the whole selection (if this block is part of a
     // multi-selection) or just this block's subtree — preview + indent/remove opts.

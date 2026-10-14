@@ -20,3 +20,5 @@ setting-sticky-parents = Sticky parent bullets
 setting-sticky-parents-hint = Keep offscreen ancestors at the top of scrolling outlines. Click one to return to it. On by default; saved on this device.
 sticky-parents-load-error = Could not load sticky parent bullets
 sticky-parents-save-error = Could not remember sticky parent bullets
+settings-embed-breadcrumbs = Block embed breadcrumbs
+settings-embed-breadcrumbs-hint = Show the source page and parent trail above embedded blocks. Off by default.

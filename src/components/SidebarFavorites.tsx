@@ -2,7 +2,14 @@
 // pre-order, indented by depth. The visible index IS `data-row-index`, so a
 // drop found by elementFromPoint needs no translation, and a label row and a
 // favorite row drag on exactly the same terms.
-import { For, Show, createSignal, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, type JSX } from "solid-js";
+import { resolveBlockBatched, blockRefTarget } from "../resolveBatch";
+import { dataRev, graphEpoch } from "../graphSession";
+import { readOr } from "../resourceRead";
+import { visibleBody } from "../render/block";
+import { openPageTarget, replaceActiveRoute, openInNewTab } from "../router";
+import { openRouteInOtherPane } from "../panes";
+import { openBlockInSidebar, openBlockRefContextMenu } from "../ui";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
   addFavoriteGroup, deleteFavoriteGroup, favoritesLayout, moveFavoriteRow,
@@ -52,11 +59,17 @@ export function SidebarFavorites(props: {
   isActive: (name: string) => boolean;
   targetName: (name: string, kind: PageKind) => string;
   open: (name: string, kind: PageKind, gesture: "normal" | "sidebar" | "new-tab" | "pane" | "context", point?: { x: number; y: number }) => void;
+  onActiveNavigationComplete?: () => void;
 }): JSX.Element {
   return (
     <div id="sidebar-favorites-list">
       <For each={visibleRows(favoritesLayout())}>
         {(row, i) => {
+          const [block] = createResource(
+            () => row.node.blockId ? `${row.node.blockId}\0${graphEpoch()}\0${dataRev()}` : null,
+            () => resolveBlockBatched(row.node.blockId!),
+          );
+          const source = () => readOr(block, undefined, "favorite block");
           const dropping = () => dropTarget()?.index === i();
           const rowClass = () => ({ "row-drop-before": dropping() && dropTarget()!.before, "row-drop-after": dropping() && !dropTarget()!.before });
           const style = () => ({
@@ -73,7 +86,7 @@ export function SidebarFavorites(props: {
             </Show>
           );
           const name = row.node.target;
-          if (name === null) return (
+          if (name === null && !row.node.blockId) return (
             <div class="nav-page nav-fav-group" data-row-index={i()} classList={rowClass()} style={style()}
               onPointerDown={(e) => startDrag(i(), e)}>
               {toggle}
@@ -85,27 +98,40 @@ export function SidebarFavorites(props: {
                 aria-label={`Delete group ${row.node.raw}`} onClick={() => deleteFavoriteGroup(row.path)}>×</button>
             </div>
           );
-          const kind = row.node.kind ?? itemKind(name);
+          const kind = row.node.kind ?? itemKind(name ?? "");
+          const title = () => row.node.blockId ? (source()?.blocks[0] ? visibleBody(source()!.blocks[0].raw).join(" ") : row.node.blockId) : name!;
+          const open = (gesture: "normal" | "sidebar" | "new-tab" | "pane" | "context", point?: { x: number; y: number }) => {
+            if (!row.node.blockId) { props.open(name!, kind, gesture, point); return; }
+            const group = source();
+            if (!group) return;
+            const target = blockRefTarget(row.node.blockId, group);
+            const route = { kind: "page" as const, name: target.page, pageKind: target.pageKind, block: target.uuid, ...(target.path ? { path: target.path } : {}) };
+            if (gesture === "sidebar") openBlockInSidebar(target);
+            else if (gesture === "new-tab") openInNewTab(route);
+            else if (gesture === "pane") openRouteInOtherPane(route);
+            else if (gesture === "context" && point) openBlockRefContextMenu(point.x, point.y, target.uuid, target.page, target.pageKind, target.path);
+            else { openPageTarget(route); replaceActiveRoute(route); props.onActiveNavigationComplete?.(); }
+          };
           return (
-            <div class="nav-page" data-row-index={i()} classList={{ active: props.isActive(props.targetName(name, kind)), ...rowClass() }}
+            <div class="nav-page" data-row-index={i()} classList={{ active: name !== null && props.isActive(props.targetName(name, kind)), ...rowClass() }}
               style={style()}
               onPointerDown={(e) => startDrag(i(), e)}
               onMouseDown={internalLinkMouseDown}
               onClick={(e) => {
                 if (rowReorderClickSuppressed()) return;
                 const dest = internalLinkDest(e);
-                props.open(name, kind, dest === "sidebar" ? "sidebar" : dest === "background" ? "new-tab" : dest === "pane" ? "pane" : "normal");
+                open(dest === "sidebar" ? "sidebar" : dest === "background" ? "new-tab" : dest === "pane" ? "pane" : "normal");
               }}
-              onAuxClick={(e) => internalLinkAuxClick(e, () => props.open(name, kind, "new-tab"))}
+              onAuxClick={(e) => internalLinkAuxClick(e, () => open("new-tab"))}
               onContextMenu={(e) => {
                 e.preventDefault();
-                props.open(name, kind, "context", { x: e.clientX, y: e.clientY });
+                open("context", { x: e.clientX, y: e.clientY });
               }}
             >
               {toggle}
               {/* ⭐ via EmojiText: WebKitGTK's Skia COLRv1 path crashes painting a
                   raw color-emoji glyph on hardened libstdc++ (#29). */}
-              <SidebarTitle text={`${pageIcon(name) || "⭐"} ${name}`} fullTitle={name} />
+              <SidebarTitle text={`${name ? pageIcon(name) || "⭐" : "⭐"} ${title()}`} fullTitle={title()} />
             </div>
           );
         }}

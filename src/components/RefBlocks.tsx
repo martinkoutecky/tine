@@ -34,6 +34,8 @@ export function RefBlocks(props: {
   /** GH #486: a click on a page-property row edits that page's properties
    *  (the caller owns the source page's edit path). Absent: read-only row. */
   onEditPageProperties?: (event: MouseEvent) => void;
+  readOnly?: boolean;
+  onOpenBlock?: (id: string) => void;
 }): JSX.Element {
   return <RefBlocksAtDepth {...props} treeDepth={1} />;
 }
@@ -45,6 +47,8 @@ function RefBlocksAtDepth(props: {
   path?: string;
   depth?: number;
   onEditPageProperties?: (event: MouseEvent) => void;
+  readOnly?: boolean;
+  onOpenBlock?: (id: string) => void;
   treeDepth: number;
 }): JSX.Element {
   return (
@@ -56,6 +60,8 @@ function RefBlocksAtDepth(props: {
           pageKind={props.pageKind}
           path={props.path}
           onEditPageProperties={props.onEditPageProperties}
+          readOnly={props.readOnly}
+          onOpenBlock={props.onOpenBlock}
           depth={props.depth ?? b.breadcrumb?.length ?? 0}
           treeDepth={props.treeDepth}
         />
@@ -70,6 +76,8 @@ function RefBlock(props: {
   pageKind?: "journal" | "page";
   path?: string;
   onEditPageProperties?: (event: MouseEvent) => void;
+  readOnly?: boolean;
+  onOpenBlock?: (id: string) => void;
   depth: number;
   treeDepth: number;
 }): JSX.Element {
@@ -87,7 +95,7 @@ function RefBlock(props: {
   // Keep the DTO hot path parse-free for ordinary references. Only an exact
   // whole-block candidate pays for lsdoc confirmation before execution.
   const beginQuery = createMemo(() =>
-    /^\s*#\+BEGIN_QUERY\b/i.test(props.block.raw)
+    !props.readOnly && /^\s*#\+BEGIN_QUERY\b/i.test(props.block.raw)
       ? inspectBeginQuery(props.block.raw, format())
       : null
   );
@@ -129,7 +137,10 @@ function RefBlock(props: {
               // read-only reference has no equivalent of, so a plain click keeps
               // doing nothing.
               const dest = internalLinkDest(e);
-              if (dest === "default") return;
+              if (dest === "default") {
+                if (props.onOpenBlock) { e.stopPropagation(); props.onOpenBlock(blockDtoExternalId(props.block)); }
+                return;
+              }
               e.stopPropagation();
               if (dest === "sidebar") openBlockInSidebar(refTarget());
               else openRefRoute(dest === "pane" ? openRouteInOtherPane : openInNewTab);
@@ -155,7 +166,7 @@ function RefBlock(props: {
               props.onEditPageProperties(event);
             }}
           >
-            <Show when={taskCheckboxState(facets().marker) !== null && !props.block.page_property}>
+            <Show when={!props.readOnly && taskCheckboxState(facets().marker) !== null && !props.block.page_property}>
               {/* GH #518: ticks the SOURCE block through its own checkbox path
                   (OG block-checkbox on a referenced block). */}
               <SourceTaskCheckbox marker={facets().marker} target={refTarget} />{" "}
@@ -221,6 +232,7 @@ function RefBlock(props: {
           <div class="block-children">
             <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind} path={props.path}
               onEditPageProperties={props.onEditPageProperties}
+              readOnly={props.readOnly} onOpenBlock={props.onOpenBlock}
               depth={props.depth + 1} treeDepth={props.treeDepth + 1} />
           </div>
         </div>
