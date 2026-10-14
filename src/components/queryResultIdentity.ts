@@ -51,7 +51,8 @@ export function resolveResultRow(row: ResultRow, mode: "action" | "mount" = "act
   if (!row.dto) { const source = node(row.id); return source?.page === row.page ? source : null; }
   const ticket = resultTicket(row.dto);
   const retained = mode === "mount" ? mounted.get(row.dto) : undefined;
-  if (retained && retained.epoch === resultsEpoch()) return retained.source;
+  // Eviction is hydration, not an epoch: a retained source must still be live.
+  if (retained && retained.epoch === resultsEpoch() && node(retained.source.id) === retained.source) return retained.source;
   const current = resultsTicketCurrent(ticket);
   let source = current ? node(row.dto.id) : undefined;
   if (current && !source) return null;

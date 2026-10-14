@@ -36,7 +36,17 @@ import { toasts, setToasts } from "../toasts";
 import { bumpDataRev } from "../graphSession";
 import { resetQueryTextOpenForTests } from "../navSettings";
 
+// These component fixtures do not bind a page host. Their source edits update
+// the working set; native coverage exercises actual publication and the epoch
+// suite separately pins refusal while publication is pending.
+const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
+vi.mock("../document/host/wiring", () => new Proxy({}, {
+  get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty
+    : key === "persistTransfer" ? saveFixture.persistTransfer : saveFixture.actual?.[key as string],
+  has: () => true,
+}));
 beforeAll(async () => {
+  saveFixture.actual = await vi.importActual("../document/host/wiring");
   await initParser();
 });
 

@@ -331,7 +331,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const search = friendlySearch();
     const both = search === null && bothKinds();
     const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed(), both]);
-    const key = `${displayKey}\0${collapsed() ? "collapsed" : dataRev()}\0${resultsEpoch()}`;
+    // A collapsed count is never acted on: neither saves nor epochs rerun it.
+    const key = `${displayKey}\0${collapsed() ? "collapsed" : `${dataRev()}\0${resultsEpoch()}`}`;
     return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};

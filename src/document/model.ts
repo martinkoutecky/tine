@@ -57,11 +57,20 @@ export { doc };
 /** Invalidate before structural working-set mutations, including producer-based
  * insert/delete/move/paste/undo and page replacement/rename. Raw-only typing and
  * folds leave mounted live objects intact; the host gate covers publication. */
+let hydrating = 0;
+/** Working-set hydration that cannot change what an existing live node means: a
+ * first load adds new nodes, and eviction removes whole pages (their rows then
+ * fail to resolve). Neither invalidates other results, so an open Table-cell
+ * draft survives browsing. Replacing a loaded page is not hydration. */
+export function hydrateWorkingSet<T>(write: () => T): T {
+  hydrating++;
+  try { return write(); } finally { hydrating--; }
+}
 export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
   const fieldOnly = args.length === 4 && ((args[0] === "byId" && ["raw", "loadedRaw", "collapsed"].includes(String(args[2])))
     || (args[0] === "pages" && ["preBlock", "title"].includes(String(args[2]))));
   batch(() => {
-    const finish = fieldOnly || args[0] === "feed" || args[0] === "loaded" ? null : beginResultsChange();
+    const finish = hydrating || fieldOnly || args[0] === "feed" || args[0] === "loaded" ? null : beginResultsChange();
     try { (writeDoc as (...args: unknown[]) => void)(...args); }
     finally {
       // A whole-state reset is complete here (workingSet.resetStore); edit
