@@ -5,11 +5,9 @@
 // the running build, show a sticky toast. This is the cross-platform half and is
 // always the way a user LEARNS an update exists.
 //
-// Installer (the toast's action): on **Windows/Linux** in the packaged app, run the
-// Tauri v2 updater — `check()` → `downloadAndInstall()` → `relaunch()` — so the
-// update applies in place. On **macOS** (manual: the Developer ID-signed bundle's
-// in-place install is not enabled yet, GH #650) and outside Tauri, fall back to
-// opening the releases page in the browser. Android/iOS update through their distribution channel, so
+// Installer (the toast's action): on desktop in the packaged app, download and
+// verify, flush saves, then install in place. macOS offers restart after installation;
+// Windows/Linux relaunch immediately. Android/iOS update through their distribution channel, so
 // both the notifier and installer are disabled there. MSIX package identity also
 // disables both; Microsoft Store manages those updates. The updater is inert until
 // a signed release with a `latest.json` exists; any failure (no manifest yet, bad
@@ -32,6 +30,11 @@ import { pushToast, dismissToast } from "./toasts";
 import { openSettings } from "./ui";
 import { checkForUpdatesAutomatically, initUpdateSettings } from "./updateSettings";
 import { reportUiFailure } from "./uiFailure";
+import { t } from "./i18n";
+
+function isMacDesktop(): boolean {
+  return browserPlatform(typeof navigator !== "undefined" ? navigator.userAgent : "").macDesktop;
+}
 
 /** THE update channel. Each build reads only its own channel, named by the identity switch:
  * stable Tine (`page.tine.Tine`) reads `releases/latest`, Tine Beta (`page.tine.TineBeta`)
@@ -96,9 +99,6 @@ async function updateMode(installer = false): Promise<UpdateMode> {
     return "unavailable";
   }
   if (resolvePackagedUpdateMode(await isMsixPackaged(), installer) === "unavailable") return "unavailable";
-  // GH #405: the pinned updater predates 2.13.2's macOS rollback repair.
-  // Keep installs manual until the manager upgrades Tauri core and the plugin.
-  if (browserPlatform(typeof navigator !== "undefined" ? navigator.userAgent : "").manualDesktopUpdate) return "manual";
   // A Flatpak's /app is read-only: the in-place install can only fail, so it
   // updates by downloading the new bundle.
   return (await isFlatpak()) ? "manual" : "self";
@@ -123,7 +123,7 @@ export type UpdaterFailureStage =
 export type UpdaterFailureCause =
   | "network" | "invalid_manifest" | "unsupported_target" | "invalid_signature"
   | "install_failed" | "relaunch_failed" | "unknown";
-type UpdaterFailurePhase = "check" | "apply" | "relaunch";
+type UpdaterFailurePhase = "check" | "apply" | "install" | "relaunch";
 type UpdaterFailure = { stage: UpdaterFailureStage; cause: UpdaterFailureCause };
 
 function errorText(error: unknown): string {
@@ -151,6 +151,7 @@ function errorText(error: unknown): string {
 export function classifyUpdaterFailure(phase: UpdaterFailurePhase, error: unknown): UpdaterFailure {
   const text = errorText(error).toLowerCase();
   if (phase === "relaunch") return { stage: "relaunch", cause: "relaunch_failed" };
+  if (phase === "install") return { stage: "install", cause: "install_failed" };
   if (phase === "check") {
     if (/request|network|connect|connection|dns|tls|certificate|proxy|timed? ?out/.test(text)) {
       return { stage: "manifest_fetch", cause: "network" };
@@ -206,6 +207,23 @@ function reportUpdaterFailure(phase: UpdaterFailurePhase, error: unknown): void 
   const failure = classifyUpdaterFailure(phase, error);
   void recordDiagnostic("updater_failure", { updaterStage: failure.stage, updaterCause: failure.cause });
   dbg(`updater failure stage=${failure.stage} cause=${failure.cause}: ${safeUpdaterErrorChain(error)}`);
+  if (phase === "install" && isMacDesktop()) {
+    // Upstream serializes errors as text; keep recovery guidance localized.
+    const text = errorText(error);
+    const notRestored = /PreviousAppNotRestored|failed to install the update and to restore the previous app/i.test(text);
+    // Recovery needs the actual location: upstream can preserve the bundle in
+    // the home folder or retain its temp folder when the install dir is unwritable.
+    // This path is shown locally; diagnostics above still use fixed/scrubbed data.
+    const prefix = "failed to install the update and to restore the previous app, which was left at ";
+    const offset = text.indexOf(prefix);
+    const location = offset < 0 ? "" : text.slice(offset + prefix.length).split(" caused by ")[0].trim();
+    const guidance = t(notRestored ? "update-mac-not-restored" : "update-mac-install-failed", {
+      bundle: `${APP_PRODUCT_NAME} (previous version).app`,
+    });
+    pushToast(location ? `${guidance} ${t("update-mac-backup-location", { path: location })}` : guidance,
+      "error", { sticky: true, action: { label: t("update-download-manually"), run: openReleases } });
+    return;
+  }
   const what = phase === "relaunch"
     ? "The update installed but Tine could not relaunch."
     : `Couldn't apply the update during ${STAGE_LABEL[failure.stage]} — opening the releases page instead.`;
@@ -341,8 +359,18 @@ async function applyUpdateOrOpen(): Promise<void> {
     } catch (error) {
       exitGuard?.reset();
       dismissToast(progressId);
-      reportUpdaterFailure("apply", error);
+      reportUpdaterFailure("install", error);
       openReleases();
+      return;
+    }
+    if (isMacDesktop()) {
+      // The atomic replacement does not end the running macOS process. Release
+      // the gate so editing can continue; Restart takes a fresh save snapshot.
+      exitGuard?.reset();
+      dismissToast(progressId);
+      pushToast(t("update-installed-restart", { name: APP_PRODUCT_NAME }), "info", {
+        sticky: true, action: { label: t("update-restart"), run: () => { void restartTine(); } },
+      });
       return;
     }
     try {

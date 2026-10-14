@@ -227,6 +227,12 @@ export interface MessageArgs {
   "toast-pinyin-save-failed": {};
   "toast-repeat-count": { "count": string | number };
   "toast-wsl-rootfs-warning": {};
+  "update-download-manually": {};
+  "update-installed-restart": { "name": string | number };
+  "update-mac-backup-location": { "path": string | number };
+  "update-mac-install-failed": { "bundle": string | number };
+  "update-mac-not-restored": { "bundle": string | number };
+  "update-restart": {};
 }
 
 export type MessageId = keyof MessageArgs;

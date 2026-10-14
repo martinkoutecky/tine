@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
-use tauri::{Runtime, State, WebviewWindow};
+use tauri::{Manager, Runtime, State, WebviewWindow};
 use tine_store::Store;
 
 pub(crate) type WindowKey = String;
@@ -555,8 +555,8 @@ impl<'r, 'de: 'r, R: Runtime> CommandArg<'de, R> for GraphContext<'r, R> {
         };
         let state: State<'r, AppState> = command
             .message
-            .state_ref()
-            .try_get()
+            .webview_ref()
+            .try_state()
             .ok_or_else(|| InvokeError::from("AppState is not managed"))?;
         let window = WebviewWindow::<R>::from_command(command)?;
         Ok(Self {

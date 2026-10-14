@@ -31,8 +31,3 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [patch.crates-io]
 # GH #533: preserve absolute UNC paths reconstructed from retained Windows handles.
 cap-primitives = { path = "vendor/cap-primitives-4.0.2" }
-# tao 0.35.3 stops GTK button events at the application-window handler, which
-# also swallows Linux native titlebar controls. This exact upstream merge makes
-# GTK propagate those events again. Remove the pin once Tauri adopts tao 0.36+.
-# https://github.com/tauri-apps/tao/pull/1218
-tao = { git = "https://github.com/tauri-apps/tao", rev = "07f3742b1833b64be27b1ef991e38d557d4276c9" }

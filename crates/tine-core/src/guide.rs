@@ -802,10 +802,13 @@ mod rename_guide_tests {
         let platforms = include_str!("templates/platforms-and-mobile.md");
         for outcome in [
             "Windows and Linux",
-            "macOS updates remain manual",
+            "macOS offers Restart",
             "signed macOS updater archives",
             "signed and notarized universal application",
             "download and replace the app manually",
+            "(previous version).app",
+            "look beside the original app",
+            "updater shows the saved location",
         ] {
             assert!(
                 platforms.contains(outcome),
