@@ -3,6 +3,7 @@ icon:: 📅
 - # Journals, tasks, and scheduling
   - Everything dated lives here: one journal page per day, tasks as plain-text markers at the start of a block, `[#A]`–`[#C]` priorities, and `SCHEDULED:`/`DEADLINE:` planning lines with calendar pickers. This page maps the shipped behavior; [[Workflows/Capture and plan your day]] walks through using it, and [[Feature showcase]] shows each construct rendered.
 - ## Journals
+  - A date mentioned by another block appears even without a journal file, at any distance in the past or future. Past days appear in chronological order; unreferenced days without files stay out of the feed. Viewing a fileless day creates no file: typing into its empty body creates it through the usual save path. Referenced future days sit in a collapsed **Upcoming** group above today, nearest first. Expand a day to see its **Linked References**, or click its title to open the day page. Adding or removing the last mention updates the feed; deleting a journal file keeps its day listed while another block still references it.
   - The **Journals** entry in the left sidebar (or **g j**) opens a multi-day feed — one continuous, editable list, newest day first. Today's journal is always shown at the top of the feed. With no daily template, its file is created lazily on your first edit: the feed shows the day, but no file exists until you type.
   - "Today" follows the calendar of the machine's local time zone as Tine's backend reads it, so today's journal rolls over at local midnight — including when Tine stays open overnight or resumes from sleep — and the Agenda, carry-over and the **Go to date** calendar all use that same day.
   - **g n** and **g p** step to the next or previous calendar day from the journal you are viewing (from another page they start at today, and they open that day even if it has no file yet). The calendar button in the top bar (**Go to date**) opens a month grid — days that already have an entry are marked — to jump to any day's journal.
@@ -42,7 +43,7 @@ icon:: 📅
        :inputs []
        :collapsed? true}]}
     ```
-  - Keyed off the scheduled/deadline date itself, not the page's journal day, over the whole graph: an unfinished item on an old page still shows while its date is in range. The underlying query is `(and (or (between scheduled -7d +7d) (between deadline -7d +7d)) (not (task DONE CANCELED CANCELLED)))`.
+  - Keyed off the scheduled/deadline date itself, not the page's journal day, over the whole graph: an unfinished item on an old page still shows while its date is in range. A saved equivalent uses Tine's query language: `{{tine-query @block (scheduled between '-7d' and '+7d' or deadline between '-7d' and '+7d') and not task in ('DONE', 'CANCELED', 'CANCELLED')}}`. OG Logseq's simple query language has no scheduled/deadline window condition.
   - Finished tasks (`DONE`, `CANCELED`, `CANCELLED`) never appear, matching Logseq.
 - ## Time tracking and the logbook
   - With Settings → **Journals** → **Time tracking** on (the default), moving into DOING / NOW records a clock-in and moving back to TODO / LATER or into DONE records a clock-out, as OG-compatible `:LOGBOOK:` `CLOCK:` rows (seconds on by default via `:logbook/settings`). Saved to `:feature/enable-timetracking?`.

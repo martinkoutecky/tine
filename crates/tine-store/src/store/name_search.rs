@@ -2,6 +2,42 @@
 use super::*;
 
 impl WholeGraph {
+    /// Referenced journal days from the published explicit-reference/alias
+    /// index, including days without a journal file. Ordinary date-named pages
+    /// and their aliases retain ordinary page identity. No document or disk
+    /// scan; O(R log D + date-name alias lookups), R indexed reference names,
+    /// D distinct referenced dates. Publications update the existing index.
+    pub(super) fn referenced_journal_days(&self) -> Vec<Day> {
+        let journal_prefix = format!("{}/", self.config.config.journals_dir);
+        self.graph
+            .explicit_reference_names()
+            .filter_map(|name| {
+                let date = self.journal_format.parse(name)?;
+                let title = self.journal_format.title(date);
+                let spellings =
+                    crate::query::journal_spelling_keys(&self.journal_format, date, &title);
+                if spellings.iter().any(|spelling| {
+                    self.name_claimants(spelling, PageKind::Page)
+                        .iter()
+                        .any(|entry| entry.kind == PageKind::Page)
+                        || self
+                            .graph
+                            .alias_owner_paths(&tine_core::refs::page_key(spelling))
+                            .is_some_and(|owners| {
+                                owners
+                                    .iter()
+                                    .any(|owner| !owner.starts_with(&journal_prefix))
+                            })
+                }) {
+                    return None;
+                }
+                Some(Day(date.ordinal_key()))
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
     /// Measurement-only count and owned payload bytes of ephemeral name keys.
     /// Includes ownership counts/names; persistent tree nodes and Arc headers
     /// are excluded. Open editor sessions are separate, lifetime-bound state.

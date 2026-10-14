@@ -1234,6 +1234,13 @@ impl ReadSnapshot {
         let positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
         (self.query_index).get(&self.pages, &positions, &self.config, self.cache_generation)
     }
+    pub(crate) fn explicit_reference_names(&self) -> impl Iterator<Item = &str> {
+        self.explicit_index
+            .shards
+            .iter()
+            .flat_map(|shard| shard.iter().map(|(name, _)| name.as_str()))
+    }
+
     pub(crate) fn referenced_page_names(&self) -> Vec<String> {
         self.referenced_names
             .get_or_init(|| {
