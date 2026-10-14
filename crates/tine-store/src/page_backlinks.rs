@@ -12,6 +12,10 @@ impl WholeGraph {
     /// path. Explicit links, namespace parents and page properties follow the
     /// reference evidence rules; duplicate links within a block count once.
     /// Cost O(P + B + R), with no file reads or persisted records.
+    /// Review measurement: ~4.4 ms warm median on 14,694 blocks / 1,075 pages
+    /// (31 release runs; metadata alone ~0.187 ms). Includes namespace expansion
+    /// and page-header projection. Read separately, coalesced only in All pages;
+    /// incremental maintenance remains a follow-up.
     pub fn page_backlink_counts(&self) -> Vec<(String, usize)> {
         page_backlink_counts(&self.corpus(), &self.config.config)
     }

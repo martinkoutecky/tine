@@ -125,7 +125,11 @@ await session(1, async browser => {
   assert.ok(await browser.execute(selector => !!document.querySelector(`${selector} .qc-panel .qs-sheet`) && !!document.querySelector(`${selector} .query-group`), active));
   await closeEditor(browser);
   await textEdit(browser, "@block and task = 'TODO' and priority = 'A'");
-  await browser.waitUntil(() => browser.execute(selector => document.querySelector(`${selector} .query-count`)?.textContent === "1", active), { timeout: 20_000 });
+  await browser.waitUntil(() => browser.execute(() => {
+    const query = [...document.querySelectorAll(".page-blocks .query-block")].find(block => block.querySelector(".query-title")?.textContent?.trim() === "Calm tasks");
+    return query?.querySelector(".query-count")?.textContent === "1";
+  }), { timeout: 20_000 });
+  await markQuery(browser, "Calm tasks");
   await closeEditor(browser);
   await browser.waitUntil(() => fs.readFileSync(queries, "utf8").includes("priority"), { timeout: 15_000 });
   phase = "copy result hierarchy and ordinary collapse save";
@@ -194,6 +198,18 @@ await session(1, async browser => {
   await browser.$(".export-preview").waitForExist({ timeout: 15_000 });
   assert.ok((await browser.$(".export-preview").getValue()).includes("Upcoming journey task"));
   await browser.execute(() => [...document.querySelectorAll(".export-foot button")].find(button => button.textContent === "Close")?.click());
+  phase = "frozen Search selection skips a changed positional source";
+  await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Select results")?.click());
+  const selectedLocator = await browser.$(".query-workspace .query-result-row").getAttribute("data-inpage-find-surface");
+  const planningPath = `${graph}/pages/Planning.md`;
+  fs.writeFileSync(planningPath, "- Unselected insertion\n" + fs.readFileSync(planningPath, "utf8"));
+  await browser.waitUntil(() => browser.execute(previous => {
+    const row = document.querySelector(".query-workspace .query-result-row");
+    return row?.textContent?.includes("Upcoming journey task") && row.getAttribute("data-inpage-find-surface") !== previous;
+  }, selectedLocator), { timeout: 20_000 });
+  await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Copy results")?.click());
+  await browser.waitUntil(() => browser.execute(() => document.body.innerText.includes("1 results changed since the query ran; run it again")), { timeout: 20_000 });
+  assert.equal(await browser.$(".export-preview").isExisting(), false);
   phase = "All pages backend counts and sort";
   if (!await browser.$(".nav-all-pages-open").isExisting()) {
     await browser.execute(() => [...document.querySelectorAll(".nav-section-header")].find(header => header.textContent?.includes("ALL PAGES"))?.click());
@@ -210,6 +226,15 @@ await session(2, async browser => {
   await openPageByName(browser, "Queries"); await markQuery(browser, "Planning query");
   await browser.waitUntil(() => browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector)?.textContent?.includes("Overdue journey task"), active), { timeout: 20_000 });
   assert.ok(fs.readFileSync(`${graph}/pages/Tasks.md`, "utf8").includes("DONE [#A] First journey task"));
+  phase = "saved planning comparison reopens without changing its answer";
+  await action(browser, "Edit");
+  await browser.execute(selector => document.querySelector(`${selector} .qs-value`)?.click(), active);
+  await browser.$('[aria-label="Date comparison"]').waitForExist({ timeout: 15_000 });
+  assert.equal(await browser.$('[aria-label="Date comparison"]').getValue(), "gt");
+  assert.equal(await browser.$('[aria-label="Date"]').getValue(), "today");
+  await browser.execute(() => document.querySelector(".qs-value-editor .qs-commit")?.click());
+  await closeEditor(browser);
+  await browser.waitUntil(() => browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector)?.textContent?.includes("Overdue journey task"), active), { timeout: 20_000 });
   await markQuery(browser, "Task board");
   await browser.$(`${active} .sheet-board-card`).waitForExist({ timeout: 20_000 });
   phase = "board last column access, drag save and genuine click navigation";

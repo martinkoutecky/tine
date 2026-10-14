@@ -14,6 +14,7 @@
 import { Show, type JSX } from "solid-js";
 import { resolveBlockRef, node as docNode, type blockRef } from "../document";
 import { loadSourcePage } from "../sourcePage";
+import { bindingOwner } from "../owned";
 import { leadingMarker, taskCheckboxState } from "../markers";
 import { pushToast } from "../toasts";
 import { formatForBlockId, toggleBlockCheckbox } from "./blockParts";
@@ -30,7 +31,9 @@ export type TaskToggleOutcome = "toggled" | "stale" | "missing" | "refused";
  * acts on a state the user did not see. Cost: one page read when the source page
  * is not loaded, plus O(page blocks) for the load and the reference resolution. */
 export async function toggleTaskAtSource(ref: LoadedBlockRef, expectChecked: boolean): Promise<TaskToggleOutcome> {
+  const owner = bindingOwner();
   if (!(await loadSourcePage(ref, "The task was not changed."))) return "refused";
+  if (!owner()) return "stale";
   const id = resolveBlockRef(ref);
   if (id === null || !docNode(id)) {
     pushToast(`The task is no longer on "${ref.page}", so it was not changed.`, "error");

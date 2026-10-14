@@ -31,14 +31,12 @@ pub(crate) struct PageModifiedWire {
     /// The `GraphRev` the times were read at.
     rev: String,
     modified: Vec<(String, i64)>,
-    backlinks: Vec<(String, usize)>,
 }
 
 pub(super) fn page_modified_wire(view: &WholeGraph) -> PageModifiedWire {
     PageModifiedWire {
         rev: view.rev().into(),
         modified: view.page_modified(),
-        backlinks: view.page_backlink_counts(),
     }
 }
 

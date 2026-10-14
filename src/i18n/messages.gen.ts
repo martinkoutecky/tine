@@ -137,6 +137,7 @@ export interface MessageArgs {
   "query-calm-is-set": {};
   "query-calm-none": {};
   "query-calm-relative-date": {};
+  "query-calm-results-changed": { "count": string | number };
   "query-calm-search": {};
   "query-calm-search-failed": { "error": string | number };
   "query-calm-select": {};

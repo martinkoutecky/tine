@@ -280,6 +280,9 @@ class TauriBackend implements Backend {
   pageModified() {
     return this.call<import("./types").PageModified>("page_modified");
   }
+  pageBacklinkCounts() {
+    return this.call<[string, number][]>("page_backlink_counts");
+  }
   journalFeedPage(limit: number, beforeDay: number | null) {
     return this.call<import("./types").JournalFeedPage>("journal_feed_page", { limit, beforeDay });
   }

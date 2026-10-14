@@ -50,7 +50,7 @@ function spyOnEverythingElse() {
   for (let proto: object | null = target; proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto))
     for (const key of Object.getOwnPropertyNames(proto)) names.add(key);
   for (const key of names) {
-    if (key === "constructor" || key === "pageInventory" || key === "pageModified" || key === "graphBindingGeneration" || key === "saveSession" || typeof target[key] !== "function") continue;
+    if (key === "constructor" || key === "pageInventory" || key === "pageModified" || key === "pageBacklinkCounts" || key === "graphBindingGeneration" || key === "saveSession" || typeof target[key] !== "function") continue;
     spies.push({ name: key, spy: vi.spyOn(target as never, key as never) as never });
   }
   return () => spies.flatMap(({ name, spy }) => spy.mock.calls.map(() => name));
@@ -60,7 +60,8 @@ async function mountAllPages(entries = inventory(), modified: [string, number][]
   const read = vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
   const readModified = vi.spyOn(backend(), "pageModified");
   if (modified === "fail") readModified.mockRejectedValue(new Error("no times"));
-  else readModified.mockResolvedValue({ rev: "1", modified, backlinks });
+  else readModified.mockResolvedValue({ rev: "1", modified });
+  const readCounts = vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue(backlinks);
   const otherCalls = spyOnEverythingElse();
   bumpGraphEpoch();
   const router = stubRouter();
@@ -68,7 +69,7 @@ async function mountAllPages(entries = inventory(), modified: [string, number][]
   document.body.append(host);
   const dispose = render(() => <AllPages router={router} />, host);
   await vi.waitFor(() => expect(host.querySelector(".all-pages-open")).not.toBeNull());
-  return { host, router, read, readModified, otherCalls, dispose };
+  return { host, router, read, readModified, readCounts, otherCalls, dispose };
 }
 
 afterEach(() => {
@@ -81,14 +82,42 @@ afterEach(() => {
 });
 
 describe("the All Pages view", () => {
+  it("coalesces rapid revisions to one in-flight read and one trailing refresh, and stops on unmount", async () => {
+    const { readCounts, readModified, dispose } = await mountAllPages([existing("Alpha")]);
+    await settle();
+    vi.useFakeTimers();
+    try {
+      let finish!: (counts: [string, number][]) => void;
+      readCounts.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+      bumpDataRev(); bumpDataRev(); bumpDataRev();
+      expect(readCounts).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(readCounts).toHaveBeenCalledTimes(2);
+      bumpDataRev(); bumpDataRev();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(readCounts).toHaveBeenCalledTimes(2);
+      finish([]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readCounts).toHaveBeenCalledTimes(3);
+      expect(readModified.mock.calls.length).toBeGreaterThan(3);
+      bumpDataRev();
+      dispose();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(readCounts).toHaveBeenCalledTimes(3);
+    } finally { vi.useRealTimers(); }
+  });
+  it("keeps graph-wide backlink reads separate from cheap updated times", () => {
+    expect(typeof (backend() as unknown as Record<string, unknown>).pageBacklinkCounts).toBe("function");
+  });
   it("refreshes backend counts after a graph change while keeping the current sort", async () => {
-    const { host, readModified, dispose } = await mountAllPages([existing("Alpha"), existing("Beta")], [], [["pages/Alpha.md", 2], ["pages/Beta.md", 7]]);
+    const { host, readModified, readCounts, dispose } = await mountAllPages([existing("Alpha"), existing("Beta")], [], [["pages/Alpha.md", 2], ["pages/Beta.md", 7]]);
     try {
       column(host, "Backlinks").click();
       await vi.waitFor(() => expect(rowNames(host)).toEqual(["Beta", "Alpha"]));
-      readModified.mockResolvedValue({ rev: "2", modified: [], backlinks: [["pages/Alpha.md", 9], ["pages/Beta.md", 7]] });
+      readModified.mockResolvedValue({ rev: "2", modified: [] });
+      readCounts.mockResolvedValue([["pages/Alpha.md", 9], ["pages/Beta.md", 7]]);
       bumpDataRev();
-      await vi.waitFor(() => expect(rowNames(host)).toEqual(["Alpha", "Beta"]));
+      await vi.waitFor(() => expect(rowNames(host)).toEqual(["Alpha", "Beta"]), { timeout: 2000 });
       expect(readModified).toHaveBeenCalledTimes(2);
     } finally { dispose(); }
   });

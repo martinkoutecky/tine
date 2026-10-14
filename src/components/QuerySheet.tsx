@@ -735,6 +735,13 @@ function QueryRow(props: {
     const test = property();
     if (test) return propertyOperatorLabel(test.id, effective().cardinality);
     const k = kind();
+    const filter = core();
+    if ((k === "scheduled" || k === "deadline") && filter.kind === "leaf" && filter.leaf.kind === "attr") {
+      const op = filter.leaf.op;
+      const symbol = { gt: ">", ge: "≥", eq: "=", lt: "<", le: "≤" }[op as "gt" | "ge" | "eq" | "lt" | "le"];
+      if (symbol) return props.node.negated ? `not ${symbol}` : symbol;
+      if (op === "is_not_set") return props.node.negated ? KIND_PHRASE[k].positive : KIND_PHRASE[k].negative;
+    }
     if (!k) return props.node.negated ? "not" : "matches";
     const phrase = KIND_PHRASE[k];
     return props.node.negated ? phrase.negative : phrase.positive;
@@ -1055,6 +1062,7 @@ function QueryRow(props: {
                   {(rootRef) => (
                     <div ref={rootRef} class="qs-menu" onClick={stop}>
                       <ValueEditor
+                        initial={core()}
                         kind={(props.sheet.openMenu() ?? "").split(":").pop() as BuilderLeafKind}
                         onCommit={(filter) => {
                           props.sheet.setOpenMenu(null);

@@ -104,6 +104,7 @@ export interface Backend {
   /** Last-modified time of every page file, read once when the All pages view
    *  opens: times the store already holds (no stat, nothing persisted). */
   pageModified(): Promise<import("./types").PageModified>;
+  pageBacklinkCounts(): Promise<[string, number][]>;
   journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;

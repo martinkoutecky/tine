@@ -109,7 +109,7 @@ function tableBody(input: SheetInput, cfg: ReturnType<typeof sheetConfig>, rows:
   // A query sheet shows the query's own `columns` when it names any; otherwise
   // the observed fields, with the page column (the live SheetTable's `fields`).
   const selected = input.query?.view.columns;
-  const explicitColumns = !!selected?.length || facetsFromDto(input.owner).properties.some(([key]) => key === "tine.columns" || key === "tine.block-columns");
+  const explicitColumns = !!selected?.length || facetsFromDto(input.owner).properties.some(([key]) => ["tine.columns", "tine.block-columns"].includes(key.trim().toLowerCase()));
   const fields = explicitColumns
     ? (selected ?? []).map(queryColumnFieldId)
     : tableFieldOrder(

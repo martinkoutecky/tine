@@ -3,10 +3,11 @@ import type { CmpOp, Filter } from "../editor/queryIr";
 import { t } from "../i18n";
 import { previewDate } from "../editor/dateExpr";
 
-/** Emits existing date leaves. SQL resolves and compares the literal. */
-export function PlanningDatePick(props: { field: "scheduled" | "deadline"; onCommit: (filter: Filter) => void }): JSX.Element {
-  const [op, setOp] = createSignal<CmpOp>("is_set");
-  const [date, setDate] = createSignal("today");
+/** Emits existing date leaves. The Rust engine resolves and compares the literal. */
+export function PlanningDatePick(props: { field: "scheduled" | "deadline"; initial?: Filter; onCommit: (filter: Filter) => void }): JSX.Element {
+  const leaf = props.initial?.kind === "leaf" && props.initial.leaf.kind === "attr" && props.initial.leaf.attr === props.field ? props.initial.leaf : undefined;
+  const [op, setOp] = createSignal<CmpOp>(leaf?.op ?? "is_set");
+  const [date, setDate] = createSignal(leaf?.value.kind === "date" ? leaf.value.literal : "today");
   const presence = () => op() === "is_set" || op() === "is_not_set";
   const commit = () => props.onCommit({ kind: "leaf", leaf: { kind: "attr", attr: props.field, op: op(),
     value: presence() ? { kind: "none" } : { kind: "date", literal: date().trim() } } });

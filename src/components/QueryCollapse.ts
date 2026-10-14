@@ -1,4 +1,6 @@
-import { blockWritable, collapseEpochOf, node, setCollapsedDeep, withUndoUnit } from "../document";
+import { blockWritable, collapseEpochOf, node, setCollapsedDeep, withUndoUnit, formatForPage, resolveBlockRef } from "../document";
+import { existingBlockId } from "../blockIdentity";
+import { noticeChangedResults, sameQueryResult } from "./queryResultIdentity";
 import { loadSourcePage } from "../sourcePage";
 import { graphOwner } from "../owned";
 import { t } from "../i18n";
@@ -12,10 +14,19 @@ export async function collapseQueryResults(groups: RefGroup[], collapsed: boolea
     if (!owner() || !await loadSourcePage({ page: group.page, pageKind: group.kind, path: group.path }, t("query-calm-fold-failed"))) return null;
   }
   if (!owner()) return null;
-  const selected = new Set(groups.flatMap(group => group.blocks.filter(block => !block.page_property).map(block => block.id)));
-  if (groups.some(group => group.blocks.some(block => !block.page_property && node(block.id)?.page !== group.page))) {
-    pushToast(t("query-calm-fold-failed"), "error"); return null;
+  const selected = new Set<string>();
+  let changed = 0;
+  for (const group of groups) {
+    const format = formatForPage(group.page);
+    for (const block of group.blocks.filter(block => !block.page_property)) {
+      const durable = existingBlockId(block.raw, format);
+      const id = durable ? resolveBlockRef({ uuid: durable, page: group.page, pageKind: group.kind, path: group.path }) : block.id;
+      const source = id ? node(id) : undefined;
+      if (!source || source.page !== group.page || !sameQueryResult(block, source, format)) changed++;
+      else selected.add(source.id);
+    }
   }
+  noticeChangedResults(changed);
   const roots = [...selected].filter(id => {
     if (!node(id)?.children.length) return false;
     let parent = node(id)?.parent;

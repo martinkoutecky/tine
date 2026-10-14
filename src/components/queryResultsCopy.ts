@@ -1,4 +1,6 @@
-import { exportNodesFor, formatForPage, node, pageByName } from "../document";
+import { exportNodesFor, formatForPage, node, pageByName, resolveBlockRef } from "../document";
+import { existingBlockId } from "../blockIdentity";
+import { noticeChangedResults, samePagePropertyResult, sameQueryResult } from "./queryResultIdentity";
 import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
 import { pushToast } from "../toasts";
@@ -33,15 +35,32 @@ export function queryResultsCopyNodes(groups: RefGroup[], pages: Pick<PageEntry,
 export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageEntry, "name">[] = []): Promise<void> {
   const owner = graphOwner();
   const forest: ExportNode[] = pages.map(page => ({ raw: page.name, children: [] }));
+  let changed = 0;
+  let count = pages.length;
   try {
     for (const group of groups) {
       if (!owner()) return;
       const loaded = pageByName(group.page);
       const exact = loaded?.kind === group.kind && (!group.path || loaded.id === group.path);
-      const format = exact ? formatForPage(group.page) : "md";
+      let format = exact ? formatForPage(group.page) : "md";
       let children: ExportNode[];
-      if (exact && group.blocks.every(block => node(block.id)?.page === group.page)) {
-        children = exportNodesFor(group.blocks.map(block => block.id));
+      if (exact) {
+        const ids: string[] = [];
+        const propertyRoots: BlockDto[] = [];
+        for (const block of group.blocks) {
+          if (block.page_property) {
+            if (samePagePropertyResult(block, loaded!.preBlock, format)) propertyRoots.push(block);
+            else changed++;
+            continue;
+          }
+          const durable = existingBlockId(block.raw, format);
+          const id = durable ? resolveBlockRef({ uuid: durable, page: group.page, pageKind: group.kind, path: group.path }) : block.id;
+          const source = id ? node(id) : undefined;
+          if (!source || source.page !== group.page || !sameQueryResult(block, source, format)) changed++;
+          else ids.push(source.id);
+        }
+        count += ids.length + propertyRoots.length;
+        children = [...blockDtosToExportNodes(propertyRoots, format), ...exportNodesFor(ids)];
       } else {
         const result = await readOwned(owner, group.path ? backend().getPageByPath(group.path) : backend().getPage(group.page, group.kind));
         if (result.kind === "stale") return;
@@ -50,13 +69,30 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
         const byId = new Map<string, BlockDto>();
         const visit = (blocks: BlockDto[]) => { for (const block of blocks) { byId.set(block.id, block); visit(block.children); } };
         visit(dto.blocks);
-        const roots = group.blocks.map(block => block.page_property ? block : byId.get(block.id));
-        if (roots.some(block => !block)) throw new Error("source block unavailable");
-        children = blockDtosToExportNodes(uniqueResultRoots(roots as BlockDto[]), dto.format ?? "md");
+        const sourceFormat = dto.format ?? "md";
+        format = sourceFormat;
+        const roots: BlockDto[] = [];
+        for (const block of group.blocks) {
+          if (block.page_property) {
+            if (samePagePropertyResult(block, dto.pre_block, sourceFormat)) roots.push(block);
+            else changed++;
+            continue;
+          }
+          const durable = existingBlockId(block.raw, sourceFormat);
+          const candidates = durable ? [...byId.values()].filter(source => sameQueryResult(block, source, sourceFormat)) : [byId.get(block.id)];
+          const source = candidates.length === 1 ? candidates[0] : undefined;
+          if (!source || !sameQueryResult(block, source, sourceFormat)) changed++;
+          else roots.push(source);
+        }
+        count += roots.length;
+        children = blockDtosToExportNodes(uniqueResultRoots(roots), sourceFormat);
       }
-      forest.push({ raw: group.page, format, children });
+      if (children.length) forest.push({ raw: group.page, format, children });
     }
-    if (owner() && forest.length) openExportNodesModal(forest, pages.length + groups.reduce((sum, group) => sum + group.blocks.length, 0));
+    if (owner()) {
+      noticeChangedResults(changed);
+      if (forest.length) openExportNodesModal(forest, count);
+    }
   } catch {
     if (owner()) pushToast(t("query-calm-copy-failed"), "error");
   }

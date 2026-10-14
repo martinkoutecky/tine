@@ -850,12 +850,13 @@ export function BetweenPick(props: {
 /** The value collector for a filter kind, and the IR leaf `og.rs` builds for the same intent. */
 export function ValueEditor(props: {
   kind: BuilderLeafKind;
+  initial?: Filter;
   onCommit: (filter: Filter) => void;
 }): JSX.Element {
   return (
     <>
       <Show when={props.kind === "scheduled" || props.kind === "deadline"}>
-        <PlanningDatePick field={props.kind as "scheduled" | "deadline"} onCommit={props.onCommit} />
+        <PlanningDatePick field={props.kind as "scheduled" | "deadline"} initial={props.initial} onCommit={props.onCommit} />
       </Show>
       <Show when={props.kind === "page"}>
         <PageInput placeholder="Page or tag name" onCommit={(name) => props.onCommit(pageRefFilter(name))} />

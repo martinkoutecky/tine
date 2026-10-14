@@ -27,4 +27,5 @@ query-calm-expand = Expand all
 query-calm-select = Select results
 query-calm-select-result = Select result
 query-calm-fold-failed = The results were not folded.
+query-calm-results-changed = { $count } results changed since the query ran; run it again
 query-calm-title-column = Title (always shown)

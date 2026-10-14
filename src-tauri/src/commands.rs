@@ -347,6 +347,14 @@ pub(crate) async fn page_modified(state: GraphContext<'_>) -> Result<PageModifie
     .map_err(|error| error.to_string())?
 }
 
+/// Separate graph-wide count read; All pages coalesces it while mounted.
+#[tauri::command]
+pub(crate) async fn page_backlink_counts(
+    state: GraphContext<'_>,
+) -> Result<Vec<(String, usize)>, String> {
+    off_ui_graph_read(&state, |view| Ok(view.page_backlink_counts())).await
+}
+
 #[derive(Serialize)]
 pub(crate) struct JournalFeedPage {
     pages: Vec<PageWire>,

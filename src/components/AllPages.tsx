@@ -30,7 +30,7 @@ import {
 // index (`pageIndex.ts`); the Updated column is ONE `page_modified` read when the
 // view opens (times the store already holds), never a call per row. Only the
 // visible slice is in the DOM, so 10k+ pages cost what one screenful costs.
-// Backlink counts come with that backend read. Created and bulk deletion are
+// Backlink counts use a separate coalesced read while mounted. Created and bulk deletion are
 // not offered here: file creation time is not reliable across platforms.
 
 /** Every row is exactly this tall, so the scroll offset maps to a row by arithmetic. */
@@ -62,7 +62,34 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
   const slice = createMemo(() => rows().slice(range().start, range().end));
 
   const metricsScope = {};
+  let countPending = false;
+  let countInFlight = false;
+  let countStarted = -Infinity;
+  let countTimer: ReturnType<typeof setTimeout> | undefined;
+  const refreshCounts = () => {
+    if (!alive || countInFlight || countTimer !== undefined || !countPending) return;
+    const wait = Math.max(0, countStarted + 1000 - Date.now());
+    if (wait) {
+      countTimer = setTimeout(() => { countTimer = undefined; refreshCounts(); }, wait);
+      return;
+    }
+    countPending = false;
+    countInFlight = true;
+    countStarted = Date.now();
+    const owner = graphOwner(() => alive);
+    void readOwned(owner, backend().pageBacklinkCounts()).then(result => {
+      if (result.kind === "current") setBacklinks(new Map(result.value));
+    }).catch(() => {
+      // Missing counts leave dashes; updated times stay independently available.
+    }).finally(() => {
+      countInFlight = false;
+      refreshCounts();
+    });
+  };
+  onCleanup(() => { if (countTimer !== undefined) clearTimeout(countTimer); });
   createEffect(on(dataRev, () => {
+    countPending = true;
+    refreshCounts();
     // One read per open or graph revision, never per row or presentation edit.
     void (async () => {
       try {
@@ -70,7 +97,6 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
         const result = await readOwned(owner, backend().pageModified());
         if (result.kind === "current") {
           setModified(new Map(result.value.modified));
-          setBacklinks(new Map(result.value.backlinks ?? []));
         }
       } catch {
         // No times: Updated shows dashes and the list still works.
