@@ -1,3 +1,10 @@
+## Settings › Editor › Advanced
+settings-pinyin-label = Match Chinese page names by Pinyin
+settings-pinyin-description = Find Han titles and aliases with Mandarin Pinyin or syllable initials. Native name matches come first. This preference stays on this device.
+settings-pinyin-reset = Reset Pinyin matching to language default
+toast-pinyin-save-failed = Could not save the Pinyin matching preference.
+toast-pinyin-load-failed = Could not load the Pinyin matching preference.
+
 ## Settings › Appearance
 settings-language-label = Language
 settings-language-description = The language of { -brand }'s menus, settings and messages. Your notes are never translated.

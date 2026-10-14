@@ -18,6 +18,7 @@ export function writePreference<T>(
   value: T,
   persist: (value: T) => Promise<unknown>,
   label: string,
+  onFailure?: () => void,
 ): void {
   let state = states.get(read) as State<T> | undefined;
   if (!state) {
@@ -33,7 +34,8 @@ export function writePreference<T>(
       state.committed = value;
     } catch {
       if (revisionOwner(read, revision)()) apply(state.committed);
-      pushToast(`Could not save ${label}.`, "error");
+      if (onFailure) onFailure();
+      else pushToast(`Could not save ${label}.`, "error");
     } finally {
       state.pending--;
     }

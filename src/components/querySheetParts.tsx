@@ -16,6 +16,7 @@ import {
   type JSX,
 } from "solid-js";
 import { backend } from "../backend";
+import { pinyinMatchingEnabled } from "../launcherRanking";
 import {
   MAX_QUERY_BUILDER_DEPTH,
   anyTaskFilter,
@@ -685,7 +686,7 @@ export function PageInput(props: {
     dqTimer = setTimeout(() => setDq(s), 120);
   });
   onCleanup(() => clearTimeout(dqTimer));
-  const [matchesResource] = createResource(dq, (s) => backend().quickSwitch(s, 8));
+  const [matchesResource] = createResource(dq, (s) => backend().quickSwitch(s, 8, undefined, pinyinMatchingEnabled()));
   // A failed lookup offers no completions; the next keystroke re-runs it.
   const matches = () => (readOr(matchesResource, undefined, "value completions"));
   return (

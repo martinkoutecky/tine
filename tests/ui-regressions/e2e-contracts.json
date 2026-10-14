@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-pinyin.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Ctrl+K finds and opens a Han title from full Mandarin Pinyin or initials, keeps native matches first, and removes expansions after disabling the device preference.","blocking":true}],
+      "acceptableVariations":["Existing deterministic tie order between colliding expansions; layout, glyphs and search latency may vary."],
+      "nonRequirements":["Exact pixels, Japanese romaji, phrase-aware polyphonic readings, block-text transliteration or GUI certification outside Linux."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh671-journal-startup.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Journals opens with the reporter's daily template on a fresh day, keeps existing journal content, and remains available through routed-day navigation, return and cold reopen.","blocking":true}],
       "acceptableVariations":["Heading classes, startup timing and layout may vary while the expected journal content is visible and existing files remain unchanged."],

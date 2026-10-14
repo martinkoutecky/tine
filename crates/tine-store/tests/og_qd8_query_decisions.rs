@@ -90,6 +90,7 @@ fn d4_query_text_is_exact_and_sees_raw_property_and_drawer_text() {
     let search = graph
         .search(
             &tine_store::SearchRequest {
+                transliteration: false,
                 text: "CAFE".into(),
                 within: None,
                 page_limit: 0,

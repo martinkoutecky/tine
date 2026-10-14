@@ -42,6 +42,8 @@ pub enum ObjectiveMatchClass {
     Substring,
     /// Fuzzy name match.
     Fuzzy,
+    /// Optional language-specific name expansion, below every native match.
+    Transliteration,
     /// Match found in block body.
     BodyEvidence,
 }
@@ -50,10 +52,11 @@ impl ObjectiveMatchClass {
     /// Fixed rank for this relevance class, higher first.
     pub fn rank(self) -> i32 {
         match self {
-            Self::Exact => 5,
-            Self::Prefix => 4,
-            Self::Substring => 3,
-            Self::Fuzzy => 2,
+            Self::Exact => 6,
+            Self::Prefix => 5,
+            Self::Substring => 4,
+            Self::Fuzzy => 3,
+            Self::Transliteration => 2,
             Self::BodyEvidence => 1,
         }
     }

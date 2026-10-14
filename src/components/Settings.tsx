@@ -73,6 +73,9 @@ import type { AssetInfo, TrashStats, JournalFile } from "../types";
 import { DEFAULT_TITLE_FORMAT, formatJournal, appNow } from "../journal";
 import {
   launcherRankingEnabled,
+  pinyinMatchingEnabled,
+  setPinyinMatchingEnabled,
+  resetPinyinMatchingSetting,
   resetLauncherRanking,
   setLauncherRankingEnabled,
 } from "../launcherRanking";
@@ -769,6 +772,13 @@ function EditorTab(props: { search: string }): JSX.Element {
           hint="Plain navigation to a page, journal, or exact zoomed/file-pinned view focuses the matching tab if one is already open. Middle-click and explicit Open in new tab still create another tab."
         >
           <Toggle on={navReuseTabs()} onClick={() => setNavReuseTabs(!navReuseTabs())} />
+        </Field>
+
+        <Field label={render(msg("settings-pinyin-label"))} hint={render(msg("settings-pinyin-description"))}>
+          <Toggle on={pinyinMatchingEnabled()} onClick={() => setPinyinMatchingEnabled(!pinyinMatchingEnabled())} />
+          <button type="button" class="og-revert" onClick={resetPinyinMatchingSetting}>
+            {render(msg("settings-pinyin-reset"))}
+          </button>
         </Field>
 
         <Field

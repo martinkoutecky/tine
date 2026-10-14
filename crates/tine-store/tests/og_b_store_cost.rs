@@ -49,6 +49,7 @@ fn open_and_retained_snapshot_save_cost() {
                 "BENCH pages={pages} run={run} open_ms={open_ms:.3} whole_graph_ms={ready_ms:.3}"
             );
             let request = SearchRequest {
+                transliteration: false,
                 text: "unchanged".into(),
                 within: None,
                 page_limit: 20,

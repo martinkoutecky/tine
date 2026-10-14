@@ -33,6 +33,7 @@ fn a_page_scoped_block_search_is_not_consumed_by_out_of_scope_matches() {
         graph
             .search(
                 &SearchRequest {
+                    transliteration: false,
                     text: "needle".into(),
                     within: within.map(PageId::from),
                     page_limit: 0,

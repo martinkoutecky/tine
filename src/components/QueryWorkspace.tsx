@@ -14,6 +14,7 @@ import {
   type JSX,
 } from "solid-js";
 import { backend, isTauri } from "../backend";
+import { pinyinMatchingEnabled } from "../launcherRanking";
 import { bindingIdentity, captureBinding } from "../binding";
 import { bindingOwner, advanceRevision, currentRevision, graphOwner, latestOwner, ownedWhen, readOwned, revisionOwner, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
@@ -253,7 +254,7 @@ function defaultDependencies(): QueryWorkspaceDependencies {
     resolvePage: (name, kind) => api.resolvePage(name, kind),
     createPage: (page, bindingGeneration) => createPage(page.name, page, { bindingGeneration }),
     runGraphSearch: (source, pageLimit, blockLimit, lane, explain, scope, pageMatchScope, views) =>
-      api.runGraphSearch(source, pageLimit, blockLimit, lane, explain, scope, pageMatchScope, views),
+      api.runGraphSearch(source, pageLimit, blockLimit, lane, explain, scope, pageMatchScope, views, pinyinMatchingEnabled()),
     parseQuery: (source, dialect) => api.parseQuery(source, dialect),
     queryRun: (query, view) => api.queryRun(query, view),
     queryExplainEmpty: (query, view) => api.queryExplainEmpty(query, view),
@@ -763,8 +764,9 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       pageMatchScope: pageMatchScope(),
       pageView: pageView(),
       blockView: blockView(),
+      transliteration: sourceKind() === "search" && pinyinMatchingEnabled(),
     }),
-    () => JSON.stringify([props.route.id, source().trim(), sourceKind(), explain(), pageMatchScope(), pageView(), blockView()]),
+    () => JSON.stringify([props.route.id, source().trim(), sourceKind(), explain(), pageMatchScope(), pageView(), blockView(), sourceKind() === "search" && pinyinMatchingEnabled()]),
     async (request): Promise<QueryExecution> => {
       if (!request.source) {
         return { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false };
@@ -798,7 +800,12 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   );
 
   // Failure is drawn from `execution.error` below; a read never throws into render.
-  const executed = () => readOr(execution, undefined, "search");
+  const executed = () => {
+    const result = readOr(execution, undefined, "search");
+    return pinyinMatchingEnabled() || !result ? result : {
+      ...result, hits: result.hits.filter(hit => hit.match_class !== "transliteration"),
+    };
+  };
   const hits = () => executed()?.hits ?? [];
   const pageHits = () => hits().filter((hit): hit is QueryPageHit => hit.entity === "page");
   const blockHits = () => hits().filter((hit): hit is Extract<QueryHit, { entity: "block" }> => hit.entity === "block");

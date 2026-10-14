@@ -15,7 +15,7 @@ import { SEARCH_SYNTAX } from "../editor/searchQuery";
 import { EmojiText } from "../render/emoji";
 import { SearchResultRow } from "./SearchResultRow";
 import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
-import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking";
+import { rankLauncherItems, recordLauncherActivation, pinyinMatchingEnabled } from "../launcherRanking";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { createPage as saveCreatedPage, CreatePageRefusal, switcherPage } from "../document";
 import type { QueryPageScope } from "../types";
@@ -112,6 +112,7 @@ export function QuickSwitcher(): JSX.Element {
       // rows are neither shown nor reused.
       graphRoot: graphMeta()?.root ?? "",
       binding: bindingIdentity(),
+      transliteration: pinyinMatchingEnabled(),
     }),
     (s) => s && s.q.trim()
       ? backend().runGraphSearch(
@@ -121,12 +122,20 @@ export function QuickSwitcher(): JSX.Element {
           s.scope ? "quick-switch:current-page" : "quick-switch",
           false,
           s.scope ?? undefined,
+          undefined,
+          undefined,
+          s.transliteration,
         )
       : Promise.resolve({ hits: [], diagnostics: [], explanation: { branches: [] }, has_more: { pages: false, blocks: false }, cancelled: false })
   );
   // A failed search says so (below) instead of throwing into the switcher's render
   // or claiming "No matched results".
-  const graphResults = () => readOr(graphResultsResource, undefined, "search results");
+  const graphResults = () => {
+    const result = readOr(graphResultsResource, undefined, "search results");
+    return pinyinMatchingEnabled() || !result ? result : {
+      ...result, hits: result.hits.filter(hit => hit.match_class !== "transliteration"),
+    };
+  };
 
   const currentPageName = () => {
     const scope = currentPageScope();

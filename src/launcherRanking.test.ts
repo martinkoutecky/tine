@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  pinyinDefault,
+  pinyinMatchingEnabled,
+  initPinyinMatchingSetting,
+  setPinyinMatchingEnabled,
+  resetPinyinMatchingSetting,
   rankLauncherItems,
   recordLauncherActivation,
   resetLauncherRanking,
   setLauncherRankingEnabled,
   type LauncherRankable,
 } from "./launcherRanking";
+
+import { backend } from "./backend";
 
 const item = (id: string, adaptiveClass: LauncherRankable["adaptiveClass"]): LauncherRankable => ({
   adaptiveIdentity: id,
@@ -29,6 +36,33 @@ beforeEach(() => {
   storage = new TestStorage();
   setLauncherRankingEnabled(true);
   vi.restoreAllMocks();
+});
+
+describe("Pinyin preference and relevance (GH #151)", () => {
+  it("defaults to Chinese UI or system language and resets to that language default", async () => {
+    expect(pinyinDefault("zh-CN", "en-US")).toBe(true);
+    expect(pinyinDefault("en", "zh-TW")).toBe(true);
+    expect(pinyinDefault("en", "ja")).toBe(false);
+    const read = vi.spyOn(backend(), "getAppBool").mockResolvedValue(true);
+    const write = vi.spyOn(backend(), "setAppBool").mockResolvedValue(undefined);
+    await initPinyinMatchingSetting();
+    expect(pinyinMatchingEnabled()).toBe(true);
+    setPinyinMatchingEnabled(false);
+    expect(pinyinMatchingEnabled()).toBe(false);
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith("pinyin-page-matching", false));
+    resetPinyinMatchingSetting();
+    expect(pinyinMatchingEnabled()).toBe(pinyinDefault());
+    await vi.waitFor(() => expect(write).toHaveBeenLastCalledWith("pinyin-page-matching", pinyinDefault()));
+    read.mockRestore(); write.mockRestore();
+  });
+
+  it("favorites and repeated choices cannot promote expansion over native fuzzy", () => {
+    const native = item("native", "fuzzy");
+    const expansion = { ...item("expansion", "transliteration"), adaptiveFavorite: true };
+    recordLauncherActivation("graph", "bj", "expansion", 100, storage);
+    recordLauncherActivation("graph", "bj", "expansion", 101, storage);
+    expect(rankLauncherItems("graph", "bj", [expansion, native], 101, storage)).toEqual([native, expansion]);
+  });
 });
 
 describe("bounded Ctrl+K frecency (GH #143)", () => {
