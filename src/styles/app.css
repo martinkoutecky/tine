@@ -3834,6 +3834,12 @@ html[data-system-insets="native-viewport"] {
   display: none;
 }
 
+/* The remaining connectors are the edited block's ancestry; emphasize them in
+   the active color, as the ported Logseq plugin does (GH #614). */
+.plugin-thread-lines-active > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block):focus-within > .block-main::before {
+  border-bottom-color: var(--ls-link-text-color);
+}
+
 .plugin-thread-lines-standard > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block) > .block-main::before {
   border-bottom-color: var(--guide-color);
 }

@@ -148,6 +148,7 @@ import { SheetContainer } from "./SheetContainer";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { wireBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
+import { clipboardSizeAllowed } from "../clipboardImage";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
@@ -1222,16 +1223,37 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       } else {
         const files = eventFiles.slice(0, MAX_CLIPBOARD_FILES);
         skipped += Math.max(0, eventFiles.length - files.length);
+        // A content-URI File can omit MIME as well as size/bytes. Let the
+        // native image reader identify it; non-image files keep generic ingress.
+        if (files.length === 1 && !files[0].type && clipboardSizeAllowed(files[0].size)) {
+          const result = await readOwned(bindingOwner(() => assetEditorCurrent(editorToken)), backend().readClipboardImage());
+          if (result.kind === "stale") return;
+          const bytes = result.value;
+          if (bytes?.length && bytes.length <= MAX_BYTE_CLIPBOARD_FILE) {
+            await insertAssetBytes(editorToken, bytes);
+            return;
+          }
+        }
         // Keep the screenshot/image behavior: image-only clipboard payloads use
         // timestamp names and optimistic rendering rather than synthetic names
         // such as Chromium's generic "image.png".
         if (files.length === 1 && files[0].type.startsWith("image/")) {
           const image = files[0];
-          if (image.size > MAX_BYTE_CLIPBOARD_FILE) skipped += Math.max(1, native.skipped);
+          if (!clipboardSizeAllowed(image.size)) skipped += Math.max(1, native.skipped);
           else {
             try {
-              const bytes = new Uint8Array(await image.arrayBuffer());
-              if (bytes.length && bytes.length <= MAX_BYTE_CLIPBOARD_FILE) {
+              let bytes: Uint8Array | null;
+              try { bytes = new Uint8Array(await image.arrayBuffer()); }
+              catch { bytes = null; }
+              // Android content-URI clips can expose an empty/unreadable File
+              // in the WebView. Read through ContentResolver instead of treating
+              // that failure as evidence that the image exceeds the budget.
+              if (!bytes?.length) {
+                const result = await readOwned(bindingOwner(() => assetEditorCurrent(editorToken)), backend().readClipboardImage());
+                if (result.kind === "stale") return;
+                bytes = result.value;
+              }
+              if (bytes?.length && bytes.length <= MAX_BYTE_CLIPBOARD_FILE) {
                 // A Windows bitmap clipboard can appear as one invalid native
                 // path plus one valid WebView2 image File. Once the bytes win,
                 // suppress that native pseudo-entry's skipped count (GH #78).
@@ -1245,13 +1267,13 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         }
         skipped += native.skipped;
         for (const file of files) {
-          if (file.size > MAX_BYTE_CLIPBOARD_FILE) {
+          if (!clipboardSizeAllowed(file.size)) {
             skipped += 1;
             continue;
           }
           try {
             const bytes = new Uint8Array(await file.arrayBuffer());
-            if (!bytes.length) {
+            if (!bytes.length || bytes.length > MAX_BYTE_CLIPBOARD_FILE) {
               skipped += 1;
               continue;
             }
