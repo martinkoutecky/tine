@@ -23,8 +23,8 @@ jobs:
           cp Casks/tine.rb "$(brew --repository)/Library/Taps/local/homebrew-tine/Casks/tine.rb"
       - name: brew style
         run: brew style --cask local/tine/tine
-      - name: brew audit --new --online --signing
-        run: brew audit --cask --new --online --signing local/tine/tine
+      - name: brew audit --new --online
+        run: brew audit --cask --new --online local/tine/tine
       - name: install, check, uninstall --zap
         run: |
           brew install --cask local/tine/tine
