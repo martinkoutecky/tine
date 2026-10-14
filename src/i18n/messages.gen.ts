@@ -905,6 +905,8 @@ export interface MessageArgs {
   "inpage-replace-result": { "count": number; "skipped": number };
   "inpage-replace-skipped": { "count": number };
   "inpage-replace-this-match-is-inside-a-link-or-markup": {};
+  "journal-agenda-title": {};
+  "journal-config-diagnostic": { "message": string | number };
   "journal-conflict-file-row-append-this-file-s-blocks-to-the-canonical": {};
   "journal-conflict-file-row-cancel": {};
   "journal-conflict-file-row-canonical": {};
@@ -927,6 +929,11 @@ export interface MessageArgs {
   "journal-filename-panel-renamed": { "count": number };
   "journal-filename-panel-renaming": {};
   "journal-filename-panel-these-journal-files-aren-t-named-after-their": {};
+  "journal-query-error": { "error": string | number; "title": string | number };
+  "journal-query-untitled": {};
+  "journal-sections-ambiguous": { "others": string | number; "page": string | number };
+  "journal-sections-create-failed": { "error": string | number; "page": string | number };
+  "journal-sections-customize": {};
   "journal-slash-thatday-is-only-available-on-journal-pages": {};
   "journal-slash-the-date-was-not-inserted-because-the-graph": {};
   "journals-upcoming": {};
@@ -1528,6 +1535,8 @@ export interface MessageArgs {
   "settings-search-wide-page-width": {};
   "settings-search-wrap-code-lines": {};
   "settings-search-zoom-scale-ctrl-scroll": {};
+  "settings-sections-open": {};
+  "settings-sections-page": { "page": string | number };
   "settings-shade-embedded-blocks-like-logseq-or-show": {};
   "settings-shaded-box": {};
   "settings-small-visual-details-saved-on-this-device": {};

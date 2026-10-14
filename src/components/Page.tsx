@@ -6,7 +6,7 @@ import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLo
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
-import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, agendaQuery, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
+import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
 import { captureBinding, graphScopedSignal } from "../binding";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
@@ -24,7 +24,7 @@ import { LinkedReferences } from "./LinkedReferences";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { FailureBoundary } from "./FailureBoundary";
 import { UnlinkedReferences } from "./UnlinkedReferences";
-import { QueryMacro } from "./Macro";
+import { TodaySections } from "./TodaySections";
 import { SheetTable } from "./SheetTable";
 import { TodayTaskSummary } from "./TodayTaskSummary";
 import { selectedThemePresentation } from "../themeGallery";
@@ -668,27 +668,7 @@ export function PageView(): JSX.Element {
               <PageSection page={p}>
                 {/* OG page/today-queries and journal: queries precede agenda. */}
                 <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
-                  <For each={graphMeta()?.journal_config_diagnostics ?? []}>
-                    {(message) => <div class="config-diagnostic" role="status">config.edn: {message}</div>}
-                  </For>
-                  <div class="today-queries">
-                    <For each={graphMeta()?.default_journal_queries ?? []}>
-                      {(query) => <div class="default-journal-query">
-                        <Show when={!query.error} fallback={<div class="query-error" role="alert">{query.title ?? "Query"}: {query.error}</div>}>
-                          <QueryMacro body={query.body} title={query.title ?? undefined} currentPage={p.name} hideWhenEmpty configQuery />
-                        </Show>
-                      </div>}
-                    </For>
-                  </div>
-                  <Show when={!graphMeta()?.disable_scheduled_and_deadline_query}>
-                  <div class="agenda-block">
-                    <QueryMacro
-                      body={agendaQuery()}
-                      title="Scheduled & Deadline"
-                      hideWhenEmpty
-                    />
-                  </div>
-                  </Show>
+                  <TodaySections today={p.name} />
                 </Show>
                 <Show when={currentRoute().kind === "journals"}>
                   <JournalLinkedReferences name={p.name} />

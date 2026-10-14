@@ -90,6 +90,7 @@ isDirty
 isLoaded
 isSaving
 isSelected
+journalSectionsPage  # why: seeded sections page DTO uses the canonical guarded-create boundary (GH #605); batchSections
 journalTemplatePage
 liveConflictDraft  # why: the in-page resolver reviews a disk-changed editor draft with the revision it was edited from (og 8e); batch21a
 loadFeed
