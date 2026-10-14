@@ -1,4 +1,5 @@
 import { sheetSourceRows } from "../sheet/sheetRows";
+import { QueryResultTask, openQueryResult } from "./QueryResultTask";
 import { sheetClickOffset, sheetCellMenu, displayLimitThrough } from "../sheet/interactions";
 import { cellIsSelected } from "../sheet/selection";
 import { formulaReferenceName } from "../sheet/boardColumns";
@@ -93,6 +94,7 @@ export function SheetTable(props: {
   addRowLabel?: string;
   schemaPage?: string;
   queryDisplay?: QueryDisplayControl;
+  onDefaultColumns?: (columns: string[]) => void;
 }): JSX.Element {
   const surfaceId = useContext(SurfaceContext);
   let tableRef: HTMLDivElement | undefined;
@@ -183,14 +185,18 @@ export function SheetTable(props: {
     return isFormulaField(field) ? formulaValueToFieldValue(formulaValue(row, field)) : readFormulaRowField(row, field);
   };
 
-  const fields = createMemo<FieldId[]>(() => {
-    const selected = props.rowSource === "query" ? props.queryDisplay?.view.columns : undefined;
-    if (selected?.length) return selected.map(queryColumnFieldId);
+  const defaultFields = createMemo<FieldId[]>(() => {
     const loadedIds = rows().filter((r) => liveFormulaRowNode(r)).map((r) => r.id);
     const observed = loadedIds.length === rows().length
       ? fieldIdsForBlocks(loadedIds, { includePage: props.rowSource === "query" })
       : fieldIdsForRecords(rows(), props.rowSource === "query");
     return tableFieldOrder(observed, extraFields(), schemaFields().map((s) => s.field), formulaFields());
+  });
+  createEffect(() => props.onDefaultColumns?.(defaultFields().map(queryColumnName).filter((field): field is string => field !== null)));
+  const fields = createMemo<FieldId[]>(() => {
+    const selected = props.rowSource === "query" ? props.queryDisplay?.view.columns : undefined;
+    const explicit = props.rowSource === "query" && blockProperty(props.ownerId, "tine.columns") !== null;
+    return selected?.length || explicit ? (selected ?? []).map(queryColumnFieldId) : defaultFields();
   });
   const formulaHintFields = createMemo(() => {
     const out: string[] = [];
@@ -983,6 +989,7 @@ export function SheetTable(props: {
             return (
               <>
                 <TitleCell
+                  query={props.rowSource === "query"}
                   ownerId={props.ownerId}
                   surfaceId={surfaceId}
                   row={row}
@@ -1096,6 +1103,7 @@ export function resetSheetRowVirtualizationForTests() {
 }
 
 function TitleCell(props: {
+  query: boolean;
   ownerId: string;
   surfaceId: string;
   row: RowRecord;
@@ -1189,7 +1197,12 @@ function TitleCell(props: {
               when={props.near}
               fallback={<span class="sheet-cell-defer">{tableRowTitle(props.row)}</span>}
             >
-              <InlineText text={tableRowTitle(props.row)} format={fmt()} />
+              <Show when={props.query} fallback={<InlineText text={tableRowTitle(props.row)} format={fmt()} />}>
+                <QueryResultTask row={props.row} />
+                <button type="button" class="query-result-open" onClick={(event) => openQueryResult(props.row, event)}>
+                  <InlineText text={tableRowTitle(props.row)} format={fmt()} />
+                </button>
+              </Show>
             </Show>
           }
         >

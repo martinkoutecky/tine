@@ -16,6 +16,7 @@ import { setDoc, type FeedPage, type Node as StoreNode } from "../document/model
 import type { BlockDto, RefGroup } from "../types";
 import type { ViewSettings } from "../editor/queryIr";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
+import { openCalmQuery } from "../tests/calmQueryActions";
 
 beforeAll(async () => { await initParser(); });
 afterEach(() => {
@@ -51,6 +52,8 @@ function load(raw: string, view: ViewSettings): void {
     return { ...parsed, view: { ...parsed.view, ...view }, block_presentation: "board" };
   });
   vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+  vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+  vi.spyOn(backend(), "printQuery").mockResolvedValue("(task TODO)");
 }
 
 
@@ -63,7 +66,7 @@ describe("a query board groups by the engine's resolved grouping", () => {
       const text = root.querySelector(".sheet-board")!.textContent ?? "";
       expect(text).toContain("open");
       expect(text).toContain("done");
-      expect(root.querySelector<HTMLSelectElement>(".sheet-board-groupby")!.value).toBe("prop:status");
+      expect(root.querySelector(".sheet-board-groupby")).toBeNull();
     } finally { dispose(); }
   });
 
@@ -72,21 +75,23 @@ describe("a query board groups by the engine's resolved grouping", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       await vi.waitFor(() => expect(root.querySelector(".sheet-board")).not.toBeNull());
-      expect(root.querySelector<HTMLSelectElement>(".sheet-board-groupby")!.value).toBe("prop:status");
+      expect(root.querySelector(".sheet-board")!.textContent).toContain("open");
+      expect(root.querySelector(".sheet-board")!.textContent).toContain("done");
     } finally { dispose(); }
   });
 
-  it("moves the Display grouping when the toolbar dropdown changes it", async () => {
+  it("moves the Display grouping through its single View menu home", async () => {
     load("{{query (task TODO)}}\ntine.view:: board\ntine.group-field:: prop:status", { group_by: "prop:status" });
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       await vi.waitFor(() => expect(root.querySelector(".sheet-board")).not.toBeNull());
-      const select = root.querySelector<HTMLSelectElement>(".sheet-board-groupby")!;
-      select.value = "priority";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
+      const panel = await openCalmQuery(root, "View");
+      [...panel.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Change")!.click();
+      const option = [...panel.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(button => button.textContent?.includes("priority"));
+      expect(option).toBeDefined(); option!.click();
       // The engine reads `tine.group-field` first: leaving it behind would make the
       // choice a no-op.
-      expect(blockProperty("query", "tine.group-field")).toBe("priority");
+      await vi.waitFor(() => expect(blockProperty("query", "tine.group-field")).toBe("priority"));
     } finally { dispose(); }
   });
 
@@ -101,20 +106,18 @@ describe("a query board groups by the engine's resolved grouping", () => {
       expect(columns).toHaveLength(1);
       expect(columns[0].textContent).toContain("All results");
       expect(columns[0].querySelectorAll(".sheet-board-card")).toHaveLength(2);
-      expect(root.querySelector<HTMLSelectElement>(".sheet-board-groupby")!.value).toBe("");
+      expect(root.querySelector(".sheet-board-groupby")).toBeNull();
     } finally { dispose(); }
   });
 
-  it("writes an explicit clear from the toolbar and from the context menu", async () => {
+  it("writes an explicit clear from View and from the existing context menu", async () => {
     load("{{query (task TODO)}}\ntine.view:: board\ntine.group-by:: prop:status", { group_by: "prop:status" });
     const { root, dispose } = mount(() => (<><Block id="query" /><ContextMenu /></>));
     try {
       await vi.waitFor(() => expect(root.querySelector(".sheet-board")).not.toBeNull());
-      const select = root.querySelector<HTMLSelectElement>(".sheet-board-groupby")!;
-      expect([...select.options].some((option) => option.value === "")).toBe(true);
-      select.value = "";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-      expect(blockProperty("query", "tine.group-field")).toBe("");
+      const panel = await openCalmQuery(root, "View");
+      [...panel.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "None")!.click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.group-field")).toBe(""));
       expect(blockProperty("query", "tine.group-by")).toBeNull();
 
       // the same writer from the context menu

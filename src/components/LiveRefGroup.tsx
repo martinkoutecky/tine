@@ -52,6 +52,8 @@ interface LiveRefGroupProps {
    *  rows with it. A second, independent IntersectionObserver gate would let the header render with no rows
    *  whenever the two observers disagree (the header gate fires, the row gate never does). */
   eager?: boolean;
+  /** Query-owned bulk action; never supplied by reference or embed callers. */
+  bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> };
 }
 
 export function LiveRefGroup(props: LiveRefGroupProps): JSX.Element {
@@ -240,7 +242,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   // `epoch` remembers the source collapse generation at fold time, so a later
   // source write reclaims authority. Ref/query surfaces keep their pre-existing
   // local-copy semantics and ignore `epoch`.
-  interface LocalCollapseRow { v: boolean; epoch: number }
+  interface LocalCollapseRow { v: boolean; epoch: number; bulk?: boolean }
   const [localCollapsed, setLocalCollapsed] = createSignal<Record<string, LocalCollapseRow>>({});
   const isEmbed = () => props.surface === "embed";
   const embedRootOverride = (id: string): boolean | null => {
@@ -301,6 +303,9 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
         return local && local.epoch === collapseEpochOf(id) ? local.v : stored;
       }
       const local = localCollapsed();
+      // Bulk actions saved the source. Follow it live, including Undo, while
+      // ordinary per-result disclosure keeps its released local semantics.
+      if (local[id]?.bulk) return stored;
       return Object.prototype.hasOwnProperty.call(local, id) ? local[id].v : defaultCollapsed(id, stored);
     },
     toggle: (id, current) => {
@@ -316,6 +321,24 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
       return next;
     }),
   };
+  let lastBulkVersion: number | undefined;
+  createEffect(() => {
+    const request = props.bulkFold;
+    if (props.surface !== "query" || !request || !ready() || lastBulkVersion === request.n) return;
+    lastBulkVersion = request.n;
+    untrack(() => {
+      const ids = new Set<string>();
+      const visit = (id: string) => { if (ids.has(id)) return; ids.add(id); for (const child of docNode(id)?.children ?? []) visit(child); };
+      for (const id of groupedIds()) if (request.epochs.has(id)) visit(id);
+      setLocalCollapsed(state => {
+        const next = { ...state };
+        for (const id of ids) if (request.epochs.get(id) === collapseEpochOf(id)) {
+          next[id] = { v: request.collapsed, epoch: collapseEpochOf(id), bulk: true };
+        }
+        return next;
+      });
+    });
+  });
   // Result DTOs are replaced during filter/query refresh. Retain local choices
   // for stable roots and their live descendants, but discard state once a root
   // leaves this group so an old choice cannot leak into a later membership.

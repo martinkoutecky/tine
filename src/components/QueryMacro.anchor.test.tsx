@@ -1,3 +1,4 @@
+import { openCalmQuery } from "../tests/calmQueryActions";
 // GH #615 current-base verification. The shared Rust printer's anchor round-trip
 // is pinned by an_anchor_the_og_form_would_lose_is_not_og_expressible.
 // These boundary fixtures exercise the actual builder/save/render interaction;
@@ -74,8 +75,8 @@ for (const entry of ["slash command", "existing OG query", "existing TQL query"]
         command.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
         await vi.waitFor(() => expect(editingId()).toBeNull());
       } else {
-        await vi.waitFor(() => expect(host.querySelector(".qs-gear")).not.toBeNull());
-        host.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+        await vi.waitFor(() => expect(host.querySelector(".qc-actions summary")).not.toBeNull());
+        await openCalmQuery(host);
       }
       await vi.waitFor(() => expect(document.querySelector(".qs-anchor-button")?.textContent).toContain("pages"));
       for (const [unit, witness] of [["blocks", "Block result witness"], ["pages", "Page result witness"]] as const) {
@@ -85,7 +86,7 @@ for (const entry of ["slash command", "existing OG query", "existing TQL query"]
         expect(option).toBeDefined();
         option!.click();
         await vi.waitFor(() => expect(doc.byId.query.raw).toBe(unit === "blocks" ? "{{tine-query @block}}" : "{{tine-query @page}}"));
-        await vi.waitFor(() => expect(host.querySelector(".qs-sentence")?.textContent?.toLowerCase()).toContain(unit));
+        await vi.waitFor(() => expect(host.querySelector(".qs-sheet")?.textContent?.toLowerCase()).toContain(unit));
         await vi.waitFor(() => expect(host.querySelector(unit === "pages" ? ".query-page-link" : ".query-group")?.textContent).toContain(witness));
       }
     } finally { dispose(); }

@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Query blocks now rest with title, count and results, with inline editing and one accessible menu; task actions, result copy with page/date titles and hierarchy, visible column choices, relative date comparisons, bulk List folding and sortable All pages backlinks are available (GH #502, GH #585, GH #387, GH #619, GH #606, GH #680, GH #653, GH #551, GH #681).
 - A page merge, rename or deletion that waited the full 10 seconds for another rename to finish could report "Couldn't confirm the merge yet; Tine keeps trying to finish it" for an operation that would never run; it now reports that another rename is still finishing and nothing changed (REG-PAGEHOST-ADMISSION-DEADLINE-RACE).
 
 ## [0.8.0-beta.1] - 2026-10-13

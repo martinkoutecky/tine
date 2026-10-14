@@ -6,7 +6,7 @@ import { pageListLabels } from "./pages";
 // (`pageIndex.ts`); nothing here reads the backend, so a sort or a filter costs
 // no IPC and a row costs no call (I-22).
 
-export type AllPagesSortKey = "title" | "updated" | "day";
+export type AllPagesSortKey = "title" | "updated" | "day" | "backlinks";
 export interface AllPagesSort {
   key: AllPagesSortKey;
   desc: boolean;
@@ -17,6 +17,7 @@ export interface AllPagesRow {
   label: string;
   /** Unix seconds the file was last modified, when the store knows it. */
   modified?: number;
+  backlinks?: number;
 }
 
 /** Most recently updated first, as in Logseq's All pages (`:block/updated-at` descending). */
@@ -66,6 +67,7 @@ export function arrangeAllPages(
   sort: AllPagesSort,
   label: (page: PageEntry) => string = pageListLabels(pages as PageEntry[]),
   modified: ModifiedTimes = new Map(),
+  backlinks: ReadonlyMap<string, number> = new Map(),
 ): AllPagesRow[] {
   const needle = filter.trim().toLowerCase();
   const kept = needle ? pages.filter((page) => page.name.toLowerCase().includes(needle)) : pages.slice();
@@ -75,8 +77,9 @@ export function arrangeAllPages(
       const aHas = a.date_key !== null, bHas = b.date_key !== null;
       if (aHas !== bHas) return aHas ? -1 : 1;
       if (aHas && a.date_key !== b.date_key) return ((a.date_key as number) - (b.date_key as number)) * direction;
-    } else if (sort.key === "updated") {
-      const at = modified.get(a.path), bt = modified.get(b.path);
+    } else if (sort.key === "updated" || sort.key === "backlinks") {
+      const values = sort.key === "backlinks" ? backlinks : modified;
+      const at = values.get(a.path), bt = values.get(b.path);
       if ((at === undefined) !== (bt === undefined)) return at !== undefined ? -1 : 1;
       if (at !== undefined && at !== bt) return (at - (bt as number)) * direction;
     }
@@ -84,7 +87,7 @@ export function arrangeAllPages(
     if (byName !== 0) return (sort.key === "title" ? direction : 1) * byName;
     return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
   });
-  return kept.map((entry) => ({ entry, label: label(entry), modified: modified.get(entry.path) }));
+  return kept.map((entry) => ({ entry, label: label(entry), modified: modified.get(entry.path), backlinks: backlinks.get(entry.path) }));
 }
 
 /** The slice of a fixed-row-height list that must exist in the DOM. `overscan` rows

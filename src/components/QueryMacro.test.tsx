@@ -21,6 +21,7 @@ import { bumpDataRev } from "../graphSession";
 import * as blockRender from "../render/block";
 import { renderedBlocks, resetNearObserverForTests } from "../lazyObserve";
 import { openSwitcher, closeSwitcher } from "../ui";
+import { openCalmQuery } from "../tests/calmQueryActions";
 
 beforeAll(async () => {
   await initParser();
@@ -114,16 +115,19 @@ async function settleQuery(): Promise<void> {
   await tick();
 }
 
-function clickView(root: HTMLElement, label: "Search" | "List" | "Table" | "Board"): void {
-  const button = [...root.querySelectorAll(".query-view-switcher button")].find(
-    (el) => el.textContent?.trim() === label
+async function clickView(root: HTMLElement, label: "Search" | "List" | "Table" | "Board"): Promise<void> {
+  const panel = await openCalmQuery(root, "View");
+  const button = [...panel.querySelectorAll('[aria-label="Query view"] button')].find(
+    (el) => el.textContent?.trim() === label.toLowerCase()
   ) as HTMLButtonElement | undefined;
   if (!button) throw new Error(`missing query view button ${label}`);
   button.click();
 }
 
 function activeView(root: HTMLElement): string | undefined {
-  return root.querySelector(".query-view-switcher button.active")?.textContent?.trim();
+  const id = root.querySelector(".ls-block")?.getAttribute("data-block-id") ?? "query";
+  const view = blockProperty(id, "tine.view") ?? "list";
+  return view.charAt(0).toUpperCase() + view.slice(1);
 }
 
 function presentedResultNumbers(
@@ -173,6 +177,111 @@ function loadDamagedQueryDoc(raw: string) {
 }
 
 describe("QueryMacro sheet integration", () => {
+  it("persists Select none from default table columns and restores defaults on Undo", async () => {
+    loadQueryDoc('{{query (task TODO)}}\ntine.view:: table');
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("(task TODO)");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      expect(root.querySelectorAll(".sheet-field-header").length).toBeGreaterThan(0);
+      const panel = await openCalmQuery(root, "View");
+      [...panel.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === "Select none")!.click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.columns")).toBe(""));
+      await settleQuery();
+      expect(root.querySelectorAll(".sheet-field-header")).toHaveLength(0);
+      expect(root.querySelector(".sheet-title-cell")).not.toBeNull();
+      undo(); await settleQuery();
+      expect(blockProperty("query", "tine.columns")).toBeNull();
+      expect(root.querySelectorAll(".sheet-field-header").length).toBeGreaterThan(0);
+    } finally { dispose(); }
+  });
+  it("keeps a title rename pointer gesture inside the query controls", async () => {
+    loadQueryDoc('{{query (task TODO) {:title "Open tasks"}}}');
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      const title = root.querySelector<HTMLElement>(".query-title")!;
+      title.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      title.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+      title.click();
+      expect(editingId()).toBeNull();
+      expect(root.querySelector(".query-title-input")).not.toBeNull();
+    } finally { dispose(); }
+  });
+  it("collapses and expands all List result trees through saved collapsed properties", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    setDoc("byId", "todo", "children", ["child"]);
+    setDoc("byId", "child", node("child", "Child of result", "todo"));
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      const click = async (label: string) => {
+        const details = root.querySelector<HTMLDetailsElement>(".qc-actions")!;
+        details.open = true; details.dispatchEvent(new Event("toggle")); await tick();
+        const id = details.querySelector("summary")!.getAttribute("aria-controls")!;
+        const button = [...document.getElementById(id)!.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === label);
+        expect(button).toBeDefined(); button!.click();
+      };
+      await click("Collapse all");
+      await vi.waitFor(() => expect(blockProperty("todo", "collapsed")).toBe("true"));
+      expect(root.querySelector('.query-group [data-block-id="child"]')).toBeNull();
+      undo();
+      await vi.waitFor(() => expect(root.querySelector('.query-group [data-block-id="child"]')).not.toBeNull());
+      await click("Collapse all");
+      await vi.waitFor(() => expect(blockProperty("todo", "collapsed")).toBe("true"));
+      await click("Expand all");
+      await vi.waitFor(() => expect(doc.byId.todo.collapsed).toBe(false));
+      expect(blockProperty("todo", "collapsed")).toBeNull();
+      await vi.waitFor(() => expect(root.querySelector('.query-group [data-block-id="child"]')).not.toBeNull());
+    } finally { dispose(); }
+  });
+  it("does not run an empty new query before a condition is added", async () => {
+    loadQueryDoc("{{query }}");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      expect(backend().queryRun).not.toHaveBeenCalled();
+      expect(root.textContent).toContain("Add a condition to see results.");
+    } finally { dispose(); }
+  });
+  it.each(["table", "board", "search"])("offers source task checkboxes in %s results", async (view) => {
+    loadQueryDoc(`{{query (task TODO)}}\ntine.view:: ${view}`);
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      const checkbox = root.querySelector<HTMLElement>('[role="checkbox"]');
+      expect(checkbox).not.toBeNull();
+      checkbox!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true }));
+      await vi.waitFor(() => expect(doc.byId.todo.raw).toContain("DONE From query"));
+      expect(doc.byId.query.raw).toContain("(task TODO)");
+      undo();
+      expect(doc.byId.todo.raw).toContain("TODO From query");
+    } finally { dispose(); }
+  });
+  it("rests with title and count and opens its builder inline from the query menu", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      expect(root.querySelector(".query-title")?.textContent).toBe("Query");
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+      expect(root.querySelector(".qs-sentence")).toBeNull();
+      expect(root.querySelector(".query-view-switcher")).toBeNull();
+      const trigger = root.querySelector<HTMLElement>('[aria-label="Query actions"]');
+      expect(trigger).not.toBeNull();
+      trigger!.click();
+      await settleQuery();
+      const menuId = trigger!.getAttribute("aria-controls")!;
+      const edit = [...document.getElementById(menuId)!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Edit");
+      expect(edit).toBeDefined();
+      edit!.click();
+      await settleQuery();
+      expect(root.querySelector(".qc-panel .qs-sheet")).not.toBeNull();
+      expect(document.querySelector(".qs-sheet-anchor")).toBeNull();
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+    } finally { dispose(); }
+  });
   it("renders the reported options map without a stray brace", async () => {
     const raw = '{{query (page-property tags gptpro) {:title "gptpro"}}}\ntine.group-field:: prop:anchor\ntine.view:: search';
     loadQueryDoc(raw);
@@ -353,7 +462,7 @@ describe("QueryMacro sheet integration", () => {
       await vi.waitFor(() => expect(root.querySelector(".query-count")?.textContent).toContain("1"));
       const excerptCalls = () => visible.mock.calls.filter(([raw]) => raw === doc.byId.todo.raw);
       expect(excerptCalls(), "List counts need no per-result Search projection").toHaveLength(0);
-      clickView(root, "Search");
+      await clickView(root, "Search");
       await vi.waitFor(() => expect(excerptCalls().length).toBeGreaterThan(0));
       (root.querySelector(".query-collapse") as HTMLButtonElement).click();
       await vi.waitFor(() => expect(root.querySelector(".query-search-hit")?.textContent).toContain("From query"));
@@ -507,8 +616,8 @@ describe("QueryMacro sheet integration", () => {
 
     expect(activeView(root)).toBe("Search");
     // Master's assertion (QueryMacro.test.tsx "reopens a materialized friendly search").
-    expect(root.querySelector(".qs-sentence")?.textContent).toBe("Blocks where search: alpha beta");
-    expect(root.querySelector(".qs-seg-value")?.textContent).toBe("alpha beta");
+    expect(root.querySelector(".qs-sentence")).toBeNull();
+    expect(root.querySelector(".qs-seg-value")).toBeNull();
     expect(root.querySelector(".qs-seg-advanced")).toBeNull();
     expect([...root.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["alpha", "beta"]);
     expect(graphSearch).toHaveBeenCalledWith("alpha beta", 500, 5_000, "inline-query:query", false);
@@ -568,7 +677,7 @@ describe("QueryMacro sheet integration", () => {
     expect(graphSearch).not.toHaveBeenCalled();
 
     for (const view of ["List", "Table", "Board", "Search"] as const) {
-      clickView(root, view);
+      await clickView(root, view);
       await settleQuery();
       expect(activeView(root)).toBe(view);
       expect(root.querySelector(".query-count")?.textContent).toBe("9");
@@ -591,8 +700,8 @@ describe("QueryMacro sheet integration", () => {
     await settleQuery();
 
     expect(root.querySelector(".query-header")).not.toBeNull();
-    expect(root.querySelector(".qs-sentence")).not.toBeNull();
-    expect(root.querySelector(".qs-seg")).not.toBeNull();
+    expect(root.querySelector(".qc-actions summary")).not.toBeNull();
+    expect(root.querySelector(".qs-seg")).toBeNull();
     expect(root.querySelectorAll(".sheet-table")).toHaveLength(1);
     expect(root.querySelectorAll(".query-table")).toHaveLength(0);
     expect(root.textContent).toContain("From query");
@@ -625,7 +734,7 @@ describe("QueryMacro sheet integration", () => {
       [...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((cell) => cell.textContent?.trim())
     ).toEqual(["High score"]);
 
-    clickView(root, "Board");
+    await clickView(root, "Board");
     await settleQuery();
     expect(activeView(root)).toBe("Board");
     expect([...root.querySelectorAll(".sheet-board-card-title")].map((card) => card.textContent?.trim())).toEqual([
@@ -652,7 +761,7 @@ describe("QueryMacro sheet integration", () => {
 
     expect(activeView(root)).toBe("List");
 
-    clickView(root, "Table");
+    await clickView(root, "Table");
     expect(activeView(root)).toBe("Table");
     expect(blockProperty("query", "tine.view")).toBe("table");
     expect(doc.byId.query.raw).toBe("{{query (todo TODO)}}\ntine.view:: table");
@@ -660,8 +769,8 @@ describe("QueryMacro sheet integration", () => {
     expect(doc.byId.query.raw).toBe(originalRaw);
     expect(activeView(root)).toBe("List");
 
-    clickView(root, "Table");
-    clickView(root, "Board");
+    await clickView(root, "Table");
+    await clickView(root, "Board");
     expect(activeView(root)).toBe("Board");
     expect(blockProperty("query", "tine.view")).toBe("board");
     expect(blockProperty("query", "tine.group-by")).toBe("state");
@@ -669,8 +778,8 @@ describe("QueryMacro sheet integration", () => {
     expect(blockProperty("query", "tine.view")).toBe("table");
     expect(blockProperty("query", "tine.group-by")).toBeNull();
 
-    clickView(root, "Board");
-    clickView(root, "List");
+    await clickView(root, "Board");
+    await clickView(root, "List");
     expect(activeView(root)).toBe("List");
     expect(blockProperty("query", "tine.view")).toBeNull();
     expect(blockProperty("query", "tine.group-by")).toBe("state");
@@ -692,7 +801,7 @@ describe("QueryMacro sheet integration", () => {
     ));
     await settleQuery();
 
-    clickView(root, "Board");
+    await clickView(root, "Board");
 
     expect(blockProperty("query", "tine.view")).toBe("board");
     expect(blockProperty("query", "tine.group-by")).toBe("tags");
@@ -715,7 +824,7 @@ describe("QueryMacro sheet integration", () => {
     (root.querySelector(".query-collapse") as HTMLElement).click();
 
     expect(root.querySelector(".query-header")).not.toBeNull();
-    expect(root.querySelector(".qs-sentence")).not.toBeNull();
+    expect(root.querySelector(".qc-actions summary")).not.toBeNull();
     expect(root.querySelectorAll(".sheet-table")).toHaveLength(0);
 
     dispose();
@@ -793,12 +902,12 @@ describe("QueryMacro sheet integration", () => {
     await settleQuery();
     expect(root.querySelectorAll(".query-table")).toHaveLength(1);
     expect(doc.byId.query.raw).toBe(raw);
-    clickView(root, "Table");
+    await clickView(root, "Table");
     expect(blockProperty("query", "tine.view")).toBe("table");
     expect(blockProperty("query", "query-table")).toBe(property ? "true" : null);
     undo();
     expect(doc.byId.query.raw).toBe(raw);
-    clickView(root, "List");
+    await clickView(root, "List");
     expect(blockProperty("query", "tine.view")).toBe("list");
     await settleQuery();
     expect(root.querySelectorAll(".query-table")).toHaveLength(0);

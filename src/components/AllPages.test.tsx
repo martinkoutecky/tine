@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { bumpGraphEpoch } from "../graphSession";
+import { bumpDataRev, bumpGraphEpoch } from "../graphSession";
 import { resetPageIndex } from "../pageIndex";
 import { resetTabsToJournals, route } from "../router";
 import type { PaneRouter } from "../router";
@@ -40,26 +40,27 @@ function stubRouter() {
   };
 }
 
-/** Every backend method except the two one-shot reads (inventory, modified times)
- *  and the ownership stamp they carry: a call to any other is a per-open or per-row call. */
+/** Graph calls apart from the shared inventory/metadata reads and ownership
+ * stamp. The router's debounced saveSession may land from test navigation or
+ * teardown; it persists tabs and cannot read or write a page row. */
 function spyOnEverythingElse() {
-  const spies: ReturnType<typeof vi.fn>[] = [];
+  const spies: { name: string; spy: ReturnType<typeof vi.fn> }[] = [];
   const target = backend() as unknown as Record<string, unknown>;
   const names = new Set<string>();
   for (let proto: object | null = target; proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto))
     for (const key of Object.getOwnPropertyNames(proto)) names.add(key);
   for (const key of names) {
-    if (key === "constructor" || key === "pageInventory" || key === "pageModified" || key === "graphBindingGeneration" || typeof target[key] !== "function") continue;
-    spies.push(vi.spyOn(target as never, key as never) as never);
+    if (key === "constructor" || key === "pageInventory" || key === "pageModified" || key === "graphBindingGeneration" || key === "saveSession" || typeof target[key] !== "function") continue;
+    spies.push({ name: key, spy: vi.spyOn(target as never, key as never) as never });
   }
-  return () => spies.reduce((n, spy) => n + spy.mock.calls.length, 0);
+  return () => spies.flatMap(({ name, spy }) => spy.mock.calls.map(() => name));
 }
 
-async function mountAllPages(entries = inventory(), modified: [string, number][] | "fail" = []) {
+async function mountAllPages(entries = inventory(), modified: [string, number][] | "fail" = [], backlinks: [string, number][] = []) {
   const read = vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
   const readModified = vi.spyOn(backend(), "pageModified");
   if (modified === "fail") readModified.mockRejectedValue(new Error("no times"));
-  else readModified.mockResolvedValue({ rev: "1", modified });
+  else readModified.mockResolvedValue({ rev: "1", modified, backlinks });
   const otherCalls = spyOnEverythingElse();
   bumpGraphEpoch();
   const router = stubRouter();
@@ -80,6 +81,27 @@ afterEach(() => {
 });
 
 describe("the All Pages view", () => {
+  it("refreshes backend counts after a graph change while keeping the current sort", async () => {
+    const { host, readModified, dispose } = await mountAllPages([existing("Alpha"), existing("Beta")], [], [["pages/Alpha.md", 2], ["pages/Beta.md", 7]]);
+    try {
+      column(host, "Backlinks").click();
+      await vi.waitFor(() => expect(rowNames(host)).toEqual(["Beta", "Alpha"]));
+      readModified.mockResolvedValue({ rev: "2", modified: [], backlinks: [["pages/Alpha.md", 9], ["pages/Beta.md", 7]] });
+      bumpDataRev();
+      await vi.waitFor(() => expect(rowNames(host)).toEqual(["Alpha", "Beta"]));
+      expect(readModified).toHaveBeenCalledTimes(2);
+    } finally { dispose(); }
+  });
+  it("shows backend backlink counts and sorts them in either direction", async () => {
+    const { host, dispose } = await mountAllPages([existing("Alpha"), existing("Beta")], [], [["pages/Alpha.md", 2], ["pages/Beta.md", 7]]);
+    try {
+      await vi.waitFor(() => expect([...host.querySelectorAll(".all-pages-backlinks")].map(el => el.textContent)).toEqual(["2", "7"]));
+      column(host, "Backlinks").click();
+      expect(rowNames(host)).toEqual(["Beta", "Alpha"]);
+      column(host, "Backlinks").click();
+      expect(rowNames(host)).toEqual(["Alpha", "Beta"]);
+    } finally { dispose(); }
+  });
   it("lists a graph of thousands of pages with a screenful of rows and one inventory read, whatever the user does", async () => {
     const { host, read, readModified, otherCalls, dispose } = await mountAllPages();
     // The count is the full graph (pages only: the two journals are hidden)...
@@ -106,7 +128,7 @@ describe("the All Pages view", () => {
     await settle();
     expect(read).toHaveBeenCalledTimes(1);
     expect(readModified).toHaveBeenCalledTimes(1);
-    expect(otherCalls()).toBe(0);
+    expect(otherCalls()).toEqual([]);
     dispose();
   });
 

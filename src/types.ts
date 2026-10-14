@@ -169,6 +169,8 @@ export interface PageInventory {
 export interface PageModified {
   rev: string;
   modified: [string, number][];
+  /** Referring blocks per exact page path, computed by the Rust projection. */
+  backlinks?: [string, number][];
 }
 
 /** One authoritative Journals-feed transaction.  Cursor fields are ordinal

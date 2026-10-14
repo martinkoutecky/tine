@@ -1,4 +1,5 @@
 import { sheetSourceRows } from "../sheet/sheetRows";
+import { QueryResultTask, openQueryResult } from "./QueryResultTask";
 import { displayLimitThrough, sheetCellMenu } from "../sheet/interactions";
 import { cellIsSelected } from "../sheet/selection";
 import { clearOnBindingInvalidated } from "../binding";
@@ -421,7 +422,7 @@ export function SheetBoard(props: {
 
   return (
     <div class="sheet-board-wrap">
-      <Show when={!blockPageReadOnly(props.ownerId)}>
+      <Show when={props.rowSource !== "query" && !blockPageReadOnly(props.ownerId)}>
         <div class="sheet-board-toolbar">
           <span>Group by</span>
           <select
@@ -473,6 +474,7 @@ export function SheetBoard(props: {
                   <For each={col.rows}>
                     {(row, rowIndex) => (
                       <BoardCard
+                        query={props.rowSource === "query"}
                         ownerId={props.ownerId}
                         surfaceId={surfaceId}
                         row={row}
@@ -591,6 +593,7 @@ export function resetBoardCardVirtualizationForTests() {
 }
 
 function BoardCard(props: {
+  query: boolean;
   ownerId: string;
   surfaceId: string;
   row: RowRecord;
@@ -636,6 +639,7 @@ function BoardCard(props: {
   });
 
   const select = () => setCellSel(cell());
+  let suppressDragClick = false;
   let cancelActiveDrag: (() => void) | null = null;
   let observedDragVersion = props.dragVersion;
   createEffect(() => {
@@ -647,6 +651,7 @@ function BoardCard(props: {
   onCleanup(() => cancelActiveDrag?.());
 
   const beginPointerDrag = (e: PointerEvent) => {
+    suppressDragClick = false;
     if (!props.canMove) return;
     if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
     cancelActiveDrag?.();
@@ -704,6 +709,7 @@ function BoardCard(props: {
       if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
       if (!moved) {
         moved = true;
+        suppressDragClick = true;
         createGhost(ev);
       } else updateGhost(ev);
       const target = props.dragCoordinator.targetAtPoint(ev.clientX, ev.clientY);
@@ -780,7 +786,9 @@ function BoardCard(props: {
 
   const onClick = (e: MouseEvent) => {
     e.stopPropagation();
+    if (suppressDragClick) { suppressDragClick = false; return; }
     select();
+    if (props.query) openQueryResult(props.row, e);
   };
   const onDoubleClick = (e: MouseEvent) => {
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -864,6 +872,7 @@ function BoardCard(props: {
             fallback={<div class="sheet-board-card-title sheet-cell-defer">{boardRowTitle(props.row)}</div>}
           >
             <div class="sheet-board-card-title">
+              <Show when={props.query}><QueryResultTask row={props.row} /></Show>
               <InlineText text={boardRowTitle(props.row)} format={fmt()} />
             </div>
             <CardChips row={props.row} groupBy={props.groupBy} onFieldClick={onChipClick} />

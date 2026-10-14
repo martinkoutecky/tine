@@ -40,7 +40,10 @@ import { queryScopedDisplayPropertyPatch } from "../editor/queryViewProperties";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { createQueryRegistryAccess } from "./QueryBuilder";
 import { QueryDisplay } from "./QueryDisplay";
+import { QueryResultsSelection } from "./QueryResultsSelection";
+import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
+import { queryWorkspaceDsl } from "./queryWorkspaceDsl";
 import { SearchResultRow } from "./SearchResultRow";
 import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
 import { QueryResultSections } from "./QueryResultSections";
@@ -96,7 +99,7 @@ export type MaterializeQueryResult =
 export interface QueryWorkspaceDependencies extends MaterializeQueryDependencies {
   /** Close this surface's two native cancellation lanes; O(1), no graph write. */
   closeSearchWorkspace?(workspace: string, bindingGeneration: number): Promise<void>;
-  parseQuery(source: string, dialect: "macro_query"): Promise<ParsedQuery>;
+  parseQuery(source: string, dialect: "macro_query" | "macro_tql"): Promise<ParsedQuery>;
   queryRun(query: Query, view: ViewSettings): Promise<QueryResult>;
   queryExplainEmpty(query: Query, view: ViewSettings): Promise<ExplainEmptyResult>;
 }
@@ -124,7 +127,7 @@ function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" |
       properties: [],
     })) if (value !== null) properties.push([key, value]);
   }
-  return { query: `{{${QUERY_MACRO_NAMES[0]} ${dsl}}}`, properties };
+  return { query: input.sourceKind === "dsl" ? queryWorkspaceDsl(dsl).macro : `{{${QUERY_MACRO_NAMES[0]} ${dsl}}}`, properties };
 }
 
 /** Is the input this attempt captured still the one the user is looking at?
@@ -476,15 +479,15 @@ function AdvancedModal(props: {
   const [draftKind, setDraftKind] = createSignal<QueryRoute["sourceKind"]>(props.sourceKind());
   const [dsl, setDsl] = createSignal(props.sourceKind() === "dsl" ? props.source() : "");
   const [error, setError] = createSignal<string | null>(null);
-  // The builder edits the ENGINE's reading of the draft and writes back the OG
-  // text the engine printed (I-12); a workspace materializes an OG `{{query}}`.
+  // The engine reads and prints the draft in the grammar its envelope carries.
   let mounted = true;
   onCleanup(() => { mounted = false; });
   const edits = {};
   const [printing, setPrinting] = createSignal(false);
   const [builderSession, { mutate }] = createResource(dsl, async (text): Promise<BuilderSession | undefined> => {
     const owner = graphOwner(() => mounted && dsl() === text, revisionOwner(edits, currentRevision(edits)));
-    const parsed = await readOwned(owner, backend().parseQuery(text, "og"));
+    const source = queryWorkspaceDsl(text);
+    const parsed = await readOwned(owner, backend().parseQuery(source.argument, source.dialect));
     return parsed.kind === "current" && owner() ? { query: parsed.value.query, view: parsed.value.view } : readLatestOr(builderSession, undefined, "query text");
   });
   const applyBuilderEdit = async (next: BuilderSession) => {
@@ -495,9 +498,10 @@ function AdvancedModal(props: {
     setPrinting(true);
     const owner = latestOwner(edits, "print", graphOwner(() => mounted));
     try {
-      const printed = await readOwned(owner, backend().printQuery(next.query, next.view, "og"));
+      const source = queryWorkspaceDsl(dsl());
+      const printed = await readOwned(owner, backend().printQuery(next.query, next.view, source.dialect === "macro_tql" ? "tql_macro" : "og"));
       if (printed.kind === "stale" || !owner()) return;
-      setDsl(printed.value);
+      setDsl(source.wrapped ? `{{${source.name} ${printed.value}}}` : printed.value);
       setError(null);
     } catch (failure) {
       // An edit the OG syntax cannot say has nowhere to go here; the printer's
@@ -606,7 +610,7 @@ function AdvancedModal(props: {
             <QueryBuilder
               session={() => (readLatestOr(builderSession, undefined, "query text"))}
               onChange={(next) => void applyBuilderEdit(next)}
-              paneDialect="og"
+              paneDialect={queryWorkspaceDsl(dsl()).dialect === "macro_tql" ? "tql" : "og"}
               sheetAlwaysOpen
               parentTransientId={props.layerId}
             />
@@ -784,7 +788,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         ));
         return result.kind === "current" && owner() ? result.value : cancelled;
       }
-      const parsed = await readOwned(owner, deps().parseQuery(request.source, "macro_query"));
+      const source = queryWorkspaceDsl(request.source);
+      const parsed = await readOwned(owner, deps().parseQuery(source.argument, source.dialect));
       if (parsed.kind === "stale" || !owner()) return cancelled;
       const result = await readOwned(owner, deps().queryRun(parsed.value.query, parsed.value.view));
       if (result.kind === "stale" || !owner()) return cancelled;
@@ -870,6 +875,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   });
   const hitSurfaceId = (hit: QueryHit) =>
     `query:${props.route.id}:${hit.entity}:${hit.entity === "page" ? hit.page.name : hit.block.id}`;
+  const task = (hit: Extract<QueryHit, { entity: "block" }>) => <SourceTaskCheckbox marker={hit.block.marker}
+    target={() => ({ uuid: blockDtoExternalId(hit.block), page: hit.page, pageKind: hit.kind, path: hit.path })} />;
   /** Everything one save attempt publishes, frozen at submit. */
   const captureSave = () => ({
     token: ++saveToken,
@@ -1043,6 +1050,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         </Show>
       </section>
 
+      <QueryResultsSelection hits={hits()} />
+
       <Show when={(executed()?.diagnostics.length ?? 0) > 0}>
         <ul class="query-workspace-diagnostics" aria-label="Query diagnostics">
           <For each={executed()?.diagnostics ?? []}>{(diagnostic) => (
@@ -1073,6 +1082,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           <div class="query-results-search" role="list" aria-label="Block results">
             <For each={blockHits()}>{(hit) => (
               <div role="listitem">
+                {task(hit)}
                 {resultButton(hit, <SearchResultRow
                     page={hit.page}
                     breadcrumb={hit.block.breadcrumb ?? []}
@@ -1088,6 +1098,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           <ul class="query-results-list" aria-label="Query results">
             <For each={blockHits()}>{(hit) => (
               <li>
+                {task(hit)}
                 <button type="button" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
                   <span class="query-list-context">{hitPage(hit)}</span>
                   <span class="query-list-text"><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></span>
@@ -1107,7 +1118,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
                   <tr data-inpage-find-surface={hitSurfaceId(hit)}>
                     <td>{hitKind(hit)}</td>
                     <td><button type="button" {...resultActions(hit)}>{hitPage(hit)}</button></td>
-                    <td><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></td>
+                    <td>{task(hit)}<button type="button" {...resultActions(hit)}><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></button></td>
                   </tr>
                 )}</For>
               </tbody>
@@ -1122,9 +1133,9 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
                 <h2>{page}<span class="query-board-count">{pageHits.length}</span></h2>
                 <div role="list">
                   <For each={pageHits}>{(hit) => (
-                    <button type="button" role="listitem" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
+                    <div role="listitem">{hit.entity === "block" && task(hit)}<button type="button" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
                       <span class="sr-only">{hitKind(hit)}: </span><MarkedText text={hit.display_text} spans={hitSpans(hit)} />
-                    </button>
+                    </button></div>
                   )}</For>
                 </div>
               </section>

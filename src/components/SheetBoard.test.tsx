@@ -4,6 +4,7 @@ import { createSignal, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
 import { __sheetBoardTestHooks, SheetBoard } from "./SheetBoard";
+import * as resultActions from "./QueryResultTask";
 import { initParser } from "../render/parse";
 import { blockProperty, hasSelection, resetStore, setRaw, undo } from "../document";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
@@ -37,6 +38,29 @@ afterEach(() => {
 
 beforeEach(() => {
   setWorkflow("todo");
+});
+
+it("keeps a query open after drag motion and opens the source on a genuine click", () => {
+  loadBoardDoc();
+  const open = vi.spyOn(resultActions, "openQueryResult").mockImplementation(() => {});
+  const { root, dispose } = mount(() => <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={queryGroups(["todo"])} />);
+  const oldElementFromPoint = document.elementFromPoint;
+  try {
+    const card = root.querySelector<HTMLElement>('[data-block-id="todo"]')!;
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, writable: true, value: () => card.closest(".sheet-board-column") });
+    card.dispatchEvent(pointer("pointerdown", 10, 10));
+    window.dispatchEvent(pointer("pointermove", 30, 30));
+    window.dispatchEvent(pointer("pointerup", 30, 30));
+    card.click();
+    expect(open).not.toHaveBeenCalled();
+    card.dispatchEvent(pointer("pointerdown", 10, 10));
+    window.dispatchEvent(pointer("pointerup", 10, 10));
+    card.click();
+    expect(open).toHaveBeenCalledTimes(1);
+  } finally {
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, writable: true, value: oldElementFromPoint });
+    dispose();
+  }
 });
 
 function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {

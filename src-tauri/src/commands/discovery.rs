@@ -1,7 +1,6 @@
 //! Name-discovery transport: readable names plus the unreadable paths.
 use super::{ResolvedWire, WholeGraph};
 use serde::Serialize;
-use tine_store::Resolved;
 
 #[derive(Serialize)]
 pub(crate) struct PageInventoryWire {
@@ -32,12 +31,14 @@ pub(crate) struct PageModifiedWire {
     /// The `GraphRev` the times were read at.
     rev: String,
     modified: Vec<(String, i64)>,
+    backlinks: Vec<(String, usize)>,
 }
 
 pub(super) fn page_modified_wire(view: &WholeGraph) -> PageModifiedWire {
     PageModifiedWire {
         rev: view.rev().into(),
         modified: view.page_modified(),
+        backlinks: view.page_backlink_counts(),
     }
 }
 

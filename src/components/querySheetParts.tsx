@@ -30,7 +30,6 @@ import {
   onPageFilter,
   pageRefFilter,
   pageTagsFilter,
-  planningFilter,
   priorityFilter,
   propertyOperatorArity,
   propertyOperators,
@@ -54,6 +53,7 @@ import { QueryVocabularyPicker, type VocabularyChoice } from "./QueryVocabularyP
 import { PropertyType } from "./PropertyType";
 import { registryRowFor, effectiveTypeOf } from "../editor/queryPropertyType";
 import { DATE_PRESETS, previewDate } from "../editor/dateExpr";
+import { PlanningDatePick } from "./QueryPlanningDatePick";
 import type { QuerySheetDropTarget } from "./querySheetReorder";
 import { dismissOnOutsidePointer, registerTransientLayer, type TransientLayer } from "../transientLayers";
 import { readOr } from "../resourceRead";
@@ -854,6 +854,9 @@ export function ValueEditor(props: {
 }): JSX.Element {
   return (
     <>
+      <Show when={props.kind === "scheduled" || props.kind === "deadline"}>
+        <PlanningDatePick field={props.kind as "scheduled" | "deadline"} onCommit={props.onCommit} />
+      </Show>
       <Show when={props.kind === "page"}>
         <PageInput placeholder="Page or tag name" onCommit={(name) => props.onCommit(pageRefFilter(name))} />
       </Show>
@@ -1265,7 +1268,6 @@ export function AddCondition(props: {
   const choose = (choice: VocabularyChoice) => {
     if (choice.kind === "builtin") {
       const next = choice.leaf;
-      if (next === "scheduled" || next === "deadline") return props.onAdd(planningFilter(next));
       if (next === "journal") return props.onAdd(journalFilter());
       setChosen(choice);
       return;

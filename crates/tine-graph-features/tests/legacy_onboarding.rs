@@ -488,7 +488,8 @@ fn guide_describes_the_current_query_sheet_and_conflict_list() {
             "{name}: /query no longer opens the field chooser by itself"
         );
     }
-    assert!(find.contains("press **Edit as text** at the foot of the sheet"));
+    assert!(find.contains("Open **⋯ → Edit as text**"));
+    assert!(find.contains("The real results remain below the editor as your live preview"));
     assert!(
         !find.contains("It is always there"),
         "the query text is behind Edit as text"

@@ -31,7 +31,7 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
   };
   const fieldName = (field: string) => field.replace(/^prop:/, "");
   const value = (row: PageRow, field: string): string => pageRowFieldValue(row, row, field);
-  const columns = createMemo(() => props.columns?.length
+  const columns = createMemo(() => props.columns !== undefined
     ? props.columns
     : [...new Set(props.rows.flatMap((row) => row.properties.map(([key]) => key)))]);
   const board = createMemo(() => {

@@ -20,6 +20,7 @@ export interface FormulaEvalRow {
   id: string;
   page: string;
   kind?: PageKind;
+  path?: string;
   dto?: BlockDto;
   /** Evaluate from `dto` only, never the live document store: the static export
    *  computes a page it may not have loaded, and must not read a different one. */

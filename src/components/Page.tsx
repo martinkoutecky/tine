@@ -649,6 +649,7 @@ export function PageView(): JSX.Element {
                     <QueryMacro
                       body={agendaQuery()}
                       title="Scheduled & Deadline"
+                      builtIn
                       hideWhenEmpty
                     />
                   </div>
