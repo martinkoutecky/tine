@@ -1785,6 +1785,24 @@ describe("page route loading", () => {
 });
 
 describe("page properties", () => {
+  it("GH #346: keeps icon visible in the properties list and editable beside the title icon", async () => {
+    const propsId = "11111111-1111-4111-8111-111111111111";
+    const dto = { name: "Flag", kind: "page" as const, title: "Flag", pre_block: null,
+      blocks: [{ id: propsId, raw: "icon:: 🚩", collapsed: false, children: [] }] };
+    setDoc({ byId: { [propsId]: node(propsId, dto.blocks[0].raw, dto.name) },
+      pages: [page(dto.name, "page", [propsId])], feed: [dto.name], loaded: true });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      expect(root.querySelector(".page-properties")?.textContent).toContain("icon");
+      (root.querySelector(".page-properties .prop-row") as HTMLElement).click();
+      await tick();
+      expect(editingId()).toBe(propsId);
+      expect(root.querySelector("textarea")?.value).toContain("icon:: 🚩");
+    } finally { dispose(); }
+  });
   it("keeps a first-bullet alias editor mounted while the property is being typed (GH #62)", async () => {
     const propsId = "11111111-1111-4111-8111-111111111111";
     const dto = {

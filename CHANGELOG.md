@@ -10,9 +10,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Crash recovery no longer switches off on Android** ("Crash recovery is off for this graph … Permission denied"). Tine tried to sync system folders above its own app data, which Android does not allow. GH #685
+- Tab drops at all four pane edges split the hovered pane, matching the drop preview even at the layout's outer edges (GH #499).
+- Raw HTML iframe dimensions honor numeric HTML attributes as pixels, percentages and inline sizing without the default embed width cap (GH #54).
+- Added an unbound Duplicate block above (with children) command beside Duplicate below, with fresh identities, cursor following and one Undo (GH #379).
+- Page `icon::` remains visible and editable in the page-properties block while still decorating the title (GH #346).
+- Page-delete failure toasts include the known refusal or storage error through localized messages (GH #687).
 - Journals startup with a daily template keeps pending work owned by the replacement view after session restoration, avoiding a spurious feed-read error; diagnostic reports also record withheld stages and typed read failures without graph content (GH #671).
 
 - Bullet threading's "Active ancestry only" mode now emphasizes the edited block's connectors in the accent color, as the original Logseq plugin does (GH #614).
+- In-app graph and global CSS share guarded saves and safe mode; saves reconcile newer disk styles and background flushing retains recoverable conflicting drafts (GH #372).
+- HTML export remembers its destination, offers Show in folder on desktop and is discoverable in the command palette (GH #616).
+- Releases now ship signed macOS updater archives; macOS updates remain manual pending the updater rollback repair (GH #405).
 - GH #524: Added regression coverage for dragging a block into an empty page in the right sidebar; current Beta already supports the move.
 - GH #499: Added regression coverage for splitting the lower pane beneath an existing top row; the reported sequence already preserves the layout on current Beta.
 - GH #593: Workspace and tab overflow menus support stable hover opening and delayed dismissal while crossing the menu gap.

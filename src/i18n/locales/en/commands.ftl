@@ -101,6 +101,7 @@ command-plugin = Plugin: { $title }
 command-go-search-selection = Search for the selected text
 command-select-copy-block-ref = Copy block refs of the selected blocks
 command-editor-duplicate-block = Duplicate block below (with children)
+command-editor-duplicate-block-above = Duplicate block above (with children)
 command-editor-insert-child-block = Insert child block
 command-editor-select-embedding-block = Select embedding block
 command-editor-collapse-children = Collapse children (one level)

@@ -58,6 +58,13 @@ const codeFiles = walk("src", (f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.t
 const inCode = new Set(codeFiles.flatMap((f) => [...stripTsComments(readFileSync(f, "utf8")).matchAll(TOKEN)].map((m) => m[0])));
 
 describe("public theme tokens (GH #610)", () => {
+  it("documents the device-before-graph CSS cascade and guarded in-app saves", () => {
+    expect(contract).toContain("global.css");
+    expect(contract).toContain("creation on save");
+    expect(contract).toContain("base revision");
+    expect(contract).toContain("before the graph");
+    expect(readFileSync("src/customCss.ts", "utf8").indexOf("document.head.appendChild(global)")).toBeLessThan(readFileSync("src/customCss.ts", "utf8").indexOf("document.head.appendChild(el)"));
+  });
   it("the contract documents a meaningful set", () => {
     expect(publicTokens.size).toBeGreaterThanOrEqual(10);
     expect(publicTokens.size).toBeLessThanOrEqual(20);
@@ -109,7 +116,7 @@ describe("public theme tokens (GH #610)", () => {
     expect([...tableTokens(guide, /^- ## 3\. The supported names/m)].sort()).toEqual([...publicTokens].sort());
     const settings = readFileSync("src/components/CustomCssSettings.tsx", "utf8");
     for (const control of ["Edit custom.css", "Disable custom CSS", "Developer tools"]) {
-      expect(settings, `Settings must show the control the Guide names: ${control}`).toContain(`label="${control}"`);
+      expect(settings, `Settings must show the control the Guide names: ${control}`).toContain(control === "Edit custom.css" ? 'label={t("css-edit-graph")}' : `label="${control}"`);
       expect(guide, `the Guide must name the Settings control ${control}`).toContain(`**${control}**`);
     }
   });

@@ -26,6 +26,7 @@ import { pushToastUnique } from "../toasts";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import { dbg } from "../debug";
 import { reportUiFailure } from "../uiFailure";
+import { msg, type UiText } from "../i18n";
 
 let publishIdentityNavigation: ((from: PageTarget, to: PageTarget) => void) | null = null;
 /** The UI installs the exact-path route, tab, Recent and sidebar rewrite. */
@@ -316,7 +317,8 @@ export function forgetPage(name: string) {
 /** Delete a page through the page host: its own input is sent and published
  *  first, then the host deletes the file (STEP3 §12); the loaded page leaves
  *  the working set only once the file is gone. A refused or failed delete keeps
- *  the page and its input. Returns whether the file was deleted.
+ *  the page and its input. Returns whether the file was deleted; the optional
+ *  `reportFailure` receives the reason already known at the refusal boundary.
  *
  *  `retireRoutes`, when given, runs synchronously once the disk delete has
  *  succeeded and before the page leaves the working set, so no pane can render
@@ -329,23 +331,25 @@ export async function deletePage(
   kind: PageKind,
   expectedPath?: string,
   retireRoutes?: () => void,
+  reportFailure?: (reason: UiText) => void,
 ): Promise<boolean> {
-  if (graphRewriteFrozen()) return false;
+  const refused = (reason: UiText) => { reportFailure?.(reason); return false; };
+  if (graphRewriteFrozen()) return refused(msg("delete-reason-rewrite"));
   const binding = captureBinding();
   const loaded = pageByName(name);
-  if (expectedPath && loaded?.id !== expectedPath) return false;
-  if (loaded?.readOnly || loaded?.guide) return false;
+  if (expectedPath && loaded?.id !== expectedPath) return refused(msg("delete-reason-target"));
+  if (loaded?.readOnly || loaded?.guide) return refused(msg("delete-reason-read-only"));
   // Delete is a resolution of a conflict (master parity, Q-TS3): the unsaved
   // input is discarded first (page_discard), then the file is deleted; the
   // host's own refusal of a delete over unsaved input (D4) stands.
-  if (isConflicted(name) && !await resolveConflict(name, "disk")) return false;
+  if (isConflicted(name) && !await resolveConflict(name, "disk")) return refused(msg("delete-reason-conflict"));
   let deleted = false;
   try {
-    deleted = await deletePageOnDisk(name, kind, expectedPath ?? loaded?.id ?? undefined);
+    deleted = await deletePageOnDisk(name, kind, expectedPath ?? loaded?.id ?? undefined, reportFailure);
   } catch (error) {
-    // The caller shows the visible failure from `false`; the cause is logged so
-    // "Delete failed" is diagnosable (I-9).
+    // Keep the raw storage cause in both the debug log and the caller's toast.
     dbg(`page delete failed for ${name}: ${String(error)}`);
+    reportFailure?.(msg("delete-reason-storage", { reason: String(error) }));
   }
   if (!deleted || !bindingCurrent(binding)) return false;
   try {

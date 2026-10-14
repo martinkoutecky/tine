@@ -460,7 +460,10 @@ export interface Backend {
   confirm(message: string, title?: string): Promise<boolean>;
   /** Native folder picker (graph open). Null if cancelled / unsupported.
    *  `title` overrides the dialog title (e.g. for "create new graph"). */
-  pickFolder(title?: string): Promise<string | null>;
+  pickFolder(title?: string, defaultPath?: string): Promise<string | null>;
+  revealExport(path: string): Promise<void>;
+  readCssFile(global: boolean): Promise<{ text: string; revision: string | null }>;
+  saveCssFile(global: boolean, text: string, revision: string | null): Promise<string>;
   /** Android native graph-folder picker. Returns a real filesystem path when
    *  picked; never a content URI. */
   pickGraphFolder(): Promise<GraphFolderPickResult>;

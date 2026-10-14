@@ -3,6 +3,8 @@
 
 /** Every English message (and `message.attribute`) id, with the arguments it takes. */
 export interface MessageArgs {
+  "command-appearance-edit-custom-css": {};
+  "command-appearance-edit-global-css": {};
   "command-command-palette-toggle": {};
   "command-editor-backward-kill-word": {};
   "command-editor-backward-word": {};
@@ -13,6 +15,7 @@ export interface MessageArgs {
   "command-editor-copy-embed": {};
   "command-editor-cycle-todo": {};
   "command-editor-duplicate-block": {};
+  "command-editor-duplicate-block-above": {};
   "command-editor-edit-selected-block": {};
   "command-editor-expand": {};
   "command-editor-expand-children": {};
@@ -54,6 +57,7 @@ export interface MessageArgs {
   "command-go-search-pages": {};
   "command-go-search-selection": {};
   "command-go-search-tab": {};
+  "command-graph-export-html": {};
   "command-guide-open": {};
   "command-page-export-pdf": {};
   "command-pane-close": {};
@@ -104,6 +108,38 @@ export interface MessageArgs {
   "command-ui-toggle-theme": {};
   "command-ui-toggle-wide-mode": {};
   "command-window-open-in-new-window": {};
+  "css-draft-recovered": {};
+  "css-edit-global": {};
+  "css-edit-graph": {};
+  "css-editor-title": {};
+  "css-external-conflict": {};
+  "css-global-file": {};
+  "css-global-hint": {};
+  "css-graph-file": {};
+  "css-graph-hint": {};
+  "css-read-failed": { "error": string | number };
+  "css-reload": {};
+  "css-reload-confirm": {};
+  "css-safe-hint": {};
+  "css-save": {};
+  "css-save-close": {};
+  "css-save-failed": { "error": string | number };
+  "delete-failed": { "reason": string | number };
+  "delete-reason-conflict": {};
+  "delete-reason-no-host": {};
+  "delete-reason-pending": { "name": string | number };
+  "delete-reason-read-only": {};
+  "delete-reason-refused": {};
+  "delete-reason-rewrite": {};
+  "delete-reason-storage": { "reason": string | number };
+  "delete-reason-superseded": { "name": string | number };
+  "delete-reason-target": {};
+  "delete-reason-uncertain": { "name": string | number };
+  "delete-reason-unsaved": { "name": string | number };
+  "delete-reason-waiting": { "name": string | number };
+  "export-remember-failed": { "error": string | number };
+  "export-reveal-failed": { "error": string | number };
+  "export-show-folder": {};
   "favorites-block-action": {};
   "graph-wsl-rootfs-refused": {};
   "links-copy-title": {};

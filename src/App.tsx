@@ -40,6 +40,7 @@ import { applyCustomCssChange, applyGraphConfigChange, loadGraphPath, persistedG
 import { installPageIndex } from "./pageIndex";
 import { t } from "./i18n";
 import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
+import { flushCssEditor } from "./cssEditor";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
@@ -124,7 +125,11 @@ export const safeClose = createSafeCloseCoordinator({
     endEdit("graph-switch");
   },
   flushPdfWork: drainPdfWork,
-  flushAll,
+  flushAll: async () => {
+    const cssSaved = await flushCssEditor();
+    const pagesSaved = await flushAll();
+    return cssSaved && pagesSaved;
+  },
   // GH #540: name the pages at risk; "No" opens the recovery panel.
   confirmDiscard: (reason) => {
     const explanation = reason === "still-saving"
@@ -658,7 +663,10 @@ export function App(): JSX.Element {
   // share it; the capture mini-window owns only an unsaved scratch page.
   onMount(() => onCleanup(installBackgroundFlush({
     endEdit: () => endEdit("graph-switch"),
-    flushAll,
+    flushAll: async () => {
+      const [pagesSaved, cssSaved] = await Promise.all([flushAll(), flushCssEditor()]);
+      return pagesSaved && cssSaved;
+    },
     closeInFlight: safeClose.inFlight,
   })));
   // GH #426: on mobile an OS reap of a hidden app is not an unclean exit.

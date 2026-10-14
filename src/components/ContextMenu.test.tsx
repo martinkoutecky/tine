@@ -242,6 +242,21 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
+  it("GH #687: delete failure toast carries the storage refusal", async () => {
+    load();
+    await bindTestHost();
+    vi.spyOn(backend(), "confirm").mockResolvedValue(true);
+    vi.spyOn(backend(), "pageDelete").mockRejectedValue(new Error("Storage permission denied"));
+    const dispose = mount(() => <ContextMenu />);
+    try {
+      openPageContextMenu(10, 10, "P", "page", true);
+      document.querySelector<HTMLElement>('[data-page-action-id="delete-page"]')!.click();
+      await vi.waitFor(() => expect(toasts().some(t => t.message.includes("Delete failed") && t.message.includes("Storage permission denied"))).toBe(true));
+      expect(toasts().find(t => t.message.includes("Delete failed"))?.text.kind).toBe("msg");
+      expect(pageByName("P")).toBeDefined();
+    } finally { dispose(); }
+  });
+
   it("context Copy/Cut block each leave a fresh exact private payload", async () => {
     load();
     setDoc("byId", "parent", "raw", "Parent\nid:: 11111111-1111-1111-1111-111111111111");

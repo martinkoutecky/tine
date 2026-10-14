@@ -21,7 +21,7 @@ function embedReferrerPolicy(src: string): "strict-origin-when-cross-origin" | "
 // Sandboxed-iframe rendering, reused for inline `inline_html` and block `raw_html`.
 function renderIframe(src: string, width?: string, height?: string, spanAttrs?: SpanDomAttrs): JSX.Element {
   return (
-    <span class="embed-iframe-wrap" style={{ ...(width ? { width } : {}), ...(height ? { "aspect-ratio": "auto", height } : {}) }} {...(spanAttrs ?? {})}>
+    <span class="embed-iframe-wrap" style={{ ...(width || height ? { "max-width": "none" } : {}), ...(width ? { width } : {}), ...(height ? { "aspect-ratio": "auto", height } : {}) }} {...(spanAttrs ?? {})}>
       <iframe class="embed-iframe" src={src} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy={embedReferrerPolicy(src)} title="embed" />
     </span>
   );

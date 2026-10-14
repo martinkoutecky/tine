@@ -7,6 +7,12 @@
       "nonRequirements":["Exact pixels, a specific remount count or Android device certification from Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-sweep-bugs.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A bindable Duplicate above copies and saves its subtree; the icon property stays visible and editable; a refused delete explains the known cause and keeps the page file.","blocking":true},{"class":"exact-safety-interoperability","userOutcome":"An iframe's authored pixel height and percentage width determine its rendered size.","blocking":true,"authority":"Sweep-bugs GH #54 browser/OG HTML-attribute sizing contract."}],
+      "acceptableVariations":["Layout, glyph rendering, publication latency and storage error text may vary while author sizing, subtree content and retained page bytes remain correct."],
+      "nonRequirements":["Arbitrary iframe CSS, Android failure diagnosis, exact styling or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-reference-batch.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Aliases preview their source title and properties; task marker pages expose source-backed task toggles; Favorites block rows open their block and derive their star without config block entries.","blocking":true}],
       "acceptableVariations":["Preview positioning, result order, emoji rendering and publication latency may vary while source identity, saved task state and favorite membership remain correct."],
@@ -533,6 +539,15 @@
       ],
       "acceptableVariations": ["Re-application timing within a few seconds, and which watcher mode delivers the change, may vary while the final style matches the file."],
       "nonRequirements": ["Launching the system editor from Edit custom.css (covered by graph-features and render tests; a native run must not start an editor).", "Exact colors beyond the file's own values, pixels or DOM nesting."],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-desktop-misc.mjs": {
+      "contracts": [
+        { "class": "stateful-ux", "userOutcome": "Quick-switcher CSS entries open Tine's editor; saved device CSS precedes graph CSS, safe mode disables both and a graph file changed outside the editor is preserved with the user's conflicting buffer still open.", "blocking": true, "authority": "GH #372, desktop-misc campaign brief" },
+        { "class": "stateful-ux", "userOutcome": "The optional native export probe opens the same export workflow from the launcher, accepts a folder through the native picker, remembers its choice, produces the reported HTML site and invokes Show in folder.", "blocking": false, "authority": "GH #616, desktop-misc campaign brief" }
+      ],
+      "acceptableVariations": ["Editor layout and conflict wording may vary while both file bytes and the unsaved buffer are preserved."],
+      "nonRequirements": ["Exact colors, pixels, editor DOM nesting, incidental output folder basenames or native folder-navigation keystrokes; macOS runtime, file-manager window contents and in-place updater acceptance."],
       "stability": "burn-in"
     },
     "scripts/e2e-find-replace.mjs": {

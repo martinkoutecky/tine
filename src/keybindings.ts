@@ -1,4 +1,5 @@
 import { adjustSidebarWidth } from "./sidebarSizing";
+import { openCssEditor } from "./cssEditor";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
 import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
@@ -372,6 +373,9 @@ const COMMANDS: CommandDef[] = [
   { id: "ui/toggle-left-sidebar", binding: "t l", label: msg("command-ui-toggle-left-sidebar"), scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: msg("command-ui-toggle-right-sidebar"), scope: "global", run: toggleRightSidebar },
   { id: "ui/open-settings", binding: "t s", label: msg("command-ui-open-settings"), scope: "global", run: openSettings },
+  { id: "appearance/edit-custom-css", binding: "", label: msg("command-appearance-edit-custom-css"), scope: "global", run: () => void openCssEditor(false) },
+  { id: "appearance/edit-global-css", binding: "", label: msg("command-appearance-edit-global-css"), scope: "global", run: () => void openCssEditor(true) },
+  { id: "graph/export-html", binding: "", label: msg("command-graph-export-html"), scope: "global", run: () => openSettings("graph") },
   {
     id: "page/export-pdf",
     binding: "",
@@ -419,6 +423,7 @@ const COMMANDS: CommandDef[] = [
   // each acts on the block selection, else on the block being edited.
   { id: "select/copy-block-ref", binding: "", label: msg("command-select-copy-block-ref"), scope: "global", run: () => { copyTargetBlockRefs(); }, global: true },
   { id: "editor/duplicate-block", binding: "", label: msg("command-editor-duplicate-block"), scope: "global", run: () => void duplicateTargetBlocks(), global: true },
+  { id: "editor/duplicate-block-above", binding: "", label: msg("command-editor-duplicate-block-above"), scope: "global", run: () => void duplicateTargetBlocks("above"), global: true },
   { id: "editor/insert-child-block", binding: "", label: msg("command-editor-insert-child-block"), scope: "global", run: () => { insertChildIntoTarget(); }, global: true },
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },

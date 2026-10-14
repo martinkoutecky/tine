@@ -292,6 +292,7 @@ mod journal_guide_tests {
             "Ctrl/Cmd+Shift+V",
             "Paste as link",
             "Duplicate block below (with children)",
+            "Duplicate block above (with children)",
             "Insert child block",
             "Collapse children (one level)",
             "Expand children (one level)",
@@ -303,6 +304,13 @@ mod journal_guide_tests {
                 "Guide is missing keyboard command: {label}"
             );
         }
+    }
+
+    #[test]
+    fn page_icon_property_remains_editable_in_the_guide() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        assert!(reference.contains("`icon::` property stays visible in the page-properties block"));
+        assert!(reference.contains("click its row to edit it"));
     }
 
     #[test]
@@ -776,6 +784,34 @@ mod rename_guide_tests {
             !platforms.contains("no App Store listing"),
             "the App Store build ships this Guide; it must not say there is no listing"
         );
+    }
+
+    #[test]
+    fn desktop_guide_teaches_export_destination_and_signed_macos_updates() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for outcome in [
+            "last successful export destination",
+            "**Show in folder**",
+            "**Export graph as HTML and read-only app…**",
+        ] {
+            assert!(
+                files.contains(outcome),
+                "missing export workflow: {outcome}"
+            );
+        }
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "Windows and Linux",
+            "macOS updates remain manual",
+            "signed macOS updater archives",
+            "signed and notarized universal application",
+            "download and replace the app manually",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing desktop update workflow: {outcome}"
+            );
+        }
     }
 
     #[test]
@@ -1304,6 +1340,10 @@ mod customize_look_guide_tests {
         let page = page();
         for needed in [
             "logseq/custom.css",
+            "**Edit global CSS**",
+            "per-user config directory",
+            "**Reload from disk**",
+            "**Ctrl+K**",
             "Settings",
             "**Edit custom.css**",
             "**Disable custom CSS**",
