@@ -3,7 +3,8 @@ import { render } from "solid-js/web";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { LONG_PRESS_DELAY } from "./longPress";
-import { contextMenu, closeContextMenu } from "../ui";
+import { contextMenu, closeContextMenu, openPageContextMenu } from "../ui";
+import { ContextMenu } from "../components/ContextMenu";
 import { openPage, route } from "../router";
 import { readFileSync } from "node:fs";
 
@@ -17,6 +18,33 @@ function pointer(element: Element, type: string, x = 40) {
   element.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true,
     pointerType: "touch", pointerId: 7, isPrimary: true, clientX: x, clientY: 40 }));
 }
+
+it.each(["[[Tine]]", "#Tine"])("GH #655: holding %s keeps preview and page actions reachable through the shared menu", async (raw) => {
+  vi.useFakeTimers(); openPage("Before", "page");
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <><AstBody raw={raw} /><ContextMenu /></>, host);
+  const actionIds = () => [...document.querySelectorAll("[data-page-action-id]")].map(el => el.getAttribute("data-page-action-id"));
+  try {
+    // Shared builder used by desktop right-click; platform-only actions retain
+    // their existing availability policy.
+    openPageContextMenu(40, 40, "Tine");
+    const expected = actionIds();
+    expect(expected).toContain("open-sidebar");
+    closeContextMenu();
+    const link = host.querySelector("a")!;
+    pointer(link, "pointerdown");
+    await vi.advanceTimersByTimeAsync(LONG_PRESS_DELAY + 100);
+    pointer(link, "pointerup");
+    expect(document.querySelector(".peek-popup")).not.toBeNull();
+    const actions = document.querySelector<HTMLButtonElement>('.peek-popup [aria-label="Page actions"]');
+    expect(actions).not.toBeNull();
+    actions!.click();
+    expect(contextMenu()).toMatchObject({ kind: "page", name: "Tine", fileActions: false });
+    expect(actionIds()).toEqual(expected);
+    expect(route()).toMatchObject({ name: "Before" });
+    expect(document.querySelector(".peek-popup")).toBeNull();
+  } finally { dispose(); }
+});
 
 it.each(["[[Tine]]", "#Tine"])("mobile hold previews %s, release stays here, outside tap dismisses, next tap navigates", async (raw) => {
   vi.useFakeTimers(); openPage("Before", "page");
@@ -57,6 +85,7 @@ it("the mobile Guide explains reachable navigation, preview dismissal and ordina
   expect(guide).toContain("Search, the navigation sidebar, Back and Forward are at the bottom");
   expect(guide).toContain("Long-press a page reference or tag to preview");
   expect(guide).toContain("Tap outside the preview to dismiss");
+  expect(guide).toContain("**Page actions**");
   expect(guide).toContain("holding ordinary text keeps the system's text selection");
 });
 
