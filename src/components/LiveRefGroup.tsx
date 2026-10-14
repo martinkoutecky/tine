@@ -15,7 +15,7 @@ import { LinkDepthContext } from "./linkDepth";
 import { readOr } from "../resourceRead";
 import { openBlockInSidebar, openPageProps } from "../ui";
 import "./LiveRefGroup.css";
-import { ResultWriteTargetContext, resolveResultRow, resultWriteTarget } from "./queryResultIdentity";
+import { ResultWriteTargetContext, liveWriteTarget, noticeChangedResults, resolveResultRow, resultWriteTarget } from "./queryResultIdentity";
 import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
@@ -394,8 +394,25 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
         <CollapseSurfaceContext.Provider value={collapseSurface}>
         <SurfaceContext.Provider value={surface}>
         <ResultWriteTargetContext.Provider value={(id) => {
-          const dto = props.surface === "query" ? dtoById(id) : undefined;
-          return dto ? resultWriteTarget({ id, dto, page: props.page, kind: props.kind, path: props.path }) : undefined;
+          if (props.surface !== "query") return undefined;
+          // A live descendant answers to the result row it is shown under: that
+          // row resolves again at commit, and the block must still be inside it.
+          const rootOf = (blockId: string) => {
+            let current = docNode(blockId) as ReturnType<typeof docNode> | undefined;
+            while (current && !dtoById(current.id)) current = current.parent ? docNode(current.parent) : undefined;
+            return current?.id;
+          };
+          const root = rootOf(id);
+          const dto = root ? dtoById(root) : undefined;
+          if (!root || !dto) return liveWriteTarget(id);
+          const row = resultWriteTarget({ id: root, dto, page: props.page, kind: props.kind, path: props.path });
+          return () => {
+            const resolved = row();
+            if (resolved === null) return null;
+            if (resolved === root && rootOf(id) === root) return id;
+            noticeChangedResults(1);
+            return null;
+          };
         }}>
         {/* GH #415: Up from the first row of an embed's ROOT row exits the embed
             into the host page; the other rows stay surface-local. */}

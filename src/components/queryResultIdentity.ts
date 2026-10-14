@@ -92,10 +92,23 @@ export function captureResultDraft(row: ResultRow): () => ReadonlyNode | null {
     && pageByName(row.page) === page && node(source.id) === source ? source : null;
 }
 
-/** A query result surface's deferred-control target for a rendered result
- * locator: `resultWriteTarget` of that row, or undefined for a live
- * ancestor/descendant (ordinary source editing) and outside query results. */
+/** A query result surface's deferred-control target: `resultWriteTarget` for a
+ * result locator, `liveWriteTarget` for a live ancestor/descendant shown with
+ * it; undefined outside query results (ordinary source editing). */
 export const ResultWriteTargetContext = createContext<(id: string) => (() => string | null) | undefined>(() => undefined);
+
+/** A deferred control opened on a live block inside a result owns that exact
+ * live node: a replacement under the same ID (reload, external change) refuses. */
+export function liveWriteTarget(id: string): () => string | null {
+  const opened = node(id);
+  const page = opened ? pageByName(opened.page) : null;
+  const binding = captureBinding();
+  return () => {
+    const current = bindingCurrent(binding) && opened && node(id) === opened && pageByName(opened.page) === page;
+    if (!current) noticeChangedResults(1);
+    return current ? id : null;
+  };
+}
 
 /** Deferred controls keep the opening descriptor, and resolve again at commit. */
 export function resultWriteTarget(row: ResultRow): () => string | null {
