@@ -59,6 +59,10 @@ const EXEMPT: &[(&str, &str)] = &[
         "writes custom.css; no page",
     ),
     (
+        "src-tauri/src/css_files.rs::graph_save",
+        "writes only the fixed logseq/custom.css Meta file through a revision-guarded transaction; no page",
+    ),
+    (
         "crates/tine-graph-features/src/pages.rs::commit_home",
         "writes logseq/config.edn (the home page setting) after a host rename; no page",
     ),

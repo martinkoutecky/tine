@@ -323,17 +323,23 @@ describe("update checks", () => {
     expect(pushToastMock).not.toHaveBeenCalled();
   });
 
-  it("keeps macOS on the manual releases page while still learning the version from check()", async () => {
+  it("installs a signed update in place on macOS after the persistence gate", async () => {
     vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)" });
     mockLatest("v0.6.0-beta.1");
-    const { update, pushToastMock, updaterCheckMock, openExternalMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
+    const download = vi.fn(async () => {});
+    const install = vi.fn(async () => {});
+    const { update, pushToastMock, updaterCheckMock, openExternalMock, relaunchMock } = await loadUpdate({ platform: "desktop", version: "0.5.3", updaterUpdate: { version: "0.6.0-beta.1", download, install, close: vi.fn(async () => {}) } });
+    update.setUpdateExitGuard({ prepare: async () => "accepted", reset: vi.fn() });
 
     await update.checkForUpdate();
     expect(updaterCheckMock).toHaveBeenCalledOnce();
     const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"));
     offer?.[2]?.action?.run();
-    await vi.waitFor(() => expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/beta"));
-    expect(updaterCheckMock, "manual mode never runs the in-place installer").toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(install).toHaveBeenCalledOnce());
+    expect(download).toHaveBeenCalledOnce();
+    expect(relaunchMock).toHaveBeenCalledOnce();
+    expect(openExternalMock).not.toHaveBeenCalled();
+    expect(updaterCheckMock).toHaveBeenCalledTimes(2);
   });
 
   it("points the manual releases fallback at the beta release page", async () => {

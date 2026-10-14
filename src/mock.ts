@@ -1464,7 +1464,10 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const c = (globalThis as { confirm?: (m?: string) => boolean }).confirm;
       return typeof c === "function" ? c(message) : true;
     },
-    async pickFolder(_title?: string): Promise<string | null> {
+    async revealExport(_path: string) {},
+    async readCssFile(_global: boolean) { return { text: "", revision: null }; },
+    async saveCssFile(_global: boolean, text: string, _revision: string | null) { return text; },
+    async pickFolder(_title?: string, _defaultPath?: string): Promise<string | null> {
       return null; // no native dialog in the browser mock
     },
     async pickGraphFolder() {

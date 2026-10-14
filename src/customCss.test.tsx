@@ -147,21 +147,22 @@ async function mount(kind: "desktop" | "android") {
 }
 
 describe("Settings custom.css affordances", () => {
-  it("desktop: Edit custom.css asks the backend, and a failure is shown as an error toast", async () => {
-    const edit = vi.spyOn(backend(), "editCustomCss").mockRejectedValueOnce(new Error("no opener"));
+  it("desktop: Edit custom.css reads the in-app editor file, and a failure is shown as an error toast", async () => {
+    const edit = vi.spyOn(backend(), "readCssFile").mockRejectedValueOnce(new Error("no CSS read"));
     const { root, dispose } = await mount("desktop");
     const button = root.querySelector<HTMLButtonElement>('[data-setting-label="Edit custom.css"] button')!;
     expect(button).not.toBeNull();
     button.click();
-    await vi.waitFor(() => expect(toasts().some((t) => t.kind === "error" && /no opener/.test(t.message))).toBe(true));
+    await vi.waitFor(() => expect(toasts().some((t) => t.kind === "error" && /no CSS read/.test(t.message))).toBe(true));
     expect(edit).toHaveBeenCalledTimes(1);
     expect(root.querySelector('[data-setting-label="Developer tools"]')).not.toBeNull();
     dispose();
   });
 
-  it("android: no editor or inspector button, a file-path hint instead", async () => {
+  it("android: the in-app editor is available, while the desktop inspector is absent", async () => {
     const { root, dispose } = await mount("android");
-    expect(root.querySelector('[data-setting-label="Edit custom.css"]')).toBeNull();
+    expect(root.querySelector('[data-setting-label="Edit custom.css"]')).not.toBeNull();
+    expect(root.querySelector('[data-setting-label="Edit global CSS"]')).not.toBeNull();
     expect(root.querySelector('[data-setting-label="Developer tools"]')).toBeNull();
     expect(root.textContent).toContain("logseq/custom.css");
     expect(root.querySelector('[data-setting-label="Disable custom CSS"]')).not.toBeNull();

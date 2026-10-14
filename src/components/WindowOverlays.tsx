@@ -1,5 +1,6 @@
 import { Show, Suspense, lazy, type JSX } from "solid-js";
 import { QuickSwitcher } from "./QuickSwitcher";
+import { CssEditor } from "./CssEditor";
 import { ContextMenu } from "./ContextMenu";
 import { Toasts, Lightbox } from "./Toasts";
 import { AudioOverlay } from "./AudioOverlay";
@@ -52,6 +53,7 @@ export function WindowOverlays(props: {
         <FailureBoundary region="PDF export"><PdfExportDialog /></FailureBoundary>
         <FailureBoundary region="Query export"><QueryExportDialog request={queryExportRequest} /></FailureBoundary>
         <FailureBoundary region="Graph creation"><GraphNamePrompt /></FailureBoundary>
+        <FailureBoundary region="CSS editor"><CssEditor /></FailureBoundary>
         <Show when={settingsOpen()}>
           <Suspense>
             <FailureBoundary region="Settings"><Settings /></FailureBoundary>

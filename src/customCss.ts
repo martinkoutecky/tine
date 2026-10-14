@@ -15,6 +15,11 @@ import { setKnobsSafeMode } from "./styleKnobs";
 import { ensureThemeStyle } from "./themeGallery";
 
 let lastCss = "";
+let globalCss = "";
+let graphVersion = 0;
+let globalVersion = 0;
+/** A successful save or paint retires reads started against the previous CSS. */
+export const customCssVersion = (global = false): number => global ? globalVersion : graphVersion;
 const [disabled, setDisabled] = createSignal(false);
 
 /** Whether custom CSS is switched off for this session (safe mode). */
@@ -24,6 +29,13 @@ function paint(): void {
   if (typeof document === "undefined") return;
   ensureLsShimStyle();
   ensureThemeStyle();
+  let global = document.getElementById("tine-global-css");
+  if (!global) {
+    global = document.createElement("style");
+    global.id = "tine-global-css";
+  }
+  global.textContent = disabled() ? "" : globalCss;
+  document.head.appendChild(global);
   let el = document.getElementById(CUSTOM_CSS_STYLE_ID);
   if (!el) {
     el = document.createElement("style");
@@ -35,7 +47,15 @@ function paint(): void {
 
 /** Remember and show the graph's current custom.css text. */
 export function applyCustomCss(css: string): void {
+  ++graphVersion;
   lastCss = css;
+  paint();
+}
+
+/** Device CSS precedes graph CSS, so graphs can override the shared defaults. */
+export function applyGlobalCss(css: string): void {
+  ++globalVersion;
+  globalCss = css;
   paint();
 }
 

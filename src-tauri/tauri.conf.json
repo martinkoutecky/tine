@@ -54,7 +54,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage", "deb", "rpm", "nsis", "dmg"],
+    "targets": ["appimage", "deb", "rpm", "nsis", "app", "dmg"],
     "createUpdaterArtifacts": true,
     "macOS": { "infoPlist": "Info.plist" },
     "iOS": { "infoPlist": "Info.plist", "minimumSystemVersion": "15.4" },

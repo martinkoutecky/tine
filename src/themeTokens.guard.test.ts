@@ -109,7 +109,7 @@ describe("public theme tokens (GH #610)", () => {
     expect([...tableTokens(guide, /^- ## 3\. The supported names/m)].sort()).toEqual([...publicTokens].sort());
     const settings = readFileSync("src/components/CustomCssSettings.tsx", "utf8");
     for (const control of ["Edit custom.css", "Disable custom CSS", "Developer tools"]) {
-      expect(settings, `Settings must show the control the Guide names: ${control}`).toContain(`label="${control}"`);
+      expect(settings, `Settings must show the control the Guide names: ${control}`).toContain(control === "Edit custom.css" ? 'label={t("css-edit-graph")}' : `label="${control}"`);
       expect(guide, `the Guide must name the Settings control ${control}`).toContain(`**${control}**`);
     }
   });

@@ -755,6 +755,32 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn desktop_guide_teaches_export_destination_and_signed_macos_updates() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for outcome in [
+            "last successful export destination",
+            "**Show in folder**",
+            "**Export graph as HTML and read-only app…**",
+        ] {
+            assert!(
+                files.contains(outcome),
+                "missing export workflow: {outcome}"
+            );
+        }
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "Windows, Linux and macOS",
+            "signed and notarized universal application",
+            "download and replace the app manually",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing desktop update workflow: {outcome}"
+            );
+        }
+    }
+
+    #[test]
     fn desktop_guide_documents_the_beta_flatpak_download() {
         // The bundle is a manual-update download: the install command, the way to find the app
         // id, side-by-side coexistence and the update path must be on the page.
@@ -1280,6 +1306,10 @@ mod customize_look_guide_tests {
         let page = page();
         for needed in [
             "logseq/custom.css",
+            "**Edit global CSS**",
+            "per-user config directory",
+            "**Reload from disk**",
+            "**Ctrl+K**",
             "Settings",
             "**Edit custom.css**",
             "**Disable custom CSS**",

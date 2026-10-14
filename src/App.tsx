@@ -39,6 +39,7 @@ import { installBlockSelectionDrag } from "./blockDrag";
 import { applyCustomCssChange, applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
 import { installPageIndex } from "./pageIndex";
 import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
+import { flushCssEditor } from "./cssEditor";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
 import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
@@ -122,7 +123,11 @@ export const safeClose = createSafeCloseCoordinator({
     endEdit("graph-switch");
   },
   flushPdfWork: drainPdfWork,
-  flushAll,
+  flushAll: async () => {
+    const cssSaved = await flushCssEditor();
+    const pagesSaved = await flushAll();
+    return cssSaved && pagesSaved;
+  },
   // GH #540: name the pages at risk; "No" opens the recovery panel.
   confirmDiscard: (reason) => {
     const explanation = reason === "still-saving"

@@ -18,7 +18,8 @@ import { resetPaneLayoutToSingle, removePageTargetAcrossPanes } from "./panes";
 import { journalTitle, localDayKey, setJournalTitleFormat, appNow } from "./journal";
 import { applyTemplateVars, prepareTemplateVars } from "./editor/templateVars";
 import { resetPageIndex } from "./pageIndex";
-import { applyCustomCss } from "./customCss";
+import { applyCustomCss, customCssVersion } from "./customCss";
+import { flushCssEditor, loadGlobalCss, checkCssEditorDisk, retireGraphCssEditor } from "./cssEditor";
 import { isMobile, platformKind } from "./platform";
 import type { BlockDto, GraphMeta } from "./types";
 import type { DraftStatus } from "./document";
@@ -59,8 +60,14 @@ export function applyGraphConfigChange(change: GraphConfigChange): void {
  *  re-read and re-apply it, no graph reopen. An event from an older graph
  *  binding is ignored; the read itself is graph-owned. */
 export function applyCustomCssChange(change: CustomCssChange): void {
+  if (change.global) {
+    void loadGlobalCss();
+    void checkCssEditorDisk(true);
+    return;
+  }
   if (change.binding_generation !== undefined && captureBinding().backendGeneration !== change.binding_generation) return;
   void injectCustomCss(true);
+  void checkCssEditorDisk(false);
 }
 
 /** Publish one config snapshot and its derived state (I-12). The journal
@@ -171,8 +178,9 @@ export async function loadGraphPath(
   // the persisted path (which is empty on a TINE_GRAPH/CLI launch).
   const hadGraph = !!graphMeta();
   const flushed = await flushAll();
+  const cssFlushed = await flushCssEditor();
   if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
-  if (hadGraph && !flushed) {
+  if (hadGraph && (!flushed || !cssFlushed)) {
     pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
     return { kind: "aborted" };
   }
@@ -257,6 +265,10 @@ export async function loadGraphPath(
     pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
     return { kind: "aborted" };
   }
+  if (hadGraph && !(await flushCssEditor())) {
+    if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
+    return { kind: "aborted" };
+  }
   if (!bindingCurrent(startingBinding)) {
     if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
     return { kind: "aborted" };
@@ -298,6 +310,7 @@ export async function loadGraphPath(
   }
   if (!hadGraph || rebindsPdfOwner) activatePdfOwnership(meta.root);
   resetStore();
+  retireGraphCssEditor();
   unfreeze?.();
   unfreeze = null;
   await bindHost();
@@ -336,6 +349,7 @@ export async function loadGraphPath(
   // here made every open pay getPage + listTemplates, which wait for the
   // whole-graph parse (master 5bb8ce020, GH #266).
   void injectCustomCss();
+  void loadGlobalCss();
   if (!switching) void pruneSidebarBlocks();
   maybeShowGuideAnnouncement();
   // On a genuine graph SWITCH, close ALL the old graph's tabs (their histories
@@ -589,6 +603,7 @@ const CUSTOM_CSS_LIVE_RETRY_MS = 400;
  *  previous graph may stay applied). Latest read wins. */
 export async function injectCustomCss(live = false): Promise<void> {
   const seq = ++customCssRead;
+  const version = customCssVersion();
   const owner = graphOwner();
   for (let attempt = 0; ; attempt++) {
     try {
@@ -596,9 +611,11 @@ export async function injectCustomCss(live = false): Promise<void> {
       if (result.kind === "stale") return;
       if (!owner()) return;
       if (seq !== customCssRead) return;
+      if (version !== customCssVersion()) return;
       applyCustomCss(result.value);
       return;
     } catch (error) {
+      if (version !== customCssVersion()) return;
       if (!owner()) return;
       if (seq !== customCssRead) return;
       if (live && attempt === 0) {

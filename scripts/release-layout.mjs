@@ -72,8 +72,11 @@ export function releaseLayout(version, identity = IDENTITY) {
       },
     },
     "macos-universal": {
-      assets: [`${product}_${version}_universal.dmg`],
-      platforms: {},
+      assets: [`${product}_${version}_universal.dmg`, `${product}_${version}_universal.app.tar.gz`, `${product}_${version}_universal.app.tar.gz.sig`],
+      platforms: {
+        "darwin-aarch64": [`${product}_${version}_universal.app.tar.gz`, `${product}_${version}_universal.app.tar.gz.sig`],
+        "darwin-x86_64": [`${product}_${version}_universal.app.tar.gz`, `${product}_${version}_universal.app.tar.gz.sig`],
+      },
     },
     "windows-x64": {
       assets: [
@@ -135,6 +138,10 @@ export function releaseLayout(version, identity = IDENTITY) {
       name.endsWith("-portable.zip") || name.endsWith(".apk") || name.endsWith(".flatpak") ? name
         : identity.productName + name.slice(product.length),
     ]));
+  }
+  // Tauri names the macOS updater after the .app, without a version or target.
+  for (const suffix of [".app.tar.gz", ".app.tar.gz.sig"]) {
+    lanes["macos-universal"].sourceAssets[`${product}_${version}_universal${suffix}`] = `${identity.productName}${suffix}`;
   }
   const platformAssets = RELEASE_LANES.flatMap((lane) => lanes[lane].assets);
   return {
