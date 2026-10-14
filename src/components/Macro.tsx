@@ -71,7 +71,7 @@ import { QueryLegacyTable } from "./QueryLegacyTable";
 import { mainWindow } from "../windowRealm";
 import { QueryMacroActions } from "./QueryMacroActions";
 import { QueryResultTask } from "./QueryResultTask";
-import { resultTicket, resultsEpoch, resultsTicketCurrent } from "../queryResultsEpoch";
+import { resultTicket, resultsEpoch, resultsTicketActionable } from "../queryResultsEpoch";
 
 // Collapsed state for query results, keyed by graph + rendered query identity.
 // A raw query-string key made unrelated dashboards across pages/graphs collide.
@@ -413,7 +413,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
    * (queryResultIdentity); say so instead of looking idle. */
   const resultsBusy = () => {
     const shown = displayed();
-    return !!shown && !collapsed() && !resultsTicketCurrent(resultTicket(shown));
+    return !!shown && !collapsed() && !resultsTicketActionable(resultTicket(shown));
   };
   const pageRows = () => displayed()?.pages ?? null;
   // The run's OWN diagnostics (I-9): an invalid query returns zero rows plus

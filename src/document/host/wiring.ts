@@ -63,8 +63,13 @@ const [hostRevision, setHostRevision] = createSignal(0);
 let stateKey = "";
 installResultsPendingGate(() => {
   hostRevision();
-  return pendingDataRevision() || early.size > 0 || transferPages.size > 0
-    || !!client?.names().some(name => client!.busy(name) || client!.owes(name) || client!.conflicted(name) || client!.holdsContent(name));
+  return pendingDataRevision() || early.size > 0
+    || !!client?.names().some(name => client!.busy(name) || client!.owes(name));
+}, "own-work");
+installResultsPendingGate(() => {
+  hostRevision();
+  return transferPages.size > 0
+    || !!client?.names().some(name => client!.conflicted(name) || client!.holdsContent(name));
 });
 
 function host(): HostClient | null {

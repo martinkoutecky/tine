@@ -196,3 +196,21 @@ it("R8-4: clean host work blocks actions but reuses the current answer on settle
   expect(root.textContent).toBe("1");
   expect(resolveResultRow(row)?.id).toBe("same");
 });
+
+it("own save work delays reruns but leaves result actions available; a held change still blocks them", async () => {
+  await fixture();
+  const [saving, setSaving] = createSignal(false); installResultsPendingGate(saving, "own-work");
+  const [held, setHeld] = createSignal(false); installResultsPendingGate(held);
+  const load = vi.fn(async () => [dto("same", "Selected")]);
+  const root = mount(() => { const [answer] = createMembershipResource(() => "question", () => "scope", load, () => false, () => true, true); return <span>{answer()?.length}</span>; });
+  await vi.waitFor(() => expect(root.textContent).toBe("1"));
+  const hit = (await load.mock.results[0].value)[0];
+  const row = { id: hit.id, page: "Source", dto: hit };
+  setSaving(true);
+  expect(captureResultsTicket().settled).toBe(false);
+  expect(resolveResultRow(row)?.id).toBe("same");
+  setHeld(true);
+  expect(resolveResultRow(row)).toBeNull();
+  setHeld(false); setSaving(false);
+  expect(resolveResultRow(row)?.id).toBe("same");
+});

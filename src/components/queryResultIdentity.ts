@@ -5,7 +5,7 @@ import { t } from "../i18n";
 import type { BlockDto, Format, PageDto, PageKind } from "../types";
 import { blockRegions } from "../render/parse";
 import { formatForPage, node, pageByName, pageRoots, type Node as ReadonlyNode } from "../document";
-import { resultTicket, resultsEpoch, resultsSettled, resultsTicketCurrent } from "../queryResultsEpoch";
+import { resultTicket, resultsEpoch, resultsSettled, resultsTicketActionable } from "../queryResultsEpoch";
 import { bindingCurrent, captureBinding } from "../binding";
 
 export interface ResultRow { id: string; page: string; kind?: PageKind; path?: string; dto?: BlockDto; detached?: boolean }
@@ -34,12 +34,12 @@ export function resolveResultRow(row: ResultRow, mode: "action" | "mount" = "act
     if (!row.dto || sourcePage.name !== row.page || sourcePage.kind !== row.kind || (row.path && sourcePage.id !== row.path)) return null;
     const format = sourcePage.format ?? "md";
     const index = dtoIndex(sourcePage);
-    if (resultsTicketCurrent(resultTicket(row.dto))) {
+    if (resultsTicketActionable(resultTicket(row.dto))) {
       const matches = index.get(row.dto.id) ?? [];
       return matches.length === 1 ? matches[0] : null;
     }
     const durable = existingBlockId(row.dto.raw, format);
-    if (!durable && !resultsTicketCurrent(resultTicket(row.dto))) return null;
+    if (!durable && !resultsTicketActionable(resultTicket(row.dto))) return null;
     const matches: BlockDto[] = [];
     const visit = (blocks: BlockDto[]) => { for (const block of blocks) {
       if (durable ? existingBlockId(block.raw, format) === durable : block.id === row.dto!.id) matches.push(block);
@@ -55,7 +55,7 @@ export function resolveResultRow(row: ResultRow, mode: "action" | "mount" = "act
   const retained = mode === "mount" ? mounted.get(row.dto) : undefined;
   // Eviction is hydration, not an epoch: a retained source must still be live.
   if (retained && retained.epoch === resultsEpoch() && node(retained.source.id) === retained.source) return retained.source;
-  const current = resultsTicketCurrent(ticket);
+  const current = resultsTicketActionable(ticket);
   let source = current ? node(row.dto.id) : undefined;
   if (source?.page !== row.page) source = undefined;
   // Projected results already carry the parser's negative identity fact. Keep
@@ -100,22 +100,11 @@ export const ResultWriteTargetContext = createContext<(id: string) => (() => str
 /** A deferred control opened on a live block shown with a result (e.g. a
  * breadcrumb ancestor) has no result row of its own. Stores merge a same-ID
  * replacement into the existing node, so identity cannot tell; any result
- * change while the control is open refuses instead (invalidate, don't guess). */
+ * change while the control is open refuses instead (invalidate, don't guess).
+ * Epoch only, not settled: the user's own typing and saves leave results
+ * unsettled without moving the epoch, and must not refuse. Also the query
+ * editor's own pickers. */
 export function liveWriteTarget(id: string): () => string | null {
-  const epoch = resultsEpoch();
-  const binding = captureBinding();
-  return () => {
-    const current = bindingCurrent(binding) && resultsSettled() && resultsEpoch() === epoch && !!node(id);
-    if (!current) noticeChangedResults(1);
-    return current ? id : null;
-  };
-}
-
-/** A picker opened from the query editor on its own block. The user's typing
- * (field-only raw writes, then their save) keeps results unsettled without
- * moving the epoch, so requiring settled would refuse every pick made during
- * the edit's own save; a result change advances the epoch on arrival. */
-export function editorWriteTarget(id: string): () => string | null {
   const epoch = resultsEpoch();
   const binding = captureBinding();
   return () => {

@@ -1,6 +1,6 @@
 import { exportNodesFor, formatForPage, pageByName } from "../document";
 import { noticeChangedResults, samePagePropertyResult, resolveResultRow } from "./queryResultIdentity";
-import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
+import { resultTicket, resultsTicketActionable } from "../queryResultsEpoch";
 import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
 import { pushToast } from "../toasts";
@@ -49,10 +49,10 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
         const ids: string[] = [];
         const propertyRoots: BlockDto[] = [];
         for (const block of group.blocks) {
-          validators.push(() => block.page_property ? resultsTicketCurrent(resultTicket(block))
+          validators.push(() => block.page_property ? resultsTicketActionable(resultTicket(block))
             : !!resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path }));
           if (block.page_property) {
-            if (resultsTicketCurrent(resultTicket(block)) && samePagePropertyResult(block, loaded!.preBlock, format)) propertyRoots.push(block);
+            if (resultsTicketActionable(resultTicket(block)) && samePagePropertyResult(block, loaded!.preBlock, format)) propertyRoots.push(block);
             else changed++;
             continue;
           }
@@ -71,10 +71,10 @@ export async function openQueryResultsCopy(groups: RefGroup[], pages: Pick<PageE
         format = sourceFormat;
         const roots: BlockDto[] = [];
         for (const block of group.blocks) {
-          validators.push(() => block.page_property ? resultsTicketCurrent(resultTicket(block))
+          validators.push(() => block.page_property ? resultsTicketActionable(resultTicket(block))
             : !!resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path }, "action", dto));
           if (block.page_property) {
-            if (resultsTicketCurrent(resultTicket(block)) && samePagePropertyResult(block, dto.pre_block, sourceFormat)) roots.push(block);
+            if (resultsTicketActionable(resultTicket(block)) && samePagePropertyResult(block, dto.pre_block, sourceFormat)) roots.push(block);
             else changed++;
             continue;
           }

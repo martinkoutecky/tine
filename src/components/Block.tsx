@@ -99,7 +99,7 @@ import { Rendered, detectMacro } from "./Rendered";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
-import { ResultWriteTargetContext, editorWriteTarget } from "./queryResultIdentity";
+import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
 import { dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
@@ -586,7 +586,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const embedNavExit = useContext(EmbedNavExitContext);
   // Inside query results, the editor's pickers write only if no result changed meanwhile (GH #433 review).
   const inResults = useContext(ResultWriteTargetContext);
-  const resultTarget = (id: string) => inResults(id) ? editorWriteTarget(id) : undefined;
+  const resultTarget = (id: string) => inResults(id) ? liveWriteTarget(id) : undefined;
   const collapseSurface = useContext(CollapseSurfaceContext);
   // Ref/query arrow navigation stays in the rendered result surface (master
   // GH #341), while structural edits still target the source outline: a

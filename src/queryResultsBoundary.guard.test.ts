@@ -23,6 +23,6 @@ it("I-12: result consumers use the shared boundary and never directly look up a 
     expect(code, `${rule}: ${file}`).toMatch(/resolveResultRow|liveFormulaRowNode|SourceTaskCheckbox/);
   }
   const boundary = readFileSync("src/components/queryResultIdentity.ts", "utf8");
-  expect(boundary, rule).toContain("resultsTicketCurrent");
+  expect(boundary, rule).toContain("resultsTicketActionable");
   expect(boundary, rule).not.toMatch(/contentFingerprint|sameQueryResult/);
 });

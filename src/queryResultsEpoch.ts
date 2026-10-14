@@ -4,10 +4,15 @@ import { createSignal } from "solid-js";
 const [epoch, setResultsEpoch] = createSignal(0);
 export const resultsEpoch = epoch;
 const [pending, setPending] = createSignal(0);
-const gates: (() => boolean)[] = [];
+/** "own-work": the user's own saves and their publication. They delay reruns
+ * (no adoption until settled) but cannot replace a result block, so they do not
+ * block result actions. "hold" (default): held external changes, conflicts,
+ * deferred reloads, transfers; actions wait until the user resolves them. */
+type GateKind = "own-work" | "hold";
+const gates: { gate: () => boolean; kind: GateKind }[] = [];
 let generation = 0;
-export function installResultsPendingGate(gate: () => boolean): void { gates.push(gate); }
-export function resultsSettled(): boolean { return pending() === 0 && !gates.some(gate => gate()); }
+export function installResultsPendingGate(gate: () => boolean, kind: GateKind = "hold"): void { gates.push({ gate, kind }); }
+export function resultsSettled(): boolean { return pending() === 0 && !gates.some(({ gate }) => gate()); }
 export function advanceResultsEpoch(): void { setResultsEpoch(value => value + 1); }
 
 /** Arrival AND completion invalidate: a read during hydration is unusable. */
@@ -31,6 +36,14 @@ export interface ResultsTicket { epoch: number; settled: boolean }
 export function captureResultsTicket(): ResultsTicket { return { epoch: resultsEpoch(), settled: resultsSettled() }; }
 export function resultsTicketCurrent(ticket: ResultsTicket | undefined): boolean {
   return !!ticket?.settled && ticket.epoch === resultsEpoch() && resultsSettled();
+}
+/** Acting on an adopted answer needs only that no result change arrived since
+ * (every replacement advances the epoch on arrival) and nothing is held for
+ * the user to resolve. Requiring settled here refused every result action for
+ * ~1 s after the user's own save. */
+export function resultsTicketActionable(ticket: ResultsTicket | undefined): boolean {
+  return !!ticket?.settled && ticket.epoch === resultsEpoch() && pending() === 0
+    && !gates.some(({ gate, kind }) => kind === "hold" && gate());
 }
 const provenance = new WeakMap<object, ResultsTicket>();
 export function resultTicket(result: object): ResultsTicket | undefined { return provenance.get(result); }
