@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-outside-file-links.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A file link that leaves the graph folder (../ or absolute) renders as an ordinary link and clicking it hands the resolved path to the system opener.","blocking":true}],
+      "acceptableVariations":["Link styling, hover text wording and the opener used may vary while the resolved path handed to the OS is correct."],
+      "nonRequirements":["A particular viewer launching, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-pinyin.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Ctrl+K finds and opens a Han title from full Mandarin Pinyin or initials, keeps native matches first, and removes expansions after disabling the device preference.","blocking":true}],
       "acceptableVariations":["Existing deterministic tie order between colliding expansions; layout, glyphs and search latency may vary."],
