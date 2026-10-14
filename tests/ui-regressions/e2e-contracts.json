@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-page-icons.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Page icons appear in sidebar lists from an existing header, follow live property typing and external file edits, and can be set or removed from the page menu through guarded saves.","blocking":true}],
+      "acceptableVariations":["Emoji rendering, layout and save latency may vary while the icon text, page identity and stored property remain correct."],
+      "nonRequirements":["Image icons, reference thumbnails, GIFs, adjustable sizes or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-reference-alias-chips.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Reference filters merge alias chips, count each block once, load legacy alias-named filters and retain canonical include/exclude choices after a guarded save and restart.","blocking":true}],
       "acceptableVariations":["Chip styling, navigation layout and save latency may vary while canonical labels, block counts, membership and persisted choices remain correct."],

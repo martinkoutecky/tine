@@ -1,5 +1,11 @@
 ## All Pages and its sidebar links
 pages-all-title = All pages
+page-icon-set = Set page icon…
+page-icon-remove = Remove page icon
+page-icon-label = Page icon
+page-icon-save = Save icon
+page-icon-hint = Enter an emoji or short text. Windows: Win + .; macOS: Control + Command + Space.
+page-icon-stale = This page changed; reopen the page actions menu to edit its icon.
 pages-all-filter = Filter page names
 pages-all-show-journals = Show journals
 pages-all-loading = Loading…

@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { ContextMenu, deletePageMenuLabel, pageMenuAvailability } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import { blockProperty, pageByName, resetStore } from "../document";
+import { blockProperty, pageByName, readPageProperty, resetStore } from "../document";
 import { editingId, endEdit } from "../editorController";
 import { type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
@@ -15,6 +15,7 @@ import { setToasts, toasts } from "../toasts";
 import { focusedRouter } from "../panes";
 import { bindTestHost } from "../document/host/wiring.test.support";
 import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
+import { reloadPage } from "../document/workingSet";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -183,6 +184,44 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     await Promise.resolve();
     expect(blockProperty("leaf", "template")).toBeNull();
     dispose();
+  });
+
+  it.each(["md", "org"] as const)("sets short text and removes a page icon from the menu through the %s property writer", async (format) => {
+    load();
+    setDoc("pages", 0, "format", format);
+    const dispose = mount(() => <ContextMenu />);
+    try {
+      openPageContextMenu(10, 10, "P", "page", true);
+      const actions = [...document.querySelectorAll<HTMLElement>("[data-page-action-id]")].map(el => el.dataset.pageActionId);
+      expect(actions.indexOf("set-page-icon")).toBe(actions.indexOf("page-properties") + 1);
+      document.querySelector<HTMLButtonElement>('[data-page-action-id="set-page-icon"]')!.click();
+      const input = document.querySelector<HTMLInputElement>('[data-page-icon-input]')!;
+      input.value = "AB";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(readPageProperty("P", "icon")).toBe("AB");
+      expect(pageByName("P")?.preBlock).toContain(format === "org" ? "#+icon: AB" : "icon:: AB");
+      openPageContextMenu(10, 10, "P", "page", true);
+      document.querySelector<HTMLButtonElement>('[data-page-action-id="remove-page-icon"]')!.click();
+      expect(readPageProperty("P", "icon")).toBeNull();
+    } finally { dispose(); }
+  });
+
+  it("refuses an icon draft after the page is replaced", () => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    try {
+      openPageContextMenu(10, 10, "P", "page", true);
+      document.querySelector<HTMLButtonElement>('[data-page-action-id="set-page-icon"]')!.click();
+      const input = document.querySelector<HTMLInputElement>('[data-page-icon-input]')!;
+      input.value = "AB";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      reloadPage({ name: "P", title: "P", kind: "page", id: pageByName("P")!.id, pre_block: "icon:: external",
+        blocks: [{ id: "external", raw: "External body", collapsed: false, children: [] }] });
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      expect(readPageProperty("P", "icon")).toBe("external");
+      expect(toasts().some(toast => toast.kind === "error" && toast.message.includes("reopen"))).toBe(true);
+    } finally { dispose(); }
   });
 
   it("does not delete a colliding page after an old graph confirmation", async () => {
@@ -409,6 +448,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "open-default-app",
       "find-in-page",
       "page-properties",
+      "set-page-icon",
       "rename-page",
       "delete-page",
     ]);
@@ -436,7 +476,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     expect(activeId()).toBe("delete-page");
     press("Home");
     expect(activeId()).toBe("open");
-    expect(menu.querySelectorAll('[role="menuitem"]')).toHaveLength(15);
+    expect(menu.querySelectorAll('[role="menuitem"]')).toHaveLength(16);
     dispose();
   });
 
@@ -551,6 +591,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
       "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
       "show-in-folder", "open-default-app", "find-in-page", "page-properties",
+      "set-page-icon",
       "carry-unfinished", "delete-journal",
     ]);
     dispose();

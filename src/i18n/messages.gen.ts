@@ -150,6 +150,12 @@ export interface MessageArgs {
   "navigation-search": {};
   "navigation-search-title": {};
   "navigation-sidebar-title": {};
+  "page-icon-hint": {};
+  "page-icon-label": {};
+  "page-icon-remove": {};
+  "page-icon-save": {};
+  "page-icon-set": {};
+  "page-icon-stale": {};
   "pages-all-column-journal-date": {};
   "pages-all-column-page": {};
   "pages-all-column-updated": {};

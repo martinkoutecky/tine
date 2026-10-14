@@ -311,6 +311,18 @@ mod journal_guide_tests {
         let reference = include_str!("templates/pages-links-references-search.md");
         assert!(reference.contains("`icon::` property stays visible in the page-properties block"));
         assert!(reference.contains("click its row to edit it"));
+        for detail in [
+            "**Set page icon…**",
+            "**Remove page icon**",
+            "emoji or short text",
+            "including external file changes",
+            "`#+icon:`",
+        ] {
+            assert!(
+                reference.contains(detail),
+                "Guide is missing page icon capability: {detail}"
+            );
+        }
     }
 
     #[test]
