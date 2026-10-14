@@ -325,6 +325,25 @@ jobs:
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=2 "$app"
 
+          # Verify the application users will actually install through the
+          # updater as well; a valid DMG alone cannot authorize that archive.
+          updater=$(find target -type f -path '*/bundle/macos/*.app.tar.gz' -print -quit)
+          [ -n "$updater" ] && [ -s "$updater.sig" ] || {
+            echo "::error::signed macOS updater archive is missing"
+            exit 1
+          }
+          updater_dir="$RUNNER_TEMP/tine-updater-verify"
+          mkdir -p "$updater_dir"
+          tar -xzf "$updater" -C "$updater_dir"
+          updater_app=$(find "$updater_dir" -maxdepth 2 -type d -name '*.app' -print -quit)
+          [ -n "$updater_app" ] || exit 1
+          codesign --verify --deep --strict --verbose=2 "$updater_app"
+          codesign -dv --verbose=4 "$updater_app" 2> "$RUNNER_TEMP/tine-updater-codesign.txt"
+          grep -Fq 'Authority=Developer ID Application:' "$RUNNER_TEMP/tine-updater-codesign.txt"
+          grep -Fq "TeamIdentifier=$APPLE_TEAM_ID" "$RUNNER_TEMP/tine-updater-codesign.txt"
+          xcrun stapler validate "$updater_app"
+          spctl --assess --type execute --verbose=2 "$updater_app"
+
       - name: Verify Linux AppImage update information
         if: startsWith(matrix.platform, 'ubuntu-')
         run: |

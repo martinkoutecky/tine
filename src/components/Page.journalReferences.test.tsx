@@ -7,15 +7,41 @@ import { resetStore } from "../document";
 import { resetTabsToJournals } from "../router";
 import { currentDayKey, journalTitle } from "../journal";
 import { resetReferenceSectionState } from "../referenceSectionState";
-import { setGraphMeta } from "../graphSession";
+import { setGraphMeta, bumpDataRev } from "../graphSession";
+import { startEditing, endEdit } from "../editorController";
 import { resetNearObserverForTests } from "../lazyObserve";
 import type { GraphMeta, PageRead } from "../types";
 
 beforeAll(initParser);
 afterEach(() => {
+  endEdit("blur");
   resetStore(); resetTabsToJournals(); setGraphMeta(null); resetReferenceSectionState();
   resetNearObserverForTests(); vi.unstubAllGlobals(); vi.restoreAllMocks();
   document.body.replaceChildren();
+});
+
+it("GH #481: feed-source editing refreshes journal backlinks without leaving Journals", async () => {
+  vi.stubGlobal("IntersectionObserver", class {
+    constructor(private callback: IntersectionObserverCallback) {}
+    observe(target: Element) { if (target.classList.contains("journal-linked-references")) this.callback([{ target, isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver); }
+    unobserve() {} disconnect() {}
+  });
+  const today = journalTitle(new Date());
+  const older = "Sep 20th, 2026";
+  const block = { id: "feed-source", raw: `Reminder [[${older}]]`, children: [], collapsed: false };
+  const pages: PageRead[] = [today, older].map((name, index) => ({ name, title: name, kind: "journal", id: `journals/live-${index}.md`, pre_block: null, blocks: index ? [] : [block] }));
+  vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages, as_of_day: currentDayKey(), next_before_day: null, done: true });
+  const backlinks = vi.spyOn(backend(), "getBacklinks").mockImplementation(async name => name === older ? [{ page: today, kind: "journal", blocks: [block] }] : []);
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <PageView />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelector(".references-count")?.textContent).toBe("1"));
+    startEditing("feed-source");
+    backlinks.mockResolvedValue([]);
+    bumpDataRev();
+    await vi.waitFor(() => expect(host.querySelector(".linked-references")).toBeNull());
+    expect(host.querySelector(".page-section")).not.toBeNull();
+  } finally { dispose(); }
 });
 
 it("Journals feed loads each day's shared references only on approach, omits zero and honors collapse", async () => {

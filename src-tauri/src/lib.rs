@@ -18,6 +18,7 @@ mod commands;
 #[path = "commands/concord.rs"]
 mod concord;
 mod concord_ledger;
+mod css_files;
 mod data_home;
 mod debug;
 mod deep_links;
@@ -68,6 +69,7 @@ mod tray;
 mod watcher;
 mod workspace_windows;
 mod youtube_identity;
+use css_files::{read_css_file, save_css_file};
 
 use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
@@ -1088,9 +1090,13 @@ pub fn run() {
             set_default_journal_template,
             set_start_of_week,
             read_custom_css,
+            read_css_file,
+            save_css_file,
+            commands::reveal_export,
             edit_custom_css,
             open_external,
             copy_image_to_clipboard,
+            platform::read_android_clipboard_image,
             clipboard_files,
             open_asset,
             open_graph_file,

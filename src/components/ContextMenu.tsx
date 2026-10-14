@@ -18,6 +18,8 @@ import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
 import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
+import { favoriteBlock } from "../favorites";
+import { t, msg, render as renderUiText, type UiText } from "../i18n";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
 import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
@@ -854,12 +856,13 @@ function PageMenu(props: {
     // recreated by a queued save right after we delete it.
     // Pane routes are retired inside the durable delete, before the page leaves
     // the working set, so no pane renders a route to a purged page (GH #376).
-    void writeOwned(owner, deletePage(name, kind, captured.path, () => removePageTargetAcrossPanes(captured)))
+    let failure: UiText = msg("delete-reason-refused");
+    void writeOwned(owner, deletePage(name, kind, captured.path, () => removePageTargetAcrossPanes(captured), reason => { failure = reason; }))
       .then((result) => {
         if (result.kind === "stale") return;
         const ok = result.value;
         if (!ok) {
-          pushToast("Delete failed", "error");
+          pushToast(msg("delete-failed", { reason: renderUiText(failure) }), "error");
           return;
         }
         // Deleted a day IN the journals feed (in place, no navigation) → the feed
@@ -871,7 +874,7 @@ function PageMenu(props: {
         }
         pushToast(`Deleted “${name}”`, "success");
       })
-      .catch(() => { pushToast("Delete failed", "error"); });
+      .catch(error => { if (owner()) pushToast(msg("delete-failed", { reason: String(error) }), "error"); });
   };
   const items: { id: string; label: string; run: () => void; danger?: boolean }[] = [
     { id: "open", label: "Open", run: () => openPageTarget(target()) },
@@ -1131,6 +1134,7 @@ function blockActions(id: string, x: number, y: number): { label: string; run: (
     { label: "Copy link", run: () => void copyTineLink({ blocks: ids }) },
     { label: multi ? "Copy block refs" : "Copy block ref", run: () => void copyBlockLink(ids, "ref") },
     { label: multi ? "Copy block embeds" : "Copy block embed", run: () => void copyBlockLink(ids, "embed") },
+    ...(!multi ? [{ label: t("favorites-block-action"), run: () => void favoriteBlock(id) }] : []),
     { label: `Copy ${noun}`, run: copy },
     // Open the export modal for the whole selection (if this block is part of a
     // multi-selection) or just this block's subtree — preview + indent/remove opts.

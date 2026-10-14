@@ -125,6 +125,7 @@ mod test_config_client;
 #[cfg(test)]
 mod test_fixture_io;
 pub mod transaction;
+mod transliteration;
 mod watch;
 pub use publish::{PublishDest, PublishFailed, PublishReceipt, SiteWriter};
 pub use restore::{RestoreFailed, RestoreFile, RestoreReport};

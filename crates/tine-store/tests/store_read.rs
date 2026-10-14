@@ -281,7 +281,10 @@ fn page_reads_and_publishes_external_edit() {
     let _ = store
         .whole_graph()
         .unwrap()
-        .complete_page_names("Note", 10, None);
+        .complete_page_names("Note", 10, None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect::<Vec<_>>();
     f.put("pages/Note.md", b"- after edit\n");
     store.refresh(tine_store::Depth::Stamps).unwrap();
     let second = store.page(&id).unwrap();
@@ -293,6 +296,7 @@ fn page_reads_and_publishes_external_edit() {
             .unwrap()
             .search(
                 &tine_store::SearchRequest {
+                    transliteration: false,
                     text: "after edit".into(),
                     within: None,
                     page_limit: 10,
@@ -369,7 +373,10 @@ fn direct_first_read_publishes_creation_and_updates_name_claimants() {
         .iter()
         .any(|entry| entry.name == "Arrived"));
     assert!(view
-        .complete_page_names("Arr", 10, None)
+        .complete_page_names("Arr", 10, None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect::<Vec<_>>()
         .iter()
         .any(|entry| entry.name == "Arrived"));
     let mut tx = store.transaction(Some(tine_store::EditKind::ReplacePage));
@@ -410,7 +417,10 @@ fn direct_first_read_updates_journal_day_and_derived_answers() {
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
     assert!(view
-        .complete_page_names("Sep 25", 10, None)
+        .complete_page_names("Sep 25", 10, None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect::<Vec<_>>()
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
 }

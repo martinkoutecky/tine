@@ -406,12 +406,13 @@ export interface Backend {
     explain?: boolean,
     scope?: QueryPageScope,
     pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope,
-    views?: { page: ViewSettings; block: ViewSettings }
+    views?: { page: ViewSettings; block: ViewSettings },
+    transliteration?: boolean
   ): Promise<QueryExecution>;
-  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string }): Promise<PageEntry[]>;
+  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string; session?: string }, transliteration?: boolean): Promise<PageEntry[]>;
   /** Capture-only page/tag completion capability. It is intentionally not the
    * general graph command route used by the main WebView. */
-  captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]>;
+  captureQuickSwitch(query: string, limit: number, transliteration?: boolean): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
@@ -461,7 +462,10 @@ export interface Backend {
   confirm(message: string, title?: string): Promise<boolean>;
   /** Native folder picker (graph open). Null if cancelled / unsupported.
    *  `title` overrides the dialog title (e.g. for "create new graph"). */
-  pickFolder(title?: string): Promise<string | null>;
+  pickFolder(title?: string, defaultPath?: string): Promise<string | null>;
+  revealExport(path: string): Promise<void>;
+  readCssFile(global: boolean): Promise<{ text: string; revision: string | null }>;
+  saveCssFile(global: boolean, text: string, revision: string | null): Promise<string>;
   /** Android native graph-folder picker. Returns a real filesystem path when
    *  picked; never a content URI. */
   pickGraphFolder(): Promise<GraphFolderPickResult>;

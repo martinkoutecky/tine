@@ -278,7 +278,9 @@ fn store::WholeGraph::block_referrers
 fn store::WholeGraph::blocks
 fn store::WholeGraph::preview_block
 
-## WholeGraph: Search/Query (ceiling: 20)
+## WholeGraph: Search/Query (ceiling: 21)
+# GH #151: SearchRequest has no per-request expansion policy; the new bool is
+# the manager-approved parameter, rather than a sibling search/completion API.
 enum store::IrRequest
 enum store::IrAnswer
 enum store::Budget
@@ -290,6 +292,7 @@ field store::SearchRequest.page_match_scope
 field store::SearchRequest.explain
 field store::SearchRequest.page_limit
 field store::SearchRequest.page_view
+field store::SearchRequest.transliteration
 field store::SearchRequest.text
 field store::SearchRequest.within
 fn store::QueryError::bridge_search_hits

@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- Optional Mandarin Pinyin and syllable-initial matching for Han page titles and aliases, preserving native-name relevance (GH #151).
+
 ### Fixed
 
 - Query and Search actions refuse stale positional results after external or structural changes and refresh once changes settle; saved planning comparisons offer correctly labelled operators (GH #387, GH #551, GH #585, GH #653).
@@ -15,6 +19,46 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Query and Search actions skip changed source results, task clicks retain their graph binding, saved date comparisons reopen intact, exports honor empty columns regardless of property case, and All pages coalesces backlink refreshes (GH #387, GH #585, GH #653, GH #680, GH #681).
 
 - Query blocks now rest with title, count and results, with inline editing and one accessible menu; task actions, result copy with page/date titles and hierarchy, visible column choices, relative date comparisons, bulk List folding and sortable All pages backlinks are available (GH #502, GH #585, GH #387, GH #619, GH #606, GH #680, GH #653, GH #551, GH #681).
+- **Crash recovery no longer switches off on Android** ("Crash recovery is off for this graph … Permission denied"). Tine tried to sync system folders above its own app data, which Android does not allow. GH #685
+- Tab drops at all four pane edges split the hovered pane, matching the drop preview even at the layout's outer edges (GH #499).
+- Raw HTML iframe dimensions honor numeric HTML attributes as pixels, percentages and inline sizing without the default embed width cap (GH #54).
+- Added an unbound Duplicate block above (with children) command beside Duplicate below, with fresh identities, cursor following and one Undo (GH #379).
+- Page `icon::` remains visible and editable in the page-properties block while still decorating the title (GH #346).
+- Page-delete failure toasts include the known refusal or storage error through localized messages (GH #687).
+- Journals startup with a daily template keeps pending work owned by the replacement view after session restoration, avoiding a spurious feed-read error; diagnostic reports also record withheld stages and typed read failures without graph content (GH #671).
+
+- Pinyin page completion preserves native-match priority, survives autosave, follows preference changes across windows, and updates cached keys only for changed names (GH #151).
+- Bullet threading's "Active ancestry only" mode now emphasizes the edited block's connectors in the accent color, as the original Logseq plugin does (GH #614).
+- In-app graph and global CSS share guarded saves and safe mode; saves reconcile newer disk styles and background flushing retains recoverable conflicting drafts (GH #372).
+- HTML export remembers its destination, offers Show in folder on desktop and is discoverable in the command palette (GH #616).
+- Releases now ship signed macOS updater archives; macOS updates remain manual pending the updater rollback repair (GH #405).
+- GH #524: Added regression coverage for dragging a block into an empty page in the right sidebar; current Beta already supports the move.
+- GH #499: Added regression coverage for splitting the lower pane beneath an existing top row; the reported sequence already preserves the layout on current Beta.
+- GH #593: Workspace and tab overflow menus support stable hover opening and delayed dismissal while crossing the menu gap.
+- GH #639: Alt-clicking a bullet keeps its block zoom when creating a destination pane.
+- GH #677: Reopening a right-sidebar page or block brings its existing card to the top, expands it and focuses it.
+- GH #663: Added unbound commands for page-name-only and block-content-only search.
+- GH #428: Added an unbound Edit selected block command, remappable to Escape, while preserving the default selection ladder.
+- GH #587: Added bindable commands to activate tabs 1–8 and the last tab in the focused pane; unbound by default because Ctrl/Cmd+1–9 already focus panes.
+
+- config.edn reader discards (`#_`) are accepted as legal EDN; the GH #332 `:graph-view {:layout : grid}` shape has a graph-open regression keeping pages and journals readable (GH #332).
+- Journals navigation uses the same notebook icon in the sidebar and topbar (GH #673).
+- Markdown horizontal rules align with the centre of their outline bullets (GH #678).
+- Markdown quote and callout collapse metadata stays outside quoted content (GH #684).
+- Clicking an in-block Markdown task list checkbox toggles its item without entering edit mode (GH #683).
+- Android image paste can read content-URI clipboard bytes when the WebView exposes an empty file, while retaining the 64 MiB limit (GH #654); selecting text in another block on mobile opens its editor with the selection and docked formatting toolbar (GH #375).
+- Mobile Search, sidebar and page-history actions are reachable from a bottom navigation row (GH #598, GH #160); holding a page reference or tag opens the shared page preview without navigating (GH #655).
+- Scrolling nested outlines keeps offscreen ancestors pinned through the root, with a desktop/mobile setting (GH #643).
+- The unbound **Select embedding block** command selects an embed's macro host for ordinary block shortcuts (GH #641).
+- Date pickers omit the redundant apply/cancel help line (GH #667).
+- Editing a code region after a soft break preserves the surrounding layout; bare references render its code cards (GH #510).
+- Task-marker pages include their tasks in editable Linked References (GH #487).
+- Reference headers place copy beside filter; Unlinked References has independent text and facet filters (GH #398).
+- Read-only hover previews show the source title and page properties and offer source-page and block navigation (GH #363, GH #417, GH #674).
+- Fine-tuning offers optional block embed breadcrumbs, off by default (GH #440).
+- Favorites page block-reference rows appear in the sidebar and can be added from the block menu after saving their source ID (GH #570).
+- Journal feed backlinks refresh on published feed-source edits while keeping editors inside reference results stable (GH #481).
+
 - A page merge, rename or deletion that waited the full 10 seconds for another rename to finish could report "Couldn't confirm the merge yet; Tine keeps trying to finish it" for an operation that would never run; it now reports that another rename is still finishing and nothing changed (REG-PAGEHOST-ADMISSION-DEADLINE-RACE).
 
 ## [0.8.0-beta.1] - 2026-10-13

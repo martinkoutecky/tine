@@ -41,6 +41,7 @@ fn search_sections(store: &Store, text: &str, pages: usize, blocks: usize) -> Va
             .unwrap()
             .search(
                 &SearchRequest {
+                    transliteration: false,
                     text: text.into(),
                     within: None,
                     page_limit: pages,

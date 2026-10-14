@@ -18,6 +18,7 @@ import { errorFamily } from "../../errorFamily";
 import { bindingOwner, readOwned, writeOwned } from "../../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
 import { dismissToast, pushToast } from "../../toasts";
+import { msg, type UiText } from "../../i18n";
 import type { BlockDto, MergeDecision, PageDto, PageKind } from "../../types";
 import { openUnsavedRecovery } from "../../unsavedRecovery";
 import { assetWritesStarted, pendingAssetWrites } from "../assetWrites";
@@ -755,11 +756,13 @@ export function isCreateConflict(error: unknown): boolean {
  * waits for the deletion to publish (Finding B), so only `applied` means the
  * file is gone; `pending`, `uncertain` and `superseded` keep the page and say
  * why. The backend's identity checks reject a twin or a stale `path`; the
- * rejection reaches the caller, which logs it (I-9). */
-export async function deletePageOnDisk(name: string, kind: PageKind, path?: string): Promise<boolean> {
+ * rejection reaches the caller, which logs it and can report it (I-9). */
+export async function deletePageOnDisk(name: string, kind: PageKind, path?: string, reportFailure?: (reason: UiText) => void): Promise<boolean> {
   const c = host();
   if (!c || !await settle(c, [name], { noConflict: true })) {
-    if (c && host() === c) pushToast(`Couldn't save “${name}”; the page was not deleted.`, "error");
+    const reason = c ? msg("delete-reason-unsaved", { name }) : msg("delete-reason-no-host");
+    if (reportFailure) reportFailure(reason);
+    else if (c && host() === c) pushToast(reason, "error");
     return false;
   }
   const owner = bindingOwner();
@@ -780,13 +783,14 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
   if (operation === "applied") return true;
   if (host() === c) deletedPages.delete(name);
   const why = {
-    waiting: `“${name}” is still saving; try deleting it again in a moment.`,
-    pending: `“${name}” is deleted once its file can be written; Tine keeps trying.`,
-    uncertain: `Tine couldn't confirm that “${name}” was deleted; it keeps trying.`,
-    superseded: `“${name}” was changed by a later edit, so it was not deleted.`,
-    refused: null,
+    waiting: msg("delete-reason-waiting", { name }),
+    pending: msg("delete-reason-pending", { name }),
+    uncertain: msg("delete-reason-uncertain", { name }),
+    superseded: msg("delete-reason-superseded", { name }),
+    refused: msg("delete-reason-refused"),
   }[operation];
-  if (why) pushToast(why, "info");
+  if (reportFailure) reportFailure(why);
+  else if (operation !== "refused") pushToast(why, "info");
   return false;
 }
 

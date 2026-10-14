@@ -292,6 +292,7 @@ mod journal_guide_tests {
             "Ctrl/Cmd+Shift+V",
             "Paste as link",
             "Duplicate block below (with children)",
+            "Duplicate block above (with children)",
             "Insert child block",
             "Collapse children (one level)",
             "Expand children (one level)",
@@ -306,7 +307,38 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn page_icon_property_remains_editable_in_the_guide() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        assert!(reference.contains("`icon::` property stays visible in the page-properties block"));
+        assert!(reference.contains("click its row to edit it"));
+    }
+
+    #[test]
     fn tab_and_sidebar_actions_are_documented() {
+        let favorites = include_str!("templates/find-and-revisit.md");
+        for detail in [
+            "**Favourite block**",
+            "a `((uuid))` row",
+            "clicking zooms into that block",
+            "never add `favorite::` properties",
+        ] {
+            assert!(
+                favorites.contains(detail),
+                "missing block favorites guidance: {detail}"
+            );
+        }
+        let previews = include_str!("templates/pages-links-references-search.md");
+        for detail in [
+            "read-only preview",
+            "**Open source**",
+            "source page's title and page properties",
+            "Block embed breadcrumbs",
+        ] {
+            assert!(
+                previews.contains(detail),
+                "missing reference guidance: {detail}"
+            );
+        }
         let context = include_str!("templates/keep-context-visible.md");
         for detail in [
             "**Close others**, **Collapse others**",
@@ -755,6 +787,34 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn desktop_guide_teaches_export_destination_and_signed_macos_updates() {
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for outcome in [
+            "last successful export destination",
+            "**Show in folder**",
+            "**Export graph as HTML and read-only app…**",
+        ] {
+            assert!(
+                files.contains(outcome),
+                "missing export workflow: {outcome}"
+            );
+        }
+        let platforms = include_str!("templates/platforms-and-mobile.md");
+        for outcome in [
+            "Windows and Linux",
+            "macOS updates remain manual",
+            "signed macOS updater archives",
+            "signed and notarized universal application",
+            "download and replace the app manually",
+        ] {
+            assert!(
+                platforms.contains(outcome),
+                "missing desktop update workflow: {outcome}"
+            );
+        }
+    }
+
+    #[test]
     fn desktop_guide_documents_the_beta_flatpak_download() {
         // The bundle is a manual-update download: the install command, the way to find the app
         // id, side-by-side coexistence and the update path must be on the page.
@@ -887,6 +947,26 @@ mod rename_guide_tests {
         // GH #253 (master 46a5290a2): Find scrolls to the occurrence, not its block.
         let search = include_str!("templates/pages-links-references-search.md");
         assert!(search.contains("the match itself is scrolled into view"));
+    }
+
+    #[test]
+    fn pinyin_guide_explains_entry_setting_and_native_priority() {
+        let guide = include_str!("templates/pages-links-references-search.md");
+        for concept in [
+            "Match Chinese page names by Pinyin",
+            "`beijing`",
+            "`bj`",
+            "Native name matches always come first",
+            "block text is not transliterated",
+            "Turning it off",
+            "default dictionary reading",
+            "Japanese kanji",
+        ] {
+            assert!(
+                guide.contains(concept),
+                "missing onboarding concept: {concept}"
+            );
+        }
     }
 
     #[test]
@@ -1291,6 +1371,10 @@ mod customize_look_guide_tests {
         let page = page();
         for needed in [
             "logseq/custom.css",
+            "**Edit global CSS**",
+            "per-user config directory",
+            "**Reload from disk**",
+            "**Ctrl+K**",
             "Settings",
             "**Edit custom.css**",
             "**Disable custom CSS**",

@@ -140,6 +140,39 @@
   }
 }
 
+/* The bottom row is in the shell's flex flow, so the document never sits under
+   it. System safe-area gutters belong to the app shell, not this row. The
+   keyboard-dock formatting toolbar remains a separate overlay above the IME. */
+:root:has(.mobile-navigation-toolbar) {
+  --mobile-navigation-height: 57px;
+}
+/* While the keyboard editing dock is up it replaces this row (space for the editor). */
+:root[data-mobile-editing-dock] {
+  --mobile-navigation-height: 0px;
+}
+:root[data-mobile-editing-dock] .mobile-navigation-toolbar {
+  display: none;
+}
+.app-container:has(.mobile-navigation-toolbar) .toast-stack {
+  bottom: calc(var(--overlay-inset-bottom) + var(--mobile-navigation-height) + 18px);
+}
+.mobile-navigation-toolbar {
+  flex: 0 0 auto;
+  height: var(--mobile-navigation-height);
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-primary);
+}
+.mobile-navigation-toolbar .navigation-actions {
+  display: flex;
+  justify-content: space-around;
+  gap: 8px;
+}
+.mobile-navigation-toolbar .icon-btn {
+  width: 44px;
+  height: 44px;
+}
+
 /* Last-resort floor for the fixed clusters themselves. The 280px viewport has
    a 252px content box and still fits right-sidebar exactly once; only below
    that measured boundary does it join the overflow menu. */

@@ -455,13 +455,93 @@ pub(crate) struct ReadSnapshot {
     icon_index: std::sync::OnceLock<Arc<page_icons::IconIndex>>,
     memos: SnapshotMemos,
     query_index: crate::query::index::QueryIndexSlot,
+    pub(crate) transliteration_names: Arc<NameKeyMap>,
+    pub(crate) transliteration_owners: SharedMap<String, usize>,
+    // Only open editor completions own supplemental keys. Shared across
+    // publications, released explicitly on close (including stale IPC replies).
+    pub(crate) completion_name_keys: Arc<std::sync::Mutex<HashMap<String, Arc<NameKeyMap>>>>,
+    #[cfg(test)]
+    pub(crate) name_cache_work: usize,
     #[cfg(test)]
     block_full_builds: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     referenced_name_full_builds: std::sync::atomic::AtomicUsize,
 }
 
+pub(crate) type NameKeyMap = SharedMap<String, Arc<crate::transliteration::NameKeys>>;
+
 impl ReadSnapshot {
+    fn build_name_keys(&mut self, old: Option<&Self>, changed_paths: &[String]) -> Arc<NameKeyMap> {
+        if let Some(old) = old {
+            self.transliteration_owners = old.transliteration_owners.clone();
+            if Arc::ptr_eq(&old.pages, &self.pages) && Arc::ptr_eq(&old.list, &self.list) {
+                return Arc::clone(&old.transliteration_names);
+            }
+        }
+        let names = |page: &PageEntry, doc: &Document| -> std::collections::BTreeSet<String> {
+            std::iter::once(page.name.clone())
+                .chain(crate::query::document_alias_spellings(doc))
+                .chain(collect_document_referenced_names(doc))
+                .filter_map(|name| crate::transliteration::cache_identity(&name))
+                .collect()
+        };
+        let mut delta: std::collections::BTreeMap<String, isize> = Default::default();
+        if let Some(old) = old {
+            // Only publication paths are inspected. Counts are page ownership,
+            // so repeated aliases/references within one document count once.
+            for path in changed_paths {
+                let before = snapshot_page_by_rel(&old.pages, None, path)
+                    .map(|(page, doc)| names(page, doc))
+                    .unwrap_or_default();
+                let after = snapshot_page_by_rel(&self.pages, None, path)
+                    .map(|(page, doc)| names(page, doc))
+                    .unwrap_or_default();
+                #[cfg(test)]
+                {
+                    self.name_cache_work += before.len() + after.len();
+                }
+                for name in before.difference(&after) {
+                    *delta.entry(name.clone()).or_default() -= 1;
+                }
+                for name in after.difference(&before) {
+                    *delta.entry(name.clone()).or_default() += 1;
+                }
+            }
+        } else {
+            for (page, doc) in self.pages.iter() {
+                for name in names(page, doc) {
+                    #[cfg(test)]
+                    {
+                        self.name_cache_work += 1;
+                    }
+                    *delta.entry(name).or_default() += 1;
+                }
+            }
+        }
+        let mut keys = old
+            .map(|old| Arc::clone(&old.transliteration_names))
+            .unwrap_or_else(|| Arc::new(NameKeyMap::new()));
+        for (name, change) in delta {
+            if change == 0 {
+                continue;
+            }
+            let before = self.transliteration_owners.get(&name).copied().unwrap_or(0);
+            let count = before
+                .checked_add_signed(change)
+                .expect("name ownership delta");
+            if count == 0 {
+                self.transliteration_owners.remove(&name);
+                Arc::make_mut(&mut keys).remove(&name);
+            } else {
+                self.transliteration_owners.insert(name.clone(), count);
+                if before == 0 {
+                    let value = Arc::new(crate::transliteration::NameKeys::build(&name));
+                    Arc::make_mut(&mut keys).insert(name, value);
+                }
+            }
+        }
+        keys
+    }
     /// Owner paths of the aliases whose page key is `key`, in
     /// `page_aliases_with_owners` order. Built once per snapshot so a
     /// resolve costs O(1) instead of cloning and re-keying every alias.
@@ -632,7 +712,7 @@ impl ReadSnapshot {
             old.map(|old| (&old.query_index, Arc::ptr_eq(&old.pages, &pages))),
             changed_paths,
         );
-        let snapshot = Self {
+        let mut snapshot = Self {
             pages,
             config,
             list,
@@ -653,11 +733,19 @@ impl ReadSnapshot {
             icon_index: std::sync::OnceLock::new(),
             memos: SnapshotMemos::default(),
             query_index,
+            transliteration_names: Arc::new(NameKeyMap::new()),
+            transliteration_owners: SharedMap::new(),
+            completion_name_keys: old
+                .map(|old| Arc::clone(&old.completion_name_keys))
+                .unwrap_or_default(),
+            #[cfg(test)]
+            name_cache_work: 0,
             #[cfg(test)]
             block_full_builds: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
+        snapshot.transliteration_names = snapshot.build_name_keys(old, changed_paths);
         let icons = page_icons::IconIndex::capture(
             old.and_then(|old| {
                 old.icon_index
@@ -973,6 +1061,7 @@ impl ReadSnapshot {
         page_match_scope: tine_core::query::ir::FriendlyPageMatchScope,
         page_view: Option<tine_core::query::ir::ViewSettings>,
         block_view: Option<tine_core::query::ir::ViewSettings>,
+        transliteration: bool,
     ) -> tine_core::query_plan::QueryExecution {
         match scope {
             Some(scope) => crate::query_plan::QueryPlan::friendly_for_page_with_policy(
@@ -989,6 +1078,7 @@ impl ReadSnapshot {
                 page_match_scope,
             ),
         }
+        .with_transliteration(transliteration)
         .with_display(page_view, block_view)
         .execute_with_explain(
             self,

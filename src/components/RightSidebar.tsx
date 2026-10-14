@@ -24,6 +24,7 @@ import { UnlinkedReferences } from "./UnlinkedReferences";
 import { endEditForSurface } from "../editorController";
 import { FailureBoundary } from "./FailureBoundary";
 import { isHTMLElementNode, mainWindow } from "../windowRealm";
+import { rightSidebarFocusRequest } from "../ui";
 
 function surfaceKey(item: SidebarItem): string {
   return `sidebar:${sidebarItemKey(item)}`;
@@ -73,6 +74,19 @@ function restoreDisclosureFocus(key: string) {
  * nodes as the main pane. Hidden state renders nothing. O(visible sidebar
  * blocks) plus page-load latency. */
 export function RightSidebar(): JSX.Element {
+  let body: HTMLDivElement | undefined;
+  createEffect(() => {
+    const request = rightSidebarFocusRequest();
+    if (!request) return;
+    queueMicrotask(() => {
+      if (rightSidebarFocusRequest() !== request || !rightSidebarOpen()) return;
+      if (body) body.scrollTop = 0;
+      const card = body?.querySelector<HTMLElement>("[data-sidebar-surface]");
+      if (card?.dataset.sidebarSurface === `sidebar:${request.key}`) {
+        card.querySelector<HTMLButtonElement>("[data-right-sidebar-item-toggle]")?.focus();
+      }
+    });
+  });
   const [actionsOpen, setActionsOpen] = createSignal(false);
   let actionsButton: HTMLButtonElement | undefined;
   let actionsMenu: HTMLDivElement | undefined;
@@ -171,7 +185,7 @@ export function RightSidebar(): JSX.Element {
             }}>✕</button>
           </div>
         </div>
-        <div class="right-sidebar-body">
+        <div class="right-sidebar-body" ref={body}>
           <Show
             when={rightSidebar().length > 0}
             fallback={

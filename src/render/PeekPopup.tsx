@@ -1,8 +1,11 @@
-import { Show, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { openInNewTab } from "../router";
+import { t } from "../i18n";
+import { PagePropertyValue } from "../components/PagePropertyValue";
 import { FloatingPortal } from "../components/FloatingPortal";
 import { RefBlocks } from "../components/RefBlocks";
 import type { BlockDto } from "../types";
-import { registerTransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { useOwnerWindow, viewportOf } from "../windowRealm";
 
 export const PeekContext = createContext(false);
@@ -69,6 +72,9 @@ export function PeekPopup(props: {
   blocks: () => BlockDto[];
   page?: string;
   pageKind?: "journal" | "page";
+  blockId?: string;
+  properties?: [string, string][];
+  format?: "md" | "org";
   truncatedCount?: () => number;
   onPointerEnter: () => void;
   onPointerLeave: () => void;
@@ -78,6 +84,11 @@ export function PeekPopup(props: {
   const ownerWindow = useOwnerWindow();
   const layerId = `peek-popup-${createUniqueId()}`;
   const [style, setStyle] = createSignal<Record<string, string>>({});
+  const openSource = (block?: string) => {
+    if (!props.page) return;
+    openInNewTab({ kind: "page", name: props.page, pageKind: props.pageKind ?? "page", ...(block ? { block } : {}) });
+    props.onDismiss();
+  };
 
   const updatePosition = () => {
     const anchor = props.anchor();
@@ -92,14 +103,15 @@ export function PeekPopup(props: {
       popupEl?.offsetWidth || POPUP_FALLBACK_WIDTH,
       Math.max(0, viewportWidth - POPUP_MARGIN * 2),
     );
-    const height = popupEl?.offsetHeight || POPUP_FALLBACK_HEIGHT;
+    const maxHeight = Math.max(0, viewportHeight - POPUP_MARGIN * 2);
+    const height = Math.min(popupEl?.offsetHeight || POPUP_FALLBACK_HEIGHT, maxHeight);
     const maxLeft = Math.max(POPUP_MARGIN, viewportWidth - width - POPUP_MARGIN);
     const left = Math.min(Math.max(rect.left, POPUP_MARGIN), maxLeft);
     const openAbove = rect.bottom + POPUP_OFFSET + height > viewportHeight - POPUP_MARGIN && rect.top > height;
 
-    setStyle(openAbove
-      ? { left: `${left}px`, bottom: `${viewportHeight - rect.top + POPUP_OFFSET}px` }
-      : { left: `${left}px`, top: `${rect.bottom + POPUP_OFFSET}px` });
+    const desiredTop = openAbove ? rect.top - POPUP_OFFSET - height : rect.bottom + POPUP_OFFSET;
+    const top = Math.max(POPUP_MARGIN, Math.min(desiredTop, viewportHeight - height - POPUP_MARGIN));
+    setStyle({ left: `${left}px`, top: `${top}px`, "max-height": `${maxHeight}px` });
   };
 
   createEffect(() => {
@@ -117,9 +129,10 @@ export function PeekPopup(props: {
     });
     onCleanup(unregister);
   });
+  dismissOnOutsidePointer({ open: () => true, inside: () => [popupEl, props.anchor()], dismiss: props.onDismiss });
 
   onMount(() => {
-    const close = () => props.onPointerLeave();
+    const close = () => props.onDismiss();
     // Dismiss when the PAGE BEHIND scrolls, but NOT when the user scrolls the
     // popup's own overflow body (or drags its scrollbar) — capture-phase scroll
     // fires for every scroller, so filter out events originating inside the popup.
@@ -150,10 +163,20 @@ export function PeekPopup(props: {
         onMouseDown={(e) => e.stopPropagation()}
       >
         <Show when={props.title}>
-          <div class="peek-popup-title">{props.title}</div>
+          <div class="peek-popup-title">
+            <button type="button" class="peek-source-title" onClick={() => openSource()}>{props.title}</button>
+            <Show when={props.page}>
+              <button type="button" class="peek-open-source" aria-label={t("preview-open-source")} onClick={() => openSource(props.blockId)}>{t("preview-open-source")}</button>
+            </Show>
+          </div>
         </Show>
         <PeekContext.Provider value={true}>
-          <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} />
+          <Show when={props.properties?.length}>
+            <div class="peek-page-properties">
+              <For each={props.properties}>{([key, value]) => <div><span class="prop-key">{key}</span>{" "}<PagePropertyValue propertyKey={key} value={value} format={props.format ?? "md"} /></div>}</For>
+            </div>
+          </Show>
+          <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} readOnly onOpenBlock={openSource} />
         </PeekContext.Provider>
         <Show when={(props.truncatedCount?.() ?? 0) > 0}>
           <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT

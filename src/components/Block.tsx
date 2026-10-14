@@ -1,7 +1,12 @@
 import { codeWrapping } from "../codeDisplay";
+import { stickyParents } from "../stickyParents";
+import { StickyAncestor } from "./StickyAncestor";
+import { AstBody } from "../render/body";
+import { codeFences } from "../editor/fences";
 import { LineGutter } from "../render/LineGutter";
-import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
+import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, on, untrack, onMount, onCleanup, type JSX } from "solid-js";
 import { autocompleteFacets, backend } from "../backend";
+import { pinyinMatchingEnabled } from "../launcherRanking";
 import { reportUiFailure } from "../uiFailure";
 import { clearClipboardSlot, normalize, peekClipboardSlot, readClipboardText } from "../clipboard";
 import {
@@ -147,7 +152,8 @@ import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { wireBlockSwipe } from "./blockSwipeWiring";
-import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
+import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
+import { clipboardSizeAllowed } from "../clipboardImage";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
@@ -313,8 +319,12 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         ...rowDecorationClasses(threadLineDecoration()),
       }}
       data-block-id={props.id}
+      data-sticky-parent={stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !blockEmbedHost() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
+      <Show when={stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !blockEmbedHost()}>
+        <StickyAncestor id={props.id} raw={node().raw} />
+      </Show>
       <div
         class="block-main"
         ref={(el) => {
@@ -647,6 +657,18 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const isCalc = editingCalc;
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
   let completionOriginalRaw: string | null = null;
+  let completionLease: { pageName: string; blockId: string; originalRaw: string; session: string } | null = null;
+  const releaseLease = (lease: NonNullable<typeof completionLease>) => {
+    // Releasing an ephemeral resource must finish even after its editor dies.
+    void readOwned(ownedWhen(() => true), backend().quickSwitch("", 0, lease, false))
+      .catch(error => dbg(`completion baseline release: ${String(error)}`));
+  };
+  const releaseCompletionLease = () => {
+    const lease = completionLease;
+    completionLease = null;
+    if (lease) releaseLease(lease);
+  };
+  onCleanup(releaseCompletionLease);
   let rawBeforeLastCommit = node().raw;
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
     // A disposed editor whose block was replaced never writes (see shownNode).
@@ -707,6 +729,13 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const [acIndex, setAcIndex] = createSignal(0);
   const codeView = createCodeBodyEditor(editorValue, pageFmt, () => !sheetCell && !isCalc() && ac()?.kind !== "code-language", () => node().raw);
   const codeShown = codeView.shown;
+  const mixedCodeContext = createMemo(() => {
+    const p = codeShown();
+    if (!p || !codeView.mixed()) return null;
+    const raw = editorValue();
+    const fence = codeFences(raw, pageFmt()).find(f => f.openEnd === p.open.length);
+    return fence ? { before: raw.slice(0, fence.start), after: raw.slice(fence.end) } : null;
+  });
   const codeEditing = createMemo(() => codeShown() !== null || codeFenceOnly(editorValue(), pageFmt()) !== null);
   const codeWrapCommit = codeView.join;
   // One door to the fence language picker: `/Code block` and the hand-typed ```
@@ -767,6 +796,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   });
 
   const closeAc = () => {
+    releaseCompletionLease();
     completionOriginalRaw = null;
     setAc(null);
     setAcBlockState(null);
@@ -962,9 +992,19 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       return;
     }
     completionOriginalRaw ??= node().raw;
-    const result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, {
-      pageName: node().page, blockId: props.id, originalRaw: completionOriginalRaw,
-    }));
+    const editor = { pageName: node().page, blockId: props.id, originalRaw: completionOriginalRaw };
+    if (!cap && pinyinMatchingEnabled() && !completionLease) {
+      completionLease = { ...editor, session: crypto.randomUUID() };
+    }
+    const lease = completionLease;
+    // Closing can overtake a blocking native query. Release again after its
+    // reply (including failure) so it cannot retain obsolete baseline keys.
+    let result: import("../owned").Owned<import("../types").PageEntry[]>;
+    try {
+      result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, lease ?? editor, pinyinMatchingEnabled()));
+    } finally {
+      if (lease && lease !== completionLease) releaseLease(lease);
+    }
     if (result.kind === "stale") return;
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
@@ -975,11 +1015,19 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         ? { label: `Create "${q}"`, insert: pageInsert(q) }
         : { label: `Create #${q}`, insert: tagInsert(q) };
     setAcItems(orderAcItems(
-      result.value.map((page) => ({ name: page.name, item: pageItem(page.name) })),
+      result.value.map((page) => ({ name: page.name, matchClass: page.match_class, item: pageItem(page.name) })),
       { name: q, item: createItem },
       { query: q, policy: linkAutocompletePolicy(), removeAccents: searchRemoveAccents() },
     ));
   };
+
+  createEffect(on(pinyinMatchingEnabled, () => {
+    const trigger = untrack(ac);
+    if (trigger?.kind === "page" || trigger?.kind === "tag") {
+      if (!pinyinMatchingEnabled()) releaseCompletionLease();
+      void updateAutocomplete();
+    }
+  }, { defer: true }));
 
   // Apply a pure text edit (format toggle / kill motion) to the textarea and
   // restore the resulting selection.
@@ -1222,16 +1270,37 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       } else {
         const files = eventFiles.slice(0, MAX_CLIPBOARD_FILES);
         skipped += Math.max(0, eventFiles.length - files.length);
+        // A content-URI File can omit MIME as well as size/bytes. Let the
+        // native image reader identify it; non-image files keep generic ingress.
+        if (files.length === 1 && !files[0].type && clipboardSizeAllowed(files[0].size)) {
+          const result = await readOwned(bindingOwner(() => assetEditorCurrent(editorToken)), backend().readClipboardImage());
+          if (result.kind === "stale") return;
+          const bytes = result.value;
+          if (bytes?.length && bytes.length <= MAX_BYTE_CLIPBOARD_FILE) {
+            await insertAssetBytes(editorToken, bytes);
+            return;
+          }
+        }
         // Keep the screenshot/image behavior: image-only clipboard payloads use
         // timestamp names and optimistic rendering rather than synthetic names
         // such as Chromium's generic "image.png".
         if (files.length === 1 && files[0].type.startsWith("image/")) {
           const image = files[0];
-          if (image.size > MAX_BYTE_CLIPBOARD_FILE) skipped += Math.max(1, native.skipped);
+          if (!clipboardSizeAllowed(image.size)) skipped += Math.max(1, native.skipped);
           else {
             try {
-              const bytes = new Uint8Array(await image.arrayBuffer());
-              if (bytes.length && bytes.length <= MAX_BYTE_CLIPBOARD_FILE) {
+              let bytes: Uint8Array | null;
+              try { bytes = new Uint8Array(await image.arrayBuffer()); }
+              catch { bytes = null; }
+              // Android content-URI clips can expose an empty/unreadable File
+              // in the WebView. Read through ContentResolver instead of treating
+              // that failure as evidence that the image exceeds the budget.
+              if (!bytes?.length) {
+                const result = await readOwned(bindingOwner(() => assetEditorCurrent(editorToken)), backend().readClipboardImage());
+                if (result.kind === "stale") return;
+                bytes = result.value;
+              }
+              if (bytes?.length && bytes.length <= MAX_BYTE_CLIPBOARD_FILE) {
                 // A Windows bitmap clipboard can appear as one invalid native
                 // path plus one valid WebView2 image File. Once the bytes win,
                 // suppress that native pseudo-entry's skipped count (GH #78).
@@ -1245,13 +1314,13 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         }
         skipped += native.skipped;
         for (const file of files) {
-          if (file.size > MAX_BYTE_CLIPBOARD_FILE) {
+          if (!clipboardSizeAllowed(file.size)) {
             skipped += 1;
             continue;
           }
           try {
             const bytes = new Uint8Array(await file.arrayBuffer());
-            if (!bytes.length) {
+            if (!bytes.length || bytes.length > MAX_BYTE_CLIPBOARD_FILE) {
               skipped += 1;
               continue;
             }
@@ -1765,6 +1834,23 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
 
   const textareaValue = createMemo(() => isCalc() ? (calcLive() ?? "") : (codeShown()?.body ?? editorValue()));
+  const editMixedContext = (event: MouseEvent, side: "before" | "after") => {
+    const context = mixedCodeContext();
+    if (!context || event.button !== 0 || forbidsEditEntry(event)) return;
+    const raw = context[side];
+    const offset = (side === "after" ? editorValue().length - raw.length : 0)
+      + (renderedClickOffset(event.currentTarget as HTMLElement, raw, pageFmt(), event) ?? raw.length);
+    event.preventDefault();
+    event.stopPropagation();
+    // The same parser-owned entry boundary handles another code card, or
+    // returns to raw source for prose. No content is rewritten on a click.
+    codeView.enter(offset);
+    ref.value = textareaValue();
+    const caret = Math.max(0, Math.min(ref.value.length, offset - (codeShown()?.open.length ?? 0)));
+    ref.focus();
+    ref.setSelectionRange(caret, caret);
+    resizeNow();
+  };
   // GH #668: document-driven changes (planning dates, undo, external updates)
   // bypass commit/onInput. Resize from the same visible buffer bound to the DOM,
   // after Solid has assigned it, using the existing coalesced layout frame.
@@ -1908,10 +1994,12 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // Rows survive refinement of the same trigger, never a new family/location
     // or a now-blank page/tag lifecycle.
     const previous = ac();
+    if (next.kind !== "page" && next.kind !== "tag") releaseCompletionLease();
     // OG save-current-block! withholds references while page-search is active.
     // Preserve autosave and give the read-only picker its pre-trigger baseline.
     if ((next.kind === "page" || next.kind === "tag") &&
         (!previous || previous.kind !== next.kind || previous.start !== next.start)) {
+      releaseCompletionLease();
       completionOriginalRaw = rawBeforeLastCommit;
     }
     setAc(next);
@@ -2187,6 +2275,17 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // its own preventDefault when it handles the event and returns whether it did
   // (false → fall through to native handling). Read ref fresh at call time.
   const runEditorCmd: Record<string, (e: KeyboardEvent) => boolean> = {
+    "editor/select-embedding-block": (e) => {
+      if (!embedNavExit) return false;
+      e.preventDefault();
+      commit(ref.value);
+      // The source's outline scope belongs to the embed. Selection belongs to
+      // its containing outline instead (including a nested embed's host).
+      const host = ref.closest(".embed-block, .embed-page")?.closest<HTMLElement>(".ls-block");
+      selectBlock(embedNavExit.hostBlockId);
+      host?.querySelector<HTMLElement>(":scope > .block-main")?.scrollIntoView?.({ block: "nearest" });
+      return true;
+    },
     "editor/bold": (e) => { e.preventDefault(); applyInlineFormat("bold"); return true; },
     "editor/italics": (e) => { e.preventDefault(); applyInlineFormat("italic"); return true; },
     "editor/strike-through": (e) => { e.preventDefault(); applyInlineFormat("strikethrough"); return true; },
@@ -2250,6 +2349,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       case "editor/indent":
       case "editor/move-block-up":
       case "editor/move-block-down":
+      case "editor/select-embedding-block":
       case "editor/cycle-todo":
         return runEditorCmd[command]?.(mobileKeyEvent) ?? false;
       case "editor/soft-newline":
@@ -2890,6 +2990,13 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
 
   const onBlur = (e: FocusEvent) => {
     clearPasteRaw();
+    // The palette must retain the source occurrence until its contextual
+    // Select embedding block action runs. Blur still commits the draft.
+    if (embedNavExit && (e.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) {
+      commit(ref.value);
+      savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
+      return;
+    }
     unregisterFocusedEditor();
     if (sheetCanceling) return;
     // The engine's blur on a textarea removed by a page replacement: not the
@@ -3169,6 +3276,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   }
   return (
     <div class="editor-wrap" classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
+      <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} /></div>}</Show>
+      <div class="code-editor-region" classList={{ "mixed-code-region": !!mixedCodeContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
         <LineGutter lines={(codeShown()?.body ?? editorValue()).split("\n")} code />
@@ -3205,6 +3314,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         onMouseUp={updateSel}
         rows={1}
       />
+      </div>
+      <Show when={mixedCodeContext()?.after}>{after => <div class="block-content mixed-code-after" onMouseDown={event => editMixedContext(event, "after")}><AstBody raw={after()} format={pageFmt()} /></div>}</Show>
       <Show when={isCalc()}>
         <div class="calc-results">
           <For each={calcRows()}>

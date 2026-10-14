@@ -97,12 +97,17 @@ describe("outline bullet modified clicks (GH #456)", () => {
     }
   });
 
-  it("opens the other pane on Alt+click", async () => {
+  it("GH #639 opens the other pane zoomed into the bullet on Alt+click", async () => {
     const { bullet, dispose } = mountBullet();
     try {
       expect(layoutPaneIds()).toEqual(["main"]);
       click(bullet, { altKey: true });
       await vi.waitFor(() => expect(layoutPaneIds().length).toBe(2));
+      const target = layoutPaneIds().find((id) => id !== "main")!;
+      expect(paneRouter(target).route()).toMatchObject({ kind: "page", name: "Bullets", block: "A" });
+      expect(paneRouter("main").route()).not.toHaveProperty("block");
+      click(bullet, { altKey: true });
+      expect(paneRouter(target).route()).toMatchObject({ block: "A" });
     } finally {
       dispose();
     }

@@ -15,7 +15,7 @@ import { SEARCH_SYNTAX } from "../editor/searchQuery";
 import { EmojiText } from "../render/emoji";
 import { SearchResultRow } from "./SearchResultRow";
 import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
-import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking";
+import { rankLauncherItems, recordLauncherActivation, pinyinMatchingEnabled } from "../launcherRanking";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 import { createPage as saveCreatedPage, CreatePageRefusal, switcherPage } from "../document";
 import type { QueryPageScope } from "../types";
@@ -69,6 +69,7 @@ export function QuickSwitcher(): JSX.Element {
   let inputRef: HTMLInputElement | undefined;
   let resultsRef: HTMLDivElement | undefined;
   let originPaneId: string | null = null;
+  let originPageScope: QueryPageScope | null = null;
   const [currentPageScope, setCurrentPageScope] = createSignal<QueryPageScope | null>(null);
   let wasOpen = false;
   // X11/WebKitGTK pastes the PRIMARY selection into the focused input on ANY
@@ -85,6 +86,8 @@ export function QuickSwitcher(): JSX.Element {
   });
 
   const commandsOnly = () => switcherMode() === "commands";
+  const pagesOnly = () => switcherMode() === "pages";
+  const contentOnly = () => switcherMode() === "content";
   const currentPageOnly = () => currentPageScope() !== null;
   // The backend search/quick-switch IPC keys off a debounced query so holding
   // keys doesn't fire a whole-graph scan per character; local sections (recents,
@@ -102,13 +105,14 @@ export function QuickSwitcher(): JSX.Element {
   const [graphResultsResource, { refetch: retrySearch }] = createResource(
     () => (commandsOnly() ? null : {
       q: debouncedQuery(),
-      pages: currentPageOnly() ? 0 : PAGE_POOL,
-      blocks: BLOCK_POOL,
+      pages: currentPageOnly() || contentOnly() ? 0 : PAGE_POOL,
+      blocks: pagesOnly() ? 0 : BLOCK_POOL,
       scope: currentPageScope(),
       // Hits belong to one graph: a switch re-keys the search so the old graph's
       // rows are neither shown nor reused.
       graphRoot: graphMeta()?.root ?? "",
       binding: bindingIdentity(),
+      transliteration: pinyinMatchingEnabled(),
     }),
     (s) => s && s.q.trim()
       ? backend().runGraphSearch(
@@ -118,12 +122,20 @@ export function QuickSwitcher(): JSX.Element {
           s.scope ? "quick-switch:current-page" : "quick-switch",
           false,
           s.scope ?? undefined,
+          undefined,
+          undefined,
+          s.transliteration,
         )
       : Promise.resolve({ hits: [], diagnostics: [], explanation: { branches: [] }, has_more: { pages: false, blocks: false }, cancelled: false })
   );
   // A failed search says so (below) instead of throwing into the switcher's render
   // or claiming "No matched results".
-  const graphResults = () => readOr(graphResultsResource, undefined, "search results");
+  const graphResults = () => {
+    const result = readOr(graphResultsResource, undefined, "search results");
+    return pinyinMatchingEnabled() || !result ? result : {
+      ...result, hits: result.hits.filter(hit => hit.match_class !== "transliteration"),
+    };
+  };
 
   const currentPageName = () => {
     const scope = currentPageScope();
@@ -159,7 +171,7 @@ export function QuickSwitcher(): JSX.Element {
 
     // Empty query → recents.
     if (!q) {
-      if (currentPageOnly()) return out;
+      if (currentPageOnly() || contentOnly()) return out;
       const recents: Item[] = recentPages().map((r) => ({
         t: "page",
         name: r.name,
@@ -175,7 +187,7 @@ export function QuickSwitcher(): JSX.Element {
 
     // Page and block membership, diagnostics, and match evidence now come from
     // one Rust QueryPlan execution. Commands/create remain launcher providers.
-    const allPages: Item[] = currentPageOnly() ? [] : (graphResults()?.hits ?? [])
+    const allPages: Item[] = currentPageOnly() || contentOnly() ? [] : (graphResults()?.hits ?? [])
       .filter((hit) => hit.entity === "page")
       .map((hit) => ({
         t: "page",
@@ -206,10 +218,10 @@ export function QuickSwitcher(): JSX.Element {
 
     // Create page (when no exact match exists).
     const exact = pageItems.some((p) => p.t === "page" && p.adaptiveClass === "exact");
-    if (!currentPageOnly() && !exact) out.push({ header: "Create", items: [{ t: "create", name: q }] });
+    if (!currentPageOnly() && !pagesOnly() && !contentOnly() && !exact) out.push({ header: "Create", items: [{ t: "create", name: q }] });
 
     // Commands matching the query.
-    const cmds = embryoPane || currentPageOnly() ? [] : commandItems(q);
+    const cmds = embryoPane || currentPageOnly() || pagesOnly() || contentOnly() ? [] : commandItems(q);
     if (cmds.length) out.push({ header: "Commands", items: cmds });
 
     // Blocks. Gather every match (backend order), then page the whole set so a
@@ -217,7 +229,7 @@ export function QuickSwitcher(): JSX.Element {
     const cur = currentPageName();
     const all: { item: Item; onCur: boolean }[] = [];
     for (const hit of graphResults()?.hits ?? []) {
-      if (hit.entity !== "block" || !hit.display_text.trim()) continue;
+      if (pagesOnly() || hit.entity !== "block" || !hit.display_text.trim()) continue;
       all.push({
         item: {
           t: "block",
@@ -281,16 +293,17 @@ export function QuickSwitcher(): JSX.Element {
       const origin = focusedRouter();
       originPaneId = switcherEmbryo()?.paneId ?? origin.paneId;
       const originRoute = origin.route();
-      setCurrentPageScope(
-        switcherMode() === "current-page" && originRoute.kind === "page"
-          ? { name: originRoute.name, pageKind: originRoute.pageKind, path: originRoute.path }
-          : null,
-      );
+      originPageScope = originRoute.kind === "page"
+        ? { name: originRoute.name, pageKind: originRoute.pageKind, path: originRoute.path }
+        : null;
       setQuery(switcherEmbryo()?.prefill ?? switcherPrefill());
       setSel(0);
       setSyntaxOpen(false);
       queueMicrotask(() => inputRef?.focus());
     }
+    // A shortcut may change modes while the overlay remains open. Keep its
+    // original pane snapshot, but apply page scope only in current-page mode.
+    setCurrentPageScope(open && switcherMode() === "current-page" ? originPageScope : null);
     wasOpen = open;
   });
   // Keep the highlight in range as results change.

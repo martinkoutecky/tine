@@ -6,6 +6,7 @@ import { pageInventoryRev } from "../graphSession";
 import { toasts } from "../toasts";
 import { activeId, closeTab, route, tabRoute, tabs } from "../router";
 import { backend } from "../backend";
+import { pinyinMatchingEnabled, setPinyinMatchingEnabled } from "../launcherRanking";
 import { closePane, focusPane, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, setFocusedPaneId, splitPane } from "../panes";
 import { resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
@@ -14,6 +15,7 @@ import { bindTestHost, submittedPages } from "../document/host/wiring.test.suppo
 
 afterEach(() => {
   closeSwitcher();
+  setPinyinMatchingEnabled(false);
   setRecentPages([]);
   setRightSidebar([]);
   setRightSidebarOpen(false);
@@ -23,6 +25,63 @@ afterEach(() => {
 });
 
 describe("QuickSwitcher search syntax help", () => {
+  it("GH #151 shows Pinyin page hits and refetches when the device setting turns off", async () => {
+    setPinyinMatchingEnabled(true);
+    const search = vi.spyOn(backend(), "runGraphSearch").mockImplementation(async (...args) => ({
+      hits: args[8] ? [{ entity: "page" as const, page: { name: "北京", kind: "page" as const,
+        path: "pages/北京.md", date_key: null }, display_text: "北京", evidence: [], score: 200,
+        match_class: "transliteration" as const }] : [],
+      diagnostics: [], explanation: { branches: [] }, cancelled: false,
+    }));
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher({ mode: "pages" });
+    const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+    input.value = "bj"; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => expect(root.querySelector(".switcher-row")?.textContent).toContain("北京"));
+    expect(search.mock.calls.at(-1)?.[8]).toBe(true);
+    setPinyinMatchingEnabled(false);
+    expect(root.querySelector(".switcher-row")?.textContent ?? "").not.toContain("北京");
+    await vi.waitFor(() => {
+      expect(search.mock.calls.at(-1)?.[8]).toBe(false);
+      expect(root.querySelector(".switcher-row")?.textContent ?? "").not.toContain("北京");
+    });
+    expect(pinyinMatchingEnabled()).toBe(false);
+    dispose(); search.mockRestore();
+  });
+  it("GH #663 switches an open current-page search to unrestricted page-name search", async () => {
+    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Origin", pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
+    const search = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({ hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher({ mode: "current-page" });
+    const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+    input.value = "needle"; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => expect(search.mock.calls.at(-1)?.[5]).toMatchObject({ name: "Origin" }));
+    openSwitcher({ mode: "pages" });
+    await vi.waitFor(() => {
+      expect(search.mock.calls.at(-1)?.[1]).toBe(100);
+      expect(search.mock.calls.at(-1)?.[5]).toBeUndefined();
+    });
+    openSwitcher({ mode: "current-page" });
+    await vi.waitFor(() => expect(search.mock.calls.at(-1)?.[5]).toMatchObject({ name: "Origin" }));
+    dispose(); search.mockRestore();
+  });
+  it.each(["pages", "content"] as const)("GH #663 limits %s search to the requested result kind", async (mode) => {
+    const search = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({ hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher({ mode } as Parameters<typeof openSwitcher>[0]);
+    const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+    input.value = "needle";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => expect(search).toHaveBeenCalled());
+    const call = search.mock.calls.at(-1)!;
+    expect(call[mode === "pages" ? 2 : 1]).toBe(0);
+    expect(root.textContent).not.toContain("Create page:");
+    expect(root.textContent).not.toContain("Commands");
+    dispose(); search.mockRestore();
+  });
   it("Ctrl-click opens a result in a background tab and keeps Search open", async () => {
     setRecentPages([{ name: "Clickable", kind: "page", path: "pages/Clickable.md" }]);
     const root = document.createElement("div");
@@ -571,7 +630,7 @@ describe("QuickSwitcher search syntax help", () => {
 
     expect(search).toHaveBeenLastCalledWith(
       "needle", 0, 100, "quick-switch:current-page", false,
-      { name: "Twin", pageKind: "page", path: "pages/second/Twin.md" },
+      { name: "Twin", pageKind: "page", path: "pages/second/Twin.md" }, undefined, undefined, false,
     );
     await vi.waitFor(() => expect([...root.querySelectorAll(".switcher-group-header")].map((node) => node.textContent)).toEqual(["Current page1"]));
     expect(root.textContent).not.toContain("Create page:");
@@ -592,7 +651,7 @@ describe("QuickSwitcher search syntax help", () => {
     input.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await vi.waitFor(() => expect(search.mock.calls.at(-1)?.[0]).toBe("global"));
 
-    expect(search).toHaveBeenLastCalledWith("global", 100, 100, "quick-switch", false, undefined);
+    expect(search).toHaveBeenLastCalledWith("global", 100, 100, "quick-switch", false, undefined, undefined, undefined, false);
     expect(root.textContent).toContain("Create page: global");
     expect(root.querySelector("[data-open-search-tab]")).not.toBeNull();
     dispose();

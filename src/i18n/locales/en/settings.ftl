@@ -1,3 +1,10 @@
+## Settings › Editor › Advanced
+settings-pinyin-label = Match Chinese page names by Pinyin
+settings-pinyin-description = Find Han titles and aliases with Mandarin Pinyin or syllable initials. Native name matches come first. This preference stays on this device.
+settings-pinyin-reset = Reset Pinyin matching to language default
+toast-pinyin-save-failed = Could not save the Pinyin matching preference.
+toast-pinyin-load-failed = Could not load the Pinyin matching preference.
+
 ## Settings › Appearance
 settings-language-label = Language
 settings-language-description = The language of { -brand }'s menus, settings and messages. Your notes are never translated.
@@ -16,3 +23,9 @@ settings-graph-folder-search-description = show in folder reveal file manager Fi
 
 ## Graph creation
 graph-wsl-rootfs-refused = Cannot create a graph here: Windows access to a WSL1 rootfs can corrupt Linux files. Choose \\wsl.localhost\<distro>\… instead.
+setting-sticky-parents = Sticky parent bullets
+setting-sticky-parents-hint = Keep offscreen ancestors at the top of scrolling outlines. Click one to return to it. On by default; saved on this device.
+sticky-parents-load-error = Could not load sticky parent bullets
+sticky-parents-save-error = Could not remember sticky parent bullets
+settings-embed-breadcrumbs = Block embed breadcrumbs
+settings-embed-breadcrumbs-hint = Show the source page and parent trail above embedded blocks. Off by default.

@@ -1,4 +1,5 @@
 import { urlDest } from "./urlDest";
+import { isFavoriteBlock, isFavoritesPage } from "../favorites";
 import { t } from "../i18n";
 // Inline markdown -> Solid components. Produces real interactive DOM (clickable
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
@@ -35,6 +36,7 @@ import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { parseImageMetaBrace } from "./imageMeta";
 import { AstBody } from "./body";
+import { codeFences } from "../editor/fences";
 import { backend } from "../backend";
 import { captureBinding } from "../binding";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
@@ -47,7 +49,7 @@ import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
 import { SourceTaskCheckbox } from "../components/SourceTaskCheckbox";
-import { blockRef, setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode } from "../document";
+import { blockRef, setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode, pageHeaderProperties } from "../document";
 import { PaneContext, focusedPaneId, openRouteInOtherPane, openPdf } from "../panes";
 import { isQueryMacroName, queryMacroExtentAtSpan, type MacroExtent } from "../editor/queryMacro";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
@@ -56,7 +58,7 @@ import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
 import { annotationInfoForBlock, pdfAssetFile, pdfFileFromPreBlock } from "../editor/annotation";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { createLongPress } from "./longPress";
+import { createLongPress, isLongPressContextMenu } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
@@ -80,6 +82,8 @@ import { windowOf } from "../windowRealm";
 // options map's closing brace and a literal comma.
 function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], rawMacro?: MacroExtent): JSX.Element {
   const body = raw.trimStart();
+  // A preview must not mount a live query editor through an inline macro.
+  if (useContext(PeekContext) && (rawMacro || isQueryMacroName(body.split(" ", 1)[0]))) return <code>{`{{${raw}}}`}</code>;
   if (rawMacro) return <QueryMacro body={`${rawMacro.name} ${rawMacro.argument}`} blockId={blockId} sourceExtent={rawMacro} sourceRaw={blockId ? docNode(blockId)?.raw.slice(rawMacro.start, rawMacro.end) : undefined} />;
   if (isQueryMacroName(/^\S*/.exec(body)![0].replace(/}+$/, ""))) return <QueryMacro body={body} blockId={blockId} />;
   if (/^embed\b/i.test(body)) return <EmbedMacro body={body} blockId={blockId} />;
@@ -254,6 +258,7 @@ const PEEK_BLOCK_CAP = 50;
 
 function createPeekBridge(disabled: () => boolean) {
   const [open, setOpen] = createSignal(false);
+  let touchOpen = false;
   let openT: ReturnType<typeof setTimeout> | undefined;
   let closeT: ReturnType<typeof setTimeout> | undefined;
   const clearOpen = () => {
@@ -278,6 +283,7 @@ function createPeekBridge(disabled: () => boolean) {
     openT = setTimeout(() => setOpen(true), PEEK_OPEN_MS);
   };
   const anchorLeave = () => {
+    if (touchOpen) return;
     clearOpen();
     if (disabled()) return;
     clearClose();
@@ -288,11 +294,13 @@ function createPeekBridge(disabled: () => boolean) {
     clearClose();
   };
   const popupLeave = () => {
+    if (touchOpen) return;
     if (disabled()) return;
     clearClose();
     closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
   };
   const dismiss = () => {
+    touchOpen = false;
     clearOpen();
     clearClose();
     setOpen(false);
@@ -301,7 +309,14 @@ function createPeekBridge(disabled: () => boolean) {
     clearOpen();
     clearClose();
   });
-  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss };
+  const hold = () => {
+    if (disabled()) return;
+    clearOpen();
+    clearClose();
+    touchOpen = true;
+    setOpen(true);
+  };
+  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss, hold };
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
@@ -346,10 +361,9 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
   // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
   // guide pages and links already inside a peek never arm another preview.
   const peek = createPeekBridge(() => insidePeek || isGuidePageName(targetName()));
-  // Mobile: a deliberate long-press raises the same context menu desktop
-  // right-click gives (GH #231). Quick tap, scroll, and text selection behave
-  // as before; the recognizer cancels on movement/release/cancel and only
-  // arms on primary touch/pen pointers.
+  // GH #655: native mobile holds open the shared page preview. Reuse the
+  // deliberate-hold recognizer and its compatibility-click ownership; desktop
+  // right-click and touch on desktop still use the page context menu.
   const longPress = createLongPress(() => anchorEl);
   onCleanup(longPress.dispose);
   const [previewResource] = createResource(
@@ -386,7 +400,8 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
-          if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
+          if (isMobilePlatform && isLongPressContextMenu(e)) peek.hold();
+          else if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
         }}
       >
         <Show when={icon()}>
@@ -400,13 +415,15 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           #{props.name}
         </Show>
       </a>
-      <Show when={peek.open() && preview() && capped().blocks.length > 0}>
+      <Show when={peek.open() && preview()}>
         <PeekPopup
           anchor={() => anchorEl}
-          title={<span class="peek-popup-title-name"><EmojiText text={props.name} /></span>}
+          title={<span class="peek-popup-title-name"><EmojiText text={preview()!.title || preview()!.name} /></span>}
           blocks={() => capped().blocks}
-          page={targetName()}
+          page={preview()!.name}
           pageKind={kind()}
+          properties={pageHeaderProperties(preview()!)}
+          format={preview()!.format}
           truncatedCount={() => capped().truncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
@@ -464,7 +481,7 @@ function renderLink(
   }
   if (url.type === "block_ref") {
     const label = s.label && s.label.length ? astText(s.label) : undefined;
-    return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} />;
+    return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} />;
   }
   const dest = urlDest(url);
   // File URLs use the OS viewer, preserving their full path (GH #577).
@@ -1245,7 +1262,7 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
 // navigate to the source page on click and show a hover preview of the full
 // referenced block (mirrors OG); a missing target, or an id that is not a
 // UUID, shows its source `((id))` in full, as OG does (GH #589).
-function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs; blockId?: string }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   if (linkDepth >= MAX_DEPTH_OF_LINKS) {
     return <span class="link-depth-warning">Reference depth is too deep</span>;
@@ -1303,6 +1320,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   };
   // Parse the referenced block's text with ITS page's format (org refs render org).
   const fmt = () => liveTarget() ? formatForBlock(props.id) : formatForPage(grp()?.page);
+  const hasCodeBody = createMemo(() => props.label === undefined && codeFences(targetRaw() ?? "", fmt()).some(f => f.closed));
   const annotation = () => {
     const block = grp()?.blocks[0];
     return block ? annotationInfoForBlock(block, fmt()) : null;
@@ -1392,24 +1410,27 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         }}
       >
         <Show when={lines() !== undefined} fallback={<>(({props.id}))</>}>
+          <Show when={isFavoriteBlock(props.id) && isFavoritesPage(props.blockId ? docNode(props.blockId)?.page : undefined)}><EmojiText text="⭐" />{" "}</Show>
           <LinkDepthContext.Provider value={linkDepth + 1}>
             <Show when={marker()}>
               {(m) => <>
                 {/* GH #518: OG's block-checkbox inside a reference ticks the
                     referenced block (block.cljs build-block-title). No text node
                     before the chip, so the reference's text stays the source's. */}
-                <SourceTaskCheckbox marker={m()} target={checkboxTarget} style={{ "margin-right": "0.3em" }} />
+                <Show when={!insidePeek}><SourceTaskCheckbox marker={m()} target={checkboxTarget} style={{ "margin-right": "0.3em" }} /></Show>
                 <span class={`block-marker marker-${m().toLowerCase()}`}>{m()}</span>{" "}
               </>}
             </Show>
-            <For each={lines()!}>
+            <Show when={hasCodeBody()} fallback={<For each={lines()!}>
               {(line, index) => (
                 <>
                   <Show when={index() > 0}><br /></Show>
                   <InlineText text={line} format={fmt()} preserveMarker={props.label === undefined} />
                 </>
               )}
-            </For>
+            </For>}>
+              <AstBody raw={lines()!.join("\n")} format={fmt()} />
+            </Show>
           </LinkDepthContext.Provider>
         </Show>
       </span>
@@ -1420,6 +1441,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           blocks={() => capped().blocks}
           page={preview()!.group.page}
           pageKind={preview()!.group.kind}
+          blockId={props.id}
           truncatedCount={previewTruncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}

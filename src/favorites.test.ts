@@ -11,7 +11,9 @@ import { bumpDataRev, graphMeta, setGraphMeta } from "./graphSession";
 import {
   addFavoriteGroup, deleteFavoriteGroup, favorites, favoritesLayout, moveFavoriteRow,
   renameFavoriteGroup, seedFavorites, setFavoriteRowCollapsed, toggleFavorite,
+  favoriteBlock, isFavoriteBlock,
 } from "./favorites";
+import { ensurePageLoaded } from "./document";
 import { layoutToMarkdown } from "./favoritesLayout";
 import { renamePageInNavigation } from "./ui";
 import { toasts, setToasts } from "./toasts";
@@ -74,6 +76,36 @@ beforeEach(async () => {
 afterEach(() => { vi.restoreAllMocks(); setToasts([]); setGraphMeta(null); });
 
 describe("favorites arrangement page", () => {
+  it("GH #570: favourite action publishes the source ID before the Favorites row through the page host", async () => {
+    disk.set("Source", { pre_block: null, blocks: [b("important block")], rev: 1 });
+    ensurePageLoaded({ name: "Source", title: "Source", kind: "page", id: "pages/Source.md", rev: "1", format: "md", pre_block: null,
+      blocks: [{ ...b("important block"), id: "Source-1" }] });
+    await favoriteBlock("Source-1");
+    await settle();
+    const target = disk.get("Source")!.blocks[0].raw;
+    expect(target).toContain("id::");
+    const uuid = favoritesLayout()[0].blockId!;
+    expect(target).toContain(uuid);
+    expect(shape(disk.get("Favorites")!).text).toContain(`((${uuid}))`);
+    expect(isFavoriteBlock(uuid)).toBe(true);
+    expect(config.names).toEqual([]);
+    expect(writes.findIndex(w => w.startsWith("page:Source:"))).toBeLessThan(writes.findIndex(w => w.startsWith("page:Favorites:")));
+  });
+  it("GH #570: block rows survive reopen and live edits without entering config favorites", async () => {
+    const uuid = "57000000-0000-4000-8000-000000000001";
+    disk.set("Favorites", { pre_block: "tine/favorites:: true", blocks: [b("Work", [b(`((${uuid}))`), b("[[A]]")])], rev: 1 });
+    seedFavorites(["A"], "Favorites");
+    await settle();
+    expect(favoritesLayout()[0].children[0].blockId).toBe(uuid);
+    expect(writes).toEqual([]);
+    addFavoriteGroup("Home");
+    await settle();
+    expect(config.names).toEqual(["A"]);
+    expect(shape(disk.get("Favorites")!).text).toContain(`((${uuid}))`);
+    disk.set("Favorites", { pre_block: "tine/favorites:: true", blocks: [b("[[A]]")], rev: 3 });
+    bumpDataRev(); await settle();
+    expect(favoritesLayout().some(node => node.blockId)).toBe(false);
+  });
   it("a flat list never grows a page; the first label creates it, page first, then config", async () => {
     toggleFavorite("A");
     toggleFavorite("B");

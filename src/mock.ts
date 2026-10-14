@@ -1208,7 +1208,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       }
       return groups.filter((g) => g.blocks.length > 0);
     },
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, pageMatchScope: import("./editor/queryIr").FriendlyPageMatchScope = "names"): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, pageMatchScope: import("./editor/queryIr").FriendlyPageMatchScope = "names", _views?: { page: import("./editor/queryIr").ViewSettings; block: import("./editor/queryIr").ViewSettings }, _transliteration = false): Promise<QueryExecution> {
       // Browser-preview approximation only (ADR 0016). Production matching,
       // diagnostics, and UTF-16 evidence come from Rust's QueryPlan evaluator.
       const matcher = parseSearchQuery(source, removeAccents);
@@ -1314,14 +1314,14 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         },
       ];
     },
-    async quickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+    async quickSwitch(query: string, limit: number, _editor?: { pageName: string; blockId: string; originalRaw: string }, _transliteration = false): Promise<PageEntry[]> {
       const q = fold(query.trim());
       return all
         .filter((p) => fold(p.name).includes(q))
         .slice(0, limit)
         .map(mockPageEntry);
     },
-    async captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+    async captureQuickSwitch(query: string, limit: number, _transliteration = false): Promise<PageEntry[]> {
       return this.quickSwitch(query, limit);
     },
     async resolveBlock(uuid: string): Promise<RefGroup | null> {
@@ -1465,7 +1465,10 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const c = (globalThis as { confirm?: (m?: string) => boolean }).confirm;
       return typeof c === "function" ? c(message) : true;
     },
-    async pickFolder(_title?: string): Promise<string | null> {
+    async revealExport(_path: string) {},
+    async readCssFile(_global: boolean) { return { text: "", revision: null }; },
+    async saveCssFile(_global: boolean, text: string, _revision: string | null) { return text; },
+    async pickFolder(_title?: string, _defaultPath?: string): Promise<string | null> {
       return null; // no native dialog in the browser mock
     },
     async pickGraphFolder() {

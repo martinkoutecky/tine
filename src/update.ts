@@ -1,4 +1,3 @@
-import { browserPlatform } from "./browserPlatform";
 // "A newer Tine is available" check — best-effort, once per launch.
 //
 // Notifier: ask the Tauri updater plugin what this build's channel offers (never
@@ -22,6 +21,7 @@ import { browserPlatform } from "./browserPlatform";
 // INSTALL the user asked for is different: it records a fixed stage/cause in the
 // privacy-safe diagnostic report and says which stage failed (GH #343).
 
+import { browserPlatform } from "./browserPlatform";
 import { APP_PRODUCT_NAME, APP_UPDATE_CHANNEL } from "./appIdentity";
 import { releaseVersion } from "../scripts/release-policy.mjs";
 import { isTauri, backend } from "./backend";
@@ -96,9 +96,11 @@ async function updateMode(installer = false): Promise<UpdateMode> {
     return "unavailable";
   }
   if (resolvePackagedUpdateMode(await isMsixPackaged(), installer) === "unavailable") return "unavailable";
+  // GH #405: the pinned updater predates 2.13.2's macOS rollback repair.
+  // Keep installs manual until the manager upgrades Tauri core and the plugin.
   if (browserPlatform(typeof navigator !== "undefined" ? navigator.userAgent : "").manualDesktopUpdate) return "manual";
   // A Flatpak's /app is read-only: the in-place install can only fail, so it
-  // updates by downloading the new bundle, like macOS.
+  // updates by downloading the new bundle.
   return (await isFlatpak()) ? "manual" : "self";
 }
 
@@ -286,8 +288,8 @@ export async function restartTine(): Promise<void> {
  * stale "Install update" action cannot install on a manual-only surface. */
 export const installUpdateForTest = (): Promise<void> => applyUpdateOrOpen();
 
-/** The toast's "Install update" action. Win/Linux packaged app → run the Tauri updater
- *  in place and relaunch; everything else (macOS, browser, or any failure) → open
+/** The toast's "Install update" action. Desktop packaged app → run the Tauri updater
+ *  in place and relaunch; any updater failure → open
  *  the releases page. Never throws. */
 async function applyUpdateOrOpen(): Promise<void> {
   const mode = await updateMode(true);
@@ -350,6 +352,7 @@ async function applyUpdateOrOpen(): Promise<void> {
       exitGuard?.reset();
       dismissToast(progressId);
       reportUpdaterFailure("relaunch", error);
+      openReleases();
     }
   } finally {
     try { await update.close(); }

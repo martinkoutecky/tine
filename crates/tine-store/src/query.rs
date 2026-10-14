@@ -1786,6 +1786,7 @@ fn finish_quick_switch_top(
 
 /// Fuzzy page-name matcher for the quick switcher. Ranks prefix > substring >
 /// subsequence, then by name length.
+#[cfg(test)]
 pub(crate) fn quick_switch(graph: &ReadSnapshot, query: &str, limit: usize) -> Vec<PageEntry> {
     let plan = crate::query_plan::QueryPlan::legacy_page_search_with_policy(
         query,
@@ -1796,6 +1797,7 @@ pub(crate) fn quick_switch(graph: &ReadSnapshot, query: &str, limit: usize) -> V
     crate::query_plan::page_hits_to_entries(execution.hits)
 }
 
+#[cfg(test)]
 pub(crate) fn quick_switch_for_editor(
     graph: &ReadSnapshot,
     query: &str,
@@ -3567,6 +3569,7 @@ mod tests {
             tine_core::query::ir::FriendlyPageMatchScope::Names,
             None,
             None,
+            false,
         ));
         assert_eq!(scoped, ["foo safe"]);
     }
@@ -4250,6 +4253,33 @@ mod tests {
         assert!(backlinks(&graph, "private-key").is_empty());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn task_marker_pages_link_tasks_instead_of_plain_status_mentions() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("tine-task-marker-backlinks-{}", std::process::id()));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            "- TODO call Alice\n- DONE call Bob\n- ordinary TODO word\n- `TODO code`\n",
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        let todo = backlinks(&graph, "TODO");
+        assert_eq!(todo.len(), 1);
+        assert_eq!(todo[0].blocks.len(), 1);
+        assert_eq!(todo[0].blocks[0].marker.as_deref(), Some("TODO"));
+        assert_eq!(
+            backlinks(&graph, "DONE")[0].blocks[0].marker.as_deref(),
+            Some("DONE")
+        );
+        assert!(!unlinked_refs(&graph, "TODO")
+            .iter()
+            .flat_map(|g| &g.blocks)
+            .any(|b| b.marker.as_deref() == Some("TODO")));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

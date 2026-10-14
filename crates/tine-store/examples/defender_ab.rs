@@ -49,6 +49,7 @@ fn page_id(root: &Path, path: &Path) -> PageId {
 
 fn ctrl_k(view: &WholeGraph) -> (f64, usize) {
     let request = SearchRequest {
+        transliteration: false,
         text: "the".to_owned(),
         within: None,
         page_limit: 100,

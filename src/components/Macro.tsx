@@ -7,15 +7,13 @@ import { For, Show, Switch, Match, createMemo, createResource, createSignal, use
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
-import { openPageInSidebar, openBlockInSidebar, pageIdentityKey, openQueryExport, switcherOpen } from "../ui";
+import { openPageInSidebar, openBlockInSidebar, openQueryExport, switcherOpen } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
-import { blocksContainEdit, createMembershipResource, groupsContainEdit } from "../resultMembership";
+import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
-import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, pageByName, resolveGuidePageDto, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
-import { resolveBlockBatched } from "../resolveBatch";
-import { LiveRefGroup } from "./LiveRefGroup";
-import { PageEmbedHeader } from "./PageEmbedHeader";
+import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
+export { EmbedMacro } from "./EmbedMacro";
 import { QueryGroups } from "./QueryGroup";
 import { QueryDisplay } from "./QueryDisplay";
 import { startEditing } from "../editorController";
@@ -49,7 +47,7 @@ import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import { QueryResultSections } from "./QueryResultSections";
 import { QueryOgHint, QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
-import type { PageKind, QueryHit, RefGroup } from "../types";
+import type { QueryHit, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { bothFamilies } from "../queryTwin";
 import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
@@ -1441,57 +1439,3 @@ export function ZoteroMacro(props: { body: string }): JSX.Element {
 }
 
 // A {{embed ((uuid))}} or {{embed [[Page]]}} block.
-export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Element {
-  const linkDepth = useContext(LinkDepthContext);
-  if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
-
-  const target = () => props.body.replace(/^embed\s*/i, "").trim();
-  const pageTarget = () => /^\[\[([^\]]+)\]\]$/.exec(target())?.[1];
-  const selfPageEmbed = () => {
-    const sourcePage = props.blockId ? docNode(props.blockId)?.page : undefined;
-    const targetPage = pageTarget();
-    return !!sourcePage
-      && pageByName(sourcePage)?.kind === "page"
-      && !!targetPage
-      && pageIdentityKey(sourcePage) === pageIdentityKey(targetPage);
-  };
-
-  const [data] = createMembershipResource(
-    () => selfPageEmbed() ? null : target(),
-    target,
-    async () => {
-    const t = target();
-    const blockRef = /^\(\(([^)]+)\)\)$/.exec(t);
-    if (blockRef) {
-      const g = await resolveBlockBatched(blockRef[1]);
-      // embedId = the embedded block's own id, so its ref-count badge is hidden
-      // inside the embed (OG hide-block-refs-count?); its children keep theirs.
-      return g ? { page: g.page, kind: g.kind, blocks: g.blocks, embedId: g.blocks[0]?.id } : null;
-    }
-    const pageRef = /^\[\[([^\]]+)\]\]$/.exec(t);
-    if (pageRef) {
-      // Backend miss → the virtual in-app Guide, matched by bare title (the embed
-      // carries no source context to remap the name). No-op for real graphs.
-      const result = await readOwned(graphOwner(), backend().getPage(pageRef[1], "page"));
-      if (result.kind === "stale") return null;
-      const p = result.value ?? resolveGuidePageDto(pageRef[1]);
-      return p ? { page: p.name, kind: "page" as PageKind, blocks: p.blocks, embedId: undefined } : null;
-    }
-    return null;
-  }, (value, id) => !!value && blocksContainEdit(value.blocks, id));
-
-  const embedded = () => readOr(data, undefined, "embed");
-  return (
-    <div class="embed-block" classList={{ "embed-page": !!pageTarget() }}>
-      {/* GH #439: a page embed names its page (OG block.cljs `page-embed` header). */}
-      <Show when={pageTarget() && (selfPageEmbed() || embedded())}>
-        <PageEmbedHeader name={embedded()?.page ?? pageTarget()!} blockId={props.blockId} />
-      </Show>
-      <Show when={!selfPageEmbed()}>
-        <Show when={embedded()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
-          <LiveRefGroup page={embedded()!.page} kind={embedded()!.kind} blocks={embedded()!.blocks} embedId={embedded()!.embedId} hostBlockId={props.blockId} surface="embed" />
-        </Show>
-      </Show>
-    </div>
-  );
-}

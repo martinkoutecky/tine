@@ -1,4 +1,5 @@
 import { codeWrapping, changeCodeWrapping } from "../codeDisplay";
+import { stickyParents, changeStickyParents } from "../stickyParents";
 import { graphConfigProblem } from "../graph";
 import { ResourceFailure } from "./ResourceFailure";
 import { reportUiFailure } from "../uiFailure";
@@ -59,7 +60,7 @@ import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { LanguageSetting } from "./LanguageSetting";
 import { GraphFolderSetting } from "./GraphFolderSetting";
-import { render, renderEnglish } from "../i18n";
+import { msg, render, renderEnglish } from "../i18n";
 import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
@@ -72,6 +73,9 @@ import type { AssetInfo, TrashStats, JournalFile } from "../types";
 import { DEFAULT_TITLE_FORMAT, formatJournal, appNow } from "../journal";
 import {
   launcherRankingEnabled,
+  pinyinMatchingEnabled,
+  setPinyinMatchingEnabled,
+  resetPinyinMatchingSetting,
   resetLauncherRanking,
   setLauncherRankingEnabled,
 } from "../launcherRanking";
@@ -494,6 +498,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       <Field label="Wrap code lines" hint="Wrap long code lines in every code block while reading and editing. Off by default, as in Logseq. Saved on this device.">
         <Toggle on={codeWrapping()} onClick={() => changeCodeWrapping(!codeWrapping())} />
       </Field>
+      <Field label={render(msg("setting-sticky-parents"))} hint={render(msg("setting-sticky-parents-hint"))}>
+        <Toggle on={stickyParents()} onClick={() => changeStickyParents(!stickyParents())} />
+      </Field>
       <Field
         label="Auto-pair brackets & quotes"
         hint="Typing ( [ { &quot; ` inserts the matching closer with the caret between, wraps a selection, types through a closer, and Backspace on an empty pair clears both. (Page-ref `[[ ]]` always auto-closes.) On by default, as in Logseq."
@@ -765,6 +772,13 @@ function EditorTab(props: { search: string }): JSX.Element {
           hint="Plain navigation to a page, journal, or exact zoomed/file-pinned view focuses the matching tab if one is already open. Middle-click and explicit Open in new tab still create another tab."
         >
           <Toggle on={navReuseTabs()} onClick={() => setNavReuseTabs(!navReuseTabs())} />
+        </Field>
+
+        <Field label={render(msg("settings-pinyin-label"))} hint={render(msg("settings-pinyin-description"))}>
+          <Toggle on={pinyinMatchingEnabled()} onClick={() => setPinyinMatchingEnabled(!pinyinMatchingEnabled())} />
+          <button type="button" class="og-revert" onClick={resetPinyinMatchingSetting}>
+            {render(msg("settings-pinyin-reset"))}
+          </button>
         </Field>
 
         <Field

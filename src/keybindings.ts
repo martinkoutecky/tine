@@ -1,4 +1,5 @@
 import { adjustSidebarWidth } from "./sidebarSizing";
+import { openCssEditor } from "./cssEditor";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
 import { browserPlatform } from "./browserPlatform";
 // Configurable keyboard shortcuts. Defaults mirror OG Logseq command ids and
@@ -153,6 +154,14 @@ function focusPaneByNumber(n: number) {
   if (pane) focusPane(pane.paneId);
 }
 
+function editSelectedBlock(): boolean {
+  const ids = selectedIds();
+  if (ids.length !== 1 || !docNode(ids[0])) return false;
+  clearSelection();
+  startEditing(ids[0]);
+  return true;
+}
+
 function focusPaneInDirection(dir: PaneDirection) {
   if (!layoutHasMultiplePanes()) return;
   const target = nearestPaneInDirection(layoutRoot(), focusedPaneId(), dir);
@@ -266,7 +275,10 @@ export function handlePaneSelectKey(e: KeyboardEvent): boolean {
 
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
+  { id: "editor/edit-selected-block", binding: "", label: msg("command-editor-edit-selected-block"), scope: "global", run: () => { editSelectedBlock(); }, global: true },
   { id: "go/search", binding: "mod+k", label: msg("command-go-search"), scope: "global", run: () => openSwitcher({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  { id: "go/search-pages", binding: "", label: msg("command-go-search-pages"), scope: "global", run: () => openSwitcher({ mode: "pages" }), global: true },
+  { id: "go/search-content", binding: "", label: msg("command-go-search-content"), scope: "global", run: () => openSwitcher({ mode: "content" }), global: true },
   { id: "go/search-current-page", binding: "mod+shift+k", label: msg("command-go-search-current-page"), scope: "global", run: () => openSwitcher({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   // GH #633: search for the selected text. Unbound: mod+shift+f is OG's
   // :command/toggle-favorite (config.cljs:493), so the chord is left to the user.
@@ -308,6 +320,20 @@ const COMMANDS: CommandDef[] = [
   // macOS). mod-chords, so they fire mid-edit; remappable like everything here.
   { id: "tab/next", binding: "mod+pagedown", label: msg("command-tab-next"), scope: "global", run: activateNextTab, global: true },
   { id: "tab/previous", binding: "mod+pageup", label: msg("command-tab-previous"), scope: "global", run: activatePrevTab, global: true },
+  // mod+1..9 belong to pane focus. Leave these browser-style slots bindable.
+  ...Array.from({ length: 9 }, (_, i): CommandDef => ({
+    id: `tab/activate-${i + 1}`,
+    binding: "",
+    label: i === 8 ? msg("command-tab-activate-last") : msg("command-tab-activate-n", { index: i + 1 }),
+    scope: "global",
+    global: true,
+    run: () => {
+      const router = paneRouter(focusedPaneId());
+      const tabs = router.tabs();
+      const tab = tabs[i === 8 ? tabs.length - 1 : i];
+      if (tab) router.setActiveTab(tab.id);
+    },
+  })),
   { id: "pane/split-right", binding: "mod+alt+\\", label: msg("command-pane-split-right"), scope: "global", run: () => void splitPane(focusedPaneId(), "row"), global: true },
   { id: "pane/split-down", binding: "mod+alt+shift+\\", label: msg("command-pane-split-down"), scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
   { id: "pane/close", binding: "", label: msg("command-pane-close"), scope: "global", run: () => void closePane(focusedPaneId()), global: true },
@@ -347,6 +373,9 @@ const COMMANDS: CommandDef[] = [
   { id: "ui/toggle-left-sidebar", binding: "t l", label: msg("command-ui-toggle-left-sidebar"), scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: msg("command-ui-toggle-right-sidebar"), scope: "global", run: toggleRightSidebar },
   { id: "ui/open-settings", binding: "t s", label: msg("command-ui-open-settings"), scope: "global", run: openSettings },
+  { id: "appearance/edit-custom-css", binding: "", label: msg("command-appearance-edit-custom-css"), scope: "global", run: () => void openCssEditor(false) },
+  { id: "appearance/edit-global-css", binding: "", label: msg("command-appearance-edit-global-css"), scope: "global", run: () => void openCssEditor(true) },
+  { id: "graph/export-html", binding: "", label: msg("command-graph-export-html"), scope: "global", run: () => openSettings("graph") },
   {
     id: "page/export-pdf",
     binding: "",
@@ -394,7 +423,9 @@ const COMMANDS: CommandDef[] = [
   // each acts on the block selection, else on the block being edited.
   { id: "select/copy-block-ref", binding: "", label: msg("command-select-copy-block-ref"), scope: "global", run: () => { copyTargetBlockRefs(); }, global: true },
   { id: "editor/duplicate-block", binding: "", label: msg("command-editor-duplicate-block"), scope: "global", run: () => void duplicateTargetBlocks(), global: true },
+  { id: "editor/duplicate-block-above", binding: "", label: msg("command-editor-duplicate-block-above"), scope: "global", run: () => void duplicateTargetBlocks("above"), global: true },
   { id: "editor/insert-child-block", binding: "", label: msg("command-editor-insert-child-block"), scope: "global", run: () => { insertChildIntoTarget(); }, global: true },
+  { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },
   { id: "editor/expand-children", binding: "", label: msg("command-editor-expand-children"), scope: "global", run: () => { setTargetChildrenCollapsed(false); }, global: true },
   // GH #448: the clipboard's URL or block ref becomes a link around the selection.
@@ -845,6 +876,7 @@ function focusedGridSurface(gridId: string): string | null {
 
 // Keyboard handling while in block-selection mode (no editor focused).
 function handleSelectionKey(e: KeyboardEvent): boolean {
+  if (matchesCommand(e, "editor/edit-selected-block")) return editSelectedBlock();
   if (e.key === "Escape") return clearSelection(), true;
   // Resolve the configured command before generic Enter handling. This keeps
   // Ctrl/Cmd+Enter (and user remaps) in block-selection mode instead of opening
@@ -972,6 +1004,9 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         return;
       }
       if (hasSelection()) {
+        if (matchesCommand(e, "editor/edit-selected-block") && editSelectedBlock()) {
+          e.preventDefault(); resetSeq(); return;
+        }
         const previous = selectedIds().at(-1) ?? null;
         if (!focusMode()) rememberBlockSelectionForPaneReturn(previous);
         clearSelection();

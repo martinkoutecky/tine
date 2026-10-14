@@ -21,6 +21,7 @@
  *  so the user's custom.css still wins. This file is the only writer of that
  *  element and of the knob classes (guarded by styleKnobs.test.ts). */
 import { createSignal } from "solid-js";
+import { t } from "./i18n";
 import { backend } from "./backend";
 import { readOwned, revisionOwner } from "./owned";
 import { preferenceReadCurrent, preferenceRevision, seedPreference, writePreference } from "./preferenceWrites";
@@ -54,6 +55,11 @@ export type KnobOutput = { css: string; classes: string[] };
  *  fallback in app.css), which styleKnobs.test.ts checks. */
 export const KNOBS: readonly StyleKnob[] = [
   { id: "knobs-embeds", type: "heading", level: 2, title: "Embeds" },
+  {
+    id: "embed-breadcrumbs", type: "class-toggle",
+    get title() { return t("settings-embed-breadcrumbs"); },
+    get description() { return t("settings-embed-breadcrumbs-hint"); },
+  },
   {
     id: "embed-shading",
     type: "class-select",

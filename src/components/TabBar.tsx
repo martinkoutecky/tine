@@ -1,12 +1,13 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { FloatingPortal } from "./FloatingPortal";
+import { hoverIntent } from "./hoverIntent";
 import { resolveRouteBlock, routeTitle, type PaneRouter, type Route, type Tab } from "../router";
 import { formatForBlock, node as docNode } from "../document";
 import { splitProps, BUILTIN_HIDE, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
 import { parseBlock, parserReady } from "../render/parse";
 import { inlineText } from "../render/facets";
-import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes, layoutRoot, windowOfPane } from "../panes";
+import { moveTabToPane, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes, layoutRoot, windowOfPane } from "../panes";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { MAIN_WINDOW_ID, isHTMLElementNode, newResizeObserver, useOwnerWindow } from "../windowRealm";
 
@@ -80,8 +81,7 @@ export type TabDropTarget =
   | { kind: "tab"; paneId: string; tabId: string; index: number; before: boolean }
   | { kind: "pane"; paneId: string }
   | { kind: "split"; paneId: string; side: SplitSide }
-  | { kind: "seam"; path: number[]; previewPaneId: string | null; side: SplitSide }
-  | { kind: "root-edge"; side: SplitSide; previewPaneId: string | null };
+  | { kind: "seam"; path: number[]; previewPaneId: string | null; side: SplitSide };
 
 const [activeTabDrag, setActiveTabDrag] = createSignal<{ paneId: string; tabId: string } | null>(null);
 const [currentTabDropTarget, setCurrentTabDropTarget] = createSignal<TabDropTarget | null>(null);
@@ -142,25 +142,10 @@ function edgeSideAt(x: number, y: number, rect: DOMRect): SplitSide | null {
   return hits[0]?.side ?? null;
 }
 
-function isRootEdge(pane: HTMLElement, side: SplitSide): boolean {
-  const row = pane.ownerDocument.querySelector(".content-row") as HTMLElement | null;
-  if (!row) return false;
-  const paneRect = pane.getBoundingClientRect();
-  const rowRect = row.getBoundingClientRect();
-  const close = (a: number, b: number) => Math.abs(a - b) <= 2;
-  switch (side) {
-    case "left": return close(paneRect.left, rowRect.left);
-    case "right": return close(paneRect.right, rowRect.right);
-    case "top": return close(paneRect.top, rowRect.top);
-    case "bottom": return close(paneRect.bottom, rowRect.bottom);
-  }
-}
-
 export function tabSplitPreviewSideForPane(paneId: string): SplitSide | null {
   const target = currentTabDropTarget();
   if (target?.kind === "split" && target.paneId === paneId) return target.side;
   if (target?.kind === "seam" && target.previewPaneId === paneId) return target.side;
-  if (target?.kind === "root-edge" && target.previewPaneId === paneId) return target.side;
   return null;
 }
 
@@ -223,9 +208,9 @@ export function tabDropTargetAt(
   if (!pane || !paneId || paneId === "pdf") return null;
   const side = edgeSideAt(x, y, pane.getBoundingClientRect());
   if (side) {
-    return isRootEdge(pane, side)
-      ? { kind: "root-edge", side, previewPaneId: paneId }
-      : { kind: "split", paneId, side };
+    // The preview occupies this pane, including at an outer layout edge.
+    // GH #499: use that same region for the drop rather than splitting root.
+    return { kind: "split", paneId, side };
   }
   return { kind: "pane", paneId };
 }
@@ -240,8 +225,6 @@ function applyTabDrop(sourcePaneId: string, tabId: string, target: TabDropTarget
       return !!moveTabToSplitPane(sourcePaneId, tabId, target.paneId, target.side);
     case "seam":
       return !!moveTabToSeamSplit(sourcePaneId, tabId, target.path);
-    case "root-edge":
-      return !!moveTabToRootEdge(sourcePaneId, tabId, target.side);
   }
 }
 
@@ -266,6 +249,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
   const stripDragLayerId = `tab-strip-drag-${createUniqueId()}`;
   const [overflowing, setOverflowing] = createSignal(false);
   const [overviewOpen, setOverviewOpen] = createSignal(false);
+  let hoverOverview = false;
+  const overviewHover = hoverIntent(() => { if (hoverOverview && !overviewDragId()) dismissOverview(false); });
   const [overviewPosition, setOverviewPosition] = createSignal({ left: 8, top: 48, width: 360 });
   const [overviewDragId, setOverviewDragId] = createSignal<string | null>(null);
   const [overviewDrop, setOverviewDrop] = createSignal<{ tabId: string; before: boolean } | null>(null);
@@ -294,6 +279,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth;
   };
   const dismissOverview = (restoreFocus = true) => {
+    overviewHover.enter();
+    hoverOverview = false;
     cancelOverviewReorder?.();
     setOverviewOpen(false);
     if (restoreFocus) queueMicrotask(() => overviewTrigger?.focus());
@@ -456,7 +443,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     queueMicrotask(() => {
       positionOverview();
       const activeIndex = Math.max(0, router.tabs().findIndex((tab) => tab.id === router.activeId()));
-      focusOverviewRow(activeIndex);
+      if (!hoverOverview) focusOverviewRow(activeIndex);
     });
     ownerWindow.addEventListener("resize", positionOverview);
     ownerWindow.addEventListener("scroll", positionOverview, true);
@@ -687,7 +674,20 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
           aria-expanded={overviewOpen()}
           aria-controls={overviewId}
           data-tab-overview-trigger
-          onClick={() => overviewOpen() ? dismissOverview() : setOverviewOpen(true)}
+          onMouseEnter={() => {
+            overviewHover.enter();
+            if (!overviewOpen()) { hoverOverview = true; setOverviewOpen(true); }
+          }}
+          onMouseLeave={overviewHover.leave}
+          onClick={() => {
+            overviewHover.enter();
+            if (hoverOverview) {
+              hoverOverview = false;
+              focusOverviewTab(router.activeId());
+            }
+            else if (overviewOpen()) dismissOverview();
+            else setOverviewOpen(true);
+          }}
         >⌄</button>
         <Show when={overviewOpen()}>
           <FloatingPortal>
@@ -702,6 +702,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
               width: `${overviewPosition().width}px`,
             }}
             onKeyDown={onOverviewKeyDown}
+            onMouseEnter={overviewHover.enter}
+            onMouseLeave={overviewHover.leave}
           >
             <For each={router.tabs()}>
               {(tab, index) => (

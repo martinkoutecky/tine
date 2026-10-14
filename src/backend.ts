@@ -497,18 +497,18 @@ class TauriBackend implements Backend {
   search(query: string, limit: number, lane?: string) {
     return this.call<RefGroup[]>("search", { query, limit, lane });
   }
-  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, views?: { page: ViewSettings; block: ViewSettings }) {
-    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null });
+  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, views?: { page: ViewSettings; block: ViewSettings }, transliteration = false) {
+    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null, transliteration });
     return {
       ...execution,
       has_more: execution.has_more ?? { pages: false, blocks: false },
     };
   }
-  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string }) {
-    return this.call<PageEntry[]>("quick_switch", { query, limit, editorPageName: editor?.pageName, editorBlockId: editor?.blockId, editorOriginalRaw: editor?.originalRaw });
+  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string; session?: string }, transliteration = false) {
+    return this.call<PageEntry[]>("quick_switch", { query, limit, editorPageName: editor?.pageName, editorBlockId: editor?.blockId, editorOriginalRaw: editor?.originalRaw, editorSession: editor?.session, transliteration });
   }
-  captureQuickSwitch(query: string, limit: number) {
-    return this.call<PageEntry[]>("capture_quick_switch", { query, limit });
+  captureQuickSwitch(query: string, limit: number, transliteration = false) {
+    return this.call<PageEntry[]>("capture_quick_switch", { query, limit, transliteration });
   }
   listTemplates() {
     return this.call<TemplateDto[]>("list_templates");
@@ -542,6 +542,11 @@ class TauriBackend implements Backend {
   }
   async readClipboardImage(): Promise<Uint8Array | null> {
     try {
+      if (await this.appPlatform() === "android") {
+        const buf = await this.call<ArrayBuffer>("read_android_clipboard_image");
+        const bytes = new Uint8Array(buf);
+        return bytes.length ? bytes : null;
+      }
       const { readImage } = await import("@tauri-apps/plugin-clipboard-manager");
       const img = await readImage();
       return await clipboardImageToPng(img);
@@ -666,11 +671,14 @@ class TauriBackend implements Backend {
     const { ask } = await import("@tauri-apps/plugin-dialog");
     return ask(message, { title: title ?? "Tine", kind: "warning" });
   }
-  async pickFolder(title?: string): Promise<string | null> {
+  async pickFolder(title?: string, defaultPath?: string): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const res = await open({ directory: true, multiple: false, title: title ?? "Open graph folder" });
+    const res = await open({ directory: true, multiple: false, title: title ?? "Open graph folder", defaultPath });
     return typeof res === "string" ? res : null;
   }
+  revealExport(path: string) { return this.call<void>("reveal_export", { path }); }
+  readCssFile(global: boolean) { return this.call<{ text: string; revision: string | null }>("read_css_file", { global }); }
+  saveCssFile(global: boolean, text: string, revision: string | null) { return this.call<string>("save_css_file", { global, text, revision }); }
   pickGraphFolder(): Promise<GraphFolderPickResult> {
     return this.call<GraphFolderPickResult>("pick_graph_folder");
   }

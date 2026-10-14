@@ -6,7 +6,7 @@ describe("OG-DUPAL1 shared computation owners", () => {
   it("F07 I-12: reference collapse mutations belong to referenceGroupCollapse.ts", () => {
     for (const panel of ["LinkedReferences", "UnlinkedReferences"]) {
       const text = source(`src/components/${panel}.tsx`);
-      expect(text).toContain("createReferenceGroupCollapse(");
+      expect(text).toContain(panel === "LinkedReferences" ? "createReferenceGroupCollapse(" : "<ReferenceSection");
       expect(text).not.toMatch(/setCollapsedGroupsFor|setCollapsedGroupsSignal|createReferenceFetcher/);
     }
   });

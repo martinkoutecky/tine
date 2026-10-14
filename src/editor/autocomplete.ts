@@ -10,6 +10,7 @@ import { pageIdentityKey } from "../pageIdentity";
 import { isEditablePropertyKey } from "./properties";
 import { codeFences, lineStartsInFence } from "./fences";
 import type { Format } from "../render/ast";
+import type { ObjectiveMatchClass } from "../types";
 
 export type TriggerKind =
   | "page"
@@ -361,6 +362,7 @@ export type LinkAutocompletePolicy = "adaptive" | "existing" | "typed";
 export interface NamedAutocompleteItem<T> {
   name: string;
   item: T;
+  matchClass?: ObjectiveMatchClass;
 }
 
 function canonicalName(name: string): string {
@@ -386,6 +388,13 @@ export function orderAcItems<T>(
   const removeAccents = opts.removeAccents !== false;
   const foldedQuery = searchFold(opts.query.trim(), removeAccents);
   if (!query) return [];
+  // Keep the existing Create policy entirely inside the native band. Both
+  // inline completion and Capture pass the backend's explicit expansion class.
+  const expansions = matches.filter((match) => match.matchClass === "transliteration");
+  if (expansions.length) {
+    return [...orderAcItems(matches.filter((match) => match.matchClass !== "transliteration"), createItem, opts),
+      ...expansions.map((match) => match.item)];
+  }
   const exact = matches.filter((match) => canonicalName(match.name) === query).sort(canonicalCompare);
   const remaining = exact.length
     ? matches.filter((match) => canonicalName(match.name) !== query)
