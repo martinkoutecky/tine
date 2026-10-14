@@ -1,0 +1,13 @@
+delete-failed = Delete failed: { $reason }
+delete-reason-rewrite = The graph is being rewritten. Try again after it finishes.
+delete-reason-target = This page target changed; reopen the page actions menu.
+delete-reason-read-only = This page is read-only.
+delete-reason-conflict = The page's save conflict could not be resolved.
+delete-reason-storage = { $reason }
+delete-reason-unsaved = Couldn't save “{ $name }”; the page was not deleted.
+delete-reason-no-host = The graph's storage session is not available.
+delete-reason-waiting = “{ $name }” is still saving; try deleting it again in a moment.
+delete-reason-pending = “{ $name }” is deleted once its file can be written; Tine keeps trying.
+delete-reason-uncertain = Tine couldn't confirm that “{ $name }” was deleted; it keeps trying.
+delete-reason-superseded = “{ $name }” was changed by a later edit, so it was not deleted.
+delete-reason-refused = Storage refused the delete without providing a reason.

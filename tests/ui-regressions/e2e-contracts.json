@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-sweep-bugs.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A bindable Duplicate above copies and saves its subtree; the icon property stays visible and editable; a refused delete explains the known cause and keeps the page file.","blocking":true},{"class":"exact-safety-interoperability","userOutcome":"An iframe's authored pixel height and percentage width determine its rendered size.","blocking":true,"authority":"Sweep-bugs GH #54 browser/OG HTML-attribute sizing contract."}],
+      "acceptableVariations":["Layout, glyph rendering, publication latency and storage error text may vary while author sizing, subtree content and retained page bytes remain correct."],
+      "nonRequirements":["Arbitrary iframe CSS, Android failure diagnosis, exact styling or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-reference-batch.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Aliases preview their source title and properties; task marker pages expose source-backed task toggles; Favorites block rows open their block and derive their star without config block entries.","blocking":true}],
       "acceptableVariations":["Preview positioning, result order, emoji rendering and publication latency may vary while source identity, saved task state and favorite membership remain correct."],

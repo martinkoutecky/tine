@@ -419,6 +419,7 @@ const COMMANDS: CommandDef[] = [
   // each acts on the block selection, else on the block being edited.
   { id: "select/copy-block-ref", binding: "", label: msg("command-select-copy-block-ref"), scope: "global", run: () => { copyTargetBlockRefs(); }, global: true },
   { id: "editor/duplicate-block", binding: "", label: msg("command-editor-duplicate-block"), scope: "global", run: () => void duplicateTargetBlocks(), global: true },
+  { id: "editor/duplicate-block-above", binding: "", label: msg("command-editor-duplicate-block-above"), scope: "global", run: () => void duplicateTargetBlocks("above"), global: true },
   { id: "editor/insert-child-block", binding: "", label: msg("command-editor-insert-child-block"), scope: "global", run: () => { insertChildIntoTarget(); }, global: true },
   { id: "editor/select-embedding-block", binding: "", label: msg("command-editor-select-embedding-block"), scope: "global", run: () => { dispatchFocusedEditorCommand("editor/select-embedding-block"); }, global: true },
   { id: "editor/collapse-children", binding: "", label: msg("command-editor-collapse-children"), scope: "global", run: () => { setTargetChildrenCollapsed(true); }, global: true },

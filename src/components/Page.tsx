@@ -258,9 +258,9 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
 }
 
 // Page properties NOT shown in the under-title property list: `alias` is surfaced
-// as "aka" chips above, and `icon` is consumed as the page icon next to the title
-// (OG hides it too). Other internal/metadata page props could be added here.
-const PAGE_PROPS_HIDDEN = new Set(["alias", "icon", "tine.tag-table"]);
+// as "aka" chips above. `icon` stays editable here as well as decorating the
+// title, matching OG's editable-built-in-properties. Hide internal tag-table metadata.
+const PAGE_PROPS_HIDDEN = new Set(["alias", "tine.tag-table"]);
 const TAG_TABLE_PROP = "tine.tag-table";
 
 function paneContextFromContext() {
@@ -1071,7 +1071,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
       </Show>
       <Show when={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
         <div class="page-properties" onClick={editPageHeader}>
-          {/* `alias`/`icon` are surfaced elsewhere (chips / title icon) — see PAGE_PROPS_HIDDEN. */}
+          {/* `alias` is surfaced as chips — see PAGE_PROPS_HIDDEN. */}
           <For each={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
             {([key, value]) => (
               <div class="prop-row">

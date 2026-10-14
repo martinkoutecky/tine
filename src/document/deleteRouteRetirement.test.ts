@@ -7,6 +7,8 @@ import { loadSingle } from "./workingSet";
 import { paneRouter, removePageTargetAcrossPanes, resetPaneLayoutToSingle } from "../panes";
 import { bindTestHost } from "./host/wiring.test.support";
 import { setToasts, toasts } from "../toasts";
+import { renderEnglish } from "../i18n";
+import { setDoc } from "./model";
 
 // GH #376 (master 950ca6ccb): deleting the open page on Android passed through
 // a black frame. The page left the working set first and its pane route was
@@ -33,6 +35,43 @@ afterEach(() => {
 });
 
 describe("page delete retires routes before purging the page (GH #376)", () => {
+  it("GH #687: returns the known storage failure to the caller without retiring the page", async () => {
+    vi.spyOn(backend(), "pageDelete").mockRejectedValue(new Error("Storage permission denied"));
+    const why = vi.fn();
+    const retire = vi.fn();
+    expect(await deletePage("Doomed", "page", undefined, retire, why)).toBe(false);
+    expect(why).toHaveBeenCalled();
+    expect(JSON.stringify(why.mock.calls)).toContain("Storage permission denied");
+    expect(retire).not.toHaveBeenCalled();
+    expect(pageByName("Doomed")).toBeDefined();
+  });
+
+  it.each([
+    ["pending", "once its file can be written"],
+    ["uncertain", "couldn't confirm"],
+    ["superseded", "changed by a later edit"],
+    ["refused", "without providing a reason"],
+  ] as const)("GH #687: passes the known %s result to the menu without another toast", async (operation, says) => {
+    setToasts([]);
+    vi.spyOn(backend(), "pageDelete").mockResolvedValueOnce(operation);
+    const why = vi.fn();
+    expect(await deletePage("Doomed", "page", undefined, undefined, why)).toBe(false);
+    expect(renderEnglish(why.mock.calls[0][0])).toContain(says);
+    expect(toasts()).toHaveLength(0);
+    expect(pageByName("Doomed")).toBeDefined();
+  });
+
+  it("GH #687: names read-only and stale-target refusals before reaching storage", async () => {
+    const remove = vi.spyOn(backend(), "pageDelete");
+    const why = vi.fn();
+    setDoc("pages", 0, "readOnly", true);
+    expect(await deletePage("Doomed", "page", undefined, undefined, why)).toBe(false);
+    expect(renderEnglish(why.mock.calls[0][0])).toContain("read-only");
+    why.mockClear();
+    expect(await deletePage("Doomed", "page", "pages/other.md", undefined, why)).toBe(false);
+    expect(renderEnglish(why.mock.calls[0][0])).toContain("target changed");
+    expect(remove).not.toHaveBeenCalled();
+  });
   it("never shows a pane route that names a page already purged", async () => {
     const remove = vi.spyOn(backend(), "pageDelete");
     const orphanedFrames: string[] = [];

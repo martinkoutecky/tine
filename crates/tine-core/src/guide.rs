@@ -292,6 +292,7 @@ mod journal_guide_tests {
             "Ctrl/Cmd+Shift+V",
             "Paste as link",
             "Duplicate block below (with children)",
+            "Duplicate block above (with children)",
             "Insert child block",
             "Collapse children (one level)",
             "Expand children (one level)",
@@ -303,6 +304,13 @@ mod journal_guide_tests {
                 "Guide is missing keyboard command: {label}"
             );
         }
+    }
+
+    #[test]
+    fn page_icon_property_remains_editable_in_the_guide() {
+        let reference = include_str!("templates/pages-links-references-search.md");
+        assert!(reference.contains("`icon::` property stays visible in the page-properties block"));
+        assert!(reference.contains("click its row to edit it"));
     }
 
     #[test]

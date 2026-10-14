@@ -13,6 +13,7 @@ export interface MessageArgs {
   "command-editor-copy-embed": {};
   "command-editor-cycle-todo": {};
   "command-editor-duplicate-block": {};
+  "command-editor-duplicate-block-above": {};
   "command-editor-edit-selected-block": {};
   "command-editor-expand": {};
   "command-editor-expand-children": {};
@@ -104,6 +105,19 @@ export interface MessageArgs {
   "command-ui-toggle-theme": {};
   "command-ui-toggle-wide-mode": {};
   "command-window-open-in-new-window": {};
+  "delete-failed": { "reason": string | number };
+  "delete-reason-conflict": {};
+  "delete-reason-no-host": {};
+  "delete-reason-pending": { "name": string | number };
+  "delete-reason-read-only": {};
+  "delete-reason-refused": {};
+  "delete-reason-rewrite": {};
+  "delete-reason-storage": { "reason": string | number };
+  "delete-reason-superseded": { "name": string | number };
+  "delete-reason-target": {};
+  "delete-reason-uncertain": { "name": string | number };
+  "delete-reason-unsaved": { "name": string | number };
+  "delete-reason-waiting": { "name": string | number };
   "favorites-block-action": {};
   "graph-wsl-rootfs-refused": {};
   "links-copy-title": {};
