@@ -172,7 +172,7 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
           <button
             class="icon-btn pdf-overflow-action"
             classList={{ active: areaMode() }}
-            title={t("pdf-area-highlight-drag-a-rectangle-to-capture-a-region-as-an-image", { value: String(isMac ? "⌘" : "Shift") })}
+            title={t("pdf-area-highlight-drag-a-rectangle-to-capture-a-region-as-an-image", { shortcut: String(isMac ? "⌘" : "Shift") })}
             onClick={() => setAreaMode((v) => !v)}
           >
             ▭
@@ -304,7 +304,7 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
             }}
           />
           <span class="pdf-find-count">
-            {findCount() ? t("pdf-find-count", { value: String(findCur()), count: String(findCount()), value3: String(findTruncated() ? "+" : "") }) : findQuery().trim() ? findTruncated() ? t("pdf-no-results-in-scanned-text") : t("pdf-no-results") : ""}
+            {findCount() ? t("pdf-find-count", { index: String(findCur()), count: String(findCount()), truncatedSuffix: String(findTruncated() ? "+" : "") }) : findQuery().trim() ? findTruncated() ? t("pdf-no-results-in-scanned-text") : t("pdf-no-results") : ""}
           </span>
           <button class="icon-btn" title={t("pdf-previous-match-shift-enter")} onClick={() => nextMatch(-1)}>
             ↑

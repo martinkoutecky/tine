@@ -40,7 +40,7 @@ conflict-resolution-these-two-files-can-t-be-folded-together = These two files c
 
 conflict-resolution-couldn-t-read-this-conflict = Couldn’t read this conflict. ({ $error })
 
-conflict-resolution-couldn-t-read-this-conflict-2 = Couldn’t read this conflict.
+conflict-resolution-conflict-unavailable = Couldn’t read this conflict.
 
 conflict-resolution-the-two-versions-are-identical-nothing-to-decide = The two versions are identical — nothing to decide.
 
@@ -110,7 +110,8 @@ journal-conflict-file-row-rename = Rename…
 
 journal-conflict-file-row-trash = Trash
 
-journal-conflict-file-row-couldn-t-read-this-file = Couldn't read this file: { $preview_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+journal-conflict-file-row-couldn-t-read-this-file = Couldn't read this file: { $error }
 
 journal-conflict-file-row-new-page-name = New page name
 

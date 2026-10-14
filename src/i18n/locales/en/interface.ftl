@@ -4,7 +4,7 @@ capture-page-title-optional-if-empty-appended-to-today = Page Title (optional, i
 
 capture-file-capture = File capture
 
-annotation-body-open-in-pdf-p = Open in PDF (P{ $hl_page })
+annotation-body-open-in-pdf-p = Open in PDF (P{ $pageNumber })
 
 audio-overlay-close-esc = Close (Esc)
 
@@ -140,7 +140,7 @@ page-props-done = Done
 
 page-props-remove = Remove { $key }
 
-page-props-remove-2 = Remove
+page-props-remove-action = Remove
 
 page-props-tine-can-remove-this-key-but-not-rewrite = Tine can remove this key but not rewrite it: keys may use letters, numbers, _, ., / or -.
 
@@ -252,7 +252,7 @@ move-notice-show = Show
 
 manager-the-installed-manifest-could-not-be-validated = The installed manifest could not be validated.
 
-router-close-pinned-tab = Close pinned tab “{ $route_title_tab_route_t }”?
+router-close-pinned-tab = Close pinned tab “{ $title }”?
 
 session-unavailable-pdf = Unavailable PDF
 

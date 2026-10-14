@@ -44,7 +44,7 @@ query-page-results-page = page
 
 query-page-results-journal = Journal
 
-query-page-results-page-2 = Page
+query-page-results-page-label = Page
 
 query-page-results-page-results = Page results
 

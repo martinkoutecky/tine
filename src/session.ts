@@ -622,7 +622,7 @@ export async function restoreSession(): Promise<void> {
       if (!owner()) return;
       await initializeWorkspaces();
     } catch (error) {
-      if (owner()) pushToastUnique(msg("session-could-not-restore-workspaces", { string_error: String(error) }), "error");
+      if (owner()) pushToastUnique(msg("session-could-not-restore-workspaces", { error: String(error) }), "error");
     }
   }
 }

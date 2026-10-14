@@ -1,5 +1,5 @@
-import { Rich } from "./ThemeChoice";
-import { t, render, renderEnglish, type Msg } from "../i18n";
+import { Rich } from "../i18n/Rich";
+import { msg, t, render, renderEnglish, type Msg } from "../i18n";
 import { For, Show, type JSX } from "solid-js";
 import {
   KNOBS,
@@ -88,7 +88,7 @@ export function StyleKnobsSettings(props: { knobs?: readonly StyleKnob[] }): JSX
   const table = () => props.knobs ?? KNOBS;
   return (
     <><div class="settings-section">{t("settings-fine-tuning")}</div>
-      <div class="settings-hint theme-gallery-hint"><Rich text={t("settings-small-visual-details-saved-on-this-device")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
+      <div class="settings-hint theme-gallery-hint"><Rich message={msg("settings-small-visual-details-saved-on-this-device")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
       <For each={table()}>
         {(knob) =>
           knob.type === "heading" ? (
@@ -100,7 +100,7 @@ export function StyleKnobsSettings(props: { knobs?: readonly StyleKnob[] }): JSX
                 <div class="settings-field-control">
                   <KnobControl knob={knob} />
                   <Show when={knobIsSet(knob, styleKnobValues())}>
-                    <button class="settings-btn knob-reset" aria-label={t("settings-reset-2", { title: display(knob.title) })} onClick={() => setKnob(knob, undefined)}>{t("settings-reset")}</button>
+                    <button class="settings-btn knob-reset" aria-label={t("settings-reset-control", { title: display(knob.title) })} onClick={() => setKnob(knob, undefined)}>{t("settings-reset")}</button>
                   </Show>
                 </div>
               </div>

@@ -80,5 +80,5 @@ export function ExternalLink(props: { dest: string; class?: string; children: JS
  *  refused scheme, a missing file and a platform with no file manager otherwise
  *  all look like a dead link (GH #444, master c817fb150). */
 export function reportLinkOpenFailure(dest: string, error: unknown): void {
-  pushToast(msg("external-link-couldn-t-open", { dest: String(dest), string_error: String(error) }), "error");
+  pushToast(msg("external-link-couldn-t-open", { dest: String(dest), error: String(error) }), "error");
 }

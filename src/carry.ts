@@ -71,7 +71,7 @@ export async function carryPrevDay(): Promise<void> {
     if (result.kind === "stale") return;
     days = result.value;
   } catch (error) {
-    if (owner()) pushToast(msg("carry-could-not-read-journal-days-for-carry", { string_error: String(error) }), "error");
+    if (owner()) pushToast(msg("carry-could-not-read-journal-days-for-carry", { error: String(error) }), "error");
     return;
   }
   if (!owner()) return;
@@ -100,7 +100,7 @@ export async function carryDay(pageName: string): Promise<void> {
     if (refuseConflictedMove([today, pageName])) return;
     await report(carryUnfinished([pageName], carryKeepsContext(), carryHeaderText()), today, owner);
   } catch (error) {
-    if (owner()) pushToast(msg("carry-could-not-carry-tasks", { string_error: String(error) }), "error");
+    if (owner()) pushToast(msg("carry-could-not-carry-tasks", { error: String(error) }), "error");
   }
 }
 
@@ -127,6 +127,6 @@ export async function carryDaysBack(days: number): Promise<void> {
     if (refuseConflictedMove([today, ...titles])) return;
     await report(carryUnfinished(titles, carryKeepsContext(), carryHeaderText()), today, owner);
   } catch (error) {
-    if (owner()) pushToast(msg("carry-could-not-carry-tasks", { string_error: String(error) }), "error");
+    if (owner()) pushToast(msg("carry-could-not-carry-tasks", { error: String(error) }), "error");
   }
 }

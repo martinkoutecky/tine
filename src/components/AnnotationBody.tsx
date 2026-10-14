@@ -26,7 +26,7 @@ export function AnnotationBody(props: {
         class="hl-prefix"
         data-highlight-id={props.highlightId}
         onClick={openHighlightPdf}
-        title={t("annotation-body-open-in-pdf-p", { hl_page: String(props.hlPage) })}
+        title={t("annotation-body-open-in-pdf-p", { pageNumber: String(props.hlPage) })}
       >
         <span class="hl-dot" style={{ background: HL_COLOR_SOLID[props.color] ?? HL_COLOR_SOLID.yellow }} />
         <strong class="hl-page-badge">P{props.hlPage}</strong>

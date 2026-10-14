@@ -12,7 +12,7 @@ calendar-jump-empty = Empty
 
 calendar-jump-today = Today
 
-namespace-namespace-2 = Namespace
+namespace-macro-label = Namespace
 
 namespace-hierarchy = Hierarchy
 
@@ -110,11 +110,11 @@ sidebar-favorites-expand = Expand
 
 sidebar-favorites-collapse = Collapse
 
-sidebar-favorites-rename-group = Rename group { $raw }
+sidebar-favorites-rename-group = Rename group { $groupName }
 
 sidebar-favorites-delete-this-group-what-it-holds-moves-up = Delete this group (what it holds moves up a level)
 
-sidebar-favorites-delete-group = Delete group { $raw }
+sidebar-favorites-delete-group = Delete group { $groupName }
 
 sidebar-favorites-new-group = + New group
 
@@ -128,13 +128,13 @@ tab-bar-show-all-tabs = Show all tabs
 
 tab-bar-open-tabs = Open tabs
 
-tab-bar-reorder = Reorder { $tab_route_tab }
+tab-bar-reorder = Reorder { $title }
 
 tab-bar-drag-to-reorder-alt-up-down-moves-the = Drag to reorder; Alt+Up/Down moves the focused tab
 
 tab-bar-pinned = Pinned
 
-tab-bar-close = Close { $tab_route_tab }
+tab-bar-close = Close { $title }
 
 tagged-pages-some-tagged-pages-are-omitted-because-the-query = Some tagged pages are omitted because the query result limit was reached.
 
@@ -162,19 +162,19 @@ window-chrome-close = Close
 
 workspace-switcher-delete-workspace = Delete workspace “{ $name }”?
 
-workspace-switcher-workspace = Workspace: { $value }
+workspace-switcher-workspace = Workspace: { $name }
 
 workspace-switcher-quick-switch-workspace = Quick switch workspace
 
 workspace-switcher-workspaces = Workspaces
 
-workspace-switcher-rename = Rename { $value }
+workspace-switcher-rename = Rename { $name }
 
-workspace-switcher-rename-2 = Rename
+workspace-switcher-rename-action = Rename
 
-workspace-switcher-delete = Delete { $value }
+workspace-switcher-delete = Delete { $name }
 
-workspace-switcher-delete-2 = Delete
+workspace-switcher-delete-action = Delete
 
 workspace-switcher-new-workspace = + New workspace
 

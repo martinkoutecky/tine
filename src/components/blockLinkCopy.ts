@@ -85,6 +85,6 @@ export async function copyTineLink(target: { page: string } | { blocks: readonly
     await writeOwned(owner, writeClipboardText(text));
     if (bindingCurrent(binding)) pushToast(msg("block-link-copy-copied-tine-link"), "success");
   } catch (error) {
-    if (bindingCurrent(binding)) pushToast(msg("block-link-copy-couldn-t-copy-tine-link", { string_error: String(error) }), "error");
+    if (bindingCurrent(binding)) pushToast(msg("block-link-copy-couldn-t-copy-tine-link", { error: String(error) }), "error");
   }
 }

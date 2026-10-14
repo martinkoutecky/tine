@@ -32,7 +32,7 @@ export function HomePageSetting(): JSX.Element {
       setPicking(false);
       setQuery("");
     } catch (error) {
-      if (owner()) pushToast(msg("home-page-setting-could-not-save-home-page", { string_error: String(error) }), "error");
+      if (owner()) pushToast(msg("home-page-setting-could-not-save-home-page", { error: String(error) }), "error");
     }
   };
   return (

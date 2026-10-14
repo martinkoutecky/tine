@@ -19,7 +19,7 @@ export async function initCodeDisplay(): Promise<void> {
     const loaded = await readOwned(revisionOwner(slot, currentRevision(slot)), backend().getAppString(key, "0"));
     if (loaded.kind === "current") setWrapping(loaded.value === "1");
   } catch (error) {
-    pushToast(msg("code-display-could-not-load-code-wrapping", { string_error: String(error) }), "error");
+    pushToast(msg("code-display-could-not-load-code-wrapping", { error: String(error) }), "error");
   }
 }
 
@@ -27,5 +27,5 @@ export function changeCodeWrapping(value: boolean): void {
   setWrapping(value);
   const owner = revisionOwner(slot, advanceRevision(slot));
   void writeOwned(owner, backend().setAppString(key, value ? "1" : "0"))
-    .catch(error => pushToast(msg("code-display-could-not-remember-code-wrapping", { string_error: String(error) }), "error"));
+    .catch(error => pushToast(msg("code-display-could-not-remember-code-wrapping", { error: String(error) }), "error"));
 }

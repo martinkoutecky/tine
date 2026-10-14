@@ -83,6 +83,6 @@ export async function importCaptureToOrigin(token: AssetEditorToken, path: strin
     }
   }
   if (origin === undefined || origin === graphMeta()?.root) return stored;
-  pushToast(msg("asset-landing-saved-to-the-assets-of-graph-it-was", { stored: String(stored), graph_name_origin: String(graphName(origin)) }), "info");
+  pushToast(msg("asset-landing-saved-to-the-assets-of-graph-it-was", { stored: String(stored), graphName: String(graphName(origin)) }), "info");
   return null;
 }

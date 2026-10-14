@@ -15,7 +15,7 @@ toast-graph-open-owner-waiting = Finishing the command line's work on this graph
 # Application notices. Error/detail variables carry untranslated diagnostics; names and paths are graph content.
 asset-landing-the-asset-was-saved-but-it-was-not = The asset was saved, but it was not inserted because the graph or block changed.
 
-asset-landing-saved-to-the-assets-of-graph-it-was = Saved { $stored } to the assets/ of graph “{ $graph_name_origin }”; it was not inserted because the graph changed.
+asset-landing-saved-to-the-assets-of-graph-it-was = Saved { $stored } to the assets/ of graph “{ $graphName }”; it was not inserted because the graph changed.
 
 backup-restore-some-pages-couldn-t-be-saved-resolve-conflicts = Some pages couldn't be saved — resolve conflicts before restoring.
 
@@ -25,7 +25,8 @@ backup-restore-restore-failed-part-way = Restore failed part-way: { $error }
 
 backup-restore-restored-snapshot-from = Restored snapshot from { $when }
 
-backup-restore-restore-failed = Restore failed: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+backup-restore-restore-failed = Restore failed: { $error }
 
 binding-some-state-of-the-previous-graph-could-not = Some state of the previous graph could not be cleared (binding.clear, { $failures } failed).
 
@@ -37,19 +38,24 @@ block-ref-actions-too-much-selected-to-duplicate = Too much selected to duplicat
 
 carry-carry-couldn-t-be-saved-resolve-the-conflict = Carry couldn't be saved — resolve the conflict; your moved tasks are kept in the editor.
 
-carry-could-not-read-journal-days-for-carry = Could not read journal days for carry: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+carry-could-not-read-journal-days-for-carry = Could not read journal days for carry: { $error }
 
 carry-no-previous-day-with-content-to-carry-from = No previous day with content to carry from
 
-carry-could-not-carry-tasks = Could not carry tasks: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+carry-could-not-carry-tasks = Could not carry tasks: { $error }
 
-code-display-could-not-load-code-wrapping = Could not load code wrapping: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+code-display-could-not-load-code-wrapping = Could not load code wrapping: { $error }
 
-code-display-could-not-remember-code-wrapping = Could not remember code wrapping: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+code-display-could-not-remember-code-wrapping = Could not remember code wrapping: { $error }
 
 conflict-overview-discarded = Discarded { $name }
 
-conflict-overview-couldn-t-discard-it = Couldn’t discard it: { $string_e }
+# $error is an untranslated diagnostic from the operating system or backend.
+conflict-overview-couldn-t-discard-it = Couldn’t discard it: { $error }
 
 conflict-resolution-finish-the-current-edit-then-apply-this-resolution = Finish the current edit, then apply this resolution.
 
@@ -61,11 +67,13 @@ conflict-resolution-resolve-this-page-s-save-conflict-first-then = Resolve this 
 
 conflict-resolution-the-file-changed-on-disk-re-reading-it = The file changed on disk — re-reading it, please redo your choices.
 
-conflict-resolution-couldn-t-resolve-it = Couldn’t resolve it: { $error_detail_e }
+# $error is an untranslated diagnostic from the operating system or backend.
+conflict-resolution-couldn-t-resolve-it = Couldn’t resolve it: { $error }
 
-conflict-resolution-still-has-unresolved-conflicts = “{ $cleanup_page_name }” still has unresolved conflicts
+conflict-resolution-still-has-unresolved-conflicts = “{ $page }” still has unresolved conflicts
 
-conflict-resolution-couldn-t-do-that = Couldn’t do that: { $error_detail_e }
+# $error is an untranslated diagnostic from the operating system or backend.
+conflict-resolution-couldn-t-do-that = Couldn’t do that: { $error }
 
 diagnostics-tab-could-not-create-the-diagnostic-report = Could not create the diagnostic report.
 
@@ -93,7 +101,8 @@ export-modal-copied-to-clipboard = Copied to clipboard
 
 export-modal-couldn-t-copy-clipboard-write-failed = Couldn't copy: clipboard write failed.
 
-external-link-couldn-t-open = Couldn't open { $dest }. ({ $string_error })
+# $error is an untranslated diagnostic from the operating system or backend.
+external-link-couldn-t-open = Couldn't open { $dest }. ({ $error })
 
 failure-boundary-could-not-be-displayed = { $region } could not be displayed.
 
@@ -109,53 +118,69 @@ graph-verification-graph-verification-report-saved = Graph verification report s
 
 graph-verification-could-not-save-the-graph-verification-report = Could not save the graph verification report.
 
-graph-verification-could-not-compare-the-reports = Could not compare the reports: { $value }
+graph-verification-could-not-compare-the-reports = Could not compare the reports: { $error }
 
-home-page-setting-could-not-save-home-page = Could not save home page: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+home-page-setting-could-not-save-home-page = Could not save home page: { $error }
 
-journal-filename-panel-couldn-t-list-journal-files-to-rename = Couldn’t list journal files to rename: { $string_e }
+# $error is an untranslated diagnostic from the operating system or backend.
+journal-filename-panel-couldn-t-list-journal-files-to-rename = Couldn’t list journal files to rename: { $error }
 
-journal-filename-panel-couldn-t-rename-them = Couldn’t rename them: { $string_e }
+# $error is an untranslated diagnostic from the operating system or backend.
+journal-filename-panel-couldn-t-rename-them = Couldn’t rename them: { $error }
 
-property-type-could-not-save-property-type = Could not save property type: { $message_string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+property-type-could-not-save-property-type = Could not save property type: { $error }
 
 quick-switcher-the-graph-changed-before-the-page-was-created = The graph changed before the page was created. Try again.
 
-quick-switcher-could-not-create-it-will-be-saved-on = Could not create “{ $name }”: { $string_error }. It will be saved on your first edit.
+# $error is an untranslated diagnostic from the operating system or backend.
+quick-switcher-could-not-create-it-will-be-saved-on = Could not create “{ $name }”: { $error }. It will be saved on your first edit.
 
-quick-switcher-could-not-create = Could not create “{ $name }”: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+quick-switcher-could-not-create = Could not create “{ $name }”: { $error }
 
 quick-switcher-that-pane-is-no-longer-available-close-this = That pane is no longer available. Close this search and try again.
 
-sidebar-couldn-t-remove-graph = Couldn't remove graph. ({ $string_error })
+# $error is an untranslated diagnostic from the operating system or backend.
+sidebar-couldn-t-remove-graph = Couldn't remove graph. ({ $error })
 
-sidebar-couldn-t-open-the-graph-picker = Couldn't open the graph picker. ({ $string_error })
+# $error is an untranslated diagnostic from the operating system or backend.
+sidebar-couldn-t-open-the-graph-picker = Couldn't open the graph picker. ({ $error })
 
-sidebar-couldn-t-create-the-graph = Couldn't create the graph. ({ $string_error })
+# $error is an untranslated diagnostic from the operating system or backend.
+sidebar-couldn-t-create-the-graph = Couldn't create the graph. ({ $error })
 
 toasts-image-copied = Image copied
 
 toasts-couldn-t-copy-the-image = Couldn't copy the image
 
-workspace-switcher-couldn-t-delete-workspace = Couldn't delete workspace: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+workspace-switcher-couldn-t-delete-workspace = Couldn't delete workspace: { $error }
 
 block-link-copy-couldn-t-copy-block-save-or-clipboard-write = Couldn't copy block { $kind }: save or clipboard write failed.
 
 block-link-copy-copied-tine-link = Copied Tine link
 
-block-link-copy-couldn-t-copy-tine-link = Couldn't copy Tine link: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+block-link-copy-couldn-t-copy-tine-link = Couldn't copy Tine link: { $error }
 
-graph-row-menu-could-not-show-the-graph-folder = Could not show the graph folder: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+graph-row-menu-could-not-show-the-graph-folder = Could not show the graph folder: { $error }
 
-graph-row-menu-could-not-copy-graph-path = Could not copy graph path: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+graph-row-menu-could-not-copy-graph-path = Could not copy graph path: { $error }
 
-graph-row-menu-could-not-remove-graph = Could not remove graph: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+graph-row-menu-could-not-remove-graph = Could not remove graph: { $error }
 
 page-trailing-could-not-add-a-block-to-this-page = Could not add a block to this page.
 
-content-width-could-not-remember-the-page-width = Could not remember the page width: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+content-width-could-not-remember-the-page-width = Could not remember the page width: { $error }
 
-content-width-could-not-load-the-page-width = Could not load the page width: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+content-width-could-not-load-the-page-width = Could not load the page width: { $error }
 
 debug-debug-log-unavailable = Debug log unavailable.
 
@@ -163,15 +188,20 @@ debug-tine-did-not-close-cleanly-last-time-a = Tine did not close cleanly last t
 
 debug-debug-logging-is-on = Debug logging is ON → { $path }
 
-deep-link-navigation-couldn-t-open-tine-link = Couldn't open Tine link: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+deep-link-navigation-couldn-t-open-tine-link = Couldn't open Tine link: { $error }
 
-deep-link-navigation-couldn-t-receive-tine-link = Couldn't receive Tine link: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+deep-link-navigation-couldn-t-receive-tine-link = Couldn't receive Tine link: { $error }
 
-deep-link-navigation-couldn-t-listen-for-tine-links = Couldn't listen for Tine links: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+deep-link-navigation-couldn-t-listen-for-tine-links = Couldn't listen for Tine links: { $error }
 
-defender-hint-could-not-run-the-exclusion = Could not run the exclusion: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+defender-hint-could-not-run-the-exclusion = Could not run the exclusion: { $error }
 
-defender-hint-could-not-remember-that-you-closed-the-hint = Could not remember that you closed the hint: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+defender-hint-could-not-remember-that-you-closed-the-hint = Could not remember that you closed the hint: { $error }
 
 blocks-outline-is-too-deep-to-insert-a-child = Outline is too deep to insert a child
 
@@ -189,23 +219,26 @@ properties-page-header-properties-must-contain-only-valid-key = Page-header prop
 
 selection-outline-is-too-deep-to-indent = Outline is too deep to indent
 
-graph-rewrite-rename-failed = Rename failed: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+graph-rewrite-rename-failed = Rename failed: { $error }
 
 history-undo-history-for-this-page-was-discarded-the = Undo history for this page was discarded: the page was reloaded since those edits
 
 history-redo-skipped-a-block-with-the-same-id = Redo skipped: a block with the same id now exists
 
-favorites-could-not-read-the-favorites-page = Could not read the Favorites page "{ $page }": { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+favorites-could-not-read-the-favorites-page = Could not read the Favorites page "{ $page }": { $error }
 
 favorites-recovered-the-favorites-page-from-an-interrupted-save = Recovered the Favorites page "{ $name }" from an interrupted save; repeat your last change.
 
 filedrop-drop-a-file-onto-a-block-to-insert = Drop a file onto a block to insert it.
 
-filedrop-has-cells-csv-tsv-drops-are-limited-to = "{ $basename_path }" has { $cells } cells; CSV/TSV drops are limited to { $max_dropped_cells }.
+filedrop-has-cells-csv-tsv-drops-are-limited-to = "{ $fileName }" has { $cells } cells; CSV/TSV drops are limited to { $cellLimit }.
 
 filedrop-dropped-files-could-not-be-inserted-at-this = Dropped files could not be inserted at this outline depth.
 
-filedrop-couldn-t-insert-dropped-file = Couldn't insert dropped file: { $string_e }
+# $error is an untranslated diagnostic from the operating system or backend.
+filedrop-couldn-t-insert-dropped-file = Couldn't insert dropped file: { $error }
 
 follow-link-couldn-t-find-the-referenced-block = Couldn't find the referenced block
 
@@ -219,17 +252,21 @@ graph-open-failure-couldn-t-open-the-graph = Couldn't open the graph. ({ $detail
 
 graph-preferences-could-not-save = Could not save { $label }.
 
-graph-session-couldn-t-save-the-journal-template-setting = Couldn't save the journal template setting. ({ $string_e })
+# $error is an untranslated diagnostic from the operating system or backend.
+graph-session-couldn-t-save-the-journal-template-setting = Couldn't save the journal template setting. ({ $error })
 
-guide-couldn-t-open-the-guide = Couldn't open the Guide. ({ $string_e })
+# $error is an untranslated diagnostic from the operating system or backend.
+guide-couldn-t-open-the-guide = Couldn't open the Guide. ({ $error })
 
-guide-couldn-t-copy-the-guide-into-your-graph = Couldn't copy the Guide into your graph. ({ $string_e })
+# $error is an untranslated diagnostic from the operating system or backend.
+guide-couldn-t-copy-the-guide-into-your-graph = Couldn't copy the Guide into your graph. ({ $error })
 
 guide-could-not-save-guide-announcement-preference = Could not save Guide announcement preference.
 
 guide-new-in-app-guide-learn-sheets-formulas-queries = New: in-app Guide — learn Sheets, formulas & queries.
 
-home-page-couldn-t-open-the-home-page = Couldn't open the home page "{ $name }". ({ $string_error })
+# $error is an untranslated diagnostic from the operating system or backend.
+home-page-couldn-t-open-the-home-page = Couldn't open the home page "{ $name }". ({ $error })
 
 inpage-replace-nothing-was-replaced-this-page-cannot-be-edited = Nothing was replaced: this page cannot be edited right now.
 
@@ -264,7 +301,8 @@ query-export-budget-could-not-load-query-export-size-limit = Could not load quer
 
 query-page-props-is-no-longer-there-so-its-properties-cannot = "{ $name }" is no longer there, so its properties cannot be edited.
 
-reload-on-focus-tine-couldn-t-finish-checking-for-external-changes = Tine couldn't finish checking for external changes. Editing is available, but reopen the page before relying on it being current. ({ $string_error })
+# $error is an untranslated diagnostic from the operating system or backend.
+reload-on-focus-tine-couldn-t-finish-checking-for-external-changes = Tine couldn't finish checking for external changes. Editing is available, but reopen the page before relying on it being current. ({ $error })
 
 reload-on-focus-live-file-notifications-are-unavailable-for-this-graph = Live file notifications are unavailable for this graph ({ $message }). Tine checks for external changes every 3 seconds instead.
 
@@ -272,13 +310,16 @@ reload-on-focus-live-file-notifications-are-back-for-this-graph = Live file noti
 
 session-live-changes-were-kept-workspace-recovery-was-skipped = Live changes were kept; workspace recovery was skipped.
 
-session-could-not-restore-workspaces = Could not restore workspaces: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+session-could-not-restore-workspaces = Could not restore workspaces: { $error }
 
-share-ingest-a-shared-item-couldn-t-be-added-to = A shared item couldn't be added to today's journal: { $string_error }. It is kept and will be retried.
+# $error is an untranslated diagnostic from the operating system or backend.
+share-ingest-a-shared-item-couldn-t-be-added-to = A shared item couldn't be added to today's journal: { $error }. It is kept and will be retried.
 
-share-ingest-a-shared-item-couldn-t-be-added-to-2 = A shared item couldn't be added to today's journal. It is kept and will be retried.
+share-ingest-shared-item-retry = A shared item couldn't be added to today's journal. It is kept and will be retried.
 
-share-ingest-couldn-t-read-tine-s-share-inbox = Couldn't read Tine's share inbox: { $string_error }
+# $error is an untranslated diagnostic from the operating system or backend.
+share-ingest-couldn-t-read-tine-s-share-inbox = Couldn't read Tine's share inbox: { $error }
 
 sidebar-sizing-could-not-load-sidebar-width = Could not load sidebar width.
 
@@ -308,7 +349,7 @@ manager-could-not-load-installed-themes = Could not load installed themes.
 
 tray-the-tray-setting-was-saved-but-could-not = The tray setting was saved but could not be applied now.
 
-workspace-windows-at-most-extra-windows-can-be-open-at = At most { $max_workspace_windows } extra windows can be open at once.
+workspace-windows-at-most-extra-windows-can-be-open-at = At most { $windowLimit } extra windows can be open at once.
 
 workspace-windows-couldn-t-open-a-new-window = Couldn't open a new window.
 

@@ -66,7 +66,7 @@ export async function restoreBackupFromSettings(
     pushToast(msg("backup-restore-restored-snapshot-from", { when: String(when) }), "success");
     refresh();
   } catch (error) {
-    pushToast(msg("backup-restore-restore-failed", { string_error: String(error) }), "error");
+    pushToast(msg("backup-restore-restore-failed", { error: String(error) }), "error");
   } finally {
     if (transitioning && ownsTransition()) setGraphTransitioning(false);
     setBusy(false);

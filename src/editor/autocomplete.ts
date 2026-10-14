@@ -594,7 +594,7 @@ const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
   // Org-mode admonitions (Logseq's colored callouts). Caret lands on the empty
   // content line between BEGIN/END.
   ...["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"].map((type) => {
-    const label = msg("editor-completion-admonition", { value: type.toLowerCase() });
+    const label = msg("editor-completion-admonition", { type: type.toLowerCase() });
     return {
       matchLabel: `Admonition: ${type.toLowerCase()}`,
       labelMessage: label,

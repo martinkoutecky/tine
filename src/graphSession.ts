@@ -48,7 +48,7 @@ export function setJournalTemplate(name: string | null) {
     })
     .catch((e) => {
       // A durable failure is reported even when the graph has since changed.
-      pushToast(msg("graph-session-couldn-t-save-the-journal-template-setting", { string_e: String(e) }), "error");
+      pushToast(msg("graph-session-couldn-t-save-the-journal-template-setting", { error: String(e) }), "error");
       if (!bindingCurrent(binding) || currentRevision(journalTemplateWrites) !== revision) return;
       const cur = graphMeta();
       if (cur && cur.root === root && confirmedTemplate?.root === root) {

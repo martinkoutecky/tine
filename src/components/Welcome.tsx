@@ -1,4 +1,4 @@
-import { Rich } from "./ThemeChoice";
+import { Rich } from "../i18n/Rich";
 import { msg, t } from "../i18n";
 import { createEffect, createResource, createSignal, onCleanup, Show, type JSX } from "solid-js";
 import { switchGraph, createNewGraph, loadGraphPath } from "../graph";
@@ -53,7 +53,7 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
     const failed = failure();
     if (!failed) return;
     void writeClipboardText(`Could not open ${failed.path}\n${failed.message}`)
-      .catch((e) => pushToast(msg("welcome-could-not-copy", { Stringe: String(e) }), "error"));
+      .catch((e) => pushToast(msg("welcome-could-not-copy", { error: String(e) }), "error"));
   };
 
   return (
@@ -79,7 +79,7 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
             <path d="M16 36 H48" /><path d="M32 36 V70" />
           </g>
         </svg><h1 class="welcome-title">{t("welcome-welcome-to-tine")}</h1>
-        <p class="welcome-lede"><Rich text={t("welcome-a-fast-local-outliner-for-your-logseq")} slots={{ "strong": (children) => <strong>{children}</strong> }} /></p>
+        <p class="welcome-lede"><Rich message={msg("welcome-a-fast-local-outliner-for-your-logseq")} slots={{ "strong": (children) => <strong>{children}</strong> }} /></p>
 
         <Show when={failure()}>
           {(failed) => (

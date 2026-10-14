@@ -194,19 +194,19 @@ export async function ingestShares(): Promise<void> {
         outcome = await ingestOne(inbox, item, owner);
       } catch (error) {
         if (!owner()) return;
-        pushToast(msg("share-ingest-a-shared-item-couldn-t-be-added-to", { string_error: String(error) }), "error");
+        pushToast(msg("share-ingest-a-shared-item-couldn-t-be-added-to", { error: String(error) }), "error");
         continue;
       }
       if (outcome === "stale") return;
       if (outcome === "elsewhere") continue;
       if (outcome === "kept") {
-        pushToast(msg("share-ingest-a-shared-item-couldn-t-be-added-to-2"), "error");
+        pushToast(msg("share-ingest-shared-item-retry"), "error");
         continue;
       }
       pushToast(msg(CAPTURED_TOAST.id), "info");
     }
   } catch (error) {
-    if (owner()) pushToast(msg("share-ingest-couldn-t-read-tine-s-share-inbox", { string_error: String(error) }), "error");
+    if (owner()) pushToast(msg("share-ingest-couldn-t-read-tine-s-share-inbox", { error: String(error) }), "error");
   }
 }
 

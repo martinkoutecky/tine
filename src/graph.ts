@@ -131,13 +131,13 @@ export async function authorizeGraphAccess(path: string): Promise<boolean> {
   const displayExternal = access.display_external_assets_path ?? external;
   if (!external || access.approved) return true;
   const confirmation = await readOwned(owner, backend().confirm(
-    t("graph-this-graph-s-assets-folder-points-outside-the", { displayExternal: displayExternal ?? external }),
+    t("graph-this-graph-s-assets-folder-points-outside-the", { assetsDirectory: displayExternal ?? external }),
     t("graph-allow-external-assets-directory")
   ));
   if (confirmation.kind === "stale") return false;
   if (!confirmation.value) {
     pushToast(
-      msg("graph-graph-not-opened-its-external-assets-directory", { displayExternal: displayExternal ?? external }),
+      msg("graph-graph-not-opened-its-external-assets-directory", { assetsDirectory: displayExternal ?? external }),
       "error",
       { sticky: true }
     );
@@ -202,7 +202,7 @@ export async function loadGraphPath(
       if (result.kind === "stale") return { kind: "aborted" };
       prepared = result.value;
     } catch (error) {
-      pushToast(msg("graph-couldn-t-prepare-the-icloud-graph", { Stringerror: String(error) }), "error", { sticky: true });
+      pushToast(msg("graph-couldn-t-prepare-the-icloud-graph", { error: String(error) }), "error", { sticky: true });
       return { kind: "aborted" };
     }
     if (!bindingCurrent(startingBinding)) return { kind: "aborted" };
@@ -390,18 +390,18 @@ function reportDraftStatus(status: DraftStatus | null): void {
   const unsaved = status?.unsaved ?? [];
   const recovered = unsaved.filter((page) => page.recovered);
   if (recovered.length) {
-    pushToast(msg("graph-recovered-unsaved-edits-on-page-s-tine", { length: recovered.length, value: recovered.map((page) => page.path).join(", ") }),
+    pushToast(msg("graph-recovered-unsaved-edits-on-page-s-tine", { count: recovered.length, pages: recovered.map((page) => page.path).join(", ") }),
       "info", { sticky: true });
   }
   const held = unsaved.filter((page) => !page.recovered);
   if (held.length) {
     const why = (page: (typeof held)[number]) => page.conflict ? " (changed on disk; open it to choose)"
       : page.failing ? " (saving fails)" : "";
-    pushToast(msg("graph-page-s-still-have-edits-that-are", { length: held.length, value: held.map((page) => page.path + why(page)).join(", ") }),
+    pushToast(msg("graph-page-s-still-have-edits-that-are", { count: held.length, pages: held.map((page) => page.path + why(page)).join(", ") }),
       held.some((page) => page.conflict || page.failing) ? "error" : "info", { sticky: true });
   }
   if (status?.unreadable.length) {
-    pushToast(msg("graph-tine-left-unreadable-crash-recovery-file-s-in-place", { length: status.unreadable.length, value: status.unreadable.join(", ") }), "error", { sticky: true });
+    pushToast(msg("graph-tine-left-unreadable-crash-recovery-file-s-in-place", { count: status.unreadable.length, files: status.unreadable.join(", ") }), "error", { sticky: true });
   }
   if (!status?.unavailable) return;
   const id: number = pushToast(msg("graph-crash-recovery-is-off-for-this-graph", { unavailable: status.unavailable }), "error",
@@ -414,7 +414,7 @@ async function retryDrafts(): Promise<void> {
     pushToast(msg("graph-crash-recovery-is-on-again"), "success");
   } catch (error) {
     const restart = (await platformKind()) === "desktop";
-    pushToast(msg("graph-crash-recovery-is-still-off", { Stringerror: String(error) }), "error", restart
+    pushToast(msg("graph-crash-recovery-is-still-off", { error: String(error) }), "error", restart
       ? { sticky: true, action: { label: msg("graph-restart-tine"), run: () => void restartTine() } }
       : { sticky: true });
   }
@@ -650,7 +650,7 @@ export async function switchGraph(): Promise<LoadGraphPathOutcome> {
       result = picked.value;
     } catch (e) {
       const platformName = platform === "android" ? "Android" : "iOS";
-      pushToast(msg("graph-couldn-t-open-the-folder-picker", { platformName: platformName, Stringe: String(e) }), "error");
+      pushToast(msg("graph-couldn-t-open-the-folder-picker", { platform: platformName, error: String(e) }), "error");
       return { kind: "aborted" };
     }
     // Diagnostic breadcrumbs (visible in `adb logcat`, chromium console channel):
@@ -745,7 +745,7 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
       if (result.kind === "stale") return { kind: "aborted" };
       prepared = result.value;
     } catch (error) {
-      pushToast(msg("graph-couldn-t-prepare-the-icloud-location", { Stringerror: String(error) }), "error", { sticky: true });
+      pushToast(msg("graph-couldn-t-prepare-the-icloud-location", { error: String(error) }), "error", { sticky: true });
       return { kind: "aborted" };
     }
     if (prepared.status !== "ready") {
@@ -775,7 +775,7 @@ export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
     if (created === null || !owner()) return { kind: "aborted" };
     root = created;
   } catch (e) {
-    pushToast(msg("graph-couldn-t-create-the-graph", { currentGraph: graphMeta() ? "open" : "none", Stringe: String(e) }), "error");
+    pushToast(msg("graph-couldn-t-create-the-graph", { graphState: graphMeta() ? "open" : "none", error: String(e) }), "error");
     return { kind: "aborted" };
   }
   const openAction = { label: msg("graph-open-graph"), run: () => void openPickedGraphPath(root) };

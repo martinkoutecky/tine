@@ -221,7 +221,7 @@ async function isManualOnlyBuild(): Promise<boolean> {
 function offerManualOnly(version: string): number {
   void recordDiagnostic("updater_manual_only");
   return pushToast(
-    msg("update-is-available-but-automatic-updates-are", { APPPRODUCTNAME: APP_PRODUCT_NAME, version: version }),
+    msg("update-is-available-but-automatic-updates-are", { product: APP_PRODUCT_NAME, version: version }),
     "warn",
     { sticky: true, action: { label: msg("update-download-manually"), run: openReleases } },
   );
@@ -231,7 +231,7 @@ function offerManualOnly(version: string): number {
  * is installed again from the downloaded file. */
 function offerFlatpakManual(version: string): number {
   return pushToast(
-    msg("update-is-available-the-flatpak-cannot-update", { APPPRODUCTNAME: APP_PRODUCT_NAME, version: version }),
+    msg("update-is-available-the-flatpak-cannot-update", { product: APP_PRODUCT_NAME, version: version }),
     "info",
     { sticky: true, action: { label: msg("update-download-manually"), run: openReleases } },
   );
@@ -268,7 +268,7 @@ export async function restartTine(): Promise<void> {
     await relaunch();
   } catch (error) {
     exitGuard?.reset();
-    pushToast(msg("update-couldn-t-restart-tine-quit-and-start", { Stringerror: String(error) }), "error", { sticky: true });
+    pushToast(msg("update-couldn-t-restart-tine-quit-and-start", { error: String(error) }), "error", { sticky: true });
   }
 }
 
@@ -300,7 +300,7 @@ async function applyUpdateOrOpen(): Promise<void> {
     return;
   }
   try {
-    const progressId = pushToast(msg("update-downloading", { APPPRODUCTNAME: APP_PRODUCT_NAME, version: update.version }), "info", { sticky: true });
+    const progressId = pushToast(msg("update-downloading", { product: APP_PRODUCT_NAME, version: update.version }), "info", { sticky: true });
     try {
       // Download first: the user keeps editing meanwhile, so the flush below sees
       // the latest state and runs immediately before the process can exit.
@@ -376,7 +376,7 @@ export async function offerUpdate(version: string, current: string, live: () => 
     return { manual };
   }
   offeredUpdateToastId = pushToast(
-    msg("update-is-available-you-re-on", { APPPRODUCTNAME: APP_PRODUCT_NAME, version: version, current: current }),
+    msg("update-is-available-you-re-on", { product: APP_PRODUCT_NAME, version: version, current: current }),
     "info",
     {
       sticky: true,

@@ -95,7 +95,7 @@ export async function installFileDrop(): Promise<() => void> {
           const matrix = parseDelimitedText(result.value, kind);
           const cells = delimitedCellCount(matrix);
           if (cells > MAX_DROPPED_CELLS) {
-            pushToast(msg("filedrop-has-cells-csv-tsv-drops-are-limited-to", { basename_path: String(basename(path)), cells: String(cells), max_dropped_cells: String(MAX_DROPPED_CELLS) }), "error");
+            pushToast(msg("filedrop-has-cells-csv-tsv-drops-are-limited-to", { fileName: String(basename(path)), cells: String(cells), cellLimit: String(MAX_DROPPED_CELLS) }), "error");
             continue;
           }
           nodes.push(matrixGridNode(titleWithoutExtension(path, kind), matrix));
@@ -124,7 +124,7 @@ export async function installFileDrop(): Promise<() => void> {
       if (!inserted) { pushToast(msg("filedrop-dropped-files-could-not-be-inserted-at-this"), "error"); return; }
       pushToast(msg("filedrop-inserted", { count: nodes.length }), "success");
     } catch (e) {
-      pushToast(msg("filedrop-couldn-t-insert-dropped-file", { string_e: String(e) }), "error");
+      pushToast(msg("filedrop-couldn-t-insert-dropped-file", { error: String(e) }), "error");
     }
   });
 

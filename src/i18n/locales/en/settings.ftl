@@ -32,9 +32,10 @@ settings-embed-breadcrumbs-hint = Show the source page and parent trail above em
 
 # Interface text; variables carry untranslated names, paths or diagnostic details.
 # Key names are literal shortcut notation and must retain their spelling.
+# $platform is mac or other. Keep the literal key names inside <kbd> tags.
 settings-inspector-hint = { $platform ->
-    [mac] Opens the inspector to see which rules style an element (also <kbd>Cmd</kbd>+<kbd1>Shift</kbd1>+<kbd2>J</kbd2>).
-   *[other] Opens the inspector to see which rules style an element (also <kbd>Ctrl</kbd>+<kbd1>Shift</kbd1>+<kbd2>J</kbd2>).
+    [mac] Opens the inspector to see which rules style an element (also <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd>).
+   *[other] Opens the inspector to see which rules style an element (also <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd>).
     }
 settings-theme-light = Light
 settings-theme-system = System
@@ -42,17 +43,12 @@ settings-theme-dark = Dark
 settings-could-not-load-asset-filename-format = Could not load asset filename format.
 settings-custom-css = Custom CSS
 
-
-
-
-
-
 settings-open-developer-tools = Open developer tools
 settings-opacity = { $title } opacity
 settings-fine-tuning = Fine-tuning
 settings-small-visual-details-saved-on-this-device = Small visual details, saved on this device. Each starts at Tine's default look; your <code>logseq/custom.css</code> still takes priority, and Disable custom CSS below switches these off for the session too.
 settings-reset = Reset
-settings-reset-2 = Reset { $title }
+settings-reset-control = Reset { $title }
 settings-appearance = Appearance
 settings-could-not-read-the-system-tray-state = Could not read the system tray state.
 settings-could-not-load-copy-subtree-preference = Could not load copy subtree preference.
@@ -74,8 +70,10 @@ settings-could-not-load-local-image-access-preference = Could not load local ima
 settings-could-not-load-editor-command = Could not load { $id } editor command.
 settings-could-not-load-tab-reuse-preference = Could not load tab reuse preference.
 settings-could-not-load-reference-completion-preference = Could not load reference completion preference.
-settings-could-not-remember-settings-size = Could not remember Settings size: { $Stringerror }
-settings-could-not-load-settings-size = Could not load Settings size: { $Stringerror }
+# $error is an untranslated diagnostic from the operating system or backend.
+settings-could-not-remember-settings-size = Could not remember Settings size: { $error }
+# $error is an untranslated diagnostic from the operating system or backend.
+settings-could-not-load-settings-size = Could not load Settings size: { $error }
 settings-could-not-apply-spellcheck-settings = Could not apply spellcheck settings.
 settings-could-not-load-spellcheck-dictionaries = Could not load spellcheck dictionaries.
 settings-could-not-load-spellcheck-preference = Could not load spellcheck preference.

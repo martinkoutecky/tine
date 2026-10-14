@@ -7,12 +7,15 @@ themes-partial = Partial
 themes-stock = Stock
 themes-theme-manifest-exceeds-the-64-kib-limit = Theme manifest exceeds the 64 KiB limit.
 themes-installed = { $name } { $version } installed.
-themes-theme-installation-failed = Theme installation failed: { $Stringerror }
+# $error is an untranslated diagnostic from the operating system or backend.
+themes-theme-installation-failed = Theme installation failed: { $error }
 themes-uninstall-this-removes-the-theme-from = Uninstall { $name }?{ "\u000A" }{ "\u000A" }This removes the theme from this device. It does not change your graph or custom.css.
 themes-uninstall-theme = Uninstall theme?
 themes-was-uninstalled = { $name } was uninstalled.
-themes-theme-could-not-be-uninstalled = Theme could not be uninstalled: { $Stringerror }
-themes-community-theme-installation-failed = Community theme installation failed: { $Stringerror }
+# $error is an untranslated diagnostic from the operating system or backend.
+themes-theme-could-not-be-uninstalled = Theme could not be uninstalled: { $error }
+# $error is an untranslated diagnostic from the operating system or backend.
+themes-community-theme-installation-failed = Community theme installation failed: { $error }
 themes-themes = Themes
 themes-style = Style
 themes-typography-journal-headings-and-other-presentation-choices = Typography, journal headings, and other presentation choices.
@@ -28,7 +31,7 @@ themes-human-reviewed = Human-reviewed
 themes-low-risk-automated-pass = Low-risk automated pass
 themes-details-screenshots = Details & screenshots
 themes-revoked = Revoked
-themes-installed-2 = Installed
+themes-installed-status = Installed
 themes-verifying = Verifying…
 themes-install = Install
 themes-install-a-token-theme = Install a token theme
@@ -44,5 +47,4 @@ themes-use-style = Use style
 themes-details = Details
 themes-uninstalling = Uninstalling…
 themes-uninstall = Uninstall…
-themes-behavioral-port-of-for-credited-to = Behavioral port of { $name } for { $ecosystem }, credited to { $value }.
-
+themes-behavioral-port-of-for-credited-to = Behavioral port of { $name } for { $ecosystem }, credited to { $authors }.

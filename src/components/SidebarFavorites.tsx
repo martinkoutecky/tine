@@ -92,11 +92,11 @@ export function SidebarFavorites(props: {
               onPointerDown={(e) => startDrag(i(), e)}>
               {toggle}
               <input class="nav-fav-group-name" size={Math.max(row.node.raw.length, 4)} value={row.node.raw}
-                aria-label={t("sidebar-favorites-rename-group", { raw: String(row.node.raw) })}
+                aria-label={t("sidebar-favorites-rename-group", { groupName: String(row.node.raw) })}
                 onChange={(e) => renameFavoriteGroup(row.path, e.currentTarget.value)} />
               {/* Deleting a group keeps its favorites (they move up), so no confirm. */}
               <button type="button" class="nav-fav-group-delete" title={t("sidebar-favorites-delete-this-group-what-it-holds-moves-up")}
-                aria-label={t("sidebar-favorites-delete-group", { raw: String(row.node.raw) })} onClick={() => deleteFavoriteGroup(row.path)}>×</button>
+                aria-label={t("sidebar-favorites-delete-group", { groupName: String(row.node.raw) })} onClick={() => deleteFavoriteGroup(row.path)}>×</button>
             </div>
           );
           const kind = row.node.kind ?? itemKind(name ?? "");

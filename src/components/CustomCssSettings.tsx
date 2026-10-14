@@ -2,12 +2,12 @@ import { Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { customCssDisabled, setCustomCssDisabled } from "../customCss";
 import { ownedWhen, readOwned } from "../owned";
 import { openCssEditor } from "../cssEditor";
-import { t } from "../i18n";
+import { msg, t } from "../i18n";
 import { platformKind } from "../platform";
 import { isMac } from "../nativeChrome";
 import { openDevtools } from "../ui";
 import { Field, Toggle } from "./settingsField";
-import { Rich } from "./ThemeChoice";
+import { Rich } from "../i18n/Rich";
 
 /** Settings > Appearance > Custom CSS (GH #610/#372): the affordances that
  *  make graph and device CSS discoverable and recoverable.
@@ -46,7 +46,7 @@ export function CustomCssSettings(): JSX.Element {
       <Show when={desktop()}>
         <Field
           label={t("settings-search-developer-tools")}
-          hint={<Rich text={t("settings-inspector-hint", { platform: isMac ? "mac" : "other" })} slots={{ kbd: (children) => <kbd>{children}</kbd>, kbd1: (children) => <kbd>{children}</kbd>, kbd2: (children) => <kbd>{children}</kbd> }} />}
+          hint={<Rich message={msg("settings-inspector-hint", { platform: isMac ? "mac" : "other" })} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} />}
         ><button class="settings-btn" onClick={() => openDevtools()}>{t("settings-open-developer-tools")}</button>
         </Field>
       </Show>

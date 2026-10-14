@@ -77,7 +77,7 @@ export async function renamePageOnDisk(
     try {
       result = await writeOwned(owner, backend().renamePage(from, to, "rename-page", target?.path, mergeInto, prepared));
     } catch (error) {
-      if (!owner()) pushToast(msg("graph-rewrite-rename-failed", { string_error: String(error) }), "error");
+      if (!owner()) pushToast(msg("graph-rewrite-rename-failed", { error: String(error) }), "error");
       throw error;
     }
     if (result.kind === "stale") return "uncertain";

@@ -51,7 +51,7 @@ export function QueryPageResults(props: {
     data-inpage-find-surface={props.surfaceId(hit)}
     {...(props.actions?.(hit) ?? { onClick: () => props.onOpen(hit) })}
   ><span class="switcher-kind">{t("query-page-results-page")}</span><span class="search-result-body">
-    <span class="search-result-context">{hit.page.kind === "journal" ? t("query-page-results-journal") : t("query-page-results-page-2")}</span>
+    <span class="search-result-context">{hit.page.kind === "journal" ? t("query-page-results-journal") : t("query-page-results-page-label")}</span>
     <span class="search-result-excerpt"><PageText hit={hit} /></span>
     <Show when={hit.evidence.some((item) => item.field === "visible_content")}>
       <span class="search-result-excerpt query-page-content-excerpt"><For each={buildSearchExcerpt(hit.display_text,
@@ -77,7 +77,7 @@ export function QueryPageResults(props: {
     <Match when={props.presentation === "table"}>
       <div class="query-results-table-wrap"><table class="query-results-table">
         <caption class="sr-only">{t("query-page-results-page-results")}</caption>
-        <thead><tr><th scope="col">{t("query-page-results-page-2")}</th><For each={props.view?.columns ?? ["kind"]}>{(field) =>
+        <thead><tr><th scope="col">{t("query-page-results-page-label")}</th><For each={props.view?.columns ?? ["kind"]}>{(field) =>
           <th scope="col">{field.startsWith("prop:") ? field.slice(5) : field}</th>}</For></tr></thead>
         <tbody><For each={props.hits}>{(hit) => <tr data-page-key={pageHitKey(hit)}>
           <td>{link(hit)}</td><For each={props.view?.columns ?? ["kind"]}>{(field) =>

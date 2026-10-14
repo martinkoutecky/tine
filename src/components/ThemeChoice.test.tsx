@@ -1,8 +1,9 @@
 import { afterEach, expect, it } from "vitest";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
-import { Rich, richValue, ThemeChoice } from "./ThemeChoice";
-import { t, setActiveLocale } from "../i18n";
+import { ThemeChoice } from "./ThemeChoice";
+import { Rich } from "../i18n/Rich";
+import { msg, setActiveLocale } from "../i18n";
 
 let dispose: (() => void) | undefined;
 afterEach(async () => {
@@ -23,7 +24,7 @@ it("keeps catalog emphasis while preserving external values as text and updating
   const host = document.createElement("div");
   document.body.append(host);
   const [name, setName] = createSignal("<code>notes & names</code>");
-  dispose = render(() => <Rich text={t("improve-lines-2", { rel: richValue(name()), lineStart: 2, lineEnd: 8, detail: richValue("<img src=x>") })} slots={{ code: (children) => <code>{children}</code> }} />, host);
+  dispose = render(() => <Rich message={msg("improve-divergence-location", { path: name(), lineStart: 2, lineEnd: 8, detail: "<img src=x>" })} slots={{ "code": (children) => <code>{children}</code> }} />, host);
   expect(host.querySelectorAll("code")).toHaveLength(1);
   expect(host.querySelector("code")?.textContent).toBe("<code>notes & names</code>");
   expect(host.textContent).toBe("<code>notes & names</code> · lines 2-8 — <img src=x>");
@@ -35,7 +36,7 @@ it("keeps catalog emphasis while preserving external values as text and updating
 it("renders every pane split instruction as a complete sentence with its nested emphasis", () => {
   const host = document.createElement("div");
   const [kind, setKind] = createSignal("edge");
-  dispose = render(() => <Rich text={t("app-pane-split-instruction", { kind: kind() })} slots={{ kbd: (children) => <kbd>{children}</kbd>, kbd1: (children) => <kbd>{children}</kbd>, span: (children) => <span>{children}</span>, span1: (children) => <em>{children}</em>, span2: (children) => <em>{children}</em> }} />, host);
+  dispose = render(() => <Rich message={msg("app-pane-split-instruction", { kind: kind() })} slots={{ "kbd": (children) => <kbd>{children}</kbd>, "span": (children) => <span>{children}</span>, "em-hint": (children) => <em>{children}</em> }} />, host);
   expect(host.textContent).toBe("Enter split the whole window · type a page name (or Ctrl+K) to open it in the new split");
   expect(host.querySelector("em")?.textContent).toBe("whole window");
   setKind("pane-edge");

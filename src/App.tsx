@@ -1,4 +1,4 @@
-import { Rich } from "./components/ThemeChoice";
+import { Rich } from "./i18n/Rich";
 import { installTineLinks } from "./deepLinkNavigation";
 import { installShareIngest } from "./shareIngest";
 import { DeepLinkGraphChoice } from "./components/DeepLinkGraphChoice";
@@ -476,14 +476,14 @@ export function PaneSelectHint(): JSX.Element {
           when={kind() !== "pane"}
           fallback={
             <span class="pane-select-hint-body">
-              <span><Rich text={t("app-move-onto-seams-edges")} slots={{ "kbd": (children) => <kbd>{children}</kbd>, "kbd1": (children) => <kbd>{children}</kbd>, "kbd2": (children) => <kbd>{children}</kbd>, "kbd3": (children) => <kbd>{children}</kbd>, "kbd4": (children) => <kbd>{children}</kbd>, "kbd5": (children) => <kbd>{children}</kbd> }} /></span>
-              <span><Rich text={t("app-ctrl-k-open-a-page-in-this-pane")} slots={{ "kbd": (children) => <kbd>{children}</kbd>, "kbd1": (children) => <kbd>{children}</kbd> }} /></span>
+              <span><Rich message={msg("app-move-onto-seams-edges")} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} /></span>
+              <span><Rich message={msg("app-ctrl-k-open-a-page-in-this-pane")} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} /></span>
             </span>
           }
         >
           <span class="pane-select-hint-body">
-            <span><Rich text={t("app-pane-split-instruction", { kind: kind() ?? "seam" })} slots={{ kbd: (children) => <kbd>{children}</kbd>, kbd1: (children) => <kbd>{children}</kbd>, span: (children) => <span>{children}</span>, span1: (children) => <span class="pane-select-hint-em">{children}</span>, span2: (children) => <span class="pane-select-hint-em">{children}</span> }} /></span>
-            <span><Rich text={t("app-pane-split-navigation", { kind: kind() ?? "seam" })} slots={{ span: (children) => <span>{children}</span>, kbd: (children) => <kbd>{children}</kbd>, kbd1: (children) => <kbd>{children}</kbd>, kbd2: (children) => <kbd>{children}</kbd>, kbd3: (children) => <kbd>{children}</kbd>, kbd4: (children) => <kbd>{children}</kbd> }} /></span>
+            <span><Rich message={msg("app-pane-split-instruction", { kind: kind() ?? "seam" })} slots={{ "kbd": (children) => <kbd>{children}</kbd>, "span": (children) => <span>{children}</span>, "em-hint": (children) => <span class="pane-select-hint-em">{children}</span> }} /></span>
+            <span><Rich message={msg("app-pane-split-navigation", { kind: kind() ?? "seam" })} slots={{ "span": (children) => <span>{children}</span>, "kbd": (children) => <kbd>{children}</kbd> }} /></span>
           </span>
         </Show>
       </div>
@@ -829,7 +829,7 @@ export function App(): JSX.Element {
       const result = await readOwned(ownedWhen(() => alive), backend().takeDataHomeFallbackNotice());
       if (result.kind === "stale" || !result.value) return;
       pushToast(
-        msg("app-tine-could-not-write-its-usual-application-data", { value: result.value }),
+        msg("app-tine-could-not-write-its-usual-application-data", { fallbackDirectory: result.value }),
         "warn",
         { sticky: true },
       );

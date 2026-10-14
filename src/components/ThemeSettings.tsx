@@ -1,4 +1,4 @@
-import { Rich } from "./ThemeChoice";
+import { Rich } from "../i18n/Rich";
 import { msg, t } from "../i18n";
 import { For, Show, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
@@ -82,7 +82,7 @@ export function ThemeSettings(): JSX.Element {
       const installed = await installThemePackage(JSON.parse(await file.text()));
       pushToast(msg("themes-installed", { name: installed.manifest.name, version: installed.manifest.version }), "info");
     } catch (error) {
-      pushToast(msg("themes-theme-installation-failed", { Stringerror: String(error) }), "error");
+      pushToast(msg("themes-theme-installation-failed", { error: String(error) }), "error");
     } finally {
       setThemePackageBusy(null);
       if (themePackageInput) themePackageInput.value = "";
@@ -102,7 +102,7 @@ export function ThemeSettings(): JSX.Element {
       await uninstallThemePackage(key);
       pushToast(msg("themes-was-uninstalled", { name: name }), "info");
     } catch (error) {
-      pushToast(msg("themes-theme-could-not-be-uninstalled", { Stringerror: String(error) }), "error");
+      pushToast(msg("themes-theme-could-not-be-uninstalled", { error: String(error) }), "error");
     } finally {
       setThemePackageBusy(null);
     }
@@ -114,7 +114,7 @@ export function ThemeSettings(): JSX.Element {
       const installed = await installCommunityTheme(themeEntry, version);
       pushToast(msg("themes-installed", { name: installed.manifest.name, version: installed.manifest.version }), "info");
     } catch (error) {
-      pushToast(msg("themes-community-theme-installation-failed", { Stringerror: String(error) }), "error");
+      pushToast(msg("themes-community-theme-installation-failed", { error: String(error) }), "error");
     } finally {
       setThemePackageBusy(null);
     }
@@ -158,7 +158,7 @@ export function ThemeSettings(): JSX.Element {
           )}
         </For>
       </div>
-      <div class="settings-hint theme-gallery-hint"><Rich text={t("themes-style-and-colors-are-independent-theme-packages")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
+      <div class="settings-hint theme-gallery-hint"><Rich message={msg("themes-style-and-colors-are-independent-theme-packages")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
 
       <StyleKnobsSettings />
 
@@ -185,7 +185,7 @@ export function ThemeSettings(): JSX.Element {
                       class="settings-btn"
                       disabled={installed() || revoked() || themePackageBusy() !== null || version().audit.status !== "passed"}
                       onClick={() => void installRegistryTheme(themeEntry)}
-                    >{revoked() ? t("themes-revoked") : installed() ? t("themes-installed-2") : themePackageBusy() === key() ? t("themes-verifying") : t("themes-install")}
+                    >{revoked() ? t("themes-revoked") : installed() ? t("themes-installed-status") : themePackageBusy() === key() ? t("themes-verifying") : t("themes-install")}
                     </button>
                   </div>
                 </div>
@@ -255,7 +255,7 @@ export function ThemeSettings(): JSX.Element {
                     </div>
                   </div>
                   <div class="settings-hint settings-field-hint">{installed.manifest.description}</div>
-                  <Show when={installed.manifest.portedFrom} keyed>{(origin) => <div class="settings-hint">{t("themes-behavioral-port-of-for-credited-to", { name: origin.name, ecosystem: origin.ecosystem, value: origin.authors.join(", ") })}</div>}
+                  <Show when={installed.manifest.portedFrom} keyed>{(origin) => <div class="settings-hint">{t("themes-behavioral-port-of-for-credited-to", { name: origin.name, ecosystem: origin.ecosystem, authors: origin.authors.join(", ") })}</div>}
                   </Show>
                 </div>
               );

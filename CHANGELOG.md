@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Localized rich-text sentences share one renderer that preserves literal graph text, with clearer tags and variables for translators (GH #107).
 - Interface text across the app (shell, settings, help, plugins, editor, PDF, rendering, notices) now comes from the localization catalog, so it can be translated; English wording, graph syntax and English command matching are unchanged (GH #107).
 - Linked References filter chips merge each page's aliases under its canonical name, count each reference block once, and save canonical filters in Logseq's `filters::` property (GH #433). Several included chips now narrow to references carrying all of them, as in Logseq (previously any of them).
 - Bullet threading highlights a continuous active ancestry in both display modes, with configurable thickness, theme-aware or custom color, and optional hierarchy colors (GH #129, [bullet-threading plugin #2](https://github.com/martinkoutecky/tine-plugin-bullet-threading/issues/2)).

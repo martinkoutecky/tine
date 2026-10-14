@@ -309,7 +309,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         alignment = undefined;
         void refetch();
       } else {
-        pushToast(msg("conflict-resolution-couldn-t-resolve-it", { error_detail_e: String(errorDetail(e)) }), "error");
+        pushToast(msg("conflict-resolution-couldn-t-resolve-it", { error: String(errorDetail(e)) }), "error");
       }
     } finally {
       if (owner()) setBusy(false);
@@ -320,7 +320,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   onCleanup(() => {
     mounted = false;
     if (conflictQueue().some((q) => q.id === cleanupConflictId)) {
-      pushToast(msg("conflict-resolution-still-has-unresolved-conflicts", { cleanup_page_name: String(cleanupPageName) }), "info");
+      pushToast(msg("conflict-resolution-still-has-unresolved-conflicts", { page: String(cleanupPageName) }), "info");
     }
   });
 
@@ -339,7 +339,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
       void refreshJournalConflicts();
       void refreshSyncConflicts();
     } catch (e) {
-      pushToast(msg("conflict-resolution-couldn-t-do-that", { error_detail_e: String(errorDetail(e)) }), "error");
+      pushToast(msg("conflict-resolution-couldn-t-do-that", { error: String(errorDetail(e)) }), "error");
     }
   };
   const trashDayFile = async (name: string) => {
@@ -398,7 +398,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         when={diffValue()}
         fallback={
           <div class="page-conflict-empty">
-            {readResource.loading ? t("conflict-resolution-reading-both-versions") : conflict().source === "duplicate-journal" && !read()?.error ? t("conflict-resolution-these-two-files-can-t-be-folded-together") : read()?.error ? t("conflict-resolution-couldn-t-read-this-conflict", { error: String(read()!.error) }) : t("conflict-resolution-couldn-t-read-this-conflict-2")}
+            {readResource.loading ? t("conflict-resolution-reading-both-versions") : conflict().source === "duplicate-journal" && !read()?.error ? t("conflict-resolution-these-two-files-can-t-be-folded-together") : read()?.error ? t("conflict-resolution-couldn-t-read-this-conflict", { error: String(read()!.error) }) : t("conflict-resolution-conflict-unavailable")}
           </div>
         }
       >

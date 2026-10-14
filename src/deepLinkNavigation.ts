@@ -100,7 +100,7 @@ export async function openTineLink(delivery: LinkDelivery, alive: () => boolean 
     focusedRouter().openInNewTab({ kind: "page", name: page.name,
       pageKind: page.kind, path: page.id, ...(target.block ? { block: target.block } : {}) }, true);
   } catch (error) {
-    if (alive()) pushToast(msg("deep-link-navigation-couldn-t-open-tine-link", { string_error: String(error) }), "error");
+    if (alive()) pushToast(msg("deep-link-navigation-couldn-t-open-tine-link", { error: String(error) }), "error");
   }
 }
 
@@ -178,7 +178,7 @@ export async function installTineLinks(alive: () => boolean): Promise<() => void
         if (disposed || !alive()) break;
         await openTineLink(delivery, () => !disposed && alive());
       }
-    }).catch((error) => { if (!disposed && alive()) pushToast(msg("deep-link-navigation-couldn-t-receive-tine-link", { string_error: String(error) }), "error"); });
+    }).catch((error) => { if (!disposed && alive()) pushToast(msg("deep-link-navigation-couldn-t-receive-tine-link", { error: String(error) }), "error"); });
   };
   let unlisten: () => void;
   try {
@@ -187,7 +187,7 @@ export async function installTineLinks(alive: () => boolean): Promise<() => void
     unlisten = registration.value;
   }
   catch (error) {
-    if (alive()) pushToast(msg("deep-link-navigation-couldn-t-listen-for-tine-links", { string_error: String(error) }), "error");
+    if (alive()) pushToast(msg("deep-link-navigation-couldn-t-listen-for-tine-links", { error: String(error) }), "error");
     return () => {};
   }
   if (!alive()) { unlisten(); return () => {}; }

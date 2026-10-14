@@ -1,6 +1,5 @@
-import { Rich, richValue } from "./ThemeChoice";
-import { render, renderEnglish, type Msg } from "../i18n";
-import { msg, t } from "../i18n";
+import { Rich } from "../i18n/Rich";
+import { msg, t, render, renderEnglish, type Msg } from "../i18n";
 import { For, Show, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { openExternal } from "./primitives";
 import { closeHelpPopup, helpPopupOpen, openSettings, openWelcome, toggleHelpPopup } from "../ui";
@@ -88,7 +87,7 @@ export function HelpPopup(): JSX.Element {
       </Show>
       <button
         class="help-corner-btn"
-        title={t("help-help-2")}
+        title={t("help-help-with-shortcut")}
         aria-label={t("help-help")}
         aria-haspopup="menu"
         aria-expanded={helpPopupOpen()}
@@ -320,7 +319,7 @@ function ShortcutRow(props: {
         >{recording() ? t("help-press-keys") : displayBinding(props.row.effective)}
         </button>
         <Show when={props.row.alias && !props.row.overridden}>
-          <span class="help-shortcut-alias"><Rich text={t("help-or", { alias: richValue(displayBinding(props.row.alias!)) })} slots={{ "span": (children) => <span class="help-keycap help-keycap-static">{children}</span> }} /></span>
+          <span class="help-shortcut-alias"><Rich message={msg("help-or", { alias: displayBinding(props.row.alias!) })} slots={{ "span": (children) => <span class="help-keycap help-keycap-static">{children}</span> }} /></span>
         </Show>
       </span>
       <span class="help-shortcut-tail">
@@ -368,7 +367,7 @@ export function ShortcutsSettingsPane(props: {
 
   return (
     <div class="help-shortcuts-pane">
-      <div class="settings-hint settings-block"><Rich text={t("help-click-a-binding-to-record-new-keys")} slots={{ "code": (children) => <code>{children}</code>, "code1": (children) => <code>{children}</code> }} /></div>
+      <div class="settings-hint settings-block"><Rich message={msg("help-click-a-binding-to-record-new-keys")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
 
       <Show when={!props.search.trim()}>
         <TriggerTable shortcuts={props.shortcuts} />

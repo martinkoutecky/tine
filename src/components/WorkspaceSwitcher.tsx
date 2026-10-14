@@ -86,7 +86,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
     try {
       await writeOwned(owner, deleteWorkspace(workspace.id));
     } catch (error) {
-      pushToast(msg("workspace-switcher-couldn-t-delete-workspace", { string_error: String(error) }), "error");
+      pushToast(msg("workspace-switcher-couldn-t-delete-workspace", { error: String(error) }), "error");
     }
   };
 
@@ -103,7 +103,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
       <button
         type="button"
         class="workspace-switcher-btn"
-        aria-label={t("workspace-switcher-workspace", { value: String(active() ? workspaceDisplayName(active()!) : "loading") })}
+        aria-label={t("workspace-switcher-workspace", { name: String(active() ? workspaceDisplayName(active()!) : "loading") })}
         aria-haspopup="menu"
         aria-expanded={menuOpen() || hoverOpen()}
         disabled={!workspaces().length}
@@ -151,17 +151,17 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
                 <button
                   type="button"
                   class="workspace-menu-action"
-                  aria-label={t("workspace-switcher-rename", { value: String(workspaceDisplayName(workspace)) })}
-                  title={t("workspace-switcher-rename-2")}
+                  aria-label={t("workspace-switcher-rename", { name: String(workspaceDisplayName(workspace)) })}
+                  title={t("workspace-switcher-rename-action")}
                   onClick={() => openEdit({ kind: "rename", id: workspace.id, value: workspaceDisplayName(workspace) })}
-                >{t("workspace-switcher-rename-2")}</button>
+                >{t("workspace-switcher-rename-action")}</button>
                 <button
                   type="button"
                   class="workspace-menu-action danger"
-                  aria-label={t("workspace-switcher-delete", { value: String(workspaceDisplayName(workspace)) })}
-                  title={t("workspace-switcher-delete-2")}
+                  aria-label={t("workspace-switcher-delete", { name: String(workspaceDisplayName(workspace)) })}
+                  title={t("workspace-switcher-delete-action")}
                   onClick={() => void remove(workspace)}
-                >{t("workspace-switcher-delete-2")}</button>
+                >{t("workspace-switcher-delete-action")}</button>
               </div>
             )}
           </For>

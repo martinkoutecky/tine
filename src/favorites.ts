@@ -221,7 +221,7 @@ async function readArrangement(mode: ReadMode | null): Promise<void> {
   const seq = ++latestRead;
   const owner = bindingOwner(() => gen === generation && writes === ownWrites && seq === latestRead);
   const read = await readOwned(owner, backend().getPage(page, "page")).catch((error: unknown) => {
-    pushToast(msg("favorites-could-not-read-the-favorites-page", { page: String(page), string_error: String(error) }), "error");
+    pushToast(msg("favorites-could-not-read-the-favorites-page", { page: String(page), error: String(error) }), "error");
     return null;
   });
   if (read?.kind !== "current" || !read.value) return;

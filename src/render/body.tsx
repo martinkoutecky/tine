@@ -114,7 +114,7 @@ function AdmonitionIcon(props: { type: string }): JSX.Element {
     <span
       class={`admonition-icon admonition-icon-${props.type}`}
       role="img"
-      aria-label={t("render-icon", { value: String(props.type) })}
+      aria-label={t("render-icon", { name: String(props.type) })}
       title={`${props.type[0].toUpperCase()}${props.type.slice(1)}`}
     >
       <EmojiText text={ADMONITION_ICONS[props.type]} />

@@ -831,7 +831,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       .slice(0, 100)
       .map(({ value }) => ({ label: value, propertyValue: value }));
     if (q && !values.some((value) => value.toLowerCase() === q.toLowerCase())) {
-      ranked.push({ get label() { return translate("editor-block-create", { value: String(q) }); }, propertyValue: q });
+      ranked.push({ get label() { return translate("editor-block-create", { name: String(q) }); }, propertyValue: q });
     }
     return ranked;
   };
@@ -883,7 +883,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         .map(({ key }) => ({ label: key, propertyName: key }));
       const created = propertyKeyFold(t.query);
       if (created && !facets.some(([key]) => key === created)) {
-        ranked.unshift({ get label() { return translate("editor-block-create", { value: String(created) }); }, propertyName: created });
+        ranked.unshift({ get label() { return translate("editor-block-create", { name: String(created) }); }, propertyName: created });
       }
       setAcItems(ranked);
       return;
@@ -1016,8 +1016,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         : { label: `#${name}`, insert: tagInsert(name), sub: aliasOfLabel(name, navigationName(name)) }; // tag context reads "#name"
     const createItem: AcItem =
       t.kind === "page"
-        ? { get label() { return translate("editor-block-create", { value: String(q) }); }, insert: pageInsert(q) }
-        : { get label() { return translate("editor-block-create-tag", { value: String(q) }); }, insert: tagInsert(q) };
+        ? { get label() { return translate("editor-block-create", { name: String(q) }); }, insert: pageInsert(q) }
+        : { get label() { return translate("editor-block-create-tag", { name: String(q) }); }, insert: tagInsert(q) };
     setAcItems(orderAcItems(
       result.value.map((page) => ({ name: page.name, matchClass: page.match_class, item: pageItem(page.name) })),
       { name: q, item: createItem },
@@ -1448,7 +1448,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           if (limited) pushToast(msg("editor-block-recording-limit-reached-saving-the-captured-audio"), "info");
           await insertAssetBytes(editorToken, bytes, undefined, recordingExt(mime));
         },
-        error: (message) => pushToast(msg("editor-block-couldn-t-save-the-recording-2", { value: String(message) }), "error"),
+        error: (message) => pushToast(msg("editor-block-desktop-recording-save-error", { error: String(message) }), "error"),
       });
       if (status === "busy") {
         pushToast(msg("editor-block-another-voice-recording-is-already-active"), "error");

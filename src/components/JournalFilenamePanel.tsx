@@ -23,7 +23,7 @@ export function JournalFilenamePanel(): JSX.Element {
       if (listed.kind !== "stale") setPending(listed.value);
     } catch (e) {
       setPending([]);
-      pushToast(msg("journal-filename-panel-couldn-t-list-journal-files-to-rename", { string_e: String(e) }), "error");
+      pushToast(msg("journal-filename-panel-couldn-t-list-journal-files-to-rename", { error: String(e) }), "error");
     }
   };
   // A graph switch or journal-format change moves the epoch and can change the proposals.
@@ -49,7 +49,7 @@ export function JournalFilenamePanel(): JSX.Element {
       await refreshJournalConflicts();
     } catch (e) {
       // A durable failure from a graph the user already left is not this graph's.
-      if (owner()) pushToast(msg("journal-filename-panel-couldn-t-rename-them", { string_e: String(e) }), "error");
+      if (owner()) pushToast(msg("journal-filename-panel-couldn-t-rename-them", { error: String(e) }), "error");
     } finally {
       setBusy(false);
     }

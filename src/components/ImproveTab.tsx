@@ -1,5 +1,5 @@
-import { Rich, richValue } from "./ThemeChoice";
-import { t } from "../i18n";
+import { Rich } from "../i18n/Rich";
+import { msg, t } from "../i18n";
 // "Help improve Tine" settings panel: run lsdoc against Logseq's own parser
 // (mldoc) on YOUR graph, entirely locally, and surface anonymized + re-verified
 // divergences you can paste into a bug report. The heavy lifting is in
@@ -97,8 +97,8 @@ export function ImproveTab(): JSX.Element {
 
   return (
     <div class="improve-tab">
-      <p class="settings-hint"><Rich text={t("improve-tine-s-parser-lsdoc-is-a-from-scratch-reimplementation")} slots={{ "strong": (children) => <b>{children}</b>, "strong1": (children) => <b>{children}</b>, "strong2": (children) => <b>{children}</b> }} /></p>
-      <p class="settings-hint"><Rich text={t("improve-privacy-nothing-is-uploaded-every-divergence-snippet")} slots={{ "strong": (children) => <b>{children}</b>, "strong1": (children) => <b>{children}</b>, "strong2": (children) => <b>{children}</b> }} /></p>
+      <p class="settings-hint"><Rich message={msg("improve-tine-s-parser-lsdoc-is-a-from-scratch-reimplementation")} slots={{ "strong": (children) => <b>{children}</b> }} /></p>
+      <p class="settings-hint"><Rich message={msg("improve-privacy-nothing-is-uploaded-every-divergence-snippet")} slots={{ "strong": (children) => <b>{children}</b> }} /></p>
 
       <div class="settings-field">
         <div class="settings-field-row"><span class="settings-label">{t("improve-what-to-run")}</span>
@@ -153,7 +153,7 @@ export function ImproveTab(): JSX.Element {
           <div class="improve-report">
             <div class="settings-hint">
               {t("improve-scan-summary", { product: APP_PRODUCT_NAME, tineVersion: r().tineVersion, lsdocVersion: r().lsdocVersion, files: r().stats.files, bytes: fmtBytes(r().stats.totalBytes) })}
-              <Show when={r().stats.skipped?.length}>{" "}<span title={r().stats.skipped?.join("\n")}>{t("improve-skipped-unreadable-or-oversized-file-s", { length: r().stats.skipped?.length ?? 0 })}</span>
+              <Show when={r().stats.skipped?.length}>{" "}<span title={r().stats.skipped?.join("\n")}>{t("improve-skipped-unreadable-or-oversized-file-s", { count: r().stats.skipped?.length ?? 0 })}</span>
               </Show>
             </div>
 
@@ -178,7 +178,7 @@ export function ImproveTab(): JSX.Element {
 
             <Show when={!!r().findings && r().lsdocAvailable}>
               <div class="improve-findings">
-                <div class="improve-findings-head"><h4>{t("improve-divergences-2", { length: divergences().length })}</h4>
+                <div class="improve-findings-head"><h4>{t("improve-divergences-count", { count: divergences().length })}</h4>
                   <Show when={divergences().length > 0}>
                     <button class="btn-secondary" onClick={() => flash(reportMarkdown(), "all")}>{copied() === "all" ? t("improve-copied") : copied() === "fail:all" ? t("improve-copy-failed") : t("improve-copy-all")}
                     </button>
@@ -205,31 +205,31 @@ export function ImproveTab(): JSX.Element {
                   )}
                 </For>
                 <Show when={oracleArtifacts().length > 0}>
-                  <details class="improve-other"><summary>{t("improve-suppressed-mldoc-oracle-artifact-s", { length: oracleArtifacts().length })}</summary>
+                  <details class="improve-other"><summary>{t("improve-suppressed-mldoc-oracle-artifact-s", { count: oracleArtifacts().length })}</summary>
                     <For each={oracleArtifacts()}>
                       {(f) => (
-                        <div class="settings-hint"><Rich text={t("improve-lines-2", { rel: richValue(f.rel), lineStart: richValue(f.lineStart), lineEnd: richValue(f.lineEnd), detail: richValue(f.detail) })} slots={{ "code": (children) => <code>{children}</code> }} /></div>
+                        <div class="settings-hint"><Rich message={msg("improve-divergence-location", { path: f.rel, lineStart: f.lineStart, lineEnd: f.lineEnd, detail: f.detail })} slots={{ "code": (children) => <code>{children}</code> }} /></div>
                       )}
                     </For>
                   </details>
                 </Show>
                 <Show when={intentionalDivergences().length > 0}>
-                  <details class="improve-other"><summary>{t("improve-known-intentional-parser-difference-s-suppressed", { length: intentionalDivergences().length })}</summary>
+                  <details class="improve-other"><summary>{t("improve-known-intentional-parser-difference-s-suppressed", { count: intentionalDivergences().length })}</summary>
                     <For each={intentionalDivergences()}>
                       {(f) => (
-                        <div class="settings-hint"><Rich text={t("improve-lines-2", { rel: richValue(f.rel), lineStart: richValue(f.lineStart), lineEnd: richValue(f.lineEnd), detail: richValue(f.detail) })} slots={{ "code": (children) => <code>{children}</code> }} /></div>
+                        <div class="settings-hint"><Rich message={msg("improve-divergence-location", { path: f.rel, lineStart: f.lineStart, lineEnd: f.lineEnd, detail: f.detail })} slots={{ "code": (children) => <code>{children}</code> }} /></div>
                       )}
                     </For>
                   </details>
                 </Show>
                 <Show when={otherFindings().length > 0}>
-                  <details class="improve-other"><summary>{t("improve-non-divergence-issue-s", { length: otherFindings().length })}</summary>
+                  <details class="improve-other"><summary>{t("improve-non-divergence-issue-s", { count: otherFindings().length })}</summary>
                     <For each={otherFindings()}>
                       {(f) => <div class="settings-hint"><code>{"rel" in f ? f.rel : ""}</code> — {f.type}</div>}
                     </For>
                   </details>
                 </Show>
-                <Show when={divergences().length > 0}><p class="settings-hint"><Rich text={t("improve-post-these-anonymized-snippets-to", { ISSUESURL: richValue(ISSUES_URL) })} slots={{ "a": (children) => <a href={ISSUES_URL} target="_blank" rel="noreferrer">{children}</a> }} /></p>
+                <Show when={divergences().length > 0}><p class="settings-hint"><Rich message={msg("improve-post-these-anonymized-snippets-to", { issuesUrl: ISSUES_URL })} slots={{ "a": (children) => <a href={ISSUES_URL} target="_blank" rel="noreferrer">{children}</a> }} /></p>
                 </Show>
               </div>
             </Show>
@@ -246,7 +246,7 @@ function BenchRow(props: { name: string; s: BenchSummary | null }): JSX.Element 
       <td>{props.name}</td><Show when={props.s} fallback={<td colSpan={5} class="settings-hint">{t("improve-pending-next-build")}</td>}>
         {(s) => (
           <>
-            <td>{s().fileCount}</td><td>{t("improve-ms", { toFixed1: s().totalMs.toFixed(1) })}</td>
+            <td>{s().fileCount}</td><td>{t("improve-ms", { milliseconds: s().totalMs.toFixed(1) })}</td>
             <td>{s().p50Ms.toFixed(2)}</td>
             <td>{s().p95Ms.toFixed(2)}</td>
             <td>{s().maxMs.toFixed(2)}</td>

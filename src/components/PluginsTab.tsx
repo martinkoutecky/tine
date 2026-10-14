@@ -1,4 +1,4 @@
-import { Rich, richValue } from "./ThemeChoice";
+import { Rich } from "../i18n/Rich";
 import { msg, t } from "../i18n";
 import { FailureBoundary } from "./FailureBoundary";
 // Plugins tab of Settings: the installed/community plugin lists, detail page and
@@ -55,7 +55,7 @@ function PluginSettingsForm(props: {
     try {
       await pluginManager.setSetting(props.plugin.manifest.id, props.plugin.manifest.version, key, value);
     } catch (error) {
-      pushToast(msg("plugins-plugin-setting-could-not-be-saved", { Stringerror: String(error) }), "error");
+      pushToast(msg("plugins-plugin-setting-could-not-be-saved", { error: String(error) }), "error");
     } finally {
       release();
     }
@@ -66,7 +66,7 @@ function PluginSettingsForm(props: {
       if (key) await pluginManager.resetSetting(props.plugin.manifest.id, props.plugin.manifest.version, key);
       else await pluginManager.resetSettings(props.plugin.manifest.id, props.plugin.manifest.version);
     } catch (error) {
-      pushToast(msg("plugins-plugin-settings-could-not-be-reset", { Stringerror: String(error) }), "error");
+      pushToast(msg("plugins-plugin-settings-could-not-be-reset", { error: String(error) }), "error");
     } finally {
       release();
     }
@@ -204,7 +204,7 @@ function PluginsTabContent(): JSX.Element {
       setView("installed");
       setSelectedPluginKey(`${plugin.manifest.id}@${plugin.manifest.version}`);
     } catch (error) {
-      pushToast(msg("plugins-plugin-installation-failed", { Stringerror: String(error) }), "error");
+      pushToast(msg("plugins-plugin-installation-failed", { error: String(error) }), "error");
     } finally {
       release();
       if (packageInput) packageInput.value = "";
@@ -217,7 +217,7 @@ function PluginsTabContent(): JSX.Element {
       if (enabled) await pluginManager.disable(id);
       else await pluginManager.enable(id, version);
     } catch (error) {
-      pushToast(msg("plugins-plugin-could-not-be", { enabled: enabled ? "disabled" : "enabled", Stringerror: String(error) }), "error");
+      pushToast(msg("plugins-plugin-could-not-be", { enabled: enabled ? "disabled" : "enabled", error: String(error) }), "error");
     } finally {
       release();
     }
@@ -237,7 +237,7 @@ function PluginsTabContent(): JSX.Element {
       pushToast(msg("plugins-was-uninstalled", { name: name, version: version }), "info");
       if (selectedPluginKey() === `${id}@${version}`) setSelectedPluginKey(null);
     } catch (error) {
-      pushToast(msg("plugins-plugin-could-not-be-uninstalled", { Stringerror: String(error) }), "error");
+      pushToast(msg("plugins-plugin-could-not-be-uninstalled", { error: String(error) }), "error");
     } finally {
       release();
     }
@@ -256,7 +256,7 @@ function PluginsTabContent(): JSX.Element {
       setView("installed");
       setSelectedPluginKey(`${installed.manifest.id}@${installed.manifest.version}`);
     } catch (error) {
-      pushToast(msg("plugins-community-plugin-installation-failed", { Stringerror: String(error) }), "error");
+      pushToast(msg("plugins-community-plugin-installation-failed", { error: String(error) }), "error");
     } finally {
       release();
     }
@@ -284,7 +284,7 @@ function PluginsTabContent(): JSX.Element {
             </div>
             <Show when={plugin.manifest.portedFrom} keyed>
               {(origin) => (
-                <div class="plugin-origin-card"><strong>{origin.relationship === "behavioral-port" ? t("plugins-behavioral-port") : t("plugins-source-derived-port")}</strong><br /><span>{t("plugins-from-for-original-authors", { name: origin.name, ecosystem: origin.ecosystem, value: origin.authors.join(", ") })}</span><br /><button class="settings-link" onClick={() => void backend().openExternal(origin.source)}>{t("plugins-original-source-at", { value: origin.revision.slice(0, 12) })}</button>
+                <div class="plugin-origin-card"><strong>{origin.relationship === "behavioral-port" ? t("plugins-behavioral-port") : t("plugins-source-derived-port")}</strong><br /><span>{t("plugins-from-for-original-authors", { name: origin.name, ecosystem: origin.ecosystem, authors: origin.authors.join(", ") })}</span><br /><button class="settings-link" onClick={() => void backend().openExternal(origin.source)}>{t("plugins-original-source-at", { revision: origin.revision.slice(0, 12) })}</button>
                 </div>
               )}
             </Show><div class="settings-section">{t("plugins-settings")}</div>
@@ -304,12 +304,12 @@ function PluginsTabContent(): JSX.Element {
         )}
       </Show>
       <Show when={!selectedPlugin()}>
-        <div class="plugin-settings-nav" role="tablist" aria-label={t("plugins-plugin-settings-sections")}><button role="tab" aria-selected={view() === "browse"} classList={{ active: view() === "browse" }} onClick={() => setView("browse")}>{t("plugins-browse")}</button><button role="tab" aria-selected={view() === "installed"} classList={{ active: view() === "installed" }} onClick={() => setView("installed")}>{t("plugins-installed", { length: installedPlugins().length })}</button>
+        <div class="plugin-settings-nav" role="tablist" aria-label={t("plugins-plugin-settings-sections")}><button role="tab" aria-selected={view() === "browse"} classList={{ active: view() === "browse" }} onClick={() => setView("browse")}>{t("plugins-browse")}</button><button role="tab" aria-selected={view() === "installed"} classList={{ active: view() === "installed" }} onClick={() => setView("installed")}>{t("plugins-installed", { count: installedPlugins().length })}</button>
         </div>
       <Show when={view() === "browse"}><div class="settings-section">{t("plugins-experimental-plugin-platform")}</div>
       <p class="settings-hint">{t("plugins-tine-plugins-are-capability-limited-webassembly-guests-not")}</p>
       <div class="settings-row">
-        <div><div class="settings-label">{t("plugins-install-a-local-package")}</div><div class="settings-hint"><Rich text={t("plugins-select-its-manifest-json-and-wasm-file-together")} slots={{ "code": (children) => <code>{children}</code>, "code1": (children) => <code>{children}</code> }} /></div>
+        <div><div class="settings-label">{t("plugins-install-a-local-package")}</div><div class="settings-hint"><Rich message={msg("plugins-select-its-manifest-json-and-wasm-file-together")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
         </div>
         <div>
           <input
@@ -381,18 +381,18 @@ function PluginsTabContent(): JSX.Element {
                     disabled={installed() || busy() !== null || version().audit.status !== "passed" || !available()}
                     onClick={() => void installCommunity(plugin, version())}
                   >{installed()
-                      ? t("plugins-installed-2")
+                      ? t("plugins-installed-status")
                       : !currentPlatform()
                         ? t("plugins-checking")
                         : !available()
-                          ? t("plugins-unavailable-on", { currentPlatform: currentPlatform() ?? "" })
+                          ? t("plugins-unavailable-on", { platform: currentPlatform() ?? "" })
                           : busy() === `${plugin.id}@${version().version}`
                             ? t("plugins-verifying")
                             : t("plugins-install")}
                   </button>
                 </div>
                 <div class="settings-hint settings-field-hint">
-                  {plugin.description}<br />{plugin.license}{" · "}{plugin.aiDevelopment === "none" ? t("plugins-human-written") : t("plugins-ai", { aiDevelopment: plugin.aiDevelopment })}{" · "}{version().platforms.join(", ")}<br />{t("plugins-capabilities-list", { kind: version().capabilities.length ? "some" : "none", capabilities: version().capabilities.join(", ") })}{" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.source)}>{t("plugins-details-screenshots")}</button>
+                  {plugin.description}<br />{plugin.license}{" · "}{plugin.aiDevelopment === "none" ? t("plugins-human-written") : t("plugins-ai", { developmentMethod: plugin.aiDevelopment })}{" · "}{version().platforms.join(", ")}<br />{t("plugins-capabilities-list", { kind: version().capabilities.length ? "some" : "none", capabilities: version().capabilities.join(", ") })}{" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.source)}>{t("plugins-details-screenshots")}</button>
                 </div>
                 <div class="plugin-safety-row">
                   <span
@@ -400,7 +400,7 @@ function PluginsTabContent(): JSX.Element {
                     classList={{ manual: version().audit.manualApproval, low: !version().audit.manualApproval }}
                   >
                     {safetyLabel()}
-                  </span><span class="settings-hint">{t("plugins-checked", { value: version().audit.checkedAt.slice(0, 10) })}</span>
+                  </span><span class="settings-hint">{t("plugins-checked", { date: version().audit.checkedAt.slice(0, 10) })}</span>
                   <button class="settings-link" onClick={() => void showReport()}>{reportOpen() ? t("plugins-hide-safety-report") : t("plugins-safety-report")}
                   </button>
                 </div>
@@ -439,7 +439,7 @@ function PluginsTabContent(): JSX.Element {
                               </For>
                             </div>
                           </Show>
-                          <div class="settings-hint"><Rich text={t("plugins-audit-details", { source: richValue(safety.sourceCommit.slice(0, 12)), package: richValue(version().sha256.slice(0, 12)), report: richValue(version().audit.sha256.slice(0, 12)), count: safety.areasReviewed.length })} slots={{ code: (children) => <code title={safety.sourceCommit}>{children}</code>, code1: (children) => <code title={version().sha256}>{children}</code>, code2: (children) => <code title={version().audit.sha256}>{children}</code> }} />{" · "}<button class="settings-link" onClick={() => void backend().openExternal(version().audit.url)}>{t("plugins-raw-report")}</button>
+                          <div class="settings-hint"><Rich message={msg("plugins-audit-details", { source: safety.sourceCommit.slice(0, 12), package: version().sha256.slice(0, 12), report: version().audit.sha256.slice(0, 12), count: safety.areasReviewed.length })} slots={{ "source-code": (children) => <code title={safety.sourceCommit}>{children}</code>, "package-code": (children) => <code title={version().sha256}>{children}</code>, "report-code": (children) => <code title={version().audit.sha256}>{children}</code> }} />{" · "}<button class="settings-link" onClick={() => void backend().openExternal(version().audit.url)}>{t("plugins-raw-report")}</button>
                           </div><div class="settings-hint">{t("plugins-automated-review-is-evidence-not-a-guarantee")}</div>
                         </>
                       )}
@@ -455,7 +455,7 @@ function PluginsTabContent(): JSX.Element {
 
       </Show>
 
-      <Show when={view() === "installed"}><div class="settings-section">{t("plugins-installed-2")}</div><Show when={installedPlugins().length > 0} fallback={<p class="settings-hint">{t("plugins-no-plugins-installed")}</p>}>
+      <Show when={view() === "installed"}><div class="settings-section">{t("plugins-installed-status")}</div><Show when={installedPlugins().length > 0} fallback={<p class="settings-hint">{t("plugins-no-plugins-installed")}</p>}>
         <For each={installedPlugins()}>
           {(plugin) => (
             <div class="settings-field">
@@ -467,7 +467,7 @@ function PluginsTabContent(): JSX.Element {
                   <button
                     class="settings-btn"
                     onClick={() => setSelectedPluginKey(`${plugin.manifest.id}@${plugin.manifest.version}`)}
-                  >{(plugin.manifest.settings?.length ?? 0) > 0 ? t("plugins-settings-2") : t("plugins-details")}
+                  >{(plugin.manifest.settings?.length ?? 0) > 0 ? t("plugins-open-settings") : t("plugins-details")}
                   </button>
                   <Toggle
                     on={plugin.enabled && plugin.running}
@@ -485,7 +485,7 @@ function PluginsTabContent(): JSX.Element {
               <div class="settings-hint settings-field-hint">
                 {plugin.manifest.description}<br />
                 <code>{plugin.manifest.id}</code> · {plugin.manifest.license} · {plugin.manifest.platforms.join(", ")}
-                <Show when={plugin.manifest.aiDevelopment && plugin.manifest.aiDevelopment !== "none"}>{" · "}{t("plugins-ai", { aiDevelopment: plugin.manifest.aiDevelopment ?? "" })}
+                <Show when={plugin.manifest.aiDevelopment && plugin.manifest.aiDevelopment !== "none"}>{" · "}{t("plugins-ai", { developmentMethod: plugin.manifest.aiDevelopment ?? "" })}
                 </Show><br />{t("plugins-capabilities-list", { kind: plugin.manifest.capabilities.length ? "some" : "none", capabilities: plugin.manifest.capabilities.join(", ") })}{" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.manifest.source)}>{t("plugins-details-screenshots")}</button>
               </div>
               <Show when={plugin.error}>

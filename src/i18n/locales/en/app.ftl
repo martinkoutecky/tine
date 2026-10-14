@@ -8,27 +8,15 @@ app-couldn-t-confirm-closing-the-window-your-unsaved = Couldn't confirm closing 
 app-tine-couldn-t-close-the-android-activity-tap = Tine couldn't close the Android activity. Tap Back to retry closing.
 app-close-tab = Close tab
 app-pane-select = Pane select
-app-move-onto-seams-edges = <kbd>←</kbd><kbd1>→</kbd1><kbd2>↑</kbd2><kbd3>↓</kbd3> move (onto seams & edges) · <kbd4>Enter</kbd4> enter pane · <kbd5>Del</kbd5> close pane
-app-ctrl-k-open-a-page-in-this-pane = <kbd>Ctrl+K</kbd> open a page in this pane · <kbd1>Esc</kbd1> exit
-
-
-
-
-
-
-
-
-
-
-
-
-
+app-move-onto-seams-edges = <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move (onto seams & edges) · <kbd>Enter</kbd> enter pane · <kbd>Del</kbd> close pane
+app-ctrl-k-open-a-page-in-this-pane = <kbd>Ctrl+K</kbd> open a page in this pane · <kbd>Esc</kbd> exit
 
 app-captured-to = Captured to “{ $title }”
 app-captured-to-today-s-journal = Captured to today's journal
 app-capture-couldn-t-be-saved-its-text = Capture couldn't be saved — its text is kept in the capture window
 app-tine-was-renamed-under-the-hood-so = Tine was renamed under the hood, so we moved your settings and backups across. A few app-level preferences (e.g. keyboard shortcuts) might need setting again — sorry about that!
-app-tine-could-not-write-its-usual-application-data = Tine could not write its usual application-data folder, so this session is keeping settings and backups in { $value } instead. Fixing the permissions on that folder restores the normal location.
+# $fallbackDirectory is the temporary application-data directory, not a graph path.
+app-tine-could-not-write-its-usual-application-data = Tine could not write its usual application-data folder, so this session is keeping settings and backups in { $fallbackDirectory } instead. Fixing the permissions on that folder restores the normal location.
 app-quick-capture-could-not-connect-to-this = Quick Capture could not connect to this graph window.
 app-the-block-renderer-failed-to-load = The block renderer failed to load — text is shown unformatted. Please reload Tine; if this persists, report it.
 app-finishing-graph-operation = Finishing graph operation…
@@ -41,7 +29,6 @@ app-settings-t-s = Settings (t s)
 app-refreshing-changes-from-disk = Refreshing changes from disk…
 app-exit-focus-esc = Exit focus (Esc)
 
-
 app-close-explanation = { $reason ->
     [still-saving] Tine is still writing your changes and is taking longer than expected — a slow or network drive can do this.
    *[other] Tine has changes that could not be saved (a conflict or a stuck save).
@@ -51,12 +38,14 @@ app-close-inventory = { $inventory ->
    *[other] { $inventory }
     }
 # Key names are literal shortcut notation. Inline slots retain the pane hint's emphasis.
+# $kind selects an outer window edge, a pane edge, or a seam between panes. <em-hint> highlights the split target and page-entry hint; <span> groups the instruction.
 app-pane-split-instruction = { $kind ->
-    [edge] <kbd>Enter</kbd> <span>split the <span1>whole window</span1></span> · <span2>type a page name</span2> (or <kbd1>Ctrl+K</kbd1>) to open it in the new split
-    [pane-edge] <kbd>Enter</kbd> <span>split <span1>this pane</span1></span> · <span2>type a page name</span2> (or <kbd1>Ctrl+K</kbd1>) to open it in the new split
-   *[seam] <kbd>Enter</kbd> <span>split here (mirrors the pane)</span> · <span2>type a page name</span2> (or <kbd1>Ctrl+K</kbd1>) to open it in the new split
+    [edge] <kbd>Enter</kbd> <span>split the <em-hint>whole window</em-hint></span> · <em-hint>type a page name</em-hint> (or <kbd>Ctrl+K</kbd>) to open it in the new split
+    [pane-edge] <kbd>Enter</kbd> <span>split <em-hint>this pane</em-hint></span> · <em-hint>type a page name</em-hint> (or <kbd>Ctrl+K</kbd>) to open it in the new split
+   *[seam] <kbd>Enter</kbd> <span>split here (mirrors the pane)</span> · <em-hint>type a page name</em-hint> (or <kbd>Ctrl+K</kbd>) to open it in the new split
     }
+# $kind selects the pane-edge navigation hint; <span> groups that optional hint.
 app-pane-split-navigation = { $kind ->
-    [pane-edge] <span>press outward again to widen the split · </span><kbd>←</kbd><kbd1>→</kbd1><kbd2>↑</kbd2><kbd3>↓</kbd3> move · <kbd4>Esc</kbd4> exit
-   *[other] <kbd>←</kbd><kbd1>→</kbd1><kbd2>↑</kbd2><kbd3>↓</kbd3> move · <kbd4>Esc</kbd4> exit
+    [pane-edge] <span>press outward again to widen the split · </span><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Esc</kbd> exit
+   *[other] <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Esc</kbd> exit
     }

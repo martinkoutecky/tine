@@ -76,7 +76,7 @@ export function ReferenceExportChooser(props: {
         </div>
         <div class="export-foot">
           <button class="export-btn-secondary" onClick={props.onClose}>{t("reference-export-chooser-cancel")}</button>
-          <button class="export-btn-primary" disabled={!count()} onClick={exportSelection}>{t("reference-export-chooser-copy-export-3")}</button>
+          <button class="export-btn-primary" disabled={!count()} onClick={exportSelection}>{t("reference-export-chooser-open")}</button>
         </div>
       </div>
     </div>

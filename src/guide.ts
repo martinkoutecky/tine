@@ -86,7 +86,7 @@ export async function openGuide(): Promise<void> {
     if (!owner()) return;
     openPageInNewTab(guidePageName(GUIDE_INDEX_TITLE), "page", undefined, true);
   } catch (e) {
-    if (graphWhenAsked()) pushToast(msg("guide-couldn-t-open-the-guide", { string_e: String(e) }), "error");
+    if (graphWhenAsked()) pushToast(msg("guide-couldn-t-open-the-guide", { error: String(e) }), "error");
   }
 }
 
@@ -112,7 +112,7 @@ export async function copyGuideIntoGraph(pageName: string): Promise<void> {
     );
     if (surface()) openPage(result.name, "page");
   } catch (e) {
-    pushToast(msg("guide-couldn-t-copy-the-guide-into-your-graph", { string_e: String(e) }), "error");
+    pushToast(msg("guide-couldn-t-copy-the-guide-into-your-graph", { error: String(e) }), "error");
   }
 }
 

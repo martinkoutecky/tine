@@ -357,7 +357,7 @@ export function GraphSwitcher(props: {
                     event.stopPropagation();
                     void writeOwned(ownedWhen(() => alive), backend().forgetKnownGraph(graph.path))
                       .then((result) => { if (result.kind === "current") void refetch(); })
-                      .catch((error) => pushToast(msg("sidebar-couldn-t-remove-graph", { string_error: String(error) }), "error"));
+                      .catch((error) => pushToast(msg("sidebar-couldn-t-remove-graph", { error: String(error) }), "error"));
                   }}
                 >
                   ×
@@ -379,7 +379,7 @@ export function GraphSwitcher(props: {
                 // Target-specific failures are reported by switchGraph after the
                 // picker returns a path, so their Retry keeps that path. A
                 // rejection here is a picker failure with no target to retry.
-                .catch((error) => pushToast(msg("sidebar-couldn-t-open-the-graph-picker", { string_error: String(error) }), "error"));
+                .catch((error) => pushToast(msg("sidebar-couldn-t-open-the-graph-picker", { error: String(error) }), "error"));
             }}
           >{t("sidebar-open-graph")}</div>
           <div
@@ -390,7 +390,7 @@ export function GraphSwitcher(props: {
                 .then((outcome) => {
                   if (outcome.kind === "loaded" || outcome.kind === "already_current") props.onActiveNavigationComplete?.();
                 })
-                .catch((error) => pushToast(msg("sidebar-couldn-t-create-the-graph", { string_error: String(error) }), "error"));
+                .catch((error) => pushToast(msg("sidebar-couldn-t-create-the-graph", { error: String(error) }), "error"));
             }}
           >{t("sidebar-new-graph")}</div>
         </div>

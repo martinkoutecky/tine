@@ -190,7 +190,7 @@ function Field(props: { scope: PropsPanelScope; spec: PagePropSpec; write: Write
       <div class="pp-row-head">
         <label class="pp-label">{props.spec.label}</label>
         <Show when={removable}>
-          <button class="pp-remove" title={t("page-props-remove", { key: String(props.spec.key) })} onClick={() => write(null)}>{t("page-props-remove-2")}</button>
+          <button class="pp-remove" title={t("page-props-remove", { key: String(props.spec.key) })} onClick={() => write(null)}>{t("page-props-remove-action")}</button>
         </Show>
       </div>
       <input

@@ -417,7 +417,7 @@ const COMMANDS: CommandDef[] = [
     binding: "",
     label: msg("command-editor-toggle-undo-redo-mode"),
     scope: "global",
-    run: () => pushToast(msg("commands-undo-redo-mode", { toggleUndoRedoMode: toggleUndoRedoMode() })),
+    run: () => pushToast(msg("commands-undo-redo-mode", { mode: toggleUndoRedoMode() })),
   },
   // Block commands (R2 B1). OG binds none of these, so none has a default key;
   // each acts on the block selection, else on the block being edited.
@@ -654,7 +654,7 @@ function pluginCommandDefs(): CommandDef[] {
     run: () => {
       void pluginManager
         .invokeCommand(pluginId, contribution.id, pluginFocusedBlock())
-        .catch((error) => pushToast(msg("commands-plugin-command-failed", { Stringerror: String(error) }), "error"));
+        .catch((error) => pushToast(msg("commands-plugin-command-failed", { error: String(error) }), "error"));
     },
   }));
 }
@@ -809,7 +809,7 @@ export function paletteCommands(
     run: () => {
       void pluginManager
         .invokeCommand(pluginId, contribution.id, focusedPluginBlock ?? undefined)
-        .catch((error) => pushToast(msg("commands-plugin-command-failed", { Stringerror: String(error) }), "error"));
+        .catch((error) => pushToast(msg("commands-plugin-command-failed", { error: String(error) }), "error"));
     },
   }));
   return [...builtIn, ...plugins];

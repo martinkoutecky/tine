@@ -1,3 +1,4 @@
+import { Rich } from "../i18n/Rich";
 import { msg, render, t } from "../i18n";
 import { optionsUpdater } from "./primitives";
 import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
@@ -153,7 +154,7 @@ function Dialog(props: { name: string }): JSX.Element {
         </div>
 
         <div class="pdf-export-note">
-          <PrintNote />
+          <Rich message={msg("pdf-export-print-note")} slots={{ strong: children => <b>{children}</b> }} />
         </div>
 
         <div class="export-foot">
@@ -163,13 +164,4 @@ function Dialog(props: { name: string }): JSX.Element {
       </div>
     </div>
   );
-}
-
-// One translated sentence with an emphasis slot, rendered as Solid nodes.
-// The catalog controls where the emphasized words appear; no HTML is injected.
-function PrintNote(): JSX.Element {
-  return <For each={t("pdf-export-print-note").split(/(<strong>.*?<\/strong>)/)}>
-    {(part) => part.startsWith("<strong>") && part.endsWith("</strong>")
-      ? <b>{part.slice(8, -9)}</b> : part}
-  </For>;
 }

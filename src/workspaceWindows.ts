@@ -102,7 +102,7 @@ export interface OpenWorkspaceWindowSpec {
 export function openWorkspaceWindow(spec: OpenWorkspaceWindowSpec): string | null {
   if (!workspaceWindowsSupported()) return null;
   if (live.size >= MAX_WORKSPACE_WINDOWS) {
-    pushToast(msg("workspace-windows-at-most-extra-windows-can-be-open-at", { max_workspace_windows: String(MAX_WORKSPACE_WINDOWS) }), "error");
+    pushToast(msg("workspace-windows-at-most-extra-windows-can-be-open-at", { windowLimit: String(MAX_WORKSPACE_WINDOWS) }), "error");
     return null;
   }
   const id = `ws-${++nextId}`;

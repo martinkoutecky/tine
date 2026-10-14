@@ -450,7 +450,7 @@ export function QuickSwitcher(): JSX.Element {
       return saved.kind === "stale" ? stale() : { kind: "current", value: null };
     } catch (error) {
       if (error instanceof CreatePageRefusal && error.reason === "graph-changed") return stale();
-      pushToast(msg("quick-switcher-could-not-create-it-will-be-saved-on", { name: String(name), string_error: String(error) }), "error");
+      pushToast(msg("quick-switcher-could-not-create-it-will-be-saved-on", { name: String(name), error: String(error) }), "error");
       return { kind: "current", value: null };
     }
   };
@@ -463,7 +463,7 @@ export function QuickSwitcher(): JSX.Element {
       if (target) openPageTarget(target);
       else openPage(name, "page");
     } catch (error) {
-      pushToast(msg("quick-switcher-could-not-create", { name: String(name), string_error: String(error) }), "error");
+      pushToast(msg("quick-switcher-could-not-create", { name: String(name), error: String(error) }), "error");
     }
   };
 

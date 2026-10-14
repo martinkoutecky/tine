@@ -32,4 +32,3 @@ about-email-support = Email support
 about-license-agpl-3-0-only = License: AGPL-3.0-only
 about-direction-design-and-authorship = direction, design, and authorship
 about-engineering-and-analysis = engineering and analysis
-

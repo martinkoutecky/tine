@@ -110,7 +110,8 @@ command-editor-paste-as-link = Paste as link
 
 # Interface text; variables carry untranslated names, paths or diagnostic details.
 commands-open-a-page-first-to-export-it = Open a page first to export it to PDF
-commands-undo-redo-mode = Undo/redo mode: { $toggleUndoRedoMode }
+# $mode is the chosen undo/redo mode label.
+commands-undo-redo-mode = Undo/redo mode: { $mode }
 commands-select-text-in-a-block-then-use = Select text in a block, then use Paste as link
 command-builtin-global-escape = Close overlays or exit focus
 commands-closes-search-settings-first-outside-overlays = Closes Search / Settings first; outside overlays, peels off block selection and focus mode.
@@ -142,6 +143,7 @@ commands-esc-leaves-a-sheet-typing-replaces-the = Esc leaves a sheet; typing rep
 command-builtin-sheet-range = Select a sheet range
 command-builtin-sheet-copy-cut = Copy, cut, or paste sheet cells
 command-builtin-sheet-fill = Fill sheet selection down or right
-commands-plugin-command-failed = Plugin command failed: { $Stringerror }
+# $error is an untranslated diagnostic from the operating system or backend.
+commands-plugin-command-failed = Plugin command failed: { $error }
 commands-couldn-t-copy-selection-clipboard-write-failed = Couldn't copy selection: clipboard write failed.
 commands-couldn-t-cut-selection-clipboard-write-failed = Couldn't cut selection: clipboard write failed.

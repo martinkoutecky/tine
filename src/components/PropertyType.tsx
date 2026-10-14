@@ -35,7 +35,7 @@ export function PropertyType(props: {
       props.onDeclarationWritten();
       setOpen(false);
     } catch (error) {
-      pushToast(msg("property-type-could-not-save-property-type", { message_string_error: String(error instanceof Error ? error.message : String(error)) }), "error");
+      pushToast(msg("property-type-could-not-save-property-type", { error: String(error instanceof Error ? error.message : String(error)) }), "error");
     } finally {
       setBusy(false);
     }

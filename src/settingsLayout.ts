@@ -20,7 +20,7 @@ export function setSettingsMaximized(on: boolean): void {
   const revision = advanceRevision(preferenceKey);
   setMaximized(on);
   void writeOwned(revisionOwner(preferenceKey, revision), backend().setAppBool(KEY, on))
-    .catch((error) => pushToast(msg("settings-could-not-remember-settings-size", { Stringerror: String(error) }), "error"));
+    .catch((error) => pushToast(msg("settings-could-not-remember-settings-size", { error: String(error) }), "error"));
 }
 
 /** Hydrate the remembered size once at startup. A user's later choice wins a
@@ -31,6 +31,6 @@ export async function initSettingsLayout(): Promise<void> {
     const loaded = await readOwned(owner, backend().getAppBool(KEY, false));
     if (loaded.kind === "current") setMaximized(loaded.value);
   } catch (error) {
-    pushToast(msg("settings-could-not-load-settings-size", { Stringerror: String(error) }), "error");
+    pushToast(msg("settings-could-not-load-settings-size", { error: String(error) }), "error");
   }
 }

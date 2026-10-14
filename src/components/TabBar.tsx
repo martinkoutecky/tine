@@ -731,7 +731,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
                     class="tab-overview-drag-handle"
                     type="button"
                     tabIndex={-1}
-                    aria-label={translate("tab-bar-reorder", { tab_route_tab: String(tabFullTitle(router.tabRoute(tab))) })}
+                    aria-label={translate("tab-bar-reorder", { title: String(tabFullTitle(router.tabRoute(tab))) })}
                     title={translate("tab-bar-drag-to-reorder-alt-up-down-moves-the")}
                     onPointerDown={(event) => beginOverviewDrag(tab.id, event)}
                     onClick={(event) => {
@@ -746,7 +746,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
                     <button
                       class="tab-overview-close"
                       type="button"
-                      aria-label={translate("tab-bar-close", { tab_route_tab: String(tabFullTitle(router.tabRoute(tab))) })}
+                      aria-label={translate("tab-bar-close", { title: String(tabFullTitle(router.tabRoute(tab))) })}
                       onClick={(event) => {
                         event.stopPropagation();
                         void closeOverviewTab(tab.id, index());

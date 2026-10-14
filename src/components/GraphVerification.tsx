@@ -118,7 +118,7 @@ export function GraphVerification(): JSX.Element {
       ));
     } catch (error) {
       setComparison(null);
-      pushToast(msg("graph-verification-could-not-compare-the-reports", { value: String(error instanceof Error ? error.message : "invalid report.") }), "error");
+      pushToast(msg("graph-verification-could-not-compare-the-reports", { error: String(error instanceof Error ? error.message : "invalid report.") }), "error");
     }
   };
 

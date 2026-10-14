@@ -91,7 +91,7 @@ export function ConflictFileRow(props: {
         </span>
       </div>
       <div class="journal-conflict-preview">
-        {props.file.preview_error ? t("journal-conflict-file-row-couldn-t-read-this-file", { preview_error: String(props.file.preview_error) }) : props.file.preview}
+        {props.file.preview_error ? t("journal-conflict-file-row-couldn-t-read-this-file", { error: String(props.file.preview_error) }) : props.file.preview}
       </div>
       <Show when={renaming()}>
         <div ref={renameRoot} class="journal-conflict-rename">

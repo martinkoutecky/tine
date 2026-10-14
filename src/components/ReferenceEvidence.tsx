@@ -84,7 +84,7 @@ export function OccurrenceControls(props: {
             type="button"
             class="reference-occurrence-jump"
             classList={{ selected: selecting() && props.selected === index() }}
-            title={selecting() ? t("reference-evidence-highlight-mention", { kind: String(occurrence.kind), value: String(index() + 1) }) : t("reference-evidence-jump-to-mention", { kind: String(occurrence.kind), value: String(index() + 1) })}
+            title={selecting() ? t("reference-evidence-highlight-mention", { kind: String(occurrence.kind), index: String(index() + 1) }) : t("reference-evidence-jump-to-mention", { kind: String(occurrence.kind), index: String(index() + 1) })}
             aria-label={t("reference-evidence-occurrence-label", { selecting: selecting() ? 1 : 0, index: String(index() + 1), total: String(total()) })}
             aria-pressed={selecting() ? props.selected === index() : undefined}
             onClick={() => (selecting() ? props.onSelect!(index()) : props.onOccurrence?.(occurrence.span))}

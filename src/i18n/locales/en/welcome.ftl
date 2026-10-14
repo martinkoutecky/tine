@@ -1,6 +1,6 @@
 
 # Interface text; variables carry untranslated names, paths or diagnostic details.
-welcome-could-not-copy = Could not copy: { $Stringe }
+welcome-could-not-copy = Could not copy: { $error }
 welcome-close-welcome = Close welcome
 welcome-welcome-to-tine = Welcome to Tine
 welcome-a-fast-local-outliner-for-your-logseq = A fast, local outliner for your <strong>Logseq</strong> graph. Tine reads and writes the same Markdown files — so you can keep using Logseq too, on the same notes.
@@ -16,4 +16,3 @@ welcome-new-to-this-we-ll-set-up-a = New to this? We'll set up a small demo grap
 welcome-setting-up-your-graph = Setting up your graph…
 welcome-opening = Opening…
 welcome-free-open-source-your-notes = Free & open source · your notes stay plain Markdown files you own.
-

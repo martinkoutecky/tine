@@ -33,14 +33,14 @@ export function graphRowMenuActions(graph: KnownGraph, deps: GraphRowMenuDeps): 
     { get label() { return render(deps.isCurrent ? msg("graph-row-menu-open-here-current-graph") : msg("graph-row-menu-open-here")); },
       disabled: deps.isCurrent, run: () => open(false) },
     ...(deps.desktop ? [{ get label() { return render(msg("graph-row-menu-show-in-folder")); }, run: () => {
-      void writeOwned(owner, deps.reveal(graph.path)).catch((error) => pushToast(msg("graph-row-menu-could-not-show-the-graph-folder", { string_error: String(error) }), "error"));
+      void writeOwned(owner, deps.reveal(graph.path)).catch((error) => pushToast(msg("graph-row-menu-could-not-show-the-graph-folder", { error: String(error) }), "error"));
     } }] : []),
     { get label() { return render(msg("graph-row-menu-copy-link")); }, run: () => void copyTineLink({ root: graph.path }) },
     { get label() { return render(msg("graph-row-menu-copy-path")); }, run: () => {
-      void writeOwned(owner, deps.copyPath(graph.path)).catch((error) => pushToast(msg("graph-row-menu-could-not-copy-graph-path", { string_error: String(error) }), "error"));
+      void writeOwned(owner, deps.copyPath(graph.path)).catch((error) => pushToast(msg("graph-row-menu-could-not-copy-graph-path", { error: String(error) }), "error"));
     } },
     { get label() { return render(msg("graph-row-menu-remove-from-this-list")); }, danger: true, run: () => {
-      void writeOwned(owner, deps.forget(graph.path)).catch((error) => pushToast(msg("graph-row-menu-could-not-remove-graph", { string_error: String(error) }), "error"));
+      void writeOwned(owner, deps.forget(graph.path)).catch((error) => pushToast(msg("graph-row-menu-could-not-remove-graph", { error: String(error) }), "error"));
     } },
   ];
 }

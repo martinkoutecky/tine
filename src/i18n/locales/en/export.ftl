@@ -55,16 +55,18 @@ export-modal-resolving = Resolving...
 export-modal-copy = Copy
 
 # Explicit mentions are authored links; plain mentions are unlinked text matches.
+# $index is the mention's one-based position within the block.
 reference-evidence-highlight-mention =
     { $kind ->
-        [explicit] Highlight explicit mention { $value }
-       *[plain] Highlight plain mention { $value }
+        [explicit] Highlight explicit mention { $index }
+       *[plain] Highlight plain mention { $index }
     }
 
+# $kind is explicit for authored links or plain for unlinked text; $index is the one-based mention position.
 reference-evidence-jump-to-mention =
     { $kind ->
-        [explicit] Jump to explicit mention { $value }
-       *[plain] Jump to plain mention { $value }
+        [explicit] Jump to explicit mention { $index }
+       *[plain] Jump to plain mention { $index }
     }
 
 reference-evidence-open-this-block-in = Open this block in { $page }
@@ -91,7 +93,7 @@ reference-export-chooser-no-entries-in-this-section = No entries in this section
 
 reference-export-chooser-cancel = Cancel
 
-reference-export-chooser-copy-export-3 = Copy / export…
+reference-export-chooser-open = Copy / export…
 
 export-modal-block-count =
     { $count ->

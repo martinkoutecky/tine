@@ -224,7 +224,7 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
         {(root) => (
           <div class="ns-macro">
             <div class="ns-macro-head">
-              <span class="ns-macro-label">{t("namespace-namespace-2")}</span>
+              <span class="ns-macro-label">{t("namespace-macro-label")}</span>
               <Show when={iconOf(root.full)}>
                 <span class="page-icon">
                   <EmojiText text={iconOf(root.full)!} />

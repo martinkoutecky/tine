@@ -53,8 +53,8 @@ editor-completion-draw-io-diagram = Draw.io diagram
 editor-completion-code-block = Code block
 editor-completion-calculator = Calculator
 editor-completion-quote = Quote
-# $value is a literal Org section type (note, tip, important, warning, caution).
-editor-completion-admonition = Admonition: { $value }
+# $type is a literal Org section type (note, tip, important, warning, caution).
+editor-completion-admonition = Admonition: { $type }
 editor-completion-divider = Divider
 editor-completion-query = Query
 editor-completion-embed = Embed

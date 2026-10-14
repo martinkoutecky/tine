@@ -14,7 +14,7 @@ help-open-the-github-releases-page = Open the GitHub releases page
 help-welcome-screen = Welcome screen
 help-show-first-run-onboarding-again = Show first-run onboarding again
 help-help = Help
-help-help-2 = Help (?)
+help-help-with-shortcut = Help (?)
 help-global = Global
 help-available-across-the-app-modifier-chords-can = Available across the app. Modifier chords can also fire while a block is being edited.
 help-select-mode = Select mode
@@ -54,14 +54,15 @@ help-syntax = Syntax
 help-result = Result
 help-click-to-remap = Click to remap
 help-press-keys = Press keys...
+# $alias is the alternate key binding, displayed as a keycap by the <span> slot.
 help-or = or <span>{ $alias }</span>
 help-unbind = Unbind
 help-remove-this-keybinding = Remove this keybinding
 help-reset = Reset
 help-reset-to-default = Reset to default
 help-built-in = Built-in
-help-click-a-binding-to-record-new-keys = Click a binding to record new keys (<code>mod</code> = Ctrl, or Cmd on macOS). Esc cancels. Overrides are saved locally on top of <code1>config.edn</code1>.
+# Keep the keybinding token mod and the configuration filename config.edn literal inside <code>.
+help-click-a-binding-to-record-new-keys = Click a binding to record new keys (<code>mod</code> = Ctrl, or Cmd on macOS). Esc cancels. Overrides are saved locally on top of <code>config.edn</code>.
 help-no-matching-shortcuts = No matching shortcuts
 help-remappable-commands = Remappable commands
 help-built-in-keys = Built-in keys
-

@@ -68,7 +68,7 @@ export async function maybeShowDefenderHint(): Promise<void> {
             const { text, kind } = exclusionResultMessage(answer.value);
             pushToast(text, kind);
           },
-          (error: unknown) => pushToast(msg("defender-hint-could-not-run-the-exclusion", { string_error: String(error) }), "error"),
+          (error: unknown) => pushToast(msg("defender-hint-could-not-run-the-exclusion", { error: String(error) }), "error"),
         );
       },
     },
@@ -79,7 +79,7 @@ export async function maybeShowDefenderHint(): Promise<void> {
       if (acting || !owner()) return;
       void writeOwned(owner, backend().dismissDefenderHint()).then(
         () => undefined,
-        (error: unknown) => pushToast(msg("defender-hint-could-not-remember-that-you-closed-the-hint", { string_error: String(error) }), "error"),
+        (error: unknown) => pushToast(msg("defender-hint-could-not-remember-that-you-closed-the-hint", { error: String(error) }), "error"),
       );
     },
   });

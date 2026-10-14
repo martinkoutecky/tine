@@ -4,13 +4,13 @@ update-diagnostics = Diagnostics
 update-download-manually = Download manually
 update-install-update = Install update
 
-update-is-available-but-automatic-updates-are = { $APPPRODUCTNAME } { $version } is available, but automatic updates are not supported by this experimental 32-bit Windows build. Download the x86 package manually.
-update-is-available-the-flatpak-cannot-update = { $APPPRODUCTNAME } { $version } is available. The Flatpak cannot update itself: download the new .flatpak bundle and install it again with flatpak install --user.
-update-couldn-t-restart-tine-quit-and-start = Couldn't restart Tine ({ $Stringerror }). Quit and start it again.
-update-downloading = Downloading { $APPPRODUCTNAME } { $version }…
+update-is-available-but-automatic-updates-are = { $product } { $version } is available, but automatic updates are not supported by this experimental 32-bit Windows build. Download the x86 package manually.
+update-is-available-the-flatpak-cannot-update = { $product } { $version } is available. The Flatpak cannot update itself: download the new .flatpak bundle and install it again with flatpak install --user.
+# $error is an untranslated diagnostic from the operating system or backend.
+update-couldn-t-restart-tine-quit-and-start = Couldn't restart Tine ({ $error }). Quit and start it again.
+update-downloading = Downloading { $product } { $version }…
 update-the-update-was-downloaded-but-not-installed = The update was downloaded but not installed, so your unsaved changes stay open. Choose Install update again when you are ready.
-update-is-available-you-re-on = { $APPPRODUCTNAME } { $version } is available — you're on { $current }.
-
+update-is-available-you-re-on = { $product } { $version } is available — you're on { $current }.
 
 update-failure-notice = { update-failure-summary } Diagnostics has the safe failure stage; launch Tine with --debug for the sanitized cause chain.
 update-failure-summary = { $phase ->

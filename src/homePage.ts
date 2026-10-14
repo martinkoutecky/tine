@@ -56,7 +56,7 @@ export async function openConfiguredHomePage(): Promise<HomeOutcome> {
     return "opened";
   } catch (error) {
     if (!owner()) return "stale";
-    pushToast(msg("home-page-couldn-t-open-the-home-page", { name: String(name), string_error: String(error) }), "error");
+    pushToast(msg("home-page-couldn-t-open-the-home-page", { name: String(name), error: String(error) }), "error");
     return "unresolved";
   }
 }

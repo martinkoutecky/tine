@@ -185,7 +185,7 @@ export function refreshOnReturnToWindow(now = Date.now(), force = false, rebuild
       // stale case too: the new binding's load read the disk itself.
       if (error instanceof StaleFocusRefresh || !bindingCurrent(binding)) return;
       // The watcher stays primary; a failed fallback must clear the notice.
-      pushToast(msg("reload-on-focus-tine-couldn-t-finish-checking-for-external-changes", { string_error: String(error) }), "error");
+      pushToast(msg("reload-on-focus-tine-couldn-t-finish-checking-for-external-changes", { error: String(error) }), "error");
     } finally {
       endRefreshNotice();
       releaseActive(refresh);

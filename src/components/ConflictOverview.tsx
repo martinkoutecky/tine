@@ -58,7 +58,7 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
       pushToast(msg("conflict-overview-discarded", { name: String(name) }), "success");
       await readOwned(owner, refreshSyncConflicts());
     } catch (e) {
-      pushToast(msg("conflict-overview-couldn-t-discard-it", { string_e: String(e) }), "error");
+      pushToast(msg("conflict-overview-couldn-t-discard-it", { error: String(e) }), "error");
     }
   };
   const orphans = (): SyncConflict[] => syncConflicts().filter((c) => !c.base_path);

@@ -50,7 +50,7 @@ export function applyContentWidths(): void {
 function remember(key: string, slot: object, value: number | null): void {
   const revision = advanceRevision(slot);
   void writeOwned(revisionOwner(slot, revision), backend().setAppString(key, value === null ? "" : String(value)))
-    .catch((error) => pushToast(msg("content-width-could-not-remember-the-page-width", { string_error: String(error) }), "error"));
+    .catch((error) => pushToast(msg("content-width-could-not-remember-the-page-width", { error: String(error) }), "error"));
 }
 
 /** Hydrate both overrides once at startup. A user's later change wins a delayed
@@ -62,7 +62,7 @@ export async function initContentWidths(): Promise<void> {
       const loaded = await readOwned(owner, backend().getAppString(key, ""));
       if (loaded.kind === "current") set(parseWidth(loaded.value));
     } catch (error) {
-      pushToast(msg("content-width-could-not-load-the-page-width", { string_error: String(error) }), "error");
+      pushToast(msg("content-width-could-not-load-the-page-width", { error: String(error) }), "error");
     }
   };
   await Promise.all([
