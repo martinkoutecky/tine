@@ -1,3 +1,4 @@
+import { t as translate } from "../i18n";
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { FloatingPortal } from "./FloatingPortal";
 import { hoverIntent } from "./hoverIntent";
@@ -624,9 +625,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
               }
             }}
             title={
-              t.pinned
-                ? "Pinned (sticky) — links open in a new tab. Double-click to unpin"
-                : "Double-click to pin (sticky)"
+              t.pinned ? translate("tab-bar-pinned-sticky-links-open-in-a-new-tab") : translate("tab-bar-double-click-to-pin-sticky")
             }
           >
             <Show when={t.pinned}>
@@ -648,8 +647,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
               <button
                 class="tab-close"
                 type="button"
-                title="Close tab"
-                aria-label="Close tab"
+                title={translate("tab-bar-close-tab")}
+                aria-label={translate("tab-bar-close-tab")}
                 data-tab-drag-exempt
                 onClick={(e) => {
                   e.stopPropagation();
@@ -668,8 +667,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
           ref={overviewTrigger}
           class="tab-overview-trigger"
           type="button"
-          title="Show all tabs"
-          aria-label="Show all tabs"
+          title={translate("tab-bar-show-all-tabs")}
+          aria-label={translate("tab-bar-show-all-tabs")}
           aria-haspopup="listbox"
           aria-expanded={overviewOpen()}
           aria-controls={overviewId}
@@ -695,7 +694,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
             id={overviewId}
             class="tab-overview"
             role="listbox"
-            aria-label="Open tabs"
+            aria-label={translate("tab-bar-open-tabs")}
             style={{
               left: `${overviewPosition().left}px`,
               top: `${overviewPosition().top}px`,
@@ -732,8 +731,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
                     class="tab-overview-drag-handle"
                     type="button"
                     tabIndex={-1}
-                    aria-label={`Reorder ${tabFullTitle(router.tabRoute(tab))}`}
-                    title="Drag to reorder; Alt+Up/Down moves the focused tab"
+                    aria-label={translate("tab-bar-reorder", { title: String(tabFullTitle(router.tabRoute(tab))) })}
+                    title={translate("tab-bar-drag-to-reorder-alt-up-down-moves-the")}
                     onPointerDown={(event) => beginOverviewDrag(tab.id, event)}
                     onClick={(event) => {
                       event.preventDefault();
@@ -741,13 +740,13 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
                     }}
                   >⠿</button>
                   <span class="tab-overview-active" aria-hidden="true">{tab.id === router.activeId() ? "✓" : ""}</span>
-                  <Show when={tab.pinned}><span class="tab-overview-pin" title="Pinned"><EmojiText text="📌" /></span></Show>
+                  <Show when={tab.pinned}><span class="tab-overview-pin" title={translate("tab-bar-pinned")}><EmojiText text="📌" /></span></Show>
                   <span class="tab-overview-title"><EmojiText text={tabFullTitle(router.tabRoute(tab))} /></span>
                   <Show when={closeOffered(router, tab)}>
                     <button
                       class="tab-overview-close"
                       type="button"
-                      aria-label={`Close ${tabFullTitle(router.tabRoute(tab))}`}
+                      aria-label={translate("tab-bar-close", { title: String(tabFullTitle(router.tabRoute(tab))) })}
                       onClick={(event) => {
                         event.stopPropagation();
                         void closeOverviewTab(tab.id, index());

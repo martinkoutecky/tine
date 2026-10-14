@@ -1,3 +1,4 @@
+import { msg, t as translate } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
 import { stickyParents } from "../stickyParents";
 import { StickyAncestor } from "./StickyAncestor";
@@ -375,7 +376,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           <span
             class="bullet-container"
             classList={{ "bullet-closed": collapsed() && hasChildren(), ordered: !!orderMarker() }}
-            title="Click to zoom; shift-click → sidebar; ctrl/cmd-click or middle-click → new tab; alt-click → other pane; drag to move"
+            title={translate("editor-block-click-to-zoom-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new-tab-alt-click-other-pane-drag-to-move")}
             onMouseDown={(e) => {
               // Shared link gesture contract (GH #207): suppress shift-range selection
               // and middle-button autoscroll / PRIMARY-paste the destinations replace.
@@ -443,7 +444,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                     <a
                       class="block-refs-count"
                       classList={{ open: showRefs() }}
-                      title="Open block references (shift-click → sidebar)"
+                      title={translate("editor-block-open-block-references-shift-click-sidebar")}
                       onClick={(e) => {
                         e.stopPropagation();
                         if (e.shiftKey) openDurableBlock(props.id, "sidebar");
@@ -551,7 +552,7 @@ async function getTemplates(): Promise<import("../types").TemplateDto[]> {
     // I-9: a failed template listing is reported (sticky red toast with Copy, recorded in the error
     // log) and the last good list, if any, is kept; it is NOT replaced by "no templates", so the
     // next `/` retries once the cause is fixed. The slash menu still lists its commands.
-    if (owner()) pushToast(`Couldn't load templates: ${String(error)}`, "error");
+    if (owner()) pushToast(msg("editor-block-couldn-t-load-templates", { detail: String(error) }), "error");
   }
   return templateCache ?? [];
 }
@@ -749,7 +750,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     setAc({ kind: "code-language", query: "", start: fenceEnd, end: fenceEnd });
     setAcIndex(0);
     setAcItems(codeLanguageItems("").map((language) => ({
-      label: language.label,
+      get label() { return language.label; },
       sub: [language.id, ...language.aliases].join(" · "),
       insert: language.id,
       caret: language.id.length + 1,
@@ -830,7 +831,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       .slice(0, 100)
       .map(({ value }) => ({ label: value, propertyValue: value }));
     if (q && !values.some((value) => value.toLowerCase() === q.toLowerCase())) {
-      ranked.push({ label: `Create "${q}"`, propertyValue: q });
+      ranked.push({ get label() { return translate("editor-block-create", { name: String(q) }); }, propertyValue: q });
     }
     return ranked;
   };
@@ -882,7 +883,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         .map(({ key }) => ({ label: key, propertyName: key }));
       const created = propertyKeyFold(t.query);
       if (created && !facets.some(([key]) => key === created)) {
-        ranked.unshift({ label: `Create "${created}"`, propertyName: created });
+        ranked.unshift({ get label() { return translate("editor-block-create", { name: String(created) }); }, propertyName: created });
       }
       setAcItems(ranked);
       return;
@@ -893,7 +894,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
     if (t.kind === "code-language") {
       setAcItems(codeLanguageItems(t.query).map((language) => ({
-        label: language.label,
+        get label() { return language.label; },
         sub: [language.id, ...language.aliases].join(" · "),
         insert: language.id,
         // If a completed fence scaffold already follows, land on its code line;
@@ -906,7 +907,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const fmt = formatForBlockId(props.id);
       setAcItems(filterAdvancedBlockCommands(t.query).map((command) => {
         const insertion = advancedBlockInsertion(command, fmt);
-        return { label: command.label, insert: insertion.insert, caret: insertion.caret };
+        return { get label() { return command.label; }, insert: insertion.insert, caret: insertion.caret };
       }));
       return;
     }
@@ -926,7 +927,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         if (c.action === "drawio" && isMobilePlatform) return;
         const s = q ? commandScore(q, c) : 1;
         if (s > 0)
-          scored.push({ item: { label: c.label, insert: c.insert, caret: c.caret, action: c.action, taskMarker: c.taskMarker }, s, idx: q ? c.matchTieOrder : c.bareOrder });
+          scored.push({ item: { get label() { return c.label; }, insert: c.insert, caret: c.caret, action: c.action, taskMarker: c.taskMarker }, s, idx: q ? c.matchTieOrder : c.bareOrder });
       });
       pluginManager.slashCommands().forEach(({ pluginId, contribution }, i) => {
         const s = q ? fuzzyScore(q, contribution.title) : 1;
@@ -947,7 +948,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           const s = showAllTemplates ? 1 : fuzzyScore(q, tp.name);
           if (s > 0)
             scored.push({
-              item: { label: `Template: ${tp.name}`, templateNodes: tp.blocks },
+              item: { get label() { return translate("editor-block-template", { name: String(tp.name) }); }, templateNodes: tp.blocks },
               s,
               idx: COMMANDS.length + pluginManager.slashCommands().length + j,
             });
@@ -1015,8 +1016,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         : { label: `#${name}`, insert: tagInsert(name), sub: aliasOfLabel(name, navigationName(name)) }; // tag context reads "#name"
     const createItem: AcItem =
       t.kind === "page"
-        ? { label: `Create "${q}"`, insert: pageInsert(q) }
-        : { label: `Create #${q}`, insert: tagInsert(q) };
+        ? { get label() { return translate("editor-block-create", { name: String(q) }); }, insert: pageInsert(q) }
+        : { get label() { return translate("editor-block-create-tag", { name: String(q) }); }, insert: tagInsert(q) };
     setAcItems(orderAcItems(
       result.value.map((page) => ({ name: page.name, matchClass: page.match_class, item: pageItem(page.name) })),
       { name: q, item: createItem },
@@ -1183,7 +1184,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const result = await writeOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, token.binding.backendGeneration)));
       if (result.kind === "stale") { reportStaleAsset(); return; }
       stored = result.value;
-    } catch (error) { pushToast(`Couldn’t save to assets/: ${String(error)}`, "error"); return; }
+    } catch (error) { pushToast(msg("editor-block-couldn-t-save-to-assets", { detail: String(error) }), "error"); return; }
     if (stored !== candidate) seedAssetBlob(stored, bytes);
     insertStoredAssets(token, [{ stored, label: origName }]);
   };
@@ -1248,7 +1249,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const pasteClipboardFiles = async (eventFiles: File[]) => {
     const editorToken = captureAssetEditorToken();
     const owner = bindingOwner();
-    const toastId = pushToast("Pasting files…", "info");
+    const toastId = pushToast(msg("editor-block-pasting-files"), "info");
     let skipped = 0;
     let nativeUnavailable = false;
     const stored: { stored: string; label?: string }[] = [];
@@ -1266,7 +1267,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
             const result = await writeOwned(owner, trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)));
             if (result.kind === "stale") return; stored.push({ stored: result.value, label: file.name });
           } catch (error) {
-            pushToast(`Couldn’t import pasted file: ${String(error)}`, "error");
+            pushToast(msg("editor-block-couldn-t-import-pasted-file", { detail: String(error) }), "error");
             skipped += 1;
           }
         }
@@ -1337,7 +1338,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
               // The durable asset + link are authoritative; cache warming is optional.
             }
           } catch (error) {
-            pushToast(`Couldn’t save pasted file: ${String(error)}`, "error");
+            pushToast(msg("editor-block-couldn-t-save-pasted-file", { detail: String(error) }), "error");
             skipped += 1;
           }
         }
@@ -1347,15 +1348,15 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       dismissToast(toastId);
       if (!bindingCurrent(editorToken.binding)) return;
       if (inserted) {
-        pushToast(`Inserted ${stored.length} file${stored.length === 1 ? "" : "s"}`, "success");
+        pushToast(msg("editor-block-inserted-file", { count: stored.length }), "success");
       }
       if (skipped) {
         pushToast(
-          `Skipped ${skipped} item${skipped === 1 ? "" : "s"}; folders and byte-only files over 64 MiB aren't pasted`,
+          msg("editor-block-skipped-item-folders-and-byte-only-files-over-64-mib-aren-t-pasted", { count: skipped }),
           "error"
         );
       } else if (nativeUnavailable && !eventFiles.length) {
-        pushToast("Couldn't read copied files; use Upload or drag-and-drop instead", "error");
+        pushToast(msg("editor-block-couldn-t-read-copied-files-use-upload-or-drag-and-drop-instead"), "error");
       }
     }
   };
@@ -1375,7 +1376,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     try {
       res = await backend().capturePhoto();
     } catch (err) {
-      if (bindingCurrent(editorToken.binding)) pushToast(`Couldn’t capture a photo (${String(err)})`, "error");
+      if (bindingCurrent(editorToken.binding)) pushToast(msg("editor-block-couldn-t-capture-a-photo", { detail: String(err) }), "error");
       return;
     }
     if (res.status === "ok" && res.path) {
@@ -1384,7 +1385,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         const stored = await trackAssetWrite(importCaptureToOrigin(editorToken, res.path, candidate));
         if (stored) insertStoredAssets(editorToken, [{ stored }]);
       } catch (err) {
-        pushToast(`Couldn’t import the photo (${String(err)})`, "error");
+        pushToast(msg("editor-block-couldn-t-import-the-photo", { detail: String(err) }), "error");
       }
     }
   });
@@ -1400,7 +1401,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       try {
         res = await backend().stopRecording();
       } catch (err) {
-        pushToast(`Couldn’t save the recording (${String(err)})`, "error");
+        pushToast(msg("editor-block-couldn-t-save-the-recording", { detail: String(err) }), "error");
         return;
       }
       if (res.status === "ok" && res.path) {
@@ -1409,7 +1410,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           const stored = await trackAssetWrite(importCaptureToOrigin(editorToken, res.path, candidate));
           if (stored) insertStoredAssets(editorToken, [{ stored }]);
         } catch (err) {
-          pushToast(`Couldn’t import the recording (${String(err)})`, "error");
+          pushToast(msg("editor-block-couldn-t-import-the-recording", { detail: String(err) }), "error");
         }
       }
       return;
@@ -1419,14 +1420,14 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     try {
       res = await backend().startRecording();
     } catch (err) {
-      if (bindingCurrent(editorToken.binding)) pushToast(`Couldn’t start recording (${String(err)})`, "error");
+      if (bindingCurrent(editorToken.binding)) pushToast(msg("editor-block-couldn-t-start-recording", { detail: String(err) }), "error");
       return;
     }
     if (!bindingCurrent(editorToken.binding)) { if (res.status === "recording") void backend().cancelRecording(); return; }
     if (res.status === "recording") {
       mobileRecordingEditorToken = editorToken;
       setRecordingAudio(true);
-      pushToast("Recording… tap the mic again to stop", "info");
+      pushToast(msg("editor-block-recording-tap-the-mic-again-to-stop"), "info");
     }
   };
 
@@ -1444,18 +1445,18 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     try {
       const status = await startDesktopVoiceRecording(desktopRecordingOwner, {
         complete: async (bytes, mime, limited) => {
-          if (limited) pushToast("Recording limit reached; saving the captured audio", "info");
+          if (limited) pushToast(msg("editor-block-recording-limit-reached-saving-the-captured-audio"), "info");
           await insertAssetBytes(editorToken, bytes, undefined, recordingExt(mime));
         },
-        error: (message) => pushToast(`Couldn’t save the recording (${message})`, "error"),
+        error: (message) => pushToast(msg("editor-block-desktop-recording-save-error", { error: String(message) }), "error"),
       });
       if (status === "busy") {
-        pushToast("Another voice recording is already active", "error");
+        pushToast(msg("editor-block-another-voice-recording-is-already-active"), "error");
         return;
       }
-      pushToast("Recording… run /record again to stop", "info");
+      pushToast(msg("editor-block-recording-run-record-again-to-stop"), "info");
     } catch (err) {
-      pushToast(`Couldn’t access the microphone (${String(err)})`, "error");
+      pushToast(msg("editor-block-couldn-t-access-the-microphone", { detail: String(err) }), "error");
     }
   };
   const uploadAsset = () => withNativeAssetPicker(async (editorToken) => {
@@ -1468,7 +1469,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const saved = await writeOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration)));
       if (saved.kind === "current") insertStoredAssets(editorToken, [{ stored: saved.value, label: orig }]);
     } catch (error) {
-      pushToast(`Couldn’t import asset: ${String(error)}`, "error");
+      pushToast(msg("editor-block-couldn-t-import-asset", { detail: String(error) }), "error");
     }
   });
 
@@ -1494,10 +1495,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const cmd = await resolveMediaEditorCommand(ed);
       if (!owner()) return;
       void writeOwned(owner, backend().editAssetExternal(saved, cmd, editorToken.binding.backendGeneration))
-        .catch(() => pushToast("Couldn’t open draw.io", "error"));
+        .catch(() => pushToast(msg("editor-block-couldn-t-open-draw-io"), "error"));
       refreshAssetOnReturn(saved);
     } catch (error) {
-      pushToast(`Couldn’t create the diagram: ${String(error)}`, "error");
+      pushToast(msg("editor-block-couldn-t-create-the-diagram", { detail: String(error) }), "error");
     }
   };
 
@@ -1548,8 +1549,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         return sourcePage;
       }, intended).then((saved) => {
         if (!saved && bindingCurrent(binding) && (inserted || ac() === trigger))
-          pushToast("Could not save the block reference. Resolve the page save and try again.", "error");
-      }).catch((error) => { if (bindingCurrent(binding)) pushToast(`Could not save the block reference: ${String(error)}`, "error"); });
+          pushToast(msg("editor-block-could-not-save-the-block-reference-resolve-the-page-save-and-try-again"), "error");
+      }).catch((error) => { if (bindingCurrent(binding)) pushToast(msg("editor-block-could-not-save-the-block-reference", { detail: String(error) }), "error"); });
       return;
     }
     if (item.plugin) {
@@ -1609,12 +1610,12 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         .then((effects) => {
           if (!editorIsCurrent()) {
             if (isPluginGraphOwnerCurrent(ownedBlock.owner) && textarea.isConnected && textarea.value !== before) {
-              pushToast("Plugin result was not inserted because the block changed while it ran.", "info");
+              pushToast(msg("editor-block-plugin-result-was-not-inserted-because-the-block-changed-while-it-ran"), "info");
             }
             return;
           }
           if (textarea.value !== before) {
-            pushToast("Plugin result was not inserted because the block changed while it ran.", "info");
+            pushToast(msg("editor-block-plugin-result-was-not-inserted-because-the-block-changed-while-it-ran"), "info");
             return;
           }
           const effect = effects.find((candidate) => candidate.kind === "insert-at-caret");
@@ -1638,7 +1639,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
             autosize();
           });
         })
-        .catch((error) => pushToast(`Plugin slash command failed: ${String(error)}`, "error"));
+        .catch((error) => pushToast(msg("editor-block-plugin-slash-command-failed", { detail: String(error) }), "error"));
       return;
     }
     if (item.templateNodes) {
@@ -1651,7 +1652,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const wasEmpty =
         docNode(props.id).raw.trim() === "" && docNode(props.id).children.length === 0;
       const lastId = insertOutlineAfter(props.id, nodes);
-      if (!lastId) { pushToast("Outline is too deep to insert", "error"); return; }
+      if (!lastId) { pushToast(msg("editor-block-outline-is-too-deep-to-insert"), "error"); return; }
       if (wasEmpty) deleteBlock(props.id);
       startEditing(lastId, docNode(lastId).raw.length);
       return;
@@ -2246,14 +2247,14 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     try {
       clipboard = await readClipboardText();
     } catch {
-      pushToast("Couldn't read the clipboard", "error");
+      pushToast(msg("editor-block-couldn-t-read-the-clipboard"), "error");
       return;
     }
     // The user kept typing while the clipboard was read: the request is stale.
     if (!ref.isConnected || ref.value !== before.value) return;
     const edit = pasteAsLinkEdit(before.value, before.start, before.end, clipboard, pageFmt());
     if (!edit) {
-      pushToast("The clipboard doesn't hold a link or a block ref", "warn");
+      pushToast(msg("editor-block-the-clipboard-doesn-t-hold-a-link-or-a-block-ref"), "warn");
       return;
     }
     applyEdit(edit);
@@ -2331,7 +2332,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       if (!outlineScope?.navOnly && outlineScope?.roots.includes(props.id)) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
       commit(ref.value);
-      if (indentBlock(props.id, selection, editSurface()) === false) pushToast("Outline is too deep to indent", "error");
+      if (indentBlock(props.id, selection, editSurface()) === false) pushToast(msg("editor-block-outline-is-too-deep-to-indent"), "error");
       return true;
     },
     "editor/outdent": (e) => {
@@ -3162,7 +3163,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
     if (text.includes("\n")) {
       e.preventDefault();
-      if (text.length > OUTLINE_MAX_SOURCE_CHARS) { pushToast("Pasted text is too large", "error"); return; }
+      if (text.length > OUTLINE_MAX_SOURCE_CHARS) { pushToast(msg("editor-block-pasted-text-is-too-large"), "error"); return; }
       if (syntaxSensitive) {
         pasteLiteralText(text);
         return;
@@ -3232,7 +3233,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     const looksImage = (e.clipboardData?.types ?? []).some(
       (t) => t.startsWith("image/") || t === "Files"
     );
-    const toastId = looksImage ? pushToast("Pasting image…", "info") : 0;
+    const toastId = looksImage ? pushToast(msg("editor-block-pasting-image"), "info") : 0;
     const editorToken = captureAssetEditorToken();
     const owner = bindingOwner(() => assetEditorCurrent(editorToken));
     void (async () => {
@@ -3250,7 +3251,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   function insertPastedOutline(nodes: OutlineNode[], tag: string, asChildren = false) {
     const current = docNode(props.id);
     if (!current) return;
-    if (!outlineFits(props.id, nodes, asChildren ? 1 : 0)) { pushToast("Pasted outline is too deep", "error"); return; }
+    if (!outlineFits(props.id, nodes, asChildren ? 1 : 0)) { pushToast(msg("editor-block-pasted-outline-is-too-deep"), "error"); return; }
     const rawAtPaste = ref.value;
     const pageAtPaste = current.page;
     const insert = (prepared: OutlineNode[] | null) => {
@@ -3260,7 +3261,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           commit(rawAtPaste);
           return insertOutlineChildren(props.id, prepared) ?? false;
         });
-        if (!inserted) pushToast("Pasted outline was refused", "error");
+        if (!inserted) pushToast(msg("editor-block-pasted-outline-was-refused"), "error");
         return;
       }
       const wasEmpty = rawAtPaste.trim() === "" && docNode(props.id).children.length === 0;
@@ -3270,7 +3271,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           ? replaceEmptyBlockWithOutline(props.id, prepared)
           : insertOutlineAfter(props.id, prepared)) ?? false;
       });
-      if (!lastId) { pushToast("Pasted outline was refused", "error"); return; }
+      if (!lastId) { pushToast(msg("editor-block-pasted-outline-was-refused"), "error"); return; }
       if (docNode(lastId)) startEditing(lastId, docNode(lastId).raw.length);
     };
     const prepared = sanitizeOutlineIdsForPaste(props.id, nodes);
@@ -3326,7 +3327,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
               <div class="calc-out" classList={{ "calc-error": !!r.error }}>
                 {r.output ?? ""}
                 <Show when={r.output !== null && !r.error}>
-                  <CopyButton text={r.output!} title="Copy result" class="calc-copy" />
+                  <CopyButton text={r.output!} title={translate("editor-block-copy-result")} class="calc-copy" />
                 </Show>
               </div>
             )}
@@ -3356,14 +3357,14 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           </div>
           <button
             class="sel-toolbar-more"
-            title="More formatting"
-            aria-label="More formatting"
+            title={translate("editor-block-more-formatting")}
+            aria-label={translate("editor-block-more-formatting")}
             aria-haspopup="menu"
             aria-expanded={selectionOverflowOpen()}
             onClick={() => setSelectionOverflowOpen((open) => !open)}
           >…</button>
           <Show when={selectionOverflowOpen()}>
-            <div ref={selectionOverflowRef} class="sel-toolbar-overflow" role="menu" aria-label="More formatting">
+            <div ref={selectionOverflowRef} class="sel-toolbar-overflow" role="menu" aria-label={translate("editor-block-more-formatting")}>
               <For each={secondarySelectionActions}>{(action) => (
                 <button
                   role="menuitem"

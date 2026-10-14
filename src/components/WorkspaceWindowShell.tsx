@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { Show, createEffect, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { PaneEdgeHighlights, PaneSelectHint, PaneTree } from "../App";
@@ -44,18 +45,18 @@ export function WorkspaceWindowShell(props: { windowId: string }): JSX.Element {
         <div class="main-container">
           <header class="topbar workspace-window-topbar">
             <div class="topbar-left">
-              <button class="icon-btn" title="Search (Ctrl+K)" aria-label="Search" data-search-trigger data-pane-focus-neutral onClick={() => openSwitcher()}>
+              <button class="icon-btn" title={t("workspace-window-shell-search-ctrl-k")} aria-label={t("workspace-window-shell-search")} data-search-trigger data-pane-focus-neutral onClick={() => openSwitcher()}>
                 <svg viewBox="0 0 24 24" class="nav-icon">
                   <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
                   <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
                 </svg>
               </button>
-              <button class="icon-btn topbar-navigation-action" title="Go back" data-pane-focus-neutral disabled={!router().canGoBack()} onClick={() => router().goBack()}>
+              <button class="icon-btn topbar-navigation-action" title={t("workspace-window-shell-go-back")} data-pane-focus-neutral disabled={!router().canGoBack()} onClick={() => router().goBack()}>
                 <svg viewBox="0 0 24 24" class="nav-icon">
                   <path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
               </button>
-              <button class="icon-btn topbar-navigation-action" title="Go forward" data-pane-focus-neutral disabled={!router().canGoForward()} onClick={() => router().goForward()}>
+              <button class="icon-btn topbar-navigation-action" title={t("workspace-window-shell-go-forward")} data-pane-focus-neutral disabled={!router().canGoForward()} onClick={() => router().goForward()}>
                 <svg viewBox="0 0 24 24" class="nav-icon">
                   <path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>

@@ -2,7 +2,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { initParser } from "../../render/parse";
 import { deleteBlock, deleteSelection, extendSelectionTo, loadFeed, mergeWithNext, mergeWithPrev, resetStore, selectBlock, setRaw, undo } from "..";
 import { doc } from "../model";
-import { installReferenceChangeCounter, setToasts, toasts } from "../../toasts";
+import { installReferenceChangeCounter, setToasts, toasts, toUiText } from "../../toasts";
+import { renderEnglish } from "../../i18n";
 import type { BlockDto } from "../../types";
 
 const counts = new Map<string, number>();
@@ -26,7 +27,7 @@ describe("reference-change notices (GH #635 / #652)", () => {
     const before = state();
     deleteBlock("root");
     expect(toasts().at(-1)?.message).toContain("5 references are now broken");
-    expect(toasts().at(-1)?.action?.label).toBe("Undo");
+    expect(renderEnglish(toUiText(toasts().at(-1)!.action!.label))).toBe("Undo");
     toasts().at(-1)!.action!.run();
     expect(state()).toEqual(before);
   });

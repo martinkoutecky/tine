@@ -61,6 +61,7 @@ describe("Plugins tab busy ownership", () => {
     const enable = deferred<void>();
     const uninstall = deferred<void>();
     const ui = await mount({ confirm: () => confirm.promise, enable: () => enable.promise, uninstall: () => uninstall.promise });
+    expect(ui.root.textContent).toContain("Capabilities: none");
 
     ui.uninstall().click(); // confirm dialog open
     await tick();

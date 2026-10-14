@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { bindingOwner, readOwned, serializeDurable, writeOwned, type Owned, type WriteOwner } from "./owned";
@@ -141,7 +142,7 @@ async function persist(next: WorkspaceRegistry, scope: WorkspaceOperation): Prom
     throw error;
   }
   if (outcome === "published-unsynced")
-    pushToast("Workspace changes are visible, but directory sync failed; they may not survive a power loss.", "error");
+    pushToast(msg("workspaces-workspace-changes-are-visible-but-directory-sync-failed"), "error");
 }
 
 function installLoaded(loaded: WorkspaceRegistry & { foreign: unknown[] }) {

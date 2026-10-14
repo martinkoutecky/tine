@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 /** Friendly-search result shell. Answers which family is pending, failed,
  * empty, or truncated; work is O(1) per family plus rendering supplied rows.
  * A failed read shows no rows. Callers need only the execution's two hit sets
@@ -32,12 +33,12 @@ export function QueryResultSections(props: {
       aria-busy={props.pending ? "true" : "false"}
     >
       <header class="query-result-section-header"><h3 id={`query-results-${mount}-${family.kind}`}>
-        {family.kind === "page" ? "Pages" : "Blocks"} <span class="query-result-section-count">{family.hits}</span>
+        {family.kind === "page" ? t("query-result-sections-pages") : t("query-result-sections-blocks")} <span class="query-result-section-count">{family.hits}</span>
       </h3>{family.control}</header>
       <Show when={props.failure}><p role="alert">{props.failure}</p></Show>
-      <Show when={!props.failure && props.pending}><p role="status">Searching…</p></Show>
+      <Show when={!props.failure && props.pending}><p role="status">{t("query-result-sections-searching")}</p></Show>
       <Show when={!props.failure && !props.pending}>
-        <Show when={family.hits > 0} fallback={<p>{family.kind === "page" ? "No matching pages." : "No matching blocks."}</p>}>
+        <Show when={family.hits > 0} fallback={<p>{family.kind === "page" ? t("query-result-sections-no-matching-pages") : t("query-result-sections-no-matching-blocks")}</p>}>
           {family.body}
         </Show>
       </Show>
@@ -45,7 +46,7 @@ export function QueryResultSections(props: {
         <p class="query-result-section-note" role="note">{family.note}</p>
       </Show>
       <Show when={!props.pending && !props.failure && family.hasMore}>
-        <p>More {family.kind === "page" ? "pages" : "blocks"} match than are shown.</p>
+        <p>{t("query-result-sections-more-matches", { kind: family.kind })}</p>
       </Show>
     </section>}</For>
   </div>;

@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 /** Device preference tracking is keyed by stable read-callback identity. Reuse
  * one callback per signal for revisions, seeds, startup reads and writes; never
  * share it across signals. Reads land only for the captured revision. Writes
@@ -35,7 +36,7 @@ export function writePreference<T>(
     } catch {
       if (revisionOwner(read, revision)()) apply(state.committed);
       if (onFailure) onFailure();
-      else pushToast(`Could not save ${label}.`, "error");
+      else pushToast(msg("preference-writes-could-not-save", { label: String(label) }), "error");
     } finally {
       state.pending--;
     }
@@ -79,5 +80,5 @@ export function loadPreference<T, U>(
     if (result.kind === "stale") return;
     apply(decode(result.value));
     seedPreference(read);
-  }).catch(() => { if (owner()) pushToast(`Could not load ${label}.`, "error"); });
+  }).catch(() => { if (owner()) pushToast(msg("preference-writes-could-not-load", { label: String(label) }), "error"); });
 }

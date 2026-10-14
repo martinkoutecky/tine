@@ -1,3 +1,4 @@
+import { msg, t } from "../i18n";
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import { errorFamily } from "../errorFamily";
@@ -81,21 +82,21 @@ export function createPdfHighlightState(options: {
   const addCrop = (id: string, crop: Crop) => pendingCrops.set(id, crop);
   const editBlocked = () => {
     if (decisionBusy() || cleanupPending()) {
-      pushToast("Finish the highlight decision or area image cleanup before editing.", "error");
+      pushToast(msg("pdf-finish-the-highlight-decision-or-area-image-cleanup-before-editing"), "error");
       return true;
     }
     if (!conflict()) return false;
-    pushToast("Resolve the highlight conflict before editing more highlights.", "error");
+    pushToast(msg("pdf-resolve-the-highlight-conflict-before-editing-more-highlights"), "error");
     return true;
   };
   const drainBlocked = () => {
     if (decisionBusy()) return true;
     if (cleanupPending()) {
-      pushToast(`Cannot close or switch graphs while ${filename} has an area image awaiting cleanup. Choose Retry cleanup.`, "error");
+      pushToast(msg("pdf-cannot-close-or-switch-graphs-while-has-an-area-image-awaiting-cleanup-choose-retry-cleanup", { name: String(filename) }), "error");
       return true;
     }
     if (!conflict()) return false;
-    pushToast(`Cannot close or switch graphs while ${filename} has a highlight conflict. Choose Keep mine or Use disk version, or Discard my changes.`, "error");
+    pushToast(msg("pdf-cannot-close-or-switch-graphs-while-has-a-highlight-conflict-choose-keep-mine-or-use-disk-version-or-discard-my-changes", { name: String(filename) }), "error");
     return true;
   };
   const retireCrop = async (id: string, crop: Crop): Promise<boolean> => {
@@ -114,7 +115,7 @@ export function createPdfHighlightState(options: {
       for (const [id, crop] of unusedPdfCrops(pendingCrops, committed, highlights())) {
         try { if (!(await retireCrop(id, crop))) return; }
         catch (error) {
-          pushToast(`Couldn't retire the unused area image. Retry cleanup. (${String(error)})`, "error");
+          pushToast(msg("pdf-couldn-t-retire-the-unused-area-image-retry-cleanup", { detail: String(String(error)) }), "error");
           return;
         }
       }
@@ -131,7 +132,7 @@ export function createPdfHighlightState(options: {
     const hlsName = hlsPageName(filename);
     if (isDirty(hlsName) || isConflicted(hlsName)) {
       if (!(await flushPage(hlsName))) {
-        if (landingOwner()) pushToast("Couldn't save notes — highlight not written. Resolve the conflict and retry.", "error");
+        if (landingOwner()) pushToast(msg("pdf-couldn-t-save-notes-highlight-not-written-resolve-the-conflict-and-retry"), "error");
         return false;
       }
       if (!graphCurrent()) return false;
@@ -152,7 +153,7 @@ export function createPdfHighlightState(options: {
         try { await retireCrop(id, crop); }
         catch (error) {
           cleanupFailed = true;
-          if (landingOwner()) pushToast(`Highlight saved, but an unused area image couldn't move to trash. (${String(error)})`, "error");
+          if (landingOwner()) pushToast(msg("pdf-highlight-saved-but-an-unused-area-image-couldn-t-move-to-trash", { detail: String(String(error)) }), "error");
         }
       }
       if (landingOwner()) {
@@ -164,9 +165,9 @@ export function createPdfHighlightState(options: {
         setUnsaved(true);
         if (errorFamily(e) === "conflict") {
           setConflict(true);
-          pushToast("Highlight conflict — choose Keep mine or Use disk version.", "error");
+          pushToast(msg("pdf-highlight-conflict-choose-keep-mine-or-use-disk-version"), "error");
         } else {
-          pushToast(`Couldn't save highlight — it remains unsaved in the PDF. (${String(e)})`, "error");
+          pushToast(msg("pdf-couldn-t-save-highlight-it-remains-unsaved-in-the-pdf", { detail: String(String(e)) }), "error");
         }
       }
       return false;
@@ -175,7 +176,7 @@ export function createPdfHighlightState(options: {
       const reloaded = await readOwned(graphCurrent, reloadHlsIfLoaded(hlsName));
       if (reloaded.kind === "stale") return false;
     } catch (error) {
-      if (landingOwner()) pushToast(`Highlight saved, but notes couldn't reload. (${String(error)})`, "error");
+      if (landingOwner()) pushToast(msg("pdf-highlight-saved-but-notes-couldn-t-reload", { detail: String(String(error)) }), "error");
     }
     return !cleanupPending();
   };
@@ -211,9 +212,9 @@ export function createPdfHighlightState(options: {
       if (latest.kind === "stale") return;
       pendingCrops.clear();
       load(latest.value);
-      pushToast("Using disk highlights; local changes were discarded.", "success");
+      pushToast(msg("pdf-using-disk-highlights-local-changes-were-discarded"), "success");
     } catch (e) {
-      pushToast(`Couldn't use disk highlights or retire their area image. (${String(e)})`, "error");
+      pushToast(msg("pdf-couldn-t-use-disk-highlights-or-retire-their-area-image", { detail: String(String(e)) }), "error");
     } finally { setDecisionBusy(false); }
   };
   const keepMine = async () => {
@@ -228,7 +229,7 @@ export function createPdfHighlightState(options: {
       setConflict(false);
       await persist();
     } catch (e) {
-      pushToast(`Couldn't reload disk highlights for Keep mine. (${String(e)})`, "error");
+      pushToast(msg("pdf-couldn-t-reload-disk-highlights-for-keep-mine", { detail: String(String(e)) }), "error");
     } finally { setDecisionBusy(false); }
   };
 
@@ -237,15 +238,15 @@ export function createPdfHighlightState(options: {
     setDecisionBusy(true);
     try {
       const answer = await readOwned(graphCurrent, backend().confirm(
-        "Discard your local PDF highlight changes? The sidecar will be left untouched. Any unreferenced local crop may remain on disk.",
+        t("pdf-discard-your-local-pdf-highlight-changes-the-sidecar-will-be-left-untouched-any-unreferenced-local-crop-may-remain-on-disk"),
         "Discard my changes"
       ));
       if (answer.kind === "stale" || !answer.value) return;
       pendingCrops.clear();
       load([]);
-      pushToast("Local highlight changes discarded; disk sidecar was left untouched.", "success");
+      pushToast(msg("pdf-local-highlight-changes-discarded-disk-sidecar-was-left-untouched"), "success");
     } catch (error) {
-      pushToast(`Couldn't confirm highlight discard. (${String(error)})`, "error");
+      pushToast(msg("pdf-couldn-t-confirm-highlight-discard", { detail: String(String(error)) }), "error");
     } finally { setDecisionBusy(false); }
   };
 

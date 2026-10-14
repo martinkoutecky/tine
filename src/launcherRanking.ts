@@ -114,7 +114,7 @@ export async function initLauncherRankingSetting(): Promise<void> {
     if (preferenceReadCurrent(enabled, revision)) { setEnabledSignal(value); seedPreference(enabled); }
   } catch {
     if (preferenceReadCurrent(enabled, revision)) setEnabledSignal(true);
-    pushToast("Could not load adaptive launcher ranking preference.", "error");
+    pushToast(msg("launcher-ranking-could-not-load-adaptive-launcher-ranking-preference"), "error");
   }
 }
 
