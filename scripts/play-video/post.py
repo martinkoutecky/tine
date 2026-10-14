@@ -56,7 +56,7 @@ subprocess.check_call(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{OUT}/raw.m
 json.dump({"total": total, "captions": caps}, open(f"{OUT}/timeline.json", "w"), indent=1)
 # contact sheet: one frame per 2 s, 8 columns
 subprocess.check_call(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{OUT}/all-files-access-demo.mp4",
-                       "-vf", "fps=1/2,scale=200:-1,tile=8x2:padding=4:margin=4:color=white",
+                       "-vf", "fps=1,scale=180:-1,tile=10x3:padding=4:margin=4:color=white",
                        "-frames:v", "1", f"{OUT}/contact-sheet.png"])
 # also per-step full-size frames
 for i, (a, b, text) in enumerate(caps):
