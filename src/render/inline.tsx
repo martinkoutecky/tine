@@ -62,7 +62,7 @@ import { createLongPress, isLongPressContextMenu } from "./longPress";
 import { hiccupToHtml } from "./hiccup";
 import { LinkDepthContext, MAX_DEPTH_OF_LINKS } from "../components/linkDepth";
 import { readOr } from "../resourceRead";
-import { fileLinkTarget } from "./relativeFileLink";
+import { fileLinkTarget, fileUrlTitle } from "./relativeFileLink";
 import { RelativeFileLink } from "./RelativeFileLinkView";
 import { galleryFor } from "../imageGallery";
 import { queryMacroRenderRun } from "./queryMacroRender";
@@ -484,9 +484,10 @@ function renderLink(
     return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} />;
   }
   const dest = urlDest(url);
+  const fileTarget = assetLinkRel(dest) === null ? fileLinkTarget(dest) : null;
   // File URLs use the OS viewer, preserving their full path (GH #577).
   // File URLs must never enter the graph annotation reader.
-  const externalPdf = /^(?:https?:\/\/|file:)/i.test(dest) && /\.pdf$/i.test(dest);
+  const externalPdf = (/^(?:https?:\/\/|file:)/i.test(dest) || fileTarget?.kind === "outside") && /\.pdf$/i.test(dest);
   if (s.image) {
     const { width, height } = parseImageMetaBrace(s.metadata);
     const alt = s.label && s.label.length ? astText(s.label) : "";
@@ -496,10 +497,9 @@ function renderLink(
       return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
     if (!externalPdf) return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} token={token} spanAttrs={spanAttrs} />;
   }
-  // GH #457: a plain path to a file outside `assets/` names a file in the
-  // graph folder, resolved as OG does (relativeFileLink.ts); an asset link
+  // GH #457: a plain file path resolves from the graph folder, preserving
+  // authored parent traversal (relativeFileLink.ts); an asset link
   // keeps the asset routes below and a bare `x.pdf` keeps the reader route.
-  const fileTarget = assetLinkRel(dest) === null ? fileLinkTarget(dest) : null;
   if (fileTarget !== null && (!/\.pdf$/i.test(dest) || /[/\\]/.test(dest))) {
     return (
       <span class="link-copy-wrap">
@@ -531,6 +531,7 @@ function renderLink(
       <a
         class="external-link"
         href={unsafeHref ? undefined : dest}
+        title={fileUrlTitle(dest)}
         {...(spanAttrs ?? {})}
         onClick={(e) => {
           e.preventDefault();

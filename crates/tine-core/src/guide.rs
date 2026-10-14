@@ -1007,11 +1007,12 @@ mod rename_guide_tests {
 
     #[test]
     fn relative_file_link_guide_names_its_base_and_the_graph_boundary() {
-        // GH #457: a file link resolves from the graph folder as Logseq does and
-        // opens a path outside the graph.
+        // GH #457: the graph is the base; explicit parent traversal can leave it.
         let search = include_str!("templates/pages-links-references-search.md");
-        assert!(search.contains("is read from the graph folder as Logseq reads it"));
-        assert!(search.contains("points outside the graph folder, such as an absolute"));
+        assert!(search.contains("A file path is read from the graph folder"));
+        assert!(search.contains("sibling `files` folder outside the graph"));
+        assert!(search.contains("Parent steps such as `../../` are preserved"));
+        assert!(!search.contains("shown struck through and never opened"));
     }
 
     #[test]

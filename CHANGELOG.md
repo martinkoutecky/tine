@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Authored parent-relative and absolute file links can open outside the graph folder through the existing desktop file opener, with the resolved path on hover and no strike-through (GH #457).
 - **Crash recovery no longer switches off on Android** ("Crash recovery is off for this graph … Permission denied"). Tine tried to sync system folders above its own app data, which Android does not allow. GH #685
 - Tab drops at all four pane edges split the hovered pane, matching the drop preview even at the layout's outer edges (GH #499).
 - Raw HTML iframe dimensions honor numeric HTML attributes as pixels, percentages and inline sizing without the default embed width cap (GH #54).
