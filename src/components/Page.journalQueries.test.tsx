@@ -12,6 +12,12 @@ import type { GraphMeta, PageRead } from "../types";
 import { backendReadsQueries, blockRunResult } from "../tests/queryReadingsTestkit";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 
+// These tests exercise config fallback; the fixture has no marked sections page.
+vi.mock("../journalSections", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../journalSections")>(),
+  locateSectionsPages: async () => [],
+}));
+
 beforeAll(initParser);
 it("the internal agenda uses the shared TQL builder for negative, zero and positive windows", () => {
   for (const ahead of [-2, 0, 2]) {

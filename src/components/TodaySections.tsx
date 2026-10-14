@@ -4,8 +4,11 @@
 // Policy: src/journalSections.ts.
 import { For, Match, Show, Switch, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { bindingCurrent, captureBinding } from "../binding";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
-import { graphOwner, readOwned } from "../owned";
+import { bindingOwner, graphOwner, readOwned } from "../owned";
+import { errorFamily } from "../errorFamily";
+import { macroNameForDialect } from "../editor/queryMacroName";
 import { readOr } from "../resourceRead";
 import { agendaQuery, agendaTql } from "../ui";
 import { openPage } from "../router";
@@ -40,20 +43,23 @@ async function readSections(): Promise<Sections> {
  *  the next free "Journal sections N" is taken (createPage refuses an existing
  *  file without a base revision). */
 export async function customizeTodaySections(): Promise<void> {
+  const binding = captureBinding();
+  const owner = bindingOwner();
   const format: Format = graphMeta()?.preferred_format ?? "md";
-  const agenda = `{{tine-query ${agendaTql()}}}`;
+  const agenda = `{{${macroNameForDialect(false)} ${agendaTql()}}}`;
   for (let n = 1; n < 100; n += 1) {
     const name = n === 1 ? DEFAULT_JOURNAL_SECTIONS_PAGE : `${DEFAULT_JOURNAL_SECTIONS_PAGE} ${n}`;
-    const existing = await backend().getPage(name, "page");
-    if (existing) continue;
     try {
-      await createPage(name, seedSectionsPage(name, format, agenda));
+      const existing = await readOwned(owner, backend().getPage(name, "page"));
+      if (existing.kind === "stale") return;
+      if (existing.value) continue;
+      await createPage(name, seedSectionsPage(name, format, agenda), { bindingGeneration: binding.backendGeneration });
     } catch (error) {
-      if (String(error).includes("conflict")) continue;
+      if (bindingCurrent(binding) && errorFamily(error) === "conflict") continue;
       pushToast(t("journal-sections-create-failed", { page: name, error: String(error) }), "error");
       return;
     }
-    openPage(name);
+    if (bindingCurrent(binding)) openPage(name);
     return;
   }
 }

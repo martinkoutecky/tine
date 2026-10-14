@@ -8,6 +8,8 @@
 import type { BlockDto, Format, PageDto } from "./types";
 import { backend } from "./backend";
 import { graphMeta } from "./graphSession";
+import { graphOwner, readOwned } from "./owned";
+import { journalSectionsPage } from "./document";
 
 export const JOURNAL_SECTIONS_PROPERTY = "tine/journal-sections";
 export const DEFAULT_JOURNAL_SECTIONS_PAGE = "Journal sections";
@@ -20,9 +22,11 @@ export const sectionsMarker = (format: Format) =>
 /** Names of the pages carrying the marker, from the engine's page-property
  *  index (one evaluation, memoized per snapshot). */
 export async function locateSectionsPages(): Promise<string[]> {
-  const parsed = await backend().parseQuery(`(page-property ${JOURNAL_SECTIONS_PROPERTY} true)`, "og");
-  const result = await backend().queryRun(parsed.query, parsed.view);
-  return result.anchor === "page" ? result.pages.map((page) => page.name) : [];
+  const owner = graphOwner();
+  const parsed = await readOwned(owner, backend().parseQuery(`(page-property ${JOURNAL_SECTIONS_PROPERTY} true)`, "og"));
+  if (parsed.kind === "stale") return [];
+  const result = await readOwned(owner, backend().queryRun(parsed.value.query, parsed.value.view));
+  return result.kind === "current" && result.value.anchor === "page" ? result.value.pages.map((page) => page.name) : [];
 }
 
 export type SectionItem =
@@ -61,5 +65,5 @@ export function seedSectionsPage(name: string, format: Format, agenda: string): 
     ...queries,
     ...(meta?.disable_scheduled_and_deadline_query ? [] : [block(agenda)]),
   ];
-  return { name, kind: "page", title: name, pre_block: sectionsMarker(format), blocks };
+  return journalSectionsPage(name, sectionsMarker(format), blocks);
 }

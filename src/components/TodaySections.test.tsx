@@ -10,17 +10,24 @@ const h = vi.hoisted(() => ({
   pages: new Map<string, PageDto>(),
   marked: [] as string[],
   locateFails: false,
+  lookupFails: false,
+  toasts: [] as string[],
   created: [] as PageDto[],
   opened: [] as string[],
+  getPageWait: null as Promise<void> | null,
+  createWait: null as Promise<void> | null,
+  parseWait: null as Promise<void> | null,
+  queryRuns: 0,
 }));
 vi.mock("../backend", () => ({
   backend: () => ({
-    parseQuery: async (text: string) => ({ query: text, view: {} }),
+    parseQuery: async (text: string) => { await h.parseWait; return { query: text, view: {} }; },
     queryRun: async () => {
+      h.queryRuns += 1;
       if (h.locateFails) throw new Error("engine down");
       return { anchor: "page", pages: h.marked.map((name) => ({ name })) };
     },
-    getPage: async (name: string) => h.pages.get(name) ?? null,
+    getPage: async (name: string) => { await h.getPageWait; if (h.lookupFails) throw new Error("lookup failed"); return h.pages.get(name) ?? null; },
   }),
 }));
 vi.mock("./Macro", () => ({
@@ -41,12 +48,15 @@ vi.mock("../ui", () => ({
   agendaTql: () => "agenda tql",
 }));
 vi.mock("../document", () => ({
-  createPage: async (name: string, dto: PageDto) => { h.created.push(dto); h.pages.set(name, dto); return null; },
+  createPage: async (name: string, dto: PageDto) => { h.created.push(dto); await h.createWait; h.pages.set(name, dto); return null; },
+  journalSectionsPage: (name: string, marker: string, blocks: BlockDto[]): PageDto => ({ name, kind: "page", title: name, pre_block: marker, blocks }),
 }));
 vi.mock("../router", () => ({ openPage: (name: string) => { h.opened.push(name); } }));
-vi.mock("../toasts", () => ({ pushToast: () => {} }));
+vi.mock("../toasts", () => ({ pushToast: (text: string) => h.toasts.push(text) }));
 
-import { setGraphMeta } from "../graphSession";
+import { bumpDataRev, bumpGraphEpoch, setGraphMeta } from "../graphSession";
+import { invalidateBinding } from "../binding";
+import { locateSectionsPages } from "../journalSections";
 import { TodaySections, customizeTodaySections } from "./TodaySections";
 import type { GraphMeta } from "../types";
 
@@ -70,10 +80,82 @@ const bodies = (div: HTMLElement) => [...div.querySelectorAll("[data-body]")].ma
 
 beforeEach(() => {
   h.pages.clear(); h.marked = []; h.locateFails = false; h.created = []; h.opened = [];
+  h.getPageWait = null; h.createWait = null;
+  h.lookupFails = false; h.toasts = [];
+  h.parseWait = null; h.queryRuns = 0;
   setGraphMeta(meta());
 });
 
 describe("today's sections (GH #605)", () => {
+  it("a graph switch while parsing the marker query cannot run it in the replacement graph", async () => {
+    let release!: () => void;
+    h.parseWait = new Promise<void>((resolve) => { release = resolve; });
+    const pending = locateSectionsPages();
+    invalidateBinding();
+    release();
+    expect(await pending).toEqual([]);
+    expect(h.queryRuns).toBe(0);
+  });
+
+  it("a failed Customize name lookup reports the creation failure and writes nothing", async () => {
+    h.lookupFails = true;
+    await customizeTodaySections();
+    expect(h.created).toEqual([]);
+    expect(h.opened).toEqual([]);
+    expect(h.toasts).toHaveLength(1);
+    expect(h.toasts[0]).toContain("lookup failed");
+  });
+
+  it("a graph switch during the name lookup prevents creation in the replacement graph", async () => {
+    let release!: () => void;
+    h.getPageWait = new Promise<void>((resolve) => { release = resolve; });
+    const pending = customizeTodaySections();
+    invalidateBinding();
+    release();
+    await pending;
+    expect(h.created).toEqual([]);
+    expect(h.opened).toEqual([]);
+  });
+
+  it("a completed creation cannot route a replacement graph to the old graph's page", async () => {
+    let release!: () => void;
+    h.createWait = new Promise<void>((resolve) => { release = resolve; });
+    const pending = customizeTodaySections();
+    await settle();
+    expect(h.created).toHaveLength(1);
+    invalidateBinding();
+    release();
+    await pending;
+    expect(h.opened).toEqual([]);
+  });
+
+  it("a display repaint during lookup still allows creation in the same graph", async () => {
+    let release!: () => void;
+    h.getPageWait = new Promise<void>((resolve) => { release = resolve; });
+    const pending = customizeTodaySections();
+    bumpGraphEpoch();
+    release();
+    await pending;
+    expect(h.created).toHaveLength(1);
+    expect(h.opened).toEqual(["Journal sections"]);
+  });
+
+  it("saved query edits refresh the sections without remounting, and deletion restores config", async () => {
+    h.marked = ["My sections"];
+    const page: PageDto = { name: "My sections", kind: "page", title: "My sections", pre_block: null, blocks: [block("{{query (task TODO)}}")] };
+    h.pages.set(page.name, page);
+    const { div, dispose } = await mount();
+    expect(bodies(div)).toEqual(["query (task TODO)"]);
+    h.pages.set(page.name, { ...page, blocks: [block("{{query (task DONE)}}")] });
+    bumpDataRev();
+    await settle(); await settle();
+    expect(bodies(div)).toEqual(["query (task DONE)"]);
+    h.marked = []; h.pages.delete(page.name);
+    bumpDataRev();
+    await settle(); await settle();
+    expect(bodies(div)).toEqual(["query (task NOW)", "query (agenda)"]);
+    dispose();
+  });
   it("without a sections page, shows config.edn queries then the agenda, and offers Customize", async () => {
     const { div, dispose } = await mount();
     expect(bodies(div)).toEqual(["query (task NOW)", "query (agenda)"]);

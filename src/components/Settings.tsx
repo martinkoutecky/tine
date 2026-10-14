@@ -1006,7 +1006,9 @@ function JournalsTab(props: { search: string }): JSX.Element {
 /** GH #605: with a sections page, today's sections (agenda included) are the
  *  queries written on it, so this window no longer applies. Say where they live. */
 function SectionsPageNote(): JSX.Element {
-  const [pages] = createResource(() => `${graphEpoch()}\0${dataRev()}`, () => locateSectionsPages());
+  // Keep the optional note empty while loading: an undefined first value must
+  // neither crash its index lookup nor suspend the entire Settings dialog.
+  const [pages] = createResource(() => `${graphEpoch()}\0${dataRev()}`, () => locateSectionsPages(), { initialValue: [] as string[] });
   const page = () => readOr(pages, [] as string[], "sections page note")[0];
   return (
     <Show when={page()}>

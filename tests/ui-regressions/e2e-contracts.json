@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-journal-sections.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Customize seeds and opens an ordinary sections page from config queries and agenda, preserves an existing default-name page, reflects an edited query under today's journal without reload, and restores config sections on deletion in Markdown and Org graphs. Journals settings identifies and opens the active page without resetting the dialog.","blocking":true}],
+      "acceptableVariations":["Query layout, page filename casing, focus, and save or watcher latency may vary while answer membership and persisted content remain correct."],
+      "nonRequirements":["Exact pixels, identical EDN whitespace, native platform certification outside Linux WebKitGTK, or synchronizing the page back into config.edn."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-reference-alias-chips.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Reference filters merge alias chips, count each block once, load legacy alias-named filters and retain canonical include/exclude choices after a guarded save and restart.","blocking":true}],
       "acceptableVariations":["Chip styling, navigation layout and save latency may vary while canonical labels, block counts, membership and persisted choices remain correct."],
