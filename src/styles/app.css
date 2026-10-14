@@ -3824,32 +3824,133 @@ html[data-system-insets="native-viewport"] {
 
 /* Host-owned rendering for the plugin `thread-lines` decoration. The guest can
    request this known visual vocabulary but cannot inject CSS or DOM. */
-.plugin-thread-lines > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block) > .block-main::before {
+.plugin-thread-lines {
+  --thread-bullet-x: 26px;
+  --thread-active-color: var(--thread-color, var(--ls-link-text-color));
+  --thread-normal-color: color-mix(in srgb, var(--guide-color) 82%, transparent);
+}
+.plugin-thread-lines-standard { --thread-normal-color: var(--guide-color); }
+.plugin-thread-lines > .block-children-container > .block-children {
+  border-left-color: transparent;
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block {
+  --thread-incoming-color: var(--thread-normal-color);
+  --thread-elbow-color: var(--thread-normal-color);
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:focus-within,
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:has(~ .ls-block:focus-within) {
+  --thread-incoming-color: var(--thread-active-color);
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:focus-within {
+  --thread-elbow-color: var(--thread-active-color);
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main {
+  position: relative;
+  --thread-bullet-y: calc(1px + (var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y)) / 2);
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main.bullet-h1 { --thread-bullet-y: calc(1px + 1.36em); }
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main.bullet-h2 { --thread-bullet-y: calc(1px + 1.12em); }
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main.bullet-h3 { --thread-bullet-y: calc(1px + .96em); }
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main::before {
   content: "";
   position: absolute;
-  left: -3px;
+  left: calc(var(--thread-bullet-x) - 1px - var(--ls-block-indent) - var(--thread-width, 1px) / 2);
   top: 0;
-  width: calc(var(--ls-block-indent) - 19px);
-  height: 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--guide-color) 82%, transparent);
+  width: calc(var(--ls-block-indent) + 1px + var(--thread-width, 1px) / 2);
+  height: calc(var(--thread-bullet-y) + var(--thread-width, 1px) / 2);
+  box-sizing: border-box;
+  border-left: var(--thread-width, 1px) solid var(--thread-incoming-color);
+  border-bottom: var(--thread-width, 1px) solid var(--thread-elbow-color);
   border-bottom-left-radius: 6px;
   pointer-events: none;
+  z-index: 1;
 }
 
 /* Active mode follows the focused branch using only host-owned focus state. It
    does not reveal block contents to the guest or let the guest select DOM. */
-.plugin-thread-lines-active > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block):not(:focus-within) > .block-main::before {
+:is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:not(:focus-within) > .block-main::before {
   display: none;
 }
 
 /* The remaining connectors are the edited block's ancestry; emphasize them in
    the active color, as the ported Logseq plugin does (GH #614). */
-.plugin-thread-lines-active > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block):focus-within > .block-main::before {
-  border-bottom-color: var(--ls-link-text-color);
+.plugin-thread-lines > .block-main {
+  position: relative;
+  --thread-bullet-y: calc(1px + (var(--ls-block-line-height) + 2 * var(--ls-block-content-pad-y)) / 2);
 }
-
-.plugin-thread-lines-standard > .block-children-container > .block-children > :is(.ls-block, .outline-list > .outline-window > .ls-block) > .block-main::before {
-  border-bottom-color: var(--guide-color);
+.plugin-thread-lines > .block-main.bullet-h1 { --thread-bullet-y: calc(1px + 1.36em); }
+.plugin-thread-lines > .block-main.bullet-h2 { --thread-bullet-y: calc(1px + 1.12em); }
+.plugin-thread-lines > .block-main.bullet-h3 { --thread-bullet-y: calc(1px + .96em); }
+/* Start beneath the parent bullet, then span preceding siblings. Stop at the
+   focused child's elbow, so unrelated guides retain their normal appearance. */
+.plugin-thread-lines:not(.collapsed) > .block-main::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--thread-bullet-x) - var(--thread-width, 1px) / 2);
+  top: var(--thread-bullet-y);
+  bottom: 0;
+  border-left: var(--thread-width, 1px) solid var(--thread-normal-color);
+  pointer-events: none;
+}
+.plugin-thread-lines:has(> .block-children-container :focus) > .block-main::after {
+  border-left-color: var(--thread-active-color);
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--thread-bullet-x) - 1px - var(--ls-block-indent) - var(--thread-width, 1px) / 2);
+  top: 0;
+  bottom: 0;
+  border-left: var(--thread-width, 1px) solid var(--thread-normal-color);
+  pointer-events: none;
+}
+:is(.plugin-thread-lines > .block-children-container > .block-children, .plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:has(~ .ls-block:focus-within)::after {
+  border-left-color: var(--thread-active-color);
+}
+.plugin-thread-lines-active > .block-main::after,
+:is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after {
+  display: none;
+}
+.plugin-thread-lines-active:has(> .block-children-container :focus) > .block-main::after,
+:is(.plugin-thread-lines-active > .block-children-container > .block-children, .plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block:has(~ .ls-block:focus-within)::after {
+  display: block;
+}
+/* Shell windowing groups siblings in separate wrappers. Carry the vertical
+   path across preceding windows and their unmounted height placeholders. */
+.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window {
+  position: relative;
+}
+.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window > [aria-hidden="true"]::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--thread-bullet-x) - 1px - var(--ls-block-indent) - var(--thread-width, 1px) / 2);
+  top: 0;
+  bottom: 0;
+  border-left: var(--thread-width, 1px) solid var(--thread-normal-color);
+  pointer-events: none;
+}
+.plugin-thread-lines-active > .block-children-container > .block-children > .outline-list > .outline-window > [aria-hidden="true"]::before {
+  display: none;
+}
+.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:has(~ .outline-window:focus-within) > .ls-block > .block-main::before {
+  border-left-color: var(--thread-active-color);
+}
+.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:has(~ .outline-window:focus-within) > .ls-block::after,
+.plugin-thread-lines > .block-children-container > .block-children > .outline-list > .outline-window:has(~ .outline-window:focus-within) > [aria-hidden="true"]::before {
+  display: block;
+  border-left-color: var(--thread-active-color);
+}
+.plugin-thread-lines:focus-within > .block-main > .block-controls .bullet,
+.plugin-thread-lines .ls-block:has(> .block-main:focus-within) > .block-main > .block-controls .bullet {
+  background: var(--thread-active-color);
+}
+.plugin-thread-lines .block-controls {
+  z-index: 2;
+}
+.plugin-thread-lines-hidden > .block-main::after,
+:is(.plugin-thread-lines-hidden > .block-children-container > .block-children, .plugin-thread-lines-hidden > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block::after,
+:is(.plugin-thread-lines-hidden > .block-children-container > .block-children, .plugin-thread-lines-hidden > .block-children-container > .block-children > .outline-list > .outline-window) > .ls-block > .block-main::before {
+  display: none;
 }
 
 .block-children-left-border:focus-visible {
@@ -3865,6 +3966,7 @@ html[data-system-insets="native-viewport"] {
    guide remains centered under the parent bullet instead of drifting with the
    tighter indentation. Desktop and precise-pointer layouts stay unchanged. */
 @media (max-width: 640px) and (pointer: coarse) {
+  .plugin-thread-lines { --thread-bullet-x: 8px; }
   :root {
     --ls-block-indent: 20px;
   }

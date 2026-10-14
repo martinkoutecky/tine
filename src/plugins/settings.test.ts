@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { PLUGIN_COLOR_PATTERN } from "./color.mjs";
 import {
   defaultPluginSettings,
   parsePluginSettingDefinitions,
@@ -22,6 +24,25 @@ const definitions = parsePluginSettingDefinitions([
 ])!;
 
 describe("plugin setting schemas", () => {
+  it("validates literal colors and an empty theme default without accepting CSS injection", () => {
+    const schema = JSON.parse(readFileSync("plugin-sdk/schema/manifest.schema.json", "utf8"));
+    const colorSchema = schema.$defs.setting.oneOf.find((choice: { properties: { type: { const: string } } }) => choice.properties.type.const === "color");
+    expect(schema.$defs.settingBase.properties.type.enum).toContain("color");
+    expect(colorSchema.properties.default.pattern).toBe(PLUGIN_COLOR_PATTERN);
+    const colors = parsePluginSettingDefinitions([
+      { key: "color", type: "color", label: "Color", description: "Theme default when empty", default: "" },
+    ])!;
+    for (const color of ["", "#abc", "#aabbcc", "rgb(12 34 56)", "hsl(120 50% 50%)"]) {
+      expect(settingAccepts(colors[0], color)).toBe(true);
+    }
+    for (const color of ["#12345", "red; background:url(x)", "var(--secret)", "url(x)", "rgb(nope)", "rgb(1%,2,3)"]) {
+      expect(settingAccepts(colors[0], color)).toBe(false);
+    }
+    expect(validatePluginSettings(colors, { color: "url(x)" })).toEqual({ color: "" });
+    expect(() => parsePluginSettingDefinitions([
+      { key: "color", type: "color", label: "Color", description: "Color", default: "url(x)" },
+    ])).toThrow(/literal color/);
+  });
   it("parses bounded host-rendered definitions and materializes defaults", () => {
     expect(defaultPluginSettings(definitions)).toEqual({ "active-only": false, intensity: "subtle", width: 1, label: "" });
   });

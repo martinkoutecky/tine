@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-reference-alias-chips.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Reference filters merge alias chips, count each block once, load legacy alias-named filters and retain canonical include/exclude choices after a guarded save and restart.","blocking":true}],
+      "acceptableVariations":["Chip styling, navigation layout and save latency may vary while canonical labels, block counts, membership and persisted choices remain correct."],
+      "nonRequirements":["Exact pixels, OG alias-inclusive matching, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-pinyin.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Ctrl+K finds and opens a Han title from full Mandarin Pinyin or initials, keeps native matches first, and removes expansions after disabling the device preference.","blocking":true}],
       "acceptableVariations":["Existing deterministic tie order between colliding expansions; layout, glyphs and search latency may vary."],

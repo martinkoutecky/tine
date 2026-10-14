@@ -60,7 +60,7 @@
       "required": ["key", "type", "label", "description", "default"],
       "properties": {
         "key": { "type": "string", "pattern": "^[a-z][a-z0-9._-]{0,79}$" },
-        "type": { "enum": ["boolean", "enum", "number", "string"] },
+        "type": { "enum": ["boolean", "enum", "number", "string", "color"] },
         "label": { "type": "string", "minLength": 1, "maxLength": 80 },
         "description": { "type": "string", "minLength": 1, "maxLength": 300 },
         "default": {}
@@ -68,6 +68,14 @@
     },
     "setting": {
       "oneOf": [
+        {
+          "allOf": [{ "$ref": "#/$defs/settingBase" }],
+          "additionalProperties": false,
+          "properties": {
+            "key": true, "type": { "const": "color" }, "label": true, "description": true,
+            "default": { "type": "string", "maxLength": 100, "pattern": "^(?:|transparent|#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})|rgba?\\((?:[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+),\\s*[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+),\\s*[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:,\\s*[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%?)?|[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%,\\s*[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%,\\s*[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%(?:,\\s*[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%?)?|[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%? +[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%? +[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%?(?: */ *[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%?)?)\\)|hsla?\\((?:[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:deg|rad|turn)?,\\s*[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%,\\s*[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%(?:,\\s*[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%?)?|[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:deg|rad|turn)? +[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)% +[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%(?: */ *[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)%?)?)\\))$" }
+          }
+        },
         {
           "allOf": [{ "$ref": "#/$defs/settingBase" }],
           "additionalProperties": false,
