@@ -63,11 +63,11 @@
   "dependencies": {
     "@fluent/bundle": "^0.19.1",
     "@fontsource-variable/noto-emoji": "^5.2.12",
-    "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/api": "^2.12.3",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-process": "^2.3.1",
-    "@tauri-apps/plugin-updater": "^2.10.1",
+    "@tauri-apps/plugin-updater": "^2.13.3",
     "@twemoji/svg": "^15.0.0",
     "chrono-node": "2.2.4",
     "dompurify": "^3.4.16",
@@ -83,7 +83,7 @@
   },
   "devDependencies": {
     "@fluent/syntax": "^0.19.0",
-    "@tauri-apps/cli": "^2.1.0",
+    "@tauri-apps/cli": "^2.12.2",
     "@types/katex": "^0.16.8",
     "@types/turndown": "^5.0.6",
     "jsdom": "^29.1.1",
