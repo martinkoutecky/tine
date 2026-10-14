@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-journal-fileless-days.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Journals shows referenced fileless past days and future Upcoming entries without writing a journal; opening a future day and typing creates only its journal file.","blocking":true}],
+      "acceptableVariations":["Disclosure styling, reference load latency and page layout may vary while counted references, collapsed Upcoming and saved body are correct."],
+      "nonRequirements":["Exact pixels, a fixed horizon, specific DOM shape or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-pinyin.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Ctrl+K finds and opens a Han title from full Mandarin Pinyin or initials, keeps native matches first, and removes expansions after disabling the device preference.","blocking":true}],
       "acceptableVariations":["Existing deterministic tie order between colliding expansions; layout, glyphs and search latency may vary."],

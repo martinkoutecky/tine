@@ -29,9 +29,32 @@ impl WholeGraph {
     /// without building the alias and reference-name indexes (GH #623). Cost
     /// O(P) page-key computations plus O(m log m) for m matches; no parse and
     /// no disk access.
+    ///
+    /// [`InventoryScope::ReferencedJournals`] lists only days mentioned by
+    /// explicit references, with accepted date spellings merged into the
+    /// configured journal title. Uses published reference/alias keys, not
+    /// document scans; O(R log D + indexed alias lookups), R reference names,
+    /// D distinct dates. Ordinary date-named pages retain ordinary identity.
     pub fn inventory(&self, scope: InventoryScope<'_>) -> Arc<Inventory> {
         match scope {
             InventoryScope::All => self.full_inventory(),
+            InventoryScope::ReferencedJournals => {
+                let mut entries: Vec<_> = self
+                    .referenced_journal_days()
+                    .into_iter()
+                    .map(|day| {
+                        let name = self.journal_format.title(JournalDate::from_ordinal(day.0));
+                        InventoryEntry {
+                            target: self.resolve(&name, true),
+                            name,
+                            is_journal: true,
+                            day: Some(day),
+                        }
+                    })
+                    .collect();
+                sort_inventory(&mut entries);
+                Arc::new(Inventory(entries))
+            }
             InventoryScope::FilesAtOrUnder(key) => {
                 Arc::new(Inventory(self.page_files_at_or_under(key)))
             }

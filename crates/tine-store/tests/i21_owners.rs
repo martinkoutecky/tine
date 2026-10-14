@@ -136,8 +136,16 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // +1 GH #457: open_graph_file resolves and opens a file link's target
         // on the blocking pool, awaited by its future like open_asset.
         // +1 GH #616: reveal_export awaits the shared OS reveal helper.
-        39,
+        // -1 GH #481: moved to commands/journals_feed.rs, same awaited owner.
+        38,
         "command future",
+        "caller awaits blocking result",
+    ),
+    (
+        "src-tauri/src/commands/journals_feed.rs",
+        "spawn_blocking(",
+        1,
+        "journal feed command future",
         "caller awaits blocking result",
     ),
     (
@@ -260,6 +268,7 @@ fn production_acquisitions_have_owners() {
         "src-tauri/src/backup/restore.rs",
         "src-tauri/src/commands.rs",
         "src-tauri/src/commands/concord.rs",
+        "src-tauri/src/commands/journals_feed.rs",
         "src-tauri/src/graph.rs",
         "src-tauri/src/host_retirement.rs",
         "src-tauri/src/settings.rs",
