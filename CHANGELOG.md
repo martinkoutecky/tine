@@ -10,6 +10,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- GH #524: Added regression coverage for dragging a block into an empty page in the right sidebar; current Beta already supports the move.
+- GH #499: Added regression coverage for splitting the lower pane beneath an existing top row; the reported sequence already preserves the layout on current Beta.
+- GH #593: Workspace and tab overflow menus support stable hover opening and delayed dismissal while crossing the menu gap.
+- GH #639: Alt-clicking a bullet keeps its block zoom when creating a destination pane.
+- GH #677: Reopening a right-sidebar page or block brings its existing card to the top, expands it and focuses it.
+- GH #663: Added unbound commands for page-name-only and block-content-only search.
+- GH #428: Added an unbound Edit selected block command, remappable to Escape, while preserving the default selection ladder.
+- GH #587: Added bindable commands to activate tabs 1–8 and the last tab in the focused pane; unbound by default because Ctrl/Cmd+1–9 already focus panes.
+
+- config.edn reader discards (`#_`) are accepted as legal EDN; the GH #332 `:graph-view {:layout : grid}` shape has a graph-open regression keeping pages and journals readable (GH #332).
+- Journals navigation uses the same notebook icon in the sidebar and topbar (GH #673).
+- Markdown horizontal rules align with the centre of their outline bullets (GH #678).
+- Markdown quote and callout collapse metadata stays outside quoted content (GH #684).
+- Clicking an in-block Markdown task list checkbox toggles its item without entering edit mode (GH #683).
 - Task-marker pages include their tasks in editable Linked References (GH #487).
 - Reference headers place copy beside filter; Unlinked References has independent text and facet filters (GH #398).
 - Read-only hover previews show the source title and page properties and offer source-page and block navigation (GH #363, GH #417, GH #674).

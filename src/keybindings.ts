@@ -153,6 +153,14 @@ function focusPaneByNumber(n: number) {
   if (pane) focusPane(pane.paneId);
 }
 
+function editSelectedBlock(): boolean {
+  const ids = selectedIds();
+  if (ids.length !== 1 || !docNode(ids[0])) return false;
+  clearSelection();
+  startEditing(ids[0]);
+  return true;
+}
+
 function focusPaneInDirection(dir: PaneDirection) {
   if (!layoutHasMultiplePanes()) return;
   const target = nearestPaneInDirection(layoutRoot(), focusedPaneId(), dir);
@@ -266,7 +274,10 @@ export function handlePaneSelectKey(e: KeyboardEvent): boolean {
 
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
+  { id: "editor/edit-selected-block", binding: "", label: msg("command-editor-edit-selected-block"), scope: "global", run: () => { editSelectedBlock(); }, global: true },
   { id: "go/search", binding: "mod+k", label: msg("command-go-search"), scope: "global", run: () => openSwitcher({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  { id: "go/search-pages", binding: "", label: msg("command-go-search-pages"), scope: "global", run: () => openSwitcher({ mode: "pages" }), global: true },
+  { id: "go/search-content", binding: "", label: msg("command-go-search-content"), scope: "global", run: () => openSwitcher({ mode: "content" }), global: true },
   { id: "go/search-current-page", binding: "mod+shift+k", label: msg("command-go-search-current-page"), scope: "global", run: () => openSwitcher({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   // GH #633: search for the selected text. Unbound: mod+shift+f is OG's
   // :command/toggle-favorite (config.cljs:493), so the chord is left to the user.
@@ -308,6 +319,20 @@ const COMMANDS: CommandDef[] = [
   // macOS). mod-chords, so they fire mid-edit; remappable like everything here.
   { id: "tab/next", binding: "mod+pagedown", label: msg("command-tab-next"), scope: "global", run: activateNextTab, global: true },
   { id: "tab/previous", binding: "mod+pageup", label: msg("command-tab-previous"), scope: "global", run: activatePrevTab, global: true },
+  // mod+1..9 belong to pane focus. Leave these browser-style slots bindable.
+  ...Array.from({ length: 9 }, (_, i): CommandDef => ({
+    id: `tab/activate-${i + 1}`,
+    binding: "",
+    label: i === 8 ? msg("command-tab-activate-last") : msg("command-tab-activate-n", { index: i + 1 }),
+    scope: "global",
+    global: true,
+    run: () => {
+      const router = paneRouter(focusedPaneId());
+      const tabs = router.tabs();
+      const tab = tabs[i === 8 ? tabs.length - 1 : i];
+      if (tab) router.setActiveTab(tab.id);
+    },
+  })),
   { id: "pane/split-right", binding: "mod+alt+\\", label: msg("command-pane-split-right"), scope: "global", run: () => void splitPane(focusedPaneId(), "row"), global: true },
   { id: "pane/split-down", binding: "mod+alt+shift+\\", label: msg("command-pane-split-down"), scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
   { id: "pane/close", binding: "", label: msg("command-pane-close"), scope: "global", run: () => void closePane(focusedPaneId()), global: true },
@@ -845,6 +870,7 @@ function focusedGridSurface(gridId: string): string | null {
 
 // Keyboard handling while in block-selection mode (no editor focused).
 function handleSelectionKey(e: KeyboardEvent): boolean {
+  if (matchesCommand(e, "editor/edit-selected-block")) return editSelectedBlock();
   if (e.key === "Escape") return clearSelection(), true;
   // Resolve the configured command before generic Enter handling. This keeps
   // Ctrl/Cmd+Enter (and user remaps) in block-selection mode instead of opening
@@ -972,6 +998,9 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         return;
       }
       if (hasSelection()) {
+        if (matchesCommand(e, "editor/edit-selected-block") && editSelectedBlock()) {
+          e.preventDefault(); resetSeq(); return;
+        }
         const previous = selectedIds().at(-1) ?? null;
         if (!focusMode()) rememberBlockSelectionForPaneReturn(previous);
         clearSelection();

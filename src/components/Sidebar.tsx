@@ -1,6 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { pageIconPrefix } from "../pageIconBatch";
 import { t } from "../i18n";
+import { JournalsIcon } from "./JournalsIcon";
 import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
@@ -150,7 +151,7 @@ export function Sidebar(props: {
           onMouseDown={internalLinkMouseDown}
           onAuxClick={(e) => internalLinkAuxClick(e, () => openInNewTab({ kind: "journals" }))}
         >
-          <Icon name="journals" />
+          <JournalsIcon />
           <span>Journals</span>
         </div>
 
@@ -494,19 +495,4 @@ export function ConflictQueueBadge(props: { onActiveNavigationComplete?: () => v
       </button>
     </Show>
   );
-}
-
-function Icon(props: { name: string }): JSX.Element {
-  // Minimal inline icons; the real Tabler set comes later.
-  if (props.name === "journals") {
-    return (
-      <svg viewBox="0 0 24 24" class="nav-icon">
-        <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6" />
-        <line x1="4" y1="9" x2="20" y2="9" stroke="currentColor" stroke-width="1.6" />
-        <line x1="9" y1="3" x2="9" y2="7" stroke="currentColor" stroke-width="1.6" />
-        <line x1="15" y1="3" x2="15" y2="7" stroke="currentColor" stroke-width="1.6" />
-      </svg>
-    );
-  }
-  return <span />;
 }

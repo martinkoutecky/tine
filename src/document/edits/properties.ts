@@ -8,7 +8,7 @@ import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
-import { isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
+import { isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
@@ -377,7 +377,7 @@ export function toggleListItemAtIndex(id: string, lineIndex: number, column: num
   const lines = node.raw.split("\n");
   const ln = lines[lineIndex];
   const token = ln?.slice(column, column + 3);
-  if (ln === undefined || token === undefined || !/^\[[ xX]\]$/.test(token)) return;
+  if (ln === undefined || (token !== "[ ]" && token !== "[x]" && token !== "[X]")) return;
   const next = ln.slice(0, column) + (token === "[ ]" ? "[x]" : "[ ]") + ln.slice(column + 3);
   pushUndo(`listcheck:${id}`, [node.page]);
   lines[lineIndex] = next;
@@ -489,12 +489,15 @@ export function setSchedule(
 /** A block's raw with `collapsed:: true` added or removed so the persisted
  *  property matches the collapsed state. OG stores collapse in the file as a
  *  block property, so mirroring it here makes a collapse survive a relaunch and
- *  show up collapsed in OG / the mobile app. Fence-aware via splitProps. */
+ *  show up collapsed in OG / the mobile app. Uses parser-owned property edits. */
 export function rawWithCollapsed(raw: string, collapsed: boolean, format: Format): string {
   if (format === "org") return orgRawWithProperty(raw, "collapsed", collapsed ? "true" : null);
-  const { visible, hidden } = splitProps(raw, BUILTIN_HIDE, format);
-  const nextHidden = upsertPropertyLine(hidden, "collapsed", collapsed ? "true" : null) ?? "";
-  return joinProps(visible, nextHidden, format);
+  if (!collapsed && !raw.toLowerCase().includes("collapsed")) return raw;
+  const existing = blockRegions(raw, format).properties.some(p => p.primary && p.key.toLowerCase() === "collapsed");
+  // Change only the owned collapse row; splitting and regrouping all hidden
+  // rows moved unrelated id:: lines when collapsing a quote (GH #684).
+  if (existing) return editBlock(raw, format, { kind: "property", key: "collapsed", value: collapsed ? "true" : null });
+  return collapsed ? joinProps(raw, "collapsed:: true", format) : raw;
 }
 
 /** Set a block's collapsed state AND mirror it into its raw `collapsed::` so it
