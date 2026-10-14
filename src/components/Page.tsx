@@ -12,6 +12,7 @@ import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
 import { blockRef, isConflicted, pageLoadRefusalMessage, reportPageLoadRefusal, whenPageReplaceable, type PageLoadRefusal } from "../document";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
+import { recordFeedReason } from "../journalFeedDiagnostic";
 import { isPublishedExport } from "../publishedBackend";
 import { pushToast } from "../toasts";
 import { focusPageTrailing } from "./pageTrailing";
@@ -147,24 +148,30 @@ let journalRefreshFlight: { graphEpoch: number; day: number; owner: JournalsFeed
 
 /** Ensure today's configured template before any feed read for that day. */
 async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promise<unknown | null> {
-  if (!ownerIsLive(owner) || windowUnbound()) return null;
+  if (!ownerIsLive(owner)) { recordFeedReason("owner-retired"); return null; }
+  if (windowUnbound()) { recordFeedReason("window-unbound"); return null; }
   const date = appNow();
   const day = localDayKey(date);
   const rollover = journalAsOfDay !== null && journalAsOfDay !== day && feedNames().length > 0;
   if (!graphMeta()?.default_journal_template) return restartJournalFeed(owner, false, rollover);
   const current = journalRefreshFlight;
-  if (current && current.graphEpoch === owner.graphEpoch && current.day === day && ownerIsLive(current.owner)) {
+  if (current && current.graphEpoch === owner.graphEpoch && current.day === day) {
+    // Startup session/layout restoration can retire the surface while the
+    // graph's shared template ensure is still reading. Transfer its guard to
+    // the incoming live surface before sharing that promise: starting another
+    // refresh would join the graph ensure with the retired surface's guard.
     current.owner = owner;
     return current.promise;
   }
   ++feedGeneration;
-  if (!rollover && feedHasActiveEdit()) { pendingFeedRestart = true; return null; }
+  if (!rollover && feedHasActiveEdit()) { recordFeedReason("active-edit"); pendingFeedRestart = true; return null; }
   const flight = { graphEpoch: owner.graphEpoch, day, owner, promise: Promise.resolve<unknown | null>(null) };
   flight.promise = (async () => {
     const ensured = await ensureJournalTemplateForDay(date, () => ownerIsLive(flight.owner)
       && !pageHasActiveEdit(journalTitle(date)) && (rollover || !feedHasActiveEdit()));
     const liveOwner = flight.owner;
     if (typeof ensured === "object") {
+      recordFeedReason("template-error", ensured.error);
       if (ownerIsLive(liveOwner)) {
         pendingFeedRestart = true;
         pushToast("Could not load journal feed. It will retry when the view refreshes.", "error");
@@ -172,11 +179,16 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
       return ensured.error;
     }
     if (ensured !== "ready" || localDayKey() !== day || !ownerIsLive(liveOwner)) {
+      recordFeedReason(localDayKey() !== day ? "template-day-changed"
+        : ensured !== "ready" ? `template-${ensured}` : "owner-retired");
       if (ownerIsLive(liveOwner)) pendingFeedRestart = true;
       return null;
     }
-    if (!rollover && feedHasActiveEdit()) { pendingFeedRestart = true; return null; }
-    return restartJournalFeed(liveOwner, false, rollover);
+    if (!rollover && feedHasActiveEdit()) { recordFeedReason("active-edit"); pendingFeedRestart = true; return null; }
+    // The same refresh remains transferable after template work, while the
+    // native feed read is pending. Its read/publication guard must follow the
+    // current surface too, rather than capture the surface that began it.
+    return restartJournalFeed({ graphEpoch: flight.graphEpoch, isLive: () => ownerIsLive(flight.owner) }, false, rollover);
   })();
   journalRefreshFlight = flight;
   try { return await flight.promise; }
@@ -198,10 +210,12 @@ function feedDayRefused(refusal: PageLoadRefusal, owner: JournalsFeedOwner): str
 async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean, rollover: boolean): Promise<unknown | null> {
   // An already-dead watcher/surface must be entirely inert.  In particular it
   // must not steal the generation from a live request that is about to land.
-  if (!ownerIsLive(owner) || windowUnbound()) return null;
+  if (!ownerIsLive(owner)) { recordFeedReason("owner-retired"); return null; }
+  if (windowUnbound()) { recordFeedReason("window-unbound"); return null; }
   const generation = ++feedGeneration; // invalidate starts/appends before checking edit safety
   const requestOwner = latestOwner(feedOwners, "restart", graphOwner(() => ownerIsLive(owner)));
   if (!rollover && feedHasActiveEdit()) {
+    recordFeedReason("active-edit");
     pendingFeedRestart = true;
     return null;
   }
@@ -209,10 +223,11 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
   loadingGeneration = generation;
   try {
     const result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, null));
-    if (result.kind === "stale") return null;
+    if (result.kind === "stale") { recordFeedReason("read-stale"); return null; }
     const response = result.value;
     reportUnreadableJournals(response);
     if (!responseMatches(browserDay, response)) {
+      recordFeedReason("day-mismatch");
       if (generation === feedGeneration && ownerIsLive(owner) && !retried && (rollover || !feedHasActiveEdit())) {
         return restartJournalFeed(owner, true, rollover);
       }
@@ -224,6 +239,8 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
     // otherwise the intentionally reactive pending-retry effect observes the
     // old true value during that store write and starts a duplicate restart.
     if (generation !== feedGeneration || !ownerIsLive(owner) || (!rollover && feedHasActiveEdit())) {
+      recordFeedReason(generation !== feedGeneration ? "generation-changed"
+        : !ownerIsLive(owner) ? "owner-retired" : "active-edit");
       if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
       return null;
     }
@@ -233,10 +250,13 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
       preserveExisting: rollover,
       isRequestLive: () => generation === feedGeneration && ownerIsLive(owner) && responseMatches(browserDay, response),
     });
-    if (loaded === "stale") return null;
+    if (loaded === "stale") { recordFeedReason("admission-stale"); return null; }
     // The whole window is withheld, as master defers its feed atomically: a
     // published feed never shows another file as a requested day.
-    if (loaded !== "published") return new FeedWithheld(feedDayRefused(loaded, owner));
+    if (loaded !== "published") {
+      recordFeedReason("admission-refused");
+      return new FeedWithheld(feedDayRefused(loaded, owner));
+    }
     setFeedRefusal(null);
     publishedFeedEpoch = owner.graphEpoch;
     publishedFeedNames = feedNames();
@@ -245,6 +265,7 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
     feedDone = response.done;
     return null;
   } catch (error) {
+    recordFeedReason("feed-error", error);
     // A failed refresh must leave the displayed feed and its cursor usable.
     // Focus, visibility, load-more, or the next calendar check will retry.
     if (generation === feedGeneration && ownerIsLive(owner)) {
@@ -376,7 +397,10 @@ export function PageView(): JSX.Element {
           if (!owned()) return;
           // A withheld feed is not a failed read: stay on the route, say why,
           // and let the pending refresh fill it in place.
-          if (!hasPublishedFeed(epoch) && !(feedError instanceof FeedWithheld)) throw feedError ?? new Error("Journal feed read failed.");
+          if (!hasPublishedFeed(epoch) && !(feedError instanceof FeedWithheld)) {
+            recordFeedReason("route-unpublished");
+            throw feedError ?? new Error("Journal feed read failed.");
+          }
         } else {
           if (isGuidePageName(r.name)) {
             await ensureGuidePagesLoaded(true);

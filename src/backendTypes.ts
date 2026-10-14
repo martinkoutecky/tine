@@ -19,12 +19,24 @@ export interface DiagnosticReport {
 
 export type DiagnosticFrontendKind =
   | "uncaught_error" | "unhandled_rejection" | "heartbeat_delay"
-  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast";
+  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast" | "journal_feed";
+
+/** Closed tokens only: journal names, paths and backend error text never enter
+ * the always-on report (I-5). These describe the read/publication boundary. */
+export type JournalFeedReason =
+  | "template-deferred" | "template-stale" | "template-error" | "template-day-changed"
+  | "active-edit" | "owner-retired" | "window-unbound" | "read-stale"
+  | "day-mismatch" | "generation-changed" | "admission-stale" | "admission-refused"
+  | "feed-error" | "route-unpublished";
+
+export type JournalFeedCause = "empty-rejection" | "other-rejection";
 
 /** Why a close discarded drafts: a save failed, or saves were still running. */
 export type DiscardReason = "failed" | "still-saving";
 
 export interface DiagnosticFrontendFields {
+  journalFeedReason?: JournalFeedReason;
+  journalFeedCause?: JournalFeedCause;
   line?: number;
   column?: number;
   delayMs?: number;

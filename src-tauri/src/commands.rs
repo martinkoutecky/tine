@@ -369,7 +369,10 @@ pub(crate) async fn journal_feed_page(
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         let feed = tine_graph_features::journals::feed_page(&slot.store, limit, before_day)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| {
+                crate::flight::journal_feed_io_failure(error.kind());
+                error.to_string()
+            })?;
         Ok(JournalFeedPage {
             pages: feed.pages.into_iter().map(page_dto).collect(),
             next_before_day: feed.next_before_day,
