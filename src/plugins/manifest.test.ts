@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { PLUGIN_MANIFEST_MAX_BYTES, PLUGIN_WASM_MAX_BYTES, parsePluginManifest, supportsPlatform } from "./manifest";
+import { readFileSync } from "node:fs";
+import { PLUGIN_MANIFEST_MAX_BYTES, PLUGIN_WASM_MAX_BYTES, SUPPORTED_PLUGIN_API_VERSIONS, parsePluginManifest, supportsPlatform } from "./manifest";
 
 const base = {
   schemaVersion: 1,
@@ -17,6 +18,21 @@ const base = {
 };
 
 describe("parsePluginManifest", () => {
+  it("runs API 0.2 and 0.3 manifests; the color setting type needs 0.3, which a 0.2-only host would refuse", () => {
+    const color = { key: "color", type: "color", label: "Color", description: "Color", default: "" };
+    const withColor = { ...base, capabilities: [...base.capabilities, "settings.read"], settings: [color] };
+    expect(parsePluginManifest(base).apiVersion).toBe("0.2");
+    expect(parsePluginManifest({ ...withColor, apiVersion: "0.3" }).settings?.[0].type).toBe("color");
+    expect(() => parsePluginManifest(withColor)).toThrow(/color needs apiVersion 0.3/);
+    expect(() => parsePluginManifest({ ...base, apiVersion: "0.4" })).toThrow(/apiVersion must be one of 0.2, 0.3/);
+  });
+
+  it("keeps the package checker's API versions equal to the host's", () => {
+    const checker = readFileSync("scripts/tine-plugin.mjs", "utf8");
+    const accepted = [...checker.matchAll(/manifest\.apiVersion !== "([0-9.]+)"/g)].map((match) => match[1]);
+    expect(accepted).toEqual([...SUPPORTED_PLUGIN_API_VERSIONS]);
+  });
+
   it("defaults an omitted platform declaration to desktop only", () => {
     const manifest = parsePluginManifest(base);
     expect(manifest.platforms).toEqual(["desktop"]);

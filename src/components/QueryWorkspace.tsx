@@ -75,6 +75,7 @@ export interface MaterializeQueryInput {
 }
 
 export interface MaterializeQueryDependencies {
+  serializeDsl(source: string): Promise<{ query: string; properties: Array<[string, string]> }>;
   /** The one name answerer: an existing file, an alias, or where a new page goes. */
   resolvePage(name: string, kind: "page"): Promise<ResolvedPage>;
   /** Write the new page through the page host (`createPage`); resolves its file revision when known. */
@@ -111,7 +112,7 @@ export interface QueryWorkspaceProps {
 }
 
 /** The query block's text and its properties, in the order they have always been written. */
-function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">): { query: string; properties: Array<[string, string]> } {
+async function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">, deps: MaterializeQueryDependencies): Promise<{ query: string; properties: Array<[string, string]> }> {
   const source = input.source.trim();
   const dsl = input.sourceKind === "search" ? friendlySearchToSavedDsl(source) : source;
   const properties: Array<[string, string]> = [];
@@ -125,7 +126,32 @@ function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" |
       properties: [],
     })) if (value !== null) properties.push([key, value]);
   }
-  return { query: `{{${QUERY_MACRO_NAMES[0]} ${dsl}}}`, properties };
+  if (input.sourceKind === "search") return { query: `{{${QUERY_MACRO_NAMES[0]} ${dsl}}}`, properties };
+  const saved = await readOwned(bindingOwner(), deps.serializeDsl(dsl));
+  if (saved.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  return { query: saved.value.query, properties: [...saved.value.properties, ...properties] };
+}
+
+/** Preserve authored OG text when expressible; convert Tine-only conditions
+ * through the engine's printer before the guarded page save. */
+export async function serializeWorkspaceDsl(source: string): Promise<{ query: string; properties: Array<[string, string]> }> {
+  const api = backend();
+  const owner = graphOwner();
+  const parsed = await readOwned(owner, api.parseQuery(source, "macro_query"));
+  if (parsed.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  const { query, view } = parsed.value;
+  const expressible = query.source.kind === "advanced" ? null : await readOwned(owner, api.queryOgExpressible(query, view));
+  if (expressible?.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  if (query.source.kind === "advanced" || expressible?.value) {
+    return { query: `{{${QUERY_MACRO_NAMES[0]} ${source}}}`, properties: [] };
+  }
+  const printed = await readOwned(owner, api.printQuery(query, view, "tql_macro"));
+  if (printed.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  // TQL keeps conditions in text and view directives on the owning block.
+  const properties: Array<[string, string]> = [];
+  if (view.sort?.length) properties.push(["tine.sort", view.sort.map(([field, direction]) => `${field} ${direction}`).join("; ")]);
+  if (view.sample != null) properties.push(["tine.sample", String(view.sample)]);
+  return { query: `{{${QUERY_MACRO_NAMES[1]} ${printed.value}}}`, properties };
 }
 
 /** Is the input this attempt captured still the one the user is looking at?
@@ -182,8 +208,8 @@ export async function materializeQueryWorkspace(
     const resolution = await readOwned(owner, deps.resolvePage(name, "page"));
     if (resolution.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     const resolved = resolution.value;
-    // The lookup is the last await before the write: an answer about a title the
-    // workspace has moved on from no longer licenses one.
+    // An answer about a title the workspace has moved on from no longer
+    // licenses a write; serialization below rechecks the same captured input.
     if (!isCurrent()) return superseded();
     if (resolved.kind === "existing") {
       return {
@@ -204,7 +230,10 @@ export async function materializeQueryWorkspace(
     // The new page's format is its resolved id's extension (the graph's preferred
     // format); the save path writes by that extension, so the block must be
     // spelled for it.
-    const { query, properties } = savedQuery(input);
+    const serialized = await readOwned(owner, savedQuery(input, deps));
+    if (serialized.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    if (!isCurrent()) return superseded();
+    const { query, properties } = serialized.value;
     const page = queryWorkspacePage(name, query, properties, /\.org$/i.test(resolved.id) ? "org" : "md");
     const saved = await writeOwned(owner, deps.createPage(page, binding.backendGeneration));
     if (saved.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
@@ -244,6 +273,7 @@ export async function materializeQueryWorkspace(
 function defaultDependencies(): QueryWorkspaceDependencies {
   const api = backend();
   return {
+    serializeDsl: serializeWorkspaceDsl,
     closeSearchWorkspace: async (workspace: string, bindingGeneration: number) => {
       if (!isTauri()) return;
       const owner = graphOwner();

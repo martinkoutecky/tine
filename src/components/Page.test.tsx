@@ -19,7 +19,7 @@ import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
 import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../router";
 import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
-import { isSaving } from "../document/host/wiring";
+import { isSaving, pendingDataRevision } from "../document/host/wiring";
 import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
 import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
@@ -557,6 +557,10 @@ describe("Journals feed generation lifecycle", () => {
       // still retries, lands the released feed, and then stops.
       await vi.waitFor(() => expect(api).toHaveBeenCalled(), { timeout: 2000 });
       await vi.waitFor(() => expect(doc.feed).toContain(`released-${gate}`));
+      // GH #481: the coalesced host publication also refreshes fileless-day
+      // membership. Only measure quiescence after that real publication lands.
+      await vi.waitFor(() => expect(pendingDataRevision()).toBe(false), { timeout: 2000 });
+      await flushMicrotasks();
       const reads = api.mock.calls.length;
       await new Promise((done) => setTimeout(done, 1000));
       expect(api).toHaveBeenCalledTimes(reads);

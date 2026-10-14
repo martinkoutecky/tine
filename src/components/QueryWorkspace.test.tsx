@@ -3,6 +3,7 @@ import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import type { PaneRouter, QueryRoute } from "../router";
 import type { QueryExecution, ResolvedPage } from "../types";
+import type { Query } from "../editor/queryIr";
 import {
   clearTransientLayersForTest,
   dismissTopTransient,
@@ -11,6 +12,7 @@ import {
 import {
   QueryWorkspace,
   materializeQueryWorkspace,
+  serializeWorkspaceDsl,
   type MaterializeQueryDependencies,
   type QueryWorkspaceDependencies,
 } from "./QueryWorkspace";
@@ -30,12 +32,26 @@ afterEach(() => {
 
 function materializeDeps(overrides: Partial<MaterializeQueryDependencies> = {}): MaterializeQueryDependencies {
   return {
+    serializeDsl: vi.fn(async (source: string) => ({ query: `{{query ${source}}}`, properties: [] })),
     resolvePage: vi.fn(async (name: string) => ({ kind: "absent" as const, id: `pages/${name}.md` })),
     createPage: vi.fn(async () => "rev-new"),
     runGraphSearch: vi.fn(async () => ({ hits: [], diagnostics: [], explanation: { branches: [{ description: "valid", children: [] }] }, cancelled: false })),
     ...overrides,
   };
 }
+
+describe("D-18 workspace date-window serialization", () => {
+  it("saves the engine's Tine query spelling for an agenda window", async () => {
+    const source = "(and (between scheduled today +7d) (task TODO))";
+    const query: Query = { anchor: "block", filter: { kind: "true" }, source: { kind: "builder" }, diagnostics: [] };
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({ query, view: { sort: [["scheduled", "asc"]], sample: 7 } });
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("@block scheduled between today and '+7d' and task in ('TODO')");
+    const result = await materializeQueryWorkspace({ title: "Window", sourceKind: "dsl", source, presentation: "list", routeId: "agenda" }, materializeDeps({ serializeDsl: serializeWorkspaceDsl }));
+    expect(result.ok && result.page.blocks[0].raw).toBe("{{tine-query @block scheduled between today and '+7d' and task in ('TODO')}}\ntine.sort:: scheduled asc\ntine.sample:: 7");
+    vi.restoreAllMocks();
+  });
+});
 
 describe("materializeQueryWorkspace", () => {
   it("does not save when a page resolve lands after a graph switch (I-20)", async () => {
@@ -333,6 +349,7 @@ function executionFixture(explained: boolean): QueryExecution {
 
 function workspaceDeps(): QueryWorkspaceDependencies {
   return {
+    serializeDsl: vi.fn(async (source: string) => ({ query: `{{query ${source}}}`, properties: [] })),
     resolvePage: vi.fn(async (name: string) => ({ kind: "absent" as const, id: `pages/${name}.md` })),
     createPage: vi.fn(async () => "saved-rev"),
     runGraphSearch: vi.fn(async (_source, pageLimit, blockLimit, _lane, explain) =>

@@ -1,38 +1,33 @@
 import type { JSX } from "solid-js";
 import { backend } from "../backend";
-import { reportLinkOpenFailure } from "../components/ExternalLink";
+import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
 import { graphOwner, readOwned } from "../owned";
-import { pushToast } from "../toasts";
-import { msg, t } from "../i18n";
-import type { FileLinkTarget } from "./relativeFileLink";
+import { graphMeta } from "../graphSession";
+import { filePathUrl, resolvedFilePath, type FileLinkTarget } from "./relativeFileLink";
 import type { SpanDomAttrs } from "./spans";
 
-/** A link to a file by plain path (GH #457), resolved against the graph
- *  folder as OG does (relativeFileLink.ts). Inside the graph it opens through
- *  the native opener, which re-checks containment after symlinks; a link that
- *  points outside the graph folder is shown as broken and never opened (a link
- *  in a note is untrusted content: imported or malformed Markdown may name any
- *  path). Cost: one OS handoff per click. */
+/** A graph-authored file path (GH #457). In-graph links keep the guarded graph
+ * opener; explicitly authored outside paths use the existing file: opener.
+ * Cost: lexical path resolution on render, one native command per click. */
 export function RelativeFileLink(props: {
   dest: string;
   target: FileLinkTarget;
   spanAttrs?: SpanDomAttrs;
   children: JSX.Element;
 }): JSX.Element {
-  const outside = () => props.target.kind === "outside";
+  const resolved = () => resolvedFilePath(props.target, graphMeta()?.root ?? "");
   return (
     <a
       class="external-link file-link"
       href={props.dest}
-      data-broken-file-link={outside() ? "" : undefined}
-      title={outside() ? t("links-outside-graph-title") : undefined}
+      title={resolved()}
       {...(props.spanAttrs ?? {})}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
         const target = props.target;
         if (target.kind === "outside") {
-          pushToast(msg("toast-link-outside-graph", { dest: props.dest }), "error");
+          void openOutboundLink(filePathUrl(resolved()));
         } else {
           void readOwned(graphOwner(), backend().openGraphFile(target.path, backend().graphBindingGeneration()))
             .catch((error) => reportLinkOpenFailure(props.dest, error));

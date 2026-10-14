@@ -247,6 +247,9 @@ export interface MessageArgs {
   "commands-plugin-command-failed": { "error": string | number };
   "commands-select-text-in-a-block-then-use": {};
   "commands-undo-redo-mode": { "mode": string | number };
+  "config-query-details": {};
+  "config-query-title": {};
+  "config-query-unsupported": {};
   "conflict-bar-keep-mine-overwrite": {};
   "conflict-bar-live-notice": { "name": string | number };
   "conflict-bar-review": {};
@@ -926,6 +929,7 @@ export interface MessageArgs {
   "journal-filename-panel-these-journal-files-aren-t-named-after-their": {};
   "journal-slash-thatday-is-only-available-on-journal-pages": {};
   "journal-slash-the-date-was-not-inserted-because-the-graph": {};
+  "journals-upcoming": {};
   "launcher-ranking-could-not-load-adaptive-launcher-ranking-preference": {};
   "link-depth-embed-depth-is-too-deep": {};
   "links-copy-title": {};

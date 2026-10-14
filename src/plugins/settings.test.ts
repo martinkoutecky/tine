@@ -9,7 +9,9 @@ import {
   validatePluginSettings,
 } from "./settings";
 
-const definitions = parsePluginSettingDefinitions([
+const parseSettings = (value: unknown) => parsePluginSettingDefinitions(value, "0.3");
+
+const definitions = parseSettings([
   { key: "active-only", type: "boolean", label: "Active only", description: "Show only the active ancestry.", default: false },
   {
     key: "intensity",
@@ -29,7 +31,7 @@ describe("plugin setting schemas", () => {
     const colorSchema = schema.$defs.setting.oneOf.find((choice: { properties: { type: { const: string } } }) => choice.properties.type.const === "color");
     expect(schema.$defs.settingBase.properties.type.enum).toContain("color");
     expect(colorSchema.properties.default.pattern).toBe(PLUGIN_COLOR_PATTERN);
-    const colors = parsePluginSettingDefinitions([
+    const colors = parseSettings([
       { key: "color", type: "color", label: "Color", description: "Theme default when empty", default: "" },
     ])!;
     for (const color of ["", "#abc", "#aabbcc", "rgb(12 34 56)", "hsl(120 50% 50%)"]) {
@@ -39,7 +41,7 @@ describe("plugin setting schemas", () => {
       expect(settingAccepts(colors[0], color)).toBe(false);
     }
     expect(validatePluginSettings(colors, { color: "url(x)" })).toEqual({ color: "" });
-    expect(() => parsePluginSettingDefinitions([
+    expect(() => parseSettings([
       { key: "color", type: "color", label: "Color", description: "Color", default: "url(x)" },
     ])).toThrow(/literal color/);
   });
@@ -48,19 +50,19 @@ describe("plugin setting schemas", () => {
   });
 
   it("rejects unknown fields, duplicate keys, invalid defaults, and unsafe descriptions", () => {
-    expect(() => parsePluginSettingDefinitions([
+    expect(() => parseSettings([
       { key: "x", type: "boolean", label: "X", description: "X", default: false, html: "<b>X</b>" },
     ])).toThrow(/unknown field html/);
-    expect(() => parsePluginSettingDefinitions([
+    expect(() => parseSettings([
       { key: "same", type: "boolean", label: "One", description: "One", default: false },
       { key: "same", type: "boolean", label: "Two", description: "Two", default: true },
     ])).toThrow(/duplicate key/);
-    expect(() => parsePluginSettingDefinitions([
+    expect(() => parseSettings([
       { key: "choice", type: "enum", label: "Choice", description: "Choice", default: "missing", choices: [
         { value: "a", label: "A" }, { value: "b", label: "B" },
       ] },
     ])).toThrow(/default must match/);
-    expect(() => parsePluginSettingDefinitions([
+    expect(() => parseSettings([
       { key: "x", type: "boolean", label: "X", description: "bad\ntext", default: false },
     ])).toThrow(/plain text/);
   });
