@@ -2,6 +2,12 @@ icon:: 📌
 
 - # Keep context visible
   - Source beside draft, note beside plan: this tour builds a working layout step by step — park a page in the right sidebar, collect places in tabs, split the window for true side-by-side, give a page its own window, and save the arrangement as a workspace. Each part ends with what you should see. The shortcut map is [[Features/Tips & shortcuts]].
+- ## Keep your place in a long outline
+  - Scroll down a nested outline: ancestors that leave the screen stay pinned at the top, through the root. Click a pinned ancestor to scroll back to its block. This works in pages, journals, panes, and right-sidebar outlines.
+  - Settings → **Appearance** → **Sticky parent bullets** turns this on or off on desktop and mobile. It starts on and is remembered on this device.
+- ## Select the block containing an embed
+  - While editing an embedded source block, run **Select embedding block** from the command palette (**Ctrl+Shift+P**). It leaves the editor and selects the block containing the `{{embed ...}}` macro. Use the ordinary move, indent, outdent, or edit shortcuts on that selection.
+  - The command starts without a key: assign one in Settings → **Keyboard shortcuts** to leave an embed directly from the keyboard. It works for block and page embeds. **Move Block Up/Down** while still editing the embedded source keeps moving that source; the **Moved in <page>** notice still tells you where an unseen move went.
 - ## Park a source in the right sidebar
   - 1. On the page you're writing, **Shift-click** a link (or a bullet's dot) to open it in the right sidebar. It's a full editor, not a preview — you can write in either place.
   - 2. Two more ways to park things: in **Ctrl+K**, press **Shift+Enter** on any page or block result; while editing, **Ctrl+Shift+O** sends the link at the caret across.

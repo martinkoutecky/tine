@@ -90,30 +90,36 @@ without a CHANGELOG entry; a custom.css that sets them is unsupported.
 
 ## 4. `logseq/custom.css` itself
 
-- **Where.** `<graph folder>/logseq/custom.css`, one file per graph, loaded after
-  the Logseq shim and the theme gallery. It is the user's file: Tine never
-  edits an existing one.
-- **Edit custom.css** (Settings > Appearance, desktop). Creates the file with
-  a short commented starter when it is missing, through the store's guarded
-  create (`tine_graph_features::custom_css::ensure_custom_css`, a `Transaction::create`
-  that fails if the file appeared meanwhile), then hands it to the operating
-  system's default app for `.css` files. That app is not guaranteed to be a text
-  editor (a browser or a viewer on some systems), so the button's hint and the
-  Guide say so and tell the user to pick an editor. On a synced graph, creating
-  the starter before the real file has arrived can make the sync tool keep the
-  starter and move the real file to a conflict copy; the Guide says to wait for
-  the file first. An existing file is never read, rewritten or size-checked by
-  this action, so an oversized or broken file can still be opened and repaired.
-  Android and iOS have no editor hand-off, so the control is replaced by a hint.
+- **Where and layering.** `<graph folder>/logseq/custom.css`, one file per graph,
+  loads after the Logseq shim, theme gallery and device `global.css`. The global
+  file lives in Tine's per-user config directory and loads before the graph
+  stylesheet, so graph rules can override device defaults.
+- **Edit custom.css / Edit global CSS** (Settings > Appearance, all platforms,
+  including Android and iOS). The quick switcher also finds both files by `css`.
+  Both open in Tine's plain text editor. Missing files start empty: creation on save
+  goes through the same guarded transaction as replacement. Every save checks the
+  editor's original base revision and uses temp-file, fsync and rename; an external
+  edit refuses the save and retains the buffer. Reload from disk explicitly
+  discards the buffer after confirmation. Opening alone never creates a file.
+- **Draft persistence.** Background visibilitychange, pagehide and freeze flush
+  CSS alongside pages. Before saving, Tine keeps a recovery capsule in device app
+  settings, scoped to the graph's root or the device global file, with the original
+  revision. A refused save retains it; reopening the same CSS file recovers it
+  without rebasing over external bytes. Successful saving clears it, unless newer
+  typing remains. A background flush cannot keep a native WebView alive until IPC
+  finishes; mobile termination during that IPC remains a runtime limitation.
 - **Live reload (all platforms with a watcher).** The store watcher notes
   `logseq/custom.css` as its own event lane (like `config.edn`), compares a
   content revision, and publishes one external change when the bytes differ;
   the window answers `graph-custom-css-changed` by re-reading through
   `read_custom_css` and re-applying. No new timer or poll: the lane runs on
   events naming the file, on a full diff, and on the poll-mode cycle that
-  already walks the graph. Tine's own creation of the file does not echo.
+  already walks the graph. Saves paint immediately, then reconcile with disk:
+  a newer external revision arriving before the save reply must win on screen.
+  Reads from before a successful save are retired. Device CSS is also refreshed
+  after saves, cross-window notifications and focus.
 - **Disable custom CSS** (Settings > Appearance, every platform). A
-  session-only safe mode held in memory: the stylesheet is blanked, the latest
+  session-only safe mode held in memory: both CSS layers and Fine-tuning are blanked, the latest
   text is remembered, and it is never persisted, so restarting Tine always
   starts with custom CSS on and a broken stylesheet is always recoverable.
 - **Developer tools** (Settings > Appearance, desktop; also Ctrl+Shift+J, Cmd+Shift+J on macOS: the binding is `mod+shift+j`). The
@@ -123,7 +129,7 @@ without a CHANGELOG entry; a custom.css that sets them is unsupported.
 | Situation | Behaviour | In-scope scenario |
 |---|---|---|
 | `logseq/custom.css` is a directory, not a file | "Edit custom.css" refuses with an error toast; nothing is created or removed | Hand-made folder or a sync-delivery shape change; refusing is the only safe answer because there is nothing to open as text |
-| The file is larger than the read limit | Applying it fails with the existing "custom.css could not be read" toast; "Edit custom.css" still opens it so it can be fixed | Pasted-in or generated file; recovery over refusal |
+| The file is larger than the read limit | Applying and opening it fail with a read error; repair it in an external editor | Pasted-in or generated file; no partial buffer may replace the full file |
 | The file vanishes or is half-written during a read | The lane re-looks once, then publishes what it sees (a removal, or a change with no revision). The window re-reads; if that read fails it keeps the last applied stylesheet (never blanks), retries once after a short pause, and reports only if the retry fails too. Only a graph-open read that fails applies nothing | External-editor save race (write-then-rename, truncate-then-write), Windows editor briefly holding the file |
 | Two outside edits land close together | The newest re-read wins; an older read that finishes last is dropped | Editor autosave plus sync delivery |
 | Another window or an editor writes the file | The window re-applies it without reopening the graph | Syncthing/Dropbox delivery, external editor |

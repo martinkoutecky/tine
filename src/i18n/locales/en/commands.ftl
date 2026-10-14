@@ -1,6 +1,9 @@
 ## Commands: the command table (keybindings.ts). A command's message id is
 ## `command-` + its id with `/` replaced by `-` (D4).
 command-go-search = Search / quick switch
+navigation-sidebar-title = Toggle sidebar (t l)
+navigation-search-title = Search (Ctrl+K)
+navigation-search = Search
 command-go-search-current-page = Search blocks in current page
 command-guide-open = Open Guide
 command-go-find-in-page = Find in page
@@ -98,7 +101,9 @@ command-plugin = Plugin: { $title }
 command-go-search-selection = Search for the selected text
 command-select-copy-block-ref = Copy block refs of the selected blocks
 command-editor-duplicate-block = Duplicate block below (with children)
+command-editor-duplicate-block-above = Duplicate block above (with children)
 command-editor-insert-child-block = Insert child block
+command-editor-select-embedding-block = Select embedding block
 command-editor-collapse-children = Collapse children (one level)
 command-editor-expand-children = Expand children (one level)
 command-editor-paste-as-link = Paste as link

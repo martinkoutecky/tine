@@ -64,6 +64,25 @@ function popup(): HTMLElement | null {
 }
 
 describe("page hover-peek (GH #40)", () => {
+  it("GH #674/#363: alias preview shows source title, properties and read-only source navigation", async () => {
+    vi.spyOn(backend(), "getPage").mockResolvedValue({
+      id: "pages/Canonical.md", name: "Canonical", title: "Canonical", kind: "page", format: "md",
+      pre_block: "alias:: Nickname\nstatus:: active", blocks: [
+        { id: "source-row", raw: "TODO source body", marker: "TODO", collapsed: false, children: [] },
+      ],
+    } as never);
+    const { root, dispose } = mountAttached("[[Nickname]]");
+    try {
+      fireEnter(root.querySelector("a.page-ref")!);
+      await advance(PEEK_OPEN_MS);
+      expect(await waitFor(() => !!popup())).toBe(true);
+      expect(popup()!.querySelector(".peek-popup-title-name")?.textContent).toBe("Canonical");
+      expect(popup()!.textContent).toContain("status");
+      expect(popup()!.textContent).toContain("active");
+      expect(popup()!.querySelector('[aria-label="Open source"]')).not.toBeNull();
+      expect(popup()!.querySelector("textarea, input[type=checkbox], [role=checkbox], [contenteditable=true]")).toBeNull();
+    } finally { dispose(); }
+  });
   // Master cab80f016: a touch hold synthesizes hover in Android/iOS
   // WebViews; only a real mouse may arm the preview.
   it.each(["touch", "pen"])("ignores %s compatibility hover but still accepts a later real mouse on the same link", async (pointerType) => {

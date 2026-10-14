@@ -1,5 +1,6 @@
 import { Show, Suspense, lazy, type JSX } from "solid-js";
 import { QuickSwitcher } from "./QuickSwitcher";
+import { CssEditor } from "./CssEditor";
 import { ContextMenu } from "./ContextMenu";
 import { Toasts, Lightbox } from "./Toasts";
 import { AudioOverlay } from "./AudioOverlay";
@@ -15,6 +16,7 @@ import { FailureBoundary } from "./FailureBoundary";
 import { DrawerBackground } from "./MobileDrawerShell";
 import { queryExportRequest, settingsOpen } from "../ui";
 import { overlayWindowId } from "../transientLayers";
+import { t } from "../i18n";
 
 const Settings = lazy(() => import("./Settings").then((module) => ({ default: module.Settings })));
 
@@ -52,6 +54,7 @@ export function WindowOverlays(props: {
         <FailureBoundary region="PDF export"><PdfExportDialog /></FailureBoundary>
         <FailureBoundary region="Query export"><QueryExportDialog request={queryExportRequest} /></FailureBoundary>
         <FailureBoundary region="Graph creation"><GraphNamePrompt /></FailureBoundary>
+        <FailureBoundary region={t("css-editor-title")}><CssEditor /></FailureBoundary>
         <Show when={settingsOpen()}>
           <Suspense>
             <FailureBoundary region="Settings"><Settings /></FailureBoundary>

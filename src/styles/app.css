@@ -3541,6 +3541,12 @@ html[data-system-insets="native-viewport"] {
   position: relative;
 }
 
+.sticky-ancestor { position: sticky; height: 30px; margin-bottom: -30px; pointer-events: none; }
+.sticky-ancestor button { pointer-events: auto; display: block; width: 100%; height: 30px; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border: 0; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); font: inherit; cursor: pointer; }
+.sticky-ancestor button[hidden] { display: none; }
+[data-sticky-parent] > .block-main { scroll-margin-top: 30px; }
+@media print { .sticky-ancestor { display: none; } }
+
 .block-main {
   display: flex;
   align-items: flex-start;
@@ -4140,7 +4146,7 @@ html[data-system-insets="native-viewport"] {
 }
 
 /* Code view/editor share card metrics and the calculator's numbered gutter. */
-.editor-wrap:has(> .block-editor.code-edit) { position: relative; padding: var(--ls-block-content-pad-y) 0; }
+.editor-wrap:has(> .code-editor-region > .block-editor.code-edit) { position: relative; padding: var(--ls-block-content-pad-y) 0; }
 .block-editor.code-edit {
   background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 6px;
   padding: 30px 12px 10px 48px; margin: 4px 0;
@@ -4154,10 +4160,15 @@ html[data-system-insets="native-viewport"] {
 .gutter-row { position: relative; }
 .code-gutter .calc-lineno { position: absolute; right: calc(100% + 14px); }
 .gutter-mirror { visibility: hidden; }
-.editor-wrap > .code-gutter { top: calc(35px + var(--ls-block-content-pad-y)); left: 49px; right: 13px; font-family: var(--tine-mono-font, var(--ls-font-mono)); font-size: 0.86em; line-height: 1.5; }
-.editor-wrap > .code-language { top: calc(14px + var(--ls-block-content-pad-y)); }
+.code-editor-region > .code-gutter { top: calc(35px + var(--ls-block-content-pad-y)); left: 49px; right: 13px; font-family: var(--tine-mono-font, var(--ls-font-mono)); font-size: 0.86em; line-height: 1.5; }
+.code-editor-region > .code-language { top: calc(14px + var(--ls-block-content-pad-y)); }
+.code-editor-region { display: contents; }
+.code-editor-region.mixed-code-region { display: block; position: relative; }
+.mixed-code-region > .code-gutter { top: 35px; }
+.mixed-code-region > .code-language { top: 14px; }
+.mixed-code-before, .mixed-code-after { padding: 0; min-height: 0; }
 .code-wrapping .code-gutter, .code-wrapping.code-block code,
-.code-wrapping > .block-editor.code-edit { white-space: pre-wrap; overflow-wrap: anywhere; }
+.code-wrapping .block-editor.code-edit { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .block-editor.h1 { font-size: 1.7em; font-weight: 600; line-height: 1.3; }
 .block-editor.h2 { font-size: 1.4em; font-weight: 600; line-height: 1.3; }
@@ -5071,11 +5082,6 @@ body.file-drop-active::after {
 }
 .dp-empty {
   visibility: hidden;
-}
-.dp-help {
-  margin: 8px 0 0;
-  font-size: 11px;
-  color: var(--text-muted);
 }
 .dp-foot {
   display: flex;
@@ -6747,6 +6753,13 @@ img.emoji {
 }
 .reference-export-toggle:disabled { opacity: .4; cursor: default; }
 
+.peek-popup-title { display: flex; align-items: center; gap: 12px; }
+.peek-source-title { color: inherit; font: inherit; text-align: left; }
+.peek-open-source { margin-left: auto; color: var(--link-color); white-space: nowrap; }
+.peek-page-properties { padding: 8px 16px; color: var(--text-secondary); }
+.embed-source-breadcrumb { display: none; color: var(--text-secondary); font-size: .85em; padding: 4px 8px; }
+.tine-embed-breadcrumbs .embed-source-breadcrumb { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+
 .ref-export-actions { display: flex; gap: 8px; }
 .ref-export-actions button {
   padding: 3px 12px;
@@ -7572,6 +7585,7 @@ html.tine-embed-shading-accent .embed-block {
 
 /* video / iframe embeds */
 .embed-iframe-wrap {
+  display: block;
   position: relative;
   width: 100%;
   max-width: 640px;
@@ -8113,7 +8127,9 @@ html.tine-embed-shading-accent .embed-block {
   border: 1px solid var(--border-color);
   border-radius: 8px;
   margin-bottom: 10px;
-  overflow: hidden;
+  /* Clip the rounded card without creating a second scroll container: its
+     sticky ancestors follow the right sidebar's scrolling viewport. */
+  overflow: clip;
 }
 
 .rs-item-head {

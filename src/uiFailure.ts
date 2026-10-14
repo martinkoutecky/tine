@@ -28,6 +28,7 @@ export type UiFailureFamily =
   | "asset-inventory"
   | "trash-inventory"
   | "custom-css"
+  | "css-draft"
   | "config-read"
   | "conflict-inventory"
   | "graph-verification"
@@ -42,6 +43,7 @@ export type UiFailureFamily =
 
 const MESSAGES: Record<UiFailureFamily, string> = {
   "custom-css": "Couldn't read custom.css. No custom CSS was applied; if you just edited it, the previous version is still in effect. Fix the file and save it again.",
+  "css-draft": "Couldn't keep a recovery copy of the CSS you are editing. The file was not saved; copy your changes before closing the editor.",
   "asset-read": "Couldn't read a file from this graph's assets. It may be unreadable.",
   "page-refresh": "Couldn't refresh a page after a change. Reopen it to see the latest.",
   "logbook": "Couldn't read or update a time-tracking entry.",

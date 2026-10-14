@@ -668,11 +668,14 @@ class TauriBackend implements Backend {
     const { ask } = await import("@tauri-apps/plugin-dialog");
     return ask(message, { title: title ?? "Tine", kind: "warning" });
   }
-  async pickFolder(title?: string): Promise<string | null> {
+  async pickFolder(title?: string, defaultPath?: string): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const res = await open({ directory: true, multiple: false, title: title ?? "Open graph folder" });
+    const res = await open({ directory: true, multiple: false, title: title ?? "Open graph folder", defaultPath });
     return typeof res === "string" ? res : null;
   }
+  revealExport(path: string) { return this.call<void>("reveal_export", { path }); }
+  readCssFile(global: boolean) { return this.call<{ text: string; revision: string | null }>("read_css_file", { global }); }
+  saveCssFile(global: boolean, text: string, revision: string | null) { return this.call<string>("save_css_file", { global, text, revision }); }
   pickGraphFolder(): Promise<GraphFolderPickResult> {
     return this.call<GraphFolderPickResult>("pick_graph_folder");
   }

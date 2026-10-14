@@ -369,7 +369,10 @@ pub(crate) async fn journal_feed_page(
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         let feed = tine_graph_features::journals::feed_page(&slot.store, limit, before_day)
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| {
+                crate::flight::journal_feed_io_failure(error.kind());
+                error.to_string()
+            })?;
         Ok(JournalFeedPage {
             pages: feed.pages.into_iter().map(page_dto).collect(),
             next_before_day: feed.next_before_day,
@@ -667,6 +670,28 @@ pub(crate) async fn publish_html(state: GraphContext<'_>) -> Result<(String, usi
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Reveal an exported site using the shared desktop file-manager helper.
+#[tauri::command]
+pub(crate) async fn reveal_export(path: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            let path = std::path::Path::new(&path);
+            if !path.is_absolute() || !path.is_dir() {
+                return Err("export folder is unavailable".into());
+            }
+            reveal_page_source(path)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = path;
+        Err("showing an export folder is available on desktop only".into())
+    }
 }
 
 /// Render one page to a self-contained HTML document (assets inlined, no sidebar)

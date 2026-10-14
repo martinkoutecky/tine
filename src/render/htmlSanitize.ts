@@ -123,9 +123,13 @@ export function rawHtmlPresentation(text: string, allowIframe = false): HtmlPres
   const src = frame?.getAttribute("src");
   if (frame && src && /^https?:\/\//i.test(src)) {
     const dimension = (name: "width" | "height") => {
-      const attr = /^(\d+px|\d+%|\d+)/i.exec(frame.getAttribute(name) ?? "")?.[1];
+      const attr = frame.getAttribute(name)?.trim();
       const style = frame.style.getPropertyValue(name);
-      return attr ?? (/^\d+(?:px|%)$/i.test(style) ? style : undefined);
+      // Inline CSS overrides HTML presentation attributes, as in a browser.
+      // Numeric HTML dimensions are pixels, never unitless CSS lengths.
+      if (/^\d+(?:\.\d+)?(?:px|%)$/i.test(style)) return style;
+      if (!attr || !/^\d+(?:\.\d+)?(?:px|%)?$/i.test(attr)) return undefined;
+      return /^\d+(?:\.\d+)?$/.test(attr) ? `${attr}px` : attr;
     };
     return { html: "", localImages: [], iframe: { src, width: dimension("width"), height: dimension("height") } };
   }

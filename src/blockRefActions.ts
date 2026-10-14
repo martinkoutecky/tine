@@ -9,6 +9,7 @@ import {
   hasSelection,
   insertEmptyChildBlock,
   insertOutlineAfter,
+  insertOutlineBefore,
   pageByName,
   pasteClipboardPayload,
   selectedIds,
@@ -74,16 +75,16 @@ function ancestorsIn(id: string, set: ReadonlySet<string>): boolean {
   return false;
 }
 
-/** GH #379: copy the target block(s), children included, directly below. Fresh
+/** GH #379: copy the target block(s), children included, directly beside them. Fresh
  *  ids (an `id::` already owned by a live block is never copied), one undo step.
  *  The caret follows the copy when a single block is being edited, so repeated
- *  presses stack duplicates. Resolves to the last inserted root, or null. */
-export async function duplicateTargetBlocks(): Promise<string | null> {
+ *  presses stack duplicates. Returns the first inserted root above, or the last below. */
+export async function duplicateTargetBlocks(side: "below" | "above" = "below"): Promise<string | null> {
   const ids = commandTargetIds();
   const set = new Set(ids);
   const roots = ids.filter((id) => !ancestorsIn(id, set));
   if (!roots.length) return null;
-  const last = roots[roots.length - 1];
+  const last = side === "above" ? roots[0] : roots[roots.length - 1];
   const wasEditing = !hasSelection() && editingId() === last;
   const payload = buildClipboardPayload(roots);
   if (!payload) {
@@ -93,9 +94,9 @@ export async function duplicateTargetBlocks(): Promise<string | null> {
   const lastNode = docNode(last)!;
   const emptyLeaf = lastNode.children.length === 0 && lastNode.raw.trim() === "";
   let created: string | null;
-  if (emptyLeaf) {
+  if (side === "above" || emptyLeaf) {
     // A paste into an empty leaf REPLACES it, which would swallow the copy.
-    created = insertOutlineAfter(last, payload.blocks.map(function toOutline(b): { raw: string; children: ReturnType<typeof toOutline>[] } {
+    created = (side === "above" ? insertOutlineBefore : insertOutlineAfter)(last, payload.blocks.map(function toOutline(b): { raw: string; children: ReturnType<typeof toOutline>[] } {
       return { raw: b.raw, children: b.children.map(toOutline) };
     }));
   } else {

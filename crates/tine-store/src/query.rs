@@ -4256,6 +4256,33 @@ mod tests {
     }
 
     #[test]
+    fn task_marker_pages_link_tasks_instead_of_plain_status_mentions() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("tine-task-marker-backlinks-{}", std::process::id()));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            "- TODO call Alice\n- DONE call Bob\n- ordinary TODO word\n- `TODO code`\n",
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        let todo = backlinks(&graph, "TODO");
+        assert_eq!(todo.len(), 1);
+        assert_eq!(todo[0].blocks.len(), 1);
+        assert_eq!(todo[0].blocks[0].marker.as_deref(), Some("TODO"));
+        assert_eq!(
+            backlinks(&graph, "DONE")[0].blocks[0].marker.as_deref(),
+            Some("DONE")
+        );
+        assert!(!unlinked_refs(&graph, "TODO")
+            .iter()
+            .flat_map(|g| &g.blocks)
+            .any(|b| b.marker.as_deref() == Some("TODO")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn disabled_property_pages_suppress_only_key_membership() {
         use std::fs;
 

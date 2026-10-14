@@ -7,7 +7,7 @@ import { splitProps, BUILTIN_HIDE, type PropFormat } from "../editor/properties"
 import { EmojiText } from "../render/emoji";
 import { parseBlock, parserReady } from "../render/parse";
 import { inlineText } from "../render/facets";
-import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes, layoutRoot, windowOfPane } from "../panes";
+import { moveTabToPane, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes, layoutRoot, windowOfPane } from "../panes";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { MAIN_WINDOW_ID, isHTMLElementNode, newResizeObserver, useOwnerWindow } from "../windowRealm";
 
@@ -81,8 +81,7 @@ export type TabDropTarget =
   | { kind: "tab"; paneId: string; tabId: string; index: number; before: boolean }
   | { kind: "pane"; paneId: string }
   | { kind: "split"; paneId: string; side: SplitSide }
-  | { kind: "seam"; path: number[]; previewPaneId: string | null; side: SplitSide }
-  | { kind: "root-edge"; side: SplitSide; previewPaneId: string | null };
+  | { kind: "seam"; path: number[]; previewPaneId: string | null; side: SplitSide };
 
 const [activeTabDrag, setActiveTabDrag] = createSignal<{ paneId: string; tabId: string } | null>(null);
 const [currentTabDropTarget, setCurrentTabDropTarget] = createSignal<TabDropTarget | null>(null);
@@ -143,25 +142,10 @@ function edgeSideAt(x: number, y: number, rect: DOMRect): SplitSide | null {
   return hits[0]?.side ?? null;
 }
 
-function isRootEdge(pane: HTMLElement, side: SplitSide): boolean {
-  const row = pane.ownerDocument.querySelector(".content-row") as HTMLElement | null;
-  if (!row) return false;
-  const paneRect = pane.getBoundingClientRect();
-  const rowRect = row.getBoundingClientRect();
-  const close = (a: number, b: number) => Math.abs(a - b) <= 2;
-  switch (side) {
-    case "left": return close(paneRect.left, rowRect.left);
-    case "right": return close(paneRect.right, rowRect.right);
-    case "top": return close(paneRect.top, rowRect.top);
-    case "bottom": return close(paneRect.bottom, rowRect.bottom);
-  }
-}
-
 export function tabSplitPreviewSideForPane(paneId: string): SplitSide | null {
   const target = currentTabDropTarget();
   if (target?.kind === "split" && target.paneId === paneId) return target.side;
   if (target?.kind === "seam" && target.previewPaneId === paneId) return target.side;
-  if (target?.kind === "root-edge" && target.previewPaneId === paneId) return target.side;
   return null;
 }
 
@@ -224,9 +208,9 @@ export function tabDropTargetAt(
   if (!pane || !paneId || paneId === "pdf") return null;
   const side = edgeSideAt(x, y, pane.getBoundingClientRect());
   if (side) {
-    return isRootEdge(pane, side)
-      ? { kind: "root-edge", side, previewPaneId: paneId }
-      : { kind: "split", paneId, side };
+    // The preview occupies this pane, including at an outer layout edge.
+    // GH #499: use that same region for the drop rather than splitting root.
+    return { kind: "split", paneId, side };
   }
   return { kind: "pane", paneId };
 }
@@ -241,8 +225,6 @@ function applyTabDrop(sourcePaneId: string, tabId: string, target: TabDropTarget
       return !!moveTabToSplitPane(sourcePaneId, tabId, target.paneId, target.side);
     case "seam":
       return !!moveTabToSeamSplit(sourcePaneId, tabId, target.path);
-    case "root-edge":
-      return !!moveTabToRootEdge(sourcePaneId, tabId, target.side);
   }
 }
 

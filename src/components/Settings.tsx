@@ -1,4 +1,5 @@
 import { codeWrapping, changeCodeWrapping } from "../codeDisplay";
+import { stickyParents, changeStickyParents } from "../stickyParents";
 import { graphConfigProblem } from "../graph";
 import { ResourceFailure } from "./ResourceFailure";
 import { reportUiFailure } from "../uiFailure";
@@ -496,6 +497,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 
       <Field label="Wrap code lines" hint="Wrap long code lines in every code block while reading and editing. Off by default, as in Logseq. Saved on this device.">
         <Toggle on={codeWrapping()} onClick={() => changeCodeWrapping(!codeWrapping())} />
+      </Field>
+      <Field label={render(msg("setting-sticky-parents"))} hint={render(msg("setting-sticky-parents-hint"))}>
+        <Toggle on={stickyParents()} onClick={() => changeStickyParents(!stickyParents())} />
       </Field>
       <Field
         label="Auto-pair brackets & quotes"
