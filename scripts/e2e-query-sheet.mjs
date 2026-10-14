@@ -80,6 +80,8 @@ const env = {
 };
 
 async function withApp(index, fn) {
+  if (process.env.E2E_D18_BETWEEN_ONLY === "1" && index < 8) return;
+  if (process.env.E2E_KALEM_K4_ONLY === "1" && index >= 8) return;
   // Allow the bounded Kalem regression to run without the unrelated builder journeys.
   if (process.env.E2E_KALEM_K4_ONLY === "1" && index < 6) return;
   const driverPort = DRIVER_BASE + index * 2;
@@ -464,7 +466,38 @@ for (const index of [6, 7]) {
     fs.writeFileSync(`${ARTIFACTS}/kalem-k4-pages-${index}.json`, JSON.stringify(state, null, 2));
   });
 }
-console.log(process.env.E2E_KALEM_K4_ONLY === "1"
+// D-18 has its own durable journey so unrelated query-sheet tests cannot
+// prevent the window save/restart capability from being verified.
+for (const index of [8, 9]) {
+  await withApp(index, async (browser) => {
+    await openPageByName(browser, "Shots");
+    await waitForQuery(browser, 1, (t) => /scheduled/i.test(t) && /deadline/i.test(t), "the planning window did not mount");
+    const shotsFile = `${GRAPH}/pages/Shots.md`;
+    const legacy = "{{query (and (task TODO) (or (between scheduled today +7d) (between deadline today +7d)))}}";
+    if (index === 8) {
+      if (!fs.readFileSync(shotsFile, "utf8").includes(legacy)) throw new Error("opening the legacy window silently rewrote it");
+      await browser.execute(() => document.querySelectorAll(".page-blocks .query-block")[1]?.querySelector(".qs-sentence")?.click());
+      await browser.$(".qs-sheet .qs-text-toggle").waitForExist({ timeout: 10_000 });
+      if (!(await browser.$(".qs-sheet .query-text-pane-input").isExisting())) {
+        await browser.execute(() => document.querySelector(".qs-sheet .qs-text-toggle")?.click());
+      }
+      const input = await browser.$(".qs-sheet .query-text-pane-input");
+      await input.waitForExist({ timeout: 10_000 });
+      await input.setValue("@block and task in ('TODO', 'DOING') and (scheduled between today and '+7d' or deadline between today and '+7d')");
+      const save = await browser.$(".qs-sheet .query-text-pane-save");
+      await browser.waitUntil(async () => save.isEnabled(), { timeout: 15_000 });
+      await save.click();
+    }
+    await browser.waitUntil(() => {
+      const authored = fs.readFileSync(shotsFile, "utf8");
+      return authored.includes("{{tine-query ") && authored.includes("scheduled between") && authored.includes("deadline between") && !authored.includes(legacy);
+    }, { timeout: 15_000, timeoutMsg: "the scheduled/deadline window did not persist as tine-query" });
+    fs.writeFileSync(`${ARTIFACTS}/d18-window-${index}.md`, fs.readFileSync(shotsFile));
+  });
+}
+console.log(process.env.E2E_D18_BETWEEN_ONLY === "1"
+  ? "PASS D-18 scheduled/deadline window save and restart"
+  : process.env.E2E_KALEM_K4_ONLY === "1"
   ? "PASS Kalem K4 page pulls before and after restart"
   : `PASS query sheet journey (${createdLine}; Kalem K4 page pulls)`);
-fs.rmSync(TMP, { recursive: true, force: true });
+if (process.env.E2E_D18_BETWEEN_ONLY !== "1") fs.rmSync(TMP, { recursive: true, force: true });

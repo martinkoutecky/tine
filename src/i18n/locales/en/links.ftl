@@ -6,6 +6,7 @@ links-copy-title = Copy link
 references-filter-unlinked = Filter unlinked references
 references-search-unlinked = Search unlinked reference text
 preview-open-source = Open source
+preview-page-actions = Page actions
 favorites-block-action = Favourite block
 references-linked = Linked References
 references-unlinked = Unlinked References

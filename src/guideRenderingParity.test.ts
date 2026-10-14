@@ -9,3 +9,8 @@ it("the Guide explains journal feed references and their lazy/collapse behavior"
   const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
   for (const outcome of ["beneath each day in the Journals feed", "References load as you scroll", "Empty sections stay hidden", "collapse threshold"]) expect(guide).toContain(outcome);
 });
+
+it("the Guide explains canonical alias chips, unique block counts and compatible filter persistence", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/pages-links-references-search.md", "utf8");
+  for (const outcome of ["page and its aliases share one chip", "block using two aliases counts once", "Include or exclude applies to every alias", "Logseq-compatible `filters::` property", "older filter naming an alias", "Unlinked References shares the alias chips"]) expect(guide).toContain(outcome);
+});

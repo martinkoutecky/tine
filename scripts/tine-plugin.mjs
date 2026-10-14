@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { acceptsPluginColor } from "../src/plugins/color.mjs";
 
 const CAPABILITIES = new Set([
   "commands.register",
@@ -150,6 +151,10 @@ function checkSettings(settings, capabilities, report) {
           setting.default < setting.min || setting.default > setting.max ||
           (setting.step !== undefined && (!Number.isFinite(setting.step) || setting.step <= 0))) {
         add(report, "errors", "manifest.settings-bounds", `${where} has invalid numeric bounds`);
+      }
+    } else if (setting.type === "color") {
+      if (!acceptsPluginColor(setting.default)) {
+        add(report, "errors", "manifest.settings-color", `${where}.default must be a literal color or empty`);
       }
     } else if (setting.type === "string") {
       if (!Number.isInteger(setting.maxLength) || setting.maxLength < 1 || setting.maxLength > 4096 ||

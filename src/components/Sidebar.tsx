@@ -1,8 +1,8 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { pageIconPrefix } from "../pageIconBatch";
 import { t } from "../i18n";
 import { JournalsIcon } from "./JournalsIcon";
-import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
+import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
 import { graphMeta } from "../graphSession";
@@ -13,7 +13,6 @@ import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type 
 import { reportGraphOpenFailure } from "../graphOpenFailure";
 import { backend } from "../backend";
 import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { allPages as allGraphPages, pageListLabels } from "../pages";
 import { navigationName } from "../pageIndex";
 import { SidebarTitle } from "./SidebarTitle";
 import { NamespaceTree } from "./Namespace";
@@ -27,12 +26,6 @@ import { graphRowMenuActions } from "./graphRowMenu";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
 import { queryAllWindows } from "../windowRealm";
-
-// Cap the rendered "All pages" list. Beyond this, rendering every row (each
-// reading route() for its active state) makes both the initial render and every
-// navigation O(pages); past a few hundred the list isn't scannable anyway, so we
-// show the first N alphabetically and point the rest at search (Ctrl-K).
-const ALL_PAGES_CAP = 300;
 
 export function sidebarPageTarget(name: string, kind: PageKind): { name: string; kind: PageKind } {
   return { name: kind === "page" ? navigationName(name) : name, kind };
@@ -86,24 +79,7 @@ export function Sidebar(props: {
   onActiveNavigationComplete?: () => void;
   graphActions?: GraphNavigationActions;
 } = {}): JSX.Element {
-  // The whole-graph page list is the shared, graph-epoch-keyed resource (see
-  // src/pages.ts) — fetched once per graph generation and shared with the
-  // namespace tree/macro/hierarchy, not a sidebar-private fetch. Epoch keying
-  // still fixes the old "graph still loading at mount" race (it refetches when
-  // the graph becomes ready).
-  const [showAll, setShowAll] = createSignal(false);
   const [showNs, setShowNs] = createSignal(false);
-
-  // Filter + sort ONCE per page-list change (memoized), not on every render /
-  // navigation as the inline `.filter().sort()` in JSX did.
-  const allPages = createMemo(() =>
-    (allGraphPages() ?? [])
-      .filter((p) => p.kind === "page")
-      .sort((a, b) => a.name.localeCompare(b.name))
-  );
-  // Built once per page-list change; asking each row to disambiguate itself
-  // scanned the whole list per row (O(rows x pages) per render).
-  const pageLabel = createMemo(() => pageListLabels(allPages()));
 
   // `path` disambiguates nested pages that share a basename (#21 Phase 2). It's
   // optional: favorites / recent are keyed by name only, so they match on name
@@ -116,14 +92,6 @@ export function Sidebar(props: {
       (path === undefined || !r.path || r.path === path)
     );
   };
-  const openEntry = (path: string, name: string) => {
-    path ? openFile(path, name, "page") : openPage(name, "page");
-    props.onActiveNavigationComplete?.();
-  };
-  const openAllPagesTab = (p: { name: string; path?: string }) =>
-    p.path
-      ? openInNewTab({ kind: "page", name: p.name, pageKind: "page", path: p.path })
-      : openPageInNewTab(p.name, "page");
   // Sidebar page rows follow the shared modified-click contract (linkGesture.ts):
   // Shift → right sidebar (GH #63), Ctrl/Cmd or middle → background tab, Alt →
   // other pane. The mousedown half suppresses shift-range selection (GH #42).
@@ -229,52 +197,14 @@ export function Sidebar(props: {
         </Show>
 
         <div class="nav-section">
-          <div
-            class="nav-section-header nav-section-toggle"
-            onClick={() => setShowAll(!showAll())}
+          <button
+            type="button"
+            class="nav-section-header nav-all-pages-open"
+            classList={{ active: route().kind === "all-pages" }}
+            onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}
           >
-            <span class="nav-toggle-caret" classList={{ open: showAll() }}>▸</span>
-            ALL PAGES
-            <Show when={allGraphPages()}>
-              <span class="nav-section-count">{allPages().length}</span>
-            </Show>
-          </div>
-          <Show when={showAll() && allGraphPages()}>
-            <div
-              class="nav-item nav-all-pages-open"
-              onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}
-            >
-              {t("pages-all-open-full-list")}
-            </div>
-            <For each={allPages().slice(0, ALL_PAGES_CAP)}>
-              {(p) => (
-                <div
-                  class="nav-page"
-                  classList={{ active: isActive(p.name, p.path) }}
-                  onMouseDown={shiftGuard}
-                  onClick={(e) => {
-                    const dest = internalLinkDest(e);
-                    if (dest === "sidebar") openPageInSidebar({ name: p.name, pageKind: "page", path: p.path });
-                    else if (dest === "background") openAllPagesTab(p);
-                    else if (dest === "pane") openRouteInOtherPane({ kind: "page", name: p.name, pageKind: "page", ...(p.path ? { path: p.path } : {}) });
-                    else openEntry(p.path, p.name);
-                  }}
-                  onAuxClick={(e) => internalLinkAuxClick(e, () => openAllPagesTab(p))}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    openPageContextMenu(e.clientX, e.clientY, { name: p.name, pageKind: "page", path: p.path });
-                  }}
-                >
-                  <SidebarTitle text={pageIconPrefix(p.name) + pageLabel()(p)} fullTitle={pageLabel()(p)} />
-                </div>
-              )}
-            </For>
-            <Show when={allPages().length > ALL_PAGES_CAP}>
-              <div class="nav-page nav-page-more" onClick={() => { openAllPages(); props.onActiveNavigationComplete?.(); }}>
-                {t("pages-all-open-more", { count: allPages().length - ALL_PAGES_CAP })}
-              </div>
-            </Show>
-          </Show>
+            {t("pages-all-title")}
+          </button>
         </div>
 
         <div class="nav-section">
