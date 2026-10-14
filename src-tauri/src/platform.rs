@@ -2,6 +2,26 @@ use crate::commands::decode_asset_b64;
 
 const MAX_CLIPBOARD_FILES: usize = 32;
 
+#[tauri::command]
+pub(crate) async fn read_android_clipboard_image(
+    app: tauri::AppHandle,
+) -> Result<tauri::ipc::Response, String> {
+    #[cfg(target_os = "android")]
+    {
+        return tauri::async_runtime::spawn_blocking(move || {
+            crate::android_clipboard::read_png(&app)
+                .map(|bytes| tauri::ipc::Response::new(bytes.unwrap_or_default()))
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(tauri::ipc::Response::new(Vec::<u8>::new()))
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ClipboardAssetFile {
