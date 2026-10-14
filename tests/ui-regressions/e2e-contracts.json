@@ -1,6 +1,18 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-panes-keys.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Remapped tab, editing and search commands reach their intended surface; reopening sidebar cards promotes one card; Alt bullet zoom and empty sidebar drops preserve their block target.","blocking":true},{"class":"flexible-presentation-heuristic","userOutcome":"Hovering workspace and tab menus allows pointer travel into the menu before choosing an item.","blocking":false}],
+      "acceptableVariations":["Hover delays, menu geometry, focus styling and save latency may vary while the semantic journeys complete."],
+      "nonRequirements":["Exact pixels, menu dimensions, the specific delay value, or native platform certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-editor-bugs.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A clicked in-block checkbox toggles its own token without entering edit; quote collapse survives save and route reopen without leaking metadata; Linux PRIMARY exports only the selected passage; malformed config EDN leaves existing pages readable while edits refuse.","blocking":true},{"class":"exact-safety-interoperability","userOutcome":"Checkbox and quote collapse writes preserve all unrelated file bytes.","blocking":true,"authority":"R2 editor-bugs lane byte-preservation contract and OG 0.10.9 property/insert-property quote placement."}],
+      "acceptableVariations":["Navigation layout, glyph details and save latency may vary while text, collapse state and paste contents remain correct."],
+      "nonRequirements":["Exact pixels, native screenshots, Tuta-specific clipboard negotiation or certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-editor-context.mjs": {
       "contracts": [
         {"class":"stateful-ux","userOutcome":"Editing an embedded mixed-code region leaves surrounding prose visible, and Select embedding block leaves that source editor and selects its macro host.","blocking":true},

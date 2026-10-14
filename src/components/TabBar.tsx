@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { FloatingPortal } from "./FloatingPortal";
+import { hoverIntent } from "./hoverIntent";
 import { resolveRouteBlock, routeTitle, type PaneRouter, type Route, type Tab } from "../router";
 import { formatForBlock, node as docNode } from "../document";
 import { splitProps, BUILTIN_HIDE, type PropFormat } from "../editor/properties";
@@ -266,6 +267,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
   const stripDragLayerId = `tab-strip-drag-${createUniqueId()}`;
   const [overflowing, setOverflowing] = createSignal(false);
   const [overviewOpen, setOverviewOpen] = createSignal(false);
+  let hoverOverview = false;
+  const overviewHover = hoverIntent(() => { if (hoverOverview && !overviewDragId()) dismissOverview(false); });
   const [overviewPosition, setOverviewPosition] = createSignal({ left: 8, top: 48, width: 360 });
   const [overviewDragId, setOverviewDragId] = createSignal<string | null>(null);
   const [overviewDrop, setOverviewDrop] = createSignal<{ tabId: string; before: boolean } | null>(null);
@@ -294,6 +297,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth;
   };
   const dismissOverview = (restoreFocus = true) => {
+    overviewHover.enter();
+    hoverOverview = false;
     cancelOverviewReorder?.();
     setOverviewOpen(false);
     if (restoreFocus) queueMicrotask(() => overviewTrigger?.focus());
@@ -456,7 +461,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     queueMicrotask(() => {
       positionOverview();
       const activeIndex = Math.max(0, router.tabs().findIndex((tab) => tab.id === router.activeId()));
-      focusOverviewRow(activeIndex);
+      if (!hoverOverview) focusOverviewRow(activeIndex);
     });
     ownerWindow.addEventListener("resize", positionOverview);
     ownerWindow.addEventListener("scroll", positionOverview, true);
@@ -687,7 +692,20 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
           aria-expanded={overviewOpen()}
           aria-controls={overviewId}
           data-tab-overview-trigger
-          onClick={() => overviewOpen() ? dismissOverview() : setOverviewOpen(true)}
+          onMouseEnter={() => {
+            overviewHover.enter();
+            if (!overviewOpen()) { hoverOverview = true; setOverviewOpen(true); }
+          }}
+          onMouseLeave={overviewHover.leave}
+          onClick={() => {
+            overviewHover.enter();
+            if (hoverOverview) {
+              hoverOverview = false;
+              focusOverviewTab(router.activeId());
+            }
+            else if (overviewOpen()) dismissOverview();
+            else setOverviewOpen(true);
+          }}
         >⌄</button>
         <Show when={overviewOpen()}>
           <FloatingPortal>
@@ -702,6 +720,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
               width: `${overviewPosition().width}px`,
             }}
             onKeyDown={onOverviewKeyDown}
+            onMouseEnter={overviewHover.enter}
+            onMouseLeave={overviewHover.leave}
           >
             <For each={router.tabs()}>
               {(tab, index) => (

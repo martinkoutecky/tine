@@ -6432,7 +6432,7 @@ body.file-drop-active::after {
 .md-hr {
   border: none;
   border-top: 1px solid var(--border-color);
-  margin: 10px 0;
+  margin: calc((var(--ls-block-line-height) - 1px) / 2) 0;
 }
 /* In-block markdown list — deliberately distinct from outline (Tine) bullets:
    real list markers, indented, no zoom/ref affordance. These live inside ONE

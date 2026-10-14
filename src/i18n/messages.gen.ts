@@ -13,6 +13,7 @@ export interface MessageArgs {
   "command-editor-copy-embed": {};
   "command-editor-cycle-todo": {};
   "command-editor-duplicate-block": {};
+  "command-editor-edit-selected-block": {};
   "command-editor-expand": {};
   "command-editor-expand-children": {};
   "command-editor-follow-link": {};
@@ -48,7 +49,9 @@ export interface MessageArgs {
   "command-go-journals": {};
   "command-go-keyboard-shortcuts": {};
   "command-go-search": {};
+  "command-go-search-content": {};
   "command-go-search-current-page": {};
+  "command-go-search-pages": {};
   "command-go-search-selection": {};
   "command-go-search-tab": {};
   "command-guide-open": {};
@@ -77,6 +80,8 @@ export interface MessageArgs {
   "command-select-copy-block-ref": {};
   "command-sidebar-grow-width": {};
   "command-sidebar-shrink-width": {};
+  "command-tab-activate-last": {};
+  "command-tab-activate-n": { "index": string | number };
   "command-tab-close": {};
   "command-tab-next": {};
   "command-tab-previous": {};
