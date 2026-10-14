@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-reference-alias-chips.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Reference filters merge alias chips, count each block once, load legacy alias-named filters and retain canonical include/exclude choices after a guarded save and restart.","blocking":true}],
+      "acceptableVariations":["Chip styling, navigation layout and save latency may vary while canonical labels, block counts, membership and persisted choices remain correct."],
+      "nonRequirements":["Exact pixels, OG alias-inclusive matching, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh671-journal-startup.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Journals opens with the reporter's daily template on a fresh day, keeps existing journal content, and remains available through routed-day navigation, return and cold reopen.","blocking":true}],
       "acceptableVariations":["Heading classes, startup timing and layout may vary while the expected journal content is visible and existing files remain unchanged."],
