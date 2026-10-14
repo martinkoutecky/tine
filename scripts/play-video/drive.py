@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 OUT = sys.argv[1]
 os.makedirs(f"{OUT}/ui", exist_ok=True)
 PKG = "page.tine.app"
+SHOTS = os.environ.get("SHOTS", "1") == "1"
 
 
 def adb(*args, check=True, timeout=120):
@@ -27,6 +28,13 @@ def sh(cmd, **kw):
 _dumpn = [0]
 
 
+def shot(tag):
+    os.makedirs(f"{OUT}/shots", exist_ok=True)
+    png = subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True).stdout
+    with open(f"{OUT}/shots/{_dumpn[0]:03d}-{tag}.png", "wb") as f:
+        f.write(png)
+
+
 def dump(tag=""):
     for _ in range(4):
         sh("uiautomator dump /sdcard/ui.xml", check=False)
@@ -35,6 +43,8 @@ def dump(tag=""):
             break
         time.sleep(0.7)
     _dumpn[0] += 1
+    if SHOTS:
+        shot(tag)
     with open(f"{OUT}/ui/{_dumpn[0]:03d}-{tag}.xml", "w") as f:
         f.write(xml)
     try:
@@ -183,7 +193,13 @@ try:
     step("Allow", "3  Back in Tine: open again, pick the notes folder", pre=0.8, post=0.8, tag="allow-dialog", exact=False)
 
     # 4. graph opens
-    wait_for("Morning review", timeout=150, tag="graph-open")
+    wait_for("Tine demo", timeout=150, tag="graph-open")
+    time.sleep(1.5)
+    root = dump("after-open")
+    h = find(root, "Close navigation sidebar")
+    if h:
+        tap_bounds(h[0][1]); time.sleep(1.0)
+    wait_for("Morning review", timeout=60, tag="journal")
     t = now()
     time.sleep(2.2)
     keep(t - 0.4, now(), "4  Tine opens your notes in place")
@@ -193,9 +209,7 @@ except Exception as e:  # keep the evidence either way
     status = f"FAILED: {e!r}"
     print(status, file=sys.stderr)
     dump("failure")
-    adb("exec-out", "screencap", "-p", check=False)
-    with open(f"{OUT}/failure.png", "wb") as f:
-        f.write(subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True).stdout)
+    shot("failure")
 
 time.sleep(0.5)
 sh("pkill -2 screenrecord", check=False)
@@ -207,6 +221,6 @@ time.sleep(1.5)
 adb("pull", "/sdcard/raw.mp4", f"{OUT}/raw.mp4")
 json.dump({"status": status, "segments": segments}, open(f"{OUT}/events.json", "w"), indent=1)
 sh("logcat -d -s Tine/FolderPicker:I chromium:I | tail -80 > /sdcard/tine.log", check=False)
-with open(f"{OUT}/logcat-tine.txt", "w") as f:
-    f.write(adb("logcat", "-d", "-t", "4000", check=False))
+with open(f"{OUT}/logcat-tine.txt", "w", errors="replace") as f:
+    f.write(subprocess.run(["adb", "logcat", "-d", "-b", "all", "-t", "6000"], capture_output=True, text=True, errors="replace").stdout)
 sys.exit(0 if status == "ok" else 1)
