@@ -22,7 +22,9 @@
 # read-only question about the user-picked parent, approved 2026-10-08.
 # Page host: the concept (STEP3 §7, commit 835713dcf, option (a)) was approved
 # by Martin 2026-10-10; A-R1 then cut PageHost::release (13 -> 12).
-## Lifecycle (ceiling: 20)
+# GH #181: read_link_identity_at takes a LinkProbe so a cold link can rule out a closed graph without opening
+# it (rule 3: parameter on the existing link question, not a sibling)
+## Lifecycle (ceiling: 24)
 enum store::WatchMode
 enum store::OpenError
 field store::GraphAccessInspection.external_assets
@@ -44,6 +46,10 @@ struct store::OpenOptions
 # og-surface step 1: surface the old scan never saw (H1, a file outside its hand list).
 fn link_identity::Store::ensure_link_identity
 fn link_identity::Store::read_link_identity_at
+enum link_identity::LinkProbe
+struct link_identity::LinkInspection
+field link_identity::LinkInspection.identity
+field link_identity::LinkInspection.target_possible
 
 ## Freshness (ceiling: 26)
 enum store::Depth

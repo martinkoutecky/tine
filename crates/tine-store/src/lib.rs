@@ -91,7 +91,7 @@ pub mod bench_events;
 pub mod cost_counters;
 pub mod directory_durability;
 mod launch_diag;
-mod link_identity;
+pub mod link_identity;
 mod no_replace;
 #[cfg(test)]
 mod no_replace_tests;

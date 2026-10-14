@@ -904,6 +904,14 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "known graph root input, read-only identity lookup before open",
         ),
         (
+            "link_identity::LinkProbe::Block",
+            "user-approved external assets input for a closed graph block probe",
+        ),
+        (
+            "link_identity::LinkProbe::Page",
+            "user-approved external assets input for a closed graph page probe",
+        ),
+        (
             "publish::PublishDest::External",
             "user-chosen parent folder input",
         ),
