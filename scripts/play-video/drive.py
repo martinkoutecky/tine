@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 OUT = sys.argv[1]
 os.makedirs(f"{OUT}/ui", exist_ok=True)
 PKG = "page.tine.app"
-SHOTS = os.environ.get("SHOTS", "1") == "1"
+SHOTS = os.environ.get("SHOTS", "0") == "1"
 
 
 def adb(*args, check=True, timeout=120):
@@ -117,10 +117,14 @@ def keep(start, end, cap):
     segments.append({"start": max(0.0, start), "end": end, "caption": cap})
 
 
-def step(needle, cap, pre=1.0, post=1.2, tag="", **kw):
-    """Wait for an element, then tap it. The kept clip runs from slightly before the
-    element was first seen... no: from `pre` s before the tap to `post` s after."""
+SETTLE = 1.8  # the screen the dump saw reaches the encoded video a little later on this slow emulator
+
+
+def step(needle, cap, pre=1.2, post=1.2, tag="", settle=SETTLE, **kw):
+    """Wait for an element, let the screen settle, tap it. The kept clip runs from
+    `pre` s before the tap to `post` s after."""
     node, b = wait_for(needle, tag=tag, **kw)
+    time.sleep(settle)
     t_tap = now()
     tap_bounds(b)
     time.sleep(post)
@@ -151,42 +155,35 @@ time.sleep(1.5)
 try:
     sh(f"monkey -p {PKG} -c android.intent.category.LAUNCHER 1")
     # 1. first run: tap "Open an existing graph"
-    step("Open an existing graph", "1  Open a graph folder", pre=1.6, post=0.9, tag="welcome")
+    step("Open an existing graph", "1  Open a graph folder", pre=1.4, post=0.6, tag="welcome")
 
     # 2. system All files access page
-    node, b = wait_for("Allow access to manage all files", tag="allfiles-settings")
-    time.sleep(0.8)
-    t_tap = now()
-    tap_bounds(b)  # the whole row toggles the switch
-    time.sleep(1.8)
-    keep(t_tap - 1.8, now(), "2  Allow \u201cAll files access\u201d")
+    step("Allow access to manage all files", "2  Allow \u201cAll files access\u201d", pre=1.3, post=2.0,
+         tag="allfiles-settings", settle=2.2)  # tapping the row toggles the switch
     sh("input keyevent KEYCODE_BACK")
     time.sleep(1.0)
 
     # 3. back in Tine, open again -> system folder picker
-    step("Open an existing graph", "3  Pick the notes folder", pre=0.8, post=1.5, tag="welcome2")
+    CAP3 = "3  Pick the notes folder"
+    step("Open an existing graph", CAP3, pre=1.0, post=0.6, tag="welcome2")
 
-    # picker navigation
+    # picker navigation: Documents -> Tine demo -> Use this folder -> Allow
     wait_for("Documents", tag="picker-start", timeout=60)
     for _ in range(6):
         root = dump("picker-nav")
-        h = find(root, "Tine demo", exact=True)
-        if h:
+        if find(root, "Tine demo", exact=True):
             break
         h = find(root, "Documents", exact=True)
         if h:
-            t = now(); tap_bounds(h[0][1]); time.sleep(1.4); keep(t - 0.8, now(), "3  Pick the notes folder")
+            time.sleep(1.2)
+            t = now(); tap_bounds(h[0][1]); time.sleep(1.2); keep(t - 1.2, now(), CAP3)
             continue
         h = find(root, "Show roots")
         if h:
             tap_bounds(h[0][1]); time.sleep(1.0)
-    t = now()
-    root = dump("picker-found")
-    h = find(root, "Tine demo", exact=True)
-    tap_bounds(h[0][1]); time.sleep(1.5)
-    keep(t - 0.6, now(), "3  Pick the notes folder")
-    step("Use this folder", "3  Pick the notes folder", pre=1.0, post=1.3, tag="use-folder")
-    step("Allow", "3  Pick the notes folder", pre=1.4, post=0.8, tag="allow-dialog", exact=False)
+    step("Tine demo", CAP3, pre=1.0, post=1.0, tag="picker-found", exact=True)
+    step("Use this folder", CAP3, pre=1.0, post=0.8, tag="use-folder")
+    step("Allow", CAP3, pre=1.4, post=0.5, tag="allow-dialog", settle=1.4)
 
     # 4. graph opens
     wait_for("Tine demo", timeout=150, tag="graph-open")
@@ -202,15 +199,17 @@ try:
             break
         tap_bounds(ds[0][1]); time.sleep(0.7)
     wait_for("Morning review", timeout=60, tag="journal")
+    time.sleep(1.8)
     t = now()
     time.sleep(2.2)
-    keep(t - 0.4, now(), "4  Tine opens it in place")
-    step("[[Seed Workshop]]", "4  Tine opens it in place", pre=0.3, post=2.6, tag="to-page", exact=True)
+    keep(t - 0.3, now(), "4  Tine opens it in place")
+    step("[[Seed Workshop]]", "4  Tine opens it in place", pre=0.2, post=3.0, tag="to-page", exact=True, settle=0.3)
     status = "ok"
 except Exception as e:  # keep the evidence either way
     status = f"FAILED: {e!r}"
     print(status, file=sys.stderr)
     dump("failure")
+    SHOTS = True
     shot("failure")
 
 # End on a visible change (Home) so the recording's last frame time ~ this instant,
