@@ -34,8 +34,9 @@ export const pinyinMatchingEnabled = pinyinEnabled;
 export async function initPinyinMatchingSetting(): Promise<void> {
   await listenForPinyinChanges();
   const revision = preferenceRevision(pinyinEnabled);
-  const owner = latestOwner(pinyinEnabled, "refresh", revisionOwner(pinyinEnabled, revision));
+  let owner: (() => boolean) | undefined;
   try {
+    owner = latestOwner(pinyinEnabled, "refresh", revisionOwner(pinyinEnabled, revision));
     const ui = await readOwned(owner, backend().getAppString("ui_language", ""));
     if (ui.kind === "stale") return;
     const fallback = pinyinDefault(ui.value || activeLocale());
@@ -46,7 +47,7 @@ export async function initPinyinMatchingSetting(): Promise<void> {
       applyPinyinEnabled(value); seedPreference(pinyinEnabled);
     }
   } catch {
-    if (!owner()) return;
+    if (owner && !owner()) return;
     if (preferenceReadCurrent(pinyinEnabled, revision)) applyPinyinEnabled(pinyinDefault());
     pushToast(msg("toast-pinyin-load-failed"), "error");
   }
