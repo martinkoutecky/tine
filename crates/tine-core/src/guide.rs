@@ -1135,7 +1135,8 @@ mod query_guide_tests {
         for control in [
             "{{query (task TODO DOING)}}",
             "(page-property type book)",
-            "(between scheduled today +7d)",
+            "{{tine-query @block scheduled between today and '+7d'}}",
+            "OG Logseq drops `(between scheduled today +7d)`",
             "at most 10,000 years",
             "tine.sample:: 10",
             "the whole query is refused",

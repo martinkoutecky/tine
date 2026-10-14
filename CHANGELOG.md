@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Scheduled/deadline query windows now save as `{{tine-query …}}` instead of Logseq syntax that silently drops the date condition (GH #422).
 - **Crash recovery no longer switches off on Android** ("Crash recovery is off for this graph … Permission denied"). Tine tried to sync system folders above its own app data, which Android does not allow. GH #685
 - Tab drops at all four pane edges split the hovered pane, matching the drop preview even at the layout's outer edges (GH #499).
 - Raw HTML iframe dimensions honor numeric HTML attributes as pixels, percentages and inline sizing without the default embed width cap (GH #54).

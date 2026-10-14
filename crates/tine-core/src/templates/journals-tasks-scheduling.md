@@ -42,7 +42,7 @@ icon:: 📅
        :inputs []
        :collapsed? true}]}
     ```
-  - Keyed off the scheduled/deadline date itself, not the page's journal day, over the whole graph: an unfinished item on an old page still shows while its date is in range. The underlying query is `(and (or (between scheduled -7d +7d) (between deadline -7d +7d)) (not (task DONE CANCELED CANCELLED)))`.
+  - Keyed off the scheduled/deadline date itself, not the page's journal day, over the whole graph: an unfinished item on an old page still shows while its date is in range. A saved equivalent uses Tine's query language: `{{tine-query @block (scheduled between '-7d' and '+7d' or deadline between '-7d' and '+7d') and not task in ('DONE', 'CANCELED', 'CANCELLED')}}`. OG Logseq's simple query language has no scheduled/deadline window condition.
   - Finished tasks (`DONE`, `CANCELED`, `CANCELLED`) never appear, matching Logseq.
 - ## Time tracking and the logbook
   - With Settings → **Journals** → **Time tracking** on (the default), moving into DOING / NOW records a clock-in and moving back to TODO / LATER or into DONE records a clock-out, as OG-compatible `:LOGBOOK:` `CLOCK:` rows (seconds on by default via `:logbook/settings`). Saved to `:feature/enable-timetracking?`.
