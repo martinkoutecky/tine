@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Bullet threading's "Active ancestry only" mode now emphasizes the edited block's connectors in the accent color, as the original Logseq plugin does (GH #614).
 - GH #524: Added regression coverage for dragging a block into an empty page in the right sidebar; current Beta already supports the move.
 - GH #499: Added regression coverage for splitting the lower pane beneath an existing top row; the reported sequence already preserves the layout on current Beta.
 - GH #593: Workspace and tab overflow menus support stable hover opening and delayed dismissal while crossing the menu gap.
@@ -24,6 +25,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Markdown horizontal rules align with the centre of their outline bullets (GH #678).
 - Markdown quote and callout collapse metadata stays outside quoted content (GH #684).
 - Clicking an in-block Markdown task list checkbox toggles its item without entering edit mode (GH #683).
+- Android image paste can read content-URI clipboard bytes when the WebView exposes an empty file, while retaining the 64 MiB limit (GH #654); selecting text in another block on mobile opens its editor with the selection and docked formatting toolbar (GH #375).
 - Scrolling nested outlines keeps offscreen ancestors pinned through the root, with a desktop/mobile setting (GH #643).
 - The unbound **Select embedding block** command selects an embed's macro host for ordinary block shortcuts (GH #641).
 - Date pickers omit the redundant apply/cancel help line (GH #667).

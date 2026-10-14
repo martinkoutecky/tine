@@ -1090,6 +1090,7 @@ pub fn run() {
             edit_custom_css,
             open_external,
             copy_image_to_clipboard,
+            platform::read_android_clipboard_image,
             clipboard_files,
             open_asset,
             open_graph_file,
