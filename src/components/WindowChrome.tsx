@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { createSignal, For, Show, type JSX } from "solid-js";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { reportUiFailure } from "../uiFailure";
@@ -46,14 +47,14 @@ export function WindowControls(): JSX.Element {
   const w = getCurrentWindow();
   return (
     <div class="win-controls">
-      <button class="win-btn" title="Minimize" onClick={() => windowAction(() => w.minimize())}>
+      <button class="win-btn" title={t("window-chrome-minimize")} onClick={() => windowAction(() => w.minimize())}>
         <svg viewBox="0 0 12 12" width="11" height="11">
           <line x1="2.5" y1="6" x2="9.5" y2="6" stroke="currentColor" stroke-width="1.1" />
         </svg>
       </button>
       <button
         class="win-btn"
-        title={maximized() ? "Restore" : "Maximize"}
+        title={maximized() ? t("window-chrome-restore") : t("window-chrome-maximize")}
         onClick={() => windowAction(() => w.toggleMaximize())}
       >
         <Show
@@ -70,7 +71,7 @@ export function WindowControls(): JSX.Element {
           </svg>
         </Show>
       </button>
-      <button class="win-btn win-close" title="Close" onClick={() => windowAction(() => w.close())}>
+      <button class="win-btn win-close" title={t("window-chrome-close")} onClick={() => windowAction(() => w.close())}>
         <svg viewBox="0 0 12 12" width="11" height="11">
           <path d="M3 3 L9 9 M9 3 L3 9" stroke="currentColor" stroke-width="1.1" />
         </svg>

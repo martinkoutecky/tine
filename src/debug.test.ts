@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { renderEnglish } from "./i18n";
 
 // GH #343: uncaught errors and main-thread stalls reach the privacy-safe
 // recorder as a fixed kind and numbers even when opt-in debug logging is off;
@@ -71,10 +72,11 @@ it("offers the diagnostic report once when the previous run did not close cleanl
     previousExitUnclean = unclean;
     fakeWindow();
     await initDebug();
-    const warned = pushToast.mock.calls.filter(([text]) => String(text).includes("did not close cleanly"));
+    const warned = pushToast.mock.calls.filter(([text]) => (typeof text === "string" ? text : renderEnglish(text)).includes("did not close cleanly"));
     expect(warned).toHaveLength(unclean ? 1 : 0);
     if (unclean) {
-      expect(warned[0][2]).toMatchObject({ sticky: true, action: { label: "Diagnostics" } });
+      expect(warned[0][2]).toMatchObject({ sticky: true });
+      expect(renderEnglish(warned[0][2].action.label)).toBe("Diagnostics");
       warned[0][2].action.run();
       await vi.waitFor(() => expect(openSettings).toHaveBeenCalledWith("diagnostics"));
     }

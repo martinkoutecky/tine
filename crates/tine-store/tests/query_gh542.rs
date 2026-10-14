@@ -44,7 +44,7 @@ impl Drop for Graph {
 fn open(name: &str, pages: &[(&str, &str)]) -> Graph {
     let dir = std::env::temp_dir().join(format!("tine-gh542-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    for sub in ["pages", "journals"] {
+    for sub in ["pages", "journals", "logseq"] {
         std::fs::create_dir_all(dir.join(sub)).unwrap();
     }
     for (path, text) in pages {
@@ -340,4 +340,49 @@ fn ogs_now_transform_orders_by_priority_with_missing_last() {
             "NOW c no priority"
         ]
     );
+}
+
+#[test]
+fn gh690_stock_next_uses_direct_refs_and_one_exclusive_date_range() {
+    let today = tine_core::date::JournalDate::today();
+    let title = |offset| today.add_days(offset).title();
+    let tasks = format!("- TODO inside [[{}]]\n- NOW start [[{}]]\n- LATER end [[{}]]\n- TODO split [[{}]] [[{}]]\n- DONE closed [[{}]]\n- Parent [[{}]]\n  - TODO inherited only\n- TODO named [[Ordinary]]\n", title(3), title(0), title(14), title(-1), title(15), title(3), title(3));
+    let graph = open("gh690", &[("pages/Tasks.md", &tasks)]);
+    let (raws, result) = answer(
+        &graph,
+        r#"{:title "📅 NEXT"
+        :query [:find (pull ?h [*]) :in $ ?start ?next :where
+        [?h :block/marker ?marker] [?h :block/ref-pages ?p]
+        [?p :block/journal? true] [?p :block/journal-day ?d]
+        [(> ?d ?start)] [(< ?d ?next)]
+        [(contains? #{"NOW" "LATER" "TODO"} ?marker)]]
+        :inputs [:today :14d-after] :collapsed? false}"#,
+    );
+    assert!(result.supported, "{:?}", result.ignored);
+    assert_eq!(raws, vec![format!("TODO inside [[{}]]", title(3))]);
+}
+
+#[test]
+fn gh690_referenced_journals_follow_title_format_before_safe_defaults() {
+    let graph = open(
+        "gh690-formats",
+        &[
+            (
+                "logseq/config.edn",
+                r#"{:journal/page-title-format "yyyy_dd_MM" :journal/file-name-format "dd.MM.yyyy"}"#,
+            ),
+            (
+                "pages/Tasks.md",
+                "- TODO title [[2026_10_11]]\n- TODO filename only [[10.11.2026]]\n",
+            ),
+        ],
+    );
+    let (raws, result) = answer(
+        &graph,
+        r#"{:query [:find (pull ?h [*]) :in $ ?start ?next :where
+        [?h :block/ref-pages ?p] [?p :block/journal? true] [?p :block/journal-day ?d]
+        [(> ?d ?start)] [(< ?d ?next)]] :inputs [2026-11-01 2026-11-20]}"#,
+    );
+    assert!(result.supported, "{:?}", result.ignored);
+    assert_eq!(raws, ["TODO title [[2026_10_11]]"]);
 }

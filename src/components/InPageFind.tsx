@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { Show, createEffect, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import {
   closeInPageFind,
@@ -126,7 +127,7 @@ export function InPageFind(): JSX.Element {
           <input
             ref={inputEl}
             class="inpage-find-input"
-            placeholder="Find in page"
+            placeholder={t("in-page-find-find-in-page")}
             value={draftQuery()}
             onInput={(e) => scheduleQuery(e.currentTarget.value)}
             onKeyDown={(e) => {
@@ -144,8 +145,8 @@ export function InPageFind(): JSX.Element {
           <button
             type="button"
             class="icon-btn inpage-replace-toggle"
-            title="Find and replace"
-            aria-label="Find and replace"
+            title={t("in-page-find-find-and-replace")}
+            aria-label={t("in-page-find-find-and-replace")}
             aria-expanded={inPageReplaceOpen()}
             onClick={toggleReplace}
           >
@@ -156,7 +157,7 @@ export function InPageFind(): JSX.Element {
           <span class="inpage-find-count">{countText()}</span>
           <button
             class="icon-btn"
-            title="Previous match (Shift+Enter)"
+            title={t("in-page-find-previous-match-shift-enter")}
             disabled={!matchCount()}
             onClick={() => stepInPageFind(-1)}
           >
@@ -166,7 +167,7 @@ export function InPageFind(): JSX.Element {
           </button>
           <button
             class="icon-btn"
-            title="Next match (Enter)"
+            title={t("in-page-find-next-match-enter")}
             disabled={!matchCount()}
             onClick={() => stepInPageFind(1)}
           >
@@ -174,7 +175,7 @@ export function InPageFind(): JSX.Element {
               <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </button>
-          <button class="icon-btn" title="Close (Esc)" onClick={closeFind}>
+          <button class="icon-btn" title={t("in-page-find-close-esc")} onClick={closeFind}>
             <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
               <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
             </svg>
@@ -185,8 +186,8 @@ export function InPageFind(): JSX.Element {
             <input
               ref={replaceEl}
               class="inpage-replace-input"
-              placeholder="Replace with"
-              aria-label="Replace with"
+              placeholder={t("in-page-find-replace-with")}
+              aria-label={t("in-page-find-replace-with")}
               value={inPageReplaceText()}
               onInput={(e) => setInPageReplaceText(e.currentTarget.value)}
               onKeyDown={(e) => {
@@ -200,12 +201,8 @@ export function InPageFind(): JSX.Element {
                 }
               }}
             />
-            <button type="button" class="inpage-replace-btn" title="Replace this match (Enter)" disabled={!matchCount()} onClick={replaceOne}>
-              Replace
-            </button>
-            <button type="button" class="inpage-replace-btn" title="Replace every match on this page (Ctrl/Cmd+Enter)" disabled={!matchCount()} onClick={replaceAll}>
-              Replace all
-            </button>
+            <button type="button" class="inpage-replace-btn" title={t("in-page-find-replace-this-match-enter")} disabled={!matchCount()} onClick={replaceOne}>{t("in-page-find-replace")}</button>
+            <button type="button" class="inpage-replace-btn" title={t("in-page-find-replace-every-match-on-this-page-ctrl-cmd")} disabled={!matchCount()} onClick={replaceAll}>{t("in-page-find-replace-all")}</button>
           </div>
         </Show>
       </div>

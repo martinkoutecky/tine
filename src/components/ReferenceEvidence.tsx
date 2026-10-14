@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import { openInNewTab, openPageAtBlock } from "../router";
 import { openRouteInOtherPane } from "../panes";
@@ -75,7 +76,7 @@ export function OccurrenceControls(props: {
     <Show when={total() > 1}>
     <span class="reference-occurrence-controls">
       <span class="reference-mention-count">
-        {total()} {total() === 1 ? "mention" : "mentions"}
+        {t("reference-evidence-mention-count", { count: total() })}
       </span>
       <For each={props.evidence.occurrences}>
         {(occurrence, index) => (
@@ -83,8 +84,8 @@ export function OccurrenceControls(props: {
             type="button"
             class="reference-occurrence-jump"
             classList={{ selected: selecting() && props.selected === index() }}
-            title={selecting() ? `Highlight ${occurrence.kind} mention ${index() + 1}` : `Jump to ${occurrence.kind} mention ${index() + 1}`}
-            aria-label={`${selecting() ? "Highlight" : "Jump to"} mention ${index() + 1} of ${total()}`}
+            title={selecting() ? t("reference-evidence-highlight-mention", { kind: String(occurrence.kind), index: String(index() + 1) }) : t("reference-evidence-jump-to-mention", { kind: String(occurrence.kind), index: String(index() + 1) })}
+            aria-label={t("reference-evidence-occurrence-label", { selecting: selecting() ? 1 : 0, index: String(index() + 1), total: String(total()) })}
             aria-pressed={selecting() ? props.selected === index() : undefined}
             onClick={() => (selecting() ? props.onSelect!(index()) : props.onOccurrence?.(occurrence.span))}
           >
@@ -172,8 +173,8 @@ export function ReferenceExcerptBlocks(props: {
             <button
               type="button"
               class="reference-excerpt-bullet"
-              title={`Open this block in ${props.page}`}
-              aria-label={`Open this block in ${props.page}`}
+              title={t("reference-evidence-open-this-block-in", { page: String(props.page) })}
+              aria-label={t("reference-evidence-open-this-block-in", { page: String(props.page) })}
               onMouseDown={internalLinkMouseDown}
               onClick={(event) => {
                 switch (internalLinkDest(event)) {
@@ -198,8 +199,8 @@ export function ReferenceExcerptBlocks(props: {
                         // A control, but its text is the excerpt's text: in-page
                         // find must still see it (src/inpageFind.ts).
                         data-inpage-find-text=""
-                        title={`Open this mention in ${props.page}`}
-                        aria-label={`Open mention ${ordinalOf(segment.span!)} in ${props.page}`}
+                        title={t("reference-evidence-open-this-mention-in", { page: String(props.page) })}
+                        aria-label={t("reference-evidence-open-mention-in", { span: String(ordinalOf(segment.span!)), page: String(props.page) })}
                         onClick={() => jumpTo(segment.span!)}
                       >
                         <EmojiText text={segment.text} />
@@ -226,7 +227,7 @@ export function ReferenceExcerptBlocks(props: {
                   aria-expanded={!!full()[block.id]}
                   onClick={() => setFull((state) => ({ ...state, [block.id]: !state[block.id] }))}
                 >
-                  {full()[block.id] ? "Show excerpt" : "Show full block"}
+                  {full()[block.id] ? t("reference-evidence-show-excerpt") : t("reference-evidence-show-full-block")}
                 </button>
               </div>
             </div>

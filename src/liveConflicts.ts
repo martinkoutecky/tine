@@ -1,3 +1,4 @@
+import { msg, render } from "./i18n";
 // Concord live-draft conflicts (og 8e): an editor draft the page host could
 // not save because its file changed on disk, as an object for the in-page
 // resolver. The host keeps that draft's crash-recovery copy until the conflict
@@ -16,8 +17,8 @@ function liveObject(name: string, path: string, kind: PageKind, live: LiveConfli
     page_path: path,
     kind,
     sides: [
-      { role: "mine", label: "Your unsaved edits" },
-      { role: "theirs", label: "The file on disk now", path },
+      { role: "mine", get label() { return render(msg("live-conflicts-your-unsaved-edits")); } },
+      { role: "theirs", get label() { return render(msg("live-conflicts-the-file-on-disk-now")); }, path },
     ],
     live,
   };

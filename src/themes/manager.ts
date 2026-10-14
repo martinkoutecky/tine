@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 import { createSignal } from "solid-js";
 import { backend } from "../backend";
 import { parseThemeManifest, themeManifestCss, themeVersionKey, type ThemeManifest } from "./manifest";
@@ -35,7 +36,7 @@ function parseStoredThemes(text: string): StoredThemes {
   try {
     const value: unknown = JSON.parse(text);
     if (!Array.isArray(value) || value.length > MAX_INSTALLED_THEMES) {
-      pushToast("Installed theme settings are invalid.", "error");
+      pushToast(msg("manager-installed-theme-settings-are-invalid"), "error");
       return { themes: [], foreign: [], rejected: true };
     }
     const themes: ThemeManifest[] = [];
@@ -43,10 +44,10 @@ function parseStoredThemes(text: string): StoredThemes {
     for (const candidate of value) {
       try { themes.push(parseThemeManifest(candidate)); } catch { foreign.push(candidate); }
     }
-    if (foreign.length) pushToast("Some installed themes could not be loaded.", "error");
+    if (foreign.length) pushToast(msg("manager-some-installed-themes-could-not-be-loaded"), "error");
     return { themes, foreign, rejected: false };
   } catch {
-    pushToast("Installed theme settings could not be parsed.", "error");
+    pushToast(msg("manager-installed-theme-settings-could-not-be-parsed"), "error");
     return { themes: [], foreign: [], rejected: true };
   }
 }
@@ -78,7 +79,7 @@ export async function initThemePackages(initialRevocations: ReadonlySet<string> 
   let text = "[]";
   let readFailed = false;
   try { text = await backend().getAppString(STORAGE_KEY, "[]"); }
-  catch { readFailed = true; pushToast("Could not load installed themes.", "error"); }
+  catch { readFailed = true; pushToast(msg("manager-could-not-load-installed-themes"), "error"); }
   const stored = readFailed ? { themes: [], foreign: [], rejected: true } : parseStoredThemes(text);
   storedStatus = stored.rejected ? "failed" : "ok";
   foreignEntries = stored.foreign;

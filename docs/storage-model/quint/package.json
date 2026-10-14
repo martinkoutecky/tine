@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Pinned Quint for checking the Tine storage models (npm ci)",
+  "dependencies": {
+    "@informalsystems/quint": "0.33.0"
+  }
+}

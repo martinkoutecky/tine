@@ -35,6 +35,7 @@ const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Queries]]\n");
 fs.writeFileSync(`${GRAPH}/pages/Tasks.md`, "- TODO alpha task\n- TODO beta task\n- DONE finished task\n");
+fs.writeFileSync(`${GRAPH}/pages/Window.md`, `- {{query (and (task TODO) (between scheduled today +7d))}}\n- TODO scheduled window hit\n  SCHEDULED: <${journal.replaceAll("_", "-")}>\n- TODO unscheduled window miss\n`);
 fs.writeFileSync(`${GRAPH}/pages/Book A.md`, "type:: book\nowner:: Ada\n\n- A book page\n");
 fs.writeFileSync(`${GRAPH}/pages/Notes.md`, "type:: note\n\n- Not a book\n");
 // GH #619 item 9: a page and a block that both carry `type:: book`, so ONE `(property type book)`
@@ -470,23 +471,26 @@ for (const index of [6, 7]) {
 // prevent the window save/restart capability from being verified.
 for (const index of [8, 9]) {
   await withApp(index, async (browser) => {
+    await openPageByName(browser, "Window");
+    const windowFile = `${GRAPH}/pages/Window.md`;
+    const legacyWindow = "{{query (and (task TODO) (between scheduled today +7d))}}";
+    if (index === 8) {
+      const before = fs.readFileSync(windowFile, "utf8");
+      await browser.waitUntil(() => browser.execute(() => document.querySelector(".page-blocks .query-og-hint")?.textContent.includes("Logseq ignores scheduled/deadline date windows")), { timeout: 15_000 });
+      if (await browser.$(".page-blocks .query-group").isExisting()) throw new Error("refused query returned rows");
+      if (fs.readFileSync(windowFile, "utf8") !== before) throw new Error("refusal silently rewrote the block");
+      await browser.$('.page-blocks [data-rewrite="convert"]').click();
+    }
+    await browser.waitUntil(() => !fs.readFileSync(windowFile, "utf8").includes(legacyWindow) && fs.readFileSync(windowFile, "utf8").includes("{{tine-query "), { timeout: 15_000 });
+    await browser.waitUntil(() => browser.execute(() => document.querySelector(".page-blocks .query-group")?.textContent.includes("scheduled window hit")), { timeout: 15_000 });
+    fs.writeFileSync(`${ARTIFACTS}/d18-convert-${index}.md`, fs.readFileSync(windowFile));
     await openPageByName(browser, "Shots");
     await waitForQuery(browser, 1, (t) => /scheduled/i.test(t) && /deadline/i.test(t), "the planning window did not mount");
     const shotsFile = `${GRAPH}/pages/Shots.md`;
     const legacy = "{{query (and (task TODO) (or (between scheduled today +7d) (between deadline today +7d)))}}";
     if (index === 8) {
       if (!fs.readFileSync(shotsFile, "utf8").includes(legacy)) throw new Error("opening the legacy window silently rewrote it");
-      await browser.execute(() => document.querySelectorAll(".page-blocks .query-block")[1]?.querySelector(".qs-sentence")?.click());
-      await browser.$(".qs-sheet .qs-text-toggle").waitForExist({ timeout: 10_000 });
-      if (!(await browser.$(".qs-sheet .query-text-pane-input").isExisting())) {
-        await browser.execute(() => document.querySelector(".qs-sheet .qs-text-toggle")?.click());
-      }
-      const input = await browser.$(".qs-sheet .query-text-pane-input");
-      await input.waitForExist({ timeout: 10_000 });
-      await input.setValue("@block and task in ('TODO', 'DOING') and (scheduled between today and '+7d' or deadline between today and '+7d')");
-      const save = await browser.$(".qs-sheet .query-text-pane-save");
-      await browser.waitUntil(async () => save.isEnabled(), { timeout: 15_000 });
-      await save.click();
+      await browser.$('.page-blocks [data-rewrite="convert"]').click();
     }
     await browser.waitUntil(() => {
       const authored = fs.readFileSync(shotsFile, "utf8");

@@ -7,12 +7,26 @@ import { resetStore } from "../document";
 import { resetTabsToJournals } from "../router";
 import { currentDayKey, journalTitle, appNow } from "../journal";
 import { setGraphMeta } from "../graphSession";
-import { agendaQuery, agendaDaysAhead, setAgendaDaysAhead } from "../ui";
+import { agendaQuery, agendaTql, agendaDaysAhead, setAgendaDaysAhead } from "../ui";
 import type { GraphMeta, PageRead } from "../types";
 import { backendReadsQueries, blockRunResult } from "../tests/queryReadingsTestkit";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 
+// These tests exercise config fallback; the fixture has no marked sections page.
+vi.mock("../journalSections", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../journalSections")>(),
+  locateSectionsPages: async () => [],
+}));
+
 beforeAll(initParser);
+it("the internal agenda uses the shared TQL builder for negative, zero and positive windows", () => {
+  for (const ahead of [-2, 0, 2]) {
+    setGraphMeta({ scheduled_future_days: ahead } as GraphMeta);
+    expect(agendaQuery()).toBe(`tine-query ${agendaTql()}`);
+    expect(agendaTql()).toContain(`'${ahead < 0 ? "" : "+"}${ahead}d'`);
+    expect(agendaTql()).toContain("not (task in ('DONE', 'CANCELED', 'CANCELLED'))");
+  }
+});
 afterEach(() => { resetStore(); resetTabsToJournals(); setGraphMeta(null); resetSharedQueryResultsForTests(); vi.restoreAllMocks(); document.body.replaceChildren(); });
 
 it("renders independent configured queries before today's agenda and applies a live config edit", async () => {
@@ -75,7 +89,7 @@ it("keeps supported simple and advanced results usable beside an unsupported que
   const dispose = render(() => <PageView />, host);
   try {
     await vi.waitFor(() => expect(host.textContent).toContain("Simple result"));
-    await vi.waitFor(() => expect(host.textContent).toContain("query not run"));
+    await vi.waitFor(() => expect(host.textContent).toContain("Tine can't run this query from config.edn yet"));
     const regions = host.querySelectorAll(".default-journal-query");
     expect(regions[2].textContent).toContain("Advanced");
     expect(regions[2].querySelector(".query-collapse.collapsed")).not.toBeNull();
@@ -131,11 +145,15 @@ it("hides a default journal query with no results, as OG does, but keeps a refus
   const dispose = render(() => <PageView />, host);
   try {
     await vi.waitFor(() => expect(host.textContent).toContain("Kept result"));
-    await vi.waitFor(() => expect(host.textContent).toContain("query not run"));
+    await vi.waitFor(() => expect(host.textContent).toContain("Tine can't run this query from config.edn yet"));
     await vi.waitFor(() => {
       expect(host.textContent).not.toContain("Empty simple");
       expect(host.textContent).not.toContain("Empty advanced");
     });
-    expect(host.textContent).toContain("cannot run these clauses (graph-code)");
+    const refusal = host.querySelector(".query-unsupported")!;
+    expect(refusal.textContent).toContain("Refused");
+    const details = refusal.querySelector("details")!;
+    expect(details.open).toBe(false);
+    expect(details.textContent).toContain("graph-code");
   } finally { dispose(); }
 });

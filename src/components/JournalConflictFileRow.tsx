@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
@@ -73,38 +74,30 @@ export function ConflictFileRow(props: {
   return (
     <>
       <div class="journal-conflict-row" data-journal-conflict={props.file.path}>
-        <button class="settings-asset-name mono" title="Show this file's contents" onClick={() => setOpen(!open())}>
+        <button class="settings-asset-name mono" title={t("journal-conflict-file-row-show-this-file-s-contents")} onClick={() => setOpen(!open())}>
           {open() ? "▾ " : "▸ "}
           {props.file.name}
           <Show when={props.file.canonical}>
-            <span class="journal-conflict-keep"> · canonical</span>
+            <span class="journal-conflict-keep">{t("journal-conflict-file-row-canonical")}</span>
           </Show>
         </button>
         <span class="journal-conflict-actions">
-          <button class="settings-btn" title="Open this exact file (editable)" onClick={props.onOpen}>
-            Open
-          </button>
+          <button class="settings-btn" title={t("journal-conflict-file-row-open-this-exact-file-editable")} onClick={props.onOpen}>{t("journal-conflict-file-row-open")}</button>
           <Show when={props.onMerge}>
-            <button class="settings-btn" title="Append this file's blocks to the canonical day, then trash it" onClick={props.onMerge}>
-              Merge
-            </button>
+            <button class="settings-btn" title={t("journal-conflict-file-row-append-this-file-s-blocks-to-the-canonical")} onClick={props.onMerge}>{t("journal-conflict-file-row-merge")}</button>
           </Show>
-          <button class="settings-btn" title="Move this file to a uniquely-named page" onClick={() => { setRenaming(true); setNewName(""); }}>
-            Rename…
-          </button>
-          <button class="settings-btn settings-btn-danger" onClick={props.onTrash}>
-            Trash
-          </button>
+          <button class="settings-btn" title={t("journal-conflict-file-row-move-this-file-to-a-uniquely-named-page")} onClick={() => { setRenaming(true); setNewName(""); }}>{t("journal-conflict-file-row-rename")}</button>
+          <button class="settings-btn settings-btn-danger" onClick={props.onTrash}>{t("journal-conflict-file-row-trash")}</button>
         </span>
       </div>
       <div class="journal-conflict-preview">
-        {props.file.preview_error ? `Couldn't read this file: ${props.file.preview_error}` : props.file.preview}
+        {props.file.preview_error ? t("journal-conflict-file-row-couldn-t-read-this-file", { error: String(props.file.preview_error) }) : props.file.preview}
       </div>
       <Show when={renaming()}>
         <div ref={renameRoot} class="journal-conflict-rename">
           <input
             class="settings-input"
-            placeholder="New page name"
+            placeholder={t("journal-conflict-file-row-new-page-name")}
             value={newName()}
             onInput={(e) => setNewName(e.currentTarget.value)}
             onKeyDown={(e) => {
@@ -113,12 +106,12 @@ export function ConflictFileRow(props: {
               else if (e.key === "Escape") setRenaming(false);
             }}
           />
-          <button class="settings-btn" onClick={submitRename}>Save</button>
-          <button class="settings-btn" onClick={() => setRenaming(false)}>Cancel</button>
+          <button class="settings-btn" onClick={submitRename}>{t("journal-conflict-file-row-save")}</button>
+          <button class="settings-btn" onClick={() => setRenaming(false)}>{t("journal-conflict-file-row-cancel")}</button>
         </div>
       </Show>
       <Show when={open()}>
-        <pre ref={contentRoot} class="journal-conflict-content">{contentResource.loading ? "…" : content() || "(empty file)"}</pre>
+        <pre ref={contentRoot} class="journal-conflict-content">{contentResource.loading ? "…" : content() || t("journal-conflict-file-row-empty-file")}</pre>
       </Show>
     </>
   );

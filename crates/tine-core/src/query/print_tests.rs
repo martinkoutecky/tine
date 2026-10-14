@@ -512,8 +512,10 @@ fn scheduled_deadline_windows_are_saved_only_in_tine_query() {
             format!("(not {window})"),
             format!("(and (task TODO) (or {window} (priority A)))"),
         ] {
-            let (query, view) = og(&source);
-            assert!(!query.is_invalid());
+            let (refused, view) = og(&source);
+            assert!(refused.is_invalid());
+            let hint = crate::query::wire_parse::og_query_hint(&refused).unwrap();
+            let query = hint.rewrites[0].query.clone();
             assert!(!og_expressible(&query, &view), "{source}");
             assert!(
                 matches!(query_print(&query, &view, PrintDialect::Og, false),

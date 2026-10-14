@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Desktop system tray settings (GH #625). Three device-local preferences, all
 // OFF by default, stored in tine-settings.json through the generic app_bool
 // door (like `native_window_frame` in nativeChrome.ts) so native startup can
@@ -35,6 +36,6 @@ export async function persistTrayPreference(key: string, next: boolean): Promise
   try {
     return await backend().trayApply();
   } catch {
-    pushToast("The tray setting was saved but could not be applied now.", "error");
+    pushToast(msg("tray-the-tray-setting-was-saved-but-could-not"), "error");
   }
 }

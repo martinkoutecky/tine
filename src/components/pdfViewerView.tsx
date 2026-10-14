@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { For, Show, type Accessor, type JSX, type Setter } from "solid-js";
 import { isMac } from "../nativeChrome";
 import { openPage } from "../router";
@@ -112,15 +113,15 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
     >
       <div class="pdf-toolbar">
         <span class="pdf-title">{props.label}</span>
-        <Show when={unsavedHighlights()}><span class="pdf-unsaved">{highlightCleanupPending() ? "Area image cleanup pending" : "Unsaved highlight"}</span></Show>
+        <Show when={unsavedHighlights()}><span class="pdf-unsaved">{highlightCleanupPending() ? t("pdf-area-image-cleanup-pending") : t("pdf-unsaved-highlight")}</span></Show>
         <div class="pdf-toolbar-actions">
           <div class="pdf-pager">
-            <button class="icon-btn" title="Previous page" onClick={() => scrollToPage(curPage() - 1)}>
+            <button class="icon-btn" title={t("pdf-previous-page")} onClick={() => scrollToPage(curPage() - 1)}>
               ‹
             </button>
             <input
               class="pdf-page-input"
-              title="Page — type a number and press Enter to jump"
+              title={t("pdf-page-type-a-number-and-press-enter-to-jump")}
               value={pageField()}
               onFocus={(e) => {
                 setPageInputFocused(true);
@@ -140,7 +141,7 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
               }}
             />
             <span class="pdf-page-total">/ {numPages()}</span>
-            <button class="icon-btn" title="Next page" onClick={() => scrollToPage(curPage() + 1)}>
+            <button class="icon-btn" title={t("pdf-next-page")} onClick={() => scrollToPage(curPage() + 1)}>
               ›
             </button>
           </div>
@@ -148,48 +149,47 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
             ref={setFindTriggerEl}
             class="icon-btn"
             classList={{ active: findOpen() }}
-            title="Find in document (Ctrl+F)"
+            title={t("pdf-find-in-document-ctrl-f")}
             onClick={() => (findOpen() ? closeFind() : openFind())}
           >
             🔍
           </button>
           <div class="pdf-zoom">
-            <button class="icon-btn" title="Zoom out" onClick={() => zoomBy(1 / 1.1)}>
+            <button class="icon-btn" title={t("pdf-zoom-out")} onClick={() => zoomBy(1 / 1.1)}>
               −
             </button>
             <span class="pdf-zoom-level">{Math.round(scale() * 100)}%</span>
-            <button class="icon-btn" title="Zoom in" onClick={() => zoomBy(1.1)}>
+            <button class="icon-btn" title={t("pdf-zoom-in")} onClick={() => zoomBy(1.1)}>
               +
             </button>
-            <button class="icon-btn pdf-overflow-action" title="Fit width" onClick={() => setScale(fitWidthScale())}>
+            <button class="icon-btn pdf-overflow-action" title={t("pdf-fit-width")} onClick={() => setScale(fitWidthScale())}>
               ↔
             </button>
-            <button class="icon-btn pdf-overflow-action" title="Fit height" onClick={() => setScale(fitHeightScale())}>
+            <button class="icon-btn pdf-overflow-action" title={t("pdf-fit-height")} onClick={() => setScale(fitHeightScale())}>
               ↕
             </button>
           </div>
           <button
             class="icon-btn pdf-overflow-action"
             classList={{ active: areaMode() }}
-            title={`Area highlight (${isMac ? "⌘" : "Shift"}) — drag a rectangle to capture a region as an image`}
+            title={t("pdf-area-highlight-drag-a-rectangle-to-capture-a-region-as-an-image", { shortcut: String(isMac ? "⌘" : "Shift") })}
             onClick={() => setAreaMode((v) => !v)}
           >
             ▭
           </button>
           <button
             class="pdf-notes-btn pdf-overflow-action"
-            title="Open highlights & notes page"
+            title={t("pdf-open-highlights-notes-page")}
             onClick={() => props.onOpenNotes ? props.onOpenNotes() : openPage(hlsPageName(props.filename), "page")}
           >
-            Notes
-          </button>
+            {t("pdf-notes")}</button>
           <button
             ref={setOutlineTriggerEl}
             type="button"
             class="icon-btn pdf-overflow-action"
             classList={{ active: outlineOpen() }}
-            title="Outline"
-            aria-label="Outline"
+            title={t("pdf-outline")}
+            aria-label={t("pdf-outline")}
             aria-expanded={outlineOpen()}
             onClick={() => {
               setSettingsOpen(false);
@@ -203,8 +203,8 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
             type="button"
             class="icon-btn"
             classList={{ active: settingsOpen() }}
-            title="More settings"
-            aria-label="More settings"
+            title={t("pdf-more-settings")}
+            aria-label={t("pdf-more-settings")}
             aria-expanded={settingsOpen()}
             onClick={() => {
               setOutlineOpen(false);
@@ -213,57 +213,56 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
           >
             ⋯
           </button>
-          <button class="icon-btn pdf-close-btn" title="Close PDF" aria-label="Close PDF" onClick={() => void closeSafely()}>
+          <button class="icon-btn pdf-close-btn" title={t("pdf-close-pdf")} aria-label={t("pdf-close-pdf")} onClick={() => void closeSafely()}>
             ✕
           </button>
         </div>
       </div>
       <Show when={highlightConflict()}>
         <div class="conflict-banner pdf-highlight-conflict" role="alert">
-          <span class="conflict-msg">Highlight conflict. Resolve it before editing more highlights.</span>
+          <span class="conflict-msg">{t("pdf-highlight-conflict-resolve-it-before-editing-more-highlights")}</span>
           <div class="conflict-actions">
-            <button class="conflict-btn keep" disabled={highlightDecisionBusy()} onClick={() => void keepMineHighlights()}>Keep mine</button>
-            <button class="conflict-btn" disabled={highlightDecisionBusy()} onClick={() => void useDiskHighlights()}>Use disk version</button>
-            <button class="conflict-btn" disabled={highlightDecisionBusy()} onClick={() => void discardMineHighlights()}>Discard my changes</button>
+            <button class="conflict-btn keep" disabled={highlightDecisionBusy()} onClick={() => void keepMineHighlights()}>{t("pdf-keep-mine")}</button>
+            <button class="conflict-btn" disabled={highlightDecisionBusy()} onClick={() => void useDiskHighlights()}>{t("pdf-use-disk-version")}</button>
+            <button class="conflict-btn" disabled={highlightDecisionBusy()} onClick={() => void discardMineHighlights()}>{t("pdf-discard-my-changes")}</button>
           </div>
         </div>
       </Show>
       <Show when={highlightCleanupPending()}>
         <div class="conflict-banner pdf-highlight-cleanup" role="alert">
-          <span class="conflict-msg">Area image cleanup is pending. Retry before closing or switching graphs.</span>
-          <button class="conflict-btn" disabled={highlightDecisionBusy()} onClick={() => void retryHighlightCleanup()}>Retry cleanup</button>
+          <span class="conflict-msg">{t("pdf-area-image-cleanup-is-pending-retry-before-closing-or-switching-graphs")}</span>
+          <button class="conflict-btn" disabled={highlightDecisionBusy()} onClick={() => void retryHighlightCleanup()}>{t("pdf-retry-cleanup")}</button>
         </div>
       </Show>
       <Show when={settingsOpen()}>
-        <div ref={setSettingsRootEl} class="pdf-settings-menu" role="dialog" aria-label="PDF settings">
-          <div class="pdf-settings-overflow" aria-label="Reader tools">
-            <button type="button" onClick={() => { setScale(fitWidthScale()); setSettingsOpen(false); }}>Fit width</button>
-            <button type="button" onClick={() => { setScale(fitHeightScale()); setSettingsOpen(false); }}>Fit height</button>
+        <div ref={setSettingsRootEl} class="pdf-settings-menu" role="dialog" aria-label={t("pdf-pdf-settings")}>
+          <div class="pdf-settings-overflow" aria-label={t("pdf-reader-tools")}>
+            <button type="button" onClick={() => { setScale(fitWidthScale()); setSettingsOpen(false); }}>{t("pdf-fit-width")}</button>
+            <button type="button" onClick={() => { setScale(fitHeightScale()); setSettingsOpen(false); }}>{t("pdf-fit-height")}</button>
             <button
               type="button"
               aria-pressed={areaMode()}
               onClick={() => { setAreaMode((v) => !v); setSettingsOpen(false); }}
             >
-              Area highlight
-            </button>
-            <button type="button" onClick={() => { if (props.onOpenNotes) props.onOpenNotes(); else openPage(hlsPageName(props.filename), "page"); setSettingsOpen(false); }}>Notes</button>
-            <button type="button" onClick={() => { setSettingsOpen(false); setOutlineOpen(true); }}>Outline</button>
+              {t("pdf-area-highlight")}</button>
+            <button type="button" onClick={() => { if (props.onOpenNotes) props.onOpenNotes(); else openPage(hlsPageName(props.filename), "page"); setSettingsOpen(false); }}>{t("pdf-notes")}</button>
+            <button type="button" onClick={() => { setSettingsOpen(false); setOutlineOpen(true); }}>{t("pdf-outline")}</button>
           </div>
-          <div class="pdf-settings-heading">Theme</div>
-          <div class="pdf-theme-choices" role="group" aria-label="PDF theme">
+          <div class="pdf-settings-heading">{t("pdf-theme")}</div>
+          <div class="pdf-theme-choices" role="group" aria-label={t("pdf-theme-options")}>
             <For each={PDF_THEMES}>
               {(choice) => {
-                const label = `${choice[0].toUpperCase()}${choice.slice(1)}`;
+                const label = () => t("pdf-theme-label", { theme: choice });
                 return (
                   <button
                     type="button"
                     class="pdf-theme-choice"
                     classList={{ active: theme() === choice }}
-                    aria-label={`${label} PDF theme`}
+                    aria-label={t("pdf-theme-description", { theme: choice })}
                     aria-pressed={theme() === choice}
                     onClick={() => chooseTheme(choice)}
                   >
-                    {label}
+                    {label()}
                   </button>
                 );
               }}
@@ -272,13 +271,13 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
         </div>
       </Show>
       <Show when={outlineOpen()}>
-        <div ref={setOutlineRootEl} class="pdf-outline-panel" role="dialog" aria-label="Document outline">
-          <div class="pdf-outline-heading">Outline</div>
-          <Show when={outlineReady()} fallback={<div class="pdf-outline-loading">Loading outline…</div>}>
+        <div ref={setOutlineRootEl} class="pdf-outline-panel" role="dialog" aria-label={t("pdf-document-outline")}>
+          <div class="pdf-outline-heading">{t("pdf-outline")}</div>
+          <Show when={outlineReady()} fallback={<div class="pdf-outline-loading">{t("pdf-loading-outline")}</div>}>
             <Show when={outlineTruncated()}>
-              <div class="pdf-outline-truncated" role="status">Outline too large; partially shown.</div>
+              <div class="pdf-outline-truncated" role="status">{t("pdf-outline-too-large-partially-shown")}</div>
             </Show>
-            <Show when={outlineItems().length} fallback={<Show when={!outlineTruncated()}><div class="pdf-outline-empty">No outlines</div></Show>}>
+            <Show when={outlineItems().length} fallback={<Show when={!outlineTruncated()}><div class="pdf-outline-empty">{t("pdf-no-outlines")}</div></Show>}>
               <PdfOutlineTree
                 items={outlineItems()}
                 expanded={(id) => expandedOutlineIds().has(id)}
@@ -294,7 +293,7 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
           <input
             ref={setFindInputEl}
             class="pdf-find-input"
-            placeholder="Find in document"
+            placeholder={t("pdf-find-in-document")}
             value={findQuery()}
             onInput={(e) => scheduleFind(e.currentTarget.value)}
             onKeyDown={(e) => {
@@ -305,26 +304,22 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
             }}
           />
           <span class="pdf-find-count">
-            {findCount()
-              ? `${findCur()} / ${findCount()}${findTruncated() ? "+" : ""}`
-              : findQuery().trim()
-                ? findTruncated() ? "No results in scanned text+" : "No results"
-                : ""}
+            {findCount() ? t("pdf-find-count", { index: String(findCur()), count: String(findCount()), truncatedSuffix: String(findTruncated() ? "+" : "") }) : findQuery().trim() ? findTruncated() ? t("pdf-no-results-in-scanned-text") : t("pdf-no-results") : ""}
           </span>
-          <button class="icon-btn" title="Previous match (Shift+Enter)" onClick={() => nextMatch(-1)}>
+          <button class="icon-btn" title={t("pdf-previous-match-shift-enter")} onClick={() => nextMatch(-1)}>
             ↑
           </button>
-          <button class="icon-btn" title="Next match (Enter)" onClick={() => nextMatch(1)}>
+          <button class="icon-btn" title={t("pdf-next-match-enter")} onClick={() => nextMatch(1)}>
             ↓
           </button>
-          <button class="icon-btn" title="Close (Esc)" onClick={closeFind}>
+          <button class="icon-btn" title={t("pdf-close-esc")} onClick={closeFind}>
             ✕
           </button>
         </div>
       </Show>
       <Show
         when={!loadError()}
-        fallback={<div class="pdf-load-error">Couldn't open this PDF: <code>{loadError()}</code></div>}
+        fallback={<div class="pdf-load-error">{t("pdf-couldn-t-open-this-pdf")}<code>{loadError()}</code></div>}
       >
         <div
           class="pdf-scroll"
@@ -366,8 +361,7 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
                 void copyExistingHighlightRef(menu()!.id!);
               }}
             >
-              Copy ref
-            </button>
+              {t("pdf-copy-ref")}</button>
             <button
               class="pdf-hl-action"
               onPointerDown={(e) => {
@@ -375,13 +369,12 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
                 void openExistingHighlightReferences(menu()!.id!);
               }}
             >
-              Linked references
-            </button>
+              {t("pdf-linked-references")}</button>
           </Show>
           <Show when={menu()!.id}>
             <button
               class="pdf-hl-remove"
-              title="Remove highlight"
+              title={t("pdf-remove-highlight")}
               onPointerDown={(e) => {
                 e.preventDefault();
                 void deleteHighlight(menu()!.id!);

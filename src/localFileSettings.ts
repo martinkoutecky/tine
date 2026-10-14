@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Device-local security preference (persisted in tine-settings.json via the generic
 // app_bool backend, so it survives a restart). OFF by default: when ON, raw-HTML
 // `<img>` tags in notes may load images from absolute paths anywhere on this machine
@@ -30,6 +31,6 @@ export async function initLocalFileSettings(): Promise<void> {
     const value = await backend().getAppBool(KEY, false);
     if (preferenceReadCurrent(allow, revision)) { setAllowSig(value); seedPreference(allow); }
   } catch {
-    pushToast("Could not load local image access preference.", "error");
+    pushToast(msg("settings-could-not-load-local-image-access-preference"), "error");
   }
 }

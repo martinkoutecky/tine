@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import { initDebug } from "./debug";
 import { Toasts } from "./components/Toasts";
 // Quick-capture mini window. A separate Tauri webview (capture.html) that the
@@ -590,7 +591,7 @@ function Capture() {
             class="capture-title"
             type="text"
             value={title()}
-            placeholder="Page Title (optional, if empty → appended to Today)"
+            placeholder={t("capture-page-title-optional-if-empty-appended-to-today")}
             onInput={(e) => setTitle(e.currentTarget.value)}
             onKeyDown={(e) => {
               // The global capture dispatcher declines IME Escape, so the title
@@ -615,9 +616,7 @@ function Capture() {
           </div>
           <Show when={submitBinding() === "false"}>
             <div class="capture-actions">
-              <button type="button" onClick={submit} disabled={captureStatus() === "saving"}>
-                File capture
-              </button>
+              <button type="button" onClick={submit} disabled={captureStatus() === "saving"}>{t("capture-file-capture")}</button>
             </div>
           </Show>
           <Show when={captureMessage()}>

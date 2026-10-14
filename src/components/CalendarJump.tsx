@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { stepMonth } from "./primitives";
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openPage } from "../router";
@@ -97,7 +98,7 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
 
   return (
     <>
-      <button ref={trigger} class={`icon-btn ${props.triggerClass ?? ""}`} title="Go to date" onClick={toggle}>
+      <button ref={trigger} class={`icon-btn ${props.triggerClass ?? ""}`} title={t("calendar-jump-go-to-date")} onClick={toggle}>
         <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
           <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
           <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7" />
@@ -109,9 +110,9 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
         <div ref={overlayRoot} class="dp-overlay" onClick={() => setOpen(false)}>
           <div class="date-picker calendar-jump-pop" onClick={(e) => e.stopPropagation()}>
             <div class="dp-head">
-              <button class="dp-nav" onClick={() => step(-1)} title="Previous month">‹</button>
+              <button class="dp-nav" onClick={() => step(-1)} title={t("calendar-jump-previous-month")}>‹</button>
               <span class="dp-title">{MONTHS[view().m]} {view().y}</span>
-              <button class="dp-nav" onClick={() => step(1)} title="Next month">›</button>
+              <button class="dp-nav" onClick={() => step(1)} title={t("calendar-jump-next-month")}>›</button>
             </div>
             <div class="dp-grid dp-dow">
               <For each={dow()}>{(d) => <span class="dp-dowcell">{d}</span>}</For>
@@ -123,7 +124,7 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
                     <button
                       class="dp-cell"
                       classList={{ today: isToday(d!), "has-content": hasContent(d!) }}
-                      title={hasContent(d!) ? "Has an entry" : "Empty"}
+                      title={hasContent(d!) ? t("calendar-jump-has-an-entry") : t("calendar-jump-empty")}
                       onClick={() => pick(d!)}
                     >
                       {d}
@@ -133,7 +134,7 @@ export function CalendarJump(props: { onOpenReady?: (open: () => void) => void; 
               </For>
             </div>
             <div class="dp-foot">
-              <button class="dp-today" onClick={() => { openPage(journalTitle(today()), "journal"); setOpen(false); }}>Today</button>
+              <button class="dp-today" onClick={() => { openPage(journalTitle(today()), "journal"); setOpen(false); }}>{t("calendar-jump-today")}</button>
             </div>
           </div>
         </div>

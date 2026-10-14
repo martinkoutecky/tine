@@ -7,6 +7,24 @@
       "nonRequirements":["Image icons, reference thumbnails, GIFs, adjustable sizes or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-journal-sections.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Customize seeds and opens an ordinary sections page from config queries and agenda, preserves an existing default-name page, reflects an edited query under today's journal without reload, and restores config sections on deletion in Markdown and Org graphs. Journals settings identifies and opens the active page without resetting the dialog.","blocking":true}],
+      "acceptableVariations":["Query layout, page filename casing, focus, and save or watcher latency may vary while answer membership and persisted content remain correct."],
+      "nonRequirements":["Exact pixels, identical EDN whitespace, native platform certification outside Linux WebKitGTK, or synchronizing the page back into config.edn."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-gh690-journal-queries.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Today's journal renders OG NOW in priority order, both own-page and older direct-reference NEXT ranges, and a plain titled refusal with closed details; returning to Journals and external task edits keep results current.","blocking":true}],
+      "acceptableVariations":["Layout, glyphs and publication timing may vary while the task membership, priority order and disclosure state remain correct."],
+      "nonRequirements":["Exact pixels, cross-platform native certification or a general Datalog join engine."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-outside-file-links.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A file link that leaves the graph folder (../ or absolute) renders as an ordinary link and clicking it hands the resolved path to the system opener.","blocking":true}],
+      "acceptableVariations":["Link styling, hover text wording and the opener used may vary while the resolved path handed to the OS is correct."],
+      "nonRequirements":["A particular viewer launching, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-journal-fileless-days.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Journals shows referenced fileless past days and future Upcoming entries without writing a journal; opening a future day and typing creates only its journal file.","blocking":true}],
       "acceptableVariations":["Disclosure styling, reference load latency and page layout may vary while counted references, collapsed Upcoming and saved body are correct."],
@@ -405,6 +423,7 @@
     },
     "scripts/e2e-query-sheet.mjs": {
       "contracts": [
+        { "class": "stateful-ux", "userOutcome": "A Logseq scheduled/deadline window visibly refuses without rows or a silent rewrite; Convert preserves its date-window meaning in a Tine query on disk and results appear through restart.", "blocking": true },
         { "class": "stateful-ux", "userOutcome": "A query block rests as one sentence and answers with blocks or, for a page-level filter, pages; a query the engine cannot read shows what it did not understand instead of an empty result, and an empty result explains which condition emptied it.", "blocking": true },
         { "class": "core-operation", "userOutcome": "A query created with /query and saved from the sheet's query text lands in the page file as an ordinary query block without touching the other query blocks, and reopens with the same answers after a restart.", "blocking": true },
         { "class": "stateful-ux", "userOutcome": "While the query sheet is open its results show inside it and follow the conditions as they are edited, before anything is saved, and previewing writes nothing to the page.", "blocking": true },

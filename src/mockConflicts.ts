@@ -1,3 +1,4 @@
+import { msg, render } from "./i18n";
 // Browser-mock Concord surface: sync-conflict copies and the derived conflict
 // queue. Split out of mock.ts (over the size ratchet); nothing here writes.
 import type { BlockDto, ConflictInventory, ConflictObject, MarkerConflictDiff, PageDto, SyncConflict, SyncConflictDiff } from "./types";
@@ -49,7 +50,7 @@ function conflictInventory(): ConflictInventory {
     page_path: copy.base_path,
     kind: copy.kind,
     sides: [
-      { role: "mine" as const, label: "This device", path: copy.base_path },
+      { role: "mine" as const, get label() { return render(msg("mock-conflicts-this-device")); }, path: copy.base_path },
       { role: "theirs" as const, label: copy.tag, path: copy.path },
     ],
     block_conflicts: 3,

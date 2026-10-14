@@ -72,6 +72,12 @@ export function favoritesArrangementBlocks(blocks: readonly BlockDto[], format: 
   return blocks.map((b) => ({ ...b, raw: rawWithCollapsed(b.raw, false, format), children: favoritesArrangementBlocks(b.children, format) }));
 }
 
+/** Today's sections use an ordinary page, published through createPage. The
+ * caller supplies the marker in the graph's preferred format and seeded blocks. */
+export function journalSectionsPage(name: string, marker: string, blocks: BlockDto[]): PageDto {
+  return { name, kind: "page", title: name, pre_block: marker, blocks };
+}
+
 export function appendAliasDraft(owner: PageDto, draft: PageDto): PageDto {
   return { ...owner, blocks: [...owner.blocks, ...aliasDraftBlocks(draft)] };
 }

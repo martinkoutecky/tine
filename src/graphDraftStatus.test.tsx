@@ -6,8 +6,12 @@ import { loadSingle } from "./document/workingSet";
 import { setGraphMeta } from "./graphSession";
 import { submittedPages } from "./document/host/wiring.test.support";
 import { setToasts, toasts } from "./toasts";
+import { renderEnglish, type UiText } from "./i18n";
+
 import type { DraftStatus } from "./document/host/protocol";
 import type { GraphMeta } from "./types";
+
+const toastLabel = (text: string | UiText) => typeof text === "string" ? text : renderEnglish(text);
 
 // Crash drafts belong to the page host (STEP3 §9). The window's part is to say
 // what the host could not use, never to block the open over it (B-Q1): an
@@ -56,7 +60,7 @@ describe("crash-recovery status at graph open (STEP3 §9, B-Q1)", () => {
     const [off] = said("Crash recovery is off");
     expect(off).toMatchObject({ kind: "error", sticky: true,
       message: "Crash recovery is off for this graph: drafts directory: permission denied. Your edits still save." });
-    expect(off.action?.label).toBe("Retry");
+    expect(toastLabel(off.action!.label)).toBe("Retry");
 
     loadSingle({ id: "pages/P.md", name: "P", title: "P", kind: "page", pre_block: null, rev: "r1",
       blocks: [{ id: "b", raw: "before", collapsed: false, children: [] }] });
@@ -78,7 +82,7 @@ describe("crash-recovery status at graph open (STEP3 §9, B-Q1)", () => {
     await vi.waitFor(() => expect(said("Crash recovery is still off")).toHaveLength(1));
     const [still] = said("Crash recovery is still off");
     expect(still).toMatchObject({ kind: "error", sticky: true, message: "Crash recovery is still off: still denied." });
-    expect(still.action?.label).toBe("Restart Tine");
+    expect(toastLabel(still.action!.label)).toBe("Restart Tine");
   });
 
   it("pages launch recovered from crash-recovery copies are named in a sticky notice (STEP3 §9)", async () => {

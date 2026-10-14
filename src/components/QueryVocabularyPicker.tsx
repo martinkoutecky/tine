@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 // One registry-backed vocabulary for condition and display pickers. QueryListbox
 // owns keyboard/ARIA behaviour; this file only builds and draws its options.
 import { For, Show, createEffect, createMemo, createSignal, type Accessor, type JSX } from "solid-js";
@@ -76,7 +77,7 @@ export function buildVocabulary(input: { anchor: Anchor; rows: RegistryRow[] | u
       const count = row ? unit === "pages" ? row.count_pages : row.count_blocks : 0;
       if (input.rows && count > 0) continue;
       entries.push({ id: `novel:${unit}:${typed}`, section: "Use a key by name",
-        label: `Use "${typed}" as a ${unit === "pages" ? "page" : "block"} property`,
+        label: t("query-vocabulary-picker-use-property", { key: typed, unit }),
         choice: { kind: "property", key: typed, throughPage }, count: input.rows ? count : undefined,
         observed: row ? phrase(row) : undefined, unit });
     }
@@ -138,14 +139,13 @@ export function QueryVocabularyPicker(props: {
     }
     return out;
   });
-  return <Listbox id={props.id} label="Condition field" class="qs-vocab" filterable
-    placeholder={props.placeholder ?? "Search fields and properties"}
+  return <Listbox id={props.id} label={t("query-vocabulary-picker-condition-field")} class="qs-vocab" filterable
+    placeholder={props.placeholder ?? t("query-vocabulary-picker-search-fields-and-properties")}
     query={search()} onQuery={setSearch} options={options()} rootRef={props.rootRef}
     status={<>
-      <Show when={props.pending?.()}><div class="qs-registry-pending" role="status">Reading this graph's properties…</div></Show>
-      <Show when={props.failure?.()}>{(failure) => <div class="qs-registry-failure" role="alert">
-        This graph's properties could not be read. {failure().message}
-        <button class="qs-registry-retry qs-vocab-retry" onClick={props.onRetry}>Try again</button>
+      <Show when={props.pending?.()}><div class="qs-registry-pending" role="status">{t("query-vocabulary-picker-reading-this-graph-s-properties")}</div></Show>
+      <Show when={props.failure?.()}>{(failure) => <div class="qs-registry-failure" role="alert">{t("query-vocabulary-picker-registry-failed", { detail: failure().message })}
+        <button class="qs-registry-retry qs-vocab-retry" onClick={props.onRetry}>{t("query-vocabulary-picker-try-again")}</button>
       </div>}</Show>
     </>}
     body={(context) => <VocabularyBody context={context} entries={map} current={props.current} />}
@@ -195,7 +195,7 @@ function VocabularyBody(props: { context: ListboxBody; entries: Accessor<Map<str
             {option.label}
           </button>
           <Show when={props.entries().get(option.key)}>{(entry) => <small class="qs-vocab-detail">
-            {entry().declared ? `${entry().declared} (declared)` : entry().observed ?? ""}
+            {entry().declared ? t("query-vocabulary-picker-declared", { declared: String(entry().declared) }) : entry().observed ?? ""}
             {entry().count !== undefined ? ` · ${entry().count} ${entry().unit}` : ""}
             {entry().preview ? ` · ${entry().preview}` : ""}
           </small>}</Show>

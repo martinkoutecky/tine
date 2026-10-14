@@ -21,7 +21,7 @@ icon:: 🔎
 	- A `{{tine-query …}}` block holds this language directly and runs like any other query block.
 - ## When a query needs Tine features
 	- Some queries have no `{{query}}` spelling — scheduled/deadline date windows, grouping, column totals, typed comparisons. When you save one, Tine renames the block's macro from `query` to `tine-query` and moves the view choices into `tine.*` properties on the same block.
-	- For a scheduled window, use `{{tine-query @block scheduled between today and '+7d'}}`; use `deadline` for a deadline window. OG Logseq drops `(between scheduled today +7d)` and `(between deadline today +7d)` as conditions: alone they run no query, and alongside other conditions they leave only those conditions. Existing such `{{query}}` blocks currently keep Tine's date-window meaning; saving edited conditions uses `{{tine-query …}}`.
+	- For a scheduled window, use `{{tine-query @block scheduled between today and '+7d'}}`; use `deadline` for a deadline window. Logseq ignores scheduled/deadline date windows in `{{query}}`, so Tine shows a cue and refuses to run those blocks as written. Click **Convert** to keep the same date-window meaning in `{{tine-query …}}`; the change can be undone.
 	- A notice under the query says so: **This query now uses Tine features Logseq can't read.** **Undo that change** puts the block back to exactly the bytes it had; **Keep it** dismisses the notice.
 - ## Simple queries
 	- The simple query language is Logseq's. Combine filters with `(and …)`, `(or …)` and `(not …)`:
