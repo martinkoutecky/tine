@@ -59,6 +59,7 @@ try {
   await browser.waitUntil(async () => (await browser.$$(".page-title")).length > 0, { timeout: 30000 });
   await sleep(2500);
   await closeToasts();
+  if (process.env.EXTRA_CSS) await browser.execute((css) => { const st = document.createElement("style"); st.textContent = css; document.head.append(st); }, fs.readFileSync(process.env.EXTRA_CSS, "utf8"));
   if (Number(process.env.WIN_W ?? 640) <= 640) await browser.keys(["Escape"]);
   const dims = await browser.execute(() => [innerWidth, innerHeight, devicePixelRatio]);
   console.log("viewport", dims);

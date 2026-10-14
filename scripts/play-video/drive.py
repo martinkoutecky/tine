@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 OUT = sys.argv[1]
 os.makedirs(f"{OUT}/ui", exist_ok=True)
-PKG = "page.tine.app"
+PKG = os.environ.get("PKG", "page.tine.app")
 SHOTS = os.environ.get("SHOTS", "0") == "1"
 
 
@@ -89,6 +89,7 @@ def find(root, needle, exact=False, cls=None):
 
 
 log = []
+checks = {}
 
 
 def tap_bounds(b):
@@ -167,9 +168,18 @@ try:
     sh("input keyevent KEYCODE_BACK")
     time.sleep(1.0)
 
-    # 3. back in Tine, open again -> system folder picker
+    # 3. back in Tine -> system folder picker. ONETAP=1 verifies the fix: the picker must
+    # open by itself after the grant, without a second tap on "Open an existing graph".
     CAP3 = "3  Pick the notes folder"
-    step("Open an existing graph", CAP3, pre=1.0, post=0.6, tag="welcome2")
+    if os.environ.get("ONETAP") == "1":
+        try:
+            wait_for("Documents", tag="onetap-picker", timeout=25)
+            checks["onetap"] = "pass: picker opened without a second tap"
+        except TimeoutError:
+            checks["onetap"] = "FAIL: picker did not open after the grant"
+            step("Open an existing graph", CAP3, pre=1.0, post=0.6, tag="welcome2")
+    else:
+        step("Open an existing graph", CAP3, pre=1.0, post=0.6, tag="welcome2")
 
     # picker navigation: Documents -> Tine demo -> Use this folder -> Allow
     wait_for("Documents", tag="picker-start", timeout=60)
@@ -194,6 +204,8 @@ try:
     time.sleep(1.5)
     root = dump("after-open")
     h = find(root, "Close navigation sidebar")
+    checks["drawer"] = ("FAIL: left drawer open after first graph open" if h
+                        else "pass: left drawer closed after first graph open")
     if h:
         tap_bounds(h[0][1]); time.sleep(1.0)
     for _ in range(3):  # dismiss emulator-only toasts (software rendering) and the Guide teaser
@@ -228,8 +240,9 @@ except subprocess.TimeoutExpired:
     rec.kill()
 time.sleep(1.5)
 adb("pull", "/sdcard/raw.mp4", f"{OUT}/raw.mp4")
-json.dump({"status": status, "t_home": t_home, "segments": segments, "log": log}, open(f"{OUT}/events.json", "w"), indent=1)
+json.dump({"status": status, "checks": checks, "t_home": t_home, "segments": segments, "log": log}, open(f"{OUT}/events.json", "w"), indent=1)
 sh("logcat -d -s Tine/FolderPicker:I chromium:I | tail -80 > /sdcard/tine.log", check=False)
 with open(f"{OUT}/logcat-tine.txt", "w", errors="replace") as f:
     f.write(subprocess.run(["adb", "logcat", "-d", "-b", "all", "-t", "6000"], capture_output=True, text=True, errors="replace").stdout)
+print("CHECKS", json.dumps(checks))
 sys.exit(0 if status == "ok" else 1)

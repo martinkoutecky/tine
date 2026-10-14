@@ -1,0 +1,92 @@
+# Proof-only (exp/play-pepk): fail-before/pass-after for the Android first-run fixes
+# (UI-ANDROID-ALL-FILES-ONE-TAP, UI-MOBILE-LEFT-DRAWER-STARTS-CLOSED).
+name: First-run one-tap proof
+on:
+  push:
+    branches: [exp/play-pepk]
+    paths: [.github/workflows/onetap-proof.yml]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: batch/first-run-0-7-3 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with: { targets: aarch64-linux-android }
+      - name: Android SDK packages
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "platforms;android-35" "build-tools;35.0.0" "ndk;26.3.11579264" "platform-tools" >/dev/null
+          NDK="$ANDROID_SDK_ROOT/ndk/26.3.11579264"
+          for v in NDK_HOME ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK_LATEST_HOME; do echo "$v=$NDK" >> "$GITHUB_ENV"; done
+      - run: npm ci
+      - name: Build debug APK
+        run: |
+          git log --oneline -1
+          node scripts/release-workflow-inputs.mjs android-config
+          CARGO_PROFILE_DEV_STRIP=symbols npx tauri android build --debug --target aarch64 --apk
+          cp src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk first-run-fix.apk
+          sha256sum first-run-fix.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: fixed-apk, path: first-run-fix.apk, retention-days: 3 }
+  proof:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: before-v0.7.2, pkg: page.tine.app }
+          - { name: after-fix, pkg: page.tine.beta }
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - uses: actions/download-artifact@v4
+        if: matrix.name == 'after-fix'
+        with: { name: fixed-apk }
+      - name: Get the APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ matrix.name }}" = after-fix ]; then mv first-run-fix.apk tine.apk
+          else gh release download v0.7.2 -R martinkoutecky/tine -p 'Tine_0.7.2_android-arm64.apk' -O tine.apk; fi
+          sha256sum tine.apk
+      - name: Prepare demo graph
+        run: |
+          cp -r play-video/graph "Tine demo"
+          mkdir -p "Tine demo/assets" out
+      - name: Run the emulator and drive
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ONETAP: "1"
+          SHOTS: "1"
+          PKG: ${{ matrix.pkg }}
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: Nexus 5
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
+          disable-animations: false
+          script: |
+            bash scripts/play-video/prepare-device.sh
+            python3 scripts/play-video/drive.py out || echo "DRIVE FAILED $?"
+      - name: Report
+        if: always()
+        run: |
+          python3 -c "import json;d=json.load(open('out/events.json'));print('STATUS',d['status']);print('CHECKS',json.dumps(d['checks']))" | tee -a $GITHUB_STEP_SUMMARY || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "proof-${{ matrix.name }}", path: out/, retention-days: 7 }
