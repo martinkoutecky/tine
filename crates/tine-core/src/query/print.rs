@@ -751,8 +751,9 @@ fn og_attr(attr: Attr, op: CmpOp, value: &Value, on_page: bool) -> Option<String
         }
         (Attr::Task, CmpOp::In) => Some(og_words("task", list_of(value)?)),
         (Attr::Priority, CmpOp::In) => Some(og_words("priority", list_of(value)?)),
-        (Attr::Scheduled, CmpOp::Between) => og_between("scheduled", value),
-        (Attr::Deadline, CmpOp::Between) => og_between("deadline", value),
+        // OG build-between-three-arg accepts timestamp properties only;
+        // scheduled/deadline return nil, so these windows must save as TQL.
+        (Attr::Scheduled | Attr::Deadline, CmpOp::Between) => None,
         (Attr::CreatedAt, CmpOp::Between) => og_timestamp_between("created-at", value),
         (Attr::LastModifiedAt, CmpOp::Between) => og_timestamp_between("last-modified-at", value),
         (Attr::Day, CmpOp::Between) if on_page => og_between("journal", value),

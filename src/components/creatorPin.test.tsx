@@ -24,6 +24,7 @@ describe("creators that save outside the document engine", () => {
   it("does not call a local workspace refusal a disk conflict", async () => {
     const input = { title: "Saved query", sourceKind: "dsl" as const, source: "(todo TODO)", presentation: "list" as const, routeId: "query-pin" };
     const deps = {
+      serializeDsl: async (source: string) => ({ query: `{{query ${source}}}`, properties: [] }),
       resolvePage: async () => ({ kind: "absent" as const, id: "pages/Saved query.md" }),
       createPage: async () => { throw new CreatePageRefusal("page-dirty"); },
       runGraphSearch: async () => ({ hits: [], diagnostics: [], explanation: { branches: [{ description: "ok", children: [] }] }, cancelled: false }),
@@ -104,6 +105,7 @@ describe("creators that save outside the document engine", () => {
     const result = await materializeQueryWorkspace({
       title: "Saved query", sourceKind: "dsl", source: "(todo TODO)", presentation: "list", routeId: "query-pin",
     }, {
+      serializeDsl: async (source) => ({ query: `{{query ${source}}}`, properties: [] }),
       resolvePage: async () => ({ kind: "absent", id: path }),
       createPage,
       runGraphSearch: async () => ({ hits: [], diagnostics: [], explanation: { branches: [{ description: "ok", children: [] }] }, cancelled: false }),

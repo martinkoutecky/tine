@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- Plugin API 0.3 adds the `color` setting type. Tine Beta runs both 0.2 and 0.3 plugins; the plugin registry offers each Tine only the versions its plugin API runs, so an older Tine keeps the last version it accepts instead of refusing an update.
 - Optional Mandarin Pinyin and syllable-initial matching for Han page titles and aliases, preserving native-name relevance (GH #151).
 
 ### Fixed
@@ -19,6 +20,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Page previews keep page actions reachable:** use the preview header's … button after holding a mobile page link or tag (GH #655).
 - **All pages in the sidebar opens the full view directly**, including from the mobile navigation drawer (GH #335).
 
+- Scheduled/deadline query windows now save as `{{tine-query …}}` instead of Logseq syntax that silently drops the date condition (GH #422).
+- Referenced journal days appear in the Journals feed without creating a file; future mentions are grouped in collapsed Upcoming above today (GH #481).
 - **Crash recovery no longer switches off on Android** ("Crash recovery is off for this graph … Permission denied"). Tine tried to sync system folders above its own app data, which Android does not allow. GH #685
 - Tab drops at all four pane edges split the hovered pane, matching the drop preview even at the layout's outer edges (GH #499).
 - Raw HTML iframe dimensions honor numeric HTML attributes as pixels, percentages and inline sizing without the default embed width cap (GH #54).
