@@ -84,7 +84,16 @@ async function markQuery(browser, title) {
   }, title), { timeout: 20_000, interval: 200, timeoutMsg: `query ${title} absent` });
 }
 const active = '[data-calm-query="active"]';
+// Result actions refuse ("results changed since the query ran") until a graph
+// save has re-run the answer; the query block is aria-busy until then.
+async function resultsCurrent(browser) {
+  await browser.waitUntil(() => browser.execute(selector => {
+    const block = document.querySelector(selector);
+    return !!block && block.getAttribute("aria-busy") !== "true";
+  }, active), { timeout: 15_000, interval: 100, timeoutMsg: "query results never became current" });
+}
 async function action(browser, name) {
+  if (["Copy results", "Collapse all", "Expand all"].includes(name)) await resultsCurrent(browser);
   await browser.$(`${active} .qc-actions > summary`).click();
   await browser.waitUntil(() => browser.execute((selector, wanted) => {
     const id = document.querySelector(`${selector} summary`)?.getAttribute("aria-controls");
@@ -122,7 +131,8 @@ await session(1, async browser => {
   await browser.keys(["Control", "a"]); await browser.keys("Calm tasks"); await browser.keys("Enter");
   await browser.waitUntil(() => fs.readFileSync(queries, "utf8").includes('"Calm tasks"'), { timeout: 15_000 });
   await markQuery(browser, "Calm tasks"); await action(browser, "Edit");
-  assert.ok(await browser.execute(selector => !!document.querySelector(`${selector} .qc-panel .qs-sheet`) && !!document.querySelector(`${selector} .query-group`), active));
+  // The rename remounts the query; its answer returns once the save publishes.
+  await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .qc-panel .qs-sheet`) && !!document.querySelector(`${selector} .query-group`), active), { timeout: 15_000, timeoutMsg: "editor panel or results missing after rename" });
   await closeEditor(browser);
   await textEdit(browser, "@block and task = 'TODO' and priority = 'A'");
   await browser.waitUntil(() => browser.execute(() => {
@@ -147,6 +157,7 @@ await session(1, async browser => {
   phase = "table task save and source navigation";
   await markQuery(browser, "Task table");
   await browser.$(`${active} [role="checkbox"]`).waitForExist({ timeout: 20_000 });
+  await resultsCurrent(browser);
   await browser.$(`${active} [role="checkbox"]`).click();
   await browser.waitUntil(() => fs.readFileSync(`${graph}/pages/Tasks.md`, "utf8").includes("DONE [#A] First journey task"), { timeout: 15_000 });
   phase = "visible default columns and select none/all persist through the query save";
@@ -238,6 +249,7 @@ await session(2, async browser => {
   await markQuery(browser, "Task board");
   await browser.$(`${active} .sheet-board-card`).waitForExist({ timeout: 20_000 });
   phase = "board last column access, drag save and genuine click navigation";
+  await resultsCurrent(browser);
   await browser.execute(selector => {
     const card = [...document.querySelectorAll(`${selector} .sheet-board-card`)].find(card => card.textContent.includes("Second journey task"));
     card?.setAttribute("data-calm-card", "active"); card?.scrollIntoView({ block: "center", inline: "nearest" });

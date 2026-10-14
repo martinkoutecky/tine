@@ -22,6 +22,7 @@ import * as blockRender from "../render/block";
 import { renderedBlocks, resetNearObserverForTests } from "../lazyObserve";
 import { openSwitcher, closeSwitcher } from "../ui";
 import { openCalmQuery } from "../tests/calmQueryActions";
+import { beginResultsChange } from "../queryResultsEpoch";
 
 // These component fixtures do not bind a page host. Their source edits update
 // the working set; native coverage exercises actual publication and the epoch
@@ -245,6 +246,23 @@ describe("QueryMacro sheet integration", () => {
       await vi.waitFor(() => expect(doc.byId.todo.collapsed).toBe(false));
       expect(blockProperty("todo", "collapsed")).toBeNull();
       await vi.waitFor(() => expect(root.querySelector('.query-group [data-block-id="child"]')).not.toBeNull());
+    } finally { dispose(); }
+  });
+  it("marks its results busy while a graph change has not yet re-run them", async () => {
+    // Result actions refuse until the answer re-lands after a save; aria-busy
+    // says so, for assistive technology and for native journeys to wait on.
+    loadQueryDoc("{{query (task TODO)}}");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      const block = () => root.querySelector(".query-block")!;
+      expect(block().querySelector('.query-group [data-block-id="todo"]')).not.toBeNull();
+      expect(block().getAttribute("aria-busy")).not.toBe("true");
+      const finish = beginResultsChange();
+      expect(block().getAttribute("aria-busy")).toBe("true");
+      finish();
+      expect(block().getAttribute("aria-busy")).toBe("true");
+      await vi.waitFor(() => expect(block().getAttribute("aria-busy")).not.toBe("true"));
     } finally { dispose(); }
   });
   it("does not run an empty new query before a condition is added", async () => {

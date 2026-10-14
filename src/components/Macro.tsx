@@ -71,7 +71,7 @@ import { QueryLegacyTable } from "./QueryLegacyTable";
 import { mainWindow } from "../windowRealm";
 import { QueryMacroActions } from "./QueryMacroActions";
 import { QueryResultTask } from "./QueryResultTask";
-import { resultsEpoch } from "../queryResultsEpoch";
+import { resultTicket, resultsEpoch, resultsTicketCurrent } from "../queryResultsEpoch";
 
 // Collapsed state for query results, keyed by graph + rendered query identity.
 // A raw query-string key made unrelated dashboards across pages/graphs collide.
@@ -409,6 +409,12 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     return current && landed?.requestKey === current.displayKey ? landed : undefined;
   };
   const groups = () => displayed()?.groups ?? [];
+  /** Result actions refuse until a graph change has re-run this answer
+   * (queryResultIdentity); say so instead of looking idle. */
+  const resultsBusy = () => {
+    const shown = displayed();
+    return !!shown && !collapsed() && !resultsTicketCurrent(resultTicket(shown));
+  };
   const pageRows = () => displayed()?.pages ?? null;
   // The run's OWN diagnostics (I-9): an invalid query returns zero rows plus
   // these, so they must render — "No results" alone would report a broken query
@@ -827,7 +833,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
 
   return (
     <Show when={!hidden()}>
-      <div class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}>
+      <div class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+        aria-busy={resultsBusy() ? "true" : undefined}>
         <Switch>
           <Match when={unsupportedAdvanced()}>
             <div class="query-unsupported" role={props.unsupportedLabel ? "alert" : undefined}>
