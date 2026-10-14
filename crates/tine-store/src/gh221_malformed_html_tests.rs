@@ -32,6 +32,7 @@ fn gh221_malformed_html_fragment_indexes_without_panic() {
         .unwrap()
         .search(
             &SearchRequest {
+                transliteration: false,
                 text: "div".into(),
                 within: None,
                 page_limit: 100,

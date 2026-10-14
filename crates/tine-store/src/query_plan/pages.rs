@@ -79,18 +79,20 @@ fn page_base_score(
         QueryExpr::Never => None,
         QueryExpr::Text(pred) if pred.field != TextField::PageName => None,
         QueryExpr::Text(pred) => match pred.mode {
-            TextMatchMode::Fuzzy => fuzzy_name_score(lower, &pred.value).map(|(score, class)| {
-                if class == ObjectiveMatchClass::Exact
-                    && plan
-                        .page_exact
-                        .as_ref()
-                        .is_some_and(|exact| identity_fold(original) != *exact)
-                {
-                    (1000, ObjectiveMatchClass::Prefix)
-                } else {
-                    (score, class)
-                }
-            }),
+            TextMatchMode::Fuzzy => fuzzy_name_score(lower, &pred.value)
+                .map(|(score, class)| {
+                    if class == ObjectiveMatchClass::Exact
+                        && plan
+                            .page_exact
+                            .as_ref()
+                            .is_some_and(|exact| identity_fold(original) != *exact)
+                    {
+                        (1000, ObjectiveMatchClass::Prefix)
+                    } else {
+                        (score, class)
+                    }
+                })
+                .or_else(|| plan.transliteration_score(original, pred)),
             TextMatchMode::Regex => plan
                 .regexes
                 .get(&pred.clause_id)
@@ -112,7 +114,7 @@ fn page_base_score(
                 } else if lower.contains(&pred.value) {
                     Some((500, ObjectiveMatchClass::Substring))
                 } else {
-                    None
+                    plan.transliteration_score(original, pred)
                 }
             }
         },
@@ -128,14 +130,31 @@ fn page_base_score(
             }
             Some((score, class))
         }
-        QueryExpr::Or(children) => children
-            .iter()
-            .find_map(|child| page_base_score(plan, child, original, lower)),
+        QueryExpr::Or(children) => {
+            let mut expansion = None;
+            for child in children {
+                if let Some(hit) = page_base_score(plan, child, original, lower) {
+                    // Preserve the first native branch's existing authority,
+                    // even when an earlier alternative matched via expansion.
+                    if hit.1 != ObjectiveMatchClass::Transliteration {
+                        return Some(hit);
+                    }
+                    if expansion.is_none() {
+                        expansion = Some(hit);
+                    }
+                }
+            }
+            expansion
+        }
         QueryExpr::Not(child) => {
-            (!eval_expr_fast(plan, child, TextField::PageName, original, lower))
-                // A successful exclusion contributes no positive relevance and
-                // therefore must not weaken the class supplied by an AND sibling.
-                .then_some((0, ObjectiveMatchClass::Exact))
+            (if plan.transliteration {
+                page_base_score(plan, child, original, lower).is_none()
+            } else {
+                !eval_expr_fast(plan, child, TextField::PageName, original, lower)
+            })
+            // A successful exclusion contributes no positive relevance and
+            // therefore must not weaken the class supplied by an AND sibling.
+            .then_some((0, ObjectiveMatchClass::Exact))
         }
     }
 }
@@ -553,6 +572,7 @@ mod tests {
             .0;
         let graph = store.whole_graph().unwrap();
         let request = crate::SearchRequest {
+            transliteration: false,
             text: "Hit".into(),
             within: None,
             page_limit: 10,

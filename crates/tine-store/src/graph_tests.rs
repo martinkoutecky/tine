@@ -57,6 +57,7 @@ fn search_count(store: &Store, query: &str) -> usize {
         .unwrap()
         .search(
             &SearchRequest {
+                transliteration: false,
                 text: query.into(),
                 within: None,
                 page_limit: 10,

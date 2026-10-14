@@ -81,6 +81,17 @@ describe("fullWidthRefReplace (Chinese IME full-width page refs)", () => {
 });
 
 describe("orderAcItems (autocomplete default action)", () => {
+  it("keeps native substring and fuzzy above expansions in every completion policy", () => {
+    for (const policy of ["adaptive", "existing", "typed"] as const) {
+      for (const [query, names] of [["beijing", ["x beijing", "北京"]], ["bj", ["bjmarker", "beijing", "北京", "北景"]]] as const) {
+        const rows = names.map((name) => ({ name, item: name, matchClass: name === "北京" || name === "北景" ? "transliteration" as const : "fuzzy" as const }));
+        const ordered = orderAcItems(rows, { name: query, item: "CREATE" }, { query, policy });
+        const native = ordered.filter((name) => name !== "CREATE" && !["北京", "北景"].includes(name));
+        for (const name of native) expect(ordered.indexOf(name)).toBeLessThan(ordered.indexOf("北京"));
+        expect(ordered.indexOf("CREATE")).toBeLessThan(ordered.indexOf("北京"));
+      }
+    }
+  });
   const matches = [
     { name: "Match One", item: "m1" },
     { name: "Match Two", item: "m2" },

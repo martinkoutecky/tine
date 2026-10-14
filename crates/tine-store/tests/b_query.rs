@@ -109,6 +109,7 @@ fn b_query_search_10k_bench() {
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
     let graph = store.whole_graph().unwrap();
     let request = SearchRequest {
+        transliteration: false,
         text: "searchable".into(),
         within: None,
         page_limit: 20,

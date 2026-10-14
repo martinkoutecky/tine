@@ -46,6 +46,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "editor", label: "Link autocomplete default", description: "OG adaptive existing typed page tag completion", level: "advanced" },
   { tab: "editor", label: "Switch to an already-open tab when navigating", description: "reuse tabs", level: "advanced" },
   { tab: "editor", label: "Learn Ctrl+K choices", description: "adaptive launcher ranking reset history", level: "advanced" },
+  { tab: "editor", label: msg("settings-pinyin-label"), description: msg("settings-pinyin-description"), aliases: ["pinyin"], level: "advanced" },
   { tab: "editor", label: "Spell checker", description: "dictionaries languages spelling" },
   { tab: "editor", label: "Copy a parent block's sub-blocks", description: "clipboard subtree", level: "advanced" },
   { tab: "editor", label: "Strip collapsed:: when copying", description: "clipboard properties", level: "advanced" },

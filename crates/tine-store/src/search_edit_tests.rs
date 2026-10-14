@@ -73,6 +73,7 @@ fn save_named(store: &Store, name: &str, edit: impl FnOnce(&mut tine_core::model
 fn search_matches(store: &Store, text: &str) -> bool {
     let view = store.whole_graph().unwrap();
     let req = tine_store::SearchRequest {
+        transliteration: false,
         text: text.into(),
         within: None,
         page_limit: 20,
