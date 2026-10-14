@@ -584,8 +584,11 @@ export function toggleTheme() {
 }
 
 // Left sidebar open/collapsed — persisted (default open; store only when collapsed).
+// In phone drawer mode the left sidebar is a transient drawer: it never starts
+// open (launch or restored session), else it covers the first page (OG mobile
+// also starts closed). The persisted desktop preference is left untouched.
 const SIDEBAR_OPEN_KEY = "logseq-claude.sidebarOpen";
-export const [sidebarOpen, setSidebarOpen] = createSignal(loadStr(SIDEBAR_OPEN_KEY) !== "0");
+export const [sidebarOpen, setSidebarOpen] = createSignal(!mobileDrawerMode() && loadStr(SIDEBAR_OPEN_KEY) !== "0");
 export const [favoritesSectionExpanded, setFavoritesSectionExpanded] = createSignal(true);
 export const [recentSectionExpanded, setRecentSectionExpanded] = createSignal(true);
 
@@ -635,7 +638,7 @@ export interface SidebarSessionState {
 }
 
 export function applySidebarSession(s: SidebarSessionState) {
-  if (typeof s.left === "boolean") setSidebarOpen(s.left);
+  if (typeof s.left === "boolean") setSidebarOpen(s.left && !mobileDrawerMode());
   const items = Array.isArray(s.items) ? s.items.filter(validSidebarItem) : undefined;
   // Session application can replace the mounted collection before it changes
   // the open signal. Prepare the old surfaces first, while their textarea blur
