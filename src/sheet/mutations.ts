@@ -1,3 +1,4 @@
+import { msg, t } from "../i18n";
 import { blockIsGridView, blockPageReadOnly, blockProperty, blockSubtreeMarkdown, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineChildren, outlineFits, replaceChildOrders, setRaw, pageByName, setBlockProperty, undo, withUndoUnit, node as docNode } from "../document";
 import { clipboardWriteRevision, copyRich } from "../clipboard";
 import { captureBinding, bindingCurrent } from "../binding";
@@ -480,7 +481,7 @@ export async function cutSheetSelection(sel: SheetMutationSelection): Promise<vo
       && sheetSelectionOutlineMarkdown(sel) === before
       && gridRows(sel.gridId)) clearSheetSelection(sel);
   } catch {
-    pushToast("Couldn't cut cells: clipboard write failed.", "error");
+    pushToast(msg("sheet-couldn-t-cut-cells-clipboard-write-failed"), "error");
   }
 }
 
@@ -712,7 +713,7 @@ function cellHasVisibleTextOrChildren(id: string): boolean {
 }
 
 function pushPasteOverwriteToast(): void {
-  pushToast("Pasted over existing cells.", "info", { action: { label: "Undo", run: () => undo() } });
+  pushToast(msg("sheet-pasted-over-existing-cells"), "info", { action: { get label() { return t("sheet-undo"); }, run: () => undo() } });
 }
 
 export function splatStructuralSheetSelection(
@@ -732,7 +733,7 @@ export function splatStructuralSheetSelection(
   // starts three levels below. Check all cells before creating rows or clearing
   // any populated destination.
   if (rows.some((row) => row.children.some((cell) => cell.children.length && !outlineFits(sel.gridId, cell.children, 3)))) {
-    pushToast("Pasted outline is too deep", "error");
+    pushToast(msg("sheet-pasted-outline-is-too-deep"), "error");
     return null;
   }
   const result =

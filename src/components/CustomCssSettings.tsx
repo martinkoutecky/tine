@@ -2,11 +2,12 @@ import { Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { customCssDisabled, setCustomCssDisabled } from "../customCss";
 import { ownedWhen, readOwned } from "../owned";
 import { openCssEditor } from "../cssEditor";
-import { t } from "../i18n";
+import { msg, t } from "../i18n";
 import { platformKind } from "../platform";
 import { isMac } from "../nativeChrome";
 import { openDevtools } from "../ui";
 import { Field, Toggle } from "./settingsField";
+import { Rich } from "../i18n/Rich";
 
 /** Settings > Appearance > Custom CSS (GH #610/#372): the affordances that
  *  make graph and device CSS discoverable and recoverable.
@@ -24,8 +25,7 @@ export function CustomCssSettings(): JSX.Element {
     });
   });
   return (
-    <>
-      <div class="settings-section">Custom CSS</div>
+    <><div class="settings-section">{t("settings-custom-css")}</div>
         <Field
           label={t("css-edit-graph")}
           hint={t("css-graph-hint")}
@@ -38,17 +38,16 @@ export function CustomCssSettings(): JSX.Element {
         <button class="settings-btn" onClick={() => void openCssEditor(true)}>{t("css-edit-global")}</button>
       </Field>
       <Field
-        label="Disable custom CSS"
+        label={t("settings-search-disable-custom-css")}
         hint={t("css-safe-hint")}
       >
         <Toggle on={customCssDisabled()} onClick={() => setCustomCssDisabled(!customCssDisabled())} />
       </Field>
       <Show when={desktop()}>
         <Field
-          label="Developer tools"
-          hint={<>Opens the inspector to see which rules style an element (also <kbd>{isMac ? "Cmd" : "Ctrl"}</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd>).</>}
-        >
-          <button class="settings-btn" onClick={() => openDevtools()}>Open developer tools</button>
+          label={t("settings-search-developer-tools")}
+          hint={<Rich message={msg("settings-inspector-hint", { platform: isMac ? "mac" : "other" })} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} />}
+        ><button class="settings-btn" onClick={() => openDevtools()}>{t("settings-open-developer-tools")}</button>
         </Field>
       </Show>
     </>

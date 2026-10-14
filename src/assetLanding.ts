@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Capture the graph binding for asset writes/opens before any await. Rust rejects
 // stale bindings before touching a graph. The editor check separately prevents a
 // completed write from inserting a reference or reclaiming focus in a new editor.
@@ -43,7 +44,7 @@ export function assetEditorIsCurrent(token: AssetEditorToken, textarea: HTMLText
 }
 
 export function reportStaleAsset(): void {
-  pushToast("The asset was saved, but it was not inserted because the graph or block changed.", "info");
+  pushToast(msg("asset-landing-the-asset-was-saved-but-it-was-not"), "info");
 }
 
 const graphName = (root: string) => root.split(/[\\/]/).filter(Boolean).pop() ?? root;
@@ -82,6 +83,6 @@ export async function importCaptureToOrigin(token: AssetEditorToken, path: strin
     }
   }
   if (origin === undefined || origin === graphMeta()?.root) return stored;
-  pushToast(`Saved ${stored} to the assets/ of graph “${graphName(origin)}”; it was not inserted because the graph changed.`, "info");
+  pushToast(msg("asset-landing-saved-to-the-assets-of-graph-it-was", { stored: String(stored), graphName: String(graphName(origin)) }), "info");
   return null;
 }

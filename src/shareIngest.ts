@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 /** S1 of the native-integrations batch (ADR 0073): shared items wait in the
  * app-owned share inbox (src-tauri/src/share_inbox.rs) and reach the graph
  * only here, through the single quick-capture writer (`appendToJournalDay`,
@@ -44,7 +45,7 @@ import { asOutlineBlock, captureTime, shapeShare } from "./shareShape";
 import type { NativeShareInbox, ShareInboxItem, SharePrepared } from "./nativeTineLinks";
 
 /** The toast the in-app quick capture shows (App.tsx `installQuickCaptureReceiver`). */
-export const CAPTURED_TOAST = "Captured to today's journal";
+export const CAPTURED_TOAST = msg("share-ingest-captured");
 
 /** done: written and removed; kept: retried later, the user is told;
  * elsewhere: bound to another graph, kept silently; stale: the binding moved. */
@@ -186,26 +187,26 @@ export async function ingestShares(): Promise<void> {
   try {
     const listing = await inbox.list();
     if (listing.rejected > 0 && owner()) pushToast(
-      `${listing.rejected === 1 ? "A shared item" : `${listing.rejected} shared items`} couldn't be read and ${listing.rejected === 1 ? "was" : "were"} kept aside in Tine's share inbox.`, "error");
+      msg("share-ingest-rejected", { count: listing.rejected }), "error");
     for (const item of listing.items) {
       let outcome: Outcome;
       try {
         outcome = await ingestOne(inbox, item, owner);
       } catch (error) {
         if (!owner()) return;
-        pushToast(`A shared item couldn't be added to today's journal: ${String(error)}. It is kept and will be retried.`, "error");
+        pushToast(msg("share-ingest-a-shared-item-couldn-t-be-added-to", { error: String(error) }), "error");
         continue;
       }
       if (outcome === "stale") return;
       if (outcome === "elsewhere") continue;
       if (outcome === "kept") {
-        pushToast("A shared item couldn't be added to today's journal. It is kept and will be retried.", "error");
+        pushToast(msg("share-ingest-shared-item-retry"), "error");
         continue;
       }
-      pushToast(CAPTURED_TOAST, "info");
+      pushToast(msg(CAPTURED_TOAST.id), "info");
     }
   } catch (error) {
-    if (owner()) pushToast(`Couldn't read Tine's share inbox: ${String(error)}`, "error");
+    if (owner()) pushToast(msg("share-ingest-couldn-t-read-tine-s-share-inbox", { error: String(error) }), "error");
   }
 }
 

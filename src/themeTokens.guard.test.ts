@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { msg, renderEnglish, type MessageId } from "./i18n";
 
 // GH #610: the public `--tine-*` tokens are a promise to users' custom.css.
 // docs/contracts/theme-tokens.md is the single source of truth. This guard
@@ -115,8 +116,9 @@ describe("public theme tokens (GH #610)", () => {
     const guide = readFileSync(GUIDE, "utf8");
     expect([...tableTokens(guide, /^- ## 3\. The supported names/m)].sort()).toEqual([...publicTokens].sort());
     const settings = readFileSync("src/components/CustomCssSettings.tsx", "utf8");
-    for (const control of ["Edit custom.css", "Disable custom CSS", "Developer tools"]) {
-      expect(settings, `Settings must show the control the Guide names: ${control}`).toContain(control === "Edit custom.css" ? 'label={t("css-edit-graph")}' : `label="${control}"`);
+    for (const id of ["css-edit-graph", "settings-search-disable-custom-css", "settings-search-developer-tools"] satisfies MessageId[]) {
+      const control = renderEnglish(msg(id));
+      expect(settings, `Settings must show the control the Guide names: ${control}`).toContain(`label={t("${id}")}`);
       expect(guide, `the Guide must name the Settings control ${control}`).toContain(`**${control}**`);
     }
   });

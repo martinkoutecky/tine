@@ -13,8 +13,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Plugin API 0.3 adds the `color` setting type. Tine Beta runs both 0.2 and 0.3 plugins; the plugin registry offers each Tine only the versions its plugin API runs, so an older Tine keeps the last version it accepts instead of refusing an update.
 - Optional Mandarin Pinyin and syllable-initial matching for Han page titles and aliases, preserving native-name relevance (GH #151).
 
+### Changed
+
+- Existing `{{query}}` blocks with scheduled/deadline date windows now ask to be converted to `{{tine-query}}`, preserving their date-window meaning with Undo (GH #422).
+
 ### Fixed
 
+- Localized rich-text sentences share one renderer that preserves literal graph text, with clearer tags and variables for translators (GH #107).
+- Interface text across the app (shell, settings, help, plugins, editor, PDF, rendering, notices) now comes from the localization catalog, so it can be translated; English wording, graph syntax and English command matching are unchanged (GH #107).
 - Linked References filter chips merge each page's aliases under its canonical name, count each reference block once, and save canonical filters in Logseq's `filters::` property (GH #433). Several included chips now narrow to references carrying all of them, as in Logseq (previously any of them).
 - Bullet threading highlights a continuous active ancestry in both display modes, with configurable thickness, theme-aware or custom color, and optional hierarchy colors (GH #129, [bullet-threading plugin #2](https://github.com/martinkoutecky/tine-plugin-bullet-threading/issues/2)).
 - **Page previews keep page actions reachable:** use the preview header's … button after holding a mobile page link or tag (GH #655).
@@ -22,6 +28,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Scheduled/deadline query windows now save as `{{tine-query …}}` instead of Logseq syntax that silently drops the date condition (GH #422).
 - Referenced journal days appear in the Journals feed without creating a file; future mentions are grouped in collapsed Upcoming above today (GH #481).
+- Authored parent-relative and absolute file links can open outside the graph folder through the existing desktop file opener, with the resolved path on hover and no strike-through (GH #457).
+- NEXT journal queries saved in Logseq configs now support direct journal references and exclusive date bounds; unsupported config queries show their title and a plain explanation with expandable technical details (GH #690).
 - **Crash recovery no longer switches off on Android** ("Crash recovery is off for this graph … Permission denied"). Tine tried to sync system folders above its own app data, which Android does not allow. GH #685
 - Tab drops at all four pane edges split the hovered pane, matching the drop preview even at the layout's outer edges (GH #499).
 - Raw HTML iframe dimensions honor numeric HTML attributes as pixels, percentages and inline sizing without the default embed width cap (GH #54).

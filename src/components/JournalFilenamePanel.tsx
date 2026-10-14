@@ -1,3 +1,4 @@
+import { msg, t } from "../i18n";
 import { For, Show, createEffect, createSignal, on, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
@@ -22,7 +23,7 @@ export function JournalFilenamePanel(): JSX.Element {
       if (listed.kind !== "stale") setPending(listed.value);
     } catch (e) {
       setPending([]);
-      pushToast(`Couldn’t list journal files to rename: ${String(e)}`, "error");
+      pushToast(msg("journal-filename-panel-couldn-t-list-journal-files-to-rename", { error: String(e) }), "error");
     }
   };
   // A graph switch or journal-format change moves the epoch and can change the proposals.
@@ -33,9 +34,7 @@ export function JournalFilenamePanel(): JSX.Element {
     const migrations = pending();
     const count = migrations.length;
     const confirmed = await readOwned(owner, backend().confirm(
-      `Rename ${count} journal file${count === 1 ? "" : "s"} to their date names?\n\n` +
-        "A snapshot is taken first, so the original names stay in Backups & recovery. " +
-        "Nothing is overwritten: a file whose date name is taken is left alone."
+      t("journal-filename-panel-confirmation", { count })
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     setBusy(true);
@@ -43,28 +42,22 @@ export function JournalFilenamePanel(): JSX.Element {
       const result = await writeOwned(owner, backend().applyJournalFilenameMigrations(migrations));
       if (result.kind === "stale") return;
       const { migrated, skipped } = result.value;
-      pushToast(`Renamed ${migrated} journal file${migrated === 1 ? "" : "s"}`, "success");
+      pushToast(msg("journal-filename-panel-renamed", { count: migrated }), "success");
       const skippedMessage = journalMigrationSkipMessage({ migrated, skipped });
       if (skippedMessage) pushToast(skippedMessage, "info");
       await load();
       await refreshJournalConflicts();
     } catch (e) {
       // A durable failure from a graph the user already left is not this graph's.
-      if (owner()) pushToast(`Couldn’t rename them: ${String(e)}`, "error");
+      if (owner()) pushToast(msg("journal-filename-panel-couldn-t-rename-them", { error: String(e) }), "error");
     } finally {
       setBusy(false);
     }
   };
   return (
     <Show when={pending().length}>
-      <div class="settings-section" style={{ "margin-top": "18px" }}>
-        Journal files named by title
-      </div>
-      <div class="settings-hint settings-block">
-        These journal files aren’t named after their date, so Tine can’t place them in the journal
-        feed and their days look empty. Renaming them fixes that, but it changes files you own, so
-        Tine never does it on its own. Version control and sync will see these as renames.
-      </div>
+      <div class="settings-section" style={{ "margin-top": "18px" }}>{t("journal-filename-panel-journal-files-named-by-title")}</div>
+      <div class="settings-hint settings-block">{t("journal-filename-panel-these-journal-files-aren-t-named-after-their")}</div>
       <For each={pending()}>
         {(m) => (
           <div class="settings-block">
@@ -74,7 +67,7 @@ export function JournalFilenamePanel(): JSX.Element {
         )}
       </For>
       <button class="settings-btn" disabled={busy()} onClick={() => void apply()}>
-        {busy() ? "Renaming…" : "Rename to date names"}
+        {busy() ? t("journal-filename-panel-renaming") : t("journal-filename-panel-rename-to-date-names")}
       </button>
     </Show>
   );

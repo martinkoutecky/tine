@@ -34,17 +34,16 @@ function NameForm(props: { request: GraphNameRequest }) {
   };
   return <div class="modal-overlay graph-name-overlay" onClick={cancel}>
     <form ref={root} class="export-modal graph-name-prompt" role="dialog" aria-modal="true"
-      aria-label="Create a new graph" onClick={event => event.stopPropagation()} onSubmit={submit}>
-      <div class="export-head">Create a new graph</div>
-      <label class="graph-name-field">Graph name
-        <input ref={input} value={name()} disabled={busy()} aria-invalid={!!error()}
+      aria-label={t("graph-name-prompt-create-a-new-graph")} onClick={event => event.stopPropagation()} onSubmit={submit}>
+      <div class="export-head">{t("graph-name-prompt-create-a-new-graph")}</div>
+      <label class="graph-name-field">{t("graph-name-prompt-graph-name")}<input ref={input} value={name()} disabled={busy()} aria-invalid={!!error()}
           aria-describedby={error() ? "graph-name-error" : undefined}
           onInput={event => { setName(event.currentTarget.value); setError(""); }} />
       </label>
       <Show when={error()}><p id="graph-name-error" class="graph-name-error" role="alert">{error() === "wsl-rootfs" ? t("graph-wsl-rootfs-refused") : error()}</p></Show>
       <div class="export-foot">
-        <button type="button" class="export-btn-secondary" disabled={busy()} onClick={cancel}>Cancel</button>
-        <button type="submit" class="export-btn-primary" disabled={busy()}>{busy() ? "Creating…" : "Create graph"}</button>
+        <button type="button" class="export-btn-secondary" disabled={busy()} onClick={cancel}>{t("graph-name-prompt-cancel")}</button>
+        <button type="submit" class="export-btn-primary" disabled={busy()}>{busy() ? t("graph-name-prompt-creating") : t("graph-name-prompt-create-graph")}</button>
       </div>
     </form>
   </div>;

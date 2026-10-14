@@ -1,0 +1,27 @@
+# Tine interface text. Graph names, paths and inserted syntax in variables stay unchanged.
+editor-today = Today
+editor-last-7-days = Last 7 days
+editor-last-30-days = Last 30 days
+editor-next-7-days = Next 7 days
+editor-this-week = This week
+editor-could-not-load-legacy-link-preference = Could not load legacy link preference.
+editor-could-not-save-migrated-link-autocomplete-policy = Could not save migrated link autocomplete policy.
+editor-could-not-load-link-autocomplete-policy = Could not load link autocomplete policy.
+editor-aliases = Aliases
+editor-other-names-this-page-answers-to-in-links-comma-separated = Other names this page answers to in [[links]] (comma-separated)
+editor-tags = Tags
+editor-page-level-tags-comma-separated = Page-level tags (comma-separated)
+editor-display-title = Display title
+editor-override-the-shown-title-the-file-name-stays-the-same = Override the shown title (the file name stays the same)
+editor-icon = Icon
+editor-an-emoji-character-shown-with-the-title = An emoji/character shown with the title
+editor-public = Public
+editor-include-this-page-when-exporting-publishing-public-pages = Include this page when exporting/publishing public pages
+editor-none = (none)
+editor-contains-both-terms = contains both terms
+editor-contains-either-term = contains either term
+editor-contains-foo-excludes-draft = contains foo, excludes draft
+editor-matches-adjacent-words = matches adjacent words
+editor-case-sensitive-regular-expression = case-sensitive regular expression
+editor-link = Link
+editor-markdown-link = Markdown link

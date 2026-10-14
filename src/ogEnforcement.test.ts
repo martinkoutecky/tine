@@ -20,6 +20,8 @@ describe("og campaign enforcement", () => {
     expect(isProduction("crates/tine-store/src/page_host/driver_tests.rs")).toBe(false);
     expect(isProduction("crates/tine-store/src/page_host/driver.rs")).toBe(true);
     expect(isProduction("src-tauri/src/owner/output_tests/mod.rs")).toBe(false);
+    expect(isProduction("src/i18n/messages.gen.ts")).toBe(false);
+    expect(isProduction("src/i18n/messages.ts")).toBe(true);
     expect(isProduction("src-tauri/src/owner/serve.rs")).toBe(true);
     expect(isProduction("crates/tine-store/src/contests.rs")).toBe(true);
   });

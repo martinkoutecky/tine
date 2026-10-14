@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { BlockList } from "./BlockList";
 import { resizeSidebar, commitSidebarWidth, setLeftSidebarReserve } from "../sidebarSizing";
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
@@ -135,7 +136,7 @@ export function RightSidebar(): JSX.Element {
     <Show when={rightSidebarOpen()}>
       <MobileDrawerPanel
         side="right"
-        label="Reference sidebar"
+        label={t("right-sidebar-reference-sidebar")}
         class="right-sidebar"
         style={{
           flex: `0 0 ${rightSidebarWidth()}px`,
@@ -159,14 +160,14 @@ export function RightSidebar(): JSX.Element {
           }}
         />
         <div class="right-sidebar-header">
-          <span>Sidebar</span>
+          <span>{t("right-sidebar-sidebar")}</span>
           <div class="rs-header-actions">
             <button
               ref={actionsButton}
               class="rs-actions-button"
               type="button"
-              title="Sidebar item actions"
-              aria-label="Sidebar item actions"
+              title={t("right-sidebar-sidebar-item-actions")}
+              aria-label={t("right-sidebar-sidebar-item-actions")}
               aria-haspopup="menu"
               aria-expanded={actionsOpen()}
               data-right-sidebar-actions
@@ -174,12 +175,12 @@ export function RightSidebar(): JSX.Element {
             >⋯</button>
             <Show when={actionsOpen()}>
               <div ref={actionsMenu} class="rs-actions-menu" role="menu" onKeyDown={onMenuKeyDown}>
-                <button type="button" role="menuitem" data-right-sidebar-action="collapse-all" onClick={() => runBulk("collapse")}>Collapse all</button>
-                <button type="button" role="menuitem" data-right-sidebar-action="expand-all" onClick={() => runBulk("expand")}>Expand all</button>
-                <button type="button" role="menuitem" data-right-sidebar-action="close-all" onClick={() => runBulk("close")}>Close all</button>
+                <button type="button" role="menuitem" data-right-sidebar-action="collapse-all" onClick={() => runBulk("collapse")}>{t("right-sidebar-collapse-all")}</button>
+                <button type="button" role="menuitem" data-right-sidebar-action="expand-all" onClick={() => runBulk("expand")}>{t("right-sidebar-expand-all")}</button>
+                <button type="button" role="menuitem" data-right-sidebar-action="close-all" onClick={() => runBulk("close")}>{t("right-sidebar-close-all")}</button>
               </div>
             </Show>
-            <button class="rs-close" title="Close sidebar (t r)" onClick={() => {
+            <button class="rs-close" title={t("right-sidebar-close-sidebar-t-r")} onClick={() => {
               if (mobileDrawerMode()) dismissDrawerAndRestore("explicit");
               else toggleRightSidebar();
             }}>✕</button>
@@ -189,9 +190,7 @@ export function RightSidebar(): JSX.Element {
           <Show
             when={rightSidebar().length > 0}
             fallback={
-              <div class="rs-empty">
-                Nothing open. Shift-click a page or block to open it here.
-              </div>
+              <div class="rs-empty">{t("right-sidebar-nothing-open-shift-click-a-page-or-block")}</div>
             }
           >
             <For each={rightSidebar()}>
@@ -351,15 +350,15 @@ function ItemActions(props: { index: number; surfaceKey: string; page?: { name: 
         ref={button}
         class="rs-actions-button"
         type="button"
-        title="More actions"
-        aria-label="More actions"
+        title={t("right-sidebar-more-actions")}
+        aria-label={t("right-sidebar-more-actions")}
         aria-haspopup="menu"
         aria-expanded={open()}
         aria-controls={open() ? menuId : undefined}
         data-right-sidebar-item-actions
         onClick={toggleOpen}
       >⋯</button>
-      <button class="rs-close" onClick={props.onClose} title="Close">✕</button>
+      <button class="rs-close" onClick={props.onClose} title={t("right-sidebar-close")}>✕</button>
       <Show when={open()}>
         <FloatingPortal>
           <div
@@ -370,24 +369,24 @@ function ItemActions(props: { index: number; surfaceKey: string; page?: { name: 
             style={{ top: `${pos().top}px`, right: `${pos().right}px` }}
             onKeyDown={onKeyDown}
           >
-            <button type="button" role="menuitem" data-right-sidebar-item-action="close" onClick={run(props.onClose)}>Close</button>
+            <button type="button" role="menuitem" data-right-sidebar-item-action="close" onClick={run(props.onClose)}>{t("right-sidebar-close")}</button>
             <Show when={count() > 1}>
-              <button type="button" role="menuitem" data-right-sidebar-item-action="close-others" onClick={run(() => { prepareOthers(); closeOtherRightSidebarItems(props.index); })}>Close others</button>
-              <button type="button" role="menuitem" data-right-sidebar-item-action="close-all" onClick={run(() => { rightSidebar().forEach((it) => prepareSurfaceForUnmount(surfaceKey(it))); closeAllRightSidebarItems(); })}>Close all</button>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="close-others" onClick={run(() => { prepareOthers(); closeOtherRightSidebarItems(props.index); })}>{t("right-sidebar-close-others")}</button>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="close-all" onClick={run(() => { rightSidebar().forEach((it) => prepareSurfaceForUnmount(surfaceKey(it))); closeAllRightSidebarItems(); })}>{t("right-sidebar-close-all")}</button>
             </Show>
             <Show
               when={props.collapsed}
-              fallback={<button type="button" role="menuitem" data-right-sidebar-item-action="collapse" onClick={run(() => { prepareSurfaceForUnmount(props.surfaceKey); setRightSidebarItemCollapsed(props.index, true); })}>Collapse</button>}
+              fallback={<button type="button" role="menuitem" data-right-sidebar-item-action="collapse" onClick={run(() => { prepareSurfaceForUnmount(props.surfaceKey); setRightSidebarItemCollapsed(props.index, true); })}>{t("right-sidebar-collapse")}</button>}
             >
-              <button type="button" role="menuitem" data-right-sidebar-item-action="expand" onClick={run(() => setRightSidebarItemCollapsed(props.index, false))}>Expand</button>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="expand" onClick={run(() => setRightSidebarItemCollapsed(props.index, false))}>{t("right-sidebar-expand")}</button>
             </Show>
             <Show when={count() > 1}>
-              <button type="button" role="menuitem" data-right-sidebar-item-action="collapse-others" onClick={run(() => { prepareOthers(); collapseOtherRightSidebarItems(props.index); })}>Collapse others</button>
-              <button type="button" role="menuitem" data-right-sidebar-item-action="collapse-all" onClick={run(() => { rightSidebar().forEach((it) => prepareSurfaceForUnmount(surfaceKey(it))); setAllRightSidebarItemsCollapsed(true); })}>Collapse all</button>
-              <button type="button" role="menuitem" data-right-sidebar-item-action="expand-all" onClick={run(() => setAllRightSidebarItemsCollapsed(false))}>Expand all</button>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="collapse-others" onClick={run(() => { prepareOthers(); collapseOtherRightSidebarItems(props.index); })}>{t("right-sidebar-collapse-others")}</button>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="collapse-all" onClick={run(() => { rightSidebar().forEach((it) => prepareSurfaceForUnmount(surfaceKey(it))); setAllRightSidebarItemsCollapsed(true); })}>{t("right-sidebar-collapse-all")}</button>
+              <button type="button" role="menuitem" data-right-sidebar-item-action="expand-all" onClick={run(() => setAllRightSidebarItemsCollapsed(false))}>{t("right-sidebar-expand-all")}</button>
             </Show>
             <Show when={props.page}>
-              {(p) => <button type="button" role="menuitem" data-right-sidebar-item-action="open-as-page" onClick={run(() => openPageTarget({ name: p().name, pageKind: p().pageKind, path: p().path }))}>Open as page</button>}
+              {(p) => <button type="button" role="menuitem" data-right-sidebar-item-action="open-as-page" onClick={run(() => openPageTarget({ name: p().name, pageKind: p().pageKind, path: p().path }))}>{t("right-sidebar-open-as-page")}</button>}
             </Show>
           </div>
         </FloatingPortal>
@@ -418,7 +417,7 @@ function PageItem(props: {
   return (
     <div class="rs-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
       <div class="rs-item-head" onPointerDown={(event) => startRowDrag(props.row.index, event)}>
-        <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? "Expand sidebar item" : "Collapse sidebar item"} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
+        <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? t("right-sidebar-expand-sidebar-item") : t("right-sidebar-collapse-sidebar-item")} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
           <span aria-hidden="true">▸</span>
         </button>
         <a class="rs-item-title" onMouseDown={internalLinkMouseDown} onClick={(e) => {
@@ -503,7 +502,7 @@ function BlockItem(props: {
   return (
     <div class="rs-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
       <div class="rs-item-head" onPointerDown={(event) => startRowDrag(props.row.index, event)}>
-        <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? "Expand sidebar item" : "Collapse sidebar item"} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
+        <button class="rs-item-toggle" type="button" aria-label={props.collapsed ? t("right-sidebar-expand-sidebar-item") : t("right-sidebar-collapse-sidebar-item")} aria-expanded={!props.collapsed} aria-controls={bodyId} data-right-sidebar-item-toggle onClick={(event) => props.onToggle(event.currentTarget)}>
           <span aria-hidden="true">▸</span>
         </button>
         <a
@@ -514,7 +513,7 @@ function BlockItem(props: {
             block: props.item.uuid,
             path: props.item.path,
           })}
-          title={`On ${props.item.page}`}
+          title={t("right-sidebar-on", { page: String(props.item.page) })}
         >
           {title()}
         </a>
@@ -528,7 +527,7 @@ function BlockItem(props: {
               when={pageLoaded()}
               fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}
             >
-              <div id={bodyId} class="rs-item-body rs-item-missing">This block is no longer available.</div>
+              <div id={bodyId} class="rs-item-body rs-item-missing">{t("right-sidebar-this-block-is-no-longer-available")}</div>
             </Show>
           }
         >

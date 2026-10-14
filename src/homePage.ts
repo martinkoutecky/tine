@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Graph home page: the ONE answer to "which page is home" (I-12). OG reads
 // config.edn `:default-home {:page "..."}` (state/get-default-home) and keeps it
 // only while that page exists (container.cljs `get-default-home-if-valid`); the
@@ -55,7 +56,7 @@ export async function openConfiguredHomePage(): Promise<HomeOutcome> {
     return "opened";
   } catch (error) {
     if (!owner()) return "stale";
-    pushToast(`Couldn't open the home page "${name}". (${String(error)})`, "error");
+    pushToast(msg("home-page-couldn-t-open-the-home-page", { name: String(name), error: String(error) }), "error");
     return "unresolved";
   }
 }

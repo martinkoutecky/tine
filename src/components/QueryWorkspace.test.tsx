@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { initParser } from "../render/parse";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import type { PaneRouter, QueryRoute } from "../router";
@@ -24,6 +25,8 @@ import { contextMenu, closeAllRightSidebarItems, rightSidebar } from "../ui";
 import { resetPaneLayoutToSingle, paneRouter, layoutPaneIds } from "../panes";
 import { resetQueryTextOpenForTests } from "../navSettings";
 
+beforeAll(initParser);
+
 afterEach(() => {
   clearTransientLayersForTest();
   resetQueryTextOpenForTests(false);
@@ -41,6 +44,18 @@ function materializeDeps(overrides: Partial<MaterializeQueryDependencies> = {}):
 }
 
 describe("D-18 workspace date-window serialization", () => {
+  it("a converted workspace saves its complete Tine macro with its effective sample", async () => {
+    const source = "{{tine-query @block scheduled between today and '+7d'}}";
+    const query: Query = { anchor: "block", filter: { kind: "true" }, source: { kind: "builder" }, diagnostics: [] };
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({ query, view: {} });
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("@block scheduled between today and '+7d'");
+    const result = await materializeQueryWorkspace({ title: "Converted", sourceKind: "dsl", source, blockDisplay: { sample: 7 }, presentation: "list", routeId: "converted" }, materializeDeps({ serializeDsl: serializeWorkspaceDsl }));
+    expect(backend().parseQuery).toHaveBeenCalledWith("@block scheduled between today and '+7d'", "macro_tql");
+    expect(result.ok && result.page.blocks[0].raw).toContain(`${source}\n`);
+    expect(result.ok && result.page.blocks[0].raw).toContain("\ntine.sample:: 7");
+    vi.restoreAllMocks();
+  });
   it("saves the engine's Tine query spelling for an agenda window", async () => {
     const source = "(and (between scheduled today +7d) (task TODO))";
     const query: Query = { anchor: "block", filter: { kind: "true" }, source: { kind: "builder" }, diagnostics: [] };
@@ -370,6 +385,34 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  it("an opened DSL window refuses, converts only on click and can be undone before saving", async () => {
+    const source = "(and (task TODO) (between scheduled today +7d))";
+    const tql = "@block and task = 'TODO' and scheduled between today and '+7d'";
+    const route: QueryRoute = { kind: "query", id: "refusal", sourceKind: "dsl", source, presentation: "list" };
+    const query: Query = { anchor: "block", filter: { kind: "true" }, diagnostics: [], source: { kind: "builder" } };
+    const deps = workspaceDeps();
+    vi.mocked(deps.parseQuery).mockImplementation(async (text, dialect) => dialect === "macro_tql"
+      ? { query, view: {} }
+      : { query: { ...query, diagnostics: [{ kind: "syntax", message: "date window refusal" }] }, view: { sample: 7 }, og_hint: { bare: [], no_conditions: false, date_windows: true, rewrites: [{ rewrite: "convert", query }] } });
+    vi.mocked(deps.queryRun).mockImplementation(async (query) => ({ anchor: "block", groups: [], diagnostics: query.diagnostics, total: 0, exceeded: false, report: { ran: [], ignored: [], supported: true } }));
+    vi.spyOn(backend(), "printQuery").mockResolvedValue(tql);
+    const router = routerMock(route);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.querySelector(".query-og-hint")?.textContent).toContain("Logseq ignores scheduled/deadline date windows"));
+      expect(deps.createPage).not.toHaveBeenCalled();
+      expect(root.querySelector(".query-workspace-status")?.textContent).not.toContain("0 results");
+      root.querySelector<HTMLButtonElement>('[data-rewrite="convert"]')!.click();
+      await waitFor(() => expect(deps.parseQuery).toHaveBeenCalledWith(tql, "macro_tql"));
+      expect(router.updateActiveQuery).toHaveBeenCalledWith({ source: `{{tine-query ${tql}}}`, sourceKind: "dsl" });
+      expect(deps.queryRun).toHaveBeenLastCalledWith(query, expect.objectContaining({ sample: 7 }));
+      expect(deps.createPage).not.toHaveBeenCalled();
+      root.querySelector<HTMLButtonElement>(".query-conversion-undo")!.click();
+      await waitFor(() => expect(root.querySelector(".query-og-hint")).not.toBeNull());
+      expect(router.updateActiveQuery).toHaveBeenCalledWith({ source, sourceKind: "dsl" });
+    } finally { dispose(); vi.restoreAllMocks(); }
+  });
   it("GH #660: a saved revision refreshes routed query membership after editing finishes", async () => {
     const route: QueryRoute = { kind: "query", id: "membership", sourceKind: "search", source: "alpha", presentation: "search" };
     const deps = workspaceDeps();
@@ -571,6 +614,7 @@ describe("QueryWorkspace", () => {
       ? Promise.resolve({ query: initial, view: {} } as never)
       : new Promise((finish) => { finishParse = finish; }));
     const pending: Array<{ query: typeof initial; finish: (text: string) => void }> = [];
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
     vi.spyOn(backend(), "printQuery").mockImplementation((query) => new Promise<string>((finish) => {
       pending.push({ query: query as typeof initial, finish });
     }));
@@ -581,11 +625,13 @@ describe("QueryWorkspace", () => {
       await waitFor(() => expect(root.querySelectorAll(".qs-row")).toHaveLength(2));
       // Keep a first printer in flight, then edit the other condition.
       root.querySelector<HTMLButtonElement>('.qs-row .qs-enabled')!.click();
+      await waitFor(() => expect(pending.length).toBeGreaterThan(0));
       if (phase === "parse") {
         pending.at(-1)!.finish("printed first");
         await waitFor(() => expect(finishParse).toBeDefined());
       }
       root.querySelectorAll<HTMLElement>(".qs-row")[1].querySelector<HTMLButtonElement>(".qs-enabled")!.click();
+      await waitFor(() => expect(pending.length).toBeGreaterThan(1));
       const edits = pending.filter((p) => p.query.filter.items.some((f) => f.kind === "off" as string));
       const latest = edits.at(-1)!;
       expect(latest.query.filter.items.map((f) => f.kind)).toEqual(["off", "off"]);

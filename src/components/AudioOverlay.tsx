@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 // Expanded audio player overlay. Opened by the "Expand" button on an inline audio
 // embed (render/inline.tsx → MediaEmbed). A dimmed, ~90vw panel "over" the app
 // (like opening a video with no picture) with a wide streaming scrubber plus
@@ -246,19 +247,19 @@ export function AudioOverlay(): JSX.Element {
         <div class="audio-panel" onClick={(e) => e.stopPropagation()}>
           <div class="audio-head">
             <span class="audio-title mono">{audioPlayer()!.name}</span>
-            <button class="audio-close" title="Close (Esc)" onClick={close}>
+            <button class="audio-close" title={t("audio-overlay-close-esc")} onClick={close}>
               ✕
             </button>
           </div>
           <canvas ref={canvasEl} class="audio-wave" onPointerDown={onWavePointer} />
           <div class="audio-controls">
-            <button class="audio-btn" title="Back 15s" onClick={() => skip(-15)}>⏮ 15s</button>
-            <button class="audio-btn" title="Back 5s" onClick={() => skip(-5)}>⏪ 5s</button>
-            <button class="audio-btn audio-play" title="Play / Pause (Space)" onClick={togglePlay}>
+            <button class="audio-btn" title={t("audio-overlay-back-15s")} onClick={() => skip(-15)}>⏮ 15s</button>
+            <button class="audio-btn" title={t("audio-overlay-back-5s")} onClick={() => skip(-5)}>⏪ 5s</button>
+            <button class="audio-btn audio-play" title={t("audio-overlay-play-pause-space")} onClick={togglePlay}>
               {playing() ? "⏸" : "▶"}
             </button>
-            <button class="audio-btn" title="Forward 5s" onClick={() => skip(5)}>5s ⏩</button>
-            <button class="audio-btn" title="Forward 15s" onClick={() => skip(15)}>15s ⏭</button>
+            <button class="audio-btn" title={t("audio-overlay-forward-5s")} onClick={() => skip(5)}>5s ⏩</button>
+            <button class="audio-btn" title={t("audio-overlay-forward-15s")} onClick={() => skip(15)}>15s ⏭</button>
             <span class="audio-time mono">
               {fmtTime(cur())} / {fmtTime(dur())}
             </span>

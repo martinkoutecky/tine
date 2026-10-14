@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { type JSX } from "solid-js";
 import { openPdf } from "../panes";
 import { InlineText } from "../render/inline";
@@ -25,7 +26,7 @@ export function AnnotationBody(props: {
         class="hl-prefix"
         data-highlight-id={props.highlightId}
         onClick={openHighlightPdf}
-        title={`Open in PDF (P${props.hlPage})`}
+        title={t("annotation-body-open-in-pdf-p", { pageNumber: String(props.hlPage) })}
       >
         <span class="hl-dot" style={{ background: HL_COLOR_SOLID[props.color] ?? HL_COLOR_SOLID.yellow }} />
         <strong class="hl-page-badge">P{props.hlPage}</strong>

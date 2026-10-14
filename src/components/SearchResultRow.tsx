@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { For, type JSX } from "solid-js";
 import { EmojiText } from "../render/emoji";
 import type { MatchSpan } from "../types";
@@ -140,7 +141,7 @@ export function SearchResultRow(props: {
   const segments = () => buildSearchExcerpt(props.text, props.spans);
   return (
     <>
-      <span class="switcher-kind">block</span>
+      <span class="switcher-kind">{t("search-result-row-block")}</span>
       <span class="search-result-body" aria-label={`${context()}: ${props.text}`}>
         <span class="search-result-context"><EmojiText text={context()} /></span>
         <span class="search-result-excerpt">

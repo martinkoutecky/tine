@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { For, Show, createEffect, createMemo, createSignal, type JSX } from "solid-js";
 
 // **The ONE listbox keyboard/ARIA controller the query sheet uses (§7.7, D-14).** It was a private `Listbox` …
@@ -164,7 +165,7 @@ export function Listbox(props: {
           aria-controls={props.id}
           aria-activedescendant={activeKey() ? optionId(activeKey()!) : undefined}
           aria-label={props.label}
-          placeholder={props.placeholder ?? "Type to filter"}
+          placeholder={props.placeholder ?? t("query-listbox-type-to-filter")}
           value={query()}
           onInput={(e) => setQuery(e.currentTarget.value)}
         />

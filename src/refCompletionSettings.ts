@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Device-local editor preference: after accepting a page/block-reference completion,
 // insert a space after the closing `]]`/`))` so typing continues cleanly. Persisted
 // in tine-settings.json via the app_bool backend so independent WebViews consume the
@@ -35,6 +36,6 @@ export async function initRefCompletionSettings(): Promise<void> {
     const value = await backend().getAppBool(KEY, true);
     if (preferenceReadCurrent(spaceAfter, revision)) { setSpaceAfterSig(value); seedPreference(spaceAfter); }
   } catch {
-    pushToast("Could not load reference completion preference.", "error");
+    pushToast(msg("settings-could-not-load-reference-completion-preference"), "error");
   }
 }

@@ -197,10 +197,11 @@ export interface ParsedQuery extends ScopedDisplaySettings {
  *  both the detection and the rewritten queries (D-18, GH #422); the marker
  *  lists come from its one marker source. */
 export interface OgQueryHint {
+  date_windows?: boolean;
   bare: ("task" | "priority")[];
   /** The query keeps no condition, so — as in Logseq — it shows nothing. */
   no_conditions: boolean;
-  rewrites: { rewrite: "open_tasks" | "any_task" | "priorities"; query: Query }[];
+  rewrites: { rewrite: "open_tasks" | "any_task" | "priorities" | "convert"; query: Query }[];
 }
 
 /** A query with at least one ENABLED diagnostic is invalid: it returns zero results plus its diagnostics (§3.5). */

@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { Show, createEffect, createMemo, onCleanup, type Accessor, type JSX } from "solid-js";
 import { aggregate, AGGREGATE_FNS, AGGREGATE_LABELS, type AggregateFn } from "../sheet/aggregate";
 import type { FieldValue } from "../sheet/fields";
@@ -16,7 +17,7 @@ export function SheetAggregateCornerToggle(props: {
       type="button"
       class="sheet-aggregate-corner-toggle"
       classList={{ "sheet-aggregate-corner-toggle-active": props.active }}
-      title={props.active ? "Hide aggregate footer" : "Show aggregate footer"}
+      title={props.active ? t("sheet-aggregate-footer-hide-aggregate-footer") : t("sheet-aggregate-footer-show-aggregate-footer")}
       aria-pressed={props.active ? "true" : "false"}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
@@ -143,7 +144,7 @@ export function SheetAggregateFooterCell(props: {
         when={activeFn()}
         fallback={
           <Show when={props.showEmpty}>
-            <button class="sheet-aggregate-add" title="Add aggregate" onClick={openMenu}>
+            <button class="sheet-aggregate-add" title={t("sheet-aggregate-footer-add-aggregate")} onClick={openMenu}>
               Σ
             </button>
           </Show>
@@ -152,7 +153,7 @@ export function SheetAggregateFooterCell(props: {
         {(fn) => (
           <button
             class="sheet-aggregate-value"
-            title={`Change aggregate (${activeLabel()})`}
+            title={t("sheet-aggregate-footer-change-aggregate", { active_label: String(activeLabel()) })}
             onClick={openMenu}
           >
             {props.query ? props.query.text : aggregate(fn() as AggregateFn, props.values)}

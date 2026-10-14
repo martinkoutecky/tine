@@ -1,3 +1,4 @@
+import { msg } from "../../i18n";
 import { revealOutlineBlock } from "../../outlineViewport";
 import { prepareReferenceChangeNotice } from "./blocks";
 import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf } from "../tree";
@@ -297,7 +298,7 @@ export function indentSelection() {
   // The kernel refuses a page-header parent (GH #638), a cycle and the cap.
   const change = outlineChange({ verb: "indent", keys: same }, [destPage]);
   if ("refused" in change) {
-    if (change.refused === "depth_cap") pushToast("Outline is too deep to indent", "error");
+    if (change.refused === "depth_cap") pushToast(msg("selection-outline-is-too-deep-to-indent"), "error");
     return;
   }
   commitSelectionChange(change, "indent-sel");

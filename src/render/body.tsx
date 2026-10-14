@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
 import { LineGutter } from "./LineGutter";
 import { TableWrap } from "../components/TableWrap";
@@ -54,7 +55,7 @@ function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs
     <pre class="code-block" classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
       <Show when={props.lang}><span class="code-language">{props.lang.toLowerCase()}</span></Show>
       <LineGutter lines={(props.code.endsWith("\n") ? props.code.slice(0, -1) : props.code).split("\n")} code />
-      <CopyButton text={props.code} title="Copy code" class="code-copy" />
+      <CopyButton text={props.code} title={t("render-copy-code")} class="code-copy" />
       <code class="hljs" innerHTML={html()} />
     </pre>
   );
@@ -75,7 +76,7 @@ export function CalcBlock(props: { src: string; spanAttrs?: SpanDomAttrs }): JSX
             <div class="calc-out" classList={{ "calc-error": !!ln.error }}>
               {ln.output ?? ""}
               <Show when={ln.output !== null && !ln.error}>
-                <CopyButton text={ln.output!} title="Copy result" class="calc-copy" />
+                <CopyButton text={ln.output!} title={t("render-copy-result")} class="calc-copy" />
               </Show>
             </div>
           </>
@@ -113,7 +114,7 @@ function AdmonitionIcon(props: { type: string }): JSX.Element {
     <span
       class={`admonition-icon admonition-icon-${props.type}`}
       role="img"
-      aria-label={`${props.type} icon`}
+      aria-label={t("render-icon", { name: String(props.type) })}
       title={`${props.type[0].toUpperCase()}${props.type.slice(1)}`}
     >
       <EmojiText text={ADMONITION_ICONS[props.type]} />
@@ -171,7 +172,7 @@ export function renderBlocks(
   );
   if (!isQuarantined(blocks)) return content;
   return (
-    <span class="parse-quarantine" title="This block couldn't be parsed and is shown as raw text">
+    <span class="parse-quarantine" title={t("render-this-block-couldn-t-be-parsed-and-is-shown-as-raw-text")}>
       {content}
     </span>
   );

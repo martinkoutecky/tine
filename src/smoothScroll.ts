@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // EXPERIMENTAL, opt-in (Settings → Appearance, default OFF). WebKitGTK never
 // synthesizes scroll momentum — each mouse-wheel notch jumps a fixed ~90px with
 // no acceleration and no coast (see tine-rendering-perf / webkit-scroll-research).
@@ -78,6 +79,6 @@ export async function initSmoothScroll(): Promise<void> {
     const result = await readOwned(owner, backend().getSmoothScroll());
     if (result.kind === "current") { apply(result.value); seedPreference(enabled); }
   } catch {
-    pushToast("Could not load smooth scrolling preference.", "error");
+    pushToast(msg("smooth-scroll-could-not-load-smooth-scrolling-preference"), "error");
   }
 }

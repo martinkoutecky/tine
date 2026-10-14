@@ -401,6 +401,9 @@ mod journal_guide_tests {
             "Config edits apply live",
             "Graph code is never executed",
             "a query with no results shows nothing",
+            "strictly after today and strictly before 14 days ahead",
+            "A reference on a parent block does not include its children",
+            "Technical details",
         ] {
             assert!(
                 text.contains(required),
@@ -1026,11 +1029,12 @@ mod rename_guide_tests {
 
     #[test]
     fn relative_file_link_guide_names_its_base_and_the_graph_boundary() {
-        // GH #457: a file link resolves from the graph folder as Logseq does and
-        // opens a path outside the graph.
+        // GH #457: the graph is the base; explicit parent traversal can leave it.
         let search = include_str!("templates/pages-links-references-search.md");
-        assert!(search.contains("is read from the graph folder as Logseq reads it"));
-        assert!(search.contains("points outside the graph folder, such as an absolute"));
+        assert!(search.contains("A file path is read from the graph folder"));
+        assert!(search.contains("sibling `files` folder outside the graph"));
+        assert!(search.contains("Parent steps such as `../../` are preserved"));
+        assert!(!search.contains("shown struck through and never opened"));
     }
 
     #[test]
@@ -1155,7 +1159,7 @@ mod query_guide_tests {
             "{{query (task TODO DOING)}}",
             "(page-property type book)",
             "{{tine-query @block scheduled between today and '+7d'}}",
-            "OG Logseq drops `(between scheduled today +7d)`",
+            "Logseq ignores scheduled/deadline date windows",
             "at most 10,000 years",
             "tine.sample:: 10",
             "the whole query is refused",
@@ -1537,6 +1541,8 @@ mod og_20d_guide_tests {
     #[test]
     fn queries_document_bare_task_as_og_and_the_rewrite_hint() {
         let queries = page("Features/Queries");
+        assert!(queries.contains("Click **Convert**"));
+        assert!(queries.contains("refuses to run those blocks as written"));
         for detail in [
             "`(task)` with no markers",
             "`(priority)` with no levels",

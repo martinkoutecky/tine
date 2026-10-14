@@ -31,6 +31,8 @@ use crate::query::ir::{
 
 use super::QUERY_NESTING_MAX;
 
+pub(crate) const DATE_WINDOW_REFUSAL: &str = "Logseq ignores scheduled/deadline date windows in this query form, so this query cannot run here as written. Convert it to a Tine query to keep its date-window meaning.";
+
 // ---------------------------------------------------------------------------
 // pre-transform (OG query_dsl.cljs:452-472), transcribed
 // ---------------------------------------------------------------------------
@@ -884,9 +886,9 @@ impl<'a> OgParse<'a> {
         }
     }
 
-    /// `(between [FIELD] START END)`. OG's fieldless form is journal-only; the
-    /// optional leading field keyword is Tine's extension and `any` keeps its
-    /// journal-or-planning reading.
+    /// `(between [FIELD] START END)`. OG's fieldless form is journal-only.
+    /// Scheduled/deadline windows retain their old tree for explicit conversion,
+    /// but refuse execution: OG `build-between-three-arg` (:214-229) ignores them.
     fn between(&mut self) -> Filter {
         #[derive(Clone, Copy, PartialEq)]
         enum BetweenField {
@@ -933,6 +935,13 @@ impl<'a> OgParse<'a> {
             },
             _ => BetweenField::Journal,
         };
+        if matches!(field, BetweenField::Scheduled | BetweenField::Deadline) {
+            self.diagnose(
+                DiagnosticKind::Syntax,
+                DATE_WINDOW_REFUSAL.to_string(),
+                None,
+            );
+        }
         // OG's `pre-transform` keywordizes a signed or unit-suffixed bound
         // (`-7d` → `:-7d`) before its own reader sees it, and a query saved by
         // OG carries the keyword form on disk. Tine parses the original text,
@@ -1230,7 +1239,7 @@ mod tests {
             "{:?}",
             query.diagnostics
         );
-        assert!(!parse("(between scheduled -7d today)").is_invalid());
+        assert!(!parse("(between -7d today)").is_invalid());
     }
 
     fn parse(source: &str) -> Query {

@@ -2206,9 +2206,29 @@ fn agenda_query_excludes_finished_tasks() {
     )
     .unwrap();
     let store = store_at(&root);
-    let q = "(and (or (between scheduled -36500d +36500d) (between deadline -36500d +36500d)) \
-             (not (task DONE CANCELED CANCELLED)))";
-    let raws: Vec<String> = query_simple(&store, q)
+    let q = "@block and (scheduled between '-36500d' and '+36500d' or deadline between '-36500d' and '+36500d') \
+             and not (task in ('DONE', 'CANCELED', 'CANCELLED'))";
+    let (query, view) = tine_core::query::parse_query_text(
+        q,
+        tine_core::query::QueryDialect::Tql,
+        tine_core::date::JournalDate::today(),
+    );
+    let tine_store::IrAnswer::Result(answer) = store
+        .whole_graph()
+        .unwrap()
+        .query_ir(tine_store::IrRequest::Run {
+            query: &query,
+            view: &view,
+            context: &tine_core::query::ir::ExecutionContext::none(),
+        })
+        .unwrap()
+    else {
+        panic!("query result");
+    };
+    let tine_core::query::ir::QueryRows::Block { groups } = answer.rows else {
+        panic!("block result");
+    };
+    let raws: Vec<String> = groups
         .iter()
         .flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone()))
         .collect();

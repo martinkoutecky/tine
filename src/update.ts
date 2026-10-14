@@ -1,3 +1,4 @@
+import { msg, t } from "./i18n";
 // "A newer Tine is available" check — best-effort, once per launch.
 //
 // Notifier: ask the Tauri updater plugin what this build's channel offers (never
@@ -30,7 +31,6 @@ import { pushToast, dismissToast } from "./toasts";
 import { openSettings } from "./ui";
 import { checkForUpdatesAutomatically, initUpdateSettings } from "./updateSettings";
 import { reportUiFailure } from "./uiFailure";
-import { t } from "./i18n";
 
 function isMacDesktop(): boolean {
   return browserPlatform(typeof navigator !== "undefined" ? navigator.userAgent : "").macDesktop;
@@ -190,16 +190,6 @@ export function safeUpdaterErrorChain(error: unknown): string {
     .slice(0, 800);
 }
 
-const STAGE_LABEL: Record<UpdaterFailureStage, string> = {
-  manifest_fetch: "manifest fetch",
-  manifest_parse: "manifest parsing",
-  target_selection: "platform selection",
-  download: "download",
-  signature_verification: "signature verification",
-  install: "installation",
-  relaunch: "relaunch",
-};
-
 /** Record a failed update step (fixed tokens only; the scrubbed chain goes to
  * the opt-in log) and tell the user which stage failed, with a way to the
  * Diagnostics report. */
@@ -224,11 +214,8 @@ function reportUpdaterFailure(phase: UpdaterFailurePhase, error: unknown): void 
       "error", { sticky: true, action: { label: t("update-download-manually"), run: openReleases } });
     return;
   }
-  const what = phase === "relaunch"
-    ? "The update installed but Tine could not relaunch."
-    : `Couldn't apply the update during ${STAGE_LABEL[failure.stage]} — opening the releases page instead.`;
-  pushToast(`${what} Diagnostics has the safe failure stage; launch Tine with --debug for the sanitized cause chain.`, "error", {
-    action: { label: "Diagnostics", run: () => openSettings("diagnostics") },
+  pushToast(msg("update-failure-notice", { phase, stage: failure.stage }), "error", {
+    action: { label: msg("update-diagnostics"), run: () => openSettings("diagnostics") },
   });
 }
 
@@ -251,9 +238,9 @@ async function isManualOnlyBuild(): Promise<boolean> {
 function offerManualOnly(version: string): number {
   void recordDiagnostic("updater_manual_only");
   return pushToast(
-    `${APP_PRODUCT_NAME} ${version} is available, but automatic updates are not supported by this experimental 32-bit Windows build. Download the x86 package manually.`,
+    msg("update-is-available-but-automatic-updates-are", { product: APP_PRODUCT_NAME, version: version }),
     "warn",
-    { sticky: true, action: { label: "Download manually", run: openReleases } },
+    { sticky: true, action: { label: msg("update-download-manually"), run: openReleases } },
   );
 }
 
@@ -261,9 +248,9 @@ function offerManualOnly(version: string): number {
  * is installed again from the downloaded file. */
 function offerFlatpakManual(version: string): number {
   return pushToast(
-    `${APP_PRODUCT_NAME} ${version} is available. The Flatpak cannot update itself: download the new .flatpak bundle and install it again with flatpak install --user.`,
+    msg("update-is-available-the-flatpak-cannot-update", { product: APP_PRODUCT_NAME, version: version }),
     "info",
-    { sticky: true, action: { label: "Download manually", run: openReleases } },
+    { sticky: true, action: { label: msg("update-download-manually"), run: openReleases } },
   );
 }
 
@@ -298,7 +285,7 @@ export async function restartTine(): Promise<void> {
     await relaunch();
   } catch (error) {
     exitGuard?.reset();
-    pushToast(`Couldn't restart Tine (${String(error)}). Quit and start it again.`, "error", { sticky: true });
+    pushToast(msg("update-couldn-t-restart-tine-quit-and-start", { error: String(error) }), "error", { sticky: true });
   }
 }
 
@@ -330,7 +317,7 @@ async function applyUpdateOrOpen(): Promise<void> {
     return;
   }
   try {
-    const progressId = pushToast(`Downloading ${APP_PRODUCT_NAME} ${update.version}…`, "info", { sticky: true });
+    const progressId = pushToast(msg("update-downloading", { product: APP_PRODUCT_NAME, version: update.version }), "info", { sticky: true });
     try {
       // Download first: the user keeps editing meanwhile, so the flush below sees
       // the latest state and runs immediately before the process can exit.
@@ -349,7 +336,7 @@ async function applyUpdateOrOpen(): Promise<void> {
     if (gate !== "accepted") {
       dismissToast(progressId);
       pushToast(
-        "The update was downloaded but not installed, so your unsaved changes stay open. Choose Install update again when you are ready.",
+        msg("update-the-update-was-downloaded-but-not-installed"),
         "warn",
       );
       return;
@@ -416,11 +403,11 @@ export async function offerUpdate(version: string, current: string, live: () => 
     return { manual };
   }
   offeredUpdateToastId = pushToast(
-    `${APP_PRODUCT_NAME} ${version} is available — you're on ${current}.`,
+    msg("update-is-available-you-re-on", { product: APP_PRODUCT_NAME, version: version, current: current }),
     "info",
     {
       sticky: true,
-      action: { label: "Install update", run: () => void applyUpdateOrOpen() },
+      action: { label: msg("update-install-update"), run: () => void applyUpdateOrOpen() },
     },
   );
   return { manual };

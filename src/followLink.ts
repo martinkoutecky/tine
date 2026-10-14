@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // GH #274: open the link at the caret without reaching for the mouse.
 //
 // OG bindings this reproduces (`frontend/modules/shortcut/config.cljs`):
@@ -88,7 +89,7 @@ function dispatch(link: NearestLink, where: "here" | "sidebar"): boolean {
       if (result.kind === "stale") return;
       const g = result.value;
       if (g === undefined) return;
-      if (!g) { pushToast("Couldn't find the referenced block", "error"); return; }
+      if (!g) { pushToast(msg("follow-link-couldn-t-find-the-referenced-block"), "error"); return; }
       const ref = blockRefTarget(uuid, g);
       if (where === "sidebar") openBlockInSidebar(ref);
       else openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });

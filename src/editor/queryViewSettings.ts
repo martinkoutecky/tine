@@ -1,3 +1,4 @@
+import { msg, render, type Msg } from "../i18n";
 // Query presentation presets and edits. Each setter returns a new view.
 
 import type { AggFn, Field, SortDir, ViewSettings } from "./queryIr";
@@ -7,22 +8,22 @@ import type { AggFn, Field, SortDir, ViewSettings } from "./queryIr";
 export interface SortPreset {
   field: string;
   dir: SortDir;
-  label: string;
-  hint: string;
+  label: Msg;
+  hint: Msg;
 }
 export const SORT_PRESETS: SortPreset[] = [
-  { field: "modified", dir: "desc", label: "Newest first", hint: "Most recent first — journal pages by their date, others by when the file was last modified" },
-  { field: "modified", dir: "asc", label: "Oldest first", hint: "Oldest first — journal pages by their date, others by file modified time" },
-  { field: "priority", dir: "asc", label: "Priority A→C", hint: "Highest priority ([#A]) first; unprioritized last" },
-  { field: "page", dir: "asc", label: "Page A→Z", hint: "Alphabetically by the page each result lives on" },
-  { field: "deadline", dir: "asc", label: "Deadline", hint: "Soonest DEADLINE first; blocks without a deadline last" },
-  { field: "scheduled", dir: "asc", label: "Scheduled", hint: "Soonest SCHEDULED first; blocks without one last" },
+  { field: "modified", dir: "desc", label: msg("settings-newest-first"), hint: msg("settings-most-recent-first-journal-pages-by") },
+  { field: "modified", dir: "asc", label: msg("settings-oldest-first"), hint: msg("settings-oldest-first-journal-pages-by-their") },
+  { field: "priority", dir: "asc", label: msg("settings-priority-a-c"), hint: msg("settings-highest-priority-a-first-unprioritized-last") },
+  { field: "page", dir: "asc", label: msg("settings-page-a-z"), hint: msg("settings-alphabetically-by-the-page-each-result-lives") },
+  { field: "deadline", dir: "asc", label: msg("settings-deadline"), hint: msg("settings-soonest-deadline-first-blocks-without-a-deadline") },
+  { field: "scheduled", dir: "asc", label: msg("settings-scheduled"), hint: msg("settings-soonest-scheduled-first-blocks-without-one-last") },
 ];
 
 /** Friendly text for a sort — a matching preset's label, else `field ↑/↓`. */
 export function sortLabel(field: string, dir: SortDir): string {
   const preset = SORT_PRESETS.find((p) => p.field === field && p.dir === dir);
-  if (preset) return preset.label.toLowerCase();
+  if (preset) return render(preset.label).toLowerCase();
   return `${field} ${dir === "desc" ? "↓" : "↑"}`;
 }
 

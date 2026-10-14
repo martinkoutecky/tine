@@ -1,3 +1,4 @@
+import { msg, render } from "../i18n";
 // Pure helpers for reading/editing `key:: value` property lines — a block's
 // continuation lines or a page's pre-block. No store/DOM, so unit-testable.
 
@@ -10,6 +11,20 @@ import { reportUiFailure } from "../uiFailure";
 
 import { property_line_json, page_regions_json, page_header_json } from "../render/wasm/lsdoc_wasm.js";
 import type { RegionProperty } from "../render/parse";
+
+// Deferred catalog messages; property getters resolve in the consuming computation.
+const UI_MESSAGES = {
+  "editor-aliases": msg("editor-aliases"),
+  "editor-other-names-this-page-answers-to-in-links-comma-separated": msg("editor-other-names-this-page-answers-to-in-links-comma-separated"),
+  "editor-tags": msg("editor-tags"),
+  "editor-page-level-tags-comma-separated": msg("editor-page-level-tags-comma-separated"),
+  "editor-display-title": msg("editor-display-title"),
+  "editor-override-the-shown-title-the-file-name-stays-the-same": msg("editor-override-the-shown-title-the-file-name-stays-the-same"),
+  "editor-icon": msg("editor-icon"),
+  "editor-an-emoji-character-shown-with-the-title": msg("editor-an-emoji-character-shown-with-the-title"),
+  "editor-public": msg("editor-public"),
+  "editor-include-this-page-when-exporting-publishing-public-pages": msg("editor-include-this-page-when-exporting-publishing-public-pages"),
+};
 
 /** Native accepted line grammar; callers choose placement and authoring policy. */
 export function acceptedPropertyLine(line: string): { key: string; value: string } | null {
@@ -366,9 +381,9 @@ export interface PagePropSpec {
   kind: "text" | "bool" | "list";
 }
 export const PAGE_PROP_SPECS: PagePropSpec[] = [
-  { key: "alias", label: "Aliases", hint: "Other names this page answers to in [[links]] (comma-separated)", kind: "list" },
-  { key: "tags", label: "Tags", hint: "Page-level tags (comma-separated)", kind: "list" },
-  { key: "title", label: "Display title", hint: "Override the shown title (the file name stays the same)", kind: "text" },
-  { key: "icon", label: "Icon", hint: "An emoji/character shown with the title", kind: "text" },
-  { key: "public", label: "Public", hint: "Include this page when exporting/publishing public pages", kind: "bool" },
+  { key: "alias", get label() { return render(UI_MESSAGES["editor-aliases"]); }, get hint() { return render(UI_MESSAGES["editor-other-names-this-page-answers-to-in-links-comma-separated"]); }, kind: "list" },
+  { key: "tags", get label() { return render(UI_MESSAGES["editor-tags"]); }, get hint() { return render(UI_MESSAGES["editor-page-level-tags-comma-separated"]); }, kind: "list" },
+  { key: "title", get label() { return render(UI_MESSAGES["editor-display-title"]); }, get hint() { return render(UI_MESSAGES["editor-override-the-shown-title-the-file-name-stays-the-same"]); }, kind: "text" },
+  { key: "icon", get label() { return render(UI_MESSAGES["editor-icon"]); }, get hint() { return render(UI_MESSAGES["editor-an-emoji-character-shown-with-the-title"]); }, kind: "text" },
+  { key: "public", get label() { return render(UI_MESSAGES["editor-public"]); }, get hint() { return render(UI_MESSAGES["editor-include-this-page-when-exporting-publishing-public-pages"]); }, kind: "bool" },
 ];
