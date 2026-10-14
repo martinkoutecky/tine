@@ -125,15 +125,24 @@ function PluginSettingsForm(props: {
                         }}
                       />
                     </Show>
-                    <Show when={definition.type === "string" && definition.type === "string"}>
+                    <Show when={definition.type === "string" || definition.type === "color"}>
                       <input
                         class="settings-input"
                         type="text"
                         aria-label={definition.label}
                         disabled={props.busy() !== null}
                         value={String(value())}
-                        maxLength={definition.type === "string" ? definition.maxLength : undefined}
+                        maxLength={definition.type === "string" ? definition.maxLength : 100}
                         onChange={(event) => void update(definition.key, event.currentTarget.value)}
+                      />
+                    </Show>
+                    <Show when={definition.type === "color"}>
+                      <input
+                        type="color"
+                        aria-label={definition.label}
+                        disabled={props.busy() !== null}
+                        value={/^#[0-9a-f]{6}$/i.test(String(value())) ? String(value()) : "#000000"}
+                        onChange={event => void update(definition.key, event.currentTarget.value)}
                       />
                     </Show>
                     <Show when={changed()}>
