@@ -30,9 +30,9 @@ const BODY = "const a = 1;\nconst b = 2;\nconst c = 3;";
 function clickCode(
   raw: string,
   landOn: (code: Element) => { node: Node; offset: number },
-  init: { name: string; format?: "md" | "org"; card?: number },
+  init: { name: string; format?: "md" | "org"; card?: number; properties?: [string, string][] },
 ): { root: HTMLElement; dispose: () => void } {
-  const block: BlockDto = { id: `card-${init.name}`, raw, collapsed: false, children: [] };
+  const block: BlockDto = { id: `card-${init.name}`, raw, collapsed: false, children: [], properties: init.properties };
   const page: PageDto = { name: init.name, format: init.format, kind: "page", title: init.name, pre_block: null, blocks: [block] };
   loadSingle(page);
   const root = document.createElement("div");
@@ -116,6 +116,13 @@ describe("clicking a code block places the caret where clicked (GH #489)", () =>
     try {
       root.querySelector<HTMLElement>(".mixed-code-before")!.dispatchEvent(new MouseEvent("mousedown", {button:0,bubbles:true,cancelable:true}));
       expect(root.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe(raw);
+    } finally { dispose(); }
+  });
+  it("keeps a heading above mixed code rendered while editing the code in its own font", () => {
+    const { root, dispose } = clickCode("Heading\nheading:: true\n```js\nconst x = 1;\n```\nafter", code => ({ node: textNodeContaining(code, "const x"), offset: 0 }), { name: "Heading before code", properties: [["heading", "true"]] });
+    try {
+      expect(root.querySelector(".mixed-code-before .heading-text.h1")?.textContent).toBe("Heading");
+      expect(root.querySelector("textarea")!.classList.contains("h1")).toBe(false);
     } finally { dispose(); }
   });
 

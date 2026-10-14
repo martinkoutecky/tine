@@ -3220,7 +3220,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   }
   return (
     <div class="editor-wrap" classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
-      <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={pageFmt()} /></div>}</Show>
+      <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} /></div>}</Show>
       <div class="code-editor-region" classList={{ "mixed-code-region": !!mixedCodeContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
