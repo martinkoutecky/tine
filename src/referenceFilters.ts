@@ -14,9 +14,8 @@ export function parseReferenceFilters(value: string): ReferenceFilters | null {
   for (let i = 0; i < form.children.length; i += 2) {
     const key = form.children[i], flag = ednSlice(bytes, form.children[i + 1]);
     if (key.kind !== "string" || (flag !== "true" && flag !== "false")) return null;
-    let name: string;
-    try { name = unquoteEdnString(ednSlice(bytes, key).slice(1, -1)); } catch { return null; }
-    result[name] = flag === "true" ? "in" : "out";
+    // readEdn already accepted this string form, so unquoting cannot refuse.
+    result[unquoteEdnString(ednSlice(bytes, key).slice(1, -1))] = flag === "true" ? "in" : "out";
   }
   return result;
 }
