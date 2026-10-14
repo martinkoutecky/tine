@@ -1,0 +1,42 @@
+# One-off: encrypt the existing Android release key for Play App Signing (PEPK).
+# Martin 2026-10-13: Play signs with our GitHub release key, not a Play-generated key.
+# Input: play-pepk/encryption_public_key.pem (from the Play Console; public, not secret).
+# Output artifact: the encrypted zip Google asks for. The plaintext key never leaves the runner.
+name: Play PEPK export
+on:
+  push:
+    branches: [exp/play-pepk]
+    paths: [play-pepk/**, .github/workflows/play-pepk.yml]
+permissions:
+  contents: read
+jobs:
+  pepk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - name: Export encrypted key
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          ks="$RUNNER_TEMP/release.jks"
+          echo "$KS_B64" | base64 -d > "$ks"
+          curl -fsSL -o pepk.jar https://www.gstatic.com/play-apps-publisher-rapid/signing-tool/prod/pepk.jar
+          sha256sum pepk.jar
+          java -jar pepk.jar --help 2>&1 | head -60 || true
+          keytool -list -v -keystore "$ks" -storepass "$KS_PASS" -alias "$KEY_ALIAS" | grep -E 'SHA256:|Owner:'
+          mkdir -p out
+          java -jar pepk.jar --keystore="$ks" --alias="$KEY_ALIAS" \
+            --keystore-pass="$KS_PASS" --key-pass="$KEY_PASS" \
+            --output=out/tine-play-signing-key.zip --include-cert --rsa-aes-encryption \
+            --encryption-key-path=play-pepk/encryption_public_key.pem
+          rm -f "$ks"
+          ls -la out; sha256sum out/*
+      - uses: actions/upload-artifact@v4
+        with: { name: tine-play-signing-key, path: out/, retention-days: 3 }
