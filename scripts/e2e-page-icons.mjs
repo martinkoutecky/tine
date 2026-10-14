@@ -60,11 +60,9 @@ try {
   await menu("AAA");
   await browser.$('[data-page-action-id="open-sidebar"]').click();
   await expectIcon("AAA", "🚩", [".rs-item-title"]);
-  await browser.execute(() => {
-    const header = [...document.querySelectorAll(".nav-section-header")].find(el => el.textContent.includes("ALL PAGES"));
-    if (header && !header.parentElement.querySelector(".nav-page-label")) header.click();
-  });
-  await expectIcon("AAA", "🚩", [".nav-section:not(:has([data-sidebar-section])) .nav-page-label"]);
+  // #335 moved the sidebar's All pages list into the full All pages view.
+  await browser.$(".nav-all-pages-open").click();
+  await expectIcon("AAA", "🚩", [".all-pages-open"]);
   proof.steps.push(journey);
 
   journey = "type icon:: 🚩 live and see Favorites and Recent before reopening";
@@ -89,7 +87,10 @@ try {
   journey = "external header edit refreshes all four surfaces";
   console.log(journey);
   fs.writeFileSync(path.join(graph, "pages/AAA.md"), fixture.replace("🚩", "AB"));
-  await expectIcon("AAA", "AB", ["#sidebar-favorites-list .nav-page-label", "#sidebar-recent-list .nav-page-label", ".nav-section:not(:has([data-sidebar-section])) .nav-page-label", ".rs-item-title"]);
+  await expectIcon("AAA", "AB", ["#sidebar-favorites-list .nav-page-label", "#sidebar-recent-list .nav-page-label", ".rs-item-title"]);
+  await browser.$(".nav-all-pages-open").click();
+  await expectIcon("AAA", "AB", [".all-pages-open"]);
+  await openPageByName(browser, "Live");
   proof.steps.push(journey);
 
   journey = "menu short text icon saves through the page-property writer";
