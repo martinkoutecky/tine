@@ -37,6 +37,12 @@
       "nonRequirements":["Exact pixels, a fixed horizon, specific DOM shape or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-empty-page-edit.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A page or journal whose file has no body (emptied in Tine, 0 bytes on disk, page properties only, Markdown or Org) shows one empty bullet that keeps the caret when clicked, and typed text is saved to that file.","blocking":true}],
+      "acceptableVariations":["Bullet styling, save latency and the bytes an emptied page saves (empty or a lone newline) may vary while typing reaches the file."],
+      "nonRequirements":["Exact pixels, caret blink timing, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-reference-alias-chips.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Reference filters merge alias chips, count each block once, load legacy alias-named filters and retain canonical include/exclude choices after a guarded save and restart.","blocking":true}],
       "acceptableVariations":["Chip styling, navigation layout and save latency may vary while canonical labels, block counts, membership and persisted choices remain correct."],

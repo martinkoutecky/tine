@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Pages and journals whose file has no body (emptied in Tine, 0 bytes on disk, or page properties only) can be edited again: clicking the empty bullet no longer drops the caret at once (GH #689).
 - Simplified Chinese now covers the complete interface catalog, including settings, queries, context menus and recovery dialogs (GH #107, GH #123).
 - Query, sheet and date controls and document notices use the localization catalog while preserving authored query syntax (GH #107).
 - Remaining Settings, page actions and page notices use the localization catalog and follow live interface language changes (GH #107).
