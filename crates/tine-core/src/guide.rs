@@ -1136,7 +1136,7 @@ mod query_guide_tests {
             "{{query (task TODO DOING)}}",
             "(page-property type book)",
             "{{tine-query @block scheduled between today and '+7d'}}",
-            "OG Logseq drops `(between scheduled today +7d)`",
+            "Logseq ignores scheduled/deadline date windows",
             "at most 10,000 years",
             "tine.sample:: 10",
             "the whole query is refused",
@@ -1518,6 +1518,8 @@ mod og_20d_guide_tests {
     #[test]
     fn queries_document_bare_task_as_og_and_the_rewrite_hint() {
         let queries = page("Features/Queries");
+        assert!(queries.contains("Click **Convert**"));
+        assert!(queries.contains("refuses to run those blocks as written"));
         for detail in [
             "`(task)` with no markers",
             "`(priority)` with no levels",

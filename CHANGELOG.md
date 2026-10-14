@@ -12,6 +12,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Optional Mandarin Pinyin and syllable-initial matching for Han page titles and aliases, preserving native-name relevance (GH #151).
 
+### Changed
+
+- Existing `{{query}}` blocks with scheduled/deadline date windows now ask to be converted to `{{tine-query}}`, preserving their date-window meaning with Undo (GH #422).
+
 ### Fixed
 
 - Linked References filter chips merge each page's aliases under its canonical name, count each reference block once, and save canonical filters in Logseq's `filters::` property (GH #433). Several included chips now narrow to references carrying all of them, as in Logseq (previously any of them).
