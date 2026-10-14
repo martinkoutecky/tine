@@ -99,6 +99,7 @@ import { Rendered, detectMacro } from "./Rendered";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
+import { ResultWriteTargetContext, editorWriteTarget } from "./queryResultIdentity";
 import { dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
@@ -583,6 +584,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const surfaceKey = useContext(SurfaceContext);
   const outlineScope = useContext(OutlineScopeContext);
   const embedNavExit = useContext(EmbedNavExitContext);
+  // Inside query results, the editor's pickers write only if no result changed meanwhile (GH #433 review).
+  const inResults = useContext(ResultWriteTargetContext);
+  const resultTarget = (id: string) => inResults(id) ? editorWriteTarget(id) : undefined;
   const collapseSurface = useContext(CollapseSurfaceContext);
   // Ref/query arrow navigation stays in the rendered result surface (master
   // GH #341), while structural edits still target the source outline: a
@@ -1704,7 +1708,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       case "deadline": {
         replaceTrigger("");
         const r = ref.getBoundingClientRect();
-        openDatePicker(props.id, item.action, r.left, r.bottom + 4);
+        openDatePicker(props.id, item.action, r.left, r.bottom + 4, resultTarget(props.id));
         return;
       }
       case "now-time":
@@ -2261,7 +2265,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
   const openScheduledDatePicker = () => {
     const r = ref.getBoundingClientRect();
-    openDatePicker(props.id, "scheduled", r.left, r.bottom + 4);
+    openDatePicker(props.id, "scheduled", r.left, r.bottom + 4, resultTarget(props.id));
   };
 
   const applyInlineFormat = (kind: InlineFormat) => {

@@ -111,6 +111,20 @@ export function liveWriteTarget(id: string): () => string | null {
   };
 }
 
+/** A picker opened from the query editor on its own block. The user's typing
+ * (field-only raw writes, then their save) keeps results unsettled without
+ * moving the epoch, so requiring settled would refuse every pick made during
+ * the edit's own save; a result change advances the epoch on arrival. */
+export function editorWriteTarget(id: string): () => string | null {
+  const epoch = resultsEpoch();
+  const binding = captureBinding();
+  return () => {
+    const current = bindingCurrent(binding) && resultsEpoch() === epoch && !!node(id);
+    if (!current) noticeChangedResults(1);
+    return current ? id : null;
+  };
+}
+
 /** Deferred controls keep the opening descriptor, and resolve again at commit. */
 export function resultWriteTarget(row: ResultRow): () => string | null {
   const opening = { ...row };
