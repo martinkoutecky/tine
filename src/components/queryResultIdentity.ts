@@ -97,14 +97,15 @@ export function captureResultDraft(row: ResultRow): () => ReadonlyNode | null {
  * it; undefined outside query results (ordinary source editing). */
 export const ResultWriteTargetContext = createContext<(id: string) => (() => string | null) | undefined>(() => undefined);
 
-/** A deferred control opened on a live block inside a result owns that exact
- * live node: a replacement under the same ID (reload, external change) refuses. */
+/** A deferred control opened on a live block shown with a result (e.g. a
+ * breadcrumb ancestor) has no result row of its own. Stores merge a same-ID
+ * replacement into the existing node, so identity cannot tell; any result
+ * change while the control is open refuses instead (invalidate, don't guess). */
 export function liveWriteTarget(id: string): () => string | null {
-  const opened = node(id);
-  const page = opened ? pageByName(opened.page) : null;
+  const epoch = resultsEpoch();
   const binding = captureBinding();
   return () => {
-    const current = bindingCurrent(binding) && opened && node(id) === opened && pageByName(opened.page) === page;
+    const current = bindingCurrent(binding) && resultsSettled() && resultsEpoch() === epoch && !!node(id);
     if (!current) noticeChangedResults(1);
     return current ? id : null;
   };
