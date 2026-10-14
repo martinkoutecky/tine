@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderEnglish, type UiText } from "./i18n";
 import type { GraphFolderPickResult, PreparedGraphFolder, LoadGraphResult } from "./backend";
 import type { GraphMeta, PageDto, PageRead } from "./types";
+
+const toastLabel = (text: string | UiText) => typeof text === "string" ? text : renderEnglish(text);
 
 const META: GraphMeta = {
   root: "/tmp/template-graph",
@@ -353,7 +356,7 @@ describe("GH #621 graph creation messages", () => {
     expect(toast.message).toContain(`Created the graph at ${META.root}`);
     expect(toast.message).toContain("couldn't open it");
     expect(toast.message).toContain("Disk read failed");
-    expect(toast.action?.label).toBe("Open graph");
+    expect(toastLabel(toast.action!.label)).toBe("Open graph");
     toast.action!.run();
     await vi.waitFor(() => expect(h.api.loadGraph).toHaveBeenCalledTimes(2));
     expect(h.api.loadGraph).toHaveBeenLastCalledWith(META.root);
@@ -365,7 +368,8 @@ describe("GH #621 graph creation messages", () => {
     const h = await loadHarness(null, { graph_root: META.root, external_assets_path: "/tmp/assets", approved: false }, false);
     await expect(h.createNewGraph()).resolves.toEqual({ kind: "aborted" });
     const { toasts } = await import("./toasts");
-    expect(toasts().at(-1)).toMatchObject({ kind: "info", sticky: true, action: { label: "Open graph" } });
+    expect(toasts().at(-1)).toMatchObject({ kind: "info", sticky: true });
+    expect(toastLabel(toasts().at(-1)!.action!.label)).toBe("Open graph");
     expect(toasts().at(-1)?.message).toContain(`Created the graph at ${META.root}, but it wasn't opened`);
     expect(h.api.loadGraph).not.toHaveBeenCalled();
   });

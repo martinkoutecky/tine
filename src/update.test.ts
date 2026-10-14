@@ -1,6 +1,7 @@
 import { IDENTITY } from "../scripts/lib/app-identity.mjs";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderEnglish, type UiText } from "./i18n";
 
 type Platform = "desktop" | "android" | "ios";
 type ToastCall = [string, string, { sticky?: boolean; action?: { label: string; run: () => void } }?];
@@ -32,7 +33,7 @@ async function loadUpdate(opts: {
   });
   const openExternalMock = vi.fn(async () => {});
   let nextToastId = 40;
-  const pushToastMock = vi.fn(() => ++nextToastId);
+  const pushToastMock = vi.fn<(...args: unknown[]) => number>(() => ++nextToastId);
   const dismissToastMock = vi.fn();
   const openSettingsMock = vi.fn();
   const diagnosticFrontendEventMock = vi.fn(async () => {});
@@ -62,8 +63,12 @@ async function loadUpdate(opts: {
   }));
   vi.doMock("./platform", () => ({ platformKind: platformKindMock }));
   vi.doMock("./toasts", () => ({
-    pushToast: pushToastMock,
-    pushToastUnique: pushToastMock,
+    pushToast: (...args: [string | UiText, ...unknown[]]) => pushToastMock(typeof args[0] === "string" ? args[0] : renderEnglish(args[0]), ...args.slice(1).map((value) => {
+      if (!value || typeof value !== "object" || !("action" in value)) return value;
+      const options = value as { action?: { label: string | UiText; run: () => void } };
+      return options.action ? { ...options, action: { ...options.action, label: typeof options.action.label === "string" ? options.action.label : renderEnglish(options.action.label) } } : options;
+    })),
+    pushToastUnique: (...args: [string | UiText, ...unknown[]]) => pushToastMock(typeof args[0] === "string" ? args[0] : renderEnglish(args[0]), ...args.slice(1)),
     dismissToast: dismissToastMock,
   }));
   vi.doMock("./ui", () => ({ openSettings: openSettingsMock }));

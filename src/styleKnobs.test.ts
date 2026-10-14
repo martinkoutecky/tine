@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { SETTING_SEARCH, settingMatches } from "./components/settingsSearch";
+import { renderEnglish } from "./i18n";
 import {
   KNOBS,
   decodeKnobValues,
@@ -157,7 +158,7 @@ describe("Settings search", () => {
     for (const k of KNOBS.filter((entry) => entry.type !== "heading")) {
       const entry = SETTING_SEARCH.find((e) => e.label === k.title);
       expect(entry?.tab, `Settings search has no entry for the knob ${k.title}`).toBe("appearance");
-      expect(settingMatches(entry!, k.title)).toBe(true);
+      expect(settingMatches(entry!, typeof k.title === "string" ? k.title : renderEnglish(k.title))).toBe(true);
     }
     expect(SETTING_SEARCH.some((e) => KNOBS.some((k) => k.type === "heading" && k.title === e.label))).toBe(false);
   });
@@ -193,7 +194,7 @@ describe("guards", () => {
   it("the Settings control sits between Color scheme and Custom CSS", () => {
     const source = readFileSync("src/components/ThemeSettings.tsx", "utf8");
     const at = (needle: string) => source.indexOf(needle);
-    expect(at("Color scheme")).toBeGreaterThan(-1);
+    expect(at('t("themes-color-scheme")')).toBeGreaterThan(-1);
     expect(at("<StyleKnobsSettings />")).toBeGreaterThan(at("Color scheme"));
     expect(at("<StyleKnobsSettings />")).toBeLessThan(at("<CustomCssSettings />"));
   });
@@ -204,7 +205,8 @@ describe("guards", () => {
     expect(guide).toContain("**Fine-tuning**");
     expect(guide).toContain("style.knobs.v1");
     for (const k of KNOBS.filter((entry) => entry.type !== "heading")) {
-      expect(guide, `the Guide must name the Settings control "${k.title}"`).toContain(`**${k.title}**`);
+      const title = typeof k.title === "string" ? k.title : renderEnglish(k.title);
+      expect(guide, `the Guide must name the Settings control "${title}"`).toContain(`**${title}**`);
     }
   });
 });

@@ -1,3 +1,5 @@
+import { Rich } from "./ThemeChoice";
+import { t, render, renderEnglish, type Msg } from "../i18n";
 import { For, Show, type JSX } from "solid-js";
 import {
   KNOBS,
@@ -7,13 +9,14 @@ import {
   validKnobValue,
   type StyleKnob,
 } from "../styleKnobs";
-import { Field, Toggle } from "./settingsField";
+import { Toggle } from "./settingsField";
 
 /** Settings > Appearance > Fine-tuning (GH #610 item 3): one control per row of
  *  the style-knob table, rendered by type. No code per knob (K1): a new visual
  *  detail is a row in `KNOBS` (src/styleKnobs.ts). Each knob has a Reset that
  *  returns to Tine's default look. Saved on this device. */
 type Control = Exclude<StyleKnob, { type: "heading" }>;
+const display = (text: string | Msg) => typeof text === "string" ? text : render(text);
 
 function KnobControl(props: { knob: Control }): JSX.Element {
   const knob = props.knob;
@@ -26,11 +29,11 @@ function KnobControl(props: { knob: Control }): JSX.Element {
       return (
         <select
           class="settings-select"
-          aria-label={knob.title}
+          aria-label={display(knob.title)}
           value={(stored() as string | null) ?? knob.default}
           onChange={(event) => setKnob(knob, event.currentTarget.value)}
         >
-          <For each={knob.options}>{(option) => <option value={option.value}>{option.label}</option>}</For>
+          <For each={knob.options}>{(option) => <option value={option.value}>{display(option.label)}</option>}</For>
         </select>
       );
     case "variable-number-slider":
@@ -38,7 +41,7 @@ function KnobControl(props: { knob: Control }): JSX.Element {
         <span class="knob-slider">
           <input
             type="range"
-            aria-label={knob.title}
+            aria-label={display(knob.title)}
             min={knob.min}
             max={knob.max}
             step={knob.step}
@@ -60,14 +63,14 @@ function KnobControl(props: { knob: Control }): JSX.Element {
           <input
             type="color"
             class="settings-color"
-            aria-label={knob.title}
+            aria-label={display(knob.title)}
             value={`#${rgb()}`}
             onInput={(event) => setKnob(knob, combine(event.currentTarget.value.slice(1), alpha()))}
           />
           <Show when={knob.opacity}>
             <input
               type="range"
-              aria-label={`${knob.title} opacity`}
+              aria-label={t("settings-opacity", { title: display(knob.title) })}
               min={0}
               max={255}
               step={1}
@@ -84,24 +87,27 @@ function KnobControl(props: { knob: Control }): JSX.Element {
 export function StyleKnobsSettings(props: { knobs?: readonly StyleKnob[] }): JSX.Element {
   const table = () => props.knobs ?? KNOBS;
   return (
-    <>
-      <div class="settings-section">Fine-tuning</div>
-      <div class="settings-hint theme-gallery-hint">
-        Small visual details, saved on this device. Each starts at Tine's default look; your <code>logseq/custom.css</code> still takes priority, and Disable custom CSS below switches these off for the session too.
-      </div>
+    <><div class="settings-section">{t("settings-fine-tuning")}</div>
+      <div class="settings-hint theme-gallery-hint"><Rich text={t("settings-small-visual-details-saved-on-this-device")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
       <For each={table()}>
         {(knob) =>
           knob.type === "heading" ? (
-            <div class="settings-subsection" data-knob-heading={knob.id}>{knob.title}</div>
+            <div class="settings-subsection" data-knob-heading={knob.id}>{display(knob.title)}</div>
           ) : (
-            <Field label={knob.title} hint={knob.description}>
-              <KnobControl knob={knob} />
-              <Show when={knobIsSet(knob, styleKnobValues())}>
-                <button class="settings-btn knob-reset" aria-label={`Reset ${knob.title}`} onClick={() => setKnob(knob, undefined)}>
-                  Reset
-                </button>
+            <div class="settings-field" data-setting-label={typeof knob.title === "string" ? knob.title : renderEnglish(knob.title)}>
+              <div class="settings-field-row">
+                <span class="settings-label">{display(knob.title)}</span>
+                <div class="settings-field-control">
+                  <KnobControl knob={knob} />
+                  <Show when={knobIsSet(knob, styleKnobValues())}>
+                    <button class="settings-btn knob-reset" aria-label={t("settings-reset-2", { title: display(knob.title) })} onClick={() => setKnob(knob, undefined)}>{t("settings-reset")}</button>
+                  </Show>
+                </div>
+              </div>
+              <Show when={knob.description}>
+                <div class="settings-hint settings-field-hint">{display(knob.description!)}</div>
               </Show>
-            </Field>
+            </div>
           )
         }
       </For>
