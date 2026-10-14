@@ -1,3 +1,4 @@
+import { Rich } from "../i18n/Rich";
 import { boardGroupField as groupFieldForToken, formulaReferenceName } from "../sheet/boardColumns";
 import { openRouteInNewWindow, workspaceWindowsSupported } from "../workspaceWindows";
 import { reportUiFailure } from "../uiFailure";
@@ -20,7 +21,7 @@ import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, 
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
 import { favoriteBlock } from "../favorites";
-import { t, msg, render as renderUiText, type UiText } from "../i18n";
+import { t, msg, render as renderUiText, type UiText, type Msg } from "../i18n";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
 import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
@@ -36,9 +37,9 @@ import { registerTransientLayer } from "../transientLayers";
 import { openInPageFind } from "../inpageFind";
 import { isHTMLElementNode, requestFrame, viewportOf } from "../windowRealm";
 
-function reportCopy(write: Promise<void>, okMsg: string): void {
+function reportCopy(write: Promise<void>, okMsg: Msg): void {
   void write.then(() => pushToast(okMsg, "success"))
-    .catch(() => pushToast("Couldn't copy: clipboard write failed.", "error"));
+    .catch(() => pushToast(msg("context-menu-ui-couldn-t-copy-clipboard-write-failed"), "error"));
 }
 
 // Right-click context menu. Universal over its target: a block (full editing
@@ -155,7 +156,7 @@ export function ContextMenu(): JSX.Element {
             class="ctx-menu"
             data-submenu-side={submenuSide()}
             role={m().kind === "page" ? "menu" : undefined}
-            aria-label={m().kind === "page" ? "Page actions" : undefined}
+            aria-label={m().kind === "page" ? t("context-menu-ui-page-actions") : undefined}
             style={{
               left: `${place()?.left ?? m().x}px`,
               top: `${place()?.top ?? m().y}px`,
@@ -314,14 +315,14 @@ function ShowChildrenAsSubmenu(props: { id: string; close: () => void }): JSX.El
     setBlockProperty(props.id, "tine.view", next === "outline" ? null : next);
     props.close();
   };
-  const label = (name: string, active: boolean) => `${active ? "✓ " : ""}${name}`;
+  const label = (view: "outline" | "grid" | "table", active: boolean) => t("context-menu-child-view", { view, active: active ? "yes" : "no" });
   return (
     <div class="ctx-item ctx-submenu">
-      <span>Show children as →</span>
+      <span>{t("context-menu-ui-show-children-as")}</span>
       <div class="ctx-submenu-menu">
-        <div class="ctx-item" onClick={() => setView("outline")}>{label("Outline", view() === "outline")}</div>
-        <div class="ctx-item" onClick={() => setView("grid")}>{label("Grid", view() === "grid")}</div>
-        <div class="ctx-item" onClick={() => setView("table")}>{label("Table", view() === "table")}</div>
+        <div class="ctx-item" onClick={() => setView("outline")}>{label("outline", view() === "outline")}</div>
+        <div class="ctx-item" onClick={() => setView("grid")}>{label("grid", view() === "grid")}</div>
+        <div class="ctx-item" onClick={() => setView("table")}>{label("table", view() === "table")}</div>
       </div>
     </div>
   );
@@ -346,17 +347,15 @@ function BlockMenu(props: { id: string; x: number; y: number; close: () => void 
       <Show when={headingsWritable()}>
         {/* Heading row */}
         <div class="ctx-row ctx-headings">
-          <button class="ctx-h" title="Automatic heading" onClick={() => { setSelectionHeading(props.id, true); props.close(); }}>
-            Auto
-          </button>
+          <button class="ctx-h" title={t("context-menu-ui-automatic-heading")} onClick={() => { setSelectionHeading(props.id, true); props.close(); }}>{t("context-menu-ui-auto")}</button>
           <For each={[1, 2, 3, 4, 5, 6]}>
             {(h) => (
-              <button class="ctx-h" title={`Heading ${h}`} onClick={() => { setSelectionHeading(props.id, h); props.close(); }}>
+              <button class="ctx-h" title={t("context-menu-ui-heading", { h: h })} onClick={() => { setSelectionHeading(props.id, h); props.close(); }}>
                 H{h}
               </button>
             )}
           </For>
-          <button class="ctx-h" title="Remove heading" onClick={() => { setSelectionHeading(props.id, null); props.close(); }}>
+          <button class="ctx-h" title={t("context-menu-ui-remove-heading")} onClick={() => { setSelectionHeading(props.id, null); props.close(); }}>
             ⌫
           </button>
         </div>
@@ -371,7 +370,7 @@ function BlockMenu(props: { id: string; x: number; y: number; close: () => void 
             classList={{ danger: !!it.danger }}
             onClick={() => { it.run(); props.close(); }}
           >
-            {it.label}
+            {renderUiText(it.label)}
           </div>
         )}
       </For>
@@ -394,7 +393,7 @@ function ColorPalette(props: { id: string; close: () => void }): JSX.Element {
     <div class="ctx-row ctx-colors">
       <button
         class="ctx-color ctx-color-none"
-        title="No background"
+        title={t("context-menu-ui-no-background")}
         onClick={() => { setBlockProperty(props.id, "background-color", null); props.close(); }}
       >
         ✕
@@ -451,29 +450,21 @@ function SheetCellMenu(props: { id: string; remove?: SheetCellRemoveCtx; close: 
       <div
         class="ctx-item"
         onClick={addChild}
-      >
-        Add child bullet
-      </div>
+      >{t("context-menu-ui-add-child-bullet")}</div>
       <div
         class="ctx-item"
         onClick={() => {
           zoomInto(props.id);
           props.close();
         }}
-      >
-        Zoom into cell
-      </div>
+      >{t("context-menu-ui-zoom-into-cell")}</div>
       <Show when={canDeleteRow() || canDeleteColumn()}>
         <div class="ctx-sep" />
         <Show when={canDeleteRow()}>
-          <div class="ctx-item danger" onClick={deleteRow}>
-            Delete row
-          </div>
+          <div class="ctx-item danger" onClick={deleteRow}>{t("context-menu-ui-delete-row")}</div>
         </Show>
         <Show when={canDeleteColumn()}>
-          <div class="ctx-item danger" onClick={deleteColumnHere}>
-            Delete column
-          </div>
+          <div class="ctx-item danger" onClick={deleteColumnHere}>{t("context-menu-ui-delete-column")}</div>
         </Show>
       </Show>
     </>
@@ -526,9 +517,7 @@ function SheetMenu(props: {
           zoomInto(props.ownerId);
           props.close();
         }}
-      >
-        Open as full page
-      </div>
+      >{t("context-menu-ui-open-as-full-page")}</div>
       <div class="ctx-sep" />
       <Show when={formulaActions()}>
         <div
@@ -546,9 +535,7 @@ function SheetMenu(props: {
             });
             props.close();
           }}
-        >
-          Add formula…
-        </div>
+        >{t("context-menu-ui-add-formula")}</div>
         <div
           class="ctx-item"
           onClick={() => {
@@ -564,14 +551,12 @@ function SheetMenu(props: {
             });
             props.close();
           }}
-        >
-          Edit filter…
-        </div>
+        >{t("context-menu-ui-edit-filter")}</div>
         <div class="ctx-sep" />
       </Show>
       <Show when={props.surface === "board"}>
         <div class="ctx-item ctx-submenu">
-          <span>Group by →</span>
+          <span>{t("context-menu-ui-group-by")}</span>
           <div class="ctx-submenu-menu">
             <For each={boardGroupByOptions(props.ownerId)}>
               {(field) => (
@@ -586,15 +571,13 @@ function SheetMenu(props: {
               )}
             </For>
             <Show when={props.rowSource === "query"}>
-              <div class="ctx-item" classList={{ "ctx-active": noGrouping() }} onClick={() => doGroupBy("")}>
-                {noGrouping() ? "✓ " : ""}No grouping
-              </div>
+              <div class="ctx-item" classList={{ "ctx-active": noGrouping() }} onClick={() => doGroupBy("")}>{t("context-menu-ui-no-grouping", { choice1: noGrouping() ? "yes" : "no" })}</div>
             </Show>
           </div>
         </div>
         <div class="ctx-sep" />
       </Show>
-      <Show when={props.rowSource === "children"} fallback={<div class="ctx-item ctx-disabled">No structural actions</div>}>
+      <Show when={props.rowSource === "children"} fallback={<div class="ctx-item ctx-disabled">{t("context-menu-ui-no-structural-actions")}</div>}>
       <Show when={props.surface === "grid"}>
         <div
           class="ctx-item"
@@ -602,24 +585,20 @@ function SheetMenu(props: {
             convertGridToPipeTable(props.ownerId);
             props.close();
           }}
-        >
-          Convert to pipe table
-        </div>
+        >{t("context-menu-ui-convert-to-pipe-table")}</div>
         <div class="ctx-sep" />
       </Show>
       <Show when={props.surface === "board" && boardField()}>
         {(field) => (
-          <div class="ctx-item" onClick={() => doHierarchify(field())}>
-            Hierarchify into columns
-          </div>
+          <div class="ctx-item" onClick={() => doHierarchify(field())}>{t("context-menu-ui-hierarchify-into-columns")}</div>
         )}
       </Show>
       <Show
         when={fields().length > 0}
-        fallback={<div class="ctx-item ctx-disabled">Hierarchify by →</div>}
+        fallback={<div class="ctx-item ctx-disabled">{t("context-menu-ui-hierarchify-by")}</div>}
       >
         <div class="ctx-item ctx-submenu">
-          <span>Hierarchify by →</span>
+          <span>{t("context-menu-ui-hierarchify-by")}</span>
           <div class="ctx-submenu-menu">
             <For each={fields()}>
               {(field) => (
@@ -637,9 +616,7 @@ function SheetMenu(props: {
         onClick={() => {
           if (canFlatten(props.ownerId)) doFlatten();
         }}
-      >
-        Flatten
-      </div>
+      >{t("context-menu-ui-flatten")}</div>
       </Show>
     </>
   );
@@ -660,25 +637,25 @@ function BlockRefMenu(props: {
 }): JSX.Element {
   const items = [
     {
-      label: "Open in sidebar",
+      label: msg("context-menu-ui-open-in-sidebar"),
       run: () => openBlockInSidebar({ uuid: props.uuid, page: props.page, pageKind: props.pageKind, path: props.path }),
     },
-    { label: "Go to block", run: () => openPageAtBlock({ name: props.page, pageKind: props.pageKind, block: props.uuid, path: props.path }) },
-    { label: "Copy link", run: () => void copyTineLink({ blockUuid: props.uuid }) },
+    { label: msg("context-menu-ui-go-to-block"), run: () => openPageAtBlock({ name: props.page, pageKind: props.pageKind, block: props.uuid, path: props.path }) },
+    { label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ blockUuid: props.uuid }) },
     {
-      label: "Copy block ref",
-      run: () => reportCopy(writeClipboardText(`((${props.uuid}))`), "Copied block ref"),
+      label: msg("context-menu-ui-copy-block-ref"),
+      run: () => reportCopy(writeClipboardText(`((${props.uuid}))`), msg("context-menu-ui-copied-block-ref")),
     },
     {
-      label: "Copy block embed",
-      run: () => reportCopy(writeClipboardText(`{{embed ((${props.uuid}))}}`), "Copied block embed"),
+      label: msg("context-menu-ui-copy-block-embed"),
+      run: () => reportCopy(writeClipboardText(`{{embed ((${props.uuid}))}}`), msg("context-menu-ui-copied-block-embed")),
     },
   ];
   return (
     <For each={items}>
       {(it) => (
         <div class="ctx-item" onClick={() => { it.run(); props.close(); }}>
-          {it.label}
+          {renderUiText(it.label)}
         </div>
       )}
     </For>
@@ -717,7 +694,7 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
     }
     if (existing.kind === "stale") return;
     if (existing.value.some((t) => t.name.toLowerCase() === title.toLowerCase())) {
-      pushToast(`A template named “${title}” already exists.`, "error");
+      pushToast(msg("context-menu-ui-a-template-named-already-exists", { title: title }), "error");
       return;
     }
     // A permission/read-only change can land while the name read is pending.
@@ -729,7 +706,7 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
     if (asksToOmitParent) {
       setBlockProperty(id, "template-including-parent", "false");
     }
-    pushToast(`Template “${title}” created.`, "success");
+    pushToast(msg("context-menu-ui-template-created", { title: title }), "success");
     close();
   };
 
@@ -737,16 +714,14 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
     <Show
       when={editing()}
       fallback={
-        <div class="ctx-item" onClick={(e) => { e.stopPropagation(); setEditing(true); }}>
-          Make a template…
-        </div>
+        <div class="ctx-item" onClick={(e) => { e.stopPropagation(); setEditing(true); }}>{t("context-menu-ui-make-a-template")}</div>
       }
     >
       <div class="ctx-template-form">
         <input
           class="ctx-template-name"
           ref={(el) => el.addEventListener("tine-dismiss-inline", () => setEditing(false), { once: true })}
-          placeholder="Template name"
+          placeholder={t("context-menu-ui-template-name")}
           autofocus
           value={name()}
           onInput={(e) => setName(e.currentTarget.value)}
@@ -763,16 +738,11 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
               checked={includeParent()}
               onChange={(e) => setIncludeParent(e.currentTarget.checked)}
             />
-            Include parent block
+            {t("context-menu-include-parent-block")}
           </label>
         </Show>
-        <button class="ctx-template-submit" onClick={() => void submit()}>
-          Create template
-        </button>
-        <div class="ctx-template-hint">
-          Tip: in the template, <code>{"<% today %>"}</code>, <code>{"<% current page %>"}</code>,{" "}
-          <code>{"<% date: +3d %>"}</code> expand when it's inserted (or via <code>/Template var</code>).
-        </div>
+        <button class="ctx-template-submit" onClick={() => void submit()}>{t("context-menu-ui-create-template")}</button>
+        <div class="ctx-template-hint"><Rich message={msg("context-menu-ui-tip-in-the-template-expand-when-it-s-inserted")} /></div>
       </div>
     </Show>
   );
@@ -803,7 +773,7 @@ function PageMenu(props: {
     const captured = target();
     const page = pageByName(name);
     if (!pageTargetMatchesLoaded(captured, page) || page!.guide) {
-      pushToast("This page target changed; reopen the page actions menu.", "error");
+      pushToast(msg("context-menu-ui-this-page-target-changed-reopen-the-page-actions-menu"), "error");
       return;
     }
     // A conflicted page is not flushed (its unsavable draft is what the
@@ -812,24 +782,24 @@ function PageMenu(props: {
     // (og I1d, master 6f8531344, GH #490).
     let conflicted = isConflicted(name);
     if (!conflicted && !page!.readOnly && !(await flushPage(name))) {
-      if (owner()) pushToast(`Couldn't save “${name}”; its on-disk file was not opened.`, "error");
+      if (owner()) pushToast(msg("context-menu-ui-couldn-t-save-its-on-disk-file-was-not", { name: name }), "error");
       return;
     }
     if (!owner()) return;
     conflicted = conflicted || isConflicted(name);
     try {
       if (!pageTargetMatchesLoaded(captured, pageByName(name))) {
-        pushToast("This page target changed; reopen the page actions menu.", "error");
+        pushToast(msg("context-menu-ui-this-page-target-changed-reopen-the-page-actions-menu"), "error");
         return;
       }
       const opened = await readOwned(owner, backend().openPageFile(name, kind, captured.path ?? page!.id, reveal));
       if (opened.kind !== "stale" && conflicted) {
-        pushToast(`“${name}” has an unresolved save conflict — this is the file as it stands on disk. Your unsaved changes stay in Tine until you resolve it.`, "info");
+        pushToast(msg("context-menu-ui-has-an-unresolved-save-conflict-this-is-the-file", { name: name }), "info");
       }
     } catch (error) {
       const message = page!.id
-        ? `Couldn't ${reveal ? "show" : "open"} the page file. (${String(error)})`
-        : "This page has no on-disk file yet. Type something and let Tine save it first.";
+        ? msg("context-menu-file-open-failed", { action: reveal ? "show" : "open", error: String(error) })
+        : msg("context-menu-file-not-saved");
       pushToast(message, "error");
     }
   };
@@ -845,11 +815,10 @@ function PageMenu(props: {
     // delete the page with no prompt.
     // A conflicted page is deleted through its conflict (master parity): the
     // prompt says the unsaved changes go too.
-    const unsaved = isConflicted(name) ? " Your unsaved changes to it are discarded too." : "";
-    const confirmed = await readOwned(owner, backend().confirm(`Delete "${name}"? The file moves to the graph's .tine-trash folder.${unsaved}`));
+    const confirmed = await readOwned(owner, backend().confirm(t("context-menu-ui-delete-the-file-moves-to-the-graph-s-tine", { name, unsaved: isConflicted(name) ? "discard" : "none" })));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     if (!captured.path && (pageByName(name) !== openedPage || pageByName(name)?.id !== path)) {
-      pushToast("This page target changed; reopen the page actions menu.", "error");
+      pushToast(msg("context-menu-ui-this-page-target-changed-reopen-the-page-actions-menu"), "error");
       return;
     }
     // Route through the store (not backend directly) so it tombstones the page and
@@ -873,25 +842,25 @@ function PageMenu(props: {
           const refused = restoreTodayJournalInFeed();
           if (refused) reportPageLoadRefusal(refused);
         }
-        pushToast(`Deleted “${name}”`, "success");
+        pushToast(msg("context-menu-ui-deleted", { name: name }), "success");
       })
       .catch(error => { if (owner()) pushToast(msg("delete-failed", { reason: String(error) }), "error"); });
   };
-  const items: { id: string; label: string; run: () => void; danger?: boolean }[] = [
-    { id: "open", label: "Open", run: () => openPageTarget(target()) },
-    { id: "open-sidebar", label: "Open in sidebar", run: () => openPageInSidebar(target()) },
-    { id: "open-new-tab", label: "Open in new tab", run: () => openPageTargetInNewTab(target()) },
-    ...(workspaceWindowsSupported() ? [{ id: "open-new-window", label: "Open in new window", run: () => void openRouteInNewWindow({ ...target(), kind: "page" }) }] : []),
-    { id: "favorite-toggle", label: fav() ? "Remove from favorites" : "Add to favorites", run: () => toggleFavorite(props.name, props.pageKind) },
-    { id: "copy-link", label: "Copy link", run: () => void copyTineLink({ page: props.name }) },
-    { id: "copy-page-ref", label: "Copy page ref", run: () => reportCopy(writeClipboardText(`[[${props.name}]]`), "Copied page ref") },
+  const items: { id: string; label: Msg; run: () => void; danger?: boolean }[] = [
+    { id: "open", label: msg("context-menu-ui-open"), run: () => openPageTarget(target()) },
+    { id: "open-sidebar", label: msg("context-menu-ui-open-in-sidebar"), run: () => openPageInSidebar(target()) },
+    { id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => openPageTargetInNewTab(target()) },
+    ...(workspaceWindowsSupported() ? [{ id: "open-new-window", label: msg("context-menu-ui-open-in-new-window"), run: () => void openRouteInNewWindow({ ...target(), kind: "page" }) }] : []),
+    { id: "favorite-toggle", label: fav() ? msg("context-menu-ui-remove-from-favorites") : msg("context-menu-ui-add-to-favorites"), run: () => toggleFavorite(props.name, props.pageKind) },
+    { id: "copy-link", label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ page: props.name }) },
+    { id: "copy-page-ref", label: msg("context-menu-ui-copy-page-ref"), run: () => reportCopy(writeClipboardText(`[[${props.name}]]`), msg("context-menu-ui-copied-page-ref")) },
     {
       id: "copy-export",
-      label: "Copy / export as…",
+      label: msg("context-menu-ui-copy-export-as"),
       run: () => {
         const page = pageByName(props.name);
         if (!pageTargetMatchesLoaded(target(), page)) {
-          pushToast("This page target changed; reopen the page actions menu.", "error");
+          pushToast(msg("context-menu-ui-this-page-target-changed-reopen-the-page-actions-menu"), "error");
           return;
         }
         // OG 1.0.0 routes the page name through the same export modal used by
@@ -902,7 +871,7 @@ function PageMenu(props: {
     },
     {
       id: "copy-page-markdown",
-      label: "Copy page as Markdown",
+      label: msg("context-menu-ui-copy-page-as-markdown"),
       run: () => {
         const owner = graphOwner();
         const request = path
@@ -913,24 +882,24 @@ function PageMenu(props: {
           const p = result.value;
           if (!p) throw new Error("Page unavailable");
           return writeClipboardText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
-        }).then(() => { if (owner()) pushToast("Copied page as Markdown", "success"); })
-          .catch(() => { if (owner()) pushToast("Couldn't copy page as Markdown.", "error"); });
+        }).then(() => { if (owner()) pushToast(msg("context-menu-ui-copied-page-as-markdown"), "success"); })
+          .catch(() => { if (owner()) pushToast(msg("context-menu-ui-couldn-t-copy-page-as-markdown"), "error"); });
       },
     },
-    ...(!isMobilePlatform ? [{ id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) }] : []),
+    ...(!isMobilePlatform ? [{ id: "export-pdf", label: msg("context-menu-ui-export-to-pdf"), run: () => openPdfExport(props.name) }] : []),
     ...(props.fileActions && !pageByName(props.name)?.guide
       ? [
-          { id: "show-in-folder", label: "Show in folder", run: () => void runFileAction(true) },
-          { id: "open-default-app", label: "Open with default app", run: () => void runFileAction(false) },
+          { id: "show-in-folder", label: msg("context-menu-ui-show-in-folder"), run: () => void runFileAction(true) },
+          { id: "open-default-app", label: msg("context-menu-ui-open-with-default-app"), run: () => void runFileAction(false) },
         ]
       : []),
     // GH #338: phones have no Mod+F. The page header's menu opens Find, whose
     // bar holds the replace row (GH #208).
-    ...(props.fileActions ? [{ id: "find-in-page", label: "Find in page", run: () => openInPageFind() }] : []),
-    ...(!readOnly() ? [{ id: "page-properties", label: "Page properties…", run: () => openPageProps(props.name, props.x, props.y) }] : []),
+    ...(props.fileActions ? [{ id: "find-in-page", label: msg("context-menu-ui-find-in-page"), run: () => openInPageFind() }] : []),
+    ...(!readOnly() ? [{ id: "page-properties", label: msg("context-menu-ui-page-properties"), run: () => openPageProps(props.name, props.x, props.y) }] : []),
     // Carry a past day's unfinished tasks to today (journal days only, not today).
     ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(appNow())
-      ? [{ id: "carry-unfinished", label: "Carry unfinished tasks → today", run: () => void carryDay(props.name) }]
+      ? [{ id: "carry-unfinished", label: msg("context-menu-ui-carry-unfinished-tasks-today"), run: () => void carryDay(props.name) }]
       : []),
   ];
   return (
@@ -947,7 +916,7 @@ function PageMenu(props: {
             data-page-action-id={it.id}
             onClick={() => { it.run(); props.close(false); }}
           >
-            {it.label}
+            {renderUiText(it.label)}
           </button>
           <Show when={it.id === "page-properties" && !openedPage?.guide}>
             <PageIconMenu name={props.name} close={props.close} />
@@ -1019,7 +988,7 @@ function PageIconMenu(props: { name: string; close: (restoreFocus?: boolean) => 
 }
 
 export function deletePageMenuLabel(pageKind: PageKind): string {
-  return pageKind === "journal" ? "Delete journal" : "Delete page";
+  return t("context-menu-delete-page-label", { kind: pageKind });
 }
 
 // Inline page rename: a context-menu item that expands into a name field (mirrors
@@ -1083,9 +1052,9 @@ function RenamePage(props: {
       }
       if (!current()) return;
       openPage(next, kind);
-      pushToast(renamed === "merged" ? `Merged into “${next}”` : `Renamed to “${next}”`, "success");
+      pushToast(msg("context-menu-rename-success", { outcome: renamed === "merged" ? "merged" : "renamed", next }), "success");
     } catch (e) {
-      pushToast(`Rename failed: ${String(e)}`, "error");
+      pushToast(msg("context-menu-ui-rename-failed", { value1: String(e) }), "error");
     }
   };
 
@@ -1101,9 +1070,7 @@ function RenamePage(props: {
           tabIndex={-1}
           data-page-action-id="rename-page"
           onClick={(e) => { e.stopPropagation(); setValue(props.name); setEditing(true); }}
-        >
-          Rename page…
-        </button>
+        >{t("context-menu-ui-rename-page")}</button>
       }
     >
       <div class="ctx-rename-form" onClick={(e) => e.stopPropagation()}>
@@ -1127,14 +1094,13 @@ function RenamePage(props: {
   );
 }
 
-function blockActions(id: string, x: number, y: number): { label: string; run: () => void; danger?: boolean }[] {
+function blockActions(id: string, x: number, y: number): { label: Msg; run: () => void; danger?: boolean }[] {
   const selected = selectedIds();
   const multi = selected.length > 1 && selected.includes(id);
   const ids = multi ? selected : [id];
-  const noun = multi ? "blocks" : "block";
   const sameSelection = () => JSON.stringify(selectedIds()) === JSON.stringify(ids);
   const text = (cut = false) => multi ? selectionMarkdown(cut || undefined) : blockSubtreeMarkdown(id, 0, true, copyStripCollapsed());
-  const copy = () => reportCopy(copyBlockOutline("copy", text(), buildClipboardPayload(ids)), `Copied ${noun}`);
+  const copy = () => reportCopy(copyBlockOutline("copy", text(), buildClipboardPayload(ids)), msg("context-menu-ui-copied", { count: ids.length }));
   const writable = ids.every(blockWritable);
   const mutate = (tag: string, action: (target: string) => void) => {
     if (ids.some((target) => !blockWritable(target))) return;
@@ -1147,12 +1113,12 @@ function blockActions(id: string, x: number, y: number): { label: string; run: (
   const isJournalTmpl = !!tmplName && graphMeta()?.default_journal_template === tmplName;
   if (!writable) {
     return [
-      { label: "Open in sidebar", run: () => { openDurableBlock(id, "sidebar"); } },
-      { label: "Zoom into block", run: () => zoomInto(id) },
-      { label: "Open in new tab", run: () => { openDurableBlock(id, "tab"); } },
-      { label: `Copy ${noun}`, run: copy },
+      { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
+      { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
+      { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); } },
+      { label: msg("context-menu-ui-copy", { count: ids.length }), run: copy },
       {
-        label: "Copy / export as…",
+        label: msg("context-menu-ui-copy-export-as"),
         run: () => {
           openExportModal(ids);
         },
@@ -1160,58 +1126,58 @@ function blockActions(id: string, x: number, y: number): { label: string; run: (
     ];
   }
   return [
-    { label: "Open in sidebar", run: () => { openDurableBlock(id, "sidebar"); } },
-    { label: "Zoom into block", run: () => zoomInto(id) },
-    { label: "Open in new tab", run: () => { openDurableBlock(id, "tab"); } },
+    { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
+    { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
+    { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); } },
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
-    { label: "Properties…", run: () => openBlockProps(id, x, y) },
+    { label: msg("context-menu-ui-properties"), run: () => openBlockProps(id, x, y) },
     // The keyboard route to "a block above this one" is Enter at offset 0, which
     // splits; a code block owns its Enter key, so a code block first on a page
     // (or first in any subtree) left the top unreachable (GH #480).
     {
-      label: "Insert block above",
+      label: msg("context-menu-ui-insert-block-above"),
       run: () => {
         const inserted = insertOutlineBefore(id, [{ raw: "", children: [] }]);
         if (inserted) startEditing(inserted, 0);
       },
     },
-    { label: "Copy link", run: () => void copyTineLink({ blocks: ids }) },
-    { label: multi ? "Copy block refs" : "Copy block ref", run: () => void copyBlockLink(ids, "ref") },
-    { label: multi ? "Copy block embeds" : "Copy block embed", run: () => void copyBlockLink(ids, "embed") },
-    ...(!multi ? [{ label: t("favorites-block-action"), run: () => void favoriteBlock(id) }] : []),
-    { label: `Copy ${noun}`, run: copy },
+    { label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ blocks: ids }) },
+    { label: multi ? msg("context-menu-ui-copy-block-refs") : msg("context-menu-ui-copy-block-ref"), run: () => void copyBlockLink(ids, "ref") },
+    { label: multi ? msg("context-menu-ui-copy-block-embeds") : msg("context-menu-ui-copy-block-embed"), run: () => void copyBlockLink(ids, "embed") },
+    ...(!multi ? [{ label: msg("favorites-block-action"), run: () => void favoriteBlock(id) }] : []),
+    { label: msg("context-menu-ui-copy", { count: ids.length }), run: copy },
     // Open the export modal for the whole selection (if this block is part of a
     // multi-selection) or just this block's subtree — preview + indent/remove opts.
     {
-      label: "Copy / export as…",
+      label: msg("context-menu-ui-copy-export-as"),
       run: () => {
         openExportModal(ids);
       },
     },
     ...(canConvertPipeTableToGrid(id)
-      ? [{ label: "Convert to grid", run: () => { convertPipeTableToGrid(id); } }]
+      ? [{ label: msg("context-menu-ui-convert-to-grid"), run: () => { convertPipeTableToGrid(id); } }]
       : []),
     {
-      label: `Cut ${noun}`,
+      label: msg("context-menu-ui-cut", { count: ids.length }),
       run: () => {
         void cutBlocks(ids, text(true), () => !multi || sameSelection() ? text(true) : "", () => multi ? deleteSelection() : deleteBlock(id))
-          .catch(() => pushToast(`Couldn't cut ${noun}: clipboard write failed.`, "error"));
+          .catch(() => pushToast(msg("context-menu-ui-couldn-t-cut-clipboard-write-failed", { count: ids.length }), "error"));
       },
     },
     {
-      label: numbered ? "Remove numbered list" : "Numbered list",
+      label: numbered ? msg("context-menu-ui-remove-numbered-list") : msg("context-menu-ui-numbered-list"),
       run: () => mutate("number-selection", toggleOwnNumberedList),
     },
-    { label: "Collapse all", run: () => mutate("collapse-selection", (target) => setCollapsedDeep(target, true)) },
-    { label: "Expand all", run: () => mutate("expand-selection", (target) => setCollapsedDeep(target, false)) },
+    { label: msg("context-menu-ui-collapse-all"), run: () => mutate("collapse-selection", (target) => setCollapsedDeep(target, true)) },
+    { label: msg("context-menu-ui-expand-all"), run: () => mutate("expand-selection", (target) => setCollapsedDeep(target, false)) },
     ...(tmplName
       ? [
           {
-            label: isJournalTmpl ? "✓ Used for new journals" : "Use for new journals",
+            label: isJournalTmpl ? msg("context-menu-ui-used-for-new-journals") : msg("context-menu-ui-use-for-new-journals"),
             run: () => setJournalTemplate(isJournalTmpl ? null : tmplName),
           },
         ]
       : []),
-    { label: `Delete ${noun}`, run: () => { if (multi ? sameSelection() : blockWritable(id)) multi ? deleteSelection() : deleteBlock(id); }, danger: true },
+    { label: msg("context-menu-ui-delete", { count: ids.length }), run: () => { if (multi ? sameSelection() : blockWritable(id)) multi ? deleteSelection() : deleteBlock(id); }, danger: true },
   ];
 }
