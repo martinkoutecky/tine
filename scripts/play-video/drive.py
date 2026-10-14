@@ -162,7 +162,7 @@ try:
     step("Open an existing graph", "1  Open a graph folder", pre=1.4, post=0.6, tag="welcome")
 
     # 2. system All files access page
-    step("Allow access to manage all files", "2  Allow \u201cAll files access\u201d", pre=1.3, post=2.0,
+    step("Allow access to manage all files", "2  Allow \u201cAll files access\u201d", pre=1.3, post=1.5,
          tag="allfiles-settings", settle=2.2)  # tapping the row toggles the switch
     sh("input keyevent KEYCODE_BACK")
     time.sleep(1.0)

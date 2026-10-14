@@ -37,8 +37,11 @@ for m in merged:
 total = out_t
 print("total kept seconds:", round(total, 1))
 fc, labels = [], []
+# screenrecord emits frames only when the screen changes: make the whole stream constant-rate first,
+# otherwise a trim over a static screen would contain no frame at all.
+fc.append(f"[0:v]fps=30,split={len(parts)}" + "".join(f"[s{i}]" for i in range(len(parts))))
 for i, (a, b) in enumerate(parts):
-    fc.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS,fps=30[v{i}]")
+    fc.append(f"[s{i}]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{i}]")
     labels.append(f"[v{i}]")
 chain = "".join(labels) + f"concat=n={len(parts)}:v=1:a=0[cat]"
 font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
