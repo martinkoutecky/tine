@@ -7289,6 +7289,30 @@ img.emoji {
   margin-bottom: 18px;
 }
 
+/* GH #605: quiet until the today section is hovered or focused; always faintly
+   visible where there is no hover (touch). */
+.today-sections-customize {
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.page-section:hover .today-sections-customize,
+.today-sections-customize:focus-visible {
+  opacity: 1;
+}
+.today-sections-customize:hover {
+  text-decoration: underline;
+}
+@media (hover: none) {
+  .today-sections-customize { opacity: 0.6; }
+}
+
 .query-header {
   font-size: 13px;
   font-weight: 600;

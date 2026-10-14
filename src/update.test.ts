@@ -330,7 +330,7 @@ describe("update checks", () => {
     expect(pushToastMock).not.toHaveBeenCalled();
   });
 
-  it("macOS stays manual: tauri-plugin-updater < 2.13.2 has a destructive install path (review finding 1)", async () => {
+  it("GH #405: macOS downloads, saves and installs, then offers a guarded restart", async () => {
     vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)" });
     mockLatest("v0.6.0-beta.1");
     const download = vi.fn(async () => {});
@@ -341,11 +341,57 @@ describe("update checks", () => {
     await update.checkForUpdate();
     const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"));
     offer?.[2]?.action?.run();
-    await vi.waitFor(() => expect(openExternalMock).toHaveBeenCalledOnce());
-    expect(download).not.toHaveBeenCalled();
-    expect(install).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(install).toHaveBeenCalledOnce());
+    expect(download).toHaveBeenCalledOnce();
+    expect(openExternalMock).not.toHaveBeenCalled();
     expect(relaunchMock).not.toHaveBeenCalled();
-    expect(updaterCheckMock).toHaveBeenCalledOnce(); // Notification only; action never asks for an installer.
+    expect(updaterCheckMock).toHaveBeenCalledTimes(2);
+    const restart = toastCalls(pushToastMock).find(([message]) => message.includes("Restart to use"));
+    expect(restart?.[2]?.action?.label).toBe("Restart");
+    restart?.[2]?.action?.run();
+    await vi.waitFor(() => expect(relaunchMock).toHaveBeenCalledOnce());
+  });
+
+  it.each([
+    `failed to install the update and to restore the previous app, which was left at /Applications/${IDENTITY.productName} (previous version).app`,
+    `failed to install the update and to restore the previous app, which was left at /Users/test/${IDENTITY.productName} (previous version).app`,
+    "failed to install the update and to restore the previous app, which was left at /tmp/updater-backup/Previous.app",
+    "PreviousAppNotRestored",
+    "Permission denied",
+  ])("GH #405: macOS install failure explains bundle recovery and opens the manual fallback: %s", async (failure) => {
+    vi.stubGlobal("navigator", { userAgent: "Macintosh; Intel Mac OS X" });
+    const reset = vi.fn();
+    const loaded = await loadUpdate({ updaterUpdate: {
+      version: "0.6.0-beta.1", download: async () => {},
+      install: async () => { throw new Error(failure); }, close: async () => {},
+    } });
+    loaded.update.setUpdateExitGuard({ prepare: async () => "accepted", reset });
+    await loaded.update.installUpdateForTest();
+    expect(reset).toHaveBeenCalledOnce();
+    expect(loaded.relaunchMock).not.toHaveBeenCalled();
+    expect(loaded.openExternalMock).toHaveBeenCalledOnce();
+    const error = toastCalls(loaded.pushToastMock).find(([, severity]) => severity === "error");
+    expect(error?.[0]).toContain(`${IDENTITY.productName} (previous version).app`);
+    expect(error?.[0]).toContain("beside");
+    expect(error?.[2]?.action?.label).toBe("Download manually");
+    if (failure.includes("which was left at ")) expect(error?.[0]).toContain(failure.split("which was left at ")[1]);
+  });
+
+  it.each(["minisign signature verification failed", "The signature verification failed"])("GH #405: macOS minisign rejection opens the manual fallback before saving or installing: %s", async (failure) => {
+    vi.stubGlobal("navigator", { userAgent: "Macintosh; Intel Mac OS X" });
+    const install = vi.fn();
+    const prepare = vi.fn(async () => "accepted" as const);
+    const download = vi.fn(async () => { throw new Error(failure); });
+    const loaded = await loadUpdate({ updaterUpdate: {
+      version: "0.6.0-beta.1", download,
+      install, close: async () => {},
+    } });
+    loaded.update.setUpdateExitGuard({ prepare, reset: vi.fn() });
+    await loaded.update.installUpdateForTest();
+    expect(download).toHaveBeenCalledOnce();
+    expect(install).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(loaded.openExternalMock).toHaveBeenCalledOnce();
   });
 
   it("points the manual releases fallback at the beta release page", async () => {
