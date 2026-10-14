@@ -63,3 +63,10 @@ for i, (a, b, text) in enumerate(caps):
     subprocess.check_call(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{(a+b)/2:.2f}",
                            "-i", f"{OUT}/all-files-access-demo.mp4", "-frames:v", "1",
                            f"{OUT}/frame-{i:02d}.png"])
+
+# debugging aid: annotated 1 fps sheet of the RAW recording (frame time = recording clock)
+subprocess.check_call(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{OUT}/raw.mp4", "-vf",
+                       f"fps=1,scale=150:-1,drawtext=fontfile={font}:text='%{{pts\\:hms}}':fontcolor=red:fontsize=22:x=4:y=h-30,tile=10x12:padding=2",
+                       "-frames:v", "1", f"{OUT}/raw-sheet.png"])
+for l in ev.get("log", []):
+    print("tap at event-clock", l["t"], "-> video", round(l["t"] + shift, 2))

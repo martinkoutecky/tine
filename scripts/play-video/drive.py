@@ -88,7 +88,11 @@ def find(root, needle, exact=False, cls=None):
     return hits
 
 
+log = []
+
+
 def tap_bounds(b):
+    log.append({"t": round(time.time() - t_rec, 2) if t_rec else 0, "tap": list(b)})
     sh(f"input tap {(b[0] + b[2]) // 2} {(b[1] + b[3]) // 2}")
 
 
@@ -224,7 +228,7 @@ except subprocess.TimeoutExpired:
     rec.kill()
 time.sleep(1.5)
 adb("pull", "/sdcard/raw.mp4", f"{OUT}/raw.mp4")
-json.dump({"status": status, "t_home": t_home, "segments": segments}, open(f"{OUT}/events.json", "w"), indent=1)
+json.dump({"status": status, "t_home": t_home, "segments": segments, "log": log}, open(f"{OUT}/events.json", "w"), indent=1)
 sh("logcat -d -s Tine/FolderPicker:I chromium:I | tail -80 > /sdcard/tine.log", check=False)
 with open(f"{OUT}/logcat-tine.txt", "w", errors="replace") as f:
     f.write(subprocess.run(["adb", "logcat", "-d", "-b", "all", "-t", "6000"], capture_output=True, text=True, errors="replace").stdout)
