@@ -15,7 +15,7 @@ const GRAPH_SRC = process.env.STORE_GRAPH;
 const OUT = process.env.OUT;
 const DRIVER = 4612, NATIVE = 4613;
 const TMP = path.join(os.tmpdir(), `tine-play-shots-${process.pid}`);
-const GRAPH = path.join(TMP, "graph");
+const GRAPH = path.join(TMP, process.env.GRAPH_NAME ?? "Notes");
 fs.rmSync(TMP, { recursive: true, force: true });
 fs.cpSync(GRAPH_SRC, GRAPH, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
@@ -53,13 +53,13 @@ try {
     capabilities: tauriCapabilities(APP, "default", process.platform, target.debuggerAddress),
   });
   await ensureMainWindow(browser);
-  await browser.setWindowSize(640, 1138);
-  await browser.execute(() => localStorage.setItem("logseq-claude.zoom", "1.8"));
+  await browser.setWindowSize(Number(process.env.WIN_W ?? 640), Number(process.env.WIN_H ?? 1138));
+  await browser.execute((z) => localStorage.setItem("logseq-claude.zoom", z), process.env.ZOOM ?? "1.8");
   await browser.refresh();
   await browser.waitUntil(async () => (await browser.$$(".page-title")).length > 0, { timeout: 30000 });
   await sleep(2500);
   await closeToasts();
-  await browser.keys(["Escape"]);
+  if (Number(process.env.WIN_W ?? 640) <= 640) await browser.keys(["Escape"]);
   const dims = await browser.execute(() => [innerWidth, innerHeight, devicePixelRatio]);
   console.log("viewport", dims);
   const scene = process.env.SCENE ?? "1-journal";
