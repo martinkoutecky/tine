@@ -1,5 +1,5 @@
 // GH #671: reporter template, fresh/existing journal, routed page and feed.
-// Supply the reporter's unmodified templates.md through GH671_TEMPLATE_FILE.
+// GH671_TEMPLATE_FILE may supply a real templates.md; a synthetic one is the default.
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -10,7 +10,17 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const testedBase = execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
 const ARTIFACTS = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(ROOT, "artifacts/gh671"));
 const APP = process.env.TINE_APP || path.join(ROOT, "target/debug/tine");
-const TEMPLATE = fs.readFileSync(process.env.GH671_TEMPLATE_FILE, "utf8");
+// Default: a synthetic template with the report's shape (page alias, a
+// non-parent template with a renderer macro, tab-indented empty children,
+// a second template). GH671_TEMPLATE_FILE overrides it with a real file.
+const SYNTHETIC_TEMPLATE = [
+  "alias:: [[template]]", "",
+  "- Daily template", "  template:: Daily Template", "  template-including-parent:: false",
+  "\t- {{renderer :todomaster}}", "\t- Prepare", "\t\t- Energy check", "\t\t- Goals", "\t\t\t-",
+  "\t- Notes", "\t- Reflect", "\t\t- **Highlights**", "\t\t\t-",
+  "- [[Project/Part 2]]", "  template:: Part 2 pipeline", "\t- Step one", "",
+].join("\n");
+const TEMPLATE = process.env.GH671_TEMPLATE_FILE ? fs.readFileSync(process.env.GH671_TEMPLATE_FILE, "utf8") : SYNTHETIC_TEMPLATE;
 const PORT = Number(process.env.E2E_DRIVER_PORT || 4761);
 fs.mkdirSync(ARTIFACTS, { recursive: true });
 const run = fs.mkdtempSync(path.join(ARTIFACTS, "native-"));
