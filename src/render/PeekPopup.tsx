@@ -188,8 +188,7 @@ export function PeekPopup(props: {
           <RefBlocks blocks={props.blocks()} page={props.page} pageKind={props.pageKind} readOnly onOpenBlock={openSource} />
         </PeekContext.Provider>
         <Show when={(props.truncatedCount?.() ?? 0) > 0}>
-          <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT
-            ? `${MAX_PEEK_COUNT}+ more blocks` : `${props.truncatedCount!()} more blocks`}</div>
+          <div class="peek-popup-more">{props.truncatedCount!() > MAX_PEEK_COUNT ? t("render-more-blocks", { count: MAX_PEEK_COUNT }) : t("render-more-blocks-exact", { count: props.truncatedCount!() })}</div>
         </Show>
       </div>
     </FloatingPortal>

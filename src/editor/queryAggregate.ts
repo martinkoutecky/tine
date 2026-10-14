@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 // Query summaries format backend statistics from the same snapshot as the rows.
 
 /** The three functions a QUERY aggregate can name (contract §4). The sheet's
@@ -67,7 +68,7 @@ export function querySummary(input: {
     columns: statistics.aggregates.map((entry) => ({ label: queryAggregateLabel(entry), entry })),
     overall: statistics.overall.map(format),
     groups: statistics.groups?.map((group) => ({
-      key: group.key, label: group.key ?? "(none)", count: group.count, cells: group.cells.map(format),
+      key: group.key, get label() { return group.key ?? t("editor-none"); }, count: group.count, cells: group.cells.map(format),
     })) ?? null,
     groupLabel: input.groupLabel ?? statistics.group_by,
     multiMembership: statistics.group_by === "tags",

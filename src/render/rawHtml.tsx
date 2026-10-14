@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { Show, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { rawHtmlPresentation } from "./htmlSanitize";
 import { allowLocalFileImages } from "../localFileSettings";
@@ -22,7 +23,7 @@ function embedReferrerPolicy(src: string): "strict-origin-when-cross-origin" | "
 function renderIframe(src: string, width?: string, height?: string, spanAttrs?: SpanDomAttrs): JSX.Element {
   return (
     <span class="embed-iframe-wrap" style={{ ...(width || height ? { "max-width": "none" } : {}), ...(width ? { width } : {}), ...(height ? { "aspect-ratio": "auto", height } : {}) }} {...(spanAttrs ?? {})}>
-      <iframe class="embed-iframe" src={src} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy={embedReferrerPolicy(src)} title="embed" />
+      <iframe class="embed-iframe" src={src} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy={embedReferrerPolicy(src)} title={t("render-embed")} />
     </span>
   );
 }
