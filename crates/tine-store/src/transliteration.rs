@@ -1,6 +1,9 @@
 //! Ephemeral, bounded page-name expansions. No dictionary enters the wasm parser.
 use pinyin::ToPinyin;
 
+#[cfg(test)]
+thread_local! { pub(crate) static BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
 #[derive(Debug, Clone, Copy)]
 enum Adapter {
     Mandarin,
@@ -65,6 +68,8 @@ pub(crate) fn normalize_query(query: &str) -> Option<String> {
 
 impl NameKeys {
     pub(crate) fn build(name: &str) -> Self {
+        #[cfg(test)]
+        BUILDS.with(|count| count.set(count.get() + 1));
         Adapter::Mandarin.keys(name)
     }
 

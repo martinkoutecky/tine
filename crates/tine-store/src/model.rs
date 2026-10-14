@@ -455,78 +455,92 @@ pub(crate) struct ReadSnapshot {
     icon_index: std::sync::OnceLock<Arc<page_icons::IconIndex>>,
     memos: SnapshotMemos,
     query_index: crate::query::index::QueryIndexSlot,
-    pub(crate) transliteration_names: Arc<HashMap<String, Arc<crate::transliteration::NameKeys>>>,
+    pub(crate) transliteration_names: Arc<NameKeyMap>,
+    pub(crate) transliteration_owners: SharedMap<String, usize>,
+    // Only open editor completions own supplemental keys. Shared across
+    // publications, released explicitly on close (including stale IPC replies).
+    pub(crate) completion_name_keys: Arc<std::sync::Mutex<HashMap<String, Arc<NameKeyMap>>>>,
+    #[cfg(test)]
+    pub(crate) name_cache_work: usize,
     #[cfg(test)]
     block_full_builds: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     referenced_name_full_builds: std::sync::atomic::AtomicUsize,
 }
 
+pub(crate) type NameKeyMap = SharedMap<String, Arc<crate::transliteration::NameKeys>>;
+
 impl ReadSnapshot {
-    fn build_name_keys(
-        &self,
-        old: Option<&Self>,
-        changed_paths: &[String],
-    ) -> Arc<HashMap<String, Arc<crate::transliteration::NameKeys>>> {
+    fn build_name_keys(&mut self, old: Option<&Self>, changed_paths: &[String]) -> Arc<NameKeyMap> {
         if let Some(old) = old {
+            self.transliteration_owners = old.transliteration_owners.clone();
             if Arc::ptr_eq(&old.pages, &self.pages) && Arc::ptr_eq(&old.list, &self.list) {
                 return Arc::clone(&old.transliteration_names);
             }
-            // A graph without Han names keeps its empty cache through ordinary
-            // publications. Inspect only changed pages' parser-owned names.
-            if old.transliteration_names.is_empty() && !changed_paths.is_empty() {
-                let has_han = changed_paths.iter().any(|path| {
-                    let Some((page, doc)) = snapshot_page_by_rel(&self.pages, None, path) else {
-                        return false;
-                    };
-                    crate::transliteration::eligible(&page.name)
-                        || crate::query::document_alias_spellings(doc)
-                            .iter()
-                            .any(|name| crate::transliteration::eligible(name))
-                        || collect_document_referenced_names(doc)
-                            .iter()
-                            .any(|name| crate::transliteration::eligible(name))
-                });
-                if !has_han {
-                    return Arc::clone(&old.transliteration_names);
-                }
-            }
         }
-        // Reuse parser-owned name projections; never transliterate body text here.
-        // Ephemeral: no checkpoint/index serialization changes.
-        let mut transliteration_names = HashMap::new();
-        let mut add_name = |name: &str| {
-            if !crate::transliteration::eligible(name) {
-                return;
-            }
-            let key = tine_core::refs::page_key(name);
-            if transliteration_names.contains_key(&key) {
-                return;
-            }
-            let keys = old
-                .and_then(|old| old.transliteration_names.get(&key))
-                .cloned()
-                .unwrap_or_else(|| Arc::new(crate::transliteration::NameKeys::build(&key)));
-            transliteration_names.insert(key, keys);
+        let names = |page: &PageEntry, doc: &Document| -> std::collections::BTreeSet<String> {
+            std::iter::once(page.name.clone())
+                .chain(crate::query::document_alias_spellings(doc))
+                .chain(collect_document_referenced_names(doc))
+                .filter_map(|name| crate::transliteration::cache_identity(&name))
+                .collect()
         };
-        for page in self.list.iter() {
-            add_name(&page.name);
-        }
-        if let Some(aliases) = self.alias_index.get() {
-            for shard in &aliases.shards {
-                for (_, names) in shard.iter() {
-                    for name in names {
-                        add_name(name);
+        let mut delta: std::collections::BTreeMap<String, isize> = Default::default();
+        if let Some(old) = old {
+            // Only publication paths are inspected. Counts are page ownership,
+            // so repeated aliases/references within one document count once.
+            for path in changed_paths {
+                let before = snapshot_page_by_rel(&old.pages, None, path)
+                    .map(|(page, doc)| names(page, doc))
+                    .unwrap_or_default();
+                let after = snapshot_page_by_rel(&self.pages, None, path)
+                    .map(|(page, doc)| names(page, doc))
+                    .unwrap_or_default();
+                #[cfg(test)]
+                {
+                    self.name_cache_work += before.len() + after.len();
+                }
+                for name in before.difference(&after) {
+                    *delta.entry(name.clone()).or_default() -= 1;
+                }
+                for name in after.difference(&before) {
+                    *delta.entry(name.clone()).or_default() += 1;
+                }
+            }
+        } else {
+            for (page, doc) in self.pages.iter() {
+                for name in names(page, doc) {
+                    #[cfg(test)]
+                    {
+                        self.name_cache_work += 1;
                     }
+                    *delta.entry(name).or_default() += 1;
                 }
             }
         }
-        for shard in &self.explicit_index.shards {
-            for (name, _) in shard.iter() {
-                add_name(name);
+        let mut keys = old
+            .map(|old| Arc::clone(&old.transliteration_names))
+            .unwrap_or_else(|| Arc::new(NameKeyMap::new()));
+        for (name, change) in delta {
+            if change == 0 {
+                continue;
+            }
+            let before = self.transliteration_owners.get(&name).copied().unwrap_or(0);
+            let count = before
+                .checked_add_signed(change)
+                .expect("name ownership delta");
+            if count == 0 {
+                self.transliteration_owners.remove(&name);
+                Arc::make_mut(&mut keys).remove(&name);
+            } else {
+                self.transliteration_owners.insert(name.clone(), count);
+                if before == 0 {
+                    let value = Arc::new(crate::transliteration::NameKeys::build(&name));
+                    Arc::make_mut(&mut keys).insert(name, value);
+                }
             }
         }
-        Arc::new(transliteration_names)
+        keys
     }
     /// Owner paths of the aliases whose page key is `key`, in
     /// `page_aliases_with_owners` order. Built once per snapshot so a
@@ -719,7 +733,13 @@ impl ReadSnapshot {
             icon_index: std::sync::OnceLock::new(),
             memos: SnapshotMemos::default(),
             query_index,
-            transliteration_names: Arc::new(HashMap::new()),
+            transliteration_names: Arc::new(NameKeyMap::new()),
+            transliteration_owners: SharedMap::new(),
+            completion_name_keys: old
+                .map(|old| Arc::clone(&old.completion_name_keys))
+                .unwrap_or_default(),
+            #[cfg(test)]
+            name_cache_work: 0,
             #[cfg(test)]
             block_full_builds: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]

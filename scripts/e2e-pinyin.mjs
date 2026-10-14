@@ -20,7 +20,7 @@ const app = process.env.TINE_APP || path.join(root, "target/release/tine");
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(out, "xdg", dir), { recursive: true });
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{}\n");
-for (const name of ["北京", "北景", "beijing", "bjmarker"]) fs.writeFileSync(path.join(graph, "pages", `${name}.md`), "- fixture body\n");
+for (const name of ["北京", "北景", "beijing", "bjmarker", "x beijing"]) fs.writeFileSync(path.join(graph, "pages", `${name}.md`), "- fixture body\n");
 const data = path.join(out, "xdg/data", APP_ID);
 fs.mkdirSync(data, { recursive: true });
 fs.writeFileSync(path.join(data, "tine-settings.json"), JSON.stringify({ "ui_language": "en", "pinyin-page-matching": process.env.PINYIN_UI_ENABLED !== "off" }));
@@ -34,12 +34,13 @@ const td = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServerArgs
   env: target.env, stdio: ["ignore", log, log], detached: true,
 });
 let browser;
-const receipt = { revision: "23848d711237e91f58ebf7371b14eb8a00d48a11 + working diff", journey: benchmark ? "Fixed warm Ctrl+K latency" : "Pinyin Ctrl+K, native priority, activation, settings off", sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex") };
+const receipt = { revision: "508380d5e51b8581b0bfa7769f441489e65f2d2d + run 3 diff", journey: benchmark ? "Fixed warm Ctrl+K latency" : "Pinyin native priority, inline/Capture completion, cross-window setting", sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex") };
 try {
   await sleep(2500);
   browser = await remote({ hostname: "127.0.0.1", port, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60000,
     capabilities: tauriCapabilities(app, "pinyin", process.platform, target.debuggerAddress) });
   await ensureMainWindow(browser);
+  const mainHandle = await browser.getWindowHandle();
   console.log("main", await browser.getUrl());
   if (!benchmark) console.log("initial", await browser.execute(() => ({ ready: document.readyState, text: document.body?.innerText?.slice(0,1000) })));
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20000 });
@@ -49,6 +50,27 @@ try {
     await browser.keys(["Control", "k"]);
     await browser.$(".switcher-input").waitForExist({ timeout: 5000 });
     await type(q);
+  };
+  const completionLabels = () => browser.execute(() => [...document.querySelectorAll(".autocomplete .ac-label")].map(n => n.textContent.trim()));
+  const complete = async (query, capture = false) => {
+    await browser.execute((q, cap) => {
+      const textarea = document.querySelector(cap ? ".capture-shell textarea" : "textarea.block-editor");
+      textarea.focus(); textarea.value = `[[${q}]]`;
+      textarea.setSelectionRange(q.length + 2, q.length + 2);
+      textarea.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: q.at(-1) }));
+    }, query, capture);
+  };
+  const showCapture = async () => {
+    const secondary = spawn(app, ["--capture"], { env, stdio: "ignore" });
+    await new Promise((resolve, reject) => { secondary.on("error", reject); secondary.on("exit", code => code === 0 ? resolve() : reject(Error(`capture forwarder exit ${code}`))); });
+    await browser.waitUntil(async () => {
+      for (const handle of await browser.getWindowHandles()) {
+        await browser.switchToWindow(handle);
+        if ((await browser.getUrl()).includes("capture.html")) return true;
+      }
+      return false;
+    }, { timeout: 10000 });
+    await browser.$(".capture-shell textarea").waitForExist({ timeout: 10000 });
   };
   if (benchmark) {
     const measurements = [];
@@ -84,6 +106,25 @@ try {
   await browser.keys(["Enter"]);
   await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "北京", { timeout: 10000 });
   receipt.initialsActivation = true;
+  receipt.step = "inline completion native substring priority";
+  await browser.$(".ls-block .block-content").click();
+  await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
+  await complete("beijing");
+  await browser.waitUntil(async () => (await completionLabels()).includes("北京"), { timeout: 10000 });
+  receipt.inlineOrder = await completionLabels();
+  if (receipt.inlineOrder.indexOf("x beijing") < 0 || receipt.inlineOrder.indexOf("x beijing") > receipt.inlineOrder.indexOf("北京")) throw Error("inline expansion outranks native substring");
+  await browser.keys(["Escape"]);
+  await browser.keys(["Escape"]);
+
+  receipt.step = "warm Capture and native fuzzy priority";
+  await showCapture();
+  await complete("bj", true);
+  await browser.waitUntil(async () => (await completionLabels()).includes("北京"), { timeout: 10000 });
+  receipt.captureOrder = await completionLabels();
+  if (receipt.captureOrder.indexOf("beijing") < 0 || receipt.captureOrder.indexOf("beijing") > receipt.captureOrder.indexOf("北京")) throw Error("Capture expansion outranks native fuzzy");
+  await browser.keys(["Escape"]);
+  await browser.keys(["Escape"]);
+  await browser.switchToWindow(mainHandle);
   receipt.step = "settings";
   await browser.keys(["Escape"]);
   await browser.$('button[title^="Settings"]').click();
@@ -102,6 +143,13 @@ try {
   await browser.waitUntil(() => browser.execute(() => !document.body.textContent.includes("Searching…")), { timeout: 10000 });
   if ((await names()).includes("北京")) throw Error("disabled matching retained Han result");
   receipt.settingOff = true;
+  await browser.keys(["Escape"]);
+  receipt.step = "persistent Capture after main preference off";
+  await showCapture();
+  await complete("bj", true);
+  await browser.waitUntil(async () => (await completionLabels()).includes("bjmarker"), { timeout: 10000 });
+  receipt.captureAfterOff = await completionLabels();
+  if (receipt.captureAfterOff.includes("北京")) throw Error("Capture kept Pinyin after preference off in main");
   await browser.saveScreenshot(path.join(out, "off.png"));
   receipt.outcome = "passed";
   }

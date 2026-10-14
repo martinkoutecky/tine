@@ -85,8 +85,7 @@ pub(crate) struct QueryPlan {
     remove_accents: bool,
     pub(crate) transliteration: bool,
     transliteration_queries: HashMap<u32, String>,
-    name_keys:
-        Option<std::sync::Arc<HashMap<String, std::sync::Arc<crate::transliteration::NameKeys>>>>,
+    pub(crate) name_keys: Option<std::sync::Arc<crate::model::NameKeyMap>>,
     page_match_scope: FriendlyPageMatchScope,
     page_view: Option<ViewSettings>,
     block_view: Option<ViewSettings>,
@@ -1185,6 +1184,7 @@ mod tests {
             .unwrap();
         }
         fs::write(dir.join("pages/Owner.md"), "alias:: 南京\n- [[上海]]\n").unwrap();
+        fs::write(dir.join("pages/Han body.md"), "- 北京\n").unwrap();
         let graph = snapshot_for_dir(&dir);
         let run = |query: &str, enabled| {
             QueryPlan::friendly(query, 100, 100)
@@ -1237,8 +1237,25 @@ mod tests {
         assert!(!names("bjng").contains(&"北京".into()));
         assert!(!names("/beijing/").contains(&"北京".into()));
         assert!(!names("bj -beijing").contains(&"北京".into()));
-        assert!(run("han", true).hits.iter().all(|hit| !matches!(hit,
-            QueryHit::Block { display_text, .. } if display_text == "北京")));
+        let blocks = |enabled| {
+            run("beijing", enabled)
+                .hits
+                .into_iter()
+                .filter_map(|hit| match hit {
+                    QueryHit::Block { page, block, .. } => Some((page, block.id)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(blocks(true), blocks(false));
+        assert!(
+            !blocks(true).iter().any(|(page, _)| page == "Han body"),
+            "Han-only body cannot match a Pinyin-only query"
+        );
+        assert!(
+            names("beijing").contains(&"北京".into()),
+            "positive page control"
+        );
         assert!(names("北京").contains(&"北京".into()));
         fs::remove_dir_all(dir).unwrap();
     }

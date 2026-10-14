@@ -938,7 +938,10 @@ fn own_journal_creation_updates_day_and_published_answers() {
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
     assert!(view
-        .complete_page_names("Sep 25", 10, None, false)
+        .complete_page_names("Sep 25", 10, None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect::<Vec<_>>()
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
 }

@@ -301,7 +301,11 @@ impl Graph {
                 query: crate::query::memo::QueryMemo::from_checkpoint(derived.query_memo),
             },
             query_index,
-            transliteration_names: Arc::new(HashMap::new()),
+            transliteration_names: Arc::new(NameKeyMap::new()),
+            transliteration_owners: SharedMap::new(),
+            completion_name_keys: Default::default(),
+            #[cfg(test)]
+            name_cache_work: 0,
             #[cfg(test)]
             block_full_builds: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]

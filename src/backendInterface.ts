@@ -408,7 +408,7 @@ export interface Backend {
     views?: { page: ViewSettings; block: ViewSettings },
     transliteration?: boolean
   ): Promise<QueryExecution>;
-  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string }, transliteration?: boolean): Promise<PageEntry[]>;
+  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string; session?: string }, transliteration?: boolean): Promise<PageEntry[]>;
   /** Capture-only page/tag completion capability. It is intentionally not the
    * general graph command route used by the main WebView. */
   captureQuickSwitch(query: string, limit: number, transliteration?: boolean): Promise<PageEntry[]>;

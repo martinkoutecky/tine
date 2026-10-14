@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Pinyin page completion preserves native-match priority, survives autosave, follows preference changes across windows, and updates cached keys only for changed names (GH #151).
 - Bullet threading's "Active ancestry only" mode now emphasizes the edited block's connectors in the accent color, as the original Logseq plugin does (GH #614).
 - GH #524: Added regression coverage for dragging a block into an empty page in the right sidebar; current Beta already supports the move.
 - GH #499: Added regression coverage for splitting the lower pane beneath an existing top row; the reported sequence already preserves the layout on current Beta.

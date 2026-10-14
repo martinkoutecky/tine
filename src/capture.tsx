@@ -20,7 +20,7 @@ import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw
 import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
-import { pinyinMatchingEnabled } from "./launcherRanking";
+import { initPinyinMatchingSetting, pinyinMatchingEnabled } from "./launcherRanking";
 import { startUiLanguage } from "./i18n/preference";
 import { reportUiFailure } from "./uiFailure";
 import { latestOwner, readOwned } from "./owned";
@@ -527,6 +527,7 @@ function Capture() {
         // window). Also refresh the pref/theme/shortcuts that may have changed
         // while we were hidden.
         const unShown = await listen("capture-shown", () => {
+          void initPinyinMatchingSetting();
           loadPref();
           void refreshPolicyThenResettleAndActivate();
           void requestTheme();

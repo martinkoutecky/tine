@@ -205,6 +205,8 @@ export interface TemplateDto {
 }
 
 export interface PageEntry {
+  /** Request-local completion evidence; absent on ordinary page inventories. */
+  match_class?: ObjectiveMatchClass;
   name: string;
   kind: PageKind;
   date_key: number | null;

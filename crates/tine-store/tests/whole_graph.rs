@@ -127,7 +127,10 @@ fn all_whole_graph_questions_use_the_public_view() {
             > 0
     );
     assert!(view
-        .complete_page_names("Source", 10, None, false)
+        .complete_page_names("Source", 10, None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect::<Vec<_>>()
         .iter()
         .any(|p| p.name == "Source"));
     assert!(!view

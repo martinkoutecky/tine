@@ -5253,7 +5253,10 @@ mod rev5_tests {
                 "complete_page_names",
                 format!(
                     "{:?}",
-                    view.complete_page_names("", 20, None, false)
+                    view.complete_page_names("", 20, None, false, None)
+                        .into_iter()
+                        .map(|(page, _)| page)
+                        .collect::<Vec<_>>()
                         .iter()
                         .map(|entry| &entry.name)
                         .collect::<Vec<_>>()

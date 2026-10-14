@@ -15,17 +15,29 @@ reading. Latin text is preserved; whitespace, hyphens and apostrophes are omitte
 Only ASCII Latin queries expand. Matches are prefixes or contiguous substrings,
 never subsequences. Kanji receive Mandarin readings, not Japanese romaji.
 
-`ReadSnapshot::build_name_keys` builds keys before publication using existing
-title, alias and explicit reference-name projections. The cache is ephemeral,
-bounded by names in that snapshot, shares unchanged keys with the prior snapshot,
-and is rebuilt after checkpoint restore. Latin-only publications reuse the
-empty cache after inspecting only the changed pages’ parser-owned names. No persisted shape changes. Search does
-no dictionary work or cache mutation. Latin-only strings allocate no keys.
+`ReadSnapshot::build_name_keys` updates a persistent tree from the publication's
+changed page paths. Per-page sets of parser-owned titles, aliases and references
+contribute ownership counts; removing one owner cannot remove another's keys.
+Unchanged tree structure and keys are shared. A body edit inspects only the
+changed documents' old/new names and retains the cache root when names do not
+change. Checkpoint restore builds this ephemeral cache once; no persisted shape
+changes. Latin-only strings allocate no keys.
+
+Inline completion holds supplemental keys for its original block under a unique
+editor session, shared across publications. The first request parses that
+baseline and reuses published keys; later keystrokes perform no dictionary work.
+`quick_switch` with limit zero releases the session on completion close, trigger
+replacement or component disposal. An IPC reply arriving after close releases
+again, so a late blocking query cannot retain obsolete names. Both native
+commands return transient completion match classes; `orderAcItems` keeps every
+native row and its existing Create policy ahead of the transliteration band.
 
 The request-local flag defaults off for legacy callers. Frontend device preference
 `pinyin-page-matching` is in `launcherRanking.ts`; Settings and its messages live
 in the existing Editor/Advanced area and Fluent catalogs. Mock and published web
 backends accept and ignore the flag; the wasm parser has no dictionary dependency.
+Persisted changes use the same Tauri event propagation pattern as UI language;
+each open WebView rereads the device preference, and Capture also refreshes on show.
 
 For each adapter add multilingual and mixed-script fixtures, native class
 precedence and collision tests, a default/ambiguous reading policy, negative/regex

@@ -58,5 +58,48 @@ fn main() {
         "{}",
         serde_json::json!({"enabled": enabled,"ready_ms":ready_ms,"cache_names":cache.0,"cache_payload_bytes":cache.1,"metrics":metrics})
     );
+    if std::env::args().nth(3).as_deref() == Some("edit") {
+        // The caller supplies a disposable fixture. Do not print any names or
+        // contents. Keep a prior snapshot held, as live editors/searches do.
+        let inventory = graph.inventory(tine_store::InventoryScope::All);
+        let id = inventory
+            .0
+            .iter()
+            .find_map(|entry| match &entry.target {
+                tine_store::Resolved::Existing { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .expect("a physical fixture page");
+        let mut save_ms = Vec::new();
+        let mut publication_ms = Vec::new();
+        let mut last = tine_store::cost_counters::snapshot();
+        for n in 0..31 {
+            let read = store.page(&id).unwrap();
+            let mut doc = read.doc;
+            doc.blocks[0].raw = format!("benchmark body {n}");
+            tine_store::cost_counters::reset();
+            let start = Instant::now();
+            assert!(matches!(
+                store.save(
+                    tine_store::EditKind::ReplacePage,
+                    &id,
+                    tine_store::SaveBase::Existing(read.rev),
+                    &doc
+                ),
+                tine_store::SaveOutcome::Saved(_)
+            ));
+            last = tine_store::cost_counters::snapshot();
+            if n > 0 {
+                save_ms.push(start.elapsed().as_secs_f64() * 1000.0);
+                publication_ms.push(last.snapshot_nanos as f64 / 1e6);
+            }
+        }
+        save_ms.sort_by(f64::total_cmp);
+        publication_ms.sort_by(f64::total_cmp);
+        println!(
+            "{}",
+            serde_json::json!({"edit_samples":30,"save_p50_ms":save_ms[15],"save_p95_ms":save_ms[28],"publication_p50_ms":publication_ms[15],"publication_p95_ms":publication_ms[28],"last_files_written":last.files_written,"last_fsyncs":last.fsyncs,"last_full_reads":last.full_reads,"last_tree_copies":last.shared_tree_node_copies})
+        );
+    }
     store.close();
 }

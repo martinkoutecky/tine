@@ -3,10 +3,25 @@ import { backend } from "./backend";
 import type { ObjectiveMatchClass } from "./types";
 import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
 import { pushToast } from "./toasts";
-import { readOwned, revisionOwner } from "./owned";
+import { advanceRevision, readOwned, revisionOwner, writeOwned } from "./owned";
 import { activeLocale, msg, render } from "./i18n";
 
 const PINYIN_KEY = "pinyin-page-matching";
+const PINYIN_CHANGED = "pinyin-page-matching-changed";
+const pinyinWindow = crypto.randomUUID();
+let pinyinListener: Promise<void> | undefined;
+function listenForPinyinChanges(): Promise<void> {
+  return pinyinListener ??= (async () => {
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      await listen<{ origin: string }>(PINYIN_CHANGED, event => {
+        if (event.payload.origin === pinyinWindow) return;
+        advanceRevision(pinyinEnabled);
+        void initPinyinMatchingSetting();
+      });
+    } catch { /* Published pages have a single window. */ }
+  })();
+}
 /** Default follows Chinese UI or primary system language; reset uses this too. */
 export function pinyinDefault(ui = activeLocale(), system = typeof navigator === "undefined" ? "" : navigator.language): boolean {
   return ui.toLowerCase().startsWith("zh") || system.toLowerCase().startsWith("zh");
@@ -16,6 +31,7 @@ export const pinyinMatchingEnabled = pinyinEnabled;
 
 /** Device preference; a newer local write wins over startup reads. */
 export async function initPinyinMatchingSetting(): Promise<void> {
+  await listenForPinyinChanges();
   const revision = preferenceRevision(pinyinEnabled);
   const owner = revisionOwner(pinyinEnabled, revision);
   try {
@@ -36,7 +52,13 @@ export async function initPinyinMatchingSetting(): Promise<void> {
 
 export function setPinyinMatchingEnabled(value: boolean): void {
   writePreference(pinyinEnabled, applyPinyinEnabled, value,
-    next => backend().setAppBool(PINYIN_KEY, next), render(msg("settings-pinyin-label")), () => pushToast(msg("toast-pinyin-save-failed"), "error"));
+    async next => {
+      await writeOwned(revisionOwner(pinyinEnabled, preferenceRevision(pinyinEnabled)), backend().setAppBool(PINYIN_KEY, next));
+      try {
+        const { emit } = await import("@tauri-apps/api/event");
+        await emit(PINYIN_CHANGED, { origin: pinyinWindow });
+      } catch { /* No native event bus in published pages. */ }
+    }, render(msg("settings-pinyin-label")), () => pushToast(msg("toast-pinyin-save-failed"), "error"));
 }
 
 export function resetPinyinMatchingSetting(): void {
