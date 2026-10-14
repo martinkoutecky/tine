@@ -108,6 +108,9 @@ export interface MessageArgs {
   "command-ui-toggle-theme": {};
   "command-ui-toggle-wide-mode": {};
   "command-window-open-in-new-window": {};
+  "config-query-details": {};
+  "config-query-title": {};
+  "config-query-unsupported": {};
   "css-draft-recovered": {};
   "css-edit-global": {};
   "css-edit-graph": {};
@@ -142,6 +145,7 @@ export interface MessageArgs {
   "export-show-folder": {};
   "favorites-block-action": {};
   "graph-wsl-rootfs-refused": {};
+  "journals-upcoming": {};
   "links-copy-title": {};
   "links-open-custom-scheme-confirm": { "scheme": string | number; "url": string | number };
   "links-open-custom-scheme-title": { "scheme": string | number };
