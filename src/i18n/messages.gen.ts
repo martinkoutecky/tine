@@ -165,6 +165,7 @@ export interface MessageArgs {
   "pages-all-show-journals": {};
   "pages-all-title": {};
   "preview-open-source": {};
+  "preview-page-actions": {};
   "references-clear": {};
   "references-collapse-all": {};
   "references-collapse-group": { "page": string | number };

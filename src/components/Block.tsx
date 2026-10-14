@@ -95,7 +95,7 @@ import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
 import { Rendered, detectMacro } from "./Rendered";
-import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, type ThreadLineDecoration } from "./block/rowChrome";
+import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { dataRev, graphEpoch } from "../graphSession";
@@ -271,11 +271,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // answer "false" thousands of times.
   const threadLineDecoration = (): ThreadLineDecoration => {
     if (!(hasChildren() && sheet().view === null)) return NO_THREAD_LINES;
-    return {
-      enabled: pluginManager.hasDeclarativeDecoration("thread-lines"),
-      active: pluginManager.declarativeDecorationSetting("thread-lines", "display") === "active",
-      standard: pluginManager.declarativeDecorationSetting("thread-lines", "intensity") === "standard",
-    };
+    return threadLineSettings(pluginManager.hasDeclarativeDecoration("thread-lines"),
+      key => pluginManager.declarativeDecorationSetting("thread-lines", key));
   };
   // Heading level of THIS block's first line, so the bullet column can match the
   // (taller) heading line box and the bullet stays centered on it. Shared with
@@ -313,11 +310,17 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   return (
     <div
       class="ls-block"
-      classList={{
-        collapsed: collapsed(),
-        "block-embed-host": blockEmbedHost(),
-        ...rowDecorationClasses(threadLineDecoration()),
-      }}
+      {...(() => {
+        const thread = threadLineDecoration();
+        return {
+          style: rowDecorationStyle(thread, thread.enabled && thread.levels ? depthOf(props.id) : 0),
+          classList: {
+            collapsed: collapsed(),
+            "block-embed-host": blockEmbedHost(),
+            ...rowDecorationClasses(thread),
+          },
+        };
+      })()}
       data-block-id={props.id}
       data-sticky-parent={stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !blockEmbedHost() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}

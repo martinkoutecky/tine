@@ -5,6 +5,8 @@ import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { installKeybindings } from "../keybindings";
 import { clearTransientLayersForTest, dismissTopTransient, registerTransientLayer } from "../transientLayers";
+import { ContextMenu } from "../components/ContextMenu";
+import { closeContextMenu, contextMenu } from "../ui";
 
 const PEEK_OPEN_MS = 350;
 const PEEK_CLOSE_MS = 150;
@@ -21,6 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  closeContextMenu();
   clearTransientLayersForTest();
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -64,6 +67,27 @@ function popup(): HTMLElement | null {
 }
 
 describe("page hover-peek (GH #40)", () => {
+  it("GH #655: preview actions and desktop right-click use identical shared page-menu items", async () => {
+    const { root, dispose } = mountAttached("[[Tine]]");
+    const menuHost = document.createElement("div"); document.body.append(menuHost);
+    const disposeMenu = render(() => <ContextMenu />, menuHost);
+    const ids = () => [...document.querySelectorAll("[data-page-action-id]")].map(el => el.getAttribute("data-page-action-id"));
+    try {
+      const link = root.querySelector("a.page-ref")!;
+      link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+      const expected = ids();
+      expect(expected).toContain("open-sidebar");
+      expect(contextMenu()).toMatchObject({ name: "Tine", fileActions: false });
+      closeContextMenu();
+      fireEnter(link);
+      await advance(PEEK_OPEN_MS);
+      expect(await waitFor(() => !!popup())).toBe(true);
+      popup()!.querySelector<HTMLButtonElement>('[aria-label="Page actions"]')!.click();
+      expect(ids()).toEqual(expected);
+      expect(contextMenu()).toMatchObject({ name: "Tine", fileActions: false });
+      expect(popup()).toBeNull();
+    } finally { disposeMenu(); dispose(); }
+  });
   it("GH #674/#363: alias preview shows source title, properties and read-only source navigation", async () => {
     vi.spyOn(backend(), "getPage").mockResolvedValue({
       id: "pages/Canonical.md", name: "Canonical", title: "Canonical", kind: "page", format: "md",
