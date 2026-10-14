@@ -669,6 +669,28 @@ pub(crate) async fn publish_html(state: GraphContext<'_>) -> Result<(String, usi
     .map_err(|error| error.to_string())?
 }
 
+/// Reveal an exported site using the shared desktop file-manager helper.
+#[tauri::command]
+pub(crate) async fn reveal_export(path: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            let path = std::path::Path::new(&path);
+            if !path.is_absolute() || !path.is_dir() {
+                return Err("export folder is unavailable".into());
+            }
+            reveal_page_source(path)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = path;
+        Err("showing an export folder is available on desktop only".into())
+    }
+}
+
 /// Render one page to a self-contained HTML document (assets inlined, no sidebar)
 /// for the print-to-PDF export, with the dialog's options. `Err("no-page")` if the
 /// page doesn't exist.

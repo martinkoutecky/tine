@@ -135,9 +135,17 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // main thread, awaited by its command future like get_page.
         // +1 GH #457: open_graph_file resolves and opens a file link's target
         // on the blocking pool, awaited by its future like open_asset.
-        38,
+        // +1 GH #616: reveal_export awaits the shared OS reveal helper.
+        39,
         "command future",
         "caller awaits blocking result",
+    ),
+    (
+        "src-tauri/src/css_files.rs",
+        "spawn_blocking(",
+        4,
+        "read_css_file / save_css_file command future; graph operations retain their slot and Store close revokes writes",
+        "caller awaits each bounded read or guarded durable save before replying; no detached worker",
     ),
     (
         "src-tauri/src/settings.rs",
@@ -258,6 +266,7 @@ fn production_acquisitions_have_owners() {
         "src-tauri/src/state.rs",
         "src-tauri/src/watcher.rs",
         "src-tauri/src/device_io.rs",
+        "src-tauri/src/css_files.rs",
     ] {
         files.push((
             file.to_owned(),
