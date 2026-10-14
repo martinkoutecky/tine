@@ -45,10 +45,10 @@ font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 dt = []
 for (a, b, text) in caps:
     t = text.replace(":", "\\:").replace("'", "")
-    dt.append(f"drawtext=fontfile={font}:text='{t}':fontcolor=white:fontsize=34:box=1:boxcolor=black@0.62:"
-              f"boxborderw=14:x=(w-text_w)/2:y=84:enable='between(t,{a:.3f},{b:.3f})'")
+    dt.append(f"drawtext=fontfile={font}:text='{t}':fontcolor=white:fontsize=38:"
+              f"x=(w-text_w)/2:y=44:enable='between(t,{a:.3f},{b:.3f})'")
 fc.append(chain)
-fc.append("[cat]" + ",".join(dt) + ",format=yuv420p[out]")
+fc.append("[cat]scale=648:1152,pad=720:1280:36:128:black," + ",".join(dt) + ",format=yuv420p[out]")
 subprocess.check_call(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{OUT}/raw.mp4",
                        "-filter_complex", ";".join(fc), "-map", "[out]", "-c:v", "libx264",
                        "-preset", "medium", "-crf", "23", "-movflags", "+faststart", "-an",

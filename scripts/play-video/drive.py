@@ -186,7 +186,7 @@ try:
     tap_bounds(h[0][1]); time.sleep(1.5)
     keep(t - 0.6, now(), "3  Pick the notes folder")
     step("Use this folder", "3  Pick the notes folder", pre=1.0, post=1.3, tag="use-folder")
-    step("Allow", "3  Pick the notes folder", pre=0.8, post=0.8, tag="allow-dialog", exact=False)
+    step("Allow", "3  Pick the notes folder", pre=1.4, post=0.8, tag="allow-dialog", exact=False)
 
     # 4. graph opens
     wait_for("Tine demo", timeout=150, tag="graph-open")
