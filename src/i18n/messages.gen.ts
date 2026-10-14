@@ -145,6 +145,7 @@ export interface MessageArgs {
   "export-show-folder": {};
   "favorites-block-action": {};
   "graph-wsl-rootfs-refused": {};
+  "journals-upcoming": {};
   "links-copy-title": {};
   "links-open-custom-scheme-confirm": { "scheme": string | number; "url": string | number };
   "links-open-custom-scheme-title": { "scheme": string | number };
@@ -167,6 +168,7 @@ export interface MessageArgs {
   "pages-all-show-journals": {};
   "pages-all-title": {};
   "preview-open-source": {};
+  "preview-page-actions": {};
   "references-clear": {};
   "references-collapse-all": {};
   "references-collapse-group": { "page": string | number };
@@ -207,6 +209,9 @@ export interface MessageArgs {
   "settings-language-description": {};
   "settings-language-label": {};
   "settings-language-system": { "language": string | number };
+  "settings-pinyin-description": {};
+  "settings-pinyin-label": {};
+  "settings-pinyin-reset": {};
   "shell-boot-opening": {};
   "shell-tray-capture": {};
   "shell-tray-open": {};
@@ -223,6 +228,8 @@ export interface MessageArgs {
   "toast-language-load-failed": {};
   "toast-language-save-failed": {};
   "toast-link-outside-graph": { "dest": string | number };
+  "toast-pinyin-load-failed": {};
+  "toast-pinyin-save-failed": {};
   "toast-repeat-count": { "count": string | number };
   "toast-wsl-rootfs-warning": {};
 }

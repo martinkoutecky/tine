@@ -3,14 +3,14 @@ import { render } from "solid-js/web";
 import { PageView } from "./Page";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { resetStore } from "../document";
+import { resetStore, flushAll } from "../document";
 import { resetTabsToJournals } from "../router";
 import { currentDayKey, journalTitle } from "../journal";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import { setGraphMeta, bumpDataRev } from "../graphSession";
 import { startEditing, endEdit } from "../editorController";
 import { resetNearObserverForTests } from "../lazyObserve";
-import type { GraphMeta, PageRead } from "../types";
+import type { GraphMeta, PageRead, JournalFeedPage } from "../types";
 
 beforeAll(initParser);
 afterEach(() => {
@@ -111,5 +111,44 @@ it("the feed displays a counted reference header on the mentioned day, even with
     expect(days[0].querySelector(".linked-references")).toBeNull();
     expect(days[1].textContent).toContain("Sep 20th, 2026");
     expect(days[1].textContent).toContain("Linked References");
+  } finally { dispose(); }
+});
+
+it("GH #481: fileless mentions render without writes and Upcoming keeps today first in the main feed", async () => {
+  setGraphMeta({ linked_references_collapsed_threshold: 0 } as GraphMeta);
+  vi.stubGlobal("IntersectionObserver", class {
+    constructor(private callback: IntersectionObserverCallback) {}
+    observe(target: Element) { if (target.classList.contains("journal-linked-references")) this.callback([{ target, isIntersecting: true } as IntersectionObserverEntry], this as unknown as IntersectionObserver); }
+    unobserve() {} disconnect() {}
+  });
+  const day = (name: string): PageRead => ({ id: `journals/${name}.md`, name, title: name, kind: "journal", pre_block: null, blocks: [], rev: null });
+  const today = journalTitle(new Date());
+  const past = day("Jan 3rd, 2000");
+  const future = day("Jan 3rd, 2099");
+  const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages: [past], upcoming: [future], as_of_day: currentDayKey(), next_before_day: null, done: true } as JournalFeedPage);
+  vi.spyOn(backend(), "getBacklinks").mockImplementation(async name => name === today ? [] : [{ page: "Planning", kind: "page", blocks: [{ id: `mention-${name}`, raw: `Remember [[${name}]]`, children: [], collapsed: false }] }]);
+  const save = vi.spyOn(backend(), "pageSubmit");
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <PageView />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelectorAll(".page-section")).toHaveLength(2));
+    expect(host.querySelector(".page-section")?.textContent).toContain(today);
+    const upcoming = host.querySelector<HTMLDetailsElement>(".journal-upcoming")!;
+    expect(upcoming).not.toBeNull();
+    expect(upcoming.open).toBe(false);
+    expect(upcoming.textContent).toContain("Upcoming");
+    upcoming.open = true; upcoming.dispatchEvent(new Event("toggle"));
+    await vi.waitFor(() => expect(upcoming.textContent).toContain(future.name));
+    const entry = upcoming.querySelector<HTMLDetailsElement>("details")!;
+    entry.open = true; entry.dispatchEvent(new Event("toggle"));
+    await vi.waitFor(() => expect(entry.querySelector(".references-count")?.textContent).toBe("1"));
+    expect(entry.querySelector(".ref-collapse.collapsed")).not.toBeNull();
+    expect(entry.querySelector("a")).not.toBeNull();
+    await flushAll();
+    expect(save).not.toHaveBeenCalled();
+    feed.mockResolvedValue({ pages: [], upcoming: [], as_of_day: currentDayKey(), next_before_day: null, done: true } as JournalFeedPage);
+    bumpDataRev();
+    await vi.waitFor(() => expect(host.querySelectorAll(".page-section")).toHaveLength(1));
+    expect(host.querySelector(".journal-upcoming")).toBeNull();
   } finally { dispose(); }
 });

@@ -4,6 +4,22 @@ import { backend } from "../backend";
 import { setFavorites, setRecentPages } from "../ui";
 import { setToasts, toasts } from "../toasts";
 import { GraphSwitcher, Sidebar } from "./Sidebar";
+import { openJournals, route } from "../router";
+import { readFileSync } from "node:fs";
+
+it("GH #335: All pages opens the full view directly", () => {
+  openJournals();
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <Sidebar />, root);
+  try {
+    const entry = [...root.querySelectorAll<HTMLElement>(".nav-section-header")].find(el => /all pages/i.test(el.textContent ?? ""))!;
+    entry.click();
+    expect(route()).toMatchObject({ kind: "all-pages" });
+    expect(entry.hasAttribute("aria-expanded")).toBe(false);
+    const guide = readFileSync("crates/tine-core/src/templates/where-things-are.md", "utf8");
+    expect(guide).toContain("**All pages** entry opens");
+  } finally { dispose(); }
+});
 
 afterEach(() => {
   setFavorites([]);

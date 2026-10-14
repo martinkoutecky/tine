@@ -538,6 +538,26 @@ fn graph_equivalent_page_names(
     let Some(journal) = pages.iter().find(|entry| {
         entry.kind == PageKind::Journal && format.parse(&entry.name) == Some(target_day)
     }) else {
+        // A date with no real page is an editable virtual journal. Keep real
+        // ordinary pages and aliases intact; only fileless dates share spellings.
+        if real_page_names(graph)
+            .get(&refs::page_key(&resolved.0))
+            .is_none()
+        {
+            let title = format.title(target_day);
+            let spellings = journal_spelling_keys(&format, target_day, &title);
+            if spellings
+                .iter()
+                .any(|name| real_page_names(graph).get(name).is_some())
+            {
+                return resolved;
+            }
+            resolved.1.extend(spellings);
+            resolved.1.sort();
+            resolved.1.dedup();
+            resolved.0 = title.clone();
+            resolved.2 = title;
+        }
         return resolved;
     };
     resolved
@@ -562,7 +582,7 @@ pub(crate) fn journal_format(config: &tine_core::config::Config) -> JournalForma
 /// master ee7730b48): its own name, the graph's title/file forms, the default
 /// title/file forms and ISO `yyyy-MM-dd`, as page keys. The one definition both
 /// query-time resolution and scoped invalidation use (I-12).
-fn journal_spelling_keys(
+pub(crate) fn journal_spelling_keys(
     format: &JournalFormat,
     day: JournalDate,
     journal_name: &str,
@@ -1786,6 +1806,7 @@ fn finish_quick_switch_top(
 
 /// Fuzzy page-name matcher for the quick switcher. Ranks prefix > substring >
 /// subsequence, then by name length.
+#[cfg(test)]
 pub(crate) fn quick_switch(graph: &ReadSnapshot, query: &str, limit: usize) -> Vec<PageEntry> {
     let plan = crate::query_plan::QueryPlan::legacy_page_search_with_policy(
         query,
@@ -1796,6 +1817,7 @@ pub(crate) fn quick_switch(graph: &ReadSnapshot, query: &str, limit: usize) -> V
     crate::query_plan::page_hits_to_entries(execution.hits)
 }
 
+#[cfg(test)]
 pub(crate) fn quick_switch_for_editor(
     graph: &ReadSnapshot,
     query: &str,
@@ -3567,6 +3589,7 @@ mod tests {
             tine_core::query::ir::FriendlyPageMatchScope::Names,
             None,
             None,
+            false,
         ));
         assert_eq!(scoped, ["foo safe"]);
     }

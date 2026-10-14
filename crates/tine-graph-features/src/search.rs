@@ -114,6 +114,37 @@ pub fn run_graph_search(
     page_view: Option<ViewSettings>,
     block_view: Option<ViewSettings>,
 ) -> Result<QueryExecution, SearchError> {
+    run_graph_search_with_transliteration(
+        store,
+        lanes,
+        source,
+        page_limit,
+        block_limit,
+        lane,
+        explain,
+        scope,
+        page_match_scope,
+        page_view,
+        block_view,
+        false,
+    )
+}
+
+/// Friendly search with request-local page-name expansion; saved query evaluation is unchanged.
+pub fn run_graph_search_with_transliteration(
+    store: &Store,
+    lanes: &SearchLanes,
+    source: String,
+    page_limit: usize,
+    block_limit: usize,
+    lane: Option<&str>,
+    explain: bool,
+    scope: Option<Scope>,
+    page_match_scope: Option<FriendlyPageMatchScope>,
+    page_view: Option<ViewSettings>,
+    block_view: Option<ViewSettings>,
+    transliteration: bool,
+) -> Result<QueryExecution, SearchError> {
     run_graph_search_after_scope(
         store,
         lanes,
@@ -126,6 +157,7 @@ pub fn run_graph_search(
         page_match_scope,
         page_view,
         block_view,
+        transliteration,
         #[cfg(test)]
         || {},
     )
@@ -143,6 +175,7 @@ fn run_graph_search_after_scope(
     page_match_scope: Option<FriendlyPageMatchScope>,
     page_view: Option<ViewSettings>,
     block_view: Option<ViewSettings>,
+    transliteration: bool,
     #[cfg(test)] after_scope: impl FnOnce(),
 ) -> Result<QueryExecution, SearchError> {
     let view = store.whole_graph().map_err(SearchError::Load)?;
@@ -156,6 +189,7 @@ fn run_graph_search_after_scope(
     });
     let request = SearchRequest {
         text: source,
+        transliteration,
         within,
         page_limit,
         block_limit,
@@ -307,6 +341,7 @@ mod tests {
             None,
             None,
             None,
+            false,
             || {
                 let writer = Arc::clone(&store);
                 std::thread::spawn(move || {

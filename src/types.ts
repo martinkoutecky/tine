@@ -175,6 +175,8 @@ export interface PageModified {
  * journal days, never counts of returned DTOs (a selected file may vanish). */
 export interface JournalFeedPage {
   pages: PageRead[];
+  /** Referenced future days, nearest first; returned on the first page only. */
+  upcoming?: PageRead[];
   next_before_day: number | null;
   done: boolean;
   as_of_day: number;
@@ -205,6 +207,8 @@ export interface TemplateDto {
 }
 
 export interface PageEntry {
+  /** Request-local completion evidence; absent on ordinary page inventories. */
+  match_class?: ObjectiveMatchClass;
   name: string;
   kind: PageKind;
   date_key: number | null;
@@ -448,7 +452,7 @@ export interface MatchEvidence {
   score?: number;
 }
 
-export type ObjectiveMatchClass = "exact" | "prefix" | "substring" | "fuzzy" | "body_evidence";
+export type ObjectiveMatchClass = "exact" | "prefix" | "substring" | "fuzzy" | "transliteration" | "body_evidence";
 
 export interface QueryDiagnostic {
   code: string;

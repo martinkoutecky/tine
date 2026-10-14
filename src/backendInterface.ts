@@ -405,12 +405,13 @@ export interface Backend {
     explain?: boolean,
     scope?: QueryPageScope,
     pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope,
-    views?: { page: ViewSettings; block: ViewSettings }
+    views?: { page: ViewSettings; block: ViewSettings },
+    transliteration?: boolean
   ): Promise<QueryExecution>;
-  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string }): Promise<PageEntry[]>;
+  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string; session?: string }, transliteration?: boolean): Promise<PageEntry[]>;
   /** Capture-only page/tag completion capability. It is intentionally not the
    * general graph command route used by the main WebView. */
-  captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]>;
+  captureQuickSwitch(query: string, limit: number, transliteration?: boolean): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;

@@ -4,8 +4,9 @@ import { StickyAncestor } from "./StickyAncestor";
 import { AstBody } from "../render/body";
 import { codeFences } from "../editor/fences";
 import { LineGutter } from "../render/LineGutter";
-import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
+import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, on, untrack, onMount, onCleanup, type JSX } from "solid-js";
 import { autocompleteFacets, backend } from "../backend";
+import { pinyinMatchingEnabled } from "../launcherRanking";
 import { reportUiFailure } from "../uiFailure";
 import { clearClipboardSlot, normalize, peekClipboardSlot, readClipboardText } from "../clipboard";
 import {
@@ -94,7 +95,7 @@ import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
 import { Rendered, detectMacro } from "./Rendered";
-import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, type ThreadLineDecoration } from "./block/rowChrome";
+import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
 import { dataRev, graphEpoch } from "../graphSession";
@@ -270,11 +271,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // answer "false" thousands of times.
   const threadLineDecoration = (): ThreadLineDecoration => {
     if (!(hasChildren() && sheet().view === null)) return NO_THREAD_LINES;
-    return {
-      enabled: pluginManager.hasDeclarativeDecoration("thread-lines"),
-      active: pluginManager.declarativeDecorationSetting("thread-lines", "display") === "active",
-      standard: pluginManager.declarativeDecorationSetting("thread-lines", "intensity") === "standard",
-    };
+    return threadLineSettings(pluginManager.hasDeclarativeDecoration("thread-lines"),
+      key => pluginManager.declarativeDecorationSetting("thread-lines", key));
   };
   // Heading level of THIS block's first line, so the bullet column can match the
   // (taller) heading line box and the bullet stays centered on it. Shared with
@@ -312,11 +310,17 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   return (
     <div
       class="ls-block"
-      classList={{
-        collapsed: collapsed(),
-        "block-embed-host": blockEmbedHost(),
-        ...rowDecorationClasses(threadLineDecoration()),
-      }}
+      {...(() => {
+        const thread = threadLineDecoration();
+        return {
+          style: rowDecorationStyle(thread, thread.enabled && thread.levels ? depthOf(props.id) : 0),
+          classList: {
+            collapsed: collapsed(),
+            "block-embed-host": blockEmbedHost(),
+            ...rowDecorationClasses(thread),
+          },
+        };
+      })()}
       data-block-id={props.id}
       data-sticky-parent={stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !blockEmbedHost() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
@@ -656,6 +660,18 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const isCalc = editingCalc;
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
   let completionOriginalRaw: string | null = null;
+  let completionLease: { pageName: string; blockId: string; originalRaw: string; session: string } | null = null;
+  const releaseLease = (lease: NonNullable<typeof completionLease>) => {
+    // Releasing an ephemeral resource must finish even after its editor dies.
+    void readOwned(ownedWhen(() => true), backend().quickSwitch("", 0, lease, false))
+      .catch(error => dbg(`completion baseline release: ${String(error)}`));
+  };
+  const releaseCompletionLease = () => {
+    const lease = completionLease;
+    completionLease = null;
+    if (lease) releaseLease(lease);
+  };
+  onCleanup(releaseCompletionLease);
   let rawBeforeLastCommit = node().raw;
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
     // A disposed editor whose block was replaced never writes (see shownNode).
@@ -783,6 +799,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   });
 
   const closeAc = () => {
+    releaseCompletionLease();
     completionOriginalRaw = null;
     setAc(null);
     setAcBlockState(null);
@@ -978,9 +995,19 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       return;
     }
     completionOriginalRaw ??= node().raw;
-    const result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, {
-      pageName: node().page, blockId: props.id, originalRaw: completionOriginalRaw,
-    }));
+    const editor = { pageName: node().page, blockId: props.id, originalRaw: completionOriginalRaw };
+    if (!cap && pinyinMatchingEnabled() && !completionLease) {
+      completionLease = { ...editor, session: crypto.randomUUID() };
+    }
+    const lease = completionLease;
+    // Closing can overtake a blocking native query. Release again after its
+    // reply (including failure) so it cannot retain obsolete baseline keys.
+    let result: import("../owned").Owned<import("../types").PageEntry[]>;
+    try {
+      result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, lease ?? editor, pinyinMatchingEnabled()));
+    } finally {
+      if (lease && lease !== completionLease) releaseLease(lease);
+    }
     if (result.kind === "stale") return;
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
@@ -991,11 +1018,19 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         ? { label: `Create "${q}"`, insert: pageInsert(q) }
         : { label: `Create #${q}`, insert: tagInsert(q) };
     setAcItems(orderAcItems(
-      result.value.map((page) => ({ name: page.name, item: pageItem(page.name) })),
+      result.value.map((page) => ({ name: page.name, matchClass: page.match_class, item: pageItem(page.name) })),
       { name: q, item: createItem },
       { query: q, policy: linkAutocompletePolicy(), removeAccents: searchRemoveAccents() },
     ));
   };
+
+  createEffect(on(pinyinMatchingEnabled, () => {
+    const trigger = untrack(ac);
+    if (trigger?.kind === "page" || trigger?.kind === "tag") {
+      if (!pinyinMatchingEnabled()) releaseCompletionLease();
+      void updateAutocomplete();
+    }
+  }, { defer: true }));
 
   // Apply a pure text edit (format toggle / kill motion) to the textarea and
   // restore the resulting selection.
@@ -1962,10 +1997,12 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // Rows survive refinement of the same trigger, never a new family/location
     // or a now-blank page/tag lifecycle.
     const previous = ac();
+    if (next.kind !== "page" && next.kind !== "tag") releaseCompletionLease();
     // OG save-current-block! withholds references while page-search is active.
     // Preserve autosave and give the read-only picker its pre-trigger baseline.
     if ((next.kind === "page" || next.kind === "tag") &&
         (!previous || previous.kind !== next.kind || previous.start !== next.start)) {
+      releaseCompletionLease();
       completionOriginalRaw = rawBeforeLastCommit;
     }
     setAc(next);

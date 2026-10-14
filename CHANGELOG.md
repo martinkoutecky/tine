@@ -8,8 +8,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- Plugin API 0.3 adds the `color` setting type. Tine Beta runs both 0.2 and 0.3 plugins; the plugin registry offers each Tine only the versions its plugin API runs, so an older Tine keeps the last version it accepts instead of refusing an update.
+- Optional Mandarin Pinyin and syllable-initial matching for Han page titles and aliases, preserving native-name relevance (GH #151).
+
 ### Fixed
 
+- Linked References filter chips merge each page's aliases under its canonical name, count each reference block once, and save canonical filters in Logseq's `filters::` property (GH #433). Several included chips now narrow to references carrying all of them, as in Logseq (previously any of them).
+- Bullet threading highlights a continuous active ancestry in both display modes, with configurable thickness, theme-aware or custom color, and optional hierarchy colors (GH #129, [bullet-threading plugin #2](https://github.com/martinkoutecky/tine-plugin-bullet-threading/issues/2)).
+- **Page previews keep page actions reachable:** use the preview header's … button after holding a mobile page link or tag (GH #655).
+- **All pages in the sidebar opens the full view directly**, including from the mobile navigation drawer (GH #335).
+
+- Scheduled/deadline query windows now save as `{{tine-query …}}` instead of Logseq syntax that silently drops the date condition (GH #422).
+- Referenced journal days appear in the Journals feed without creating a file; future mentions are grouped in collapsed Upcoming above today (GH #481).
+- Authored parent-relative and absolute file links can open outside the graph folder through the existing desktop file opener, with the resolved path on hover and no strike-through (GH #457).
 - NEXT journal queries saved in Logseq configs now support direct journal references and exclusive date bounds; unsupported config queries show their title and a plain explanation with expandable technical details (GH #690).
 - **Crash recovery no longer switches off on Android** ("Crash recovery is off for this graph … Permission denied"). Tine tried to sync system folders above its own app data, which Android does not allow. GH #685
 - Tab drops at all four pane edges split the hovered pane, matching the drop preview even at the layout's outer edges (GH #499).
@@ -19,6 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Page-delete failure toasts include the known refusal or storage error through localized messages (GH #687).
 - Journals startup with a daily template keeps pending work owned by the replacement view after session restoration, avoiding a spurious feed-read error; diagnostic reports also record withheld stages and typed read failures without graph content (GH #671).
 
+- Pinyin page completion preserves native-match priority, survives autosave, follows preference changes across windows, and updates cached keys only for changed names (GH #151).
 - Bullet threading's "Active ancestry only" mode now emphasizes the edited block's connectors in the accent color, as the original Logseq plugin does (GH #614).
 - In-app graph and global CSS share guarded saves and safe mode; saves reconcile newer disk styles and background flushing retains recoverable conflicting drafts (GH #372).
 - HTML export remembers its destination, offers Show in folder on desktop and is discoverable in the command palette (GH #616).

@@ -347,43 +347,8 @@ pub(crate) async fn page_modified(state: GraphContext<'_>) -> Result<PageModifie
     .map_err(|error| error.to_string())?
 }
 
-#[derive(Serialize)]
-pub(crate) struct JournalFeedPage {
-    pages: Vec<PageWire>,
-    next_before_day: Option<i64>,
-    done: bool,
-    as_of_day: i64,
-    /// Journals this page skipped as unreadable (`path: reason`); omitted when
-    /// none.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    unreadable: Vec<String>,
-}
-
-/// Feed-only pagination by ordinal day.
-#[tauri::command]
-pub(crate) async fn journal_feed_page(
-    limit: usize,
-    before_day: Option<i64>,
-    state: GraphContext<'_>,
-) -> Result<JournalFeedPage, String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let feed = tine_graph_features::journals::feed_page(&slot.store, limit, before_day)
-            .map_err(|error| {
-                crate::flight::journal_feed_io_failure(error.kind());
-                error.to_string()
-            })?;
-        Ok(JournalFeedPage {
-            pages: feed.pages.into_iter().map(page_dto).collect(),
-            next_before_day: feed.next_before_day,
-            done: feed.done,
-            as_of_day: feed.as_of_day,
-            unreadable: feed.unreadable,
-        })
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
+mod journals_feed;
+pub(crate) use journals_feed::*;
 #[tauri::command]
 pub(crate) async fn get_page(
     name: String,
@@ -754,6 +719,7 @@ pub(crate) async fn run_graph_search(
     page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
     page_view: Option<tine_core::query::ir::ViewSettings>,
     block_view: Option<tine_core::query::ir::ViewSettings>,
+    transliteration: Option<bool>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
     let slot = slot_for_context(&state)?;
@@ -763,7 +729,7 @@ pub(crate) async fn run_graph_search(
         path: scope.path,
     });
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::run_graph_search(
+        tine_graph_features::search::run_graph_search_with_transliteration(
             &slot.store,
             &slot.block_search_lanes,
             source,
@@ -775,6 +741,7 @@ pub(crate) async fn run_graph_search(
             page_match_scope,
             page_view,
             block_view,
+            transliteration.unwrap_or(false),
         )
         .map_err(feature_search_error)
     })
@@ -1019,24 +986,53 @@ pub(crate) async fn quick_switch(
     editor_block_id: Option<String>,
     editor_original_raw: Option<String>,
     editor_page_name: Option<String>,
+    editor_session: Option<String>,
+    transliteration: Option<bool>,
     state: GraphContext<'_>,
-) -> Result<Vec<PageEntry>, String> {
+) -> Result<Vec<CompletionPageEntry>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         slot.store
             .whole_graph()
             .map(
                 |view| match (editor_page_name, editor_block_id, editor_original_raw) {
-                    (Some(page), Some(id), Some(original)) => {
-                        view.complete_page_names(&query, limit, Some((&page, &id, &original)))
-                    }
-                    _ => view.complete_page_names(&query, limit, None),
+                    (Some(page), Some(id), Some(original)) => view.complete_page_names(
+                        &query,
+                        limit,
+                        Some((&page, &id, &original)),
+                        transliteration.unwrap_or(false),
+                        editor_session.as_deref(),
+                    ),
+                    _ => view.complete_page_names(
+                        &query,
+                        limit,
+                        None,
+                        transliteration.unwrap_or(false),
+                        None,
+                    ),
                 },
             )
+            .map(completion_entries)
             .map_err(|e| format!("graph load failed: {e:?}"))
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Request-local DTO: PageEntry's persisted inventory shape is unchanged.
+#[derive(serde::Serialize)]
+pub(crate) struct CompletionPageEntry {
+    #[serde(flatten)]
+    page: PageEntry,
+    match_class: tine_core::query_plan::ObjectiveMatchClass,
+}
+
+fn completion_entries(
+    hits: Vec<(PageEntry, tine_core::query_plan::ObjectiveMatchClass)>,
+) -> Vec<CompletionPageEntry> {
+    hits.into_iter()
+        .map(|(page, match_class)| CompletionPageEntry { page, match_class })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1052,7 +1048,11 @@ fn capture_quick_switch_for(
         .store
         .whole_graph()
         .map_err(|e| format!("graph load failed: {e:?}"))?;
-    Ok(view.complete_page_names(query, limit.min(8), None))
+    Ok(view
+        .complete_page_names(query, limit.min(8), None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect())
 }
 
 /// The sole graph-backed capability exposed to Quick Capture. It is deliberately
@@ -1062,17 +1062,24 @@ fn capture_quick_switch_for(
 pub(crate) async fn capture_quick_switch(
     query: String,
     limit: usize,
+    transliteration: Option<bool>,
     binding_generation: Option<u64>,
     window: WebviewWindow,
     state: State<'_, AppState>,
-) -> Result<Vec<PageEntry>, String> {
+) -> Result<Vec<CompletionPageEntry>, String> {
     let slot = capture_quick_switch_slot(&state, window.label(), binding_generation)?;
     tauri::async_runtime::spawn_blocking(move || {
         let view = slot
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        Ok(view.complete_page_names(&query, limit.min(8), None))
+        Ok(completion_entries(view.complete_page_names(
+            &query,
+            limit.min(8),
+            None,
+            transliteration.unwrap_or(false),
+            None,
+        )))
     })
     .await
     .map_err(|error| error.to_string())?

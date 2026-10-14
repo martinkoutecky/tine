@@ -175,7 +175,10 @@ fn restore_journal_updates_day_and_view() {
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
     assert!(view
-        .complete_page_names("Sep 25", 10, None)
+        .complete_page_names("Sep 25", 10, None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect::<Vec<_>>()
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
     store.close();

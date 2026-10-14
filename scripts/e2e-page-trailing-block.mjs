@@ -60,20 +60,13 @@ const driver = spawn(
 
 let browser;
 async function openPage(name) {
-  if ((await browser.$$(".nav-page")).length === 0) {
-    const expanded = await browser.execute(() => {
-      const header = [...document.querySelectorAll(".nav-section-header")]
-        .find((element) => element.textContent?.includes("ALL PAGES"));
-      if (!header) return false;
-      header.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-      return true;
-    });
-    if (!expanded) throw new Error("missing ALL PAGES sidebar section");
-  }
-  await browser.waitUntil(async () => (await browser.$$(".nav-page")).length > 0, { timeout: 15_000, timeoutMsg: "page index did not load" });
+  await browser.$(".nav-all-pages-open").click();
+  await browser.$(".all-pages-filter").waitForExist({ timeout: 10_000 });
+  await browser.$(".all-pages-filter").setValue(name);
+  await browser.waitUntil(async () => (await browser.$$(".all-pages-open")).length > 0, { timeout: 15_000, timeoutMsg: "page index did not load" });
   const result = await browser.execute((wanted) => {
-    const row = [...document.querySelectorAll(".nav-page")].find((element) => element.textContent?.trim() === wanted);
-    if (!row) return { ok: false, names: [...document.querySelectorAll(".nav-page")].map((element) => element.textContent?.trim()) };
+    const row = [...document.querySelectorAll(".all-pages-open")].find((element) => element.textContent?.trim() === wanted);
+    if (!row) return { ok: false, names: [...document.querySelectorAll(".all-pages-open")].map((element) => element.textContent?.trim()) };
     row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
     return { ok: true, names: [] };
   }, name);

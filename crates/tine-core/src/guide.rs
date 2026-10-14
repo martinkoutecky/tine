@@ -717,6 +717,22 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn referenced_fileless_journal_days_are_documented() {
+        let text = include_str!("templates/journals-tasks-scheduling.md");
+        for behavior in [
+            "even without a journal file",
+            "Viewing a fileless day creates no file",
+            "collapsed **Upcoming** group above today, nearest first",
+            "removing the last mention updates the feed",
+        ] {
+            assert!(
+                text.contains(behavior),
+                "missing journal behavior: {behavior}"
+            );
+        }
+    }
+
+    #[test]
     fn a_capture_finished_after_a_graph_switch_is_documented() {
         // og H1b: kept in the graph it was started in, never the new one.
         let mobile = include_str!("templates/platforms-and-mobile.md");
@@ -953,6 +969,26 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn pinyin_guide_explains_entry_setting_and_native_priority() {
+        let guide = include_str!("templates/pages-links-references-search.md");
+        for concept in [
+            "Match Chinese page names by Pinyin",
+            "`beijing`",
+            "`bj`",
+            "Native name matches always come first",
+            "block text is not transliterated",
+            "Turning it off",
+            "default dictionary reading",
+            "Japanese kanji",
+        ] {
+            assert!(
+                guide.contains(concept),
+                "missing onboarding concept: {concept}"
+            );
+        }
+    }
+
+    #[test]
     fn unlinked_reference_guide_says_the_highlight_is_clickable() {
         // GH #200 (master 552d988c9): nothing in the UI announces that a
         // highlighted mention is a control, so the Guide has to.
@@ -990,11 +1026,12 @@ mod rename_guide_tests {
 
     #[test]
     fn relative_file_link_guide_names_its_base_and_the_graph_boundary() {
-        // GH #457: a file link resolves from the graph folder as Logseq does and
-        // opens a path outside the graph.
+        // GH #457: the graph is the base; explicit parent traversal can leave it.
         let search = include_str!("templates/pages-links-references-search.md");
-        assert!(search.contains("is read from the graph folder as Logseq reads it"));
-        assert!(search.contains("points outside the graph folder, such as an absolute"));
+        assert!(search.contains("A file path is read from the graph folder"));
+        assert!(search.contains("sibling `files` folder outside the graph"));
+        assert!(search.contains("Parent steps such as `../../` are preserved"));
+        assert!(!search.contains("shown struck through and never opened"));
     }
 
     #[test]
@@ -1118,7 +1155,8 @@ mod query_guide_tests {
         for control in [
             "{{query (task TODO DOING)}}",
             "(page-property type book)",
-            "(between scheduled today +7d)",
+            "{{tine-query @block scheduled between today and '+7d'}}",
+            "OG Logseq drops `(between scheduled today +7d)`",
             "at most 10,000 years",
             "tine.sample:: 10",
             "the whole query is refused",
@@ -1411,10 +1449,10 @@ mod og_20d_guide_tests {
 
     #[test]
     fn where_things_are_documents_the_full_all_pages_view() {
-        // GH #335: the sidebar list is capped; the full view is how a large graph is browsed.
+        // GH #335: the sidebar entry navigates directly to the full view.
         let map = page("Start/Where things are");
         for detail in [
-            "**Open the full list…**",
+            "**All pages** entry opens",
             "**Updated** column shows when each page",
             "**Page** (name)",
             "**Show journals**",
