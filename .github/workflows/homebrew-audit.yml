@@ -1,0 +1,35 @@
+# Temporary: audit the draft homebrew-cask submission (GH #679) on a real macOS
+# runner. Lives only on branch ci/homebrew-audit; deleted after use.
+name: homebrew-cask-audit
+on:
+  push:
+    branches: [ci/homebrew-audit]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_FROM_API: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Local tap with the draft cask
+        run: |
+          brew update-reset "$(brew --repository)" >/dev/null 2>&1 || true
+          brew tap homebrew/cask
+          brew tap-new --no-git local/tine
+          cp Casks/tine.rb "$(brew --repository)/Library/Taps/local/homebrew-tine/Casks/tine.rb"
+      - name: brew style
+        run: brew style --cask local/tine/tine
+      - name: brew audit --new --online --signing
+        run: brew audit --cask --new --online --signing local/tine/tine
+      - name: install, check, uninstall --zap
+        run: |
+          brew install --cask local/tine/tine
+          test -d /Applications/Tine.app
+          codesign --verify --deep --strict /Applications/Tine.app
+          spctl --assess --type execute -vv /Applications/Tine.app
+          xcrun stapler validate /Applications/Tine.app || true
+          brew uninstall --cask --zap local/tine/tine
+          test ! -e /Applications/Tine.app
