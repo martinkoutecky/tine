@@ -14,9 +14,11 @@
 import { Show, type JSX } from "solid-js";
 import { resolveBlockRef, node as docNode, type blockRef } from "../document";
 import { loadSourcePage } from "../sourcePage";
+import { bindingOwner } from "../owned";
 import { leadingMarker, taskCheckboxState } from "../markers";
 import { pushToast } from "../toasts";
 import { formatForBlockId, toggleBlockCheckbox } from "./blockParts";
+import { noticeChangedResults, resolveResultRow, type ResultRow } from "./queryResultIdentity";
 
 /** A durable reference to a block plus its exact owner page. */
 export type LoadedBlockRef = ReturnType<typeof blockRef>;
@@ -29,9 +31,13 @@ export type TaskToggleOutcome = "toggled" | "stale" | "missing" | "refused";
  * is written and the rendered state catches up instead, so a click never
  * acts on a state the user did not see. Cost: one page read when the source page
  * is not loaded, plus O(page blocks) for the load and the reference resolution. */
-export async function toggleTaskAtSource(ref: LoadedBlockRef, expectChecked: boolean): Promise<TaskToggleOutcome> {
+export async function toggleTaskAtSource(ref: LoadedBlockRef, expectChecked: boolean, result?: ResultRow): Promise<TaskToggleOutcome> {
+  const owner = bindingOwner();
   if (!(await loadSourcePage(ref, "The task was not changed."))) return "refused";
-  const id = resolveBlockRef(ref);
+  if (!owner()) return "stale";
+  const source = result ? resolveResultRow(result) : null;
+  if (result && !source) { noticeChangedResults(1); return "stale"; }
+  const id = source?.id ?? resolveBlockRef(ref);
   if (id === null || !docNode(id)) {
     pushToast(`The task is no longer on "${ref.page}", so it was not changed.`, "error");
     return "missing";
@@ -50,6 +56,7 @@ export function SourceTaskCheckbox(props: {
   marker: string | null | undefined;
   target: () => LoadedBlockRef | null;
   style?: JSX.CSSProperties;
+  result?: ResultRow;
 }): JSX.Element {
   const state = () => taskCheckboxState(props.marker);
   return (
@@ -68,7 +75,7 @@ export function SourceTaskCheckbox(props: {
             const ref = props.target();
             const checked = state();
             if (!ref || checked === null) return;
-            void toggleTaskAtSource(ref, checked).catch(() => {
+            void toggleTaskAtSource(ref, checked, props.result).catch(() => {
               pushToast("Couldn't load the task's page, so the task was not changed.", "error");
             });
           }}

@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 import { isPackageId, isPackageVersion } from "../packageIdentity";
 import { schemaGuards } from "../schemaGuards";
 import { createSignal } from "solid-js";
@@ -503,7 +504,7 @@ async function applyLiveSnapshot(
         backend().storePluginRegistryCache(cache.indexJson, cache.signature));
       if (result.kind === "current") setRegistryPersistenceError(null);
     } catch (error) {
-      pushToast(`Could not cache verified plugin registry: ${String(error)}`, "error");
+      pushToast(msg("plugins-ui-could-not-cache-verified-plugin-registry", { value1: String(error) }), "error");
       if (generation === latestVerifiedGeneration)
         setRegistryPersistenceError(`The verified live registry is active but was not saved for restart: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -635,7 +636,7 @@ export function loadSafetyReport(plugin: RegistryPlugin, version: RegistryVersio
       if ((await digestHex(bytes)) !== version.audit.sha256) throw new Error("safety report digest does not match the signed registry");
       const report = parseSafetyReport(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), plugin, version);
       await backend().setAppString(`plugin-audit:${key}`, new TextDecoder().decode(bytes))
-        .catch(() => pushToast("Could not cache plugin safety report.", "error"));
+        .catch(() => pushToast(msg("plugins-ui-could-not-cache-plugin-safety-report"), "error"));
       return report;
     } catch (networkError) {
       const cached = await backend().getAppString(`plugin-audit:${key}`, "");

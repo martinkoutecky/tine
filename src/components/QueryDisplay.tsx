@@ -3,6 +3,7 @@ import { VIEW_KINDS, type AggFn, type ViewSettings } from "../editor/queryIr";
 import type { RegistryAccess } from "./querySheetParts";
 import { QueryVocabularyPicker, displayFieldEntries, type DisplaySlot } from "./QueryVocabularyPicker";
 import { registerTransientLayer } from "../transientLayers";
+import { t } from "../i18n";
 
 /** The inline Display panel edits one ViewSettings value. The host owns the
  * guarded write, so a field choice and the header switcher share one save path.
@@ -16,22 +17,26 @@ export function QueryDisplay(props: {
   formulas?: () => readonly string[];
   parentTransientId?: string;
   onOpenChange?: (open: boolean) => void;
+  inline?: boolean;
+  defaultColumns?: () => readonly string[];
 }): JSX.Element {
-  const [open, setOpen] = createSignal(false);
+  const [open, setOpen] = createSignal(props.inline ?? false);
   createEffect(() => props.onOpenChange?.(open()));
   const [picker, setPicker] = createSignal<DisplaySlot | null>(null);
-  const [sampleText, setSampleText] = createSignal("");
+  const [sampleText, setSampleText] = createSignal(props.view().sample === undefined ? "" : String(props.view().sample));
   const id = `query-display-${createUniqueId()}`;
   let trigger: HTMLButtonElement | undefined;
   let panel: HTMLDivElement | undefined;
   createEffect(() => {
-    if (!open()) return;
+    if (!open() || props.inline) return;
     const unregister = registerTransientLayer({ id, parentId: props.parentTransientId,
       root: () => panel ?? null, trigger: () => trigger ?? null,
       dismiss: () => { setOpen(false); return true; } });
     onCleanup(unregister);
   });
   const view = props.view;
+  const columns = () => view().columns ?? [...props.defaultColumns?.() ?? []];
+  const availableColumns = () => [...new Set([...props.defaultColumns?.() ?? [], ...columns()])];
   const apply = (patch: Partial<ViewSettings>) => void props.apply({ ...view(), ...patch });
   const openPanel = () => {
     if (!open()) setSampleText(view().sample === undefined ? "" : String(view().sample));
@@ -40,7 +45,7 @@ export function QueryDisplay(props: {
   };
   const pick = (slot: DisplaySlot, field: string) => {
     if (slot === "sort") apply({ sort: [...view().sort ?? [], [field, "asc"]] });
-    if (slot === "column") apply({ columns: [...view().columns ?? [], field] });
+    if (slot === "column") apply({ columns: [...new Set([...columns(), field])] });
     if (slot === "aggregate") apply({ aggregates: [...view().aggregates ?? [], [field, "sum"]] });
     if (slot === "group") apply({ group_by: field });
     setPicker(null);
@@ -79,8 +84,8 @@ export function QueryDisplay(props: {
     if (parsed.valid && parsed.value !== view().sample) apply({ sample: parsed.value });
   };
   return <div class="qd-root">
-    <button ref={trigger} type="button" class="qd-trigger" aria-expanded={open()} aria-controls={id}
-      onClick={openPanel}>{props.rowKind() === "page" ? "Display pages" : "Display"}</button>
+    <Show when={!props.inline}><button ref={trigger} type="button" class="qd-trigger" aria-expanded={open()} aria-controls={id}
+      onClick={openPanel}>{props.rowKind() === "page" ? "Display pages" : "Display"}</button></Show>
     <Show when={open()}><div ref={panel} id={id} class="qd-panel" role="dialog"
       aria-label={props.rowKind() === "page" ? "Page display" : "Block display"}
       onClick={(event) => event.stopPropagation()}>
@@ -102,11 +107,17 @@ export function QueryDisplay(props: {
             {dir === "asc" ? "Asc" : "Desc"}</button>)}
         </For>{fieldPicker("sort", "+ sort")}
       </section>
-      <section><h4>Columns</h4>
-        <Show when={!view().columns?.length}><div>All fields the rows carry</div></Show>
-        <For each={view().columns ?? []}>{(field, index) => listRow(field, index(), view().columns?.length ?? 0,
-          (to) => apply({ columns: move(view().columns ?? [], index(), to) }),
-          () => apply({ columns: (view().columns ?? []).filter((_, i) => i !== index()) }))}</For>
+      <section aria-label={t("query-calm-columns")}><h4>Columns</h4>
+        <Show when={view().view === "table"}><label class="qd-row">
+          <input type="checkbox" checked disabled />{t("query-calm-title-column")}
+        </label></Show>
+        <button type="button" onClick={() => apply({ columns: availableColumns() })}>{t("query-calm-all")}</button>
+        <button type="button" onClick={() => apply({ columns: [] })}>{t("query-calm-none")}</button>
+        <For each={availableColumns()}>{(field) => <label class="qd-row">
+          <input type="checkbox" aria-label={field} checked={columns().includes(field)} onChange={(event) =>
+            apply({ columns: event.currentTarget.checked ? [...columns(), field] : columns().filter((column) => column !== field) })} />
+          {field}
+        </label>}</For>
         {fieldPicker("column", "+ column")}
       </section>
       <section><h4>Summarize</h4>
@@ -128,7 +139,7 @@ export function QueryDisplay(props: {
         <Show when={!sample().valid}><div role="alert">A sample is a whole number up to 4294967295.</div></Show>
         <Show when={sample().valid && sample().value === 0}><div>No results (sample 0)</div></Show>
       </section>
-      <button type="button" onClick={() => setOpen(false)}>Done</button>
+      <Show when={!props.inline}><button type="button" onClick={() => setOpen(false)}>Done</button></Show>
     </div></Show>
   </div>;
 }

@@ -130,7 +130,7 @@ function ConfigSections(props: { today: string }): JSX.Element {
       </div>
       <Show when={!graphMeta()?.disable_scheduled_and_deadline_query}>
         <div class="agenda-block">
-          <QueryMacro body={agendaQuery()} title={t("journal-agenda-title")} hideWhenEmpty />
+          <QueryMacro body={agendaQuery()} title={t("journal-agenda-title")} builtIn hideWhenEmpty />
         </div>
       </Show>
     </>

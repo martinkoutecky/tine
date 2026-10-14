@@ -418,6 +418,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async pageModified() {
       return { rev: "0", modified: [] };
     },
+    async pageBacklinkCounts(): Promise<[string, number][]> { return []; },
     async resolvePage(name: string, kind: "journal" | "page") {
       const snapshot = await load();
       const page = pageByName(snapshot, name);
@@ -902,6 +903,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
 export const PUBLISHED_ANSWERED_METHODS = [
   "pageInventory",
   "pageModified",
+  "pageBacklinkCounts",
   "resolvePage",
   "loadGraph",
   "inspectGraphAccess",

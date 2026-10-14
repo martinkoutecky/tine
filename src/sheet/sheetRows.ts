@@ -14,5 +14,5 @@ export function sheetSourceRows(
     const owner = docNode(ownerId);
     return (owner?.children ?? []).map((id) => ({ id, page: docNode(id)?.page ?? owner?.page ?? "" }));
   }
-  return (groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, kind: g.kind, dto: b })));
+  return (groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, kind: g.kind, path: g.path, dto: b })));
 }

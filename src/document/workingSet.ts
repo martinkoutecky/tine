@@ -1,7 +1,7 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
 import { activatePageInstance, pageInstanceGeneration, pageInstanceGenerations, retirePageInstance } from "./instance";
 import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHolds, isConflicted, rekeyPage, releaseHolds, resolveConflict, setBaseRev, unsettledPages, untombstone } from "./host/wiring";
-import { clearCollapseEpochs, doc, setDoc, FeedPage, pageByName } from "./model";
+import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, FeedPage, pageByName } from "./model";
 import { batch } from "solid-js";
 import { produce } from "solid-js/store";
 import { purgePageNodes, toFeedPage, emptyPage, foldMarkedPageHeader } from "./convert";
@@ -93,7 +93,7 @@ function upsertPage(dto: PageDto & { id?: string }) {
   setBaseRev(dto.name, dto.rev ?? null);
   batch(() => {
     if (carried) endEdit("external-reload");
-    setDoc(
+    const write = () => setDoc(
       produce((s) => {
         purgePageNodes(s, dto.name);
         const fp = toFeedPage(dto, s.byId);
@@ -102,6 +102,7 @@ function upsertPage(dto: PageDto & { id?: string }) {
         else s.pages.push(fp);
       })
     );
+    if (replacing) write(); else hydrateWorkingSet(write);
     if (carried) reopenEditor(dto.name, carried);
   });
   activatePageInstance(dto.name);
@@ -456,7 +457,7 @@ function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
   const pin = pinnedPages();
   const evicted: string[] = [];
-  setDoc(
+  hydrateWorkingSet(() => setDoc(
     produce((s) => {
       // Oldest first (insertion order); stop once at the cap or only pinned left.
       for (let i = 0; i < s.pages.length && s.pages.length > WORKING_SET_CAP; ) {
@@ -470,7 +471,7 @@ function evictIfNeeded() {
         evicted.push(name);
       }
     })
-  );
+  ));
   for (const name of evicted) retirePageInstance(name);
   invalidateAllMatrixDimensions();
 }

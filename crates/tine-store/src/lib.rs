@@ -95,6 +95,7 @@ pub mod link_identity;
 mod no_replace;
 #[cfg(test)]
 mod no_replace_tests;
+mod page_backlinks;
 mod page_host;
 /// Fault and abort plants in the page host's I/O (tests only, Q-P2b-2).
 #[cfg(feature = "test-faults")]

@@ -9,14 +9,14 @@ import { observeNear, unobserveNear } from "../lazyObserve";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { requestFrame } from "../windowRealm";
 
-interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean }
+interface QueryGroupProps { group: () => RefGroup | undefined; flat?: boolean; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }
 
 /** Present the complete keyed List without one graph-sized DOM commit. Existing
  * groups survive membership refreshes; at most 32 new shells mount per frame.
  * Pending groups reserve the same approximate height as their eventual shells.
  * A covering picker pauses new mounts while retaining the existing keyed rows.
  * Without browser layout all groups mount immediately, like observeNear. */
-export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?: boolean; paused?: boolean }): JSX.Element {
+export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?: boolean; paused?: boolean; bulkFold?: { n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> } }): JSX.Element {
   const [keys, setKeys] = createSignal<string[]>([]);
   let frame: (() => void) | undefined;
   let generation = 0;
@@ -65,7 +65,7 @@ export function QueryGroups(props: { groups: () => Map<string, RefGroup>; flat?:
     return rows * 1.9;
   });
   return <>
-    <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} flat={props.flat} />}</For>
+    <For each={keys()}>{(key) => <QueryGroup group={() => props.groups().get(key)} flat={props.flat} bulkFold={props.bulkFold} />}</For>
     <Show when={pendingHeight() > 0}>
       <div class="query-pending-groups" aria-hidden="true" style={{ "min-height": `${pendingHeight()}em` }} />
     </Show>
@@ -131,7 +131,7 @@ function MountedQueryGroup(props: QueryGroupProps): JSX.Element {
           >
             {page()}
           </div>
-          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb eager />
+          <LiveRefGroup page={page()} kind={kind()} path={g().path} blocks={g().blocks} surface="query" showBreadcrumb eager bulkFold={props.bulkFold} />
         </>
       )}
     </Show>

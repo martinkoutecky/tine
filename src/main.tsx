@@ -37,6 +37,7 @@ import "./styles/themePresentation.css";
 import "./styles/pdf-workspace.css";
 import "./styles/settingsControls.css";
 import "./styles/query.css";
+import "./styles/query-calm.css";
 import "./styles/conflicts.css";
 import "./styles/allPages.css";
 import "./styles/region-failure.css";

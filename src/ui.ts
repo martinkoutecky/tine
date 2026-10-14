@@ -838,10 +838,10 @@ export type DatePickerTarget =
   | { insertJournal: (title: string) => void }
   | { field: `prop:${string}`; fieldType: "date" | "datetime" };
 export const [datePicker, setDatePicker] = graphScopedSignal<
-  { blockId: string; which: DatePickerTarget; x: number; y: number }
+  { blockId: string; which: DatePickerTarget; x: number; y: number; resolveWriteTarget?: () => string | null }
 >();
-export function openDatePicker(blockId: string, which: DatePickerTarget, x: number, y: number) {
-  setDatePicker({ blockId, which, x, y });
+export function openDatePicker(blockId: string, which: DatePickerTarget, x: number, y: number, resolveWriteTarget?: () => string | null) {
+  setDatePicker({ blockId, which, x, y, resolveWriteTarget });
 }
 export function closeDatePicker() {
   setDatePicker(null);

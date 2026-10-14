@@ -98,3 +98,21 @@ it("embedded descendant editing retains the containing answer", () => {
   expect(blocksContainEdit([{ ...child, id: "root", children: [child] }], "child")).toBe(true);
   expect(blocksContainEdit([{ ...child, id: "root", children: [] }], "child")).toBe(false);
 });
+
+it("D-10: a suppressed (collapsed) guarded read is not rerun by structural result epochs", async () => {
+  const { beginResultsChange } = await import("./queryResultsEpoch");
+  const [expanded, setExpanded] = createSignal(false);
+  const load = vi.fn(async (_id: string): Promise<string[]> => ["task"]);
+  const root = document.createElement("div"); document.body.append(root);
+  disposals.push(render(() => {
+    const [answer] = createMembershipResource(() => "Target", () => "Target", load,
+      (rows, id) => rows.includes(id), expanded, true);
+    return <div>{answer()?.join(",")}</div>;
+  }, root));
+  await vi.waitFor(() => expect(root.textContent).toBe("task"));
+  for (let i = 0; i < 3; i++) { beginResultsChange()(); await turn(); }
+  expect(load).toHaveBeenCalledTimes(1);
+  setExpanded(true); await turn();
+  beginResultsChange()(); await turn();
+  expect(load).toHaveBeenCalledTimes(3);
+});

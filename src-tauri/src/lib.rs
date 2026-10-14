@@ -49,6 +49,7 @@ mod migrate_identifier;
 mod native_integrations;
 mod native_mouse_history;
 mod owner;
+mod page_backlinks;
 mod page_commands;
 mod pdf_crop_rollback;
 mod platform;
@@ -1037,6 +1038,7 @@ pub fn run() {
             android_system_bars::set_system_bar_appearance,
             page_inventory,
             page_modified,
+            page_backlinks::page_backlink_counts,
             journal_feed_page,
             get_page,
             graph_source_files,

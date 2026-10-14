@@ -873,6 +873,7 @@ export function builderLeafKind(filter: Filter): BuilderLeafKind | null {
     case "scheduled":
     case "deadline":
       if (leaf.op === "is_set") return leaf.attr === "scheduled" ? "scheduled" : "deadline";
+      if (["eq", "gt", "ge", "lt", "le", "is_not_set"].includes(leaf.op)) return leaf.attr;
       return leaf.op === "between" || leaf.op === "ge" || leaf.op === "le" ? "between" : null;
     case "content":
       if (leaf.op === "like") return "content";
@@ -1102,9 +1103,9 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
     case "priority":
       return [words("priority: "), chip((listOf(leaf.value) ?? []).join(" | ") || "no levels")];
     case "scheduled":
-      return [words("scheduled")];
     case "deadline":
-      return [words("deadline")];
+      if (leaf.op === "is_set") return [words(leaf.attr)];
+      break;
     case "content":
       return [
         words('text: "'),

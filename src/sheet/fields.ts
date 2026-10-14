@@ -64,7 +64,7 @@ interface GroupKeysOptions {
 
 function facetsForInput(input: GroupKeyInput): Facets | null {
   const id = typeof input === "string" ? input : input.id;
-  const n = typeof input === "string" ? docNode(id) : liveFormulaRowNode(input);
+  const n = typeof input === "string" ? docNode(id) : liveFormulaRowNode(input, "mount");
   if (n) return facetsOf(n.raw, formatForBlock(id));
   return typeof input === "string" || !input.dto ? null : facetsFromDto(input.dto);
 }
@@ -405,7 +405,7 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
   }
 
   const id = typeof input === "string" ? input : input.id;
-  if (typeof input === "string" ? docNode(id) : liveFormulaRowNode(input)) return [groupKeyForBlock(id, field)];
+  if (typeof input === "string" ? docNode(id) : liveFormulaRowNode(input, "mount")) return [groupKeyForBlock(id, field)];
 
   const f = facetsForInput(input);
   if (!f) return [null];

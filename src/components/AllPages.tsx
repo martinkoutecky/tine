@@ -1,7 +1,8 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { t } from "../i18n";
-import { graphOwner, readOwned } from "../owned";
+import { graphOwner, latestOwner, readOwned } from "../owned";
+import { dataRev } from "../graphSession";
 import type { PaneRouter } from "../router";
 import { allPages, pageListLabels } from "../pages";
 import { installPageIndex } from "../pageIndex";
@@ -30,8 +31,8 @@ import {
 // index (`pageIndex.ts`); the Updated column is ONE `page_modified` read when the
 // view opens (times the store already holds), never a call per row. Only the
 // visible slice is in the DOM, so 10k+ pages cost what one screenful costs.
-// Created and backlink-count columns, bulk actions (delete, orphan removal) are
-// not here: file creation time is not reliable across platforms.
+// Backlink counts use a separate coalesced read while mounted. Created and bulk deletion are
+// not offered here: file creation time is not reliable across platforms.
 
 /** Every row is exactly this tall, so the scroll offset maps to a row by arithmetic. */
 export const ALL_PAGES_ROW_HEIGHT = 32;
@@ -44,6 +45,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
   const [scrollTop, setScrollTop] = createSignal(0);
   const [viewport, setViewport] = createSignal(640);
   const [modified, setModified] = createSignal<ModifiedTimes>(new Map());
+  const [backlinks, setBacklinks] = createSignal<ReadonlyMap<string, number>>(new Map());
   let scroller: HTMLDivElement | undefined;
   let alive = true;
   onCleanup(() => { alive = false; });
@@ -55,21 +57,54 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
   const labels = createMemo(() => pageListLabels(listed() ?? []));
   const rows = createMemo<AllPagesRow[]>(() => {
     const pages = listed();
-    return pages ? arrangeAllPages(pages, filter(), sort(), labels(), modified()) : [];
+    return pages ? arrangeAllPages(pages, filter(), sort(), labels(), modified(), backlinks()) : [];
   });
   const range = createMemo(() => visibleRange(scrollTop(), viewport(), ALL_PAGES_ROW_HEIGHT, rows().length));
   const slice = createMemo(() => rows().slice(range().start, range().end));
 
-  onMount(() => {
-    // One read per open. The list is usable meanwhile; Updated fills in when it lands.
+  const metricsScope = {};
+  let countPending = false;
+  let countInFlight = false;
+  let countStarted = -Infinity;
+  let countTimer: ReturnType<typeof setTimeout> | undefined;
+  const refreshCounts = () => {
+    if (!alive || countInFlight || countTimer !== undefined || !countPending) return;
+    const wait = Math.max(0, countStarted + 1000 - Date.now());
+    if (wait) {
+      countTimer = setTimeout(() => { countTimer = undefined; refreshCounts(); }, wait);
+      return;
+    }
+    countPending = false;
+    countInFlight = true;
+    countStarted = Date.now();
+    const owner = graphOwner(() => alive);
+    void readOwned(owner, backend().pageBacklinkCounts()).then(result => {
+      if (result.kind === "current") setBacklinks(new Map(result.value));
+    }).catch(() => {
+      // Missing counts leave dashes; updated times stay independently available.
+    }).finally(() => {
+      countInFlight = false;
+      refreshCounts();
+    });
+  };
+  onCleanup(() => { if (countTimer !== undefined) clearTimeout(countTimer); });
+  createEffect(on(dataRev, () => {
+    countPending = true;
+    refreshCounts();
+    // One read per open or graph revision, never per row or presentation edit.
     void (async () => {
       try {
-        const result = await readOwned(graphOwner(() => alive), backend().pageModified());
-        if (result.kind === "current") setModified(new Map(result.value.modified));
+        const owner = latestOwner(metricsScope, "metrics", graphOwner(() => alive));
+        const result = await readOwned(owner, backend().pageModified());
+        if (result.kind === "current") {
+          setModified(new Map(result.value.modified));
+        }
       } catch {
         // No times: Updated shows dashes and the list still works.
       }
     })();
+  }));
+  onMount(() => {
     const measure = () => { if (scroller?.isConnected) setViewport(scroller.clientHeight || 640); };
     measure();
     const observer = scroller ? newResizeObserver(scroller, measure) : null;
@@ -135,6 +170,9 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
           <button type="button" class="all-pages-col all-pages-updated-col" role="columnheader" aria-sort={ariaSort("updated")} onClick={() => sortBy("updated")}>
             {t("pages-all-column-updated")}{arrow("updated")}
           </button>
+          <button type="button" class="all-pages-col" role="columnheader" aria-sort={ariaSort("backlinks")} onClick={() => sortBy("backlinks")}>
+            {t("query-calm-backlinks")}{arrow("backlinks")}
+          </button>
           <button type="button" class="all-pages-col all-pages-day-col" role="columnheader" aria-sort={ariaSort("day")} onClick={() => sortBy("day")}>
             {t("pages-all-column-journal-date")}{arrow("day")}
           </button>
@@ -172,6 +210,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
                       {row.label}
                     </button>
                     <span class="all-pages-updated" role="cell">{formatUpdated(row.modified)}</span>
+                    <span class="all-pages-backlinks" role="cell">{row.backlinks ?? "—"}</span>
                     <span class="all-pages-day" role="cell">{formatPageDay(row.entry.date_key)}</span>
                   </div>
                 )}

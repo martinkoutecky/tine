@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { graphOwner, readOwned } from "./owned";
@@ -69,7 +70,7 @@ function flush() {
     .catch(() => {
       if (!owner()) return;
       batch.forEach((name) => requested.delete(name));
-      pushToast("Could not load page icons. They will retry when shown again.", "error");
+      pushToast(msg("page-icon-ui-could-not-load-page-icons-they-will-retry-when"), "error");
     });
 }
 

@@ -28,7 +28,8 @@ export function displayPropertyPatch(view: ViewSettings, scope: DisplayNamespace
     (view.aggregates ?? []).map(encodeQueryAggregate).join(";"),
   ];
   const patch = keys.map((key, index): [string, string | null] =>
-    [`${prefix}${key}`, scope === "legacy" && index !== 2 && values[index] === "" ? null : values[index]]);
+    [`${prefix}${key}`, scope === "legacy" && index !== 2 && values[index] === ""
+      && !(key === "columns" && view.columns !== undefined) ? null : values[index]]);
   if (scope !== "legacy") patch.push([`${prefix}display`, "1"]);
   return patch;
 }

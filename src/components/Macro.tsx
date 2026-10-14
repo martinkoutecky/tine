@@ -1,10 +1,9 @@
 import { FailureBoundary } from "./FailureBoundary";
-import { msg, render as renderMessage } from "../i18n";
+import { msg, t, render as renderMessage } from "../i18n";
 import { youtubePlayerForTarget, registerYoutubePlayer, recordYoutubePlayback, unregisterYoutubePlayer, type YoutubePlayer } from "../youtubePlayer";
 export { youtubePlayerForTarget } from "../youtubePlayer";
 import { TableWrap } from "./TableWrap";
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, useContext, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
-import { setBoardGroupBy } from "../sheet/mutations";
 import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
@@ -16,7 +15,10 @@ import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revi
 import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
 export { EmbedMacro } from "./EmbedMacro";
 import { QueryGroups } from "./QueryGroup";
-import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
+import { QueryDisplay } from "./QueryDisplay";
+import { startEditing } from "../editorController";
+import { collapseQueryResults } from "./QueryCollapse";
+import { QueryBuilder, createQueryRegistryAccess, type BuilderSession } from "./QueryBuilder";
 import { CrossingNotice } from "./CrossingNotice";
 import { SearchResultRow } from "./SearchResultRow";
 import { editEdnTitle, readEdnOptions } from "../editor/edn";
@@ -29,7 +31,6 @@ import {
   sourceOptions,
   sourceOriginal,
   sourcePrintDialect,
-  VIEW_KINDS,
   type ExecutionContext,
   type ExplainEmptyResult,
   type ParsedQuery,
@@ -68,13 +69,9 @@ import {
 export { boundedFeature, withoutHostBlock, PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY };
 import { QueryLegacyTable } from "./QueryLegacyTable";
 import { mainWindow } from "../windowRealm";
-
-const QUERY_VIEW_LABEL: Record<QueryView, string> = {
-  search: "Search",
-  list: "List",
-  table: "Table",
-  board: "Board",
-};
+import { QueryMacroActions } from "./QueryMacroActions";
+import { QueryResultTask } from "./QueryResultTask";
+import { resultTicket, resultsEpoch, resultsTicketActionable } from "../queryResultsEpoch";
 
 // Collapsed state for query results, keyed by graph + rendered query identity.
 // A raw query-string key made unrelated dashboards across pages/graphs collide.
@@ -192,6 +189,7 @@ export function QueryMacro(props: {
   // and config.edn's default journal queries (OG query.cljs: a built-in query
   // with an empty result renders nothing).
   hideWhenEmpty?: boolean;
+  builtIn?: boolean;
   /** App-inserted query from config.edn, with user-facing refusal copy. */
   configQuery?: boolean;
 }): JSX.Element {
@@ -207,6 +205,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const sourceError = () => macroBody() === null ? "Query source could not be parsed. Edit the block text to repair the macro." : undefined;
   const macroName = (): string => macroBody()?.name ?? QUERY_MACRO_NAMES[0];
   const arg = () => macroBody()?.argument.trim() ?? "";
+  const emptyDraft = () => !!props.blockId && arg() === "";
   const hostProperties = createMemo<[string, string][]>(() => {
     const id = props.blockId;
     const node = id ? docNode(id) : undefined;
@@ -327,12 +326,13 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // 10k-graph 3/20-block save measurements are in RECEIPT-14Q4A.md.
   const runRequest = createMemo(() => {
     const query = runnable();
-    if (!query) return undefined;
+    if (!query || emptyDraft()) return undefined;
     const context = executionContext();
     const search = friendlySearch();
     const both = search === null && bothKinds();
     const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed(), both]);
-    const key = `${displayKey}\0${collapsed() ? "collapsed" : dataRev()}`;
+    // A collapsed count is never acted on: neither saves nor epochs rerun it.
+    const key = `${displayKey}\0${collapsed() ? "collapsed" : `${dataRev()}\0${resultsEpoch()}`}`;
     return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
@@ -401,7 +401,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       matchedTotal: result.matched_total ?? null,
       both,
     };
-  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed());
+  }, (value, id) => !!value && groupsContainEdit(value.groups, id), () => !collapsed(), true);
   /** The last coherent answer; an errored run shows its error, not old rows. */
   const displayed = (): QueryOperation | undefined => {
     const current = runRequest();
@@ -409,6 +409,12 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     return current && landed?.requestKey === current.displayKey ? landed : undefined;
   };
   const groups = () => displayed()?.groups ?? [];
+  /** Result actions refuse until a graph change has re-run this answer
+   * (queryResultIdentity); say so instead of looking idle. */
+  const resultsBusy = () => {
+    const shown = displayed();
+    return !!shown && !collapsed() && !resultsTicketActionable(resultTicket(shown));
+  };
   const pageRows = () => displayed()?.pages ?? null;
   // The run's OWN diagnostics (I-9): an invalid query returns zero rows plus
   // these, so they must render — "No results" alone would report a broken query
@@ -518,7 +524,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const blockId = props.blockId;
     if (!blockId || !docNode(blockId)) return false;
     const rawAtStart = docNode(blockId).raw;
-    const previousDisplay = displayEdit ? new Map(displayPropertyPatch(reading()?.view ?? {})) : null;
+    const previousDisplay = displayEdit ? new Map(displayPropertyPatch(displayView())) : null;
     const previousGroup = displayEdit ? reading()?.view.group_by : undefined;
     const owner = bindingOwner(() => docNode(blockId)?.raw === rawAtStart);
     const current = macroName();
@@ -651,6 +657,13 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const [noticeDontShow, setNoticeDontShow] = createSignal(false);
   const [noticeFocused, setNoticeFocused] = createSignal(false);
   const [sheetOpen, setSheetOpen] = createSignal(false);
+  const [editRequest, setEditRequest] = createSignal<{ n: number; tab: "filter" | "display" | "text" } | null>(null);
+  const [bulkFold, setBulkFold] = createSignal<{ n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> }>();
+  const advancedRegistry = createQueryRegistryAccess(() => isAdvanced() && editRequest()?.tab === "display");
+  const requestEdit = (tab: "filter" | "display" | "text") => {
+    if (isAdvanced() && tab !== "display" && props.blockId) { startEditing(props.blockId); return; }
+    setEditRequest({ n: (editRequest()?.n ?? 0) + 1, tab });
+  };
   const setCrossed = (blockId: string, changed: string | null) => {
     primeCrossingNoticePreference();
     setCrossedText(changed);
@@ -696,6 +709,14 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   };
   const showBuilder = () => !!props.blockId && !isAdvanced() && !!builderSession();
   const [paneStale, setPaneStale] = createSignal(false);
+  const [defaultColumns, setDefaultColumns] = createSignal<string[]>([], { equals: sameJson });
+  const effectiveDefaultColumns = createMemo(() => reading()?.query.anchor === "page"
+    ? [...new Set((pageRows() ?? []).flatMap(row => row.properties.map(([key]) => key)))] : defaultColumns());
+  const displayView = (): ViewSettings => {
+    const view = reading()?.view ?? {};
+    return { ...view, columns: view.columns?.length || props.blockId && blockProperty(props.blockId, "tine.columns") !== null
+      ? view.columns : undefined };
+  };
 
   const globalSort = createMemo(() => (runnable()?.view.sort ?? []).length > 0);
   const queryGroupKey = (group: RefGroup, flat: boolean) =>
@@ -812,7 +833,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
 
   return (
     <Show when={!hidden()}>
-      <div class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}>
+      <div class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+        aria-busy={resultsBusy() ? "true" : undefined}>
         <Switch>
           <Match when={unsupportedAdvanced()}>
             <div class="query-unsupported" role={props.unsupportedLabel ? "alert" : undefined}>
@@ -908,57 +930,47 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   );
                 })()}
               </Show>{" "}
-              {/* The builder sentence carries the count beside it; queries with
-                  no builder keep it here so the count never disappears. */}
-              <Show when={!showBuilder()}>
-                <Show when={!reading()?.og_hint?.date_windows}><span class="query-count">{total()}</span></Show>
-              </Show>
-              <Show when={!isPublishedExport() && runnable() && displayed() && total() > 0}>
-                <button type="button" class="query-export-action" title="Export query results"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    openQueryExport({
+              <Show when={!reading()?.og_hint?.date_windows}><span class="query-count">{total()}</span></Show>
+              <Show when={!props.builtIn && !isPublishedExport() && runnable()}>
+                <QueryMacroActions current={runnable} groups={groups} pages={() => pageRows() ?? []}
+                  editable={!!props.blockId && blockWritable(props.blockId)} results={!!displayed() && total() > 0}
+                  edit={requestEdit}
+                  fold={blockFace() === "list" ? (collapsed) => {
+                    void collapseQueryResults(groups(), collapsed).then(epochs => {
+                      if (epochs) setBulkFold({ n: (bulkFold()?.n ?? 0) + 1, collapsed, epochs });
+                    });
+                  } : undefined}
+                  export={() => openQueryExport({
                       argument: executionArg() ?? arg(),
                       dialect: macroTextDialect(macroName()),
                       properties: hostProperties(),
                       currentPage: executionContext()?.current_page,
                       hostBlockId: props.blockId,
                       name: titleText(),
-                    });
-                  }}>Export…</button>
-              </Show>
-              <Show when={props.blockId && !isPublishedExport()}>
-                <div class="query-view-switcher" role="group" aria-label="Query view" onClick={stop}>
-                  <For each={VIEW_KINDS}>
-                    {(view) => (
-                      <button
-                        type="button"
-                        classList={{ active: currentView() === view }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setQueryView(view);
-                        }}
-                      >
-                        {QUERY_VIEW_LABEL[view]}
-                      </button>
-                    )}
-                  </For>
-                </div>
+                    })} />
               </Show>
             </div>
+            <Show when={isAdvanced() && editRequest()?.tab === "display"}>
+              <div class="qc-panel">
+                <button type="button" class="qc-done" onClick={() => setEditRequest(null)}>{t("query-calm-done")}</button>
+                <QueryDisplay inline registry={advancedRegistry} view={displayView} apply={applyDisplay} defaultColumns={effectiveDefaultColumns} rowKind={() => reading()?.query.anchor ?? "block"} />
+              </div>
+            </Show>
             {/* The builder edits a FILTER; an authored advanced query keeps its
                 own editing path (raw text) — converting one is out of scope. */}
             <Show when={showBuilder()}>
               <QueryBuilder
+                inline
+                openRequest={editRequest}
                 session={builderSession}
                 onChange={applyEdit}
-                display={{ view: () => reading()?.view ?? {}, apply: applyDisplay,
+                display={{ view: displayView, apply: applyDisplay,
+                  defaultColumns: effectiveDefaultColumns,
                   formulas: () => [...formulasOf(hostProperties()).keys()] }}
                 paneDialect="tql"
                 blockId={props.blockId}
                 previewContext={executionContext}
                 both={props.blockId ? { on: bothKinds, set: setBothKinds } : undefined}
-                total={<Show when={!reading()?.og_hint?.date_windows}><span class="query-count">{total()}</span></Show>}
                 onStale={setPaneStale}
                 onOpenChange={setSheetOpen}
                 notice={showCrossingNotice() && sheetOpen() ? crossingNotice : undefined}
@@ -1004,10 +1016,10 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 {blockingDiagnostics().map((d) => d.message).join(" · ")}
               </div>
             </Show>
-            <Show when={!collapsed()}>
+            <Show when={emptyDraft()}><div class="query-empty">{t("query-calm-condition")}</div></Show>
+            <Show when={!collapsed() && !emptyDraft()}>
               <Show when={displayed()?.statistics}>
-                {(statistics) => <QueryStatisticsSummary statistics={statistics()} onClearGrouping={props.blockId && blockWritable(props.blockId) && !isPublishedExport()
-                  ? () => setBoardGroupBy(props.blockId!, "") : undefined} />}
+                {(statistics) => <QueryStatisticsSummary statistics={statistics()} />}
               </Show>
               <Switch>
                 <Match when={displayed()?.both}>
@@ -1026,7 +1038,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                               rows={both().pages}
                               view={simpleView()}
                               groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
-                              columns={runnable()?.view.columns}
+                              columns={displayView().columns}
                             />
                           ),
                         },
@@ -1040,13 +1052,14 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                           // macro's OWN anchor, so a page-anchored macro's blocks get none.
                           body: (
                             <Switch fallback={
-                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} />}>
-                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} />
+                              <Show when={globalSort()} fallback={<QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} bulkFold={bulkFold()} />}>
+                                <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} bulkFold={bulkFold()} />
                               </Show>
                             }>
                               <Match when={sheetFace() && !!props.blockId && blockFace() === "table"}>
                                 <SheetContainer>
                                   <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
+                                    onDefaultColumns={setDefaultColumns}
                                     queryDisplay={{ view: reading()?.view ?? {},
                                       ...(both().ownAnchor === "block" ? { statistics: displayed()?.statistics, statisticsView: runnable()?.view } : {}),
                                       apply: (next) => void applyDisplay(next) }} />
@@ -1071,7 +1084,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                         rows={pages()}
                         view={simpleView()}
                         groupBy={runnable()?.view.group_by ?? blockProperty(props.blockId ?? "", "tine.group-by") ?? undefined}
-                        columns={runnable()?.view.columns}
+                        columns={displayView().columns}
                       />
                     </Show>
                   )}
@@ -1083,6 +1096,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                         <Switch>
                           <Match when={blockFace() === "table"}>
                             <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
+                              onDefaultColumns={setDefaultColumns}
                               queryDisplay={{ view: reading()?.view ?? {}, statistics: displayed()?.statistics, statisticsView: runnable()?.view, apply: (next) => void applyDisplay(next) }} />
                           </Match>
                           <Match when={blockFace() === "board"}>
@@ -1148,6 +1162,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                                   openInNewTab({ kind: "page", name: bh.page, pageKind: bh.kind, block: blockDtoExternalId(bh.block), ...(bh.path ? { path: bh.path } : {}) });
                                 })}
                               >
+                                <QueryResultTask row={{ id: blockHit().block.id, page: blockHit().page, kind: blockHit().kind,
+                                  path: blockHit().path, dto: blockHit().block }} />
                                 <SearchResultRow
                                   page={blockHit().page}
                                   breadcrumb={blockHit().block.breadcrumb ?? []}
@@ -1170,11 +1186,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                         <Show
                           when={globalSort()}
                           fallback={
-                            <QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} />
+                            <QueryGroups groups={groupedQueryByKey} paused={switcherOpen()} bulkFold={bulkFold()} />
                           }
                         >
                           {/* Sorted: the engine's flat global order, one group per run of rows. */}
-                          <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} />
+                          <QueryGroups groups={flatQueryByKey} flat paused={switcherOpen()} bulkFold={bulkFold()} />
                         </Show>
                       }
                     >

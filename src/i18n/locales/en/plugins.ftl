@@ -89,3 +89,7 @@ plugins-audit-details = { $count ->
     [one] Source <source-code>{ $source }</source-code> · Package <package-code>{ $package }</package-code> · Report <report-code>{ $report }</report-code> · { $count } areas reviewed
    *[other] Source <source-code>{ $source }</source-code> · Package <package-code>{ $package }</package-code> · Report <report-code>{ $report }</report-code> · { $count } areas reviewed
     }
+
+# Remaining interface text (GH #107). Inline code and syntax stay unchanged.
+plugins-ui-could-not-cache-verified-plugin-registry = Could not cache verified plugin registry: { $value1 }
+plugins-ui-could-not-cache-plugin-safety-report = Could not cache plugin safety report.

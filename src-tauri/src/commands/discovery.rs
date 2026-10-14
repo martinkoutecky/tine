@@ -1,7 +1,6 @@
 //! Name-discovery transport: readable names plus the unreadable paths.
 use super::{ResolvedWire, WholeGraph};
 use serde::Serialize;
-use tine_store::Resolved;
 
 #[derive(Serialize)]
 pub(crate) struct PageInventoryWire {

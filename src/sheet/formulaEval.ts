@@ -1,6 +1,6 @@
 import { createMemo, type Accessor } from "solid-js";
 import { dataRev } from "../graphSession";
-import { formatForBlock, pageByName, type Node as StoreNode, node as docNode } from "../document";
+import { formatForBlock, type Node as StoreNode } from "../document";
 import { facetsFromDto, facetsOf } from "../render/facets";
 import { evaluate, parseFormula, type Ast, type FormulaValue, type ParseResult } from "./formula";
 import {
@@ -16,10 +16,12 @@ import { fieldValueFromFacets, readField, type FieldId, type FieldValue } from "
 import type { BlockDto, PageKind } from "../types";
 
 import { appNow } from "../journal";
+import { resolveResultRow } from "../components/queryResultIdentity";
 export interface FormulaEvalRow {
   id: string;
   page: string;
   kind?: PageKind;
+  path?: string;
   dto?: BlockDto;
   /** Evaluate from `dto` only, never the live document store: the static export
    *  computes a page it may not have loaded, and must not read a different one. */
@@ -30,12 +32,11 @@ export function formulaRowKey(row: Pick<FormulaEvalRow, "id" | "page" | "kind">)
   return row.kind ? `${row.kind}\0${row.page}\0${row.id}` : row.id;
 }
 
-export function liveFormulaRowNode(row: FormulaEvalRow): StoreNode | null {
-  if (row.detached) return null;
-  const node = docNode(row.id);
-  if (!node || node.page !== row.page) return null;
-  if (row.kind && pageByName(row.page)?.kind !== row.kind) return null;
-  return node;
+export function liveFormulaRowNode(row: FormulaEvalRow, mode: "action" | "mount" = "action"): StoreNode | null {
+  const source = resolveResultRow(row, mode);
+  // Sheet field writers use row.id; a moved authored identity remains read-only
+  // here until the requery supplies its current locator.
+  return source?.id === row.id ? source as StoreNode : null;
 }
 
 interface FormulaResultsOptions {
@@ -83,7 +84,7 @@ export function formulaResultKey(row: string | FormulaEvalRow, formulaName: stri
 
 export function readFormulaRowField(row: FormulaEvalRow, field: FieldId): FieldValue | null {
   if (field.startsWith("formula:")) return null;
-  if (liveFormulaRowNode(row)) return readField(row.id, field);
+  if (liveFormulaRowNode(row, "mount")) return readField(row.id, field);
 
   const f = row.dto ? facetsFromDto(row.dto) : null;
   if (!f) return null;
@@ -164,7 +165,7 @@ export function evaluateFormulaForRow(
 }
 
 function observeFormulaRow(row: FormulaEvalRow): void {
-  const node = liveFormulaRowNode(row);
+  const node = liveFormulaRowNode(row, "mount");
   if (node) {
     // Track the same fine-grained raw dependency ordinary sheet cells read.
     void facetsOf(node.raw, formatForBlock(row.id));

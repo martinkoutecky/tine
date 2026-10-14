@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { bumpGraphEpoch } from "../graphSession";
+import { bumpDataRev, bumpGraphEpoch } from "../graphSession";
 import { resetPageIndex } from "../pageIndex";
 import { resetTabsToJournals, route } from "../router";
 import type { PaneRouter } from "../router";
@@ -40,27 +40,29 @@ function stubRouter() {
   };
 }
 
-/** Every backend method except the two one-shot reads (inventory, modified times),
- *  the ownership stamp they carry, and the windowed icon batch (checked separately):
- *  a call to any other is a per-open or per-row call. */
+/** Graph calls apart from the shared inventory/metadata reads, the ownership
+ * stamp and the windowed icon batch (checked separately). The router's
+ * debounced saveSession may land from test navigation or teardown; it persists
+ * tabs and cannot read or write a page row. */
 function spyOnEverythingElse() {
-  const spies: ReturnType<typeof vi.fn>[] = [];
+  const spies: { name: string; spy: ReturnType<typeof vi.fn> }[] = [];
   const target = backend() as unknown as Record<string, unknown>;
   const names = new Set<string>();
   for (let proto: object | null = target; proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto))
     for (const key of Object.getOwnPropertyNames(proto)) names.add(key);
   for (const key of names) {
-    if (key === "constructor" || key === "pageInventory" || key === "pageModified" || key === "graphBindingGeneration" || key === "pageIcons" || typeof target[key] !== "function") continue;
-    spies.push(vi.spyOn(target as never, key as never) as never);
+    if (key === "constructor" || key === "pageInventory" || key === "pageModified" || key === "pageBacklinkCounts" || key === "graphBindingGeneration" || key === "saveSession" || key === "pageIcons" || typeof target[key] !== "function") continue;
+    spies.push({ name: key, spy: vi.spyOn(target as never, key as never) as never });
   }
-  return () => spies.reduce((n, spy) => n + spy.mock.calls.length, 0);
+  return () => spies.flatMap(({ name, spy }) => spy.mock.calls.map(() => name));
 }
 
-async function mountAllPages(entries = inventory(), modified: [string, number][] | "fail" = []) {
+async function mountAllPages(entries = inventory(), modified: [string, number][] | "fail" = [], backlinks: [string, number][] = []) {
   const read = vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries });
   const readModified = vi.spyOn(backend(), "pageModified");
   if (modified === "fail") readModified.mockRejectedValue(new Error("no times"));
   else readModified.mockResolvedValue({ rev: "1", modified });
+  const readCounts = vi.spyOn(backend(), "pageBacklinkCounts").mockResolvedValue(backlinks);
   const otherCalls = spyOnEverythingElse();
   const icons = vi.spyOn(backend(), "pageIcons").mockImplementation(async (names: string[]) =>
     Object.fromEntries(names.filter((name) => name === "Page 00001").map((name) => [name, "🚩"])));
@@ -70,7 +72,7 @@ async function mountAllPages(entries = inventory(), modified: [string, number][]
   document.body.append(host);
   const dispose = render(() => <AllPages router={router} />, host);
   await vi.waitFor(() => expect(host.querySelector(".all-pages-open")).not.toBeNull());
-  return { host, router, read, readModified, otherCalls, icons, dispose };
+  return { host, router, read, readModified, readCounts, otherCalls, icons, dispose };
 }
 
 afterEach(() => {
@@ -83,6 +85,55 @@ afterEach(() => {
 });
 
 describe("the All Pages view", () => {
+  it("coalesces rapid revisions to one in-flight read and one trailing refresh, and stops on unmount", async () => {
+    const { readCounts, readModified, dispose } = await mountAllPages([existing("Alpha")]);
+    await settle();
+    vi.useFakeTimers();
+    try {
+      let finish!: (counts: [string, number][]) => void;
+      readCounts.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+      bumpDataRev(); bumpDataRev(); bumpDataRev();
+      expect(readCounts).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(readCounts).toHaveBeenCalledTimes(2);
+      bumpDataRev(); bumpDataRev();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(readCounts).toHaveBeenCalledTimes(2);
+      finish([]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(readCounts).toHaveBeenCalledTimes(3);
+      expect(readModified.mock.calls.length).toBeGreaterThan(3);
+      bumpDataRev();
+      dispose();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(readCounts).toHaveBeenCalledTimes(3);
+    } finally { vi.useRealTimers(); }
+  });
+  it("keeps graph-wide backlink reads separate from cheap updated times", () => {
+    expect(typeof (backend() as unknown as Record<string, unknown>).pageBacklinkCounts).toBe("function");
+  });
+  it("refreshes backend counts after a graph change while keeping the current sort", async () => {
+    const { host, readModified, readCounts, dispose } = await mountAllPages([existing("Alpha"), existing("Beta")], [], [["pages/Alpha.md", 2], ["pages/Beta.md", 7]]);
+    try {
+      column(host, "Backlinks").click();
+      await vi.waitFor(() => expect(rowNames(host)).toEqual(["Beta", "Alpha"]));
+      readModified.mockResolvedValue({ rev: "2", modified: [] });
+      readCounts.mockResolvedValue([["pages/Alpha.md", 9], ["pages/Beta.md", 7]]);
+      bumpDataRev();
+      await vi.waitFor(() => expect(rowNames(host)).toEqual(["Alpha", "Beta"]), { timeout: 2000 });
+      expect(readModified).toHaveBeenCalledTimes(2);
+    } finally { dispose(); }
+  });
+  it("shows backend backlink counts and sorts them in either direction", async () => {
+    const { host, dispose } = await mountAllPages([existing("Alpha"), existing("Beta")], [], [["pages/Alpha.md", 2], ["pages/Beta.md", 7]]);
+    try {
+      await vi.waitFor(() => expect([...host.querySelectorAll(".all-pages-backlinks")].map(el => el.textContent)).toEqual(["2", "7"]));
+      column(host, "Backlinks").click();
+      expect(rowNames(host)).toEqual(["Beta", "Alpha"]);
+      column(host, "Backlinks").click();
+      expect(rowNames(host)).toEqual(["Alpha", "Beta"]);
+    } finally { dispose(); }
+  });
   it("lists a graph of thousands of pages with a screenful of rows and one inventory read, whatever the user does", async () => {
     const { host, read, readModified, otherCalls, icons, dispose } = await mountAllPages();
     // GH #346, as OG's all-pages table (page.cljs:1245): a row shows its page's icon.
@@ -111,7 +162,7 @@ describe("the All Pages view", () => {
     await settle();
     expect(read).toHaveBeenCalledTimes(1);
     expect(readModified).toHaveBeenCalledTimes(1);
-    expect(otherCalls()).toBe(0);
+    expect(otherCalls()).toEqual([]);
     // Icons are one coalesced read per rendered window, never per row or per graph page.
     for (const [names] of icons.mock.calls) expect(names.length).toBeLessThan(60);
     expect(icons.mock.calls.length).toBeLessThanOrEqual(4);

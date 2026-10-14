@@ -27,7 +27,7 @@ const fieldDate = (y: number, m: number, d: number) => `${y}-${pad2(m + 1)}-${pa
 export function DatePicker(): JSX.Element {
   return (
     <Show when={datePicker()} keyed>
-      {(dp) => <Picker bid={dp.blockId} which={dp.which} x={dp.x} y={dp.y} />}
+      {(dp) => <Picker bid={dp.blockId} which={dp.which} x={dp.x} y={dp.y} resolveWriteTarget={dp.resolveWriteTarget} />}
     </Show>
   );
 }
@@ -41,7 +41,7 @@ function propDateSelection(bid: string, field: FieldId): { y: number; m: number;
   return parseIsoDateLike(value);
 }
 
-function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: number }): JSX.Element {
+function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: number; resolveWriteTarget?: () => string | null }): JSX.Element {
   let root: HTMLDivElement | undefined;
   const binding = captureBinding();
   const ownerWindow = useOwnerWindow();
@@ -122,24 +122,25 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
     setView(next);
   };
   const writePickedDate = (y: number, m: number, d: number) => {
-    if (!bound()) return;
+    if (!bound()) return false;
+    const bid = props.resolveWriteTarget ? props.resolveWriteTarget() : props.bid;
+    if (!bid) return false;
     const picked = fieldDate(y, m, d);
     if (isScheduleTarget(props.which)) {
-      setSchedule(props.bid, props.which, { y, m, d }, repeater(), time());
-      return;
+      setSchedule(bid, props.which, { y, m, d }, repeater(), time());
+      return true;
     }
     if ("insertJournal" in props.which) {
       props.which.insertJournal(journalTitle(localCalendarDate(y, m, d)!));
-      return;
+      return true;
     }
-    const fieldTime = props.which.fieldType === "datetime" ? propDateSelection(props.bid, props.which.field)?.time : null;
-    writeFieldVisibly(props.bid, props.which.field, fieldTime ? `${picked} ${fieldTime}` : picked);
+    const fieldTime = props.which.fieldType === "datetime" ? propDateSelection(bid, props.which.field)?.time : null;
+    return writeFieldVisibly(bid, props.which.field, fieldTime ? `${picked} ${fieldTime}` : picked);
   };
   const [chosen, setChosen] = createSignal({ ...cursor() });
   const commitDraft = () => {
     const date = chosen();
-    writePickedDate(date.y, date.m, date.d);
-    close();
+    if (writePickedDate(date.y, date.m, date.d)) close();
   };
   const selectDate = (date: { y: number; m: number; d: number }) => {
     setChosen(date); setCursor(date); setView({ y: date.y, m: date.m });
@@ -291,9 +292,11 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
             <button
               class="dp-btn dp-clear"
               onClick={() => {
-                if (!bound()) return close();
-                if (isScheduleTarget(props.which)) writeFieldVisibly(props.bid, props.which, "");
-                else if ("field" in props.which) writeFieldVisibly(props.bid, props.which.field, "");
+                if (!bound()) return;
+                const bid = props.resolveWriteTarget ? props.resolveWriteTarget() : props.bid;
+                if (!bid) return;
+                if (isScheduleTarget(props.which) && !writeFieldVisibly(bid, props.which, "")) return;
+                else if (typeof props.which === "object" && "field" in props.which && !writeFieldVisibly(bid, props.which.field, "")) return;
                 close();
               }}
             >
