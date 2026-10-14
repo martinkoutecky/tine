@@ -2,7 +2,7 @@ import { Show, createContext, createEffect, createSignal, createUniqueId, onClea
 import { FloatingPortal } from "../components/FloatingPortal";
 import { RefBlocks } from "../components/RefBlocks";
 import type { BlockDto } from "../types";
-import { registerTransientLayer } from "../transientLayers";
+import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { useOwnerWindow, viewportOf } from "../windowRealm";
 
 export const PeekContext = createContext(false);
@@ -92,14 +92,15 @@ export function PeekPopup(props: {
       popupEl?.offsetWidth || POPUP_FALLBACK_WIDTH,
       Math.max(0, viewportWidth - POPUP_MARGIN * 2),
     );
-    const height = popupEl?.offsetHeight || POPUP_FALLBACK_HEIGHT;
+    const maxHeight = Math.max(0, viewportHeight - POPUP_MARGIN * 2);
+    const height = Math.min(popupEl?.offsetHeight || POPUP_FALLBACK_HEIGHT, maxHeight);
     const maxLeft = Math.max(POPUP_MARGIN, viewportWidth - width - POPUP_MARGIN);
     const left = Math.min(Math.max(rect.left, POPUP_MARGIN), maxLeft);
     const openAbove = rect.bottom + POPUP_OFFSET + height > viewportHeight - POPUP_MARGIN && rect.top > height;
 
-    setStyle(openAbove
-      ? { left: `${left}px`, bottom: `${viewportHeight - rect.top + POPUP_OFFSET}px` }
-      : { left: `${left}px`, top: `${rect.bottom + POPUP_OFFSET}px` });
+    const desiredTop = openAbove ? rect.top - POPUP_OFFSET - height : rect.bottom + POPUP_OFFSET;
+    const top = Math.max(POPUP_MARGIN, Math.min(desiredTop, viewportHeight - height - POPUP_MARGIN));
+    setStyle({ left: `${left}px`, top: `${top}px`, "max-height": `${maxHeight}px` });
   };
 
   createEffect(() => {
@@ -117,9 +118,10 @@ export function PeekPopup(props: {
     });
     onCleanup(unregister);
   });
+  dismissOnOutsidePointer({ open: () => true, inside: () => [popupEl, props.anchor()], dismiss: props.onDismiss });
 
   onMount(() => {
-    const close = () => props.onPointerLeave();
+    const close = () => props.onDismiss();
     // Dismiss when the PAGE BEHIND scrolls, but NOT when the user scrolls the
     // popup's own overflow body (or drags its scrollbar) — capture-phase scroll
     // fires for every scroller, so filter out events originating inside the popup.

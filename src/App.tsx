@@ -38,6 +38,7 @@ import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
 import { applyCustomCssChange, applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
 import { installPageIndex } from "./pageIndex";
+import { t } from "./i18n";
 import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
@@ -1108,6 +1109,57 @@ export function App(): JSX.Element {
     onCleanup(installInterfaceZoomWheel());
   });
 
+  // One shared group: mobile places it below the document, desktop in the title bar.
+  const NavigationActions = () => (
+    <div class="navigation-actions topbar-left">
+      <button
+        class="icon-btn"
+        title={t("navigation-sidebar-title")}
+        onClick={(event) => toggleSidebar(event.currentTarget)}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
+          <line x1="9" y1="4" x2="9" y2="20" stroke="currentColor" stroke-width="1.7" />
+        </svg>
+      </button>
+      <button
+        class="icon-btn"
+        title={t("navigation-search-title")}
+        aria-label={t("navigation-search")}
+        data-search-trigger
+        data-pane-focus-neutral
+        onClick={() => openSwitcher()}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
+          <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
+        </svg>
+      </button>
+      <button
+        class="icon-btn topbar-navigation-action"
+        title={t("command-go-backward")}
+        data-pane-focus-neutral
+        disabled={!canGoBack()}
+        onClick={topbarActions.back}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+      <button
+        class="icon-btn topbar-navigation-action"
+        title={t("command-go-forward")}
+        data-pane-focus-neutral
+        disabled={!canGoForward()}
+        onClick={topbarActions.forward}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+    </div>
+  );
+
   // Frameless window: the toolbar doubles as the title bar (decorations are off),
   // so track maximized state to drive our custom max/restore glyph + resize grips.
   // Also apply the persisted native-frame preference (Linux/Windows; macOS uses its
@@ -1201,53 +1253,7 @@ export function App(): JSX.Element {
             user drag the window by its empty areas (buttons/tabs, being children
             without the attribute, still click normally; double-click maximizes). */}
         <header class="topbar" data-tauri-drag-region>
-          <div class="topbar-left">
-            <button
-              class="icon-btn"
-              title="Toggle sidebar (t l)"
-              onClick={(event) => toggleSidebar(event.currentTarget)}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-                <line x1="9" y1="4" x2="9" y2="20" stroke="currentColor" stroke-width="1.7" />
-              </svg>
-            </button>
-            <button
-              class="icon-btn"
-              title="Search (Ctrl+K)"
-              aria-label="Search"
-              data-search-trigger
-              data-pane-focus-neutral
-              onClick={() => openSwitcher()}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
-                <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
-              </svg>
-            </button>
-            <button
-              class="icon-btn topbar-navigation-action"
-              title="Go back"
-              data-pane-focus-neutral
-              disabled={!canGoBack()}
-              onClick={topbarActions.back}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-            <button
-              class="icon-btn topbar-navigation-action"
-              title="Go forward"
-              data-pane-focus-neutral
-              disabled={!canGoForward()}
-              onClick={topbarActions.forward}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-          </div>
+          <Show when={!isMobilePlatform}><FailureBoundary region="Navigation"><NavigationActions /></FailureBoundary></Show>
           {/* A collapsed sidebar has no mounted sidebar header. Keep a compact
               one-tap workspace path in the toolbar without putting its full
               non-shrinking label back in this no-wrap row. */}
@@ -1351,6 +1357,11 @@ export function App(): JSX.Element {
           </DrawerBackground>
           <FailureBoundary region="The reference sidebar"><RightSidebar /></FailureBoundary>
         </div>
+        <Show when={isMobilePlatform}>
+          <DrawerBackground class="mobile-navigation-toolbar" blockedBy="any">
+            <FailureBoundary region="Navigation"><NavigationActions /></FailureBoundary>
+          </DrawerBackground>
+        </Show>
       </DrawerBackground>
       <MobileDrawerController />
       <DrawerBackground class="drawer-floating-background" blockedBy="any">
