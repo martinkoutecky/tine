@@ -388,6 +388,24 @@ mod journal_guide_tests {
     }
 
     #[test]
+    fn todays_sections_page_is_documented() {
+        let text = include_str!("templates/journals-tasks-scheduling.md");
+        for required in [
+            "**Customize today's sections…**",
+            "`tine/journal-sections:: true`",
+            "in outline order",
+            "Delete the page, or set the marker to `false`, to go back to `config.edn`",
+            "Tine never writes to `config.edn`",
+            "the Agenda window setting no longer applies",
+        ] {
+            assert!(
+                text.contains(required),
+                "missing sections-page fact: {required}"
+            );
+        }
+    }
+
+    #[test]
     fn journal_logseq_query_config_is_documented_with_examples() {
         let text = include_str!("templates/journals-tasks-scheduling.md");
         for required in [

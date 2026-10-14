@@ -11,6 +11,7 @@ import { agendaQuery, agendaTql } from "../ui";
 import { openPage } from "../router";
 import { createPage } from "../document";
 import { pushToast } from "../toasts";
+import { t } from "../i18n";
 import { QueryMacro } from "./Macro";
 import { BeginQuery, inspectBeginQuery } from "./BeginQuery";
 import { detectMacro } from "./Rendered";
@@ -49,7 +50,7 @@ export async function customizeTodaySections(): Promise<void> {
       await createPage(name, seedSectionsPage(name, format, agenda));
     } catch (error) {
       if (String(error).includes("conflict")) continue;
-      pushToast(`Couldn't create the page "${name}": ${String(error)}`, "error");
+      pushToast(t("journal-sections-create-failed", { page: name, error: String(error) }), "error");
       return;
     }
     openPage(name);
@@ -75,7 +76,7 @@ export function TodaySections(props: { today: string }): JSX.Element {
         <Show when={!sections.error}>
           <ConfigSections today={props.today} />
           <button class="today-sections-customize" type="button" disabled={busy()} onClick={customize}>
-            Customize today's sections…
+            {t("journal-sections-customize")}
           </button>
         </Show>
       }>
@@ -83,7 +84,7 @@ export function TodaySections(props: { today: string }): JSX.Element {
           <div class="today-queries today-sections" data-sections-page={found().page}>
             <Show when={found().ambiguous.length > 0}>
               <div class="config-diagnostic" role="status">
-                Several pages are marked tine/journal-sections; using "{found().page}". Also marked: {found().ambiguous.join(", ")}.
+                {t("journal-sections-ambiguous", { page: found().page, others: found().ambiguous.join(", ") })}
               </div>
             </Show>
             <For each={found().items}>
@@ -110,12 +111,12 @@ function ConfigSections(props: { today: string }): JSX.Element {
   return (
     <>
       <For each={graphMeta()?.journal_config_diagnostics ?? []}>
-        {(message) => <div class="config-diagnostic" role="status">config.edn: {message}</div>}
+        {(message) => <div class="config-diagnostic" role="status">{t("journal-config-diagnostic", { message })}</div>}
       </For>
       <div class="today-queries">
         <For each={graphMeta()?.default_journal_queries ?? []}>
           {(query) => <div class="default-journal-query">
-            <Show when={!query.error} fallback={<div class="query-error" role="alert">{query.title ?? "Query"}: {query.error}</div>}>
+            <Show when={!query.error} fallback={<div class="query-error" role="alert">{t("journal-query-error", { title: query.title ?? t("journal-query-untitled"), error: query.error ?? "" })}</div>}>
               <QueryMacro body={query.body} title={query.title ?? undefined} currentPage={props.today} hideWhenEmpty />
             </Show>
           </div>}
@@ -123,7 +124,7 @@ function ConfigSections(props: { today: string }): JSX.Element {
       </div>
       <Show when={!graphMeta()?.disable_scheduled_and_deadline_query}>
         <div class="agenda-block">
-          <QueryMacro body={agendaQuery()} title="Scheduled & Deadline" hideWhenEmpty />
+          <QueryMacro body={agendaQuery()} title={t("journal-agenda-title")} hideWhenEmpty />
         </div>
       </Show>
     </>

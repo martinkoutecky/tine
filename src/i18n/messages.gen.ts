@@ -142,6 +142,13 @@ export interface MessageArgs {
   "export-show-folder": {};
   "favorites-block-action": {};
   "graph-wsl-rootfs-refused": {};
+  "journal-agenda-title": {};
+  "journal-config-diagnostic": { "message": string | number };
+  "journal-query-error": { "error": string | number; "title": string | number };
+  "journal-query-untitled": {};
+  "journal-sections-ambiguous": { "others": string | number; "page": string | number };
+  "journal-sections-create-failed": { "error": string | number; "page": string | number };
+  "journal-sections-customize": {};
   "links-copy-title": {};
   "links-open-custom-scheme-confirm": { "scheme": string | number; "url": string | number };
   "links-open-custom-scheme-title": { "scheme": string | number };
@@ -207,6 +214,8 @@ export interface MessageArgs {
   "settings-pinyin-description": {};
   "settings-pinyin-label": {};
   "settings-pinyin-reset": {};
+  "settings-sections-open": {};
+  "settings-sections-page": { "page": string | number };
   "shell-boot-opening": {};
   "shell-tray-capture": {};
   "shell-tray-open": {};

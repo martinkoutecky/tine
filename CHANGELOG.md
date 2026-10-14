@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Today's sections page**: Customize today's sections… (hover today's journal) creates a *Journal sections* page holding today's queries and the agenda; its query blocks then decide what shows under today's journal, editable in Tine itself instead of `config.edn` (which Tine never writes and Logseq keeps using). Delete the page to return to `config.edn` (GH #605).
 - Optional Mandarin Pinyin and syllable-initial matching for Han page titles and aliases, preserving native-name relevance (GH #151).
 
 ### Fixed

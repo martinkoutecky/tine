@@ -12,7 +12,8 @@ import { JournalFilenamePanel } from "./JournalFilenamePanel";
 import { ConflictFileRow } from "./JournalConflictFileRow";
 import { settingsOpen, closeSettings, settingsTabRequest, clearSettingsTabRequest, workflow, changeWorkflow, timetrackingEnabled, changeTimetrackingEnabled, showBrackets, changeShowBrackets, changePreferredFormat, changeJournalTitleFormat, shortcutOverrides, setShortcutOverride, resetShortcutOverride, accentColor, changeAccent, wideMode, toggleWideMode, documentMode, toggleDocumentMode, docModeEnterForNewBlock, changeDocModeEnterForNewBlock, logicalOutdenting, changeLogicalOutdenting, typographyMode, setTypographyMode, autoPairing, setAutoPairing, dimInFocus, setDimInFocus, changeStartOfWeek, carryKeepsContext, setCarryKeepsContext, carryHeader, setCarryHeader, carryDays, setCarryDays, showCarryButtons, setShowCarryButtons, agendaDaysBack, setAgendaDaysBack, agendaDaysAhead, setAgendaDaysAhead, journalConflicts, refreshJournalConflicts, refreshSyncConflicts, type SettingsTabId } from "../ui";
 import { pendingConflictCount } from "../liveConflicts";
-import { setJournalTemplate, graphMeta } from "../graphSession";
+import { setJournalTemplate, graphMeta, graphEpoch, dataRev } from "../graphSession";
+import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
@@ -996,8 +997,24 @@ function JournalsTab(props: { search: string }): JSX.Element {
           onChange={(e) => setAgendaDaysAhead(Number(e.currentTarget.value))}
         />
         <span class="settings-hint">{graphMeta()?.scheduled_future_days != null ? "days ahead · set by :scheduled/future-days in config.edn" : "days ahead"}</span>
+        <SectionsPageNote />
       </Field>
     </>
+  );
+}
+
+/** GH #605: with a sections page, today's sections (agenda included) are the
+ *  queries written on it, so this window no longer applies. Say where they live. */
+function SectionsPageNote(): JSX.Element {
+  const [pages] = createResource(() => `${graphEpoch()}\0${dataRev()}`, () => locateSectionsPages());
+  const page = () => readOr(pages, [] as string[], "sections page note")[0];
+  return (
+    <Show when={page()}>
+      {(name) => <div class="settings-hint">
+        {render(msg("settings-sections-page", { page: name() }))}{" "}
+        <button type="button" class="settings-link" onClick={() => { closeSettings(); openPage(name()); }}>{render(msg("settings-sections-open"))}</button>
+      </div>}
+    </Show>
   );
 }
 
