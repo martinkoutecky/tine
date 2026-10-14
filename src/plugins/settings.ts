@@ -72,7 +72,8 @@ function finite(value: unknown, where: string): number {
   return value;
 }
 
-export function parsePluginSettingDefinitions(value: unknown): PluginSettingDefinition[] | undefined {
+/** `apiVersion` gates types newer than API 0.2: an older host refuses them. */
+export function parsePluginSettingDefinitions(value: unknown, apiVersion: string): PluginSettingDefinition[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) throw new PluginSettingsError("settings must be an array");
   if (value.length > 64) throw new PluginSettingsError("settings must contain at most 64 entries");
@@ -91,6 +92,7 @@ export function parsePluginSettingDefinitions(value: unknown): PluginSettingDefi
     };
     switch (obj.type) {
       case "color":
+        if (apiVersion === "0.2") throw new PluginSettingsError(`${where}.type color needs apiVersion 0.3`);
         knownKeys(obj, where, ["key", "type", "label", "description", "default"]);
         if (!acceptsPluginColor(obj.default)) throw new PluginSettingsError(`${where}.default must be a literal color or empty`);
         return { ...base, type: "color", default: obj.default };
