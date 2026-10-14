@@ -35,6 +35,7 @@ const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Queries]]\n");
 fs.writeFileSync(`${GRAPH}/pages/Tasks.md`, "- TODO alpha task\n- TODO beta task\n- DONE finished task\n");
+fs.writeFileSync(`${GRAPH}/pages/Window.md`, `- {{query (and (task TODO) (between scheduled today +7d))}}\n- TODO scheduled window hit\n  SCHEDULED: <${journal.replaceAll("_", "-")}>\n- TODO unscheduled window miss\n`);
 fs.writeFileSync(`${GRAPH}/pages/Book A.md`, "type:: book\nowner:: Ada\n\n- A book page\n");
 fs.writeFileSync(`${GRAPH}/pages/Notes.md`, "type:: note\n\n- Not a book\n");
 // GH #619 item 9: a page and a block that both carry `type:: book`, so ONE `(property type book)`
@@ -80,6 +81,8 @@ const env = {
 };
 
 async function withApp(index, fn) {
+  if (process.env.E2E_D18_BETWEEN_ONLY === "1" && index < 8) return;
+  if (process.env.E2E_KALEM_K4_ONLY === "1" && index >= 8) return;
   // Allow the bounded Kalem regression to run without the unrelated builder journeys.
   if (process.env.E2E_KALEM_K4_ONLY === "1" && index < 6) return;
   const driverPort = DRIVER_BASE + index * 2;
@@ -464,7 +467,41 @@ for (const index of [6, 7]) {
     fs.writeFileSync(`${ARTIFACTS}/kalem-k4-pages-${index}.json`, JSON.stringify(state, null, 2));
   });
 }
-console.log(process.env.E2E_KALEM_K4_ONLY === "1"
+// D-18 has its own durable journey so unrelated query-sheet tests cannot
+// prevent the window save/restart capability from being verified.
+for (const index of [8, 9]) {
+  await withApp(index, async (browser) => {
+    await openPageByName(browser, "Window");
+    const windowFile = `${GRAPH}/pages/Window.md`;
+    const legacyWindow = "{{query (and (task TODO) (between scheduled today +7d))}}";
+    if (index === 8) {
+      const before = fs.readFileSync(windowFile, "utf8");
+      await browser.waitUntil(() => browser.execute(() => document.querySelector(".page-blocks .query-og-hint")?.textContent.includes("Logseq ignores scheduled/deadline date windows")), { timeout: 15_000 });
+      if (await browser.$(".page-blocks .query-group").isExisting()) throw new Error("refused query returned rows");
+      if (fs.readFileSync(windowFile, "utf8") !== before) throw new Error("refusal silently rewrote the block");
+      await browser.$('.page-blocks [data-rewrite="convert"]').click();
+    }
+    await browser.waitUntil(() => !fs.readFileSync(windowFile, "utf8").includes(legacyWindow) && fs.readFileSync(windowFile, "utf8").includes("{{tine-query "), { timeout: 15_000 });
+    await browser.waitUntil(() => browser.execute(() => document.querySelector(".page-blocks .query-group")?.textContent.includes("scheduled window hit")), { timeout: 15_000 });
+    fs.writeFileSync(`${ARTIFACTS}/d18-convert-${index}.md`, fs.readFileSync(windowFile));
+    await openPageByName(browser, "Shots");
+    await waitForQuery(browser, 1, (t) => /scheduled/i.test(t) && /deadline/i.test(t), "the planning window did not mount");
+    const shotsFile = `${GRAPH}/pages/Shots.md`;
+    const legacy = "{{query (and (task TODO) (or (between scheduled today +7d) (between deadline today +7d)))}}";
+    if (index === 8) {
+      if (!fs.readFileSync(shotsFile, "utf8").includes(legacy)) throw new Error("opening the legacy window silently rewrote it");
+      await browser.$('.page-blocks [data-rewrite="convert"]').click();
+    }
+    await browser.waitUntil(() => {
+      const authored = fs.readFileSync(shotsFile, "utf8");
+      return authored.includes("{{tine-query ") && authored.includes("scheduled between") && authored.includes("deadline between") && !authored.includes(legacy);
+    }, { timeout: 15_000, timeoutMsg: "the scheduled/deadline window did not persist as tine-query" });
+    fs.writeFileSync(`${ARTIFACTS}/d18-window-${index}.md`, fs.readFileSync(shotsFile));
+  });
+}
+console.log(process.env.E2E_D18_BETWEEN_ONLY === "1"
+  ? "PASS D-18 scheduled/deadline window save and restart"
+  : process.env.E2E_KALEM_K4_ONLY === "1"
   ? "PASS Kalem K4 page pulls before and after restart"
   : `PASS query sheet journey (${createdLine}; Kalem K4 page pulls)`);
-fs.rmSync(TMP, { recursive: true, force: true });
+if (process.env.E2E_D18_BETWEEN_ONLY !== "1") fs.rmSync(TMP, { recursive: true, force: true });

@@ -79,6 +79,12 @@ Tine's existing conflict-checked persistence engine.
 
 ## Platforms
 
+Declarative settings support `boolean`, `enum`, bounded `number`, bounded `string`,
+and `color`. A color's default and stored value are a literal hex, rgb/rgba,
+hsl/hsla color, `transparent`, or empty (the host's theme default). Variables,
+URLs and arbitrary CSS are rejected. This additive schema type uses API 0.2;
+no capability or guest protocol change is needed.
+
 `platforms` may contain `desktop`, `android`, and `ios`. Omitting it means desktop
 only, and the starter template declares only desktop. Add Android or iOS only after
 testing the package on that platform. Each contribution may narrow the

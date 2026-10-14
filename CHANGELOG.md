@@ -13,9 +13,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Today's sections page**: Customize today's sections… (hover today's journal) creates a *Journal sections* page holding today's queries and the agenda; its query blocks then decide what shows under today's journal, editable in Tine itself instead of `config.edn` (which Tine never writes and Logseq keeps using). Delete the page to return to `config.edn` (GH #605).
 - Optional Mandarin Pinyin and syllable-initial matching for Han page titles and aliases, preserving native-name relevance (GH #151).
 
+### Changed
+
+- Existing `{{query}}` blocks with scheduled/deadline date windows now ask to be converted to `{{tine-query}}`, preserving their date-window meaning with Undo (GH #422).
+
 ### Fixed
 
 - Linked References filter chips merge each page's aliases under its canonical name, count each reference block once, and save canonical filters in Logseq's `filters::` property (GH #433). Several included chips now narrow to references carrying all of them, as in Logseq (previously any of them).
+- Bullet threading highlights a continuous active ancestry in both display modes, with configurable thickness, theme-aware or custom color, and optional hierarchy colors (GH #129, [bullet-threading plugin #2](https://github.com/martinkoutecky/tine-plugin-bullet-threading/issues/2)).
+- **Page previews keep page actions reachable:** use the preview header's … button after holding a mobile page link or tag (GH #655).
+- **All pages in the sidebar opens the full view directly**, including from the mobile navigation drawer (GH #335).
+
+- Scheduled/deadline query windows now save as `{{tine-query …}}` instead of Logseq syntax that silently drops the date condition (GH #422).
 - **Crash recovery no longer switches off on Android** ("Crash recovery is off for this graph … Permission denied"). Tine tried to sync system folders above its own app data, which Android does not allow. GH #685
 - Tab drops at all four pane edges split the hovered pane, matching the drop preview even at the layout's outer edges (GH #499).
 - Raw HTML iframe dimensions honor numeric HTML attributes as pixels, percentages and inline sizing without the default embed width cap (GH #54).

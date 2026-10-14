@@ -65,8 +65,8 @@ describe("left sidebar rows carry the page icon", () => {
   });
 });
 
-describe("the All pages list carries the page icon", () => {
-  it("an iconed page shows its icon before its name; others show the bare name", async () => {
+describe("the All pages sidebar navigation", () => {
+  it("no longer enumerates pages or their icons in the sidebar (GH #335)", async () => {
     vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
     const existing = (n: string) => ({ kind: "existing" as const, id: `pages/${n}.md`, others: [] });
     vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [
@@ -78,10 +78,10 @@ describe("the All pages list carries the page icon", () => {
     const root = document.createElement("div");
     document.body.append(root);
     const dispose = render(() => <Sidebar />, root);
-    const header = [...root.querySelectorAll<HTMLElement>(".nav-section-header")].find((h) => h.textContent?.includes("ALL PAGES"))!;
+    const header = root.querySelector<HTMLButtonElement>(".nav-all-pages-open")!;
     header.click();
-    await expect.poll(() => labels(root, ".nav-section:has(.nav-section-header:not([data-sidebar-section])) .nav-page-label")
-      .filter((l) => /All$/.test(l))).toEqual(["🏁 IconAll", "PlainAll"]);
+    expect(root.textContent).not.toContain("IconAll");
+    expect(root.textContent).not.toContain("PlainAll");
     dispose();
     resetPageIndex();
   });

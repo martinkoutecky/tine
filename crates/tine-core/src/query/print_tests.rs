@@ -462,7 +462,6 @@ fn og_expressible_queries_round_trip_through_the_og_printer() {
         "(namespace Project)",
         "(journal)",
         "(page-tags public private)",
-        "(between scheduled today +7d)",
         // GH #619: the builder's "In a journal page" condition (OG's `between`
         // over a range wider than any journal date; OG's rule needs a journal).
         "(between -2000y +2000y)",
@@ -499,6 +498,34 @@ fn the_og_printer_refuses_what_og_cannot_say() {
             matches!(&printed, Err(d) if d.kind == DiagnosticKind::NotApplicable),
             "{source} printed as {printed:?}"
         );
+    }
+}
+
+#[test]
+fn scheduled_deadline_windows_are_saved_only_in_tine_query() {
+    for field in ["scheduled", "deadline"] {
+        let window = format!("(between {field} today +7d)");
+        for source in [
+            window.clone(),
+            format!("(and {window} (task TODO))"),
+            format!("(or {window} (task TODO))"),
+            format!("(not {window})"),
+            format!("(and (task TODO) (or {window} (priority A)))"),
+        ] {
+            let (refused, view) = og(&source);
+            assert!(refused.is_invalid());
+            let hint = crate::query::wire_parse::og_query_hint(&refused).unwrap();
+            let query = hint.rewrites[0].query.clone();
+            assert!(!og_expressible(&query, &view), "{source}");
+            assert!(
+                matches!(query_print(&query, &view, PrintDialect::Og, false),
+                Err(d) if d.kind == DiagnosticKind::NotApplicable),
+                "{source}"
+            );
+            let printed = query_print(&query, &view, PrintDialect::TqlMacro, false).unwrap();
+            assert!(printed.contains(field), "{printed}");
+            assert_eq!(tql(&printed).normalized().filter, query.normalized().filter);
+        }
     }
 }
 
@@ -699,21 +726,15 @@ fn a_quoted_value_survives_the_og_escaping() {
 fn the_og_printer_writes_bare_exactly_the_tokens_the_resolver_reads() {
     let today = JournalDate::from_ordinal(20260904);
     for (source, expected) in [
-        (
-            "(between scheduled 2026_01_05 today)",
-            "(between scheduled 2026_01_05 today)",
-        ),
-        (
-            "(between scheduled [[-7D]] today)",
-            "(between scheduled [[-7D]] today)",
-        ),
-        ("(between scheduled -7d NOW)", "(between scheduled -7d NOW)"),
+        ("(between 2026_01_05 today)", "(between 2026_01_05 today)"),
+        ("(between [[-7D]] today)", "(between [[-7D]] today)"),
+        ("(between -7d NOW)", "(between -7d NOW)"),
     ] {
         let (query, view) = og(source);
         assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);
         let printed = print_og(&query, &view, false).expect(source);
         assert_eq!(printed, expected, "{source}");
-        let Some(literal) = printed.split_whitespace().nth(2) else {
+        let Some(literal) = printed.split_whitespace().nth(1) else {
             panic!("{printed}")
         };
         let bare = !literal.starts_with("[[");

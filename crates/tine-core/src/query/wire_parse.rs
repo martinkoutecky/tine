@@ -72,13 +72,15 @@ pub struct ParsedQuery {
 /// rewrites to explicit forms. Every rewrite is a complete query the caller
 /// saves through the ordinary print-and-write path; the marker lists come from
 /// the one marker source ([`crate::doc::MARKERS`] / [`crate::doc::DONE_MARKERS`]).
-/// Present only for a valid OG-dialect query that has one of these shapes.
+/// Also carries the refusal and conversion of scheduled/deadline windows.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct OgQueryHint {
     /// The bare heads the query contains, `task` before `priority`.
     pub bare: Vec<BareHead>,
     /// The query keeps no condition (OG's nil query), so it shows nothing.
     pub no_conditions: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub date_windows: bool,
     /// The explicit rewrites on offer, one per button.
     pub rewrites: Vec<OgHintRewrite>,
 }
@@ -95,6 +97,7 @@ pub enum BareHead {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OgRewrite {
+    Convert,
     /// Every marker except DONE / CANCELED / CANCELLED (carry-over's open rule).
     OpenTasks,
     /// Every marker.
@@ -174,7 +177,34 @@ fn with_explicit(filter: &Filter, attr: Attr, values: &[&str]) -> Filter {
 
 /// The D-18 cue for `query`, or `None`. O(query size × rewrites).
 pub fn og_query_hint(query: &Query) -> Option<OgQueryHint> {
-    if !matches!(query.source, Source::Og { .. }) || query.is_invalid() {
+    if !matches!(query.source, Source::Og { .. }) {
+        return None;
+    }
+    if query
+        .diagnostics
+        .iter()
+        .any(|d| d.message == super::og::DATE_WINDOW_REFUSAL)
+    {
+        let mut converted = query.clone();
+        converted.filter = query.evaluable_filter();
+        converted
+            .diagnostics
+            .retain(|d| d.message != super::og::DATE_WINDOW_REFUSAL);
+        return Some(OgQueryHint {
+            bare: vec![],
+            no_conditions: false,
+            date_windows: true,
+            rewrites: if converted.is_invalid() {
+                vec![]
+            } else {
+                vec![OgHintRewrite {
+                    rewrite: OgRewrite::Convert,
+                    query: converted,
+                }]
+            },
+        });
+    }
+    if query.is_invalid() {
         return None;
     }
     let mut bare = Vec::new();
@@ -210,6 +240,7 @@ pub fn og_query_hint(query: &Query) -> Option<OgQueryHint> {
     (no_conditions || !bare.is_empty()).then_some(OgQueryHint {
         bare,
         no_conditions,
+        date_windows: false,
         rewrites,
     })
 }
@@ -374,6 +405,103 @@ mod tests {
     /// condition left says so, and every rewrite is a whole query that prints
     /// to the explicit OG form and reads back to itself (the save path prints
     /// it; nothing here writes).
+    #[test]
+    fn scheduled_deadline_windows_refuse_and_convert_in_every_position() {
+        use crate::query::print::{query_print, PrintDialect};
+        for field in ["scheduled", "deadline"] {
+            let window = format!("(between {field} today +7d)");
+            for text in [
+                window.clone(),
+                format!("(and {window} (task TODO))"),
+                format!("(or {window} (task TODO))"),
+                format!("(not {window})"),
+                format!("(and (task TODO) (or (not {window}) (priority A)))"),
+            ] {
+                let parsed =
+                    parse_query_pair(&text, QueryTextDialect::MacroQuery, &[], Registry::none());
+                assert!(parsed.query.is_invalid(), "must refuse: {text}");
+                let hint = parsed.og_hint.expect("conversion cue");
+                assert_eq!(hint.rewrites.len(), 1);
+                let converted = &hint.rewrites[0].query;
+                assert!(!converted.is_invalid());
+                assert_eq!(converted.filter, parsed.query.evaluable_filter());
+                let printed =
+                    query_print(converted, &parsed.view, PrintDialect::Tql, false).unwrap();
+                let again =
+                    parse_query_pair(&printed, QueryTextDialect::MacroTql, &[], Registry::none());
+                assert_eq!(
+                    again.query.normalized(),
+                    converted.normalized(),
+                    "{printed}"
+                );
+                assert!(again.og_hint.is_none());
+            }
+        }
+        for field in ["created_at", "last_modified_at"] {
+            assert!(!parse_query_pair(
+                &format!("(between {field} today +7d)"),
+                QueryTextDialect::MacroQuery,
+                &[],
+                Registry::none()
+            )
+            .query
+            .is_invalid());
+        }
+        let titled = parse_query_pair(
+            "(between scheduled today +7d) {:title \"My window\" :collapsed? true}",
+            QueryTextDialect::MacroQuery,
+            &[],
+            Registry::none(),
+        );
+        let hint = titled.og_hint.unwrap();
+        let printed = query_print(
+            &hint.rewrites[0].query,
+            &titled.view,
+            PrintDialect::TqlMacro,
+            false,
+        )
+        .unwrap();
+        assert!(
+            printed.ends_with("{:title \"My window\" :collapsed? true}"),
+            "{printed}"
+        );
+        let broken = parse_query_pair(
+            "(and (between deadline today +7d) (unknown x))",
+            QueryTextDialect::MacroQuery,
+            &[],
+            Registry::none(),
+        );
+        assert!(
+            broken.og_hint.unwrap().rewrites.is_empty(),
+            "conversion must not erase another error"
+        );
+    }
+
+    #[test]
+    fn d18_refuses_all_positions_probe() {
+        let mut accepted = Vec::new();
+        for field in ["scheduled", "deadline"] {
+            let window = format!("(between {field} today +7d)");
+            for text in [
+                window.clone(),
+                format!("(and {window} (task TODO))"),
+                format!("(or {window} (task TODO))"),
+                format!("(not {window})"),
+                format!("(and (task TODO) (or (not {window}) (priority A)))"),
+            ] {
+                let parsed =
+                    parse_query_pair(&text, QueryTextDialect::MacroQuery, &[], Registry::none());
+                if !parsed.query.is_invalid() {
+                    accepted.push(text);
+                }
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "accepted incompatible queries: {accepted:#?}"
+        );
+    }
+
     #[test]
     fn the_og_hint_names_bare_heads_and_offers_round_tripping_rewrites() {
         use crate::query::print::{og_expressible, query_print, PrintDialect};

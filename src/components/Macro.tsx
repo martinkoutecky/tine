@@ -898,7 +898,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               {/* The builder sentence carries the count beside it; queries with
                   no builder keep it here so the count never disappears. */}
               <Show when={!showBuilder()}>
-                <span class="query-count">{total()}</span>
+                <Show when={!reading()?.og_hint?.date_windows}><span class="query-count">{total()}</span></Show>
               </Show>
               <Show when={!isPublishedExport() && runnable() && displayed() && total() > 0}>
                 <button type="button" class="query-export-action" title="Export query results"
@@ -945,7 +945,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 blockId={props.blockId}
                 previewContext={executionContext}
                 both={props.blockId ? { on: bothKinds, set: setBothKinds } : undefined}
-                total={<span class="query-count">{total()}</span>}
+                total={<Show when={!reading()?.og_hint?.date_windows}><span class="query-count">{total()}</span></Show>}
                 onStale={setPaneStale}
                 onOpenChange={setSheetOpen}
                 notice={showCrossingNotice() && sheetOpen() ? crossingNotice : undefined}
@@ -983,7 +983,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 </div>
               )}
             </Show>
-            <Show when={blockingDiagnostics().length > 0}>
+            <Show when={blockingDiagnostics().length > 0 && (!reading()?.og_hint?.date_windows || !reading()?.og_hint?.rewrites.length)}>
               <div class="query-unsupported query-diagnostics" role="alert">
                 <span class="query-diagnostics-lead">
                   Tine didn't understand part of this query, so it returned no results:

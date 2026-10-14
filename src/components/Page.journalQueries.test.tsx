@@ -7,12 +7,20 @@ import { resetStore } from "../document";
 import { resetTabsToJournals } from "../router";
 import { currentDayKey, journalTitle, appNow } from "../journal";
 import { setGraphMeta } from "../graphSession";
-import { agendaQuery, agendaDaysAhead, setAgendaDaysAhead } from "../ui";
+import { agendaQuery, agendaTql, agendaDaysAhead, setAgendaDaysAhead } from "../ui";
 import type { GraphMeta, PageRead } from "../types";
 import { backendReadsQueries, blockRunResult } from "../tests/queryReadingsTestkit";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 
 beforeAll(initParser);
+it("the internal agenda uses the shared TQL builder for negative, zero and positive windows", () => {
+  for (const ahead of [-2, 0, 2]) {
+    setGraphMeta({ scheduled_future_days: ahead } as GraphMeta);
+    expect(agendaQuery()).toBe(`tine-query ${agendaTql()}`);
+    expect(agendaTql()).toContain(`'${ahead < 0 ? "" : "+"}${ahead}d'`);
+    expect(agendaTql()).toContain("not (task in ('DONE', 'CANCELED', 'CANCELLED'))");
+  }
+});
 afterEach(() => { resetStore(); resetTabsToJournals(); setGraphMeta(null); resetSharedQueryResultsForTests(); vi.restoreAllMocks(); document.body.replaceChildren(); });
 
 it("renders independent configured queries before today's agenda and applies a live config edit", async () => {

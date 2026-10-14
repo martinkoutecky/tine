@@ -171,6 +171,10 @@ export interface MessageArgs {
   "pages-all-show-journals": {};
   "pages-all-title": {};
   "preview-open-source": {};
+  "preview-page-actions": {};
+  "query-convert": {};
+  "query-date-window-refusal": {};
+  "query-undo-conversion": {};
   "references-clear": {};
   "references-collapse-all": {};
   "references-collapse-group": { "page": string | number };

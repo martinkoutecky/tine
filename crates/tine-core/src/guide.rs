@@ -1153,7 +1153,8 @@ mod query_guide_tests {
         for control in [
             "{{query (task TODO DOING)}}",
             "(page-property type book)",
-            "(between scheduled today +7d)",
+            "{{tine-query @block scheduled between today and '+7d'}}",
+            "Logseq ignores scheduled/deadline date windows",
             "at most 10,000 years",
             "tine.sample:: 10",
             "the whole query is refused",
@@ -1446,10 +1447,10 @@ mod og_20d_guide_tests {
 
     #[test]
     fn where_things_are_documents_the_full_all_pages_view() {
-        // GH #335: the sidebar list is capped; the full view is how a large graph is browsed.
+        // GH #335: the sidebar entry navigates directly to the full view.
         let map = page("Start/Where things are");
         for detail in [
-            "**Open the full list…**",
+            "**All pages** entry opens",
             "**Updated** column shows when each page",
             "**Page** (name)",
             "**Show journals**",
@@ -1535,6 +1536,8 @@ mod og_20d_guide_tests {
     #[test]
     fn queries_document_bare_task_as_og_and_the_rewrite_hint() {
         let queries = page("Features/Queries");
+        assert!(queries.contains("Click **Convert**"));
+        assert!(queries.contains("refuses to run those blocks as written"));
         for detail in [
             "`(task)` with no markers",
             "`(priority)` with no levels",

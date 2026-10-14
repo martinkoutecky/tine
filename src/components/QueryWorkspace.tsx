@@ -37,7 +37,7 @@ import type {
 } from "../types";
 import { VIEW_KINDS, type ParsedQuery, type Query, type QueryResult, type ViewSettings, type ExplainEmptyResult, type FriendlyPageMatchScope } from "../editor/queryIr";
 import { queryDisplaySettings, type QueryDisplayDraft } from "../editor/queryDisplayDraft";
-import { queryScopedDisplayPropertyPatch } from "../editor/queryViewProperties";
+import { displayPropertyPatch, queryScopedDisplayPropertyPatch } from "../editor/queryViewProperties";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { createQueryRegistryAccess } from "./QueryBuilder";
 import { QueryDisplay } from "./QueryDisplay";
@@ -55,6 +55,10 @@ import { openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../u
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { readLatestOr, readOr } from "../resourceRead";
 import { documentOf } from "../windowRealm";
+import { queryMacroExtent } from "../editor/queryMacro";
+import { macroTextDialect, type QueryTextDialect } from "../editor/queryIr";
+import { QueryOgHint } from "./QueryResultParts";
+import { t } from "../i18n";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -75,6 +79,7 @@ export interface MaterializeQueryInput {
 }
 
 export interface MaterializeQueryDependencies {
+  serializeDsl(source: string): Promise<{ query: string; properties: Array<[string, string]> }>;
   /** The one name answerer: an existing file, an alias, or where a new page goes. */
   resolvePage(name: string, kind: "page"): Promise<ResolvedPage>;
   /** Write the new page through the page host (`createPage`); resolves its file revision when known. */
@@ -97,7 +102,7 @@ export type MaterializeQueryResult =
 export interface QueryWorkspaceDependencies extends MaterializeQueryDependencies {
   /** Close this surface's two native cancellation lanes; O(1), no graph write. */
   closeSearchWorkspace?(workspace: string, bindingGeneration: number): Promise<void>;
-  parseQuery(source: string, dialect: "macro_query"): Promise<ParsedQuery>;
+  parseQuery(source: string, dialect: QueryTextDialect): Promise<ParsedQuery>;
   queryRun(query: Query, view: ViewSettings): Promise<QueryResult>;
   queryExplainEmpty(query: Query, view: ViewSettings): Promise<ExplainEmptyResult>;
 }
@@ -111,7 +116,7 @@ export interface QueryWorkspaceProps {
 }
 
 /** The query block's text and its properties, in the order they have always been written. */
-function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">): { query: string; properties: Array<[string, string]> } {
+async function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">, deps: MaterializeQueryDependencies): Promise<{ query: string; properties: Array<[string, string]> }> {
   const source = input.source.trim();
   const dsl = input.sourceKind === "search" ? friendlySearchToSavedDsl(source) : source;
   const properties: Array<[string, string]> = [];
@@ -125,7 +130,49 @@ function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" |
       properties: [],
     })) if (value !== null) properties.push([key, value]);
   }
-  return { query: `{{${QUERY_MACRO_NAMES[0]} ${dsl}}}`, properties };
+  if (input.sourceKind === "search") return { query: `{{${QUERY_MACRO_NAMES[0]} ${dsl}}}`, properties };
+  const saved = await readOwned(bindingOwner(), deps.serializeDsl(dsl));
+  if (saved.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  // A converted DSL workspace becomes one ordinary query block. Its effective
+  // display must also be singular so the saved block keeps its sort/sample.
+  if (input.blockDisplay && workspaceQueryInput(dsl).dialect === "macro_tql") {
+    for (const [key, value] of displayPropertyPatch({ ...input.blockDisplay, view: input.blockPresentation ?? input.presentation })) {
+      if (value !== null) properties.push([key, value]);
+    }
+  }
+  return { query: saved.value.query, properties: [...saved.value.properties, ...properties] };
+}
+
+/** Preserve authored OG text when expressible; convert Tine-only conditions
+ * through the engine's printer before the guarded page save. */
+export async function serializeWorkspaceDsl(source: string): Promise<{ query: string; properties: Array<[string, string]> }> {
+  const api = backend();
+  const owner = graphOwner();
+  const input = workspaceQueryInput(source);
+  const parsed = await readOwned(owner, api.parseQuery(input.argument, input.dialect));
+  if (parsed.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  const { query, view } = parsed.value;
+  const expressible = query.source.kind === "advanced" ? null : await readOwned(owner, api.queryOgExpressible(query, view));
+  if (expressible?.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  if (query.source.kind === "advanced" || expressible?.value) {
+    return { query: `{{${QUERY_MACRO_NAMES[0]} ${input.argument}}}`, properties: [] };
+  }
+  const printed = await readOwned(owner, api.printQuery(query, view, "tql_macro"));
+  if (printed.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  // TQL keeps conditions in text and view directives on the owning block.
+  const properties: Array<[string, string]> = [];
+  if (view.sort?.length) properties.push(["tine.sort", view.sort.map(([field, direction]) => `${field} ${direction}`).join("; ")]);
+  if (view.sample != null) properties.push(["tine.sample", String(view.sample)]);
+  return { query: `{{${QUERY_MACRO_NAMES[1]} ${printed.value}}}`, properties };
+}
+
+/** A converted workspace keeps a complete macro, whose name owns its dialect. */
+function workspaceQueryInput(source: string): { argument: string; dialect: QueryTextDialect } {
+  if (!source.startsWith("{{")) return { argument: source, dialect: "macro_query" };
+  const extent = queryMacroExtent(source);
+  return extent?.start === 0 && extent.end === source.length
+    ? { argument: extent.argument, dialect: macroTextDialect(extent.name) }
+    : { argument: source, dialect: "macro_query" };
 }
 
 /** Is the input this attempt captured still the one the user is looking at?
@@ -182,8 +229,8 @@ export async function materializeQueryWorkspace(
     const resolution = await readOwned(owner, deps.resolvePage(name, "page"));
     if (resolution.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     const resolved = resolution.value;
-    // The lookup is the last await before the write: an answer about a title the
-    // workspace has moved on from no longer licenses one.
+    // An answer about a title the workspace has moved on from no longer
+    // licenses a write; serialization below rechecks the same captured input.
     if (!isCurrent()) return superseded();
     if (resolved.kind === "existing") {
       return {
@@ -204,7 +251,10 @@ export async function materializeQueryWorkspace(
     // The new page's format is its resolved id's extension (the graph's preferred
     // format); the save path writes by that extension, so the block must be
     // spelled for it.
-    const { query, properties } = savedQuery(input);
+    const serialized = await readOwned(owner, savedQuery(input, deps));
+    if (serialized.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    if (!isCurrent()) return superseded();
+    const { query, properties } = serialized.value;
     const page = queryWorkspacePage(name, query, properties, /\.org$/i.test(resolved.id) ? "org" : "md");
     const saved = await writeOwned(owner, deps.createPage(page, binding.backendGeneration));
     if (saved.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
@@ -244,6 +294,7 @@ export async function materializeQueryWorkspace(
 function defaultDependencies(): QueryWorkspaceDependencies {
   const api = backend();
   return {
+    serializeDsl: serializeWorkspaceDsl,
     closeSearchWorkspace: async (workspace: string, bindingGeneration: number) => {
       if (!isTauri()) return;
       const owner = graphOwner();
@@ -485,7 +536,8 @@ function AdvancedModal(props: {
   const [printing, setPrinting] = createSignal(false);
   const [builderSession, { mutate }] = createResource(dsl, async (text): Promise<BuilderSession | undefined> => {
     const owner = graphOwner(() => mounted && dsl() === text, revisionOwner(edits, currentRevision(edits)));
-    const parsed = await readOwned(owner, backend().parseQuery(text, "og"));
+    const input = workspaceQueryInput(text);
+    const parsed = await readOwned(owner, backend().parseQuery(input.argument, input.dialect));
     return parsed.kind === "current" && owner() ? { query: parsed.value.query, view: parsed.value.view } : readLatestOr(builderSession, undefined, "query text");
   });
   const applyBuilderEdit = async (next: BuilderSession) => {
@@ -496,13 +548,14 @@ function AdvancedModal(props: {
     setPrinting(true);
     const owner = latestOwner(edits, "print", graphOwner(() => mounted));
     try {
-      const printed = await readOwned(owner, backend().printQuery(next.query, next.view, "og"));
+      const expressible = await readOwned(owner, backend().queryOgExpressible(next.query, next.view));
+      if (expressible.kind === "stale" || !owner()) return;
+      const printed = await readOwned(owner, backend().printQuery(next.query, next.view, expressible.value ? "og" : "tql_macro"));
       if (printed.kind === "stale" || !owner()) return;
-      setDsl(printed.value);
+      setDsl(expressible.value ? printed.value : `{{${QUERY_MACRO_NAMES[1]} ${printed.value}}}`);
       setError(null);
     } catch (failure) {
-      // An edit the OG syntax cannot say has nowhere to go here; the printer's
-      // own message says which part (I-9), and the draft is left as it was.
+      // The printer owns the refusal; leave the draft unchanged on failure.
       if (owner()) setError(failure instanceof Error ? failure.message : String(failure));
     } finally { if (owner()) setPrinting(false); }
   };
@@ -691,6 +744,13 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
    *  the only honest thing left once the write has landed. */
   const [saveNotice, setSaveNotice] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
+  const [dslReading, setDslReading] = createSignal<{ source: string; parsed: ParsedQuery }>();
+  const [conversionUndo, setConversionUndo] = createSignal<{ source: string; converted: string; pageDisplay?: QueryDisplayDraft; blockDisplay?: QueryDisplayDraft }>();
+  const ogHint = () => {
+    const reading = dslReading();
+    const hint = reading?.parsed.og_hint;
+    return sourceKind() === "dsl" && reading?.source === source() && hint?.date_windows ? hint : undefined;
+  };
   // The workspace under an in-flight save is not frozen: the user can retype the
   // search, change the view, rename it, switch tab or graph. Every completion
   // has to get past these before it may touch routing, messages or `saving`.
@@ -786,9 +846,11 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         ));
         return result.kind === "current" && owner() ? result.value : cancelled;
       }
-      const parsed = await readOwned(owner, deps().parseQuery(request.source, "macro_query"));
+      const input = workspaceQueryInput(request.source);
+      const parsed = await readOwned(owner, deps().parseQuery(input.argument, input.dialect));
       if (parsed.kind === "stale" || !owner()) return cancelled;
-      const result = await readOwned(owner, deps().queryRun(parsed.value.query, parsed.value.view));
+      setDslReading({ source: request.source, parsed: parsed.value });
+      const result = await readOwned(owner, deps().queryRun(parsed.value.query, queryDisplaySettings(blockDisplay(), parsed.value.view, presentation())));
       if (result.kind === "stale" || !owner()) return cancelled;
       const explanation = request.explain && result.value.total === 0 && !(result.value.diagnostics ?? []).some((item) => !item.disabled)
         ? await readOwned(owner, deps().queryExplainEmpty(parsed.value.query, parsed.value.view))
@@ -843,6 +905,24 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     setSource(next);
     setSourceKind(kind);
     props.router.updateActiveQuery({ source: next, sourceKind: kind });
+  };
+  const convertDsl = async (query: Query) => {
+    const before = source();
+    const reading = dslReading();
+    if (!reading || reading.source !== before) return;
+    const revision = inputRevision();
+    const owner = graphOwner(() => alive && inputRevision() === revision);
+    try {
+      const printed = await readOwned(owner, backend().printQuery(query, reading.parsed.view, "tql_macro"));
+      if (printed.kind === "stale" || !owner()) return;
+      const converted = `{{${QUERY_MACRO_NAMES[1]} ${printed.value}}}`;
+      setConversionUndo({ source: before, converted, pageDisplay: pageDisplay(), blockDisplay: blockDisplay() });
+      const { view: _view, ...draft } = reading.parsed.view;
+      const pages = { ...draft, ...pageDisplay() }, blocks = { ...draft, ...blockDisplay() };
+      setPageDisplay(pages); setBlockDisplay(blocks);
+      props.router.updateActiveQuery({ pageDisplay: pages, blockDisplay: blocks });
+      updateSource(converted, "dsl");
+    } catch (error) { if (owner()) setSaveError(error instanceof Error ? error.message : String(error)); }
   };
   const updatePresentation = (next: QueryPresentation) => {
     setPresentation(next);
@@ -1045,12 +1125,22 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         <Show when={!!source().trim() && !execution.loading && !execution.error && executed()?.cancelled}>
           Search superseded by a newer request.
         </Show>
-        <Show when={!!source().trim() && !execution.loading && !execution.error && executed() && !executed()?.cancelled}>
+        <Show when={!!source().trim() && !execution.loading && !execution.error && executed() && !executed()?.cancelled && !ogHint()?.date_windows}>
           {hits().length} result{hits().length === 1 ? "" : "s"}
         </Show>
       </section>
 
-      <Show when={(executed()?.diagnostics.length ?? 0) > 0}>
+      <Show when={ogHint()}>{(hint) => <QueryOgHint hint={hint()} onRewrite={(query) => { void convertDsl(query); }} />}</Show>
+      <Show when={conversionUndo()?.converted === source()}>
+        <button type="button" class="query-conversion-undo" onClick={() => {
+          const prior = conversionUndo(); if (!prior) return;
+          setPageDisplay(prior.pageDisplay); setBlockDisplay(prior.blockDisplay);
+          props.router.updateActiveQuery({ pageDisplay: prior.pageDisplay, blockDisplay: prior.blockDisplay });
+          updateSource(prior.source, "dsl"); setConversionUndo(undefined);
+        }}>{t("query-undo-conversion")}</button>
+      </Show>
+
+      <Show when={(executed()?.diagnostics.length ?? 0) > 0 && (!ogHint()?.date_windows || !ogHint()?.rewrites.length)}>
         <ul class="query-workspace-diagnostics" aria-label="Query diagnostics">
           <For each={executed()?.diagnostics ?? []}>{(diagnostic) => (
             <li role="alert" data-code={diagnostic.code}>{diagnostic.message}</li>
@@ -1065,7 +1155,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         </section>
       </Show>
 
-      <Show when={source().trim()}>
+      <Show when={source().trim() && !ogHint()?.date_windows}>
       <QueryResultSections
         pending={execution.loading}
         failure={execution.error ? `Search failed: ${execution.error instanceof Error ? execution.error.message : String(execution.error)}` : null}

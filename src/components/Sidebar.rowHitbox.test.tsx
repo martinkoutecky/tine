@@ -131,7 +131,7 @@ describe("left-sidebar row hitbox (GH #468)", () => {
     }
   });
 
-  it("navigates when the blank part of an All pages row is clicked, as it does from the title", async () => {
+  it("opens the full All pages view when its entry's blank space or title is clicked", async () => {
     vi.spyOn(backend(), "pageInventory").mockResolvedValue({
       rev: "1",
       entries: [{
@@ -142,20 +142,12 @@ describe("left-sidebar row hitbox (GH #468)", () => {
     await refreshPageIndex();
     const { root, dispose } = mount();
     try {
-      const header = [...root.querySelectorAll<HTMLElement>(".nav-section-header")]
-        .find((el) => el.textContent?.includes("ALL PAGES"))!;
-      header.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-      const row = await vi.waitFor(() => {
-        const found = [...root.querySelectorAll<HTMLElement>(".nav-page")]
-          .find((el) => el.textContent?.includes("Listed page"));
-        expect(found).toBeDefined();
-        return found!;
-      });
+      const row = root.querySelector<HTMLElement>(".nav-all-pages-open")!;
       clickRow(row);
-      expect(route()).toMatchObject({ kind: "page", name: "Listed page" });
+      expect(route()).toMatchObject({ kind: "all-pages" });
       openJournals();
       clickTitle(row);
-      expect(route()).toMatchObject({ kind: "page", name: "Listed page" });
+      expect(route()).toMatchObject({ kind: "all-pages" });
     } finally {
       dispose();
     }
