@@ -1,3 +1,4 @@
+import { msg } from "../../i18n";
 import { doc, pageByName, DocState } from "../model";
 import { refuseConflictedMove } from "../host/wiring";
 import { captureBinding, bindingCurrent } from "../../binding";
@@ -16,7 +17,7 @@ import { applyOutlineChange, markOutlineDirty, outlineChange, outlineChangePages
 function commitMove(change: OutlineChange | { refused: OutlineRefusal }, undoKind: string): boolean | undefined {
   if ("refused" in change) {
     if (change.refused !== "depth_cap") return undefined;
-    pushToast("Outline is too deep to move", "error");
+    pushToast(msg("moves-outline-is-too-deep-to-move"), "error");
     return false;
   }
   const pages = outlineChangePages(change);

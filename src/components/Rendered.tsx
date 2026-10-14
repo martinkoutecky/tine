@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { Show, Switch, Match, onMount, onCleanup, type JSX } from "solid-js";
 import { pageByName, blockPageReadOnly, blockExternalId, type OutlineScope, type Node as ReadonlyNode } from "../document";
 import { isPropertyLine } from "../render/block";
@@ -187,7 +188,7 @@ export function Rendered(props: {
           classList={{ checked: taskCheckboxState(facets().marker) === true }}
           role="checkbox"
           aria-checked={taskCheckboxState(facets().marker) === true}
-          title={taskCheckboxState(facets().marker) === true ? "Mark undone" : "Mark done"}
+          title={taskCheckboxState(facets().marker) === true ? t("rendered-mark-undone") : t("rendered-mark-done")}
           // Mouse-DOWN (not click) + preventDefault so toggling never enters the
           // block editor (OG parity — matches the block-ref/chip mousedown model).
           onMouseDown={(e) => {
@@ -227,7 +228,7 @@ export function Rendered(props: {
       <Show when={facets().scheduled}>
         <span
           class="date-chip scheduled"
-          title="Scheduled — click to change"
+          title={t("rendered-scheduled-click-to-change")}
           onClick={(e) => {
             e.stopPropagation();
             openDatePicker(props.id, "scheduled", e.clientX, e.clientY);
@@ -239,7 +240,7 @@ export function Rendered(props: {
       <Show when={facets().deadline}>
         <span
           class="date-chip deadline"
-          title="Deadline — click to change"
+          title={t("rendered-deadline-click-to-change")}
           onClick={(e) => {
             e.stopPropagation();
             openDatePicker(props.id, "deadline", e.clientX, e.clientY);

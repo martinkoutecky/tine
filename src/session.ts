@@ -1,3 +1,4 @@
+import { msg, t, renderEnglish } from "./i18n";
 import { reportUiFailure } from "./uiFailure";
 import { backend } from "./backend";
 import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
@@ -129,7 +130,7 @@ export function prepareWorkspaceRecovery(): (activeId: string, parked: Persisted
       || intervened;
     const wantsParked = !!evidence && (evidence.present === false || !!evidence.workspaceId && evidence.workspaceId !== activeId);
     if (changed && wantsParked) {
-      pushToastUnique("Live changes were kept; workspace recovery was skipped.", "warn"); // a decision, not a failure
+      pushToastUnique(msg("session-live-changes-were-kept-workspace-recovery-was-skipped"), "warn"); // a decision, not a failure
       return buildPersistedSession();
     }
     if (wantsParked) {
@@ -182,7 +183,7 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
       && (o.page === undefined || (Number.isSafeInteger(o.page) && Number(o.page) > 0 && Number(o.page) <= 5000))
       && (o.scale === undefined || (typeof o.scale === "number" && Number.isFinite(o.scale)
         && o.scale >= 0.05 && o.scale <= 20)));
-    if (malformed) return { kind: "invalid", title: "Unavailable PDF",
+    if (malformed) return { kind: "invalid", get title() { return t("session-unavailable-pdf"); },
       message: "This saved PDF tab is malformed and was not opened." };
     const viewId = seenViewIds.has(o.viewId as string) ? mintPdfViewId(seenViewIds) : o.viewId as string;
     seenViewIds.add(viewId);
@@ -524,11 +525,11 @@ let sessionSaveFailure: { id: number; message: string } | null = null;
 const windowUnbound = () => backend().graphBindingGeneration() === 0;
 
 function reportSessionSaveFailure(error: unknown): void {
-  const message = `Could not save session: ${String(error)}`;
+  const message = renderEnglish(msg("session-save-failed", { detail: String(error) }));
   const priorMessage = sessionSaveFailure?.message;
   if (sessionSaveFailure && priorMessage !== message) dismissToast(sessionSaveFailure.id);
   sessionSaveFailure = {
-    id: pushToastUnique(message, "error", { sticky: true, action: { label: "Retry", run: () => { void flushSession().catch(() => console.error("Session retry failed")); } } }),
+    id: pushToastUnique(msg("session-save-failed", { detail: String(error) }), "error", { sticky: true, action: { label: msg("session-retry"), run: () => { void flushSession().catch(() => console.error("Session retry failed")); } } }),
     message,
   };
 }
@@ -621,7 +622,7 @@ export async function restoreSession(): Promise<void> {
       if (!owner()) return;
       await initializeWorkspaces();
     } catch (error) {
-      if (owner()) pushToastUnique(`Could not restore workspaces: ${String(error)}`, "error");
+      if (owner()) pushToastUnique(msg("session-could-not-restore-workspaces", { string_error: String(error) }), "error");
     }
   }
 }

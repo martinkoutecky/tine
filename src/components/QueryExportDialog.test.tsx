@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { QueryExportDialog } from "./QueryExportDialog";
+import { rawText, renderEnglish } from "../i18n";
 
 vi.mock("../owned", async (orig) => ({ ...await orig<typeof import("../owned")>(), graphOwner: () => () => true }));
 vi.mock("../sheet/exportSheets", () => ({ exportSheets: async () => [] }));
@@ -30,8 +31,11 @@ it("exports a reviewed query directly into its graph and reports recovery and mi
   exportButton(root).click(); for (let i = 0; i < 4; i++) await tick();
   expect(api).toHaveBeenCalled();
   const { pushToast } = await import("../toasts");
-  expect(pushToast).toHaveBeenCalledWith(expect.stringContaining("old/previous"), "success", { sticky: true });
-  expect(pushToast).toHaveBeenCalledWith(expect.stringContaining("missing.png"), "warn", { sticky: true });
+  const calls = vi.mocked(pushToast).mock.calls.map(([text, kind, options]) => [
+    renderEnglish(typeof text === "string" ? rawText(text) : text), kind, options,
+  ]);
+  expect(calls).toContainEqual([expect.stringContaining("old/previous"), "success", { sticky: true }]);
+  expect(calls).toContainEqual([expect.stringContaining("missing.png"), "warn", { sticky: true }]);
 });
 it("requires an explicit Replace or separate folder choice", async () => {
   const api = vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "site", pages: 1, files: 12, retired: null, warnings: [] } as never);

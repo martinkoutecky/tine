@@ -1,3 +1,4 @@
+import { msg, t } from "../i18n";
 import { ErrorBoundary, Show, createMemo, type JSX } from "solid-js";
 import { writeClipboardText } from "../clipboard";
 import { slowBackendState } from "../slowBackend";
@@ -44,7 +45,7 @@ function FailureRegion(props: {
   // and to the user's own screen, never to the always-on record.
   void recordDiagnostic("uncaught_error");
   dbg(`region failed: ${props.region}: ${String(props.error)}`);
-  pushToastUnique(`${props.region} could not be displayed.`, "error");
+  pushToastUnique(msg("failure-boundary-could-not-be-displayed", { region: String(props.region) }), "error");
 
   const message = () => {
     const error = props.error;
@@ -67,25 +68,20 @@ function FailureRegion(props: {
 
   return (
     <div class="region-failure" role="alert" data-failed-region={props.region}>
-      <div class="region-failure-title">{props.region} could not be displayed.</div>
+      <div class="region-failure-title">{t("failure-boundary-could-not-be-displayed", { region: props.region })}</div>
       <div class="region-failure-message">{message()}</div>
       <Show when={busy()}>
         {(state) => (
-          <div class="region-failure-slow">
-            Tine is still waiting on {state().count === 1 ? "an operation" : `${state().count} operations`} that
-            {" "}{state().count === 1 ? "has" : "have"} been running for over {state().seconds}s. This is usually
-            why a region fails to appear, and your notes on disk are not affected.
+          <div class="region-failure-slow">{t("failure-boundary-slow-operations", { count: state().count, seconds: String(state().seconds) })}
           </div>
         )}
       </Show>
       <div class="region-failure-actions">
         <button type="button" onClick={() => {
           const details = `${props.region} could not be displayed.\n${props.error instanceof Error ? props.error.stack || message() : message()}`;
-          void writeClipboardText(details).catch(() => pushToastUnique("Couldn’t copy error details: clipboard write failed.", "error"));
-        }}>Copy details</button>
-        <button type="button" class="region-failure-retry" onClick={() => props.onRetry()}>
-          Retry
-        </button>
+          void writeClipboardText(details).catch(() => pushToastUnique(msg("failure-boundary-couldn-t-copy-error-details-clipboard-write-failed"), "error"));
+        }}>{t("failure-boundary-copy-details")}</button>
+        <button type="button" class="region-failure-retry" onClick={() => props.onRetry()}>{t("failure-boundary-retry")}</button>
       </div>
     </div>
   );

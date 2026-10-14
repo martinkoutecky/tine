@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 /** Block navigation for sidebar, tab and pane actions. Opening a block never
  * writes the graph: OG stamps an `id::` only when a reference is created (copy
  * ref/embed, `((` autocomplete), so these actions hand the live ref straight to
@@ -61,7 +62,7 @@ export function commandTargetIds(): string[] {
 export function copyTargetBlockRefs(): boolean {
   const ids = commandTargetIds();
   if (!ids.length) {
-    pushToast("Select blocks (or edit one) to copy their block refs", "warn");
+    pushToast(msg("block-ref-actions-select-blocks-or-edit-one-to-copy-their"), "warn");
     return false;
   }
   void copyBlockLink(ids, "ref");
@@ -88,7 +89,7 @@ export async function duplicateTargetBlocks(side: "below" | "above" = "below"): 
   const wasEditing = !hasSelection() && editingId() === last;
   const payload = buildClipboardPayload(roots);
   if (!payload) {
-    pushToast("Too much selected to duplicate", "error");
+    pushToast(msg("block-ref-actions-too-much-selected-to-duplicate"), "error");
     return null;
   }
   const lastNode = docNode(last)!;

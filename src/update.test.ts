@@ -1,12 +1,15 @@
 import { IDENTITY } from "../scripts/lib/app-identity.mjs";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderEnglish, type UiText } from "./i18n";
 
 type Platform = "desktop" | "android" | "ios";
 type ToastCall = [string, string, { sticky?: boolean; action?: { label: string; run: () => void } }?];
 
 function toastCalls(mock: { mock: { calls: unknown[][] } }): ToastCall[] {
-  return mock.mock.calls as unknown as ToastCall[];
+  return mock.mock.calls.map(([text, kind, options]) => [
+    typeof text === "string" ? text : renderEnglish(text as UiText), kind, options,
+  ]) as ToastCall[];
 }
 
 async function loadUpdate(opts: {
@@ -191,7 +194,7 @@ describe("update checks", () => {
     expect(settings.checkForUpdatesAutomatically()).toBe(false);
     await vi.waitFor(() => expect(settings.checkForUpdatesAutomatically()).toBe(true));
     expect(setAppBoolMock).toHaveBeenCalledWith("check_for_updates_automatically", false);
-    expect(pushToastMock).toHaveBeenCalledWith("Could not save automatic update preference.", "error");
+    expect(toastCalls(pushToastMock)).toContainEqual(["Could not save automatic update preference.", "error", undefined]);
   });
 
   it("GH #618: a late startup read cannot overwrite a newer toggle", async () => {

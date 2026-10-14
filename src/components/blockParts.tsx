@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 /** Small stateless pieces of the block view and editor, split out of Block.tsx:
  * task-marker/checkbox toggles on one block (each one `setRaw` of that block),
  * the clock badge and calendar glyph, and pure text/DOM helpers the editor uses
@@ -50,10 +51,10 @@ export function ClockBadge(props: { info: LogbookInfo }): JSX.Element {
         <table>
           <thead>
             <tr>
-              <th>Type</th>
-              <th>Start</th>
-              <th>End</th>
-              <th>Span</th>
+              <th>{t("block-parts-type")}</th>
+              <th>{t("block-parts-start")}</th>
+              <th>{t("block-parts-end")}</th>
+              <th>{t("block-parts-span")}</th>
             </tr>
           </thead>
           <tbody>

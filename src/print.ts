@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Print / export-to-PDF: render a whole page to a self-contained HTML document in
 // the Rust core (assets inlined, no sidebar — see publish::page_print_html), drop
 // it into a hidden same-origin <iframe>, and print that frame. The user's native
@@ -63,7 +64,7 @@ function bundledStylesheets(): HTMLLinkElement[] {
 }
 
 class PrintQueryLimitError extends Error {
-  constructor(detail: string) {
+  constructor(readonly detail: string) {
     super(`PDF export stopped at the Print query limit. ${detail}`);
     this.name = "PrintQueryLimitError";
   }
@@ -165,7 +166,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     const saved = savedResult?.kind === "current" && savedResult.value;
     if (!owner()) { cleanup(); return; }
     if (!saved) {
-      pushToast("PDF export stopped because some page edits could not be saved. Resolve the save conflict and try again.", "error");
+      pushToast(msg("print-pdf-export-stopped-because-some-page-edits-could"), "error");
       cleanup();
       return;
     }
@@ -184,7 +185,8 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
     cleanup();
     if (!current) return;
     // `no-page` (deleted mid-action) or any core error — never leave a dangling frame.
-    pushToast(e instanceof PrintQueryLimitError ? e.message : `Couldn't prepare “${name}” for PDF`, "error");
+    if (e instanceof PrintQueryLimitError) pushToast(msg("print-query-limit", { detail: e.detail }), "error");
+    else pushToast(msg("print-couldn-t-prepare-for-pdf", { name }), "error");
     console.error("pagePrintHtml failed");
     return;
   }
@@ -222,7 +224,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
         win.focus();
         win.print();
       } catch (e) {
-        if (owner()) pushToast("Print failed", "error");
+        if (owner()) pushToast(msg("print-print-failed"), "error");
         console.error("iframe print failed");
         cleanup();
       }
@@ -236,7 +238,7 @@ export async function exportPagePdf(name: string, opts: PrintOpts = DEFAULT_PRIN
   } catch {
     const current = owner();
     cleanup();
-    if (current) pushToast("Print failed", "error");
+    if (current) pushToast(msg("print-print-failed"), "error");
     console.error("iframe setup failed");
   }
 }

@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // OG-MULTIWINDOW P4: secondary workspace windows (desktop only).
 //
 // A workspace window is a native OS window whose Document is driven entirely
@@ -101,7 +102,7 @@ export interface OpenWorkspaceWindowSpec {
 export function openWorkspaceWindow(spec: OpenWorkspaceWindowSpec): string | null {
   if (!workspaceWindowsSupported()) return null;
   if (live.size >= MAX_WORKSPACE_WINDOWS) {
-    pushToast(`At most ${MAX_WORKSPACE_WINDOWS} extra windows can be open at once.`, "error");
+    pushToast(msg("workspace-windows-at-most-extra-windows-can-be-open-at", { max_workspace_windows: String(MAX_WORKSPACE_WINDOWS) }), "error");
     return null;
   }
   const id = `ws-${++nextId}`;
@@ -141,7 +142,7 @@ async function launch(entry: Entry, geometry: WindowGeometry | null, activate: b
   } catch {
     console.error("workspace window failed to open");
     if (!entry.disposed) {
-      pushToast("Couldn't open a new window.", "error");
+      pushToast(msg("workspace-windows-couldn-t-open-a-new-window"), "error");
       disposeWorkspaceWindow(entry.id, "user");
     }
   }

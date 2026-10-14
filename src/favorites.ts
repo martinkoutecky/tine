@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Favorites: membership, identity and the arrangement page (family 22).
 //
 // ONE state: the arrangement tree. `favorites()` is its flat pre-order
@@ -220,7 +221,7 @@ async function readArrangement(mode: ReadMode | null): Promise<void> {
   const seq = ++latestRead;
   const owner = bindingOwner(() => gen === generation && writes === ownWrites && seq === latestRead);
   const read = await readOwned(owner, backend().getPage(page, "page")).catch((error: unknown) => {
-    pushToast(`Could not read the Favorites page "${page}": ${String(error)}`, "error");
+    pushToast(msg("favorites-could-not-read-the-favorites-page", { page: String(page), string_error: String(error) }), "error");
     return null;
   });
   if (read?.kind !== "current" || !read.value) return;
@@ -274,7 +275,7 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
       // a later seed (generation) or binding must not inherit the fold (I-20).
       const gen = generation;
       setTimeout(() => { if (gen === generation && owner()) void readArrangement("recover"); }, 0);
-      pushToast(`Recovered the Favorites page "${name}" from an interrupted save; repeat your last change.`, "info");
+      pushToast(msg("favorites-recovered-the-favorites-page-from-an-interrupted-save", { name: String(name) }), "info");
       throw new Error(`recovered the Favorites page "${name}"`);
     }
     if (disk && arrangementPage && layoutToMarkdown(diskLayout(disk)) !== pageBase) {

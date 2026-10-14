@@ -1,3 +1,5 @@
+import { Rich } from "../i18n/Rich";
+import { t, msg } from "../i18n";
 import { Show, createSignal, createUniqueId, onMount, type JSX } from "solid-js";
 
 /** **The user half of the persisted-form crossing (SPEC §4.3 "Notice", §7.5).**
@@ -81,15 +83,10 @@ export function CrossingNotice(props: {
       tabindex="-1"
       onClick={(e) => e.stopPropagation()}
     >
-      <p class="query-crossing-notice-text">
-        This query now uses Tine features Logseq can't read
-        <Show when={props.feature}>{(feature) => <> (<code>{feature()}</code>)</>}</Show>. Logseq
-        will show the block as plain text.
-      </p>
+      <p class="query-crossing-notice-text"><Rich message={msg("crossing-notice-warning", { feature: props.feature ?? "", has_feature: props.feature ? 1 : 0 })} /></p>
       <Show when={props.changed}>
         {(text) => (
-          <p class="query-crossing-notice-changed">
-            The block now reads: <code>{text()}</code>
+          <p class="query-crossing-notice-changed"><Rich message={msg("crossing-notice-changed-block", { text: text() })} />
           </p>
         )}
       </Show>
@@ -98,26 +95,20 @@ export function CrossingNotice(props: {
           class="query-crossing-notice-undo"
           disabled={!props.canUndo}
           title={
-            props.canUndo
-              ? "Put the query back the way it was"
-              : "Something else was changed since; use the ordinary Undo to step back to it"
+            props.canUndo ? t("crossing-notice-put-the-query-back-the-way-it-was") : t("crossing-notice-something-else-was-changed-since-use-the-ordinary")
           }
           onClick={() => { if (props.onUndo() && dontShow()) props.onDontShowAgain(); }}
         >
-          {props.canUndo ? "Undo that change" : "Undo (use Ctrl+Z)"}
+          {props.canUndo ? t("crossing-notice-undo-that-change") : t("crossing-notice-undo-use-ctrl-z")}
         </button>
-        <button class="query-crossing-notice-keep" onClick={() => close(props.onKeep)}>
-          Keep it
-        </button>
+        <button class="query-crossing-notice-keep" onClick={() => close(props.onKeep)}>{t("crossing-notice-keep-it")}</button>
         <label class="query-crossing-notice-dismiss" for={checkboxId}>
           <input
             id={checkboxId}
             type="checkbox"
             checked={dontShow()}
             onChange={(e) => setDontShow(e.currentTarget.checked)}
-          />
-          Don't show this again
-        </label>
+          />{t("crossing-notice-don-t-show-this-again")}</label>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { pageIconPrefix } from "../pageIconBatch";
-import { t } from "../i18n";
+import { msg, t } from "../i18n";
 import { JournalsIcon } from "./JournalsIcon";
 import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, recentPages, openPageContextMenu, openActionContextMenu, openPageInSidebar, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
@@ -104,7 +104,7 @@ export function Sidebar(props: {
   return (
     <div class="left-sidebar-inner">
       <div class="sidebar-header">
-        <div class="app-logo">Tine</div>
+        <div class="app-logo">{t("sidebar-tine")}</div>
         <GraphSwitcher
           onActiveNavigationComplete={props.onActiveNavigationComplete}
           actions={props.graphActions ?? graphNavigationActions}
@@ -120,7 +120,7 @@ export function Sidebar(props: {
           onAuxClick={(e) => internalLinkAuxClick(e, () => openInNewTab({ kind: "journals" }))}
         >
           <JournalsIcon />
-          <span>Journals</span>
+          <span>{t("sidebar-journals")}</span>
         </div>
 
         <Show when={favoriteCount() > 0}>
@@ -133,9 +133,7 @@ export function Sidebar(props: {
               aria-controls="sidebar-favorites-list"
               onClick={toggleFavoritesSection}
             >
-              <span class="nav-toggle-caret" classList={{ open: favoritesSectionExpanded() }}>▸</span>
-              FAVORITES
-              <span class="nav-section-count">{favoriteCount()}</span>
+              <span class="nav-toggle-caret" classList={{ open: favoritesSectionExpanded() }}>▸</span>{t("sidebar-favorites")}<span class="nav-section-count">{favoriteCount()}</span>
             </button>
             <Show when={favoritesSectionExpanded()}>
               <SidebarFavorites
@@ -159,9 +157,7 @@ export function Sidebar(props: {
               aria-controls="sidebar-recent-list"
               onClick={toggleRecentSection}
             >
-              <span class="nav-toggle-caret" classList={{ open: recentSectionExpanded() }}>▸</span>
-              RECENT
-              <span class="nav-section-count">{recentPages().length}</span>
+              <span class="nav-toggle-caret" classList={{ open: recentSectionExpanded() }}>▸</span>{t("sidebar-recent")}<span class="nav-section-count">{recentPages().length}</span>
             </button>
             <Show when={recentSectionExpanded()}>
               <div id="sidebar-recent-list">
@@ -212,9 +208,7 @@ export function Sidebar(props: {
             class="nav-section-header nav-section-toggle"
             onClick={() => setShowNs(!showNs())}
           >
-            <span class="nav-toggle-caret" classList={{ open: showNs() }}>▸</span>
-            NAMESPACES
-          </div>
+            <span class="nav-toggle-caret" classList={{ open: showNs() }}>▸</span>{t("sidebar-namespaces")}</div>
           <Show when={showNs()}>
             <NamespaceTree onPageContextMenu={openRowMenu} onActiveNavigationComplete={props.onActiveNavigationComplete} />
           </Show>
@@ -223,7 +217,7 @@ export function Sidebar(props: {
 
       <div class="sidebar-footer">
         <ConflictQueueBadge onActiveNavigationComplete={props.onActiveNavigationComplete} />
-        <button class="new-page-btn" onClick={() => openSwitcher()}>+ New page</button>
+        <button class="new-page-btn" onClick={() => openSwitcher()}>{t("sidebar-new-page")}</button>
       </div>
     </div>
   );
@@ -357,13 +351,13 @@ export function GraphSwitcher(props: {
                 <span class="graph-switch-row-name">{graph.name}</span>
                 <button
                   class="graph-switch-remove"
-                  title={`Remove ${graph.name} from this list`}
-                  aria-label={`Remove ${graph.name} from this list`}
+                  title={t("sidebar-remove-from-this-list", { name: String(graph.name) })}
+                  aria-label={t("sidebar-remove-from-this-list", { name: String(graph.name) })}
                   onClick={(event) => {
                     event.stopPropagation();
                     void writeOwned(ownedWhen(() => alive), backend().forgetKnownGraph(graph.path))
                       .then((result) => { if (result.kind === "current") void refetch(); })
-                      .catch((error) => pushToast(`Couldn't remove graph. (${String(error)})`, "error"));
+                      .catch((error) => pushToast(msg("sidebar-couldn-t-remove-graph", { string_error: String(error) }), "error"));
                   }}
                 >
                   ×
@@ -385,11 +379,9 @@ export function GraphSwitcher(props: {
                 // Target-specific failures are reported by switchGraph after the
                 // picker returns a path, so their Retry keeps that path. A
                 // rejection here is a picker failure with no target to retry.
-                .catch((error) => pushToast(`Couldn't open the graph picker. (${String(error)})`, "error"));
+                .catch((error) => pushToast(msg("sidebar-couldn-t-open-the-graph-picker", { string_error: String(error) }), "error"));
             }}
-          >
-            Open graph…
-          </div>
+          >{t("sidebar-open-graph")}</div>
           <div
             class="ctx-item"
             onClick={() => {
@@ -398,11 +390,9 @@ export function GraphSwitcher(props: {
                 .then((outcome) => {
                   if (outcome.kind === "loaded" || outcome.kind === "already_current") props.onActiveNavigationComplete?.();
                 })
-                .catch((error) => pushToast(`Couldn't create the graph. (${String(error)})`, "error"));
+                .catch((error) => pushToast(msg("sidebar-couldn-t-create-the-graph", { string_error: String(error) }), "error"));
             }}
-          >
-            New graph…
-          </div>
+          >{t("sidebar-new-graph")}</div>
         </div>
       </Show>
     </div>
@@ -419,9 +409,9 @@ export function ConflictQueueBadge(props: { onActiveNavigationComplete?: () => v
   const count = pendingConflictCount;
   return (
     <Show when={count()}>
-      <button class="conflict-queue-badge" title="Review the pages that need a decision" onClick={() => { openConflicts(); props.onActiveNavigationComplete?.(); }}>
+      <button class="conflict-queue-badge" title={t("sidebar-review-the-pages-that-need-a-decision")} onClick={() => { openConflicts(); props.onActiveNavigationComplete?.(); }}>
         <span class="conflict-queue-dot" aria-hidden="true" />
-        {count()} conflict{count() === 1 ? "" : "s"}
+        {t("sidebar-conflict-count", { count: count() })}
       </button>
     </Show>
   );

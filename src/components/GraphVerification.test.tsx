@@ -109,7 +109,10 @@ describe("Verify synchronized graph (master 749bfb2b1)", () => {
     paste(host, "{\"schemaVersion\":1,\"tool\":\"other\"}");
     button(host, "Compare reports").click();
     await flush();
-    expect(toast).toHaveBeenCalledWith(expect.stringContaining("unsupported format"), "error");
+    const { renderEnglish } = await import("../i18n");
+    const [text, kind] = toast.mock.calls.at(-1)!;
+    expect(renderEnglish(toasts.toUiText(text))).toContain("unsupported format");
+    expect(kind).toBe("error");
     expect(host.querySelector(".diagnostics-comparison")).toBeNull();
     dispose();
   });
