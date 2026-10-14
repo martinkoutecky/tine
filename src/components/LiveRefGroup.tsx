@@ -15,7 +15,7 @@ import { LinkDepthContext } from "./linkDepth";
 import { readOr } from "../resourceRead";
 import { openBlockInSidebar, openPageProps } from "../ui";
 import "./LiveRefGroup.css";
-import { resolveResultRow } from "./queryResultIdentity";
+import { ResultWriteTargetContext, resolveResultRow, resultWriteTarget } from "./queryResultIdentity";
 import { resultTicket, resultsTicketCurrent } from "../queryResultsEpoch";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
@@ -393,6 +393,10 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   return (
         <CollapseSurfaceContext.Provider value={collapseSurface}>
         <SurfaceContext.Provider value={surface}>
+        <ResultWriteTargetContext.Provider value={(id) => {
+          const dto = props.surface === "query" ? dtoById(id) : undefined;
+          return dto ? resultWriteTarget({ id, dto, page: props.page, kind: props.kind, path: props.path }) : undefined;
+        }}>
         {/* GH #415: Up from the first row of an embed's ROOT row exits the embed
             into the host page; the other rows stay surface-local. */}
         <EmbedNavExitContext.Provider value={
@@ -481,6 +485,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
         </LinkDepthContext.Provider>
         </OutlineScopeContext.Provider>
         </EmbedNavExitContext.Provider>
+        </ResultWriteTargetContext.Provider>
         </SurfaceContext.Provider>
         </CollapseSurfaceContext.Provider>
   );

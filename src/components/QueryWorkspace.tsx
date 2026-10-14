@@ -752,7 +752,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const ogHint = () => {
     const reading = dslReading();
     const hint = reading?.parsed.og_hint;
-    return sourceKind() === "dsl" && reading?.source === source() && hint?.date_windows ? hint : undefined;
+    return sourceKind() === "dsl" && reading?.source === source().trim() && hint?.date_windows ? hint : undefined;
   };
   // The workspace under an in-flight save is not frozen: the user can retype the
   // search, change the view, rename it, switch tab or graph. Every completion
@@ -914,7 +914,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const convertDsl = async (query: Query) => {
     const before = source();
     const reading = dslReading();
-    if (!reading || reading.source !== before) return;
+    if (!reading || reading.source !== before.trim()) return;
     const revision = inputRevision();
     const owner = graphOwner(() => alive && inputRevision() === revision);
     try {
@@ -963,7 +963,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const hitSurfaceId = (hit: QueryHit) =>
     `query:${props.route.id}:${hit.entity}:${hit.entity === "page" ? hit.page.name : hit.block.id}`;
   const task = (hit: Extract<QueryHit, { entity: "block" }>) => <SourceTaskCheckbox marker={hit.block.marker}
-    target={() => ({ uuid: blockDtoExternalId(hit.block), page: hit.page, pageKind: hit.kind, path: hit.path })} />;
+    target={() => ({ uuid: blockDtoExternalId(hit.block), page: hit.page, pageKind: hit.kind, path: hit.path })}
+    result={{ id: hit.block.id, page: hit.page, kind: hit.kind, path: hit.path, dto: hit.block }} />;
   /** Everything one save attempt publishes, frozen at submit. */
   const captureSave = () => ({
     token: ++saveToken,

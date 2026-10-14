@@ -1,3 +1,4 @@
+import { createContext } from "solid-js";
 import { existingBlockId } from "../blockIdentity";
 import { pushToast } from "../toasts";
 import { t } from "../i18n";
@@ -90,6 +91,11 @@ export function captureResultDraft(row: ResultRow): () => ReadonlyNode | null {
   return () => source && bindingCurrent(binding) && resultsSettled()
     && pageByName(row.page) === page && node(source.id) === source ? source : null;
 }
+
+/** A query result surface's deferred-control target for a rendered result
+ * locator: `resultWriteTarget` of that row, or undefined for a live
+ * ancestor/descendant (ordinary source editing) and outside query results. */
+export const ResultWriteTargetContext = createContext<(id: string) => (() => string | null) | undefined>(() => undefined);
 
 /** Deferred controls keep the opening descriptor, and resolve again at commit. */
 export function resultWriteTarget(row: ResultRow): () => string | null {
