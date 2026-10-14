@@ -10,6 +10,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- GH #524: Added regression coverage for dragging a block into an empty page in the right sidebar; current Beta already supports the move.
+- GH #499: Added regression coverage for splitting the lower pane beneath an existing top row; the reported sequence already preserves the layout on current Beta.
+- GH #593: Workspace and tab overflow menus support stable hover opening and delayed dismissal while crossing the menu gap.
+- GH #639: Alt-clicking a bullet keeps its block zoom when creating a destination pane.
+- GH #677: Reopening a right-sidebar page or block brings its existing card to the top, expands it and focuses it.
+- GH #663: Added unbound commands for page-name-only and block-content-only search.
+- GH #428: Added an unbound Edit selected block command, remappable to Escape, while preserving the default selection ladder.
+- GH #587: Added bindable commands to activate tabs 1–8 and the last tab in the focused pane; unbound by default because Ctrl/Cmd+1–9 already focus panes.
+
+- config.edn reader discards (`#_`) are accepted as legal EDN; the GH #332 `:graph-view {:layout : grid}` shape has a graph-open regression keeping pages and journals readable (GH #332).
+- Journals navigation uses the same notebook icon in the sidebar and topbar (GH #673).
+- Markdown horizontal rules align with the centre of their outline bullets (GH #678).
+- Markdown quote and callout collapse metadata stays outside quoted content (GH #684).
+- Clicking an in-block Markdown task list checkbox toggles its item without entering edit mode (GH #683).
 - Mobile Search, sidebar and page-history actions are reachable from a bottom navigation row (GH #598, GH #160); holding a page reference or tag opens the shared page preview without navigating (GH #655).
 - A page merge, rename or deletion that waited the full 10 seconds for another rename to finish could report "Couldn't confirm the merge yet; Tine keeps trying to finish it" for an operation that would never run; it now reports that another rename is still finishing and nothing changed (REG-PAGEHOST-ADMISSION-DEADLINE-RACE).
 

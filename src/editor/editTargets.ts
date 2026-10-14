@@ -22,6 +22,7 @@ export const FORBID_EDIT_SELECTOR = [
   // Nested editors remain allowed: their own host does not contain this ancestor.
   ".embed-block",
   ".block-marker",
+  ".block-checkbox",
   ".clock-badge",
   ".date-chip",
   ".hl-prefix",
