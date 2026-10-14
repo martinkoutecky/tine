@@ -1,3 +1,4 @@
+import { msg, render, t } from "../i18n";
 import { optionsUpdater } from "./primitives";
 import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { pdfExportPage, closePdfExport } from "../ui";
@@ -5,6 +6,25 @@ import { exportPagePdf, DEFAULT_PRINT_OPTS } from "../print";
 import type { PrintOpts } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 import { activeWindow, listen } from "../windowRealm";
+
+// Deferred catalog messages; property getters resolve in the consuming computation.
+const UI_MESSAGES = {
+  "pdf-export-expand-all": msg("pdf-export-expand-all"),
+  "pdf-export-print-every-block-even-folded-ones": msg("pdf-export-print-every-block-even-folded-ones"),
+  "pdf-export-keep-folded": msg("pdf-export-keep-folded"),
+  "pdf-export-hide-collapsed-blocks-children-as-on-screen": msg("pdf-export-hide-collapsed-blocks-children-as-on-screen"),
+  "pdf-export-small": msg("pdf-export-small"),
+  "pdf-export-13px": msg("pdf-export-13px"),
+  "pdf-export-normal": msg("pdf-export-normal"),
+  "pdf-export-16px": msg("pdf-export-16px"),
+  "pdf-export-large": msg("pdf-export-large"),
+  "pdf-export-19px": msg("pdf-export-19px"),
+  "pdf-export-narrow": msg("pdf-export-narrow"),
+  "pdf-export-10mm": msg("pdf-export-10mm"),
+  "pdf-export-16mm": msg("pdf-export-16mm"),
+  "pdf-export-wide": msg("pdf-export-wide"),
+  "pdf-export-24mm": msg("pdf-export-24mm"),
+};
 
 const STORE_KEY = "tine.pdfExportOpts";
 
@@ -27,18 +47,18 @@ function saveOpts(o: PrintOpts): void {
 }
 
 const COLLAPSED: { value: boolean; label: string; hint: string }[] = [
-  { value: true, label: "Expand all", hint: "print every block, even folded ones" },
-  { value: false, label: "Keep folded", hint: "hide collapsed blocks' children, as on screen" },
+  { value: true, get label() { return render(UI_MESSAGES["pdf-export-expand-all"]); }, get hint() { return render(UI_MESSAGES["pdf-export-print-every-block-even-folded-ones"]); } },
+  { value: false, get label() { return render(UI_MESSAGES["pdf-export-keep-folded"]); }, get hint() { return render(UI_MESSAGES["pdf-export-hide-collapsed-blocks-children-as-on-screen"]); } },
 ];
 const FONT: { value: number; label: string; hint: string }[] = [
-  { value: 13, label: "Small", hint: "13px" },
-  { value: 16, label: "Normal", hint: "16px" },
-  { value: 19, label: "Large", hint: "19px" },
+  { value: 13, get label() { return render(UI_MESSAGES["pdf-export-small"]); }, get hint() { return render(UI_MESSAGES["pdf-export-13px"]); } },
+  { value: 16, get label() { return render(UI_MESSAGES["pdf-export-normal"]); }, get hint() { return render(UI_MESSAGES["pdf-export-16px"]); } },
+  { value: 19, get label() { return render(UI_MESSAGES["pdf-export-large"]); }, get hint() { return render(UI_MESSAGES["pdf-export-19px"]); } },
 ];
 const MARGIN: { value: number; label: string; hint: string }[] = [
-  { value: 10, label: "Narrow", hint: "10mm" },
-  { value: 16, label: "Normal", hint: "16mm" },
-  { value: 24, label: "Wide", hint: "24mm" },
+  { value: 10, get label() { return render(UI_MESSAGES["pdf-export-narrow"]); }, get hint() { return render(UI_MESSAGES["pdf-export-10mm"]); } },
+  { value: 16, get label() { return render(UI_MESSAGES["pdf-export-normal"]); }, get hint() { return render(UI_MESSAGES["pdf-export-16mm"]); } },
+  { value: 24, get label() { return render(UI_MESSAGES["pdf-export-wide"]); }, get hint() { return render(UI_MESSAGES["pdf-export-24mm"]); } },
 ];
 
 /** Pre-export options dialog for "Export to PDF…". Collects render options, then
@@ -81,12 +101,12 @@ function Dialog(props: { name: string }): JSX.Element {
     <div class="modal-overlay" onClick={closePdfExport}>
       <div ref={root} class="export-modal pdf-export-modal" onClick={(e) => e.stopPropagation()}>
         <div class="export-head">
-          Export to PDF <span class="export-count">{props.name}</span>
+          {t("pdf-export-export-to-pdf")}<span class="export-count">{props.name}</span>
         </div>
 
         <div class="export-opts">
           <div class="export-opt-row export-indent">
-            <span class="export-opt-label">Collapsed blocks</span>
+            <span class="export-opt-label">{t("pdf-export-collapsed-blocks")}</span>
             <For each={COLLAPSED}>
               {(s) => (
                 <button
@@ -101,7 +121,7 @@ function Dialog(props: { name: string }): JSX.Element {
             </For>
           </div>
           <div class="export-opt-row export-indent">
-            <span class="export-opt-label">Font size</span>
+            <span class="export-opt-label">{t("pdf-export-font-size")}</span>
             <For each={FONT}>
               {(s) => (
                 <button
@@ -116,7 +136,7 @@ function Dialog(props: { name: string }): JSX.Element {
             </For>
           </div>
           <div class="export-opt-row export-indent">
-            <span class="export-opt-label">Margins</span>
+            <span class="export-opt-label">{t("pdf-export-margins")}</span>
             <For each={MARGIN}>
               {(s) => (
                 <button
@@ -133,15 +153,23 @@ function Dialog(props: { name: string }): JSX.Element {
         </div>
 
         <div class="pdf-export-note">
-          Opens your system print dialog — choose <b>Save as PDF</b> (or a printer).
-          The document always prints on a light background, whatever your theme.
+          <PrintNote />
         </div>
 
         <div class="export-foot">
-          <button class="export-btn-secondary" onClick={closePdfExport}>Cancel</button>
-          <button class="export-btn-primary" onClick={doExport}>Export…</button>
+          <button class="export-btn-secondary" onClick={closePdfExport}>{t("pdf-export-cancel")}</button>
+          <button class="export-btn-primary" onClick={doExport}>{t("pdf-export-export")}</button>
         </div>
       </div>
     </div>
   );
+}
+
+// One translated sentence with an emphasis slot, rendered as Solid nodes.
+// The catalog controls where the emphasized words appear; no HTML is injected.
+function PrintNote(): JSX.Element {
+  return <For each={t("pdf-export-print-note").split(/(<strong>.*?<\/strong>)/)}>
+    {(part) => part.startsWith("<strong>") && part.endsWith("</strong>")
+      ? <b>{part.slice(8, -9)}</b> : part}
+  </For>;
 }

@@ -1,0 +1,24 @@
+# Tine interface text. Graph names, paths and inserted syntax in variables stay unchanged.
+sheet-can-t-convert-to-grid-children-would-collide-with-grid-rows = Can't convert to grid: children would collide with grid rows.
+sheet-can-t-convert-this-parser-does-not-round-trip-inside-table-cells = Can't convert: this parser does not round-trip \| inside table cells.
+sheet-couldn-t-cut-cells-clipboard-write-failed = Couldn't cut cells: clipboard write failed.
+sheet-pasted-over-existing-cells = Pasted over existing cells.
+sheet-undo = Undo
+sheet-pasted-outline-is-too-deep = Pasted outline is too deep
+sheet-couldn-t-copy-cells-clipboard-write-failed = Couldn't copy cells: clipboard write failed.
+sheet-resize-column = Resize { $label } column
+sheet-drag-to-resize-double-click-to-reset = Drag to resize; double-click to reset
+sheet-grid-requires-markdown = Convert to pipe table is only available for markdown grids.
+sheet-grid-read-only = Can't convert a read-only grid to a pipe table.
+sheet-grid-title-required = Can't convert: the grid block needs a title line above its tine.* properties.
+sheet-grid-too-large = Can't convert grids larger than 30 columns by 200 rows to a pipe table.
+sheet-grid-empty = Can't convert an empty grid to a pipe table.
+sheet-grid-row-missing = Can't convert this grid because a row is missing.
+sheet-grid-row-properties = Can't convert: row hidden properties would be lost.
+sheet-grid-row-content = Can't convert: row blocks must be empty.
+sheet-grid-row-empty = Can't convert: empty rows cannot be represented as pipe tables.
+sheet-grid-cell-missing = Can't convert this grid because a cell is missing.
+sheet-grid-cell-properties = Can't convert: cell hidden properties would be lost.
+sheet-grid-cell-children = Can't convert: cells with children cannot be represented in a pipe table.
+sheet-grid-cell-multiline = Can't convert: cells must be single-line.
+sheet-grid-cell-pipe = Can't convert: this parser does not round-trip \| inside table cells.

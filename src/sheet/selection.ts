@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 import { createRoot, createSignal } from "solid-js";
 import { pushToast } from "../toasts";
 import { clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock, node as docNode } from "../document";
@@ -1046,7 +1047,7 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
   if (mod && !e.altKey && !e.shiftKey && key === "r" && !isSeamSel(sel)) return fillSheetSelection(sel, "right");
   if (mod && !e.altKey && !e.shiftKey && key === "c" && !isSeamSel(sel)) {
     void copySheetSelection(sel)
-      .catch(() => pushToast("Couldn't copy cells: clipboard write failed.", "error"));
+      .catch(() => pushToast(msg("sheet-couldn-t-copy-cells-clipboard-write-failed"), "error"));
     return true;
   }
   if (mod && !e.altKey && !e.shiftKey && key === "x" && !isSeamSel(sel)) {
