@@ -5,7 +5,7 @@ import { t } from "../i18n";
 import type { BlockDto, Format, PageDto, PageKind } from "../types";
 import { blockRegions } from "../render/parse";
 import { formatForPage, node, pageByName, pageRoots, type Node as ReadonlyNode } from "../document";
-import { resultTicket, resultsEpoch, resultsSettled, resultsTicketActionable } from "../queryResultsEpoch";
+import { resultTicket, resultsActionable, resultsEpoch, resultsTicketActionable } from "../queryResultsEpoch";
 import { bindingCurrent, captureBinding } from "../binding";
 
 export interface ResultRow { id: string; page: string; kind?: PageKind; path?: string; dto?: BlockDto; detached?: boolean }
@@ -39,7 +39,8 @@ export function resolveResultRow(row: ResultRow, mode: "action" | "mount" = "act
       return matches.length === 1 ? matches[0] : null;
     }
     const durable = existingBlockId(row.dto.raw, format);
-    if (!durable && !resultsTicketActionable(resultTicket(row.dto))) return null;
+    // Authored identity survives replacement, not a held or in-flight change.
+    if (!durable || !resultsActionable()) return null;
     const matches: BlockDto[] = [];
     const visit = (blocks: BlockDto[]) => { for (const block of blocks) {
       if (durable ? existingBlockId(block.raw, format) === durable : block.id === row.dto!.id) matches.push(block);
@@ -60,7 +61,7 @@ export function resolveResultRow(row: ResultRow, mode: "action" | "mount" = "act
   if (source?.page !== row.page) source = undefined;
   // Projected results already carry the parser's negative identity fact. Keep
   // missing positional rows cheap; older/unprojected DTOs still ask the parser.
-  const durable = !source && row.dto.has_id !== false && existingBlockId(row.dto.raw, formatForPage(row.page));
+  const durable = !source && row.dto.has_id !== false && resultsActionable() && existingBlockId(row.dto.raw, formatForPage(row.page));
   if (durable) {
     const candidates: ReadonlyNode[] = [];
     const pending = [...pageRoots(row.page)];
@@ -88,7 +89,7 @@ export function captureResultDraft(row: ResultRow): () => ReadonlyNode | null {
   const source = resolveResultRow(row);
   const page = pageByName(row.page);
   const binding = captureBinding();
-  return () => source && bindingCurrent(binding) && resultsSettled()
+  return () => source && bindingCurrent(binding) && resultsActionable()
     && pageByName(row.page) === page && node(source.id) === source ? source : null;
 }
 

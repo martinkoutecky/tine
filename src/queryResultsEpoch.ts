@@ -42,8 +42,11 @@ export function resultsTicketCurrent(ticket: ResultsTicket | undefined): boolean
  * the user to resolve. Requiring settled here refused every result action for
  * ~1 s after the user's own save. */
 export function resultsTicketActionable(ticket: ResultsTicket | undefined): boolean {
-  return !!ticket?.settled && ticket.epoch === resultsEpoch() && pending() === 0
-    && !gates.some(({ gate, kind }) => kind === "hold" && gate());
+  return !!ticket?.settled && ticket.epoch === resultsEpoch() && resultsActionable();
+}
+/** No result change in flight and nothing held for the user; own save work allowed. */
+export function resultsActionable(): boolean {
+  return pending() === 0 && !gates.some(({ gate, kind }) => kind === "hold" && gate());
 }
 const provenance = new WeakMap<object, ResultsTicket>();
 export function resultTicket(result: object): ResultsTicket | undefined { return provenance.get(result); }

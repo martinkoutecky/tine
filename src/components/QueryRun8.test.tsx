@@ -214,3 +214,31 @@ it("own save work delays reruns but leaves result actions available; a held chan
   setHeld(false); setSaving(false);
   expect(resolveResultRow(row)?.id).toBe("same");
 });
+
+it("an open Table draft commits during the user's own save work, not during a held change", async () => {
+  const groups = await fixture();
+  const [saving, setSaving] = createSignal(false); installResultsPendingGate(saving, "own-work");
+  const [held, setHeld] = createSignal(false); installResultsPendingGate(held);
+  const root = mount(() => <SheetTable ownerId="query" rowSource="query" groups={groups} queryDisplay={{ view: { columns: ["owner"] }, apply: () => {} }} />);
+  cell(root, "prop:owner").dispatchEvent(new MouseEvent("dblclick", { bubbles: true, button: 0 }));
+  const input = root.querySelector<HTMLInputElement>(".sheet-prop-input")!;
+  input.value = "Martin"; input.dispatchEvent(new Event("input", { bubbles: true }));
+  setHeld(true); key(input, "Enter");
+  expect(blockProperty("same", "owner")).toBe("Original");
+  setHeld(false); setSaving(true); key(input, "Enter");
+  expect(blockProperty("same", "owner")).toBe("Martin");
+  setSaving(false);
+});
+
+it("an authored-ID result does not resolve around a held change", async () => {
+  await fixture();
+  const [held, setHeld] = createSignal(false); installResultsPendingGate(held);
+  setDoc("byId", "same", "raw", "Selected\nid:: same-authored"); await Promise.resolve();
+  const hit = dto("missing", "Selected\nid:: same-authored"); adoptResults(hit, captureResultsTicket());
+  const row = { id: "missing", page: "Source", dto: hit };
+  expect(resolveResultRow(row)?.id).toBe("same");
+  setHeld(true);
+  expect(resolveResultRow(row)).toBeNull();
+  setHeld(false);
+  expect(resolveResultRow(row)?.id).toBe("same");
+});
