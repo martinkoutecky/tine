@@ -455,6 +455,7 @@ pub(crate) struct ReadSnapshot {
     icon_index: std::sync::OnceLock<Arc<page_icons::IconIndex>>,
     memos: SnapshotMemos,
     query_index: crate::query::index::QueryIndexSlot,
+    pub(crate) transliteration_names: Arc<HashMap<String, Arc<crate::transliteration::NameKeys>>>,
     #[cfg(test)]
     block_full_builds: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -462,6 +463,71 @@ pub(crate) struct ReadSnapshot {
 }
 
 impl ReadSnapshot {
+    fn build_name_keys(
+        &self,
+        old: Option<&Self>,
+        changed_paths: &[String],
+    ) -> Arc<HashMap<String, Arc<crate::transliteration::NameKeys>>> {
+        if let Some(old) = old {
+            if Arc::ptr_eq(&old.pages, &self.pages) && Arc::ptr_eq(&old.list, &self.list) {
+                return Arc::clone(&old.transliteration_names);
+            }
+            // A graph without Han names keeps its empty cache through ordinary
+            // publications. Inspect only changed pages' parser-owned names.
+            if old.transliteration_names.is_empty() && !changed_paths.is_empty() {
+                let has_han = changed_paths.iter().any(|path| {
+                    let Some((page, doc)) = snapshot_page_by_rel(&self.pages, None, path) else {
+                        return false;
+                    };
+                    crate::transliteration::eligible(&page.name)
+                        || crate::query::document_alias_spellings(doc)
+                            .iter()
+                            .any(|name| crate::transliteration::eligible(name))
+                        || collect_document_referenced_names(doc)
+                            .iter()
+                            .any(|name| crate::transliteration::eligible(name))
+                });
+                if !has_han {
+                    return Arc::clone(&old.transliteration_names);
+                }
+            }
+        }
+        // Reuse parser-owned name projections; never transliterate body text here.
+        // Ephemeral: no checkpoint/index serialization changes.
+        let mut transliteration_names = HashMap::new();
+        let mut add_name = |name: &str| {
+            if !crate::transliteration::eligible(name) {
+                return;
+            }
+            let key = tine_core::refs::page_key(name);
+            if transliteration_names.contains_key(&key) {
+                return;
+            }
+            let keys = old
+                .and_then(|old| old.transliteration_names.get(&key))
+                .cloned()
+                .unwrap_or_else(|| Arc::new(crate::transliteration::NameKeys::build(&key)));
+            transliteration_names.insert(key, keys);
+        };
+        for page in self.list.iter() {
+            add_name(&page.name);
+        }
+        if let Some(aliases) = self.alias_index.get() {
+            for shard in &aliases.shards {
+                for (_, names) in shard.iter() {
+                    for name in names {
+                        add_name(name);
+                    }
+                }
+            }
+        }
+        for shard in &self.explicit_index.shards {
+            for (name, _) in shard.iter() {
+                add_name(name);
+            }
+        }
+        Arc::new(transliteration_names)
+    }
     /// Owner paths of the aliases whose page key is `key`, in
     /// `page_aliases_with_owners` order. Built once per snapshot so a
     /// resolve costs O(1) instead of cloning and re-keying every alias.
@@ -632,7 +698,7 @@ impl ReadSnapshot {
             old.map(|old| (&old.query_index, Arc::ptr_eq(&old.pages, &pages))),
             changed_paths,
         );
-        let snapshot = Self {
+        let mut snapshot = Self {
             pages,
             config,
             list,
@@ -653,11 +719,13 @@ impl ReadSnapshot {
             icon_index: std::sync::OnceLock::new(),
             memos: SnapshotMemos::default(),
             query_index,
+            transliteration_names: Arc::new(HashMap::new()),
             #[cfg(test)]
             block_full_builds: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
+        snapshot.transliteration_names = snapshot.build_name_keys(old, changed_paths);
         let icons = page_icons::IconIndex::capture(
             old.and_then(|old| {
                 old.icon_index
@@ -973,6 +1041,7 @@ impl ReadSnapshot {
         page_match_scope: tine_core::query::ir::FriendlyPageMatchScope,
         page_view: Option<tine_core::query::ir::ViewSettings>,
         block_view: Option<tine_core::query::ir::ViewSettings>,
+        transliteration: bool,
     ) -> tine_core::query_plan::QueryExecution {
         match scope {
             Some(scope) => crate::query_plan::QueryPlan::friendly_for_page_with_policy(
@@ -989,6 +1058,7 @@ impl ReadSnapshot {
                 page_match_scope,
             ),
         }
+        .with_transliteration(transliteration)
         .with_display(page_view, block_view)
         .execute_with_explain(
             self,

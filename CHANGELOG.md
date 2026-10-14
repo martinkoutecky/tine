@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- Optional Mandarin Pinyin and syllable-initial matching for Han page titles and aliases, preserving native-name relevance (GH #151).
+
 ### Fixed
 
 - Bullet threading's "Active ancestry only" mode now emphasizes the edited block's connectors in the accent color, as the original Logseq plugin does (GH #614).

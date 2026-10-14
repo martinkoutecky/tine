@@ -3,6 +3,46 @@ import { backend } from "./backend";
 import type { ObjectiveMatchClass } from "./types";
 import { writePreference, seedPreference, preferenceRevision, preferenceReadCurrent } from "./preferenceWrites";
 import { pushToast } from "./toasts";
+import { readOwned, revisionOwner } from "./owned";
+import { activeLocale, msg, render } from "./i18n";
+
+const PINYIN_KEY = "pinyin-page-matching";
+/** Default follows Chinese UI or primary system language; reset uses this too. */
+export function pinyinDefault(ui = activeLocale(), system = typeof navigator === "undefined" ? "" : navigator.language): boolean {
+  return ui.toLowerCase().startsWith("zh") || system.toLowerCase().startsWith("zh");
+}
+const [pinyinEnabled, applyPinyinEnabled] = createSignal(pinyinDefault());
+export const pinyinMatchingEnabled = pinyinEnabled;
+
+/** Device preference; a newer local write wins over startup reads. */
+export async function initPinyinMatchingSetting(): Promise<void> {
+  const revision = preferenceRevision(pinyinEnabled);
+  const owner = revisionOwner(pinyinEnabled, revision);
+  try {
+    const ui = await readOwned(owner, backend().getAppString("ui_language", ""));
+    if (ui.kind === "stale") return;
+    const fallback = pinyinDefault(ui.value || activeLocale());
+    const loaded = await readOwned(owner, backend().getAppBool(PINYIN_KEY, fallback));
+    if (loaded.kind === "stale") return;
+    const value = loaded.value;
+    if (preferenceReadCurrent(pinyinEnabled, revision)) {
+      applyPinyinEnabled(value); seedPreference(pinyinEnabled);
+    }
+  } catch {
+    if (preferenceReadCurrent(pinyinEnabled, revision)) applyPinyinEnabled(pinyinDefault());
+    pushToast(msg("toast-pinyin-load-failed"), "error");
+  }
+}
+
+export function setPinyinMatchingEnabled(value: boolean): void {
+  writePreference(pinyinEnabled, applyPinyinEnabled, value,
+    next => backend().setAppBool(PINYIN_KEY, next), render(msg("settings-pinyin-label")), () => pushToast(msg("toast-pinyin-save-failed"), "error"));
+}
+
+export function resetPinyinMatchingSetting(): void {
+  setPinyinMatchingEnabled(pinyinDefault());
+}
+void initPinyinMatchingSetting();
 
 const SETTING_KEY = "adaptive-launcher-ranking";
 const VERSION = 1;
@@ -14,7 +54,8 @@ const OBJECTIVE_CLASS_RANK: Record<ObjectiveMatchClass, number> = {
   prefix: 1,
   substring: 2,
   fuzzy: 3,
-  body_evidence: 4,
+  transliteration: 4,
+  body_evidence: 5,
 };
 
 interface ActivationRecord {

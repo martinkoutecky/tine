@@ -495,7 +495,7 @@ fn bench_switcher(root: &Path) -> io::Result<f64> {
     let mut durations = Vec::with_capacity(SWITCHER_RUNS);
     for _ in 0..SWITCHER_RUNS {
         let started = Instant::now();
-        let results = view.complete_page_names("pa", 12, None);
+        let results = view.complete_page_names("pa", 12, None, false);
         durations.push(started.elapsed());
         assert!(!results.is_empty(), "quick_switch returned no results");
         black_box(results.len());

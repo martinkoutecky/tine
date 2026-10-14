@@ -72,7 +72,7 @@ describe("reference authoring", () => {
       inputAt(textarea, kind === "page" ? "[[Fz]]" : "#Fz", kind === "page" ? 4 : 3);
       const expected = kind === "page" ? 'Create "Fz"' : "Create #Fz";
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe(expected));
-      expect(quickSwitch).toHaveBeenLastCalledWith("Fz", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "" });
+      expect(quickSwitch).toHaveBeenLastCalledWith("Fz", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "" }, false);
       accept(textarea);
       expect(textarea.value.trim()).toBe(kind === "page" ? "[[Fz]]" : "#Fz");
     } finally { dispose(); }
@@ -176,7 +176,7 @@ describe("reference authoring", () => {
       const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
       inputAt(textarea, "[[P]]", 3);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target"));
-      expect(quickSwitch).toHaveBeenLastCalledWith("P", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "[[P]]" });
+      expect(quickSwitch).toHaveBeenLastCalledWith("P", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "[[P]]" }, false);
 
       // Type the rest and accept immediately, before the 90 ms backend debounce.
       // The visible row is still legitimate, but replacement must use the live

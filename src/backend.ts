@@ -494,18 +494,18 @@ class TauriBackend implements Backend {
   search(query: string, limit: number, lane?: string) {
     return this.call<RefGroup[]>("search", { query, limit, lane });
   }
-  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, views?: { page: ViewSettings; block: ViewSettings }) {
-    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null });
+  async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, views?: { page: ViewSettings; block: ViewSettings }, transliteration = false) {
+    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null, transliteration });
     return {
       ...execution,
       has_more: execution.has_more ?? { pages: false, blocks: false },
     };
   }
-  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string }) {
-    return this.call<PageEntry[]>("quick_switch", { query, limit, editorPageName: editor?.pageName, editorBlockId: editor?.blockId, editorOriginalRaw: editor?.originalRaw });
+  quickSwitch(query: string, limit: number, editor?: { pageName: string; blockId: string; originalRaw: string }, transliteration = false) {
+    return this.call<PageEntry[]>("quick_switch", { query, limit, editorPageName: editor?.pageName, editorBlockId: editor?.blockId, editorOriginalRaw: editor?.originalRaw, transliteration });
   }
-  captureQuickSwitch(query: string, limit: number) {
-    return this.call<PageEntry[]>("capture_quick_switch", { query, limit });
+  captureQuickSwitch(query: string, limit: number, transliteration = false) {
+    return this.call<PageEntry[]>("capture_quick_switch", { query, limit, transliteration });
   }
   listTemplates() {
     return this.call<TemplateDto[]>("list_templates");

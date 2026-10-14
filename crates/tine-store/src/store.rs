@@ -350,6 +350,7 @@ mod diagnostics;
 #[cfg(test)]
 mod fold_save_tests;
 mod inventory;
+mod name_search;
 #[cfg(test)]
 mod page_open_tests;
 mod page_read;
@@ -2487,6 +2488,8 @@ pub enum InventoryScope<'a> {
 pub struct SearchRequest {
     /// Search expression.
     pub text: String,
+    /// Request-local name expansion; legacy callers pass false.
+    pub transliteration: bool,
     /// Restrict search to this physical page id, including a chosen twin; an
     /// alias does not broaden the scope. An absent file produces an empty
     /// result; check existence separately if it matters.
@@ -3142,6 +3145,7 @@ impl WholeGraph {
                 .unwrap_or(tine_core::query::ir::FriendlyPageMatchScope::Names),
             req.page_view.clone(),
             req.block_view.clone(),
+            req.transliteration,
         );
         if result.cancelled {
             Err(QueryError::Cancelled)
@@ -3284,34 +3288,6 @@ impl WholeGraph {
     /// O(distinct referenced ids) entries; later reads clone that cached map.
     pub fn block_ref_counts(&self) -> Arc<HashMap<String, usize>> {
         self.graph.public_block_ref_counts()
-    }
-
-    /// `[[` completion over pages, journals, aliases and referenced names.
-    /// A first call can traverse all page blocks and reference text to build
-    /// indexes; later calls scan page, alias, and referenced-name candidates
-    /// and rank or sort matches, returning at most `limit` entries. Once an
-    /// index has been built, a later publication carries it forward by updating
-    /// changed pages; the first completion after every save does not rescan B.
-    /// An inline editor can supply its (page, block, pre-completion text) to
-    /// retain the reference baseline while its live draft autosaves. This
-    /// examines that page's blocks in addition to the name candidates above.
-    pub fn complete_page_names(
-        &self,
-        text: &str,
-        limit: usize,
-        editor: Option<(&str, &str, &str)>,
-    ) -> Vec<PageEntry> {
-        match editor {
-            Some((page, block, original)) => crate::query::quick_switch_for_editor(
-                &self.graph,
-                text,
-                limit,
-                page,
-                block,
-                original,
-            ),
-            None => crate::query::quick_switch(&self.graph, text, limit),
-        }
     }
 
     /// Literal `((` block search, O(B) per call, at most `limit` blocks.
@@ -4022,6 +3998,7 @@ mod rev5_tests {
         assert_eq!(
             view.search(
                 &SearchRequest {
+                    transliteration: false,
                     text: "ordinary".into(),
                     within: None,
                     page_limit: 10,
@@ -5231,6 +5208,7 @@ mod rev5_tests {
                     "{:?}",
                     view.search(
                         &SearchRequest {
+                            transliteration: false,
                             text: "Target".into(),
                             within: None,
                             page_limit: 10,
@@ -5275,7 +5253,7 @@ mod rev5_tests {
                 "complete_page_names",
                 format!(
                     "{:?}",
-                    view.complete_page_names("", 20, None)
+                    view.complete_page_names("", 20, None, false)
                         .iter()
                         .map(|entry| &entry.name)
                         .collect::<Vec<_>>()

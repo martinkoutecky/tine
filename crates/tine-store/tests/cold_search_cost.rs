@@ -18,6 +18,7 @@ fn a_block_only_first_search_derives_no_page_facts() {
     let result = graph
         .search(
             &SearchRequest {
+                transliteration: false,
                 text: "uniqueblockneedle".into(),
                 within: None,
                 page_limit: 10,

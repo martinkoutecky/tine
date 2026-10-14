@@ -127,7 +127,7 @@ fn all_whole_graph_questions_use_the_public_view() {
             > 0
     );
     assert!(view
-        .complete_page_names("Source", 10, None)
+        .complete_page_names("Source", 10, None, false)
         .iter()
         .any(|p| p.name == "Source"));
     assert!(!view
@@ -266,6 +266,7 @@ fn query_and_scoped_search_use_page_identity() {
     let search = view
         .search(
             &SearchRequest {
+                transliteration: false,
                 text: "archived".into(),
                 within: Some(within.clone()),
                 page_limit: 10,
@@ -284,6 +285,7 @@ fn query_and_scoped_search_use_page_identity() {
     assert!(!search.hits.is_empty());
     let cancelled = view.search(
         &SearchRequest {
+            transliteration: false,
             text: "archived".into(),
             within: Some(within),
             page_limit: 10,
@@ -301,6 +303,7 @@ fn query_and_scoped_search_use_page_identity() {
         assert!(matches!(
             view.search(
                 &SearchRequest {
+                    transliteration: false,
                     text: "x".into(),
                     within: Some(id),
                     page_limit: 1,
@@ -328,6 +331,7 @@ fn scoped_search_keeps_block_allowance_when_page_limit_is_large() {
     let hits = view
         .search(
             &SearchRequest {
+                transliteration: false,
                 text: "searchable".into(),
                 within: Some(PageId::from("pages/Source.md")),
                 page_limit: 20_000,
@@ -351,6 +355,7 @@ fn public_search_request_routes_page_content_membership() {
     let search = |page_match_scope| {
         view.search(
             &SearchRequest {
+                transliteration: false,
                 text: "searchable".into(),
                 within: None,
                 page_limit: 10,
@@ -389,6 +394,7 @@ fn public_search_hydrates_authored_properties_only_for_physical_pages() {
     let result = view
         .search(
             &SearchRequest {
+                transliteration: false,
                 text: "Source".into(),
                 within: None,
                 page_limit: 10,
@@ -419,6 +425,7 @@ fn public_search_sorts_complete_sections_then_samples_them_independently() {
     }
     let view = fixture.view();
     let mut request = SearchRequest {
+        transliteration: false,
         text: "alpha".into(),
         within: None,
         page_limit: 2,

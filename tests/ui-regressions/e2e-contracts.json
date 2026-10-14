@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-pinyin.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Ctrl+K finds and opens a Han title from full Mandarin Pinyin or initials, keeps native matches first, and removes expansions after disabling the device preference.","blocking":true}],
+      "acceptableVariations":["Existing deterministic tie order between colliding expansions; layout, glyphs and search latency may vary."],
+      "nonRequirements":["Exact pixels, Japanese romaji, phrase-aware polyphonic readings, block-text transliteration or GUI certification outside Linux."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-panes-keys.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Remapped tab, editing and search commands reach their intended surface; reopening sidebar cards promotes one card; Alt bullet zoom and empty sidebar drops preserve their block target.","blocking":true},{"class":"flexible-presentation-heuristic","userOutcome":"Hovering workspace and tab menus allows pointer travel into the menu before choosing an item.","blocking":false}],
       "acceptableVariations":["Hover delays, menu geometry, focus styling and save latency may vary while the semantic journeys complete."],

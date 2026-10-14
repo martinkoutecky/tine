@@ -273,7 +273,7 @@ impl Graph {
         ) {
             return None;
         }
-        let read = ReadSnapshot {
+        let mut read = ReadSnapshot {
             pages,
             config,
             list: Arc::clone(&list),
@@ -301,11 +301,13 @@ impl Graph {
                 query: crate::query::memo::QueryMemo::from_checkpoint(derived.query_memo),
             },
             query_index,
+            transliteration_names: Arc::new(HashMap::new()),
             #[cfg(test)]
             block_full_builds: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
+        read.transliteration_names = read.build_name_keys(None, &[]);
         Some((Arc::new(read), list))
     }
 }

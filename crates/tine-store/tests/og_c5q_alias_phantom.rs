@@ -44,6 +44,7 @@ fn graph() -> (tempfile::TempDir, Store) {
 
 fn page_hits(store: &Store, text: &str) -> Vec<(String, String, Option<String>)> {
     let request = SearchRequest {
+        transliteration: false,
         text: text.into(),
         within: None,
         page_limit: 100,
@@ -101,7 +102,7 @@ fn alias_reference_is_never_a_phantom_alias_page() {
         let names: Vec<_> = store
             .whole_graph()
             .unwrap()
-            .complete_page_names(query, 100, None)
+            .complete_page_names(query, 100, None, false)
             .into_iter()
             .filter(|entry| entry.rel_path.is_none())
             .map(|entry| entry.name.to_lowercase())

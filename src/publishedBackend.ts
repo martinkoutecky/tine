@@ -535,7 +535,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return collect(snapshot, (block) => includesFolded(block.raw, wanted.folded), limit);
     },
     quickSwitch,
-    async captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+    async captureQuickSwitch(query: string, limit: number, _transliteration = false): Promise<PageEntry[]> {
       return quickSwitch(query, limit);
     },
     async queryFacets() {
@@ -578,7 +578,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
      *  aliases and block text from the snapshot — navigation, not a query. A
      *  query-language search (any other consumer) is refused: the export holds
      *  answers, not an index. */
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane?: string, _explain?: boolean, scope?: QueryPageScope, _pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, _views?: { page: ViewSettings; block: ViewSettings }): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane?: string, _explain?: boolean, scope?: QueryPageScope, _pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, _views?: { page: ViewSettings; block: ViewSettings }, _transliteration = false): Promise<QueryExecution> {
       const snapshot = await load();
       if (lane !== "quick-switch" && lane !== "quick-switch:current-page") throw await staticQueryRefusal();
       const wanted = literalNeedle(source);

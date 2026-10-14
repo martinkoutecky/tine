@@ -2,6 +2,7 @@ import { codeWrapping } from "../codeDisplay";
 import { LineGutter } from "../render/LineGutter";
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { autocompleteFacets, backend } from "../backend";
+import { pinyinMatchingEnabled } from "../launcherRanking";
 import { reportUiFailure } from "../uiFailure";
 import { clearClipboardSlot, normalize, peekClipboardSlot, readClipboardText } from "../clipboard";
 import {
@@ -965,7 +966,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     completionOriginalRaw ??= node().raw;
     const result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, {
       pageName: node().page, blockId: props.id, originalRaw: completionOriginalRaw,
-    }));
+    }, pinyinMatchingEnabled()));
     if (result.kind === "stale") return;
     const pageItem = (name: string): AcItem =>
       t.kind === "page"

@@ -1786,6 +1786,7 @@ fn finish_quick_switch_top(
 
 /// Fuzzy page-name matcher for the quick switcher. Ranks prefix > substring >
 /// subsequence, then by name length.
+#[cfg(test)]
 pub(crate) fn quick_switch(graph: &ReadSnapshot, query: &str, limit: usize) -> Vec<PageEntry> {
     let plan = crate::query_plan::QueryPlan::legacy_page_search_with_policy(
         query,
@@ -1796,6 +1797,7 @@ pub(crate) fn quick_switch(graph: &ReadSnapshot, query: &str, limit: usize) -> V
     crate::query_plan::page_hits_to_entries(execution.hits)
 }
 
+#[cfg(test)]
 pub(crate) fn quick_switch_for_editor(
     graph: &ReadSnapshot,
     query: &str,
@@ -3567,6 +3569,7 @@ mod tests {
             tine_core::query::ir::FriendlyPageMatchScope::Names,
             None,
             None,
+            false,
         ));
         assert_eq!(scoped, ["foo safe"]);
     }

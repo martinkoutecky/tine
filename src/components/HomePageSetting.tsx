@@ -1,5 +1,6 @@
 import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
+import { pinyinMatchingEnabled } from "../launcherRanking";
 import { graphMeta, setGraphMeta } from "../graphSession";
 import { bindingOwner, graphOwner, readOwned, writeOwned } from "../owned";
 import { pushToast } from "../toasts";
@@ -14,7 +15,7 @@ export function HomePageSetting(): JSX.Element {
   const [matchesResource] = createResource(query, async (text) => {
     const owner = graphOwner();
     if (!owner()) return [];
-    const result = await readOwned(owner, backend().quickSwitch(text, 8));
+    const result = await readOwned(owner, backend().quickSwitch(text, 8, undefined, pinyinMatchingEnabled()));
     return result.kind === "current" ? result.value.filter((page) => page.kind === "page") : [];
   });
   const matches = () => readOr(matchesResource, undefined, "home page search");

@@ -129,6 +129,9 @@ export interface MessageArgs {
   "settings-language-description": {};
   "settings-language-label": {};
   "settings-language-system": { "language": string | number };
+  "settings-pinyin-description": {};
+  "settings-pinyin-label": {};
+  "settings-pinyin-reset": {};
   "shell-boot-opening": {};
   "shell-tray-capture": {};
   "shell-tray-open": {};
@@ -143,6 +146,8 @@ export interface MessageArgs {
   "toast-language-load-failed": {};
   "toast-language-save-failed": {};
   "toast-link-outside-graph": { "dest": string | number };
+  "toast-pinyin-load-failed": {};
+  "toast-pinyin-save-failed": {};
   "toast-repeat-count": { "count": string | number };
   "toast-wsl-rootfs-warning": {};
 }

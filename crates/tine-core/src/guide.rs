@@ -890,6 +890,26 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn pinyin_guide_explains_entry_setting_and_native_priority() {
+        let guide = include_str!("templates/pages-links-references-search.md");
+        for concept in [
+            "Match Chinese page names by Pinyin",
+            "`beijing`",
+            "`bj`",
+            "Native name matches always come first",
+            "block text is not transliterated",
+            "Turning it off",
+            "default dictionary reading",
+            "Japanese kanji",
+        ] {
+            assert!(
+                guide.contains(concept),
+                "missing onboarding concept: {concept}"
+            );
+        }
+    }
+
+    #[test]
     fn unlinked_reference_guide_says_the_highlight_is_clickable() {
         // GH #200 (master 552d988c9): nothing in the UI announces that a
         // highlighted mention is a control, so the Guide has to.

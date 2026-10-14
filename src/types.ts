@@ -448,7 +448,7 @@ export interface MatchEvidence {
   score?: number;
 }
 
-export type ObjectiveMatchClass = "exact" | "prefix" | "substring" | "fuzzy" | "body_evidence";
+export type ObjectiveMatchClass = "exact" | "prefix" | "substring" | "fuzzy" | "transliteration" | "body_evidence";
 
 export interface QueryDiagnostic {
   code: string;

@@ -20,6 +20,7 @@ import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw
 import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
+import { pinyinMatchingEnabled } from "./launcherRanking";
 import { startUiLanguage } from "./i18n/preference";
 import { reportUiFailure } from "./uiFailure";
 import { latestOwner, readOwned } from "./owned";
@@ -471,7 +472,7 @@ function Capture() {
     cancel,
     enterFiles,
     bulletHint,
-    quickSwitch: (query, limit) => backend().captureQuickSwitch(query, limit),
+    quickSwitch: (query, limit) => backend().captureQuickSwitch(query, limit, pinyinMatchingEnabled()),
   };
 
   // Grow/shrink the window whenever the rendered content changes: new/removed
