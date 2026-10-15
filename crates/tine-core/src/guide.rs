@@ -661,7 +661,7 @@ mod search_guide_tests {
         for text in [
             "select visible results",
             "Org source stays Org",
-            "include chips match any",
+            "match every included chip and none of the excluded chips",
             "collapse or expand all source groups",
         ] {
             assert!(
