@@ -2492,6 +2492,36 @@
         "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
         "refs": []
       }
+    },
+    {
+      "section": "Fixed",
+      "text": "Switching a query's view, grouping, columns or totals no longer rewrites the query text you wrote, such as `(todo …)` becoming `(task …)` (UI-QUERY-DISPLAY-KEEPS-AUTHORED-TEXT).",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-DISPLAY-KEEPS-AUTHORED-TEXT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-QUERY-DISPLAY-KEEPS-AUTHORED-TEXT.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the documented behaviour that display edits do not convert a query's filter; no workflow changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
     }
   ]
 }

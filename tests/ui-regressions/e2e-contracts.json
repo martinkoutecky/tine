@@ -487,9 +487,9 @@
     "scripts/e2e-query-sheet-input.mjs": {
       "contracts": [
         { "class": "stateful-ux", "userOutcome": "With a query's builder sheet open, real pointer presses and key presses on the sheet's own controls (the + Add condition button, the field chooser's filter and rows, its operator list) act on the sheet: the block behind does not enter edit mode, the sheet stays open, typed keys reach the filter, and Escape peels the chooser then the sheet without editing or changing any other block.", "blocking": true },
-        { "class": "stateful-ux", "userOutcome": "The sheet opens next to the query sentence it belongs to and the field chooser's rows are readable and on screen.", "blocking": true }
+        { "class": "stateful-ux", "userOutcome": "Query actions → Edit opens the builder sheet inline below its owning query's header and the field chooser's rows are readable and on screen.", "blocking": true }
       ],
-      "acceptableVariations": ["Which side of the sentence the sheet opens on, the chooser's row height, the wording of rows and operators, and how many Escape presses it takes while the chooser and sheet are both open."],
+      "acceptableVariations": ["The inline sheet's dimensions, the chooser's row height, the wording of rows and operators, and how many Escape presses it takes while the chooser and sheet are both open."],
       "nonRequirements": ["Exact sheet or popover geometry, animation, or the order of fields in the chooser."],
       "stability":"burn-in"
     },
