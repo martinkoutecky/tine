@@ -528,12 +528,36 @@ export function QueryBuilder(props: {
   const [stale, setStale] = createSignal(false);
   const [open, setOpen] = createSignal(false);
   let builderEl: HTMLDivElement | undefined;
+  let inlinePanel: HTMLDivElement | undefined;
+  const focusQuery = () => builderEl?.closest(".query-block")?.querySelector<HTMLElement>(".qc-actions > summary")?.focus();
+  const closeInline = () => { setOpen(false); focusQuery(); };
+  const change = (next: BuilderSession): void | Promise<boolean> => {
+    const outcome = props.onChange(next);
+    if (!props.inline) return outcome;
+    // Applying a value removes its popover and a reparse can replace the
+    // condition rows. Recover only focus that fell onto the body, never a
+    // user's deliberate move to another control while the save was pending.
+    const restore = (saved: boolean | void) => {
+      if (open() && inlinePanel?.isConnected
+        && inlinePanel.ownerDocument.activeElement === inlinePanel.ownerDocument.body) {
+        inlinePanel.querySelector<HTMLElement>(".qc-done")?.focus();
+      }
+      return saved !== false;
+    };
+    if (outcome) return outcome.then(restore);
+    restore(outcome);
+    return outcome;
+  };
   const [tab, setTab] = createSignal<"filter" | "display" | "text">("filter");
   createEffect(() => {
     const request = props.openRequest?.();
     if (!request) return;
     setTab(request.tab);
     setOpen(true);
+    if (props.inline) queueMicrotask(() => {
+      if (open()) (request.tab === "text" ? inlinePanel?.querySelector<HTMLElement>("textarea")
+        : inlinePanel?.querySelector<HTMLElement>(".qc-done"))?.focus();
+    });
   });
   // The text pane is mounted only while its toggle is on (default off, remembered).
   // The remembered state is a durable device preference (navSettings), not localStorage.
@@ -618,7 +642,7 @@ export function QueryBuilder(props: {
     const current = session();
     if (!current) return;
     invalidateAnchorPreview();
-    const outcome = props.onChange({ query: { ...current.query, filter: next }, view: current.view });
+    const outcome = change({ query: { ...current.query, filter: next }, view: current.view });
     setOpenMenu(null);
     return outcome;
   };
@@ -640,7 +664,7 @@ export function QueryBuilder(props: {
   const commitQuery = (query: Query) => {
     const current = session();
     if (!current) return;
-    props.onChange({ query, view: current.view });
+    void change({ query, view: current.view });
   };
 
   /**
@@ -868,7 +892,11 @@ export function QueryBuilder(props: {
           onCommit={(parsed) => {
             const current = props.session();
             if (!current) return;
-            props.onChange({ query: carryForward(parsed), view: current.view });
+            // Like a condition Apply, continue editing in the same panel.
+            // Save becomes disabled as the session is replaced; focus the
+            // textarea first so native WebKit cannot drop focus onto the body.
+            if (props.inline) paneHandle()?.focus();
+            void change({ query: carryForward(parsed), view: current.view });
           }}
           onStale={(value) => {
             setStale(value);
@@ -934,9 +962,9 @@ export function QueryBuilder(props: {
           </Show>
           <Show when={props.sheetAlwaysOpen}>{sheet()}</Show>
           <Show when={props.inline && open()}>
-            <div class="qc-panel" onClick={stop} onMouseDown={(event) => event.stopPropagation()}
-              onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") setOpen(false); }}>
-              <button type="button" class="qc-done" onClick={() => setOpen(false)}>{t("query-calm-done")}</button>
+            <div ref={inlinePanel} class="qc-panel" onClick={stop} onMouseDown={(event) => event.stopPropagation()}
+              onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") { event.preventDefault(); closeInline(); } }}>
+              <button type="button" class="qc-done" onClick={closeInline}>{t("query-calm-done")}</button>
               <Show when={tab() === "filter"} fallback={footer()}>{sheet()}</Show>
             </div>
           </Show>

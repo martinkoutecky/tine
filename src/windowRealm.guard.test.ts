@@ -39,6 +39,8 @@ const DOM_CLASS = /^(HTML\w*Element|SVG\w*Element|Element|Node|Text|CharacterDat
 /** Process-wide or main-only uses: `<file> <key>` (or `<file> *` for a file that
  * never runs in a workspace window) → why the global realm is right. */
 const REALM_ALLOW: Record<string, string> = {
+  "src/systemBars.ts *":
+    "Android's native bars follow the main app background; its observer starts only on Android, where workspace windows do not exist.",
   "src/capture.tsx *":
     "The quick-capture window is its own webview with its own JS realm; it never hosts workspace windows.",
   "src/main.tsx *":

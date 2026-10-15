@@ -14,11 +14,12 @@ const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
 const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : "tauri-driver");
 const DRIVER_BASE = Number(process.env.E2E_DRIVER_PORT || 4492);
 const NATIVE_BASE = Number(process.env.E2E_NATIVE_PORT || 4493);
-const TMP = "/tmp/tine-query-workspace-e2e";
+const TMP_ROOT = path.resolve(process.env.E2E_TMP_ROOT || process.env.TMPDIR || "/tmp");
+fs.mkdirSync(TMP_ROOT, { recursive: true });
+const TMP = fs.mkdtempSync(path.join(TMP_ROOT, "tine-query-workspace-e2e-"));
 const GRAPH = `${TMP}/graph`;
 const ARTIFACTS = process.env.E2E_ARTIFACT_DIR || `${TMP}/artifacts`;
 
-fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.mkdirSync(ARTIFACTS, { recursive: true });

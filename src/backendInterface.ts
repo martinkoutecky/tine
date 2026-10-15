@@ -80,9 +80,9 @@ export interface Backend {
     indexJson: string,
     signature: string
   ): Promise<void>;
-  /** Keep Android's edge-to-edge status/navigation icon appearance readable
-   *  against Tine's explicit in-app theme. Other platforms are a no-op. */
-  setSystemBarAppearance(dark: boolean): Promise<void>;
+  /** Host-internal Android bar background (opaque #rrggbb) and icon contrast.
+   * Missing/invalid background uses the mode fallback. Other platforms no-op. */
+  setSystemBarAppearance(dark: boolean, background?: string): Promise<void>;
   defaultGraphParent(): Promise<string>;
   closeGraphWindow(): Promise<void>;
   /** Desktop tray (GH #625, src/tray.ts): sync the icon to the `tray_*` device settings. */

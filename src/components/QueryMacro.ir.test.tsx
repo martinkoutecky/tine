@@ -35,6 +35,7 @@ import { tryFreezeGraphRewrite } from "../document/graphRewriteState";
 import { toasts, setToasts } from "../toasts";
 import { bumpDataRev } from "../graphSession";
 import { resetQueryTextOpenForTests } from "../navSettings";
+import { startEditing } from "../editorController";
 
 // These component fixtures do not bind a page host. Their source edits update
 // the working set; native coverage exercises actual publication and the epoch
@@ -620,6 +621,116 @@ async function saveThroughPane(root: HTMLElement, text: string): Promise<void> {
 }
 
 describe("B5: the save path chooses the name and answers NotApplicable", () => {
+  it("keeps another block editor's focus when a delayed crossing notice arrives", async () => {
+    load("{{query (task TODO)}}");
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    let finish: ((text: string) => void) | undefined;
+    vi.spyOn(backend(), "printQuery").mockImplementation(async (_query, _view, dialect) => dialect === "tql_macro"
+      ? new Promise<string>(resolve => { finish = resolve; }) : "-- task TODO");
+    const { root, dispose } = mount(() => <><Block id="query" /><Block id="todo" /></>);
+    try {
+      const input = await openPane(root);
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async source => parsedAs(source));
+      type(input, "@block and any(children, task = 'TODO')");
+      const save = await vi.waitFor(() => {
+        const found = root.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        expect(found?.disabled).toBe(false); return found!;
+      });
+      save.focus(); save.click();
+      await vi.waitFor(() => expect(finish).toBeDefined());
+      startEditing("todo"); await settle();
+      const editor = root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      expect(editor).not.toBeNull(); editor.focus();
+      finish!("@block and any(children, task = 'TODO')"); await settle();
+      expect(root.querySelector(".query-crossing-notice")).not.toBeNull();
+      expect(document.activeElement).toBe(editor);
+    } finally { finish?.("-- task DONE"); dispose(); }
+  });
+  it("keeps Escape's query focus when a pending dialect-crossing save finishes after the editor closes", async () => {
+    load("{{query (task TODO)}}");
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(false);
+    let finish: ((text: string) => void) | undefined;
+    vi.spyOn(backend(), "printQuery").mockImplementation(async (_query, _view, dialect) => dialect === "tql_macro"
+      ? new Promise<string>(resolve => { finish = resolve; }) : "-- task TODO");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const input = await openPane(root);
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async source => parsedAs(source));
+      type(input, "-- task DONE");
+      const save = await vi.waitFor(() => {
+        const found = root.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        if (!found || found.disabled) throw new Error("save unavailable"); return found;
+      });
+      save.focus(); save.click();
+      await vi.waitFor(() => expect(finish).toBeDefined());
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(root.querySelector(".qc-panel")).toBeNull();
+      const trigger = root.querySelector(".qc-actions > summary");
+      expect(document.activeElement).toBe(trigger);
+      finish!("-- task DONE");
+      await settle();
+      expect(root.querySelector(".query-crossing-notice")).not.toBeNull();
+      expect(document.activeElement).toBe(trigger);
+    } finally { finish?.("-- task DONE"); dispose(); }
+  });
+  it("keeps Apply in the inline panel when its condition rows are replaced", async () => {
+    load('{{query (task TODO) {:title "Tasks"}}}');
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+      query: { anchor: "block", filter: { kind: "leaf", leaf: { kind: "attr", attr: "task", op: "in", value: { kind: "list", items: [{ kind: "text", text: "TODO" }] } } },
+        source: { kind: "og", original: "(task TODO)", og_options: '{:title "Tasks"}' } }, view: {},
+    });
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue('(task DONE) {:title "Tasks"}');
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await openCalmQuery(root);
+      root.querySelector<HTMLButtonElement>(".qs-value")!.click();
+      const apply = await vi.waitFor(() => {
+        const found = document.querySelector<HTMLButtonElement>(".qs-value-editor .qs-commit");
+        expect(found).not.toBeNull(); return found!;
+      });
+      [...document.querySelectorAll<HTMLLabelElement>(".qs-check")].find(label => label.textContent?.trim() === "DONE")!
+        .querySelector<HTMLInputElement>("input")!.click();
+      apply.focus(); apply.click();
+      await vi.waitFor(() => expect(doc.byId.query.raw).toContain("task DONE"));
+      await settle();
+      expect(root.querySelector(".qc-panel")?.contains(document.activeElement)).toBe(true);
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(root.querySelector(".qc-panel")).toBeNull();
+      expect(document.activeElement).toBe(root.querySelector(".qc-actions > summary"));
+    } finally { dispose(); }
+  });
+  it.each([[true, ""], [false, ""], [true, "Notes: "]] as const)("keeps keyboard focus after Save query text (OG expressible: %s, prefix: %s), then Escape returns to the query", async (expressible, prefix) => {
+    load(`${prefix}{{query (task TODO)}}`);
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(expressible);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("(task DONE)");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const input = await openPane(root);
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async source => parsedAs(source));
+      type(input, "-- task DONE");
+      const save = await vi.waitFor(() => {
+        const found = root.querySelector<HTMLButtonElement>(".query-text-pane-save");
+        if (!found || found.disabled) throw new Error("save unavailable");
+        return found;
+      });
+      save.focus(); save.click();
+      await settle();
+      if (expressible) expect(document.activeElement).toBe(root.querySelector(".query-text-pane-input"));
+      else expect(root.querySelector(".qc-panel")?.contains(document.activeElement)).toBe(true);
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(root.querySelector(".qc-panel")).toBeNull();
+      expect(document.activeElement).toBe(root.querySelector('[aria-label="Query actions"]'));
+      const panel = await openCalmQuery(root, "View");
+      const done = panel.querySelector<HTMLButtonElement>(".qc-done")!;
+      done.focus(); done.click();
+      expect(document.activeElement).toBe(root.querySelector('[aria-label="Query actions"]'));
+    } finally { dispose(); }
+  });
   it("reports a frozen rewrite refusal without changing the block or showing a crossing notice", async () => {
     load("{{query (task TODO)}}");
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));

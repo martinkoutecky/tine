@@ -25,7 +25,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Search tabs support Up/Down to highlight results and Enter to open them, including sidebar, background-tab and other-pane modifiers (GH #697).
 - Page embeds can fold to their page-name line with the host block's mouse or keyboard fold; the choice is saved on the host without changing the embedded page (GH #694).
 - Find in page now prefills a single-line text selection and activates its first match; absent or multiline selections keep the previous query (GH #695).
+- Android status and navigation bar backgrounds follow the active theme and custom CSS live, with icons chosen for contrast (GH #693).
 
+- Query renames keep results visible, and inline query saves keep keyboard focus so Escape and Done return to the query (GH #502, GH #619).
 - Android: granting All files access while opening a graph now continues straight to the folder picker; it no longer needs a second tap (UI-ANDROID-ALL-FILES-ONE-TAP).
 - Phones: the left sidebar starts closed, so it no longer covers the journal after the first graph opens (UI-MOBILE-LEFT-DRAWER-STARTS-CLOSED).
 - Nested inline checkboxes now indent by the same clear step as child blocks (GH #691).

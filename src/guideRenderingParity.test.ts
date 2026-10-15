@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide teaches query answer continuity and Save then Escape", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
+  for (const outcome of ["Renaming keeps the current results visible", "unsaved text draft leaves the results unchanged", "Saving keeps focus in the editor", "returns focus to the query's **⋯** menu"]) expect(guide).toContain(outcome);
+});
 it("the Guide teaches inline checklist clicks, nesting, Org and own-content collapse", () => {
   const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
   for (const outcome of ["**Shift+Enter**", "`+ [ ] item` in Org", "tick just that item without opening the editor", "same indent step as child blocks", "its own inline checklist stays visible"]) expect(guide).toContain(outcome);

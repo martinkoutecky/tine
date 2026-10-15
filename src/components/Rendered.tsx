@@ -17,13 +17,13 @@ import { AnnotationBody } from "./AnnotationBody";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { blockBackgroundColor } from "../blockColors";
 import { queryMacroExtent, type MacroExtent } from "../editor/queryMacro";
-import { soleBlockMacro } from "../render/parse";
+import { isQuarantined, parseBlock, parserReady, soleBlockMacro } from "../render/parse";
 import { isQueryMacroName } from "../editor/queryMacro";
 import { beginEditGesture, renderedClickOffset, registerRenderedSelection } from "./blockGestures";
 import { isMobilePlatform } from "../nativeChrome";
 import { startEditing } from "../editorController";
 import { editorOffsetFromRenderedRange } from "../render/spans";
-import { BUILTIN_HIDE } from "../editor/properties";
+import { BUILTIN_HIDE, HIDE_ALL, splitProps } from "../editor/properties";
 import { CalGlyph, ClockBadge, toggleBlockMarkerLabel, toggleBlockCheckbox } from "./blockParts";
 
 // The rendered (non-editing) body of one block: header facets, body, chips and
@@ -31,6 +31,15 @@ import { CalGlyph, ClockBadge, toggleBlockMarkerLabel, toggleBlockCheckbox } fro
 
 // Detect a block whose entire body is a single {{query}}/{{tine-query}}/{{embed}} macro.
 export function detectMacro(raw: string, format: "md" | "org" = "md"): { kind: "query" | "embed"; inner: string; sourceExtent?: MacroExtent } | null {
+  if (!parserReady() || !raw.includes("{{") || isQuarantined(parseBlock(raw, format === "org"))) return null;
+  // lsdoc's inline macro stops at the first `}}` (inside an options map),
+  // leaving a phantom closing brace and denying the standalone host. Use the
+  // shared query reader's complete extent and the parser's visible body, so
+  // option-bearing queries keep the same reactive host as bare queries.
+  const queryExtent = queryMacroExtent(raw);
+  if (queryExtent && splitProps(raw, HIDE_ALL, format).visible.trim() === raw.slice(queryExtent.start, queryExtent.end)) {
+    return { kind: "query", inner: `${queryExtent.name} ${queryExtent.argument}`, sourceExtent: queryExtent };
+  }
   const macro = soleBlockMacro(raw, format);
   if (!macro) return null;
   if (isQueryMacroName(macro.name)) {
@@ -143,7 +152,7 @@ export function Rendered(props: {
     return blockBackgroundColor(facets().properties);
   };
 
-  const body = (
+  const body = () => (
     <Show when={annotation()} fallback={<AstBody raw={node().raw} blockId={props.id} format={fmt()} headingLevel={headingLevel()} />}>
       <AnnotationBody
         highlightId={blockExternalId(props.id) ?? props.id}
@@ -220,7 +229,7 @@ export function Rendered(props: {
       {/* Heading size is applied inside AstBody to ONLY the heading's first line
           (see renderBlocks headingLevel), so a `> quote`/table/etc. continuation in
           the same block renders at normal size — matching OG. */}
-      {body}
+      {body()}
       {/* Same gate for the trailing chips. `clock()` is only non-null for a
           DONE/TODO/LATER block, so keying on the marker also keeps `logbookInfo`
           off every ordinary block's raw text. */}

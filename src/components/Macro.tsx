@@ -72,7 +72,7 @@ import { QueryLegacyTable } from "./QueryLegacyTable";
 import { mainWindow } from "../windowRealm";
 import { QueryMacroActions } from "./QueryMacroActions";
 import { QueryResultTask } from "./QueryResultTask";
-import { resultTicket, resultsEpoch, resultsTicketActionable } from "../queryResultsEpoch";
+import { resultTicket, resultsEpoch, resultsTicketCurrent } from "../queryResultsEpoch";
 
 // Collapsed state for query results, keyed by graph + rendered query identity.
 // A raw query-string key made unrelated dashboards across pages/graphs collide.
@@ -331,9 +331,19 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const context = executionContext();
     const search = friendlySearch();
     const both = search === null && bothKinds();
-    const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed(), both]);
+    // Authored options (title, collapsed, table) do not change the question.
+    // Keep the last adopted answer on screen through their save/publication;
+    // its original ticket still governs actions. Advanced execution reads the
+    // original source, so retain it in the identity (parse.rs::resolve_for_execution).
+    // Dialects resolve stored IR differently (OG drops an empty task clause,
+    // TQL evaluates it), so a dialect change always retires the shown answer.
+    const source = query.query.source;
+    const answerQuery = { ...query.query, source: source.kind === "advanced"
+      ? { kind: source.kind, original: source.original } : { kind: source.kind } };
+    const { view: _presentation, columns: _columns, group_by: _group, aggregates: _aggregates, ...answerView } = query.view;
+    const displayKey = JSON.stringify([graphEpoch(), answerQuery, answerView, context ?? null, search, collapsed(), both]);
     // A collapsed count is never acted on: neither saves nor epochs rerun it.
-    const key = `${displayKey}\0${collapsed() ? "collapsed" : `${dataRev()}\0${resultsEpoch()}`}`;
+    const key = `${JSON.stringify([displayKey, query.query, query.view])}\0${collapsed() ? "collapsed" : `${dataRev()}\0${resultsEpoch()}`}`;
     return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
@@ -410,11 +420,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     return current && landed?.requestKey === current.displayKey ? landed : undefined;
   };
   const groups = () => displayed()?.groups ?? [];
-  /** Result actions refuse until a graph change has re-run this answer
-   * (queryResultIdentity); say so instead of looking idle. */
+  /** The shown answer is awaiting a settled rerun. Own saves can keep actions
+   * valid, but publication still delays adoption (queryResultsEpoch). */
   const resultsBusy = () => {
     const shown = displayed();
-    return !!shown && !collapsed() && !resultsTicketActionable(resultTicket(shown));
+    return !!shown && !collapsed() && (operation.loading || !resultsTicketCurrent(resultTicket(shown)));
   };
   const pageRows = () => displayed()?.pages ?? null;
   // The run's OWN diagnostics (I-9): an invalid query returns zero rows plus
@@ -522,6 +532,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // express crosses to `{{tine-query}}` (and says so, §7.5). The bytes written
   // are the engine's; a refused print writes nothing and says why (I-4).
   const applyEdit = async (next: BuilderSession, displayEdit = false): Promise<boolean> => {
+    const startedInSheet = sheetOpen();
     const blockId = props.blockId;
     if (!blockId || !docNode(blockId)) return false;
     const rawAtStart = docNode(blockId).raw;
@@ -594,11 +605,15 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       setPrintError(msg("macro-query-rewrite"));
       return false;
     }
-    if (crossing) setCrossed(blockId, boundedFeature(argument));
+    if (crossing) setCrossed(blockId, boundedFeature(argument), startedInSheet);
     return true;
   };
   /** Display uses the same guarded print and undo unit as a filter edit. */
   const applyDisplay = (view: ViewSettings): Promise<boolean> => {
+    // Display rows can disappear or be replaced after their guarded save.
+    // Keep focus on the panel's stable completion control before that happens.
+    const panel = queryEl?.querySelector<HTMLElement>(".qc-panel");
+    if (panel?.contains(panel.ownerDocument.activeElement)) panel.querySelector<HTMLElement>(".qc-done")?.focus();
     const current = reading();
     if (current && view.view !== current.view.view
       && JSON.stringify({ ...view, view: undefined }) === JSON.stringify({ ...current.view, view: undefined })) {
@@ -653,6 +668,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // -- the §7.5 crossing notice ----------------------------------------------
   const [crossedTag, setCrossedTag] = createSignal<string | null>(null);
   const [crossedText, setCrossedText] = createSignal<string | null>(null);
+  const [crossedFromSheet, setCrossedFromSheet] = createSignal(false);
   // The notice moves between two hosts; its UI state lives here so a
   // re-parented notice keeps its checkbox and does not grab focus again (N3).
   const [noticeDontShow, setNoticeDontShow] = createSignal(false);
@@ -661,13 +677,20 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const [editRequest, setEditRequest] = createSignal<{ n: number; tab: "filter" | "display" | "text" } | null>(null);
   const [bulkFold, setBulkFold] = createSignal<{ n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> }>();
   const advancedRegistry = createQueryRegistryAccess(() => isAdvanced() && editRequest()?.tab === "display");
+  let queryEl: HTMLDivElement | undefined;
+  const closeDisplay = () => {
+    setEditRequest(null);
+    queryEl?.querySelector<HTMLElement>(".qc-actions > summary")?.focus();
+  };
   const requestEdit = (tab: "filter" | "display" | "text") => {
     if (isAdvanced() && tab !== "display" && props.blockId) { startEditing(props.blockId); return; }
     setEditRequest({ n: (editRequest()?.n ?? 0) + 1, tab });
+    if (isAdvanced()) queueMicrotask(() => queryEl?.querySelector<HTMLElement>(".qc-panel .qc-done")?.focus());
   };
-  const setCrossed = (blockId: string, changed: string | null) => {
+  const setCrossed = (blockId: string, changed: string | null, fromSheet = false) => {
     primeCrossingNoticePreference();
     setCrossedText(changed);
+    setCrossedFromSheet(fromSheet);
     setNoticeDontShow(false);
     setNoticeFocused(false);
     setCrossedTag(`query:cross:${blockId}`);
@@ -689,7 +712,10 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       changed={crossedText() ?? undefined}
       dontShow={noticeDontShow()}
       onDontShowChange={setNoticeDontShow}
-      autoFocus={!noticeFocused()}
+      // A pending print can land after the user closes the panel or moves to
+      // another editor. Only continue focus while this query still owns it.
+      autoFocus={!noticeFocused() && (!crossedFromSheet() || sheetOpen())
+        && !!queryEl?.contains(queryEl.ownerDocument.activeElement)}
       onFocused={() => setNoticeFocused(true)}
       onUndo={() => {
         if (undo()) {
@@ -834,7 +860,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
 
   return (
     <Show when={!hidden()}>
-      <div class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+      <div ref={queryEl} class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
         aria-busy={resultsBusy() ? "true" : undefined}>
         <Switch>
           <Match when={unsupportedAdvanced()}>
@@ -944,8 +970,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               </Show>
             </div>
             <Show when={isAdvanced() && editRequest()?.tab === "display"}>
-              <div class="qc-panel">
-                <button type="button" class="qc-done" onClick={() => setEditRequest(null)}>{t("query-calm-done")}</button>
+              <div class="qc-panel" onKeyDown={event => {
+                event.stopPropagation();
+                if (event.key === "Escape") { event.preventDefault(); closeDisplay(); }
+              }}>
+                <button type="button" class="qc-done" onClick={closeDisplay}>{t("query-calm-done")}</button>
                 {/* Which clauses Tine ran is editing context, not resting content (GH #502). */}
                 <Show when={advInfo()?.supported}>
                   <div class="query-adv-note">
