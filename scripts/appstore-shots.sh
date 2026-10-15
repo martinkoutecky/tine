@@ -21,7 +21,7 @@ run_theme() { # udid slug theme scenes...
   local data graph
   data="$(xcrun simctl get_app_container "$udid" "$BUNDLE" data)"
   graph="$data/Documents/Tine Demo"
-  mkdir -p "$data/Documents"
+  mkdir -p "$data/Documents" "$data/tmp"
   python3 scripts/appstore-demo-graph.py store-demo-graph "$graph"
   xcrun simctl ui "$udid" appearance "$theme"
   SIMCTL_CHILD_RUST_LOG=info \
@@ -29,15 +29,17 @@ run_theme() { # udid slug theme scenes...
   SIMCTL_CHILD_TINE_DEBUG_LOG="$data/tmp/tine-debug-$theme.log" \
   SIMCTL_CHILD_TINE_GRAPH="$graph" \
   SIMCTL_CHILD_TINE_SHOT_THEME="$theme" \
+  SIMCTL_CHILD_TINE_SHOT_ROUTE_DIR="$data/tmp" \
     xcrun simctl launch "$udid" "$BUNDLE"
   sleep 15
   shoot "$udid" "$slug" "$theme-0-launch"
-  # tine:// routes (src/deepLinks.ts parseAppRoute) opened like a Home Screen quick action.
+  # tine:// routes (src/deepLinks.ts parseAppRoute), handed over through the proof-branch route file
+  # (simctl openurl pops an "Open in TineOutline?" dialog).
   local n=1 scene url
   for scene in "journal|tine://today" "seed-workshop|tine://page/Seed%20Workshop" \
                "field-guide|tine://page/Field%20Guide" "search|tine://search?q=soil"; do
     url="${scene#*|}"; scene="${scene%%|*}"
-    xcrun simctl openurl "$udid" "$url"
+    printf "%s" "$url" > "$data/tmp/route"
     sleep 5
     shoot "$udid" "$slug" "$theme-$n-$scene"
     n=$((n+1))

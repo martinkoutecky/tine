@@ -137,6 +137,8 @@ function markGuideAnnounced(owner: WriteOwner) {
  * restores the flag and toasts. O(1) plus deferred backend write. */
 export function maybeShowGuideAnnouncement() {
   const meta = graphMeta();
+  // PROOF BRANCH ONLY (exp/appstore-shots): no announcement toast in screenshots.
+  if ((globalThis as { __TINE_SHOT_THEME__?: string }).__TINE_SHOT_THEME__) return;
   if (!meta || meta.guide_announced || announcementShownForRoot.has(meta.root)) return;
   announcementShownForRoot.add(meta.root);
   const owner = bindingOwner();

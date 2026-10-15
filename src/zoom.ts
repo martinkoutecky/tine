@@ -67,6 +67,9 @@ export function applyZoom(): void {
   void platformKind()
     .then((kind) => {
       const scale = interfaceZoom();
+      // Tauri registers `set_webview_zoom` for desktop only, so on iOS the
+      // call always rejects. (proof-branch fix; iOS has no zoom UI)
+      if (kind === "ios") return;
       if (kind === "android") {
         applyAndroidInterfaceZoom(scale);
         return;

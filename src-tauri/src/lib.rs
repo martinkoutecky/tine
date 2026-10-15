@@ -838,6 +838,21 @@ pub fn run() {
             diag("setup() begin");
             // The persisted Spotlight index may hold a graph this launch never binds.
             spotlight::launched(app.handle());
+            // PROOF BRANCH ONLY (exp/appstore-shots): the Simulator shows an
+            // "Open in TineOutline?" dialog for every `simctl openurl`, so the
+            // screenshot job drops a tine:// URL in a file and this hands it to
+            // the same handler a Home Screen quick action uses.
+            if let Some(dir) = std::env::var_os("TINE_SHOT_ROUTE_DIR") {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let file = std::path::Path::new(&dir).join("route");
+                    if let Ok(url) = std::fs::read_to_string(&file) {
+                        let _ = std::fs::remove_file(&file);
+                        deep_links::receive_url(&handle, url.trim().to_string());
+                    }
+                });
+            }
             #[cfg(target_os = "linux")]
             youtube_identity::create_windows(app, &youtube_windows);
             #[cfg(desktop)]
