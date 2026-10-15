@@ -188,7 +188,7 @@ function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boo
   // under the new editor, which found no block and closed (GH #689).
   if (dto.blocks.length === 0 && roots.length === 1) {
     const only = doc.byId[roots[0]];
-    if (only && only.raw === "" && only.children.length === 0) return true;
+    if (only && only.raw.trim() === "" && only.children.length === 0) return true; // same rule as pageToDto
   }
   const eq = (b: BlockDto, id: string): boolean => {
     const n = doc.byId[id];

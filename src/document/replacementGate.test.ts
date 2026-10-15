@@ -208,6 +208,19 @@ describe("a body-less file's text is the lone empty bullet (GH #689)", () => {
     expect(editingId()).toBe(only);
   });
 
+  it("keeps the editor on a whitespace-only bullet when the file's echo arrives (saved as no body)", async () => {
+    loadFeed([page("Journal", ["j"])]);
+    ensurePageLoaded(page("P", ["a word"]));
+    const only = pageByName("P")!.roots[0];
+    startEditing(only, 0);
+    setRaw(only, " ");
+    expect(await flushAll()).toBe(true);
+    host.deliver({ key: "pages/P.md", answer: null, page: mailPage(++version, page("P", [])) });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pageByName("P")!.roots).toEqual([only]);
+    expect(editingId()).toBe(only);
+  });
+
   it("still reloads a real change to an empty file", async () => {
     loadFeed([page("Journal", ["j"])]);
     ensurePageLoaded(page("P", ["kept until disk says otherwise"]));
