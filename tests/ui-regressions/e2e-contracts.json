@@ -289,6 +289,7 @@
     "scripts/e2e-mobile-drawers.mjs": {
       "contracts": [
         { "class": "stateful-ux", "userOutcome": "On compact viewports, sidebars behave as modal overlays with safe dismissal.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "On compact viewports, the app launches with no sidebar drawer covering the page.", "blocking": true },
         { "class": "stateful-ux", "userOutcome": "On roomy viewports, sidebars remain persistent rather than becoming modal overlays.", "blocking": true }
       ],
       "acceptableVariations": ["Breakpoint and geometry may evolve, but modal overlay behavior on compact viewports and persistent sidebar behavior on roomy viewports are blocking.", "A PDF may be a routed split-pane tab while remaining contained beside the persistent sidebar."],

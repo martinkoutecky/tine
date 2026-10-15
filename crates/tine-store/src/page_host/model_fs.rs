@@ -59,8 +59,6 @@ pub(super) struct ModelFs {
     /// Adapter memory (STEP3 §2), lost at a crash. A model entry is named by
     /// its key; a spelling only orders the driver's path locks.
     pub spellings: BTreeMap<String, String>,
-    /// Alternate-extension twins a creating save finds (STEP3 §3.2).
-    pub twins: BTreeMap<String, String>,
     /// Draft I/O is down (M2): every draft effect fails untouched.
     pub down: bool,
 }
@@ -435,7 +433,17 @@ impl HostIo for ModelFs {
     }
 
     fn page_twin(&mut self, page: &str) -> IoResult<Option<String>> {
-        Ok(self.twins.get(page).cloned())
+        let twin = if let Some(stem) = page.strip_suffix(".md") {
+            format!("{stem}.org")
+        } else if let Some(stem) = page.strip_suffix(".org") {
+            format!("{stem}.md")
+        } else {
+            return Ok(None);
+        };
+        Ok(self
+            .files
+            .contains_key(&format!("graph/{twin}"))
+            .then_some(twin))
     }
 
     fn trash_move(&mut self, page: &str, payload: &str) -> MoveResult {

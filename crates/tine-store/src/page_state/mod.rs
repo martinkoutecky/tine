@@ -16,7 +16,7 @@ mod order;
 const ABSENT: i64 = -1;
 const NONE: i64 = -2;
 const UNKNOWN: i64 = -3;
-const MODEL_SHA: &str = "353162e99b1e87603cfd2d58deadc0abc3351cb8627d0115d41333014ed40a07";
+const MODEL_SHA: &str = "7ebed8779c70012c6d02a2a82417d1461db3d059819187576931134c4ea7e95c";
 type Text = i64; // Opaque equality labels, never arithmetic operands.
 type Pairs = BTreeSet<(usize, Text)>;
 
@@ -87,7 +87,7 @@ record!(Gate {
     vers: Vec<i64>,
     open: BTreeSet<usize>
 });
-record!(Sys { alive: bool, disk: Vec<Text>, stable: Vec<Text>, drafts: Vec<Draft>, trash: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "trashStable"))] trash_stable: Vec<BTreeSet<Text>>, pages: Vec<Page>, job: Job, w: Vec<W>, mb: Vec<Mail>, up: Vec<Up>, gates: Vec<Gate> });
+record!(Sys { alive: bool, claimed: BTreeSet<usize>, disk: Vec<Text>, stable: Vec<Text>, drafts: Vec<Draft>, trash: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "trashStable"))] trash_stable: Vec<BTreeSet<Text>>, pages: Vec<Page>, job: Job, w: Vec<W>, mb: Vec<Mail>, up: Vec<Up>, gates: Vec<Gate> });
 record!(Promise {
     on: bool,
     bytes: Text,
@@ -212,6 +212,7 @@ fn init(config: Config) -> State {
         config,
         s: Sys {
             alive: true,
+            claimed: BTreeSet::new(),
             disk: disk.clone(),
             stable: disk,
             drafts: (0..count).map(|_| nodraft()).collect(),
@@ -1354,6 +1355,8 @@ enum Action {
     SwitchReq,
     SwitchFin,
     ExtWriteD(usize, Text, bool),
+    ExtClaim(usize, bool),
+    PlanCreate(usize),
     Crash,
     WindowCrash,
     Power(bool, bool),
@@ -1383,7 +1386,9 @@ fn step(x: &State, a: Action) -> Option<State> {
                 && page(*dst)
                 && page(*src)
         }
-        Action::OpDelete(p)
+        Action::PlanCreate(p)
+        | Action::ExtClaim(p, _)
+        | Action::OpDelete(p)
         | Action::Load(p)
         | Action::FlushDel(p)
         | Action::WOpen(p)
@@ -1426,6 +1431,21 @@ fn step(x: &State, a: Action) -> Option<State> {
         Action::SwitchReq => switch_req(x),
         Action::SwitchFin => switch_fin(x),
         Action::ExtWriteD(p, v, d) => ext_write_d(x, p, v, d),
+        Action::PlanCreate(p) => {
+            (x.s.disk[p] == ABSENT && !x.s.claimed.contains(&p)).then(|| x.clone())
+        }
+        Action::ExtClaim(p, present) => {
+            if x.s.claimed.contains(&p) == present {
+                return None;
+            }
+            let mut s = x.s.clone();
+            if present {
+                s.claimed.insert(p);
+            } else {
+                s.claimed.remove(&p);
+            }
+            commit(x, s, x.g.clone(), "extClaim")
+        }
         Action::Crash => crash(x),
         Action::WindowCrash => window_crash(x),
         Action::Power(a, b) => power(x, a, b),
