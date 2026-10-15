@@ -1,5 +1,3 @@
-use crate::commands::decode_asset_b64;
-
 const MAX_CLIPBOARD_FILES: usize = 32;
 
 #[tauri::command]
@@ -277,32 +275,223 @@ fn linux_copy_image(bytes: &[u8]) -> Result<(), String> {
 #[tauri::command]
 pub(crate) async fn copy_image_to_clipboard(
     app: tauri::AppHandle,
-    bytes_b64: String,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<(), String> {
+    let bytes = clipboard_request_bytes(request.body())?;
     tauri::async_runtime::spawn_blocking(move || {
-        // Bounds the payload (and rejects bad base64) before any platform route.
-        let bytes = decode_asset_b64(&bytes_b64)?;
         // The clipboard plugin's mobile `write_image` is "Unsupported on this
         // platform", so Android publishes the image through its own plugin
         // (GH #654).
         #[cfg(target_os = "android")]
         {
-            let _ = bytes;
+            use base64::Engine;
+            let png = clipboard_png(&bytes)?;
+            let bytes_b64 = base64::engine::general_purpose::STANDARD.encode(png);
             return crate::android_clipboard::copy_png(&app, &bytes_b64);
         }
         #[cfg(not(target_os = "android"))]
         {
             use tauri_plugin_clipboard_manager::ClipboardExt;
             #[cfg(target_os = "linux")]
-            if linux_copy_image(&bytes).is_ok() {
+            if bytes.starts_with(b"\x89PNG\r\n\x1a\n") && linux_copy_image(&bytes).is_ok() {
                 return Ok(());
             }
-            let img = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
+            let image = decode_clipboard_image(&bytes)?;
+            #[cfg(target_os = "linux")]
+            if !bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+                && linux_copy_image(&encode_clipboard_png(&image)?).is_ok()
+            {
+                return Ok(());
+            }
+            // Reuse decoded pixels if the Linux tools failed too.
+            let rgba = image.into_rgba8();
+            let (width, height) = rgba.dimensions();
+            let img = tauri::image::Image::new_owned(rgba.into_raw(), width, height);
             app.clipboard().write_image(&img).map_err(|e| e.to_string())
         }
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Tauri 2.12.3 never supplies Raw on Android; desktop's postMessage fallback
+/// also serializes Uint8Array as a JSON array. Bound every form before making
+/// an owned byte buffer. Tauri has already materialized the request itself.
+fn clipboard_request_bytes(body: &tauri::ipc::InvokeBody) -> Result<Vec<u8>, String> {
+    const MAX_BYTES: usize = 64 * 1024 * 1024;
+    let check_len = |len: usize| {
+        if len == 0 || len > MAX_BYTES {
+            Err("image is empty or exceeds 64 MiB clipboard limit".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    match body {
+        tauri::ipc::InvokeBody::Raw(bytes) => {
+            check_len(bytes.len())?;
+            Ok(bytes.clone())
+        }
+        tauri::ipc::InvokeBody::Json(value) => {
+            if let Some(b64) = value.get("bytesB64").and_then(serde_json::Value::as_str) {
+                // Shared asset gate checks encoded and decoded lengths before
+                // base64 allocation, including the padding boundary.
+                let bytes = crate::commands::decode_asset_b64(b64)?;
+                check_len(bytes.len())?;
+                Ok(bytes)
+            } else if let Some(values) = value.as_array() {
+                check_len(values.len())?;
+                // Reject malformed values before allocating the output too.
+                if !values.iter().all(|v| v.as_u64().is_some_and(|n| n <= 255)) {
+                    return Err("expected image byte array".into());
+                }
+                Ok(values.iter().map(|v| v.as_u64().unwrap() as u8).collect())
+            } else {
+                Err("expected raw image bytes or base64 image payload".into())
+            }
+        }
+    }
+}
+
+fn decode_clipboard_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    use image::ImageDecoder;
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    // Unlike ImageReader::decode, into_decoder doesn't reserve the output
+    // buffer. Bound both the decoded buffer and the eventual RGBA conversion
+    // before allocating either (a small JPEG can describe enormous dimensions).
+    let (width, height) = decoder.dimensions();
+    image::Limits::default()
+        .reserve(
+            decoder
+                .total_bytes()
+                .max((u64::from(width) * u64::from(height)).saturating_mul(4)),
+        )
+        .map_err(|e| e.to_string())?;
+    let orientation = decoder.orientation().map_err(|e| e.to_string())?;
+    let mut image = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+    image.apply_orientation(orientation);
+    Ok(image)
+}
+
+#[cfg(any(target_os = "android", all(test, target_os = "linux")))]
+fn clipboard_png(bytes: &[u8]) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Ok(std::borrow::Cow::Borrowed(bytes));
+    }
+    Ok(std::borrow::Cow::Owned(encode_clipboard_png(
+        &decode_clipboard_image(bytes)?,
+    )?))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn encode_clipboard_png(image: &image::DynamicImage) -> Result<Vec<u8>, String> {
+    let mut png = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    Ok(png.into_inner())
+}
+
+#[cfg(test)]
+mod image_copy_tests {
+    use super::*;
+
+    #[test]
+    fn clipboard_accepts_android_json_and_desktop_transport_fallback() {
+        use tauri::ipc::InvokeBody::{Json, Raw};
+        let bytes = vec![137, 80, 78, 71];
+        // Actual ipc-protocol.js postMessage payloads (Android string and
+        // desktop Uint8Array serialized by process-ipc-message-fn.js).
+        let android = serde_json::from_str(r#"{"bytesB64":"iVBORw=="}"#).unwrap();
+        let fallback = serde_json::from_str("[137,80,78,71]").unwrap();
+        for body in [Raw(bytes.clone()), Json(android), Json(fallback)] {
+            assert_eq!(clipboard_request_bytes(&body).unwrap(), bytes);
+        }
+        for value in [
+            "null",
+            "{}",
+            "[]",
+            "[256]",
+            "[-1]",
+            "[1.5]",
+            "[null]",
+            r#"{"bytesB64":""}"#,
+            r#"{"bytesB64":"invalid"}"#,
+        ] {
+            assert!(clipboard_request_bytes(&Json(serde_json::from_str(value).unwrap())).is_err());
+        }
+        assert!(clipboard_request_bytes(&Raw(Vec::new())).is_err());
+        assert!(clipboard_request_bytes(&Raw(vec![0; 64 * 1024 * 1024 + 1])).is_err());
+        // Maximum encoded length, but padding implies one byte over the bound.
+        let b64 = "A".repeat((64_usize * 1024 * 1024).div_ceil(3) * 4);
+        assert!(
+            clipboard_request_bytes(&Json(serde_json::json!({"bytesB64": b64})))
+                .unwrap_err()
+                .contains("64 MiB")
+        );
+    }
+
+    #[test]
+    fn clipboard_decode_preserves_pixels_and_rejects_invalid_images() {
+        let image = image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 78]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        assert_eq!(
+            decode_clipboard_image(png.get_ref()).unwrap().into_rgba8(),
+            image
+        );
+        assert!(decode_clipboard_image(b"invalid").is_err());
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        assert!(matches!(
+            clipboard_png(png.get_ref()).unwrap(),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn clipboard_jpeg_preserves_browser_orientation() {
+        let image = image::RgbImage::from_fn(16, 24, |x, y| {
+            image::Rgb([(x * 13) as u8, (y * 9) as u8, ((x + y) * 5) as u8])
+        });
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut jpeg, image::ImageFormat::Jpeg).unwrap();
+        let jpeg = jpeg.into_inner();
+        // JPEG APP1: Exif TIFF, one orientation entry (6 = 90 degrees CW).
+        let exif = b"Exif\0\0II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x06\0\0\0\0\0\0\0";
+        let mut oriented = vec![0xff, 0xd8, 0xff, 0xe1];
+        oriented.extend_from_slice(&((exif.len() + 2) as u16).to_be_bytes());
+        oriented.extend_from_slice(exif);
+        oriented.extend_from_slice(&jpeg[2..]);
+        let decoded = decode_clipboard_image(&oriented).unwrap().into_rgba8();
+        let original = decode_clipboard_image(&jpeg).unwrap().into_rgba8();
+        assert_eq!(decoded, image::imageops::rotate90(&original));
+        assert_ne!(decoded, image::imageops::rotate270(&original));
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let png = clipboard_png(&oriented).unwrap();
+            assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+            assert_eq!(decode_clipboard_image(&png).unwrap().into_rgba8(), decoded);
+        }
+    }
+
+    #[test]
+    fn clipboard_rejects_huge_decoded_jpeg_before_pixel_allocation() {
+        let image = image::RgbImage::from_pixel(2, 3, image::Rgb([12, 34, 56]));
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut jpeg, image::ImageFormat::Jpeg).unwrap();
+        let mut jpeg = jpeg.into_inner();
+        let sof = jpeg.windows(2).position(|w| w == [0xff, 0xc0]).unwrap();
+        // The baseline JPEG SOF describes a 16384-square RGB image (768 MiB),
+        // despite the tiny encoded payload. RGBA would require 1 GiB.
+        jpeg[sof + 5..sof + 7].copy_from_slice(&16384_u16.to_be_bytes());
+        jpeg[sof + 7..sof + 9].copy_from_slice(&16384_u16.to_be_bytes());
+        assert!(decode_clipboard_image(&jpeg)
+            .unwrap_err()
+            .to_lowercase()
+            .contains("limit"));
+    }
 }
 
 /// What the backend knows about the rendering path, so the UI can warn — loudly

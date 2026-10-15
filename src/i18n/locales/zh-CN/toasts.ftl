@@ -1,3 +1,4 @@
+image-copy-progress = 正在复制图片…
 toast-copy = 复制
 
 toast-copy-title = 复制完整消息

@@ -1016,6 +1016,7 @@ export interface MessageArgs {
   "home-page-setting-open-this-page-when-the-graph-opens-only": {};
   "home-page-setting-search-home-pages": {};
   "home-page-setting-search-pages": {};
+  "image-copy-progress": {};
   "improve-anonymized-via": { "tier": string | number };
   "improve-both": {};
   "improve-copied": {};
