@@ -22,7 +22,7 @@ import { blockExternalId, existingBlockId, isBlockRefUuid } from "./identity";
 import { captureReferenceChangeCount, pushReferenceChangeNotice, pushToast } from "../../toasts";
 import { graphEpoch } from "../../graphSession";
 import { blockRefsInText } from "../../render/pageRefs";
-import { blockRegions } from "../../render/parse";
+import { blockRegions, soleBlockMacro } from "../../render/parse";
 
 let referenceEditSeq = 0;
 /** Capture the edit's targets before mutation, then publish against its existing
@@ -474,20 +474,29 @@ export function ensureEmptyBlock(pageName: string, opts: { afterProperties?: boo
 }
 
 
+/** Page-embed bodies share the host's ordinary, persisted outline fold. */
+export function blockHasPageEmbed(id: string): boolean {
+  const n = doc.byId[id];
+  if (!n) return false;
+  const macro = soleBlockMacro(n.raw, formatForBlock(id));
+  const target = macro?.args.join(", ").trim() ?? "";
+  return macro?.name === "embed" && target.startsWith("[[") && target.endsWith("]]");
+}
+
 export function toggleCollapse(id: string) {
   const n = doc.byId[id];
-  if (!n || !blockWritable(id) || n.children.length === 0) return;
+  if (!n || !blockWritable(id) || (n.children.length === 0 && !blockHasPageEmbed(id))) return;
   pushUndo("collapse", [n.page]);
-  writeCollapsed(id, !n.collapsed);
+  writeCollapsed(id, !n.collapsed, blockHasPageEmbed(id));
   markDirty(n.page, "save-block");
 }
 
-/** Explicitly collapse or expand a block (no-op if it has no children or is
+/** Explicitly collapse or expand a block (no-op if it has no foldable body or is
  *  already in the requested state). */
 export function setCollapsed(id: string, collapsed: boolean) {
   const n = doc.byId[id];
-  if (!n || !blockWritable(id) || n.children.length === 0 || n.collapsed === collapsed) return;
+  if (!n || !blockWritable(id) || (n.children.length === 0 && !blockHasPageEmbed(id)) || n.collapsed === collapsed) return;
   pushUndo("collapse", [n.page]);
-  writeCollapsed(id, collapsed);
+  writeCollapsed(id, collapsed, blockHasPageEmbed(id));
   markDirty(n.page, "save-block");
 }

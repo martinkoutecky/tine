@@ -503,10 +503,12 @@ export function rawWithCollapsed(raw: string, collapsed: boolean, format: Format
 
 /** Set a block's collapsed state AND mirror it into its raw `collapsed::` so it
  *  persists — the on-disk markdown is the source of truth on the next load. */
-export function writeCollapsed(id: string, collapsed: boolean) {
+export function writeCollapsed(id: string, collapsed: boolean, explicit = false) {
   const n = doc.byId[id];
   if (!n || !blockWritable(id)) return;
-  const nextRaw = rawWithCollapsed(n.raw, collapsed, formatForBlock(id));
+  const nextRaw = explicit
+    ? editBlock(n.raw, formatForBlock(id), { kind: "property", key: "collapsed", value: String(collapsed) })
+    : rawWithCollapsed(n.raw, collapsed, formatForBlock(id));
   setDoc("byId", id, "collapsed", collapsed);
   if (nextRaw !== n.raw) setDoc("byId", id, "raw", nextRaw);
   bumpCollapseEpochs([id]);

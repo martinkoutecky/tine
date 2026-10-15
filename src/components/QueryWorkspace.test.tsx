@@ -393,6 +393,91 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  it("GH #697: Enter opens the highlighted physical page when two results share a title", async () => {
+    const route: QueryRoute = { kind: "query", id: "keyboard-twins", sourceKind: "search", source: "alpha", presentation: "search" };
+    const deps = workspaceDeps();
+    const hit = executionFixture(false).hits[0];
+    if (hit.entity !== "page") throw new Error("expected page fixture");
+    vi.mocked(deps.runGraphSearch).mockResolvedValue({ hits: [hit, { ...hit, page: { ...hit.page, path: "pages/twin/alpha.md" } }], diagnostics: [], explanation: { branches: [] }, cancelled: false });
+    const router = routerMock(route);
+    const root = document.createElement("div"); document.body.append(root);
+    const previous = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.querySelectorAll("[data-query-result]")).toHaveLength(2));
+      root.querySelector<HTMLInputElement>(".query-workspace-source")!.focus();
+      for (const key of ["ArrowDown", "ArrowDown", "Enter"]) document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      expect(router.openInNewTab).toHaveBeenCalledWith(expect.objectContaining({ path: "pages/twin/alpha.md" }), true);
+    } finally { dispose(); HTMLElement.prototype.scrollIntoView = previous; }
+  });
+
+  it("GH #697: a result removed by live refresh returns keyboard focus to the tab's search input", async () => {
+    const route: QueryRoute = { kind: "query", id: "keyboard-refresh", sourceKind: "search", source: "alpha", presentation: "search" };
+    const deps = workspaceDeps();
+    let result = executionFixture(false);
+    vi.mocked(deps.runGraphSearch).mockImplementation(async () => result);
+    const root = document.createElement("div"); document.body.append(root);
+    const previous = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={deps} />, root);
+    try {
+      await waitFor(() => expect(root.querySelectorAll("[data-query-result]")).toHaveLength(2));
+      const input = root.querySelector<HTMLInputElement>(".query-workspace-source")!;
+      input.focus();
+      for (let i = 0; i < 2; i++) document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+      expect(document.activeElement?.textContent).toContain("alpha result");
+      result = { ...result, hits: [] };
+      bumpDataRev();
+      await waitFor(() => expect(root.querySelectorAll("[data-query-result]")).toHaveLength(0));
+      await waitFor(() => expect(document.activeElement).toBe(input));
+    } finally { dispose(); HTMLElement.prototype.scrollIntoView = previous; }
+  });
+
+  it.each(["search", "list", "table", "board"] as const)("GH #697: arrows enter and wrap %s results, Enter preserves click destinations and typing", async (presentation) => {
+    const route: QueryRoute = { kind: "query", id: "keyboard", sourceKind: "search", source: "alpha", presentation };
+    const router = routerMock(route);
+    const root = document.createElement("div"); document.body.append(root);
+    const scroll = vi.fn();
+    const previous = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = scroll;
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={workspaceDeps()} />, root);
+    const key = (key: string, modifiers = {}) => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...modifiers }));
+    try {
+      await waitFor(() => expect(root.textContent).toContain("Alpha notes"));
+      const input = root.querySelector<HTMLInputElement>(".query-workspace-source")!;
+      input.focus();
+      key("ArrowDown");
+      expect(document.activeElement?.textContent).toContain("Alpha notes");
+      expect(document.activeElement?.getAttribute("tabindex")).toBe("0");
+      expect(document.activeElement?.classList.contains("active")).toBe(true);
+      key("ArrowDown");
+      expect(document.activeElement?.textContent).toContain("alpha result");
+      key("Enter", { ctrlKey: true });
+      expect(router.openInNewTab).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Research", block: "authored-block-1" }), false);
+      key("ArrowDown");
+      expect(document.activeElement?.textContent).toContain("Alpha notes");
+      key("ArrowUp");
+      key("Enter", { shiftKey: true });
+      expect(rightSidebar().some(item => item.kind === "block" && item.uuid === "authored-block-1")).toBe(true);
+      key("ArrowUp");
+      key("Enter");
+      expect(router.openInNewTab).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Alpha notes" }), true);
+      const paneCount = layoutPaneIds().length;
+      key("Enter", { altKey: true });
+      expect(layoutPaneIds().length).toBeGreaterThan(paneCount);
+      expect(layoutPaneIds().some(id => {
+        const route = paneRouter(id).route();
+        return route.kind === "page" && route.name === "Alpha notes";
+      })).toBe(true);
+      expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+      input.focus(); input.value = "beta";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      expect(router.updateActiveQuery).toHaveBeenCalledWith({ source: "beta", sourceKind: "search" });
+      expect(document.activeElement).toBe(input);
+    } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); HTMLElement.prototype.scrollIntoView = previous; }
+  });
+
   it("an opened DSL window refuses, converts only on click and can be undone before saving", async () => {
     const source = "(and (task TODO) (between scheduled today +7d))";
     const tql = "@block and task = 'TODO' and scheduled between today and '+7d'";
