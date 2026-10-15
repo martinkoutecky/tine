@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "scenarios": {
     "scripts/e2e-quit-signal.mjs": {
-      "contracts": [{"class":"exact-safety-interoperability","userOutcome":"SIGTERM and SIGHUP end the app like Quit: an edit typed within the save debounce is on disk and the unclean-exit marker is removed.","blocking":true,"authority":"GH #701; data safety (pending saves flush on an orderly quit) and the ADR 0058 unclean-exit marker contract."}],
+      "contracts": [{"class":"exact-safety-interoperability","userOutcome":"SIGTERM, SIGHUP and SIGINT, to the app alone or to it and its WebKit helpers at once, end the app within 30 s and remove the unclean-exit marker; signalled alone, an edit typed within the save debounce is on disk.","blocking":true,"authority":"GH #701; data safety (pending saves flush on an orderly quit) and the ADR 0058 unclean-exit marker contract."}],
       "acceptableVariations":["Exit latency within the 30 s bound and the order of window teardown may vary."],
       "nonRequirements":["SIGKILL or a lost display connection, which no process can handle; native runs outside Linux X11 WebKitGTK."],
       "stability":"burn-in"

@@ -1,8 +1,12 @@
-// GH #701: shutting down or logging out sends SIGTERM; closing a terminal
-// sends SIGHUP. Each must end Tine like Quit: a just-typed edit reaches disk,
-// and the unclean-exit marker (ADR 0058) is removed, so the next launch does
-// not say Tine "did not close cleanly". Before the fix the default action
-// killed the process at once (exit status 143) and left the marker.
+// GH #701: shutting down or logging out sends SIGTERM (and often SIGHUP right
+// after) to every process of the session; closing a terminal sends SIGHUP and
+// Ctrl+C sends SIGINT to the process group. Each must end Tine like Quit within
+// a bound, removing the unclean-exit marker (ADR 0058), so the next launch does
+// not say Tine "did not close cleanly". When only the app process is signalled
+// (`kill <pid>`), its WebKit helpers survive and a just-typed edit must reach
+// disk too. When the helpers die with it, the page cannot flush; the app must
+// still exit and clear the marker. Before the fix the default action killed
+// the process at once (exit status 143) and left the marker.
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -45,9 +49,19 @@ function appPid() {
   }
   return null;
 }
+/** `pid` and every process below it (WebKit's helpers), as a session stop or a
+ *  terminal's process-group signal reaches them all at once. */
+function tree(pid) {
+  const rows = execFileSync("ps", ["-eo", "pid=,ppid="], { encoding: "utf8" }).trim().split("\n").map((l) => l.trim().split(/\s+/).map(Number));
+  const all = [pid];
+  for (let i = 0; i < all.length; i++) for (const [child, parent] of rows) if (parent === all[i]) all.push(child);
+  return all;
+}
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
-async function run(signal, text) {
+/** `how` is "app" (only the app process), or a list of signals sent to the
+ *  app and all its descendants in order. */
+async function run(signal, text, how = "app") {
   const log = fs.openSync(path.join(TMP, `driver-${signal}.log`), "w");
   const driver = spawn(DRIVER, ["--port", String(port), "--native-port", String(port + 1), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
   let browser;
@@ -64,11 +78,21 @@ async function run(signal, text) {
     await browser.keys("End");
     await browser.keys(text);
     // Within the save debounce: only the quit flush can save it.
-    process.kill(pid, signal);
+    if (how === "app") process.kill(pid, signal);
+    else {
+      const all = tree(pid);
+      for (const sig of how) for (const p of all) { try { process.kill(p, sig); } catch { /* gone */ } }
+      proof.steps.push(`${signal}: sent ${how.join("+")} to ${all.length} processes (app and helpers)`);
+    }
     const deadline = Date.now() + 30_000;
     while (alive(pid) && Date.now() < deadline) await sleep(100);
     if (alive(pid)) throw new Error(`${signal}: the app was still running 30 s after ${signal}`);
     proof.steps.push(`${signal}: the app exited`);
+    if (how !== "app") {
+      if (fs.existsSync(MARKER)) throw new Error(`${signal}: the unclean-exit marker survived, so the next launch reports that Tine did not close cleanly`);
+      proof.steps.push(`${signal}: the unclean-exit marker was removed`);
+      return;
+    }
     await waitForFileText(PAGE, (body) => body.includes(text)).catch((error) => {
       throw new Error(`${signal}: the typed edit is not on disk (${error.message}); file is ${JSON.stringify(fs.readFileSync(PAGE, "utf8"))}`);
     });
@@ -85,6 +109,8 @@ async function run(signal, text) {
 try {
   await run("SIGTERM", " saved by sigterm");
   await run("SIGHUP", " saved by sighup");
+  await run("shutdown", " shutdown text", ["SIGTERM", "SIGHUP"]);
+  await run("SIGINT", " ctrl-c text", ["SIGINT"]);
   fs.writeFileSync(path.join(TMP, "proof.json"), `${JSON.stringify(proof, null, 2)}\n`);
   console.log(`e2e-quit-signal: PASS (${proof.steps.length} steps) ${TMP}`);
 } catch (error) {
