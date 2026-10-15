@@ -40,4 +40,29 @@ describe("left drawer on first run", () => {
     ui.setLeftSidebarOpen(true);
     expect(ui.sidebarOpen()).toBe(true);
   });
+
+  it("a window narrow at launch gets its desktop sidebar back when it widens", async () => {
+    localStorage.removeItem("logseq-claude.sidebarOpen");
+    const listeners: (() => void)[] = [];
+    let phone = true;
+    Object.defineProperty(globalThis, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        get matches() { return phone; },
+        media: "(max-width: 639px)",
+        addEventListener: (_: string, f: () => void) => listeners.push(f),
+        removeEventListener() {},
+      }),
+    });
+    vi.resetModules();
+    const ui = await import("./ui");
+    const drawers = await import("./mobileDrawers");
+    drawers.installMobileDrawerMode();
+    ui.applySidebarSession({ left: true });
+    expect(ui.sidebarOpen()).toBe(false);
+    phone = false;
+    listeners.forEach((f) => f());
+    ui.normalizeSidebarDrawers();
+    expect(ui.sidebarOpen()).toBe(true);
+  });
 });
