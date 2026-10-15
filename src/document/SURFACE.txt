@@ -22,6 +22,7 @@ applyLiveResolution  # why: conflict dock applies a live-buffer resolution throu
 beginPageHeaderEdit
 bindHost  # why: graph open binds the page host client for the new working set; batch-og-s3b
 blockExternalId
+blockHasPageEmbed  # why: host disclosure and keyboard folds share parser-owned page-embed eligibility (GH #694); batch-embed-find
 blockIsGridView
 blockPageReadOnly
 blockPositionRef  # why: a saved session names an ID-less zoomed block by position, so navigation never writes id:: (GH #623); batch-nav

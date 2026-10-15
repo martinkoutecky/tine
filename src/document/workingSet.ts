@@ -181,6 +181,15 @@ function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boo
   const folded = foldMarkedPageHeader(page);
   if (!folded || (dto.pre_block ?? null) !== (folded.preBlock ?? null)) return false;
   const roots = folded.rootIds;
+  // A file with no body (0 bytes, or page properties only) is shown as one empty
+  // bullet (`toLoadablePage`, `ensureEmptyBlock`), and saving that bullet writes
+  // no body: the same content. Otherwise the host's answer to the Open that a
+  // click on the bullet sends (or the echo of emptying a page) replaced the page
+  // under the new editor, which found no block and closed (GH #689).
+  if (dto.blocks.length === 0 && roots.length === 1) {
+    const only = doc.byId[roots[0]];
+    if (only && only.raw.trim() === "" && only.children.length === 0) return true; // same rule as pageToDto
+  }
   const eq = (b: BlockDto, id: string): boolean => {
     const n = doc.byId[id];
     if (!n || n.raw !== b.raw || n.children.length !== b.children.length) return false;
