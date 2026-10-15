@@ -2,6 +2,7 @@
 //! host fields, physical draft selection or guarantee history.
 use super::*;
 use crate::page_state::conformance::Oracle;
+use crate::PageId;
 use io::Phase;
 use model_fs::{Fault, ModelFs};
 use serde_json::{json, Value};
@@ -103,6 +104,13 @@ struct Driver<F: ConformanceIo = ModelFs> {
     profile: String,
     barriers: usize,
     actions: usize,
+    twin_failures: usize,
+    occupied_refusals: usize,
+    queued_refusals: usize,
+    effective_renames: usize,
+    save_kind_refinements: usize,
+    refinement_schedule: bool,
+    twin_suffix: bool,
     stepped: bool,
     prepare_operations: bool,
     effect: Option<(String, Vec<Value>, u64, u64)>,
@@ -144,6 +152,13 @@ impl<F: ConformanceIo> Driver<F> {
             profile: profile.into(),
             barriers: 0,
             actions: 0,
+            twin_failures: 0,
+            occupied_refusals: 0,
+            queued_refusals: 0,
+            effective_renames: 0,
+            save_kind_refinements: 0,
+            refinement_schedule: false,
+            twin_suffix: false,
             stepped: false,
             prepare_operations: false,
             effect: None,
@@ -206,6 +221,13 @@ impl<F: ConformanceIo> Driver<F> {
             profile: self.profile.clone(),
             barriers: self.barriers,
             actions: self.actions,
+            twin_failures: self.twin_failures,
+            occupied_refusals: self.occupied_refusals,
+            queued_refusals: self.queued_refusals,
+            effective_renames: self.effective_renames,
+            save_kind_refinements: self.save_kind_refinements,
+            refinement_schedule: self.refinement_schedule,
+            twin_suffix: self.twin_suffix,
             stepped: self.stepped,
             prepare_operations: self.prepare_operations,
             effect: self.effect.clone(),
@@ -427,7 +449,7 @@ impl<F: ConformanceIo> Driver<F> {
                 json!({"dst":index(dst),"src":index(src),"vers":vers,"open":open})
             })
             .collect();
-        json!({"alive":self.host.alive,"gates":gates,"disk":disk(&self.host.fs.physical().files),
+        json!({"alive":self.host.alive,"claimed":self.claims(),"gates":gates,"disk":disk(&self.host.fs.physical().files),
             "stable":disk(&self.host.fs.physical().stable),"drafts":records,"pages":pages,
             "mb":mail,"up":up,"job":job,"w":self.windows,
             "trash":trash(&self.host.fs.physical().files),"trashStable":trash(&self.host.fs.physical().stable)})
@@ -612,16 +634,230 @@ impl<F: ConformanceIo> Driver<F> {
         panic!("{name}: nonterminal draft effect");
     }
 
-    fn step(&mut self, name: &str, args: &[Value]) -> bool {
-        if self.prepare_operations && self.host.alive && matches!(name, "opApply" | "opApplyPacked")
+    /// Physical claimant paths are durable external files, separate from the
+    /// canonical page path. Occupancy is read from the filesystem witness.
+    fn claims(&self) -> Vec<usize> {
+        (0..self.windows.len())
+            .filter(|&p| {
+                self.host
+                    .fs
+                    .physical()
+                    .files
+                    .contains_key(&format!("graph/{p:04}.org"))
+            })
+            .collect()
+    }
+
+    /// The binding's C3 predicate on a native projection of readable files.
+    /// The oracle never supplies occupancy or the transaction's answer.
+    fn slot_refusal(
+        &self,
+        eff: &BTreeMap<usize, i64>,
+        plan: &BTreeMap<usize, i64>,
+    ) -> Option<ApplyRefusal> {
+        let creations: Vec<_> = eff
+            .iter()
+            .filter(|(p, t)| **t != ABSENT && plan.get(p) == Some(&ABSENT))
+            .map(|(&p, _)| (crate::FileId::from(format!("pages/{}", key(p))), None, None))
+            .collect();
+        if creations.is_empty() {
+            return None;
+        }
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("pages")).unwrap();
+        for (path, bytes) in &self.host.fs.physical().files {
+            if let Some(page) = path.strip_prefix("graph/") {
+                if page.ends_with(".md") || page.ends_with(".org") {
+                    std::fs::write(root.path().join("pages").join(page), bytes).unwrap();
+                }
+            }
+        }
+        let store = crate::Store::open(root.path(), Default::default())
+            .unwrap()
+            .0;
+        let refusal = binding::creation_refusal(&store, &creations);
+        store.close();
+        refusal
+    }
+
+    fn rename_operation(&mut self, name: &str, args: &[Value]) -> Disposition {
+        let p = args[0].as_u64().unwrap() as usize;
+        let q = args[1].as_u64().unwrap() as usize;
+        let refs: BTreeSet<usize> = if name == "opRename" {
+            serde_json::from_value(args[2].clone()).unwrap()
+        } else {
+            (0..3)
+                .filter(|&i| {
+                    args[2 + i]
+                        .as_bool()
+                        .unwrap_or_else(|| args[2 + i].as_i64() == Some(1))
+                        && (name == "opRenameRaw" || i != p && i != q)
+                })
+                .collect()
+        };
+        let rt: BTreeMap<usize, i64> = if name == "opRename" {
+            args[3]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|pair| {
+                    (
+                        pair[0].as_u64().unwrap() as usize,
+                        pair[1].as_i64().unwrap(),
+                    )
+                })
+                .collect()
+        } else {
+            (0..3).map(|i| (i, args[5 + i].as_i64().unwrap())).collect()
+        };
+        let refkeys = refs.iter().map(|&r| key(r)).collect();
+        self.host
+            .rename_with(&key(p), &key(q), &refkeys, |bytes, k, moving| {
+                let r = k.trim_end_matches(".md").parse::<usize>().unwrap();
+                Ok(if !moving && refs.contains(&r) {
+                    text(rt[&r])
+                } else {
+                    bytes.clone()
+                })
+            })
+    }
+
+    fn apply_admission(&mut self, name: &str, args: &[Value]) -> Result<Disposition, ApplyRefusal> {
+        let (eff, plan, dst, src) = apply_args(name, args);
+        let keys = eff.keys().map(|&p| key(p)).collect();
+        let unsaved = binding::unsaved(&self.host, &keys);
+        // Compare the complete production admission set with the independent
+        // oracle, not merely the first page selected for the public refusal.
+        let expected: BTreeSet<_> = eff
+            .keys()
+            .filter(|&&p| {
+                let page = &self.oracle.state()["s"]["pages"][p];
+                page["held"] == true
+                    && (page["typed"] == true
+                        || page["risk"] == true
+                        || page["buf"] != page["base"])
+            })
+            .map(|&p| key(p))
+            .collect();
+        let actual: BTreeSet<_> = unsaved.keys().cloned().collect();
+        assert!(
+            expected.is_subset(&actual),
+            "{name}: production omitted oracle-dirty page"
+        );
+        for &p in eff.keys() {
+            if actual.contains(&key(p)) && !expected.contains(&key(p)) {
+                let state = &self.oracle.state()["s"];
+                assert!(
+                    state["w"][p]["pend"] == true
+                        || state["w"][p]["sent"] == true
+                        || state["up"].as_array().unwrap().iter().any(|u| {
+                            u["p"] == json!(p) || (u["kind"] == "op" && u["q"] == json!(p))
+                        }),
+                    "{name}: production unsaved page outside dirty-or-pending predicate"
+                );
+            }
+        }
+        if let Some(page) = unsaved.into_values().next() {
+            return Err(ApplyRefusal::Unsaved(page));
+        }
+        if let Some(refusal) = self.slot_refusal(&eff, &plan) {
+            return Err(refusal);
+        }
+        let effects = eff
+            .iter()
+            .map(|(&p, &t)| (key(p), (text(t), text(plan[&p]))))
+            .collect();
+        let ends = (dst != NONE).then(|| (key(dst as usize), key(src as usize)));
+        let moved = ends.as_ref().map(|(d, s)| (d.as_str(), s.as_str()));
+        match self.host.apply(&effects, moved) {
+            Disposition::Refused | Disposition::Disabled => Err(ApplyRefusal::Changed),
+            Disposition::Waiting => Err(ApplyRefusal::Busy),
+            disposition => Ok(disposition),
+        }
+    }
+
+    // The window side is the existing synthetic adapter, not native frontend
+    // conformance. Submit only when that adapter's current window permits it.
+    fn submit_input(&mut self, p: usize, resolve: Option<i64>) -> bool {
+        let w = self.windows[p].clone();
+        if !self.host.alive || !w.on || w.sent || if resolve.is_some() { !w.conf } else { !w.pend }
         {
+            return false;
+        }
+        let t = resolve.unwrap_or(w.text);
+        self.windows[p].text = t;
+        self.windows[p].pend = false;
+        self.windows[p].sent = true;
+        self.admit(
+            p,
+            RequestKind::Submit {
+                bytes: text(t),
+                version: self.raw(w.bv),
+                // NONE is the model's absent resolution token, not bytes.
+                resolve: resolve.and_then(|_| (w.obs != NONE).then(|| text(w.obs))),
+            },
+        );
+        true
+    }
+
+    fn edit_input(&mut self, p: usize, text: i64) -> bool {
+        if !self.host.alive || !self.windows[p].on || self.windows[p].text == text {
+            return false;
+        }
+        self.windows[p].text = text;
+        self.windows[p].pend = true;
+        true
+    }
+
+    fn move_input(&mut self, p: usize, q: usize, ts: i64, td: i64) -> bool {
+        let a = &self.windows[p];
+        let Some(b) = self.windows.get(q) else {
+            return false;
+        };
+        if !self.host.alive
+            || p == q
+            || !a.on
+            || !b.on
+            || a.pend
+            || a.sent
+            || b.pend
+            || b.sent
+            || ts == a.text
+            || td == b.text
+        {
+            return false;
+        }
+        let vs = self.raw(a.bv);
+        let vd = self.raw(b.bv);
+        self.windows[p].text = ts;
+        self.windows[q].text = td;
+        self.windows[p].sent = true;
+        self.windows[q].sent = true;
+        self.admit(
+            p,
+            RequestKind::Move {
+                receiver: key(q),
+                source_text: text(ts),
+                receiver_text: text(td),
+                source_version: vs,
+                receiver_version: vd,
+            },
+        );
+        true
+    }
+
+    fn step(&mut self, name: &str, args: &[Value]) -> bool {
+        let prepare_operations = self.prepare_operations
+            || (self.refinement_schedule
+                && (self.queued_refusals > 0 || self.occupied_refusals > 0));
+        if prepare_operations && self.host.alive && matches!(name, "opApply" | "opApplyPacked") {
             for p in apply_args(name, args).0.into_keys() {
                 if !self.host.pages.contains_key(&key(p)) {
                     assert!(self.step("load", &[json!(p)]));
                 }
             }
         }
-        if self.prepare_operations
+        if prepare_operations
             && self.host.alive
             && matches!(
                 name,
@@ -658,7 +894,341 @@ impl<F: ConformanceIo> Driver<F> {
         }
         let successor = self.oracle.next(name, args);
         if successor.is_none() {
+            let refused_schedule = self.refinement_schedule
+                && (self.queued_refusals > 0 || self.occupied_refusals > 0);
+            if refused_schedule && matches!(name, "flush" | "flushDel") {
+                // The host's start_save chooses payload versus deletion from
+                // its current buffer; a scripted label can become obsolete.
+                let current_kind = if name == "flush" { "flushDel" } else { "flush" };
+                if self.oracle.next(current_kind, args).is_some() {
+                    assert!(self.step(current_kind, args));
+                    self.save_kind_refinements += 1;
+                    return true;
+                }
+            }
+            if refused_schedule
+                && matches!(
+                    name,
+                    "flush"
+                        | "flushDel"
+                        | "wRecv"
+                        | "observe"
+                        | "wSend"
+                        | "wResolve"
+                        | "deliverUp"
+                        | "wEdit"
+                        | "draftSync"
+                        | "wOp"
+                        | "wOpTo"
+                )
+            {
+                for q in named(name, args) {
+                    self.register(q);
+                }
+                let before = self.abstract_state();
+                let files = self.host.fs.physical().files.clone();
+                let stable = self.host.fs.physical().stable.clone();
+                let version = self.host.version;
+                let versions = self.versions.clone();
+                let page = key(args[0].as_u64().unwrap_or(0) as usize);
+                if matches!(name, "wOp" | "wOpTo") {
+                    let p = args[0].as_u64().unwrap() as usize;
+                    let (q, ts, td) = if name == "wOp" {
+                        (
+                            1usize.checked_sub(p).unwrap_or(self.windows.len()),
+                            args[1].as_i64().unwrap(),
+                            args[2].as_i64().unwrap(),
+                        )
+                    } else {
+                        (
+                            args[1].as_u64().unwrap() as usize,
+                            args[2].as_i64().unwrap(),
+                            args[3].as_i64().unwrap(),
+                        )
+                    };
+                    assert!(
+                        !self.move_input(p, q, ts, td),
+                        "window adapter accepted oracle-disabled move"
+                    );
+                } else if name == "wEdit" {
+                    assert!(
+                        !self.edit_input(
+                            args[0].as_u64().unwrap() as usize,
+                            args[1].as_i64().unwrap()
+                        ),
+                        "window adapter accepted oracle-disabled edit"
+                    );
+                } else if matches!(name, "wSend" | "wResolve") {
+                    assert!(
+                        !self.submit_input(
+                            args[0].as_u64().unwrap() as usize,
+                            (name == "wResolve").then(|| args[1].as_i64().unwrap())
+                        ),
+                        "window adapter accepted oracle-disabled submit"
+                    );
+                } else if name == "deliverUp" {
+                    assert_eq!(self.host.dequeue(), Disposition::Disabled);
+                } else if name == "wRecv" {
+                    assert!(
+                        self.host.receive(&page).is_none(),
+                        "disabled receive returned mail"
+                    );
+                } else {
+                    let result = if name == "observe" {
+                        self.host.observe(&page)
+                    } else if name == "draftSync" {
+                        self.host.begin_draft(&page)
+                    } else {
+                        self.host.start_save(&page)
+                    };
+                    assert!(
+                        matches!(result, Disposition::Disabled | Disposition::Waiting),
+                        "{name}: host accepted disabled save after admission stutter: {result:?}"
+                    );
+                }
+                assert_eq!(self.abstract_state(), before);
+                assert_eq!(self.host.fs.physical().files, files);
+                assert_eq!(self.host.fs.physical().stable, stable);
+                assert_eq!(self.host.version, version);
+                assert_eq!(self.versions, versions);
+                self.compare("refused operation save schedule stutter");
+                self.actions += 1;
+                return true;
+            }
+            if name == "opRename" {
+                // R5/A-W1: oracle refs describe actual effects, whereas the
+                // public host input supplies candidates. Independently derive
+                // the effective set from oracle buffers and the opaque rewrite.
+                let refs: BTreeSet<usize> = serde_json::from_value(args[2].clone()).unwrap();
+                let rt: BTreeMap<usize, i64> = args[3]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|pair| {
+                        (
+                            pair[0].as_u64().unwrap() as usize,
+                            pair[1].as_i64().unwrap(),
+                        )
+                    })
+                    .collect();
+                let state = &self.oracle.state()["s"];
+                let effective: BTreeSet<_> = refs
+                    .iter()
+                    .copied()
+                    .filter(|&r| {
+                        let page = &state["pages"][r];
+                        let dirty = page["typed"] == true
+                            || page["risk"] == true
+                            || page["buf"] != page["base"];
+                        let busy = state["job"]["on"] == true && state["job"]["p"] == json!(r);
+                        !(page["held"] == true && (dirty || busy) && page["buf"] == json!(rt[&r]))
+                    })
+                    .collect();
+                let mapped = [
+                    args[0].clone(),
+                    args[1].clone(),
+                    json!(effective),
+                    json!(rt
+                        .iter()
+                        .filter(|(r, _)| effective.contains(r))
+                        .map(|(r, t)| json!([r, t]))
+                        .collect::<Vec<_>>()),
+                ];
+                if effective != refs && self.oracle.next("opRename", &mapped).is_some() {
+                    let version = self.host.version;
+                    assert_eq!(self.rename_operation(name, args), Disposition::Pending);
+                    self.compare("effective rename pending");
+                    self.drain("opRename", &mapped, self.host.incarnation, version);
+                    self.effective_renames += 1;
+                    return true;
+                }
+            }
+            if (self.twin_suffix || refused_schedule)
+                && self.host.job.is_none()
+                && matches!(name, "check" | "rename" | "dirSync" | "saveFail")
+            {
+                let before = self.abstract_state();
+                let files = self.host.fs.physical().files.clone();
+                let stable = self.host.fs.physical().stable.clone();
+                let version = self.host.version;
+                let versions = self.versions.clone();
+                assert_eq!(self.host.advance_save(), Disposition::Disabled);
+                assert_eq!(self.abstract_state(), before);
+                assert_eq!(self.host.fs.physical().files, files);
+                assert_eq!(self.host.fs.physical().stable, stable);
+                assert_eq!(self.host.version, version);
+                assert_eq!(self.versions, versions);
+                self.compare("terminated twin save suffix stutter");
+                self.actions += 1;
+                return true;
+            }
+            if matches!(name, "opApply" | "opApplyPacked") {
+                let before = self.abstract_state();
+                let version = self.host.version;
+                let files = self.host.fs.physical().files.clone();
+                let stable = self.host.fs.physical().stable.clone();
+                let versions = self.versions.clone();
+                let (eff, plan, dst, src) = apply_args(name, args);
+                let oracle = self.oracle.state();
+                let dirty = eff.keys().find(|&&p| {
+                    let page = &oracle["s"]["pages"][p];
+                    page["held"] == true
+                        && (page["typed"] == true
+                            || page["risk"] == true
+                            || page["buf"] != page["base"])
+                });
+                let expected = if let Some(&p) = dirty {
+                    ApplyRefusal::Unsaved(PageId::from(key(p)))
+                } else if eff
+                    .keys()
+                    .any(|p| plan.get(p) != Some(&label(&self.host.pages[&key(*p)].buf)))
+                    || eff.iter().any(|(p, t)| {
+                        *t != ABSENT && plan.get(p) == Some(&ABSENT) && self.claims().contains(p)
+                    })
+                {
+                    ApplyRefusal::Changed
+                } else if self
+                    .host
+                    .order
+                    .touches(&eff.keys().map(|&p| key(p)).collect())
+                    || self.host.job.is_some()
+                {
+                    ApplyRefusal::Busy
+                } else {
+                    panic!("unclassified opApply refusal: {eff:?} {plan:?} {dst}/{src}");
+                };
+                let result = self.apply_admission(name, args);
+                if matches!(result, Err(ApplyRefusal::Unsaved(_))) {
+                    // The entire observed set already passed the independent
+                    // dirty-or-queued predicate, including every dirty page.
+                    // Its first spelling may be pending before a dirty sibling.
+                } else {
+                    assert_eq!(
+                        result,
+                        Err(expected),
+                        "{name}: host must refuse oracle-disabled input"
+                    );
+                }
+                assert_eq!(
+                    self.abstract_state(),
+                    before,
+                    "{name}: refusal changed host state"
+                );
+                assert_eq!(self.host.version, version);
+                assert_eq!(self.host.fs.physical().files, files);
+                assert_eq!(self.host.fs.physical().stable, stable);
+                assert_eq!(self.versions, versions);
+            } else if matches!(
+                name,
+                "opDelete" | "opRename" | "opRenamePacked" | "opRenameRaw"
+            ) {
+                let before = self.abstract_state();
+                let files = self.host.fs.physical().files.clone();
+                let stable = self.host.fs.physical().stable.clone();
+                let version = self.host.version;
+                let versions = self.versions.clone();
+                let result = if name == "opDelete" {
+                    self.host
+                        .delete_loaded(&key(args[0].as_u64().unwrap() as usize))
+                } else {
+                    self.rename_operation(name, args)
+                };
+                assert!(
+                    matches!(
+                        result,
+                        Disposition::Refused | Disposition::Waiting | Disposition::Disabled
+                    ),
+                    "{name}: host accepted oracle-disabled operation: {result:?}"
+                );
+                assert_eq!(
+                    self.abstract_state(),
+                    before,
+                    "{name}: refusal changed host state"
+                );
+                assert_eq!(self.host.fs.physical().files, files);
+                assert_eq!(self.host.fs.physical().stable, stable);
+                assert_eq!(self.host.version, version);
+                assert_eq!(self.versions, versions);
+                self.compare("operation refusal stutter");
+            } else if name == "planCreate" {
+                let p = args[0].as_u64().unwrap() as usize;
+                assert_eq!(
+                    self.slot_refusal(&BTreeMap::from([(p, 3)]), &BTreeMap::from([(p, ABSENT)])),
+                    Some(ApplyRefusal::Changed)
+                );
+            }
+            if refused_schedule
+                && matches!(
+                    name,
+                    "opApply"
+                        | "opApplyPacked"
+                        | "opDelete"
+                        | "opRename"
+                        | "opRenamePacked"
+                        | "opRenameRaw"
+                )
+            {
+                self.actions += 1;
+                return true;
+            }
             return false;
+        }
+        if matches!(name, "opApply" | "opApplyPacked") {
+            let before = self.abstract_state();
+            let files = self.host.fs.physical().files.clone();
+            let stable = self.host.fs.physical().stable.clone();
+            let version = self.host.version;
+            let versions = self.versions.clone();
+            let result = self.apply_admission(name, args);
+            if let Err(refusal) = result {
+                let (eff, plan, _, _) = apply_args(name, args);
+                if matches!(refusal, ApplyRefusal::Unsaved(_)) {
+                    // apply_admission independently checked the entire set against
+                    // oracle dirty-or-pending input, including every dirty page.
+                    self.queued_refusals += 1;
+                } else {
+                    assert_eq!(refusal, ApplyRefusal::Changed, "{name}: unexpected refusal");
+                    assert!(
+                        eff.iter().any(|(p, t)| {
+                            *t != ABSENT
+                                && plan.get(p) == Some(&ABSENT)
+                                && (files.contains_key(&format!("graph/{}", key(*p)))
+                                    || self.claims().contains(p))
+                        }),
+                        "{name}: refusal without physical expected-ABSENT occupancy"
+                    );
+                    let oracle = self.oracle.state();
+                    assert!(
+                        eff.iter().any(|(p, t)| {
+                            *t != ABSENT
+                                && plan.get(p) == Some(&ABSENT)
+                                && (oracle["s"]["disk"][*p] != json!(ABSENT)
+                                    || oracle["s"]["claimed"]
+                                        .as_array()
+                                        .unwrap()
+                                        .contains(&json!(p)))
+                        }),
+                        "{name}: occupied refusal outside oracle occupancy predicate"
+                    );
+                    self.occupied_refusals += 1;
+                }
+                assert_eq!(
+                    self.abstract_state(),
+                    before,
+                    "{name}: refusal changed state"
+                );
+                assert_eq!(self.host.fs.physical().files, files);
+                assert_eq!(self.host.fs.physical().stable, stable);
+                assert_eq!(self.host.version, version);
+                assert_eq!(self.versions, versions);
+                self.compare("admission refusal stutter");
+                self.actions += 1;
+                return true;
+            }
+            assert_eq!(result, Ok(Disposition::Pending));
+            self.compare("apply pending");
+            self.drain(name, args, self.host.incarnation, version);
+            return true;
         }
         for q in named(name, args) {
             self.register(q);
@@ -677,23 +1247,10 @@ impl<F: ConformanceIo> Driver<F> {
                 self.admit(p, RequestKind::Open);
             }
             "wEdit" => {
-                self.windows[p].text = v(1);
-                self.windows[p].pend = true;
+                assert!(self.edit_input(p, v(1)));
             }
             "wSend" | "wResolve" => {
-                let w = self.windows[p].clone();
-                let t = if name == "wResolve" { v(1) } else { w.text };
-                self.windows[p].text = t;
-                self.windows[p].pend = false;
-                self.windows[p].sent = true;
-                self.admit(
-                    p,
-                    RequestKind::Submit {
-                        bytes: text(t),
-                        version: self.raw(w.bv),
-                        resolve: (name == "wResolve").then(|| text(w.obs)),
-                    },
-                );
+                assert!(self.submit_input(p, (name == "wResolve").then(|| v(1))));
             }
             "wDiscard" => {
                 self.windows[p].pend = false;
@@ -712,22 +1269,7 @@ impl<F: ConformanceIo> Driver<F> {
                 } else {
                     (v(1) as usize, v(2), v(3))
                 };
-                let vs = self.raw(self.windows[p].bv);
-                let vd = self.raw(self.windows[q].bv);
-                self.windows[p].text = ts;
-                self.windows[q].text = td;
-                self.windows[p].sent = true;
-                self.windows[q].sent = true;
-                self.admit(
-                    p,
-                    RequestKind::Move {
-                        receiver: key(q),
-                        source_text: text(ts),
-                        receiver_text: text(td),
-                        source_version: vs,
-                        receiver_version: vd,
-                    },
-                );
+                assert!(self.move_input(p, q, ts, td));
             }
             "wRecv" => self.receive(p),
             "deliverUp" => {
@@ -762,6 +1304,7 @@ impl<F: ConformanceIo> Driver<F> {
                 assert_eq!(self.host.observe(&key(p)), Disposition::Applied);
             }
             "flush" | "flushDel" => {
+                self.twin_suffix = false;
                 assert_eq!(self.host.start_save(&key(p)), Disposition::Pending);
                 self.custody_stutter();
                 if name == "flush" && !self.stepped {
@@ -769,7 +1312,29 @@ impl<F: ConformanceIo> Driver<F> {
                 }
             }
             "check" => {
+                let twin = self.host.job.as_ref().is_some_and(|job| {
+                    job.base == Base::Known(None)
+                        && job.bytes.is_some()
+                        && !self
+                            .host
+                            .fs
+                            .physical()
+                            .files
+                            .contains_key(&format!("graph/{}", job.page))
+                        && self.claims().contains(&index(&job.page))
+                });
                 self.host.advance_save();
+                if twin && self.host.job.is_none() {
+                    assert!(
+                        self.oracle.next("saveFail", &[]).is_some(),
+                        "twin failure must be an enabled model step"
+                    );
+                    self.register_versions("saveFail", &[], old_inc);
+                    self.finish("saveFail", &[]);
+                    self.twin_failures += 1;
+                    self.twin_suffix = true;
+                    return true;
+                }
             }
             "rename" => {
                 let page = self.host.job.as_ref().unwrap().page.clone();
@@ -844,57 +1409,8 @@ impl<F: ConformanceIo> Driver<F> {
             // own `refs` here; the newly enabled concrete schedules are pinned
             // by `mutation_tests` (R3a) against that effective-set step.
             "opRename" | "opRenamePacked" | "opRenameRaw" => {
-                let q = v(1) as usize;
-                let refs: BTreeSet<usize> = if name == "opRename" {
-                    serde_json::from_value(args[2].clone()).unwrap()
-                } else {
-                    (0..3)
-                        .filter(|&i| b(2 + i) && (name == "opRenameRaw" || i != p && i != q))
-                        .collect()
-                };
-                let rt: BTreeMap<usize, i64> = if name == "opRename" {
-                    args[3]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|pair| {
-                            (
-                                pair[0].as_u64().unwrap() as usize,
-                                pair[1].as_i64().unwrap(),
-                            )
-                        })
-                        .collect()
-                } else {
-                    (0..3).map(|i| (i, v(5 + i))).collect()
-                };
-                let refkeys = refs.iter().map(|&r| key(r)).collect();
-                assert_eq!(
-                    self.host
-                        .rename_with(&key(p), &key(q), &refkeys, |bytes, k, moving| {
-                            let r = k.trim_end_matches(".md").parse::<usize>().unwrap();
-                            Ok(if !moving && refs.contains(&r) {
-                                text(rt[&r])
-                            } else {
-                                bytes.clone()
-                            })
-                        }),
-                    Disposition::Pending
-                );
+                assert_eq!(self.rename_operation(name, args), Disposition::Pending);
                 self.compare("rename pending");
-                self.drain(name, args, old_inc, old_version);
-                return true;
-            }
-            // The feature's planned bytes, applied as one operation; the
-            // plan is each page's expected text (host-only-writer P2).
-            "opApply" | "opApplyPacked" => {
-                let (eff, plan, dst, src) = apply_args(name, args);
-                let effects = (eff.iter())
-                    .map(|(&p, &t)| (key(p), (text(t), text(plan[&p]))))
-                    .collect();
-                let ends = (dst != NONE).then(|| (key(dst as usize), key(src as usize)));
-                let moved = ends.as_ref().map(|(d, s)| (d.as_str(), s.as_str()));
-                assert_eq!(self.host.apply(&effects, moved), Disposition::Pending);
-                self.compare("apply pending");
                 self.drain(name, args, old_inc, old_version);
                 return true;
             }
@@ -902,6 +1418,7 @@ impl<F: ConformanceIo> Driver<F> {
                 assert_eq!(self.host.switch_request(), Disposition::Applied);
             }
             "switchFin" => {
+                self.twin_suffix = false;
                 assert_eq!(
                     self.host.switch_ready(self.host.last_admitted),
                     Disposition::Applied
@@ -909,6 +1426,19 @@ impl<F: ConformanceIo> Driver<F> {
                 assert_eq!(self.host.switch_finish(), Disposition::Applied);
                 self.windows.fill(Window::default());
                 self.pending_ids.fill(None);
+            }
+            "planCreate" => {
+                assert_eq!(
+                    self.slot_refusal(&BTreeMap::from([(p, 3)]), &BTreeMap::from([(p, ABSENT)])),
+                    None
+                );
+            }
+            "extClaim" => {
+                self.host.fs.external(
+                    &format!("{p:04}.org"),
+                    b(1).then(|| Arc::from(&b"claimant"[..])),
+                    true,
+                );
             }
             "extWrite" | "extWriteD" => {
                 self.host
@@ -921,6 +1451,7 @@ impl<F: ConformanceIo> Driver<F> {
                 self.pending_ids.fill(None);
             }
             "crash" => {
+                self.twin_suffix = false;
                 self.host.fs.crash();
                 self.host.stop();
                 self.fresh_binding();
@@ -928,6 +1459,7 @@ impl<F: ConformanceIo> Driver<F> {
                 self.pending_ids.fill(None);
             }
             "power" | "powerK" | "powerKBits" => {
+                self.twin_suffix = false;
                 let keep: BTreeSet<usize> = match name {
                     "power" => (0..2).filter(|&i| b(i)).collect(),
                     "powerKBits" => (0..3).filter(|&i| b(i)).collect(),
@@ -1004,7 +1536,12 @@ impl<F: ConformanceIo> Driver<F> {
             "wSend" | "wResolve" => {
                 owed.insert((p, self.windows[p].text));
                 if name == "wResolve" {
-                    insert(&mut g["seen"][p], json!(before["s"]["w"][p]["obs"]));
+                    let obs = before["s"]["w"][p]["obs"].as_i64().unwrap();
+                    // Restore can leave NONE through publication and a stale
+                    // submit. Observation sentinels are not seen text.
+                    if [ABSENT, 1, 2, 3].contains(&obs) {
+                        insert(&mut g["seen"][p], json!(obs));
+                    }
                 }
             }
             "wOp" | "wOpTo" => {
@@ -1353,13 +1890,39 @@ impl<F: ConformanceIo> Driver<F> {
                 }
                 "fail" => {
                     let Some(mut probe) = self.fork() else {
+                        if op[1].as_array().is_some_and(|ops| ops.len() == 1)
+                            && op[1][0][0] == "action"
+                            && matches!(
+                                op[1][0][1].as_str(),
+                                Some("opApply" | "planCreate" | "opDelete" | "opRename")
+                            )
+                        {
+                            let before = self.abstract_state();
+                            let outcome = self.program(op[1].as_array().unwrap());
+                            if outcome == Err("effective-rename-refinement") {
+                                return outcome;
+                            }
+                            if outcome != Err("disabled") {
+                                return Err("false");
+                            }
+                            assert_eq!(
+                                self.abstract_state(),
+                                before,
+                                "native refusal changed state"
+                            );
+                            continue;
+                        }
                         return Err("unsupported-native-probe");
                     };
-                    if probe.program(op[1].as_array().unwrap()).is_ok() {
+                    let outcome = probe.program(op[1].as_array().unwrap());
+                    self.effective_renames = probe.effective_renames;
+                    if outcome.is_ok() {
                         return Err("false");
                     }
                 }
                 "action" => {
+                    let twin_failures = self.twin_failures;
+                    let effective_renames = self.effective_renames;
                     let args: Vec<_> = op[2]
                         .as_array()
                         .unwrap()
@@ -1386,6 +1949,14 @@ impl<F: ConformanceIo> Driver<F> {
                     }
                     if !self.step(op[1].as_str().unwrap(), &args) {
                         return Err("disabled");
+                    }
+                    if self.twin_failures > twin_failures {
+                        // The complete saveFail successor was compared. The
+                        // scripted publication suffix belongs to another choice.
+                        return Err("twin-saveFail-refinement");
+                    }
+                    if self.effective_renames > effective_renames {
+                        return Err("effective-rename-refinement");
                     }
                 }
                 _ => panic!("unsupported program opcode {op}"),

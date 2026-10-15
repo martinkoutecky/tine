@@ -23,6 +23,15 @@ struct NativeFs {
 impl NativeFs {
     fn check_readable(&self) {
         for p in 0..self.count {
+            let twin = self.graph.join(format!("{p:04}.org"));
+            assert_eq!(
+                fs::read(twin).ok(),
+                self.ledger
+                    .files
+                    .get(&format!("graph/{p:04}.org"))
+                    .map(|b| b.to_vec()),
+                "native claimant occupancy"
+            );
             let bytes = match fs::read(self.graph.join(key(p))) {
                 Ok(bytes) => Some(Arc::<[u8]>::from(bytes)),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -374,7 +383,13 @@ impl HostIo for NativeFs {
 fn excluded(program: &Value) -> bool {
     if let Some(values) = program.as_array() {
         if values.first().and_then(Value::as_str) == Some("fail") {
-            return true;
+            let probe = &values[1];
+            return !(probe.as_array().is_some_and(|ops| ops.len() == 1)
+                && probe[0][0] == "action"
+                && matches!(
+                    probe[0][1].as_str(),
+                    Some("opApply" | "planCreate" | "opDelete" | "opRename")
+                ));
         }
         if values.first().and_then(Value::as_str) == Some("action")
             && values
@@ -391,6 +406,18 @@ fn excluded(program: &Value) -> bool {
 }
 
 #[test]
+fn s35_native_creation_positive_control() {
+    let mut driver = Driver::<NativeFs>::new_with_io("base", 3);
+    super::tests::creation_control(&mut driver, false);
+    assert!(driver.host.pages[&key(2)].clean());
+}
+
+#[test]
+fn s35_native_physical_twin_takes_save_fail() {
+    super::tests::creation_control(&mut Driver::<NativeFs>::new_with_io("base", 3), true);
+}
+
+#[test]
 #[cfg(test)]
 fn native_committed_scenarios_in_four_profiles() {
     let fixture: Value =
@@ -400,6 +427,10 @@ fn native_committed_scenarios_in_four_profiles() {
     let mut skipped = vec![];
     let mut refinements = vec![];
     let mut comparisons = 0;
+    let mut twins = 0;
+    let mut occupied = 0;
+    let mut queued = 0;
+    let mut effective = 0;
     for (name, program) in fixture["scenarios"].as_object().unwrap() {
         if excluded(program) {
             skipped.push(name.as_str());
@@ -413,8 +444,21 @@ fn native_committed_scenarios_in_four_profiles() {
         {
             let profile = oracle["profile"].as_str().unwrap();
             let mut driver = Driver::<NativeFs>::new_with_io(profile, 3);
-            let outcome = driver.program(program.as_array().unwrap());
-            if outcome == Err("native-create-refinement") {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+                driver.program(program.as_array().unwrap()))).unwrap_or_else(|failure| {
+                    eprintln!("failure capsule: tested HEAD 1b040e6c7a20 plus lane diff; native {profile}/{name}; expected s3.5 scenario outcome; observed host/model state mismatch; classification=product-or-model divergence");
+                    std::panic::resume_unwind(failure)
+                });
+            twins += driver.twin_failures;
+            occupied += driver.occupied_refusals;
+            queued += driver.queued_refusals;
+            effective += driver.effective_renames;
+            if matches!(
+                outcome,
+                Err("native-create-refinement"
+                    | "twin-saveFail-refinement"
+                    | "effective-rename-refinement")
+            ) {
                 refinements.push(format!("{profile}/{name}"));
                 continue;
             }
@@ -429,6 +473,6 @@ fn native_committed_scenarios_in_four_profiles() {
     }
     assert!(!ran.is_empty());
     eprintln!(
-        "native scenarios: {} selected, {comparisons} profile outcomes; ran={ran:?}; ModelFs-only={skipped:?}; separate no-replace refinement={refinements:?}", ran.len()
+        "native scenarios: {} selected, {comparisons} profile outcomes; {twins} twin saveFail / {occupied} occupied stutters / {queued} queued stutters / {effective} effective renames; ran={ran:?}; ModelFs-only={skipped:?}; refinement={refinements:?}", ran.len()
     );
 }

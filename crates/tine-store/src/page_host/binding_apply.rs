@@ -192,12 +192,8 @@ impl PageHost {
                     if state.progress.host.lacks_locks(&keys) {
                         return Wait::Until(None);
                     }
-                    let tx = store.transaction(None);
-                    if creations.iter().any(|(file, name, source)| {
-                        tx.admission_slot(file, name.as_deref(), source.as_ref())
-                            .is_err()
-                    }) {
-                        return Wait::Ready(Err(ApplyRefusal::Changed));
+                    if let Some(refusal) = creation_refusal(&store, &creations) {
+                        return Wait::Ready(Err(refusal));
                     }
                 }
                 let (disposition, reply) = state.progress.with_host(|host| {
@@ -303,4 +299,21 @@ impl PageHost {
                 ReserveRefusal::Busy => ApplyRefusal::Busy,
             })
     }
+}
+
+/// Binding C3: a creation whose name slot another file claims is refused.
+/// The real binding and lockstep conformance both call this one predicate
+/// before the inner host can draft or version an operation.
+pub(in crate::page_host) fn creation_refusal(
+    store: &crate::Store,
+    creations: &[(crate::FileId, Option<String>, Option<crate::FileId>)],
+) -> Option<ApplyRefusal> {
+    let tx = store.transaction(None);
+    creations
+        .iter()
+        .any(|(file, name, source)| {
+            tx.admission_slot(file, name.as_deref(), source.as_ref())
+                .is_err()
+        })
+        .then_some(ApplyRefusal::Changed)
 }

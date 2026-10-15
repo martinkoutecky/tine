@@ -158,7 +158,7 @@ fn a_twin_before_the_rename_fails_the_creating_save() {
     let mut h = host();
     open(&mut h, "c.md");
     edit(&mut h, "c.md", "created");
-    h.fs.twins.insert("c.md".into(), "c.org".into());
+    h.fs.external("c.org", Some(Arc::from(&b"twin"[..])), true);
     assert_eq!(h.start_save("c.md"), Disposition::Pending);
     while h.job.is_some() {
         h.advance_save();
@@ -181,7 +181,7 @@ fn a_twin_after_the_rename_is_a_notice_and_the_save_still_publishes() {
     while h.job.as_ref().unwrap().phase != SavePhase::Rename {
         h.advance_save();
     }
-    h.fs.twins.insert("c.md".into(), "c.org".into());
+    h.fs.external("c.org", Some(Arc::from(&b"twin"[..])), true);
     while h.job.is_some() {
         h.advance_save();
     }
@@ -197,7 +197,7 @@ fn a_replacing_save_does_not_probe_for_a_twin() {
     let mut h = host();
     open(&mut h, "a.md");
     edit(&mut h, "a.md", "replaced");
-    h.fs.twins.insert("a.md".into(), "a.org".into());
+    h.fs.external("a.org", Some(Arc::from(&b"twin"[..])), true);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
     while h.job.is_some() {
         h.advance_save();
@@ -253,7 +253,7 @@ fn a_twin_after_the_rename_keeps_a_failed_sync_uncertain() {
     while h.job.as_ref().unwrap().phase != SavePhase::Rename {
         h.advance_save();
     }
-    h.fs.twins.insert("c.md".into(), "c.org".into());
+    h.fs.external("c.org", Some(Arc::from(&b"twin"[..])), true);
     h.fs.inject(Phase::PageSync, [Fault::Before]);
     while h.job.is_some() {
         h.advance_save();
