@@ -1314,7 +1314,11 @@ mod read;
 pub use read::{HostRead, HostReadError};
 #[path = "binding_apply.rs"]
 mod apply;
+#[cfg(test)]
+pub(super) use apply::creation_refusal;
 pub use apply::{ApplyRefusal, Effect, Expected, HostOp};
+#[cfg(test)]
+pub(super) use retained::unsaved;
 #[cfg(feature = "test-faults")]
 pub use retained::OPERATION_WAIT;
 pub use retained::{RenameRefusal, Reservation, ReserveRefusal};

@@ -42,7 +42,9 @@ pub(super) fn discharge(s: &mut Sys, q: usize, ver: i64) {
 /// s3.2, in upDiscard: a Discard of a running rename's unwitnessed
 /// destination reverts its source while that still holds the deletion.
 pub(super) fn revert_partner(x: &State, s: &mut Sys, g: &mut Ghost, p: usize, v1: i64) {
-    let Some(src) = partner(s, p).filter(|&q| s.pages[q].buf == ABSENT) else {
+    let Some(src) = partner(s, p)
+        .filter(|&q| (s.pages[q].held || x.config.mutant("MRH")) && s.pages[q].buf == ABSENT)
+    else {
         return;
     };
     let sp = s.pages[src].clone();

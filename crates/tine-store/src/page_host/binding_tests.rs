@@ -1497,7 +1497,10 @@ fn save_through(u: &mut Unit, page: &str, twin_at_rename: bool) -> Option<Bindin
     assert_eq!(u.progress.host.start_save(page), Disposition::Pending);
     while let Some(job) = &u.progress.host.job {
         if twin_at_rename && job.phase == SavePhase::Rename {
-            u.progress.host.fs.twins.insert(page.into(), "c.org".into());
+            u.progress
+                .host
+                .fs
+                .external("c.org", Some(Arc::from(&b"twin"[..])), true);
         }
         u.progress.host.advance_save();
         notice = mailed(&u.collect(), page).or(notice);
@@ -1522,13 +1525,12 @@ fn a2_a_twin_is_a_binding_notice_until_a_later_save_publishes() {
             u.progress
                 .host
                 .fs
-                .twins
-                .insert("c.md".into(), "c.org".into());
+                .external("c.org", Some(Arc::from(&b"twin"[..])), true);
         }
         let notice = save_through(&mut u, "c.md", after_rename).unwrap();
         assert_eq!(notice.twin.as_deref(), Some("c.org"), "A2: {after_rename}");
         assert_eq!(u.progress.host.pages["c.md"].clean(), after_rename);
-        u.progress.host.fs.twins.clear();
+        u.progress.host.fs.external("c.org", None, true);
         if after_rename {
             u.progress.with_host(|h| edit(h, "c.md", "again"));
             u.collect();

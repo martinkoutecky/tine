@@ -54,9 +54,9 @@ def name(e):
     return e[1] if e[0]=='id' else None
 
 
-SHA = "353162e99b1e87603cfd2d58deadc0abc3351cb8627d0115d41333014ed40a07"
-SCENARIO_SHA = "033fc5b7aac419a70421c795cced1d9e0e7d8021a6f053632131fff7cefe43b8"
-SCENARIO_COUNT = 177
+SHA = "7ebed8779c70012c6d02a2a82417d1461db3d059819187576931134c4ea7e95c"
+SCENARIO_SHA = "9200a28404f60177fa3dadda6e3b932f8a866c6bb7a2110854fcd7e181abe6b5"
+SCENARIO_COUNT = 194
 PROFILES = {
     "base": 'Set("crash", "power")',
     "R1": 'Set("crash", "power", "R1")',
@@ -70,7 +70,7 @@ def scenarios(source):
     definitions, runs = {}, []
     for i, m in enumerate(matches):
         kind, n, params = m.groups()
-        if n in ["noop", "ok"]: continue
+        if n in ["noop", "ok", "planCreate"]: continue
         body = source[m.end():matches[i+1].start() if i+1 < len(matches) else len(source)].strip()
         definitions[n] = (re.findall(r"(\w+)\s*:", params or ""), parse(body))
         if kind == "run": runs.append(n)
@@ -139,7 +139,7 @@ def traced_model(model):
                "observe": 4, "draftSync": 4, "wDiscard": 2, "wClose": 2,
                "switchReq": 2}
     def emit(n, args=(), bind=""):
-        encoded = [f"if ({a}) 1 else 0" if a in ["ok", "dur", "k0", "k1", "k2", "r0", "r1", "r2", "e0", "e1", "e2"] else a for a in args]
+        encoded = [f"if ({a}) 1 else 0" if a in ["ok", "dur", "present", "k0", "k1", "k2", "r0", "r1", "r2", "e0", "e1", "e2"] else a for a in args]
         call = n + ("(" + ", ".join(args) + ")" if args else "")
         group = bind + ' all { ' + call + ', traceAction\' = { name: "' + n + '", args: List(' + ", ".join(encoded) + ') } }'
         groups.extend([group] * weights.get(n, 1))
@@ -151,6 +151,7 @@ def traced_model(model):
     for n in ["check", "rename", "saveFail", "switchReq", "switchFin", "crash", "windowCrash", "launch"]:
         emit(n)
     for n in ["dirSync", "deliverUp"]: emit(n, ["ok"], "nondet ok = BOOLS.oneOf()")
+    emit("extClaim", ["p", "present"], "nondet p = PAGES.oneOf() nondet present = BOOLS.oneOf()")
     emit("extWriteD", ["p", "v", "dur"], "nondet p = PAGES.oneOf() nondet v = TEXTS.union(Set(ABSENT)).oneOf() nondet dur = BOOLS.oneOf()")
     emit("powerKBits", ["k0", "k1", "k2"], "nondet k0 = BOOLS.oneOf() nondet k1 = BOOLS.oneOf() nondet k2 = BOOLS.oneOf()")
     for n in ["opDelete", "flushDel"]: emit(n, ["p"], "nondet p = PAGES.oneOf()")
@@ -176,7 +177,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("model_dir", type=Path)
     ap.add_argument("--quint", type=Path)
-    ap.add_argument("--scenario-source", type=Path, required=True, help="authoritative s3.3 scenarios (og/merged/scenarios-s33.inc; hash-pinned)")
+    ap.add_argument("--scenario-source", type=Path, required=True, help="authoritative s3.5 scenarios (og/merged/scenarios-s35.inc; hash-pinned)")
     ap.add_argument("--traces-per-profile", type=int, default=64)
     ap.add_argument("--steps", type=int, default=40)
     ap.add_argument("--sample", type=int, default=8, help="committed traces per profile; all generated traces are also replayed")
@@ -186,7 +187,7 @@ def main():
     root = Path(__file__).resolve().parents[2]
     work = root/"scratch"/"s3"; work.mkdir(parents=True, exist_ok=True)
     fixture = root/"crates/tine-store/tests/fixtures/s2"; fixture.mkdir(parents=True, exist_ok=True)
-    model = (args.model_dir/"storage-s33.qnt").read_text()
+    model = (args.model_dir/"storage-s35.qnt").read_text()
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
     source = args.scenario_source.read_text()
     assert hashlib.sha256(source.encode()).hexdigest() == SCENARIO_SHA
@@ -233,7 +234,7 @@ def main():
     seen = {s["action"]["name"] for t in traces for s in t["states"]}
     required = {"wOpen", "wSend", "wDiscard", "wClose", "wRecv", "flush", "observe", "draftSync",
                 "wEdit", "wResolve", "wOpTo", "opRenamePacked", "opApplyPacked", "opDelete", "flushDel", "check", "rename", "saveFail", "switchReq", "switchFin",
-                "crash", "windowCrash", "launch", "dirSync", "deliverUp", "extWriteD", "powerKBits", "load"}
+                "crash", "windowCrash", "launch", "dirSync", "deliverUp", "extClaim", "extWriteD", "powerKBits", "load"}
     assert required <= seen, ("random corpus omitted actions", required-seen)
     all_data = {"model_sha256": SHA, "seeds": seeds, "max_steps": args.steps,
                 "driver": "weighted-original-choices", "pages": 3, "traces": traces}

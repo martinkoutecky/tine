@@ -232,6 +232,9 @@ pub(super) fn op_apply(
     let stale = ps
         .iter()
         .any(|p| plan.get(p).is_none_or(|t| op_cur(&x.s, *p) != *t));
+    let claimed_creates = ps
+        .iter()
+        .any(|p| plan.get(p) == Some(&ABSENT) && eff[p] != ABSENT && x.s.claimed.contains(p));
     let shape = if mv {
         let (d, s) = (dst as usize, src as usize);
         src != NONE
@@ -253,6 +256,7 @@ pub(super) fn op_apply(
             .iter()
             .all(|p| op_clean(&x.s, *p) || x.config.mutant("MAC"))
         || (stale && !x.config.mutant("MEX"))
+        || (claimed_creates && !x.config.mutant("MNS"))
         || !shape
     {
         return None;
@@ -312,6 +316,9 @@ pub(super) fn op_apply(
     }
     if stale {
         g.bad.insert("op-stale-base".into());
+    }
+    if claimed_creates {
+        g.bad.insert("name-slot-create-over-claim".into());
     }
     commit(x, s, g, "opApply")
 }

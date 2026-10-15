@@ -5,7 +5,7 @@
 The Rust conformance tests check the committed fixtures against
 `page_state::MODEL_SHA`, and the generators check the canonical model
 against their own pins, but only when they run. A change to the canonical
-model alone (`og/merged/storage-s33.qnt` or its scenarios) passes every test
+model alone (`og/merged/storage-s35.qnt` or its scenarios) passes every test
 on the old fixtures. This check closes that gap: run it after regenerating
 and before integrating a storage packet.
 
@@ -37,14 +37,14 @@ def main() -> int:
     rust_sha = re.search(r'const MODEL_SHA: &str = "([0-9a-f]{64})";', rust).group(1)
     fixtures = ROOT / "crates/tine-store/tests/fixtures/s2"
     pins = {
-        "canonical storage-s33.qnt": digest(merged / "storage-s33.qnt"),
+        "canonical storage-s35.qnt": digest(merged / "storage-s35.qnt"),
         "page_state::MODEL_SHA": rust_sha,
     }
     for name in ("scenarios.json", "traces.json", "witnesses.json"):
         pins[f"fixture {name}"] = json.loads((fixtures / name).read_text())["model_sha256"]
     failures = [f"{name}: {sha}" for name, sha in pins.items() if sha != SHA]
     scenarios = {
-        "canonical scenarios-s33.inc": digest(merged / "scenarios-s33.inc"),
+        "canonical scenarios-s35.inc": digest(merged / "scenarios-s35.inc"),
         "fixture scenarios.json": json.loads((fixtures / "scenarios.json").read_text())["scenario_sha256"],
     }
     failures += [f"{name}: {sha}" for name, sha in scenarios.items() if sha != SCENARIO_SHA]
