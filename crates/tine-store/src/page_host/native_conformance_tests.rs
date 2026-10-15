@@ -140,6 +140,19 @@ impl NativeFs {
     }
 }
 
+/// The ledger's readable pages as real files under `dir`, for evaluating a
+/// production predicate over them (C3 occupancy in `slot_refusal`).
+pub(super) fn write_pages(ledger: &ModelFs, dir: &std::path::Path) {
+    fs::create_dir(dir).unwrap();
+    for (path, bytes) in &ledger.files {
+        if let Some(page) = path.strip_prefix("graph/") {
+            if page.ends_with(".md") || page.ends_with(".org") {
+                fs::write(dir.join(page), bytes).unwrap();
+            }
+        }
+    }
+}
+
 impl ConformanceIo for NativeFs {
     fn native_create_refinement() -> bool {
         true

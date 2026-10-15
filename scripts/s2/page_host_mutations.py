@@ -74,6 +74,7 @@ def main():
     binary = ROOT / "scratch/page-host/tools/bin/cargo-mutants"
     command = ["rtk", "proxy", str(binary), "mutants", "--no-config", "--dir", str(work),
                "--file", "src/page_host/*.rs", "--exclude", "**/conformance.rs",
+               "--exclude", "**/conformance_step.rs",
                "--exclude", "**/scheduler.rs", "--exclude", "**/*tests.rs",
                "--exclude", "**/model_fs.rs", "--output", str(args.output.resolve()),
                "--jobs", "3", "--timeout", "90", "--build-timeout", "180",

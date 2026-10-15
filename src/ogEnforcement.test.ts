@@ -24,6 +24,9 @@ describe("og campaign enforcement", () => {
     expect(isProduction("src/i18n/messages.ts")).toBe(true);
     expect(isProduction("src-tauri/src/owner/serve.rs")).toBe(true);
     expect(isProduction("crates/tine-store/src/contests.rs")).toBe(true);
+    expect(isProduction("crates/tine-store/src/page_state/mod.rs")).toBe(false);
+    // That exemption holds only while the transcription stays test-gated.
+    expect(readFileSync(path.join(root, "crates/tine-store/src/lib.rs"), "utf8")).toMatch(/#\[cfg\(test\)\]\nmod page_state;/);
   });
 
   it("ratchets production file size against the post-batch-5 baseline", () => {
