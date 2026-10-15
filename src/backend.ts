@@ -256,8 +256,8 @@ class TauriBackend implements Backend {
       signature,
     });
   }
-  setSystemBarAppearance(dark: boolean) {
-    return this.call<void>("set_system_bar_appearance", { dark });
+  setSystemBarAppearance(dark: boolean, background?: string) {
+    return this.call<void>("set_system_bar_appearance", { dark, background });
   }
   closeGraphWindow() {
     return this.call<void>("close_graph_window");
