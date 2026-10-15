@@ -58,6 +58,8 @@ mod plugins;
 mod query_export;
 #[path = "commands/query_ir.rs"]
 mod query_ir;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod quit_signal;
 mod search_workspace;
 mod settings;
 mod share_inbox;
@@ -943,6 +945,8 @@ pub fn run() {
             // (start-minimized); a tray that cannot be created never hides it.
             #[cfg(desktop)]
             let start_hidden = tray::init(app);
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            quit_signal::install(app.handle());
             #[cfg(desktop)]
             if let Some(config) = &main_window {
                 workspace_windows::create_main(app, config, start_hidden);

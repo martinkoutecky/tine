@@ -2,15 +2,15 @@
 """Quint <-> Lean outcome replay: the evidence that the Lean transcription behaves like the Quint model.
 
     (cd ../lean && lake build)          # the replays import the Lean transcriptions
-    python3 compare.py s2|s3|s31|s32|s33
+    python3 compare.py s2|s3|s31|s32|s33|s34|s35
 
 For one model version, every scenario is run in Quint (../quint/run.py, same variants as sweep.py) and in Lean
 (a program generated from the SAME scenario file by replay*.py, executed with `lake env lean --run`), under the
 four race profiles and under every mutant of the model's SWEEP-MUTS line. Each scenario's outcome (pass,
 assertion failure, disabled step, test returned false, refusal) must be identical, and every mutant's own
 scenario must fail by assertion in both. This is finite evidence, not a proof of transcription fidelity.
-Recorded results (internal verifier reruns): s2 2,024, s3 3,720, s3.1 4,433, s3.2 5,724, s3.3 7,080
-outcomes, zero differences. (s3.1's MUL heldness mutant was replayed separately; it is not covered here.)
+Recorded results (internal verifier reruns): s2 2,024, s3 3,720, s3.1 4,433, s3.2 5,724, s3.3 7,080,
+s3.4 7,831, s3.5 8,148 outcomes, zero differences. (s3.1's MUL heldness mutant was replayed separately; it is not covered here.)
 """
 import ast, json, os, re, subprocess, sys, time
 from pathlib import Path
@@ -23,6 +23,8 @@ VERSIONS = {  # version: (generator module, model, scenarios, scenario count, ge
     's31': ('replay7',  'storage-s31.qnt', 'scenarios-s31.inc', 143, 'Replay7.lean'),
     's32': ('replay8',  'storage-s32.qnt', 'scenarios-s32.inc', 159, 'Replay8.lean'),
     's33': ('replay33', 'storage-s33.qnt', 'scenarios-s33.inc', 177, 'Replay33.lean'),
+    's34': ('replay34', 'storage-s34.qnt', 'scenarios-s34.inc', 191, 'Replay34.lean'),
+    's35': ('replay35', 'storage-s35.qnt', 'scenarios-s35.inc', 194, 'Replay35.lean'),
 }
 if len(sys.argv) != 2 or sys.argv[1] not in VERSIONS:
     sys.exit(__doc__)

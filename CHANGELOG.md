@@ -27,6 +27,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- On Linux and macOS, shutting down, logging out, closing Tine's terminal or pressing Ctrl+C now ends Tine through its normal Quit within a few seconds, so the next launch no longer says Tine did not close cleanly (GH #701).
 - Image copy avoids redundant PNG encoding and base64 transport and immediately shows progress (GH #700).
 - Space-separated tags and page references in property values now render as separate links and agree with page tag facets and alias resolution (GH #699).
 - Repeated **Expand children (one level)** presses now open the next collapsed level, until the whole subtree is expanded (GH #696).

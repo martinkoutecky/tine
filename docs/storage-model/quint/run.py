@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run one Quint storage model under a race profile and a mutant.
 
-    QNT=storage-s33.qnt SCEN=scenarios-s33.inc INV='guarantee and orderHolds and renameResolves' \
+    QNT=storage-s35.qnt SCEN=scenarios-s35.inc INV='guarantee and orderHolds and renameResolves' \
         python3 run.py PROFILE MUTANT SAMPLES STEPS [SEED]      # random simulation
 
 PROFILE is base | R1 | weak | all; MUTANT is none or a name from the model's `SWEEP-MUTS` line.
@@ -26,14 +26,14 @@ SCENARIO_MATCH = '^(max|own|q|m)[A-Z]'   # every scenario name in the published 
 
 
 def model():
-    return os.environ.get('QNT', 'storage-s33.qnt')
+    return os.environ.get('QNT', 'storage-s35.qnt')
 
 
 def variant(profile, mutant):
     t = (ROOT / model()).read_text()
     t = re.sub(r'pure val RACES: Set\[str\] = .*', f'pure val RACES: Set[str] = {PROFILES[profile]}', t, count=1)
     t = re.sub(r'pure val MUTANT: str = ".*"', f'pure val MUTANT: str = "{mutant}"', t, count=1)
-    t = t.replace('  // @@SCENARIOS@@', (ROOT / os.environ.get('SCEN', 'scenarios-s33.inc')).read_text())
+    t = t.replace('  // @@SCENARIOS@@', (ROOT / os.environ.get('SCEN', 'scenarios-s35.inc')).read_text())
     d = OUT / 'gen'
     d.mkdir(parents=True, exist_ok=True)
     f = d / f'{Path(model()).stem}-{profile}-{mutant}.qnt'
