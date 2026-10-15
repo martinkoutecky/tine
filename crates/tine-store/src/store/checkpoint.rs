@@ -54,7 +54,9 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// hold folded aliases and must be rebuilt from the unchanged graph files.
 /// 14 (GH #487): parsed task markers join explicit reference projections,
 /// candidate indexes and cached backlinks; old disposable caches rebuild.
-pub(crate) const FORMAT: u32 = 14;
+/// 15 (GH #699): parser-token extraction separates stored page tag facets and
+/// aliases; older combined names in derived indexes and answers must rebuild.
+pub(crate) const FORMAT: u32 = 15;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.8";

@@ -39,7 +39,7 @@ describe("OG-B-DOOR2 shared-answer boundaries", () => {
   });
 
   it("uses Rust property separators and one grapheme-safe plain matcher (I-4/I-12)", () => {
-    expect(read("src/render/pageRefs.ts")).toContain("splitLinkableProperty(value)");
+    expect(read("src/render/pageRefs.ts")).toContain('linkable_property_names(value, format === "org")');
     expect(read("src/render/block.ts")).not.toContain(".split(/[,，]/)");
     expect(read("src/mock.ts")).not.toContain(".split(/[,，]/)");
     const source = read("crates/tine-core/src/reference_evidence/plain_match.rs");

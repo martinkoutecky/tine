@@ -404,12 +404,10 @@ pub(crate) fn document_alias_spellings(doc: &Document) -> Vec<String> {
             if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
                 continue;
             }
-            for alias in v.split(tine_core::refs::is_linkable_property_separator) {
-                let alias = strip_ref(alias.trim());
-                if !alias.is_empty() {
-                    aliases.push(alias);
-                }
-            }
+            aliases.extend(tine_core::property_refs::linkable_names(
+                &v,
+                page_document_is_org(doc),
+            ));
         }
     }
     // Collapse duplicate identities while retaining a deterministic spelling.
@@ -996,8 +994,8 @@ fn backlink_filter_entry(
             add_facet(marker);
         }
         // OG treats tags::/alias:: property values as page references too. The
-        // property boundary itself is parser-owned; only its comma-separated
-        // semantic values are unwrapped here.
+        // property boundary and explicit reference tokens are parser-owned;
+        // top-level plain text supplies the additional comma-separated names.
         for (key, value) in projection.properties() {
             if !(key.eq_ignore_ascii_case("tags")
                 || key.eq_ignore_ascii_case("alias")
@@ -1009,8 +1007,7 @@ fn backlink_filter_entry(
             if quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"') {
                 continue;
             }
-            for value in value.split(tine_core::refs::is_linkable_property_separator) {
-                let name = strip_ref(value.trim());
+            for name in tine_core::property_refs::linkable_names(value, block.is_org()) {
                 add_facet(&name);
             }
         }
@@ -2269,17 +2266,6 @@ fn resolve_ids_in_page<'a>(
             }
         }
     });
-}
-
-/// A page-ref argument's bare name: `#tag`, `[[Page]]` and `Page` alike.
-fn strip_ref(s: &str) -> String {
-    let t = s.trim();
-    let t = t.strip_prefix('#').unwrap_or(t).trim();
-    let t = t
-        .strip_prefix("[[")
-        .and_then(|x| x.strip_suffix("]]"))
-        .unwrap_or(t);
-    t.trim().to_string()
 }
 
 #[cfg(test)]

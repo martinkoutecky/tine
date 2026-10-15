@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-gh699-property-tags.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Each reporter property spelling renders three independent tags; clicking eng opens the eng page with the source backlink, while browsing preserves all source files.","blocking":true}],
+      "acceptableVariations":["Link styling, layout and load latency may vary while tag destinations and source backlinks agree."],
+      "nonRequirements":["Exact pixels, incidental DOM structure or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-embed-find.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Page embeds fold to their page-name line, share the host children fold, survive navigation and save only the host; nested keyboard folds affect the occurrence and preserve both embedded source files; the existing Find key seeds editor and rendered selections with the first match active.","blocking":true}],
       "acceptableVariations":["Disclosure styling and save latency may vary while the host state, source bytes and selected query remain correct."],
