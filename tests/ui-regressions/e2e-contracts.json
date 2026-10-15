@@ -43,6 +43,12 @@
       "nonRequirements":["Exact pixels, a fixed horizon, specific DOM shape or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-empty-page-edit.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A page or journal whose file has no body (emptied in Tine, 0 bytes on disk, page properties only, Markdown or Org) shows one empty bullet that keeps the caret when clicked, and typed text is saved to that file.","blocking":true}],
+      "acceptableVariations":["Bullet styling, save latency and the bytes an emptied page saves (empty or a lone newline) may vary while typing reaches the file."],
+      "nonRequirements":["Exact pixels, caret blink timing, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-reference-alias-chips.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Reference filters merge alias chips, count each block once, load legacy alias-named filters and retain canonical include/exclude choices after a guarded save and restart.","blocking":true}],
       "acceptableVariations":["Chip styling, navigation layout and save latency may vary while canonical labels, block counts, membership and persisted choices remain correct."],
@@ -83,6 +89,12 @@
       "contracts": [{"class":"core-operation","userOutcome":"A clicked in-block checkbox toggles its own token without entering edit; quote collapse survives save and route reopen without leaking metadata; Linux PRIMARY exports only the selected passage; malformed config EDN leaves existing pages readable while edits refuse.","blocking":true},{"class":"exact-safety-interoperability","userOutcome":"Checkbox and quote collapse writes preserve all unrelated file bytes.","blocking":true,"authority":"R2 editor-bugs lane byte-preservation contract and OG 0.10.9 property/insert-property quote placement."}],
       "acceptableVariations":["Navigation layout, glyph details and save latency may vary while text, collapse state and paste contents remain correct."],
       "nonRequirements":["Exact pixels, native screenshots, Tuta-specific clipboard negotiation or certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-inline-checkbox.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Markdown and Org inline checkbox clicks toggle the selected item without entering edit; reopening retains it; collapse hides child blocks while retaining own content.","blocking":true},{"class":"exact-safety-interoperability","userOutcome":"Ticking and unticking preserve every unrelated file byte.","blocking":true,"authority":"GH #691 lane guarded-save and exact parsed-source-position contract."},{"class":"flexible-presentation-heuristic","userOutcome":"Nested inline checklist hierarchy is clearly indented, comparable to ordinary child blocks.","blocking":false}],
+      "acceptableVariations":["List markers, font metrics, layout and save latency may vary while the hierarchy and checked state remain clear."],
+      "nonRequirements":["Exact pixels, hiding own content on collapse, changing OG parser classifications or certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-editor-context.mjs": {

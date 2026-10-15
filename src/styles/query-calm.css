@@ -1,11 +1,11 @@
-/* A resting query reads like outline content. The native disclosure retains
-   keyboard access even while its visual affordance is quiet. */
+/* A resting query keeps its own bounded box (Martin 2026-10-14: remove elements
+   from the box, keep the box); the calm part is what sits inside it. The native
+   disclosure retains keyboard access even while its visual affordance is quiet. */
 .query-block, .query-block.query-sheet-block {
-  border: 0;
-  border-left: 2px solid var(--border-color);
-  border-radius: 0;
-  background: transparent;
-  padding: 2px 0 2px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  padding: 6px 12px;
   margin: 4px 0;
   min-width: 0;
 }
