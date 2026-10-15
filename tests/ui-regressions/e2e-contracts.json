@@ -85,6 +85,12 @@
       "nonRequirements":["Exact pixels, native screenshots, Tuta-specific clipboard negotiation or certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-inline-checkbox.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Markdown and Org inline checkbox clicks toggle the selected item without entering edit; reopening retains it; collapse hides child blocks while retaining own content.","blocking":true},{"class":"exact-safety-interoperability","userOutcome":"Ticking and unticking preserve every unrelated file byte.","blocking":true,"authority":"GH #691 lane guarded-save and exact parsed-source-position contract."},{"class":"flexible-presentation-heuristic","userOutcome":"Nested inline checklist hierarchy is clearly indented, comparable to ordinary child blocks.","blocking":false}],
+      "acceptableVariations":["List markers, font metrics, layout and save latency may vary while the hierarchy and checked state remain clear."],
+      "nonRequirements":["Exact pixels, hiding own content on collapse, changing OG parser classifications or certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-editor-context.mjs": {
       "contracts": [
         {"class":"stateful-ux","userOutcome":"Editing an embedded mixed-code region leaves surrounding prose visible, and Select embedding block leaves that source editor and selects its macro host.","blocking":true},
