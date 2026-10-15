@@ -24,6 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Changed
 
 - Existing `{{query}}` blocks with scheduled/deadline date windows now ask to be converted to `{{tine-query}}`, preserving their date-window meaning with Undo (GH #422).
+- The Linux Flatpak is built on the GNOME 49 runtime (was 48), which Tine's updated Tauri needs.
 
 ### Fixed
 

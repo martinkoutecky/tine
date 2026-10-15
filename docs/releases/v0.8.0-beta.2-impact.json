@@ -2522,6 +2522,36 @@
         "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
         "refs": []
       }
+    },
+    {
+      "section": "Changed",
+      "text": "The Linux Flatpak is built on the GNOME 49 runtime (was 48), which Tine's updated Tauri needs.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "not-applicable",
+        "reason": "Packaging runtime bump; the release workflow's offline Flatpak build is the gate (src/flatpakPackaging.guard.test.ts pins the manifest).",
+        "refs": [
+          ".github/workflows/flatpak.yml"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Installation steps are unchanged; Flatpak pulls the GNOME 49 runtime automatically.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
     }
   ]
 }
