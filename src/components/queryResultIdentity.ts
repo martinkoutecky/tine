@@ -4,8 +4,7 @@ import { pushToast } from "../toasts";
 import { t } from "../i18n";
 import type { BlockDto, Format, PageDto, PageKind } from "../types";
 import { blockRegions } from "../render/parse";
-import { formatForPage, node, pageByName, pageRoots, type Node as ReadonlyNode } from "../document";
-import { pageInstanceGeneration } from "../document/instance";
+import { formatForPage, node, pageByName, pageInstanceGeneration, pageRoots, type Node as ReadonlyNode } from "../document";
 import { resultTicket, resultsActionable, resultsEpoch, resultsTicketActionable } from "../queryResultsEpoch";
 import { bindingCurrent, captureBinding } from "../binding";
 
