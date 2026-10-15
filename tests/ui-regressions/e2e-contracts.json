@@ -7,6 +7,12 @@
       "nonRequirements":["Exact pixels, incidental DOM structure or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-image-copy.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Inline JPEG and PNG copy and lightbox copy show progress and publish an image on the Linux system clipboard; decoded clipboard dimensions match the source.","blocking":true}],
+      "acceptableVariations":["Copy duration, PNG compression, styling and clipboard target ordering may vary while image data and progress remain available."],
+      "nonRequirements":["A fixed latency threshold, exact pixels, batch image operations, or native runtime certification outside Linux X11 WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-embed-find.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Page embeds fold to their page-name line, share the host children fold, survive navigation and save only the host; nested keyboard folds affect the occurrence and preserve both embedded source files; the existing Find key seeds editor and rendered selections with the first match active.","blocking":true}],
       "acceptableVariations":["Disclosure styling and save latency may vary while the host state, source bytes and selected query remain correct."],
