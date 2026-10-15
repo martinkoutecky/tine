@@ -600,6 +600,13 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   // A navOnly display-list scope must never act as a merge/structural topology.
   const structuralScope = outlineScope?.navOnly ? null : outlineScope;
+  const setOccurrenceCollapsed = (value: boolean) => {
+    if (!collapseSurface) { setCollapsed(props.id, value); return; }
+    const n = docNode(props.id);
+    if (!n || (n.children.length === 0 && !blockHasPageEmbed(props.id))) return;
+    const current = collapseSurface.collapsed(props.id, n.collapsed);
+    if (current !== value) collapseSurface.toggle(props.id, current);
+  };
   let ref!: HTMLTextAreaElement;
   let pendingScrollAnchor: ReturnType<typeof captureEditorScrollAnchor> | undefined;
   onCleanup(() => pendingScrollAnchor?.cancel());
@@ -2312,8 +2319,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     "editor/forward-word": (e) => { e.preventDefault(); moveCaret(wordForward(ref.value, ref.selectionStart)); return true; },
     "editor/move-block-up": (e) => moveBlockCmd(e, -1),
     "editor/move-block-down": (e) => moveBlockCmd(e, 1),
-    "editor/collapse": (e) => { e.preventDefault(); setCollapsed(props.id, true); return true; },
-    "editor/expand": (e) => { e.preventDefault(); setCollapsed(props.id, false); return true; },
+    "editor/collapse": (e) => { e.preventDefault(); setOccurrenceCollapsed(true); return true; },
+    "editor/expand": (e) => { e.preventDefault(); setOccurrenceCollapsed(false); return true; },
     "editor/select-block-up": (e) => selectBlockCmd(e, -1),
     "editor/select-block-down": (e) => selectBlockCmd(e, 1),
     "editor/select-all": (e) => {
