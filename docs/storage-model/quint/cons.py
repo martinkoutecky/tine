@@ -10,6 +10,7 @@ under its own profile; with --full, every mutant under every profile). --two-pag
 
     python3 cons.py storage-s2x.qnt storage-s3.qnt  scenarios-s2.inc --two-pages    # s3   vs s2.1
     python3 cons.py storage-s33.qnt storage-s34.qnt scenarios-s33.inc --full        # s3.4 vs s3.3
+    python3 cons.py storage-s34.qnt storage-s35.qnt scenarios-s34.inc --full        # s3.5 vs s3.4
 """
 import ast, os, re, sys
 from pathlib import Path

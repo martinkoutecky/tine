@@ -14,6 +14,14 @@
 > (`614f82a8`) and `storage-s33.qnt` is s3.3. The sentence below that the implementation conforms to s3.2 "until the host operation
 > lands" is as of 2026-10-11; the host operation landed on 2026-10-12, and the conformance tests shipped in
 > 0.8.0-beta.1 replay s3.3.
+>
+> **Later versions (added 2026-10-14).** The model has moved on twice since this text was last revised.
+> **s3.4** (`quint/storage-s34.qnt`, `ddcc4332`) adds name-slot admission to `opApply`; **s3.5**
+> (`quint/storage-s35.qnt`, `7ebed877`, scenarios `quint/scenarios-s35.inc`, `9200a284`) is the current model and
+> differs from s3.4 only in the held-source guard of the cancelling Discard (the paragraph "Landed as s3.5"
+> in §6 below). The model files and their scenarios are the specification; this text explains s3.3 and the
+> history through the s3.5 guard. [`../README.md`](../README.md) has the lineage and the proof status; the
+> complete Lean proof covers s3.5.
 
 `storage-s33.qnt` (s3.3, scenarios `scenarios-s33.inc`) **is** the specification; this file explains it (sha256
 prefixes in §6). `storage-s3.qnt` stays s3.2, the model the step-3b implementation conforms to, until the host
@@ -290,7 +298,11 @@ takes the invariant from `INV`). Gates rerun by the manager:
     targets hold on the trace. The intent (§3a) is to restore a *held* source whose buffer holds the
     operation's deletion.
     - Fix: add `held` to the guard.
-    - Pending: it lands with Lean round 9, so the transcription and the model change together.
+    - Landed as **s3.5** (2026-10-14, `storage-s35.qnt`, model receipt not published): the guard also requires `held`; mutant MRH
+      restores the old guard. 194 scenarios × 4 profiles, 38/38 mutants; s3.4 vs s3.5 over all 191 old scenarios, 152
+      cases, 0 differences. Production already matched s3.5 (`page_host/order.rs` filters on the held-page map; this is
+      a source reading; the conformance run against s3.5 on 2026-10-15, og `490465a70`, confirms it). Lean round 9 proved
+      the literal s3.4; rounds 10 and 11 prove s3.5.
 
 
 **s3.1 (2026-10-09), model `614f82a8`, scenarios `4b4e2720`.** Lane `s3x-quint` (notes

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scenario and mutant sweep for one model version.
 
-    QNT=storage-s33.qnt SCEN=scenarios-s33.inc python3 sweep.py
+    QNT=storage-s35.qnt SCEN=scenarios-s35.inc python3 sweep.py
 
 1. Every scenario passes on the unmutated model in each race profile (base, R1, weak, all).
 2. Each mutant listed in the model's `// SWEEP-MUTS: {...}` line (mutant -> profile) is CAUGHT: its own
