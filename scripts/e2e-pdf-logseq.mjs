@@ -1546,9 +1546,14 @@ try {
     scroll.scrollTop = page.offsetTop;
     scroll.dispatchEvent(new Event("scroll"));
   });
+  // The page report is asynchronous; wait for it, then make sure no replayed
+  // backlink intent pulls the reader back afterwards.
+  const pageAfterScroll = async () => browser.$(".pdf-page-input").getValue();
+  await browser.waitUntil(async () => await pageAfterScroll() === "2", { timeout: 5_000 }).catch(() => {});
   await sleep(500);
-  if (await browser.$(".pdf-page-input").getValue() !== "2") {
-    throw new Error("GH #672: scrolling after a backlink replayed its page-one target");
+  const settledPage = await pageAfterScroll();
+  if (settledPage !== "2") {
+    throw new Error(`GH #672: scrolling after a backlink replayed its page-one target (page input ${JSON.stringify(settledPage)})`);
   }
   await browser.$(`[data-block-ref="${SECOND_SECOND_ID}"]`).click();
   await browser.waitUntil(async () => await browser.$(".pdf-page-input").getValue() === "1", {
