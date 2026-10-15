@@ -113,12 +113,22 @@ async function textEdit(browser, text) {
     if (!button || button.disabled) return false; button.setAttribute("data-calm-save", "active"); return true;
   }, active), { timeout: 15_000, timeoutMsg: "query text never became saveable" });
   await browser.$('[data-calm-save="active"]').click();
-  // Saving can change `query` to `tine-query` and remount the macro. Locate
-  // the domain title again instead of retaining the old DOM identity.
+  // Saving can change `query` to `tine-query`. Locate the saved query by its
+  // domain title before observing the editor and keyboard return path.
   await markQuery(browser, title);
+  assert.ok(await browser.execute(selector => document.querySelector(`${selector} .qc-panel`)?.contains(document.activeElement), active),
+    "Save query text keeps keyboard focus inside the editor");
+  await browser.keys("Escape");
+  assert.equal(await browser.$(`${active} .qc-panel`).isExisting(), false, "Save then Escape closes the editor");
+  assert.ok(await browser.execute(selector => document.activeElement === document.querySelector(`${selector} .qc-actions > summary`), active),
+    "Escape returns focus to the query actions");
 }
 async function closeEditor(browser) {
-  if (await browser.$(`${active} .qc-done`).isExisting()) await browser.$(`${active} .qc-done`).click();
+  if (await browser.$(`${active} .qc-done`).isExisting()) {
+    await browser.$(`${active} .qc-done`).click();
+    assert.ok(await browser.execute(selector => document.activeElement === document.querySelector(`${selector} .qc-actions > summary`), active),
+      "Done returns focus to the query actions");
+  }
 }
 await session(1, async browser => {
   phase = "rest, title rename, inline live results";
@@ -128,10 +138,29 @@ await session(1, async browser => {
   await browser.$(`${active} .query-title`).click();
   await browser.$(`${active} .query-title-input`).waitForExist({ timeout: 10_000 });
   await browser.$(`${active} .query-title-input`).click();
+  await browser.execute(selector => {
+    const owner = document.querySelector(selector).closest(".ls-block");
+    const samples = [];
+    const sample = () => {
+      const query = owner.querySelector(".query-block");
+      samples.push({ count: query?.querySelector(".query-count")?.textContent ?? null,
+        results: query?.querySelectorAll(".query-group").length ?? 0 });
+    };
+    const observer = new MutationObserver(sample);
+    observer.observe(owner, { childList: true, subtree: true, characterData: true });
+    let frame;
+    const paint = () => { sample(); frame = requestAnimationFrame(paint); };
+    paint();
+    window.__calmRename = { stop: () => { observer.disconnect(); cancelAnimationFrame(frame); sample(); return samples; } };
+  }, active);
   await browser.keys(["Control", "a"]); await browser.keys("Calm tasks"); await browser.keys("Enter");
   await browser.waitUntil(() => fs.readFileSync(queries, "utf8").includes('"Calm tasks"'), { timeout: 15_000 });
-  await markQuery(browser, "Calm tasks"); await action(browser, "Edit");
-  // The rename remounts the query; its answer returns once the save publishes.
+  await markQuery(browser, "Calm tasks"); await resultsCurrent(browser);
+  const renameSamples = await browser.execute(() => window.__calmRename.stop());
+  fs.writeFileSync(`${out}/rename-samples.json`, JSON.stringify(renameSamples));
+  assert.ok(renameSamples.length > 0 && renameSamples.every(sample => sample.count === "2" && sample.results > 0),
+    `title-only rename never empties the shown answer: ${JSON.stringify(renameSamples)}`);
+  await action(browser, "Edit");
   await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .qc-panel .qs-sheet`) && !!document.querySelector(`${selector} .query-group`), active), { timeout: 15_000, timeoutMsg: "editor panel or results missing after rename" });
   await closeEditor(browser);
   await textEdit(browser, "@block and task = 'TODO' and priority = 'A'");
@@ -250,22 +279,41 @@ await session(2, async browser => {
   await browser.$(`${active} .sheet-board-card`).waitForExist({ timeout: 20_000 });
   phase = "board last column access, drag save and genuine click navigation";
   await resultsCurrent(browser);
+  // Start the independent pointer journey from neutral focus. The board's
+  // existing captured blur listener cancels a drag if an old control blurs
+  // during pointerdown; that focus-transition defect is outside this lane.
+  await browser.execute(() => document.activeElement?.blur());
   await browser.execute(selector => {
     const card = [...document.querySelectorAll(`${selector} .sheet-board-card`)].find(card => card.textContent.includes("Second journey task"));
-    card?.setAttribute("data-calm-card", "active"); card?.scrollIntoView({ block: "center", inline: "nearest" });
+    card?.scrollIntoView({ block: "center", inline: "nearest" });
   }, active);
-  await browser.$('[data-calm-card="active"] [role="checkbox"]').waitForExist({ timeout: 15_000 });
+  // Scrolling a cold card near can hydrate its source and refresh the answer.
+  // Wait after that admission, then choose the current card by domain identity.
+  await resultsCurrent(browser);
   const points = await browser.execute(selector => {
-    const card = document.querySelector('[data-calm-card="active"]');
+    const card = [...document.querySelectorAll(`${selector} .sheet-board-card`)].find(card => card.textContent.includes("Second journey task"));
+    card?.setAttribute("data-calm-card", "active");
     const target = [...document.querySelectorAll(`${selector} .sheet-board-column`)].find(column => column.querySelector(".sheet-board-header > span")?.textContent === "DONE");
     const a = card.getBoundingClientRect(), b = target.getBoundingClientRect();
-    return { from: { x: Math.round(a.x + a.width / 2), y: Math.round(a.y + a.height / 2) }, to: { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + 90) } };
+    const points = { from: { x: Math.round(a.x + a.width / 2), y: Math.round(a.y + a.height / 2) }, to: { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + 90) } };
+    const events = [];
+    const trace = event => events.push({ type: event.type, target: event.target?.className,
+      ghost: !!document.querySelector(".sheet-board-drag-ghost"), busy: document.querySelector(selector)?.getAttribute("aria-busy") });
+    const types = ["pointerdown", "pointerup", "pointercancel", "lostpointercapture", "blur"];
+    for (const type of types) window.addEventListener(type, trace, true);
+    window.__calmBoardTrace = { stop: () => { for (const type of types) window.removeEventListener(type, trace, true); return events; } };
+    return { ...points, hits: [points.from, points.to].map(point => {
+      const hit = document.elementFromPoint(point.x, point.y);
+      return { class: hit?.className, column: hit?.closest(".sheet-board-column")?.querySelector(".sheet-board-header > span")?.textContent };
+    }) };
   }, active);
+  fs.writeFileSync(`${out}/board-drag-points.json`, JSON.stringify(points));
   await browser.performActions([{ type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [
     { type: "pointerMove", origin: "viewport", duration: 0, ...points.from }, { type: "pointerDown", button: 0 },
     { type: "pointerMove", origin: "viewport", duration: 500, ...points.to }, { type: "pointerUp", button: 0 },
   ] }]);
   await browser.releaseActions();
+  fs.writeFileSync(`${out}/board-drag-events.json`, JSON.stringify(await browser.execute(() => window.__calmBoardTrace.stop())));
   await browser.waitUntil(() => fs.readFileSync(`${graph}/pages/Tasks.md`, "utf8").includes("DONE Second journey task"), { timeout: 15_000 });
   assert.equal(await browser.execute(() => document.querySelector("h1.page-title")?.textContent), "Queries", "dragging keeps the query open");
   await markQuery(browser, "Task board");
