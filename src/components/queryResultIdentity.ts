@@ -5,11 +5,12 @@ import { t } from "../i18n";
 import type { BlockDto, Format, PageDto, PageKind } from "../types";
 import { blockRegions } from "../render/parse";
 import { formatForPage, node, pageByName, pageRoots, type Node as ReadonlyNode } from "../document";
+import { pageInstanceGeneration } from "../document/instance";
 import { resultTicket, resultsActionable, resultsEpoch, resultsTicketActionable } from "../queryResultsEpoch";
 import { bindingCurrent, captureBinding } from "../binding";
 
 export interface ResultRow { id: string; page: string; kind?: PageKind; path?: string; dto?: BlockDto; detached?: boolean }
-const mounted = new WeakMap<BlockDto, { epoch: number; source: ReadonlyNode; raw: string; parent: string | null }>();
+const mounted = new WeakMap<BlockDto, { source: ReadonlyNode; instance: number | null }>();
 const dtoIndexes = new WeakMap<PageDto, Map<string, BlockDto[]>>();
 function dtoIndex(page: PageDto): Map<string, BlockDto[]> {
   let index = dtoIndexes.get(page);
@@ -55,17 +56,14 @@ export function resolveResultRow(row: ResultRow, mode: "action" | "mount" = "act
   const ticket = resultTicket(row.dto);
   const retained = mode === "mount" ? mounted.get(row.dto) : undefined;
   // Eviction is hydration, not an epoch: a retained source must still be live.
-  // Display outlives an epoch when the live node still reads as it did: a
+  // Display outlives an epoch while the source page instance is unchanged: a
   // structural edit elsewhere (Enter on today's journal) must not drop every
-  // shown result to its stand-in until the rerun. A same-ID replacement changes
-  // its text or parent and retires it. Actions keep the strict epoch above.
-  if (retained && node(retained.source.id) === retained.source && retained.source.page === row.page) {
-    const { raw, parent } = retained.source;
-    if (retained.epoch === resultsEpoch() || (raw === retained.raw && parent === retained.parent)) {
-      mounted.set(row.dto, { epoch: resultsEpoch(), source: retained.source, raw, parent });
-      return retained.source;
-    }
-  }
+  // shown result to its stand-in until the rerun. Local edits never reassign a
+  // runtime id; installing backend content over a loaded page (the only same-ID
+  // merge, workingSet upsertPage) starts a new instance and retires the row.
+  // Actions keep the strict epoch.
+  if (retained && node(retained.source.id) === retained.source && retained.source.page === row.page
+    && retained.instance === pageInstanceGeneration(row.page)) return retained.source;
   const current = resultsTicketActionable(ticket);
   let source = current ? node(row.dto.id) : undefined;
   if (source?.page !== row.page) source = undefined;
@@ -88,7 +86,7 @@ export function resolveResultRow(row: ResultRow, mode: "action" | "mount" = "act
     if (candidates.length === 1) source = candidates[0];
   }
   if (!source || source.page !== row.page) return null;
-  if (mode === "mount") mounted.set(row.dto, { epoch: resultsEpoch(), source, raw: source.raw, parent: source.parent });
+  if (mode === "mount") mounted.set(row.dto, { source, instance: pageInstanceGeneration(row.page) });
   return source;
 }
 

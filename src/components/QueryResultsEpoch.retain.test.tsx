@@ -2,6 +2,7 @@ import { afterEach, beforeAll, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
 import { insertEmptyChildBlock, resetStore } from "../document";
+import { reloadPage } from "../document/workingSet";
 import { doc, setDoc } from "../document/model";
 import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
 import { LiveRefGroup } from "./LiveRefGroup";
@@ -57,13 +58,17 @@ it("keeps a typed-into result live when a structural edit follows", async () => 
   } finally { dispose(); }
 });
 
-it("still retires a mounted result whose block was replaced under the same id", async () => {
+it("retires a mounted result when its page is replaced, even with equal text and parent", async () => {
   await load();
   const { root, dispose } = await mountResult();
   try {
-    setDoc("byId", "task", (node) => ({ ...node, raw: "TODO Unrelated replacement" }));
+    // A watcher or conflict reload installs backend content over the loaded
+    // page: the same runtime id now names a block with another subtree.
+    reloadPage({ id: "pages/Source.md", name: "Source", title: "Source", kind: "page", pre_block: null, rev: "r2",
+      blocks: [{ id: "task", raw: "TODO Selected", marker: "TODO", collapsed: false,
+        children: [{ id: "child", raw: "Replacement child", collapsed: false, children: [] }] }] });
     await Promise.resolve();
-    expect(root.textContent).not.toContain("Unrelated replacement");
-    expect(doc.byId.task.raw).toBe("TODO Unrelated replacement");
+    expect(doc.byId.child.raw).toBe("Replacement child");
+    expect(root.textContent).not.toContain("Replacement child");
   } finally { dispose(); }
 });
