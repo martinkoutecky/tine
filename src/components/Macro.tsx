@@ -893,11 +893,6 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
             </div>
           </Match>
           <Match when={true}>
-            <Show when={isAdvanced() && advInfo()?.supported}>
-              <div class="query-adv-note">
-                {t("macro-advanced-ran", { clauses: (advInfo()!.ran ?? []).join(", ") || "—" })}
-              </div>
-            </Show>
             <div class="query-header">
               <ReferenceDisclosure
                 class="query-collapse"
@@ -980,6 +975,12 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 if (event.key === "Escape") { event.preventDefault(); closeDisplay(); }
               }}>
                 <button type="button" class="qc-done" onClick={closeDisplay}>{t("query-calm-done")}</button>
+                {/* Which clauses Tine ran is editing context, not resting content (GH #502). */}
+                <Show when={advInfo()?.supported}>
+                  <div class="query-adv-note">
+                    {t("macro-advanced-ran", { clauses: (advInfo()!.ran ?? []).join(", ") || "—" })}
+                  </div>
+                </Show>
                 <QueryDisplay inline registry={advancedRegistry} view={displayView} apply={applyDisplay} defaultColumns={effectiveDefaultColumns} rowKind={() => reading()?.query.anchor ?? "block"} />
               </div>
             </Show>

@@ -22,6 +22,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - Query renames keep results visible, and inline query saves keep keyboard focus so Escape and Done return to the query (GH #502, GH #619).
+- Android: granting All files access while opening a graph now continues straight to the folder picker; it no longer needs a second tap (UI-ANDROID-ALL-FILES-ONE-TAP).
+- Phones: the left sidebar starts closed, so it no longer covers the journal after the first graph opens (UI-MOBILE-LEFT-DRAWER-STARTS-CLOSED).
+- Nested inline checkboxes now indent by the same clear step as child blocks (GH #691).
+- Query blocks keep their bounded box at rest, and an advanced query no longer shows the "Advanced query — ran" line until you open its View panel (GH #502).
+- Simplified Chinese now covers the complete interface catalog, including settings, queries, context menus and recovery dialogs (GH #107, GH #123).
 - Query, sheet and date controls and document notices use the localization catalog while preserving authored query syntax (GH #107).
 - Remaining Settings, page actions and page notices use the localization catalog and follow live interface language changes (GH #107).
 - Cold Tine block links skip loading known graphs that cannot contain the target, while preserving graph-copy choices and missing-target errors (GH #181).

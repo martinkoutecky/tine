@@ -74,8 +74,9 @@ try {
     capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
   });
   await ensureMainWindow(browser);
-  await browser.$(".page-ref").waitForExist({ timeout: 20_000 });
-  const routed = await browser.execute(() => {
+  // The journal may re-render after the first refs appear; wait for the fixture ref itself.
+  let routed;
+  await browser.waitUntil(async () => (routed = await browser.execute(() => {
     const ref = [...document.querySelectorAll(".page-ref")]
       .find((element) => element.textContent?.includes("Print proof"));
     if (!ref) return {
@@ -87,8 +88,8 @@ try {
       ref.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
     }
     return { ok: true, refs: [], title: "" };
-  });
-  if (!routed.ok) throw new Error(`print fixture page-ref is missing: ${JSON.stringify(routed)}`);
+  })).ok, { timeout: 20_000, interval: 250 }).catch(() => {});
+  if (!routed?.ok) throw new Error(`print fixture page-ref is missing: ${JSON.stringify(routed)}`);
   await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Print proof", {
     timeout: 10_000, timeoutMsg: "could not route to print fixture",
   });
