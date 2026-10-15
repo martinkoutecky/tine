@@ -18,6 +18,10 @@ export function isProduction(file) {
   // Generated sources (`x.gen.ts`, e.g. the i18n message types) grow with their
   // input; the seam to split along is the input (the .ftl catalogs), not the output.
   if (/\.gen\.[^/]+$/.test(file)) return false;
+  // The storage model's executable transcription (`#[cfg(test)] mod page_state;`
+  // in tine-store's lib.rs): a test oracle shaped like storage-s3.qnt, never
+  // compiled into Tine; scripts/s2/net_lines.py classifies it the same way.
+  if (file.startsWith("crates/tine-store/src/page_state/")) return false;
   return true;
 }
 

@@ -3,6 +3,43 @@
 use super::super::apply::{ApplyRefusal, Effect, Expected, HostOp};
 use super::*;
 
+#[test]
+fn review_binding_reports_unsaved_for_settled_dirty_input() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, _page) = live.open("pages/a.md");
+    live.pause(true);
+    live.host.driver.shared.with_state_for_tests(|state| {
+        state.progress.with_host(|host| {
+            // Freeze the valid post-submit page shape before the automatic save,
+            // and reconcile the production progress bookkeeping at its boundary.
+            host.version += 1;
+            let page = host.pages.get_mut(&key).unwrap();
+            page.buf = Some(bytes("- typed\n"));
+            page.typed = true;
+            page.version = host.version;
+            host.mark(&key);
+            assert!(!host.pages[&key].clean());
+            assert!(matches!(
+                host.logical(&key),
+                crate::page_host::Logical::Settled(_)
+            ));
+        });
+    });
+    let result = live.host.apply(op(
+        vec![(
+            "pages/a.md",
+            Effect::Write(bytes("- planned\n")),
+            Expected::Bytes(bytes("- typed\n")),
+        )],
+        Input::Refuse,
+    ));
+    assert_eq!(
+        result,
+        Err(ApplyRefusal::Unsaved(PageId::from("pages/a.md")))
+    );
+    live.host.stop();
+}
+
 fn bytes(text: &str) -> Arc<[u8]> {
     Arc::from(text.as_bytes())
 }

@@ -178,8 +178,8 @@ enum Step<R> {
 /// The pages among `keys` with unsaved input (Q3), including an admitted
 /// operation's pages before its draft applies (a retiring draft is not
 /// input: its page is saved), each with its current spelling.
-pub(super) fn unsaved(
-    host: &Host<ProductionIo>,
+pub(in crate::page_host) fn unsaved<F: HostIo>(
+    host: &Host<F>,
     keys: &BTreeSet<PageKey>,
 ) -> BTreeMap<PageKey, PageId> {
     keys.iter()
