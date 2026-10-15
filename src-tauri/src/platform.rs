@@ -1189,13 +1189,28 @@ mod clipboard_tool_tests {
     // the production-source scan (og-enforcement) as test code.
     #![cfg(target_os = "linux")]
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     use std::time::{Duration, Instant};
 
+    /// A child process writes the script, so this test process never holds a
+    /// write descriptor that a parallel test's fork could inherit; executing a
+    /// file another process still has open for writing fails with ETXTBSY.
     fn script(dir: &std::path::Path, name: &str, body: &str) -> (String, Vec<String>) {
         let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let written = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+                "sh",
+            ])
+            .arg(format!("#!/bin/sh\n{body}\n"))
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(
+            written.success(),
+            "could not write test script {}",
+            path.display()
+        );
         (path.to_string_lossy().into_owned(), Vec::new())
     }
     fn pid_of(dir: &std::path::Path, file: &str) -> u32 {
