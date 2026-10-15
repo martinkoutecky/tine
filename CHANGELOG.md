@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Image copy avoids redundant PNG encoding and base64 transport and immediately shows progress (GH #700).
 - Repeated **Expand children (one level)** presses now open the next collapsed level, until the whole subtree is expanded (GH #696).
 - Search tabs support Up/Down to highlight results and Enter to open them, including sidebar, background-tab and other-pane modifiers (GH #697).
 - Page embeds can fold to their page-name line with the host block's mouse or keyboard fold; the choice is saved on the host without changing the embedded page (GH #694).

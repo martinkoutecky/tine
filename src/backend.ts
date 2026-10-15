@@ -58,7 +58,8 @@ import { isPublishedExport, publishedBackend } from "./publishedBackend";
 import { nativeTineLinks } from "./nativeTineLinks";
 import { ASSET_INGRESS_MAX_BYTES, clipboardImageToPng } from "./clipboardImage";
 
-// Encode asset bytes as one base64 string for the save_*/copy_image IPC. The old
+// Encode asset bytes as one base64 string for save_* and Android image-copy
+// IPC (Android cannot receive raw InvokeBody). The old
 // `Array.from(bytes)` produced a JSON number[] — ~4-5x the payload + a multi-MB
 // per-element parse and a giant throwaway array on the webview thread for every
 // image paste / PDF crop. base64 is ~1.33x the byte size, a single string the
@@ -736,9 +737,15 @@ class TauriBackend implements Backend {
     }
     await this.writeText(text);
   }
-  copyImageToClipboard(bytes: Uint8Array): Promise<void> {
-    if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) return Promise.reject(new Error("image exceeds 64 MiB clipboard limit"));
-    return this.call<void>("copy_image_to_clipboard", { bytesB64: bytesToBase64(bytes) });
+  async copyImageToClipboard(bytes: Uint8Array): Promise<void> {
+    if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) throw new Error("image exceeds 64 MiB clipboard limit");
+    // Binary InvokeBody avoids base64, JSON and a large UI-thread string build.
+    await this.ready;
+    const { invoke } = await import("@tauri-apps/api/core");
+    if (await this.appPlatform() === "android") {
+      return invoke<void>("copy_image_to_clipboard", { bytesB64: bytesToBase64(bytes) });
+    }
+    return invoke<void>("copy_image_to_clipboard", bytes);
   }
   readHighlights(pdf: string) {
     return this.call<Highlight[]>("read_highlights", { pdf });
