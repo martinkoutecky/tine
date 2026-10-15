@@ -1,6 +1,7 @@
 package page.tine.app
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
@@ -26,16 +27,31 @@ class GraphFolderPickerPlugin(private val activity: Activity): Plugin(activity) 
   @Command
   fun pickGraphFolder(invoke: Invoke) {
     if (!fileAccessAllowed()) {
-      openAllFilesAccessSettings()
-      val ret = JSObject()
-      ret.put("status", "permission-requested")
-      invoke.resolve(ret)
+      // Wait for the user to come back from the settings page, then continue
+      // to the folder picker in the same invoke (one tap, not two).
+      if (!launchAllFilesAccessSettings(invoke)) resolveStatus(invoke, "permission-needed")
       return
     }
+    openFolderPicker(invoke)
+  }
 
+  @ActivityCallback
+  fun allFilesAccessResult(invoke: Invoke, result: ActivityResult) {
+    // The settings page always returns RESULT_CANCELED; the grant is the answer.
+    if (fileAccessAllowed()) openFolderPicker(invoke)
+    else resolveStatus(invoke, "permission-needed")
+  }
+
+  private fun openFolderPicker(invoke: Invoke) {
     val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
     intent.addCategory(Intent.CATEGORY_DEFAULT)
     startActivityForResult(invoke, intent, "folderPickerResult")
+  }
+
+  private fun resolveStatus(invoke: Invoke, status: String) {
+    val ret = JSObject()
+    ret.put("status", status)
+    invoke.resolve(ret)
   }
 
   @ActivityCallback
@@ -82,16 +98,21 @@ class GraphFolderPickerPlugin(private val activity: Activity): Plugin(activity) 
     return Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
   }
 
-  private fun openAllFilesAccessSettings() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-    try {
-      val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-      intent.data = Uri.fromParts("package", activity.packageName, null)
-      activity.startActivity(intent)
-    } catch (ex: Exception) {
-      val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-      activity.startActivity(intent)
+  /** Open the per-app All files access page (else the system-wide list) and
+   *  report back through allFilesAccessResult. False when neither exists. */
+  private fun launchAllFilesAccessSettings(invoke: Invoke): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+    val perApp = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+    perApp.data = Uri.fromParts("package", activity.packageName, null)
+    for (intent in listOf(perApp, Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))) {
+      try {
+        startActivityForResult(invoke, intent, "allFilesAccessResult")
+        return true
+      } catch (ex: ActivityNotFoundException) {
+        Log.w("Tine/FolderPicker", "No activity for ${intent.action}")
+      }
     }
+    return false
   }
 }
 

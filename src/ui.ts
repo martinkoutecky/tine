@@ -584,8 +584,13 @@ export function toggleTheme() {
 }
 
 // Left sidebar open/collapsed — persisted (default open; store only when collapsed).
+// In phone drawer mode the left drawer never starts open (OG mobile neither);
+// leaving drawer mode restores the roomy-window choice, so a desktop window
+// that is briefly narrow at launch keeps its sidebar.
 const SIDEBAR_OPEN_KEY = "logseq-claude.sidebarOpen";
-export const [sidebarOpen, setSidebarOpen] = createSignal(loadStr(SIDEBAR_OPEN_KEY) !== "0");
+let roomyLeftOpen = loadStr(SIDEBAR_OPEN_KEY) !== "0";
+let lastDrawerMode = mobileDrawerMode();
+export const [sidebarOpen, setSidebarOpen] = createSignal(!mobileDrawerMode() && roomyLeftOpen);
 export const [favoritesSectionExpanded, setFavoritesSectionExpanded] = createSignal(true);
 export const [recentSectionExpanded, setRecentSectionExpanded] = createSignal(true);
 
@@ -609,6 +614,7 @@ export function resetLeftSidebarSections() {
 
 function persistLeftOpen(v: boolean) {
   if (!saveStr(SIDEBAR_OPEN_KEY, v ? null : "0")) return;
+  roomyLeftOpen = v;
   setSidebarOpen(v);
   scheduleSessionSave(); // durable open/closed state (localStorage isn't kept)
 }
@@ -635,7 +641,7 @@ export interface SidebarSessionState {
 }
 
 export function applySidebarSession(s: SidebarSessionState) {
-  if (typeof s.left === "boolean") setSidebarOpen(s.left);
+  if (typeof s.left === "boolean") setSidebarOpen((roomyLeftOpen = s.left) && !mobileDrawerMode());
   const items = Array.isArray(s.items) ? s.items.filter(validSidebarItem) : undefined;
   // Session application can replace the mounted collection before it changes
   // the open signal. Prepare the old surfaces first, while their textarea blur
@@ -1177,6 +1183,8 @@ export function openBlockInSidebar(ref: {
 /** Restored desktop state can contain both panels.  Entering drawer mode has a
  * deliberate winner: the contextual right sidebar. */
 export function normalizeSidebarDrawers() {
+  if (lastDrawerMode && !mobileDrawerMode()) setSidebarOpen(roomyLeftOpen);
+  lastDrawerMode = mobileDrawerMode();
   if (!mobileDrawerMode()) {
     // A compact opener must not survive a resize into persistent-sidebar mode
     // and later steal focus after an unrelated programmatic drawer open.

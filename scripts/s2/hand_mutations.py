@@ -95,7 +95,10 @@ def main():
     work = prepare(args.output / "harness")
     if args.baseline_tests:
         shutil.copyfile(args.baseline_tests, work / "src/page_state/tests.rs")
-    env = {**os.environ, "CARGO_TARGET_DIR": str(ROOT / "target/s3-hand-mutants")}
+    # Distinct scratch crates have the same package/target names. Sharing a
+    # target directory can reuse another sweep's test executable, even after
+    # cargo's build lock is released. Keep the executable with its own harness.
+    env = {**os.environ, "CARGO_TARGET_DIR": str(args.output.resolve() / "target")}
     outcomes = []
     try:
         for entry in entries:
