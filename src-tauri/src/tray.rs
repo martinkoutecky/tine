@@ -207,7 +207,7 @@ pub(crate) fn flatpak_icon_dir(
 
 #[cfg(desktop)]
 pub(crate) use desktop::{
-    init, main_start_hidden_pending, relabel, reveal_main_if_hidden, window_event, TrayState,
+    init, main_start_hidden_pending, quit, relabel, reveal_main_if_hidden, window_event, TrayState,
 };
 
 #[cfg(desktop)]

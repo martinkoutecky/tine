@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- On Linux and macOS, shutting down, logging out or closing Tine's terminal now quits Tine like Quit: an edit typed just before is saved, and the next launch no longer says Tine did not close cleanly (GH #701).
 - Image copy avoids redundant PNG encoding and base64 transport and immediately shows progress (GH #700).
 - Space-separated tags and page references in property values now render as separate links and agree with page tag facets and alias resolution (GH #699).
 

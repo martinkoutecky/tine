@@ -74,6 +74,11 @@ tine-ios-folder-picker-native = { path = "ios-folder-picker-native" }
 # src/native_integrations.rs.
 tine-ios-native-integrations = { path = "ios-native-integrations" }
 
+# GH #701: SIGTERM/SIGHUP/SIGINT run an orderly Quit (src/quit_signal.rs).
+# Already in Cargo.lock through tokio; pinned to the version it resolves.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+signal-hook-registry = "=1.4.8"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx"] }
 # Windows uses Schannel through native-tls: the default rustls transport does

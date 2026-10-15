@@ -5055,6 +5055,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "signal-hook-registry",
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",

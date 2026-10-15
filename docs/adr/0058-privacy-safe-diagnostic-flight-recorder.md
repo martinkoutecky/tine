@@ -42,7 +42,10 @@ sticky toast offers Settings → Help & diagnostics. Desktop's orderly end is
 `RunEvent::Exit` (`App::run` never returns, master d9763603). On Android and iOS
 the OS reaps a hidden app without notice, so the session follows visibility
 (master a846665f, GH #426); desktop ignores visibility, because a crash behind a
-minimised window is exactly what the recorder must catch.
+minimised window is exactly what the recorder must catch. On Linux and
+macOS a SIGTERM, SIGHUP or SIGINT (shutdown, logout, a closed terminal) runs
+the tray's Quit, so it ends at `RunEvent::Exit` too; a second signal exits at
+once and stays unclean (GH #701, `src-tauri/src/quit_signal.rs`).
 
 **Saved report.** Settings → Help & diagnostics can Copy the report, or on
 desktop Save it to a file the user picks in the save dialog, written with the
