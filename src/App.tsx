@@ -1184,7 +1184,7 @@ export function App(): JSX.Element {
       <Show when={sidebarOpen()}>
         <MobileDrawerPanel
           side="left"
-          label="Navigation sidebar"
+          label={t("app-prose-navigation-sidebar")}
           class="left-sidebar"
           style={{
             flex: `0 0 ${sidebarWidth()}px`,

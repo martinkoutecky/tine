@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { reportUiFailure } from "./uiFailure";
@@ -88,17 +89,17 @@ function loadStr(key: string): string | null {
   try {
     return localStorage.getItem(key);
   } catch {
-    if (typeof localStorage !== "undefined") pushToast("Could not load display preference.", "error");
+    if (typeof localStorage !== "undefined") pushToast(msg("ui-ui-could-not-load-display-preference"), "error");
     return null;
   }
 }
-function saveStr(key: string, val: string | null, what = "display preference"): boolean {
+function saveStr(key: string, val: string | null, what: "display preference" | "keyboard shortcuts" = "display preference"): boolean {
   try {
     if (val === null) localStorage.removeItem(key);
     else localStorage.setItem(key, val);
     return true;
   } catch {
-    pushToast(`Could not save ${what}.`, "error");
+    pushToast(msg("ui-save-preference-failed", { preference: what === "keyboard shortcuts" ? "keyboard" : "display" }), "error");
     return false;
   }
 }
@@ -232,7 +233,7 @@ export function changeJournalTitleFormat(fmt: string) {
         setJournalTitleFormat(m.journal_page_title_format);
         bumpGraphEpoch();
       }
-      pushToast(`Could not save journal title format: ${String(error)}`, "error");
+      pushToast(msg("ui-ui-could-not-save-journal-title-format", { value1: String(error) }), "error");
     });
 }
 
@@ -262,7 +263,7 @@ export async function refreshJournalConflicts(): Promise<void> {
   } catch (error) {
     // A failed listing must not read as "no duplicate days": say so, but only
     // for the graph that asked (a switch already emptied the list).
-    if (owner()) pushToast(`Could not check for duplicate journal days: ${String(error)}`, "error");
+    if (owner()) pushToast(msg("ui-ui-could-not-check-for-duplicate-journal-days", { value1: String(error) }), "error");
   }
 }
 
@@ -286,9 +287,9 @@ export async function refreshSyncConflicts(notify: "new" | false = false): Promi
     if (notify === "new" && arrived.length) {
       const first = arrived[0];
       const toastId = pushToast(
-        `${arrived.length} new sync conflict${arrived.length === 1 ? " needs" : "s need"} review`,
+        msg("ui-sync-conflicts", { count: arrived.length }),
         "info",
-        { sticky: true, action: { label: "Review", run: () => openPageTarget({ name: first.page_name, pageKind: first.kind, path: first.page_path }) },
+        { sticky: true, action: { label: msg("ui-review"), run: () => openPageTarget({ name: first.page_name, pageKind: first.kind, path: first.page_path }) },
           onDismiss: () => forgetArrivalNotice(toastId) }
       );
       trackArrivalNotice(toastId, arrived.map((conflict) => conflict.id));
@@ -561,7 +562,7 @@ export async function enterFocusMode() {
   try {
     await setFocusFullscreen(true);
   } catch {
-    pushToast("Could not enter fullscreen focus mode.", "error");
+    pushToast(msg("ui-ui-could-not-enter-fullscreen-focus-mode"), "error");
   }
 }
 /** Disable focus and request fullscreen exit. Failure toasts without rollback; resolves after request. O(1) plus native latency. */
@@ -572,7 +573,7 @@ export async function exitFocusMode() {
   try {
     await setFocusFullscreen(false);
   } catch {
-    pushToast("Could not leave fullscreen focus mode.", "error");
+    pushToast(msg("ui-ui-could-not-leave-fullscreen-focus-mode"), "error");
   }
 }
 
@@ -583,8 +584,13 @@ export function toggleTheme() {
 }
 
 // Left sidebar open/collapsed — persisted (default open; store only when collapsed).
+// In phone drawer mode the left drawer never starts open (OG mobile neither);
+// leaving drawer mode restores the roomy-window choice, so a desktop window
+// that is briefly narrow at launch keeps its sidebar.
 const SIDEBAR_OPEN_KEY = "logseq-claude.sidebarOpen";
-export const [sidebarOpen, setSidebarOpen] = createSignal(loadStr(SIDEBAR_OPEN_KEY) !== "0");
+let roomyLeftOpen = loadStr(SIDEBAR_OPEN_KEY) !== "0";
+let lastDrawerMode = mobileDrawerMode();
+export const [sidebarOpen, setSidebarOpen] = createSignal(!mobileDrawerMode() && roomyLeftOpen);
 export const [favoritesSectionExpanded, setFavoritesSectionExpanded] = createSignal(true);
 export const [recentSectionExpanded, setRecentSectionExpanded] = createSignal(true);
 
@@ -608,6 +614,7 @@ export function resetLeftSidebarSections() {
 
 function persistLeftOpen(v: boolean) {
   if (!saveStr(SIDEBAR_OPEN_KEY, v ? null : "0")) return;
+  roomyLeftOpen = v;
   setSidebarOpen(v);
   scheduleSessionSave(); // durable open/closed state (localStorage isn't kept)
 }
@@ -634,7 +641,7 @@ export interface SidebarSessionState {
 }
 
 export function applySidebarSession(s: SidebarSessionState) {
-  if (typeof s.left === "boolean") setSidebarOpen(s.left);
+  if (typeof s.left === "boolean") setSidebarOpen((roomyLeftOpen = s.left) && !mobileDrawerMode());
   const items = Array.isArray(s.items) ? s.items.filter(validSidebarItem) : undefined;
   // Session application can replace the mounted collection before it changes
   // the open signal. Prepare the old surfaces first, while their textarea blur
@@ -1176,6 +1183,8 @@ export function openBlockInSidebar(ref: {
 /** Restored desktop state can contain both panels.  Entering drawer mode has a
  * deliberate winner: the contextual right sidebar. */
 export function normalizeSidebarDrawers() {
+  if (lastDrawerMode && !mobileDrawerMode()) setSidebarOpen(roomyLeftOpen);
+  lastDrawerMode = mobileDrawerMode();
   if (!mobileDrawerMode()) {
     // A compact opener must not survive a resize into persistent-sidebar mode
     // and later steal focus after an unrelated programmatic drawer open.
@@ -1270,7 +1279,7 @@ export async function pruneSidebarBlocks(): Promise<void> {
   const dead = new Set(blocks.filter((_, i) =>
     resolved[i].status === "fulfilled" && !resolved[i].value));
   if (resolved.some((result) => result.status === "rejected")) {
-    pushToast("Could not check some sidebar blocks. Try again after the graph loads.", "error");
+    pushToast(msg("ui-ui-could-not-check-some-sidebar-blocks-try-again-after-the"), "error");
   }
   if (dead.size) {
     setRightSidebar(rightSidebar().filter((i) => i.kind !== "block" || !dead.has(i)));
@@ -1508,7 +1517,7 @@ export function closeSwitcher() {
 export const [pdfExportPage, setPdfExportPage] = graphScopedSignal<string>();
 export function openPdfExport(name: string) {
   if (isMobilePlatform) {
-    pushToast("PDF export needs the desktop app: a mobile WebView cannot print.", "info");
+    pushToast(msg("ui-ui-pdf-export-needs-the-desktop-app-a-mobile-webview-cannot"), "info");
     return;
   }
   setPdfExportPage(name);

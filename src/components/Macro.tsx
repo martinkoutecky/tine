@@ -1,5 +1,6 @@
 import { FailureBoundary } from "./FailureBoundary";
-import { msg, t, render as renderMessage } from "../i18n";
+import { msg, t, rawText, render as renderMessage, type UiText } from "../i18n";
+import { Rich } from "../i18n/Rich";
 import { youtubePlayerForTarget, registerYoutubePlayer, recordYoutubePlayback, unregisterYoutubePlayer, type YoutubePlayer } from "../youtubePlayer";
 export { youtubePlayerForTarget } from "../youtubePlayer";
 import { TableWrap } from "./TableWrap";
@@ -71,7 +72,7 @@ import { QueryLegacyTable } from "./QueryLegacyTable";
 import { mainWindow } from "../windowRealm";
 import { QueryMacroActions } from "./QueryMacroActions";
 import { QueryResultTask } from "./QueryResultTask";
-import { resultTicket, resultsEpoch, resultsTicketActionable } from "../queryResultsEpoch";
+import { resultTicket, resultsEpoch, resultsTicketCurrent } from "../queryResultsEpoch";
 
 // Collapsed state for query results, keyed by graph + rendered query identity.
 // A raw query-string key made unrelated dashboards across pages/graphs collide.
@@ -99,7 +100,7 @@ function saveCollapsed(key: string, v: boolean) {
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const sameJson = <T,>(a: T, b: T) => JSON.stringify(a) === JSON.stringify(b);
 const CURRENT_PAGE_RE = /<%\s*current page\s*%>/i;
-const BLOCK_CHANGED = "The block changed while saving. Try this edit again.";
+const BLOCK_CHANGED = msg("macro-block-changed");
 
 // Device-local dismissal keyed by graph (D-11): one read per graph binding,
 // shared by every crossing in this window (I-12/I-13).
@@ -127,7 +128,7 @@ function dismissCrossingNoticeForever(): void {
   void writeOwned(
     revisionOwner(crossingNoticePreference, revision, bindingOwner()),
     backend().setAppBool(CROSSING_NOTICE_KEY, true),
-  ).catch((error: unknown) => pushToast(`Couldn't save the notice preference: ${errorText(error)}`, "error"));
+  ).catch((error: unknown) => pushToast(msg("macro-macro-couldn-t-save-the-notice-preference", { value1: errorText(error) }), "error"));
 }
 export function resetCrossingNoticeForTests(): void {
   crossingNoticePrimed = undefined;
@@ -330,9 +331,19 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const context = executionContext();
     const search = friendlySearch();
     const both = search === null && bothKinds();
-    const displayKey = JSON.stringify([graphEpoch(), query.query, query.view, context ?? null, search, collapsed(), both]);
+    // Authored options (title, collapsed, table) do not change the question.
+    // Keep the last adopted answer on screen through their save/publication;
+    // its original ticket still governs actions. Advanced execution reads the
+    // original source, so retain it in the identity (parse.rs::resolve_for_execution).
+    // Dialects resolve stored IR differently (OG drops an empty task clause,
+    // TQL evaluates it), so a dialect change always retires the shown answer.
+    const source = query.query.source;
+    const answerQuery = { ...query.query, source: source.kind === "advanced"
+      ? { kind: source.kind, original: source.original } : { kind: source.kind } };
+    const { view: _presentation, columns: _columns, group_by: _group, aggregates: _aggregates, ...answerView } = query.view;
+    const displayKey = JSON.stringify([graphEpoch(), answerQuery, answerView, context ?? null, search, collapsed(), both]);
     // A collapsed count is never acted on: neither saves nor epochs rerun it.
-    const key = `${displayKey}\0${collapsed() ? "collapsed" : `${dataRev()}\0${resultsEpoch()}`}`;
+    const key = `${JSON.stringify([displayKey, query.query, query.view])}\0${collapsed() ? "collapsed" : `${dataRev()}\0${resultsEpoch()}`}`;
     return { query, context, search, displayKey, key, both };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
   const runOwners = {};
@@ -409,11 +420,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     return current && landed?.requestKey === current.displayKey ? landed : undefined;
   };
   const groups = () => displayed()?.groups ?? [];
-  /** Result actions refuse until a graph change has re-run this answer
-   * (queryResultIdentity); say so instead of looking idle. */
+  /** The shown answer is awaiting a settled rerun. Own saves can keep actions
+   * valid, but publication still delays adoption (queryResultsEpoch). */
   const resultsBusy = () => {
     const shown = displayed();
-    return !!shown && !collapsed() && !resultsTicketActionable(resultTicket(shown));
+    return !!shown && !collapsed() && (operation.loading || !resultsTicketCurrent(resultTicket(shown)));
   };
   const pageRows = () => displayed()?.pages ?? null;
   // The run's OWN diagnostics (I-9): an invalid query returns zero rows plus
@@ -449,7 +460,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const ranEmpty = () =>
     !!displayed() && !operation.loading && total() === 0 && blockingDiagnostics().length === 0
     && displayed()?.report?.supported !== false;
-  const emptyMessage = () => (ranEmpty() ? "No results" : "Loading query results…");
+  const emptyMessage = () => (ranEmpty() ? t("macro-prose-no-results") : t("macro-prose-loading-query-results"));
 
   // Why empty? (Q14, N19): which top-level conjunct emptied the query, asked
   // only once the run actually came back empty.
@@ -479,10 +490,10 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   };
 
   // -- editing: every edit is printed by the engine and written back as bytes --
-  const [printError, setPrintError] = createSignal<string | null>(null);
+  const [printError, setPrintError] = createSignal<UiText | null>(null);
   const refuseChanged = () => {
     setPrintError(BLOCK_CHANGED);
-    pushToastUnique(BLOCK_CHANGED, "error");
+    pushToastUnique(msg("macro-block-changed"), "error");
     return false;
   };
   // Rewrite just THIS macro inside the owning block, targeted by the extent's
@@ -521,6 +532,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // express crosses to `{{tine-query}}` (and says so, §7.5). The bytes written
   // are the engine's; a refused print writes nothing and says why (I-4).
   const applyEdit = async (next: BuilderSession, displayEdit = false): Promise<boolean> => {
+    const startedInSheet = sheetOpen();
     const blockId = props.blockId;
     if (!blockId || !docNode(blockId)) return false;
     const rawAtStart = docNode(blockId).raw;
@@ -549,7 +561,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
         printed = await readOwned(owner, backend().printQuery(next.query, next.view, dialect));
       }
     } catch (error) {
-      setPrintError(errorText(error));
+      setPrintError(rawText(errorText(error)));
       return false;
     }
     const node = docNode(blockId);
@@ -559,7 +571,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     // A page that turned read-only while the print was in flight refuses the
     // write; report "not saved" so the sheet arms no focus (master 93ff682a3).
     if (!blockWritable(blockId)) {
-      setPrintError("This block is read-only. The query was not changed.");
+      setPrintError(msg("macro-query-read-only"));
       return false;
     }
     const target = targetMacro(node.raw);
@@ -590,14 +602,18 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       return true;
     });
     if (saved !== true) {
-      setPrintError("A graph rewrite is in progress. The query was not changed.");
+      setPrintError(msg("macro-query-rewrite"));
       return false;
     }
-    if (crossing) setCrossed(blockId, boundedFeature(argument));
+    if (crossing) setCrossed(blockId, boundedFeature(argument), startedInSheet);
     return true;
   };
   /** Display uses the same guarded print and undo unit as a filter edit. */
   const applyDisplay = (view: ViewSettings): Promise<boolean> => {
+    // Display rows can disappear or be replaced after their guarded save.
+    // Keep focus on the panel's stable completion control before that happens.
+    const panel = queryEl?.querySelector<HTMLElement>(".qc-panel");
+    if (panel?.contains(panel.ownerDocument.activeElement)) panel.querySelector<HTMLElement>(".qc-done")?.focus();
     const current = reading();
     if (current && view.view !== current.view.view
       && JSON.stringify({ ...view, view: undefined }) === JSON.stringify({ ...current.view, view: undefined })) {
@@ -612,7 +628,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // authored source verbatim, so renaming a partly understood query cannot
   // rewrite its filter.
   const [editingTitle, setEditingTitle] = createSignal(false);
-  const titleText = () => props.title ?? titleOption() ?? "Query";
+  const titleText = () => props.title ?? titleOption() ?? t("macro-prose-query");
   const titleEditable = () => !!props.blockId && props.title === undefined && !!reading();
   const setTitle = async (t: string) => {
     const blockId = props.blockId;
@@ -642,16 +658,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
         rewriteMacro(`{{${macroName()} ${printed.value}}}`, target);
         return true;
       });
-      setPrintError(saved === true ? null : "A graph rewrite is in progress. The query was not changed.");
+      setPrintError(saved === true ? null : msg("macro-query-rewrite"));
     } catch (error) {
       // I-4: a refused print is never swallowed; nothing is written.
-      setPrintError(errorText(error));
+      setPrintError(rawText(errorText(error)));
     }
   };
 
   // -- the §7.5 crossing notice ----------------------------------------------
   const [crossedTag, setCrossedTag] = createSignal<string | null>(null);
   const [crossedText, setCrossedText] = createSignal<string | null>(null);
+  const [crossedFromSheet, setCrossedFromSheet] = createSignal(false);
   // The notice moves between two hosts; its UI state lives here so a
   // re-parented notice keeps its checkbox and does not grab focus again (N3).
   const [noticeDontShow, setNoticeDontShow] = createSignal(false);
@@ -660,13 +677,20 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const [editRequest, setEditRequest] = createSignal<{ n: number; tab: "filter" | "display" | "text" } | null>(null);
   const [bulkFold, setBulkFold] = createSignal<{ n: number; collapsed: boolean; epochs: ReadonlyMap<string, number> }>();
   const advancedRegistry = createQueryRegistryAccess(() => isAdvanced() && editRequest()?.tab === "display");
+  let queryEl: HTMLDivElement | undefined;
+  const closeDisplay = () => {
+    setEditRequest(null);
+    queryEl?.querySelector<HTMLElement>(".qc-actions > summary")?.focus();
+  };
   const requestEdit = (tab: "filter" | "display" | "text") => {
     if (isAdvanced() && tab !== "display" && props.blockId) { startEditing(props.blockId); return; }
     setEditRequest({ n: (editRequest()?.n ?? 0) + 1, tab });
+    if (isAdvanced()) queueMicrotask(() => queryEl?.querySelector<HTMLElement>(".qc-panel .qc-done")?.focus());
   };
-  const setCrossed = (blockId: string, changed: string | null) => {
+  const setCrossed = (blockId: string, changed: string | null, fromSheet = false) => {
     primeCrossingNoticePreference();
     setCrossedText(changed);
+    setCrossedFromSheet(fromSheet);
     setNoticeDontShow(false);
     setNoticeFocused(false);
     setCrossedTag(`query:cross:${blockId}`);
@@ -688,14 +712,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       changed={crossedText() ?? undefined}
       dontShow={noticeDontShow()}
       onDontShowChange={setNoticeDontShow}
-      autoFocus={!noticeFocused()}
+      // A pending print can land after the user closes the panel or moves to
+      // another editor. Only continue focus while this query still owns it.
+      autoFocus={!noticeFocused() && (!crossedFromSheet() || sheetOpen())
+        && !!queryEl?.contains(queryEl.ownerDocument.activeElement)}
       onFocused={() => setNoticeFocused(true)}
       onUndo={() => {
         if (undo()) {
           dismissCrossing();
           return true;
         }
-        pushToastUnique("Undo is unavailable while the graph is being rewritten.", "error");
+        pushToastUnique(msg("macro-macro-undo-is-unavailable-while-the-graph-is-being-rewritten"), "error");
         return false;
       }}
       onKeep={dismissCrossing}
@@ -791,12 +818,12 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
         class="query-why-empty"
         onClick={(e) => { e.stopPropagation(); setExplainOpen(!explainOpen()); }}
       >
-        {explainOpen() ? "hide" : "why empty?"}
+        {explainOpen() ? t("macro-macro-hide") : t("macro-macro-why-empty")}
       </button>
       <Show when={explainOpen()}>
         <div class="query-why-empty-panel" onClick={stop}>
           <Show when={explained.loading}>
-            <span class="query-why-empty-pending">Checking…</span>
+            <span class="query-why-empty-pending">{t("macro-macro-checking")}</span>
           </Show>
           <Show when={explainNotice()}>
             {(notice) => <div class="query-why-empty-notice">{notice()}</div>}
@@ -804,7 +831,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
           <Show when={(explanation()?.rows.length ?? 0) > 0}>
             <TableWrap><table class="md-table query-why-empty-table">
               <thead>
-                <tr><th>Condition</th><th>Alone</th><th>Without it</th></tr>
+                <tr><th>{t("macro-macro-condition")}</th><th>{t("macro-macro-alone")}</th><th>{t("macro-macro-without-it")}</th></tr>
               </thead>
               <tbody>
                 <For each={explanation()!.rows}>
@@ -833,7 +860,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
 
   return (
     <Show when={!hidden()}>
-      <div class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
+      <div ref={queryEl} class="query-block" classList={{ "query-sheet-block": sheetFace(), "query-stale": paneStale() }}
         aria-busy={resultsBusy() ? "true" : undefined}>
         <Switch>
           <Match when={unsupportedAdvanced()}>
@@ -843,15 +870,12 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 when={props.unsupportedLabel}
                 fallback={
                   <>
-                    Advanced (datalog) query not run: Tine cannot run{" "}
-                    {(advInfo()?.ignored ?? []).length > 0
-                      ? `these clauses (${(advInfo()?.ignored ?? []).join(", ")})`
-                      : "some of its clauses"}
-                    , and a partial answer would be wrong. <code>{`{{${props.body}}}`}</code>
+                    <Rich message={msg("macro-advanced-unsupported", { clauses: (advInfo()?.ignored ?? []).join(", "), hasClauses: (advInfo()?.ignored ?? []).length ? 1 : 0 })} />
+                    <code>{props.body}</code>
                   </>
                 }
               >
-                {(label) => <>{label()}: query contains unsupported clauses.</>}
+                {(label) => <>{t("macro-labeled-unsupported", { label: label() })}</>}
               </Show>
               <Show when={blockingDiagnostics().length > 0}>
                 <span class="query-diagnostics">{" "}{blockingDiagnostics().map((d) => d.message).join(" · ")}</span>
@@ -869,16 +893,11 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
             </div>
           </Match>
           <Match when={true}>
-            <Show when={isAdvanced() && advInfo()?.supported}>
-              <div class="query-adv-note">
-                Advanced query — ran: {(advInfo()!.ran ?? []).join(", ") || "—"}
-              </div>
-            </Show>
             <div class="query-header">
               <ReferenceDisclosure
                 class="query-collapse"
                 collapsed={collapsed()}
-                title={collapsed() ? "Expand results" : "Collapse results"}
+                title={collapsed() ? t("macro-macro-expand-results") : t("macro-macro-collapse-results")}
                 onClick={(e) => {
                   e.stopPropagation();
                   toggleCollapsed();
@@ -890,7 +909,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   <span
                     class="query-title"
                     classList={{ "query-title-editable": titleEditable() }}
-                    title={titleEditable() ? "Click to rename this query" : undefined}
+                    title={titleEditable() ? t("macro-macro-click-to-rename-this-query") : undefined}
                     onClick={(e) => {
                       if (titleEditable()) {
                         e.stopPropagation();
@@ -909,7 +928,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                       class="query-title-input"
                       autofocus
                       value={titleOption() ?? ""}
-                      placeholder="Query title"
+                      placeholder={t("macro-macro-query-title")}
                       onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => {
                         e.stopPropagation();
@@ -951,8 +970,17 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               </Show>
             </div>
             <Show when={isAdvanced() && editRequest()?.tab === "display"}>
-              <div class="qc-panel">
-                <button type="button" class="qc-done" onClick={() => setEditRequest(null)}>{t("query-calm-done")}</button>
+              <div class="qc-panel" onKeyDown={event => {
+                event.stopPropagation();
+                if (event.key === "Escape") { event.preventDefault(); closeDisplay(); }
+              }}>
+                <button type="button" class="qc-done" onClick={closeDisplay}>{t("query-calm-done")}</button>
+                {/* Which clauses Tine ran is editing context, not resting content (GH #502). */}
+                <Show when={advInfo()?.supported}>
+                  <div class="query-adv-note">
+                    {t("macro-advanced-ran", { clauses: (advInfo()!.ran ?? []).join(", ") || "—" })}
+                  </div>
+                </Show>
                 <QueryDisplay inline registry={advancedRegistry} view={displayView} apply={applyDisplay} defaultColumns={effectiveDefaultColumns} rowKind={() => reading()?.query.anchor ?? "block"} />
               </div>
             </Show>
@@ -997,23 +1025,21 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
             <Show when={printError()}>
               {(message) => (
                 <div class="query-unsupported query-print-refused" role="alert">
-                  The query wasn't changed: {message()}
+                  {t("macro-query-unchanged", { detail: renderMessage(message()) })}
                 </div>
               )}
             </Show>
             <Show when={loadError()}>
               {(error) => (
                 <div class="query-unsupported" role="alert">
-                  Query couldn't be loaded: {errorText(error())}
+                  {t("macro-query-load-failed", { detail: errorText(error()) })}
                 </div>
               )}
             </Show>
             <Show when={blockingDiagnostics().length > 0 && (!reading()?.og_hint?.date_windows || !reading()?.og_hint?.rewrites.length)}>
               <div class="query-unsupported query-diagnostics" role="alert">
-                <span class="query-diagnostics-lead">
-                  Tine didn't understand part of this query, so it returned no results:
-                </span>{" "}
-                {blockingDiagnostics().map((d) => d.message).join(" · ")}
+                <Rich message={msg("macro-query-diagnostics", { detail: blockingDiagnostics().map((d) => d.message).join(" · ") })}
+                  slots={{ lead: (children) => <span class="query-diagnostics-lead">{children}</span> }} />
               </div>
             </Show>
             <Show when={emptyDraft()}><div class="query-empty">{t("query-calm-condition")}</div></Show>
@@ -1108,7 +1134,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   </Show>
                 </Match>
                 <Match when={currentView() === "search"}>
-                  <div class="query-search-results" role="list" aria-label="Search results" onClick={stop}>
+                  <div class="query-search-results" role="list" aria-label={t("macro-macro-search-results")} onClick={stop}>
                     <Show when={searchPresentationHits().length > 0} fallback={empty()}>
                       <For each={searchPresentationHits()}>
                         {(hit) => (
@@ -1370,7 +1396,7 @@ export function VideoMacro(props: { body: string }): JSX.Element {
       }
     >
       <div class="embed-iframe-wrap">
-        <iframe id={isYoutubeEmbed() ? iframeId : undefined} class="embed-iframe" src={embed()!} allowfullscreen title="video" {...embedAttrs()} />
+        <iframe id={isYoutubeEmbed() ? iframeId : undefined} class="embed-iframe" src={embed()!} allowfullscreen title={t("macro-macro-video")} {...embedAttrs()} />
       </div>
     </Show>
   );
@@ -1433,7 +1459,7 @@ export function ClozeMacro(props: { body: string }): JSX.Element {
     <span
       class="cloze"
       classList={{ revealed: revealed() }}
-      title={revealed() ? "Click to hide" : "Click to reveal"}
+      title={revealed() ? t("macro-macro-click-to-hide") : t("macro-macro-click-to-reveal")}
       onClick={(e) => {
         e.stopPropagation();
         setRevealed((v) => !v);
@@ -1452,8 +1478,8 @@ export function ClozeMacro(props: { body: string }): JSX.Element {
 export function ZoteroMacro(props: { body: string }): JSX.Element {
   const arg = () => props.body.replace(/^zotero-(imported|linked)-file\s*/i, "").trim();
   return (
-    <span class="zotero-ref" title="Zotero integration isn't supported in Tine">
-      📎 {arg() || "Zotero attachment"}
+    <span class="zotero-ref" title={t("macro-macro-zotero-integration-isn-t-supported-in-tine")}>
+      📎 {arg() || t("macro-macro-zotero-attachment")}
     </span>
   );
 }

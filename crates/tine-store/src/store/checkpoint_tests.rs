@@ -85,6 +85,35 @@ fn write_checkpoint(root: &Path, cp: &Path) {
 }
 
 #[test]
+fn gh699_old_property_extraction_checkpoints_are_rebuilt() {
+    let root = graph();
+    fs::write(
+        root.path().join("pages/B.md"),
+        "alias:: [[Bee]] [[Buzz]]\ntags:: #eng #exec #founder\n\n- body\n",
+    )
+    .unwrap();
+    let cp = root.path().join("launch.bin");
+    write_checkpoint(root.path(), &cp);
+    // Format 14 may retain combined tag facets and aliases from raw splitting.
+    let mut bytes = fs::read(&cp).unwrap();
+    bytes[8..12].copy_from_slice(&14_u32.to_le_bytes());
+    fs::write(&cp, bytes).unwrap();
+    let store = open_cp(root.path(), &cp);
+    let view = store.whole_graph_reconciled().unwrap();
+    assert_eq!(load_outcome(&store), "format");
+    assert!(parse_passes(&store) > 0, "old derived state must rebuild");
+    assert!(!view.graph.alias_owner_paths("buzz").unwrap().is_empty());
+    let crate::QueryResult::Simple(groups) = view
+        .query("(page-tags eng)", crate::QueryDialect::Simple)
+        .unwrap()
+    else {
+        panic!("simple rows")
+    };
+    assert_eq!(groups.len(), 1);
+    store.close();
+}
+
+#[test]
 fn pre_headline_tag_checkpoints_rebuild_org_page_references() {
     let root = graph();
     fs::write(root.path().join("pages/C.org"), "* headline :Plugins:\n").unwrap();
@@ -859,7 +888,7 @@ fn the_golden_body_is_pinned_to_format() {
     let digest: String = sha256(&bytes).iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(
         (FORMAT, digest.as_str()),
-        (14, GOLDEN),
+        (15, GOLDEN),
         "ADR 0070: the checkpoint body changed; bump FORMAT and re-pin GOLDEN"
     );
 }

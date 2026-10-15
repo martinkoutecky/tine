@@ -50,8 +50,17 @@ revisions 2 and 3).
   kind, nearest enclosing named owner, normalized text) is not in the
   baseline, counting every text with a two-letter word, lower-case included,
   at the sinks it lists (JSX text and fragment/conditional string children,
-  `title`/`aria-label`/`placeholder`/`alt` attributes, toast and dialog
-  arguments, UI-named object properties). It does not read inline script
+  `title`/`aria-label`/`placeholder`/`alt` and other accessible-text attributes,
+  component `label`/`hint`/`tooltip`/`fallback` props, toast and dialog
+  arguments, UI-named object properties). It also follows local helper returns,
+  displayed parameters back to their call arguments, conditional values,
+  render callbacks, reactive memos and constant vocabulary lookups. Exported
+  prose helpers ending in `Sentence`, `Phrase`, `Label`, `Title` or `Words` are
+  checked at their definition, including in `.ts` files. This remains a
+  syntactic, single-file check: imported implementations, aliases, arbitrary
+  mutations and unnamed external producers are not followed. Intentional
+  literal boundaries may carry `{ site, reason }` entries in the baseline;
+  `--update` preserves those reasons. It does not read inline script
   strings (the GH #572 unsupported-engine card stays English), and a converted
   site leaves the baseline only through `--update`.
 - Separately, it fails a call of `t`, `render` or `renderEnglish` (a named

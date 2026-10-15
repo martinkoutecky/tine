@@ -21,6 +21,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Image copy avoids redundant PNG encoding and base64 transport and immediately shows progress (GH #700).
+- Space-separated tags and page references in property values now render as separate links and agree with page tag facets and alias resolution (GH #699).
+
+- Repeated **Expand children (one level)** presses now open the next collapsed level, until the whole subtree is expanded (GH #696).
+- Search tabs support Up/Down to highlight results and Enter to open them, including sidebar, background-tab and other-pane modifiers (GH #697).
+- Page embeds can fold to their page-name line with the host block's mouse or keyboard fold; the choice is saved on the host without changing the embedded page (GH #694).
+- Find in page now prefills a single-line text selection and activates its first match; absent or multiline selections keep the previous query (GH #695).
+- Android status and navigation bar backgrounds follow the active theme and custom CSS live, with icons chosen for contrast (GH #693).
+
+- Query renames keep results visible, and inline query saves keep keyboard focus so Escape and Done return to the query (GH #502, GH #619).
+- Android: granting All files access while opening a graph now continues straight to the folder picker; it no longer needs a second tap (UI-ANDROID-ALL-FILES-ONE-TAP).
+- Phones: the left sidebar starts closed, so it no longer covers the journal after the first graph opens (UI-MOBILE-LEFT-DRAWER-STARTS-CLOSED).
+- Nested inline checkboxes now indent by the same clear step as child blocks (GH #691).
+- Query blocks keep their bounded box at rest, and an advanced query no longer shows the "Advanced query — ran" line until you open its View panel (GH #502).
+- Pages and journals whose file has no body (emptied in Tine, 0 bytes on disk, or page properties only) can be edited again: clicking the empty bullet no longer drops the caret at once (GH #689).
+- Conflict headings and choices, resting query sentences, and helper-produced interface text now follow Chinese and live language changes; the literal ratchet also follows UI helper results and displayed arguments (GH #107).
+- Simplified Chinese now covers the complete interface catalog, including settings, queries, context menus and recovery dialogs (GH #107, GH #123).
+- Query, sheet and date controls and document notices use the localization catalog while preserving authored query syntax (GH #107).
 - Remaining Settings, page actions and page notices use the localization catalog and follow live interface language changes (GH #107).
 - Cold Tine block links skip loading known graphs that cannot contain the target, while preserving graph-copy choices and missing-target errors (GH #181).
 - Localized rich-text sentences share one renderer that preserves literal graph text, with clearer tags and variables for translators (GH #107).

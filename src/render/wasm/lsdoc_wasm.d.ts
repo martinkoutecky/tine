@@ -73,6 +73,11 @@ export function is_render_hidden_prop(key: string, user_hidden: string[]): boole
  */
 export function last_panic(): string;
 
+/**
+ * OG property tokens, shared with native property atomization. O(value bytes).
+ */
+export function linkable_property_names(value: string, is_org: boolean): string[];
+
 export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_marker: string, new_marker: string, enabled: boolean, with_seconds: boolean): string;
 
 export function logbook_clock_in(raw: string, is_org: boolean, with_seconds: boolean): string;
@@ -284,6 +289,7 @@ export interface InitOutput {
     readonly is_query_macro_name: (a: number, b: number) => number;
     readonly is_render_hidden_prop: (a: number, b: number, c: number, d: number) => number;
     readonly last_panic: () => [number, number];
+    readonly linkable_property_names: (a: number, b: number, c: number) => [number, number];
     readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
     readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
     readonly logbook_clock_out: (a: number, b: number, c: number, d: number) => [number, number];

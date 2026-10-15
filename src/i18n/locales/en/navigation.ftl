@@ -204,3 +204,14 @@ sidebar-conflict-count =
        *[other] { NUMBER($count, useGrouping: 0) } conflicts
     }
 tagged-pages-heading = { " " }Pages tagged with "{ $name }"
+
+# Helper-return and component-prop interface text (GH #107).
+navigation-prose-no-results = No results
+navigation-prose-no-graph = No graph
+navigation-prose-journals = Journals
+navigation-prose-conflicts = Conflicts
+navigation-prose-all-pages = All pages
+navigation-prose-search = Search
+navigation-prose-guide = Guide
+
+navigation-prose-search-source = Search: { $source }

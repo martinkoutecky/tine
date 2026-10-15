@@ -479,3 +479,17 @@ settings-orphaned-assets-summary =
     }
 settings-ui-open-in-the-default-app = Open in the default app
 settings-ui-trash = Trash
+
+# Helper-return and component-prop interface text (GH #107).
+settings-prose-always-ask-before-applying-an-external-change = Always ask before applying an external change
+settings-prose-when-a-page-you-are-not-editing-changes-on-disk = When a page you are not editing changes on disk, keep what you are reading and offer Reload from disk / Keep mine instead of updating it. Changes that conflict or arrive mid-edit are always handled safely either way.
+settings-prose-re-reads-every-file-in-the-open-graph-and-rebuilds = Re-reads every file in the open graph and rebuilds Tine's view of it.
+settings-prose-show-tine-in-the-system-tray = Show Tine in the system tray
+settings-prose-adds-a-tray-notification-area-macos-menu-bar-icon-click = Adds a tray / notification-area (macOS: menu-bar) icon. Click it to show or hide the main window; its menu has Open Tine, Quick Capture and Quit. Closing the window still quits Tine. Off by default.
+settings-prose-minimize-to-tray = Minimize to tray
+settings-prose-minimizing-the-main-window-hides-the-window-instead-of-leaving = Minimizing the main window hides the window instead of leaving it in the taskbar; restore it from the tray icon. Needs “Show Tine in the system tray”.
+settings-prose-start-minimized-to-tray = Start minimized to tray
+settings-prose-launch-with-the-main-window-hidden-open-it-from-the = Launch with the main window hidden; open it from the tray icon. Launching Tine again, or opening a graph or link, always shows it. Needs “Show Tine in the system tray”.
+
+settings-prose-last-rescan = Last rescan finished at { $time }.
+settings-prose-file-size = { $value } { $unit }

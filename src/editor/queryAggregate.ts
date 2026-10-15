@@ -43,8 +43,8 @@ export interface QuerySummary {
 
 /** The user-facing name of one aggregate column. */
 export function queryAggregateLabel([field, fn]: QueryAggregateEntry): string {
-  const verb = fn === "count" ? "Count" : fn === "sum" ? "Sum" : "Avg";
-  return field ? `${verb} of ${field}` : verb;
+  const verb = fn === "count" ? t("query-prose-count") : fn === "sum" ? t("query-prose-sum") : t("query-prose-avg");
+  return field ? t("query-prose-aggregate-field", { verb, field }) : verb;
 }
 
 /** Format the snapshot's complete statistics. Rows and live editor facets never
@@ -57,7 +57,7 @@ export function querySummary(input: {
   if (!statistics) return null;
   const format = (cell: import("./queryIr").QueryStatisticsCell): QuerySummaryCell => {
     if (cell.kind === "marker") return {
-      text: `Unavailable (${cell.reason.replaceAll("_", " ")})`, skipped: cell.skipped,
+      text: t("query-prose-aggregate-unavailable", { reason: cell.reason }), skipped: cell.skipped,
     };
     // Avoid overflowing a finite large number while rounding for display.
     const scaled = cell.value * 1000;
@@ -73,7 +73,7 @@ export function querySummary(input: {
     groupLabel: input.groupLabel ?? statistics.group_by,
     multiMembership: statistics.group_by === "tags",
     notice: statistics.grouping_status === "unsupported_formula"
-      ? "Exact statistics by formula are not supported yet. Overall statistics are shown."
+      ? t("query-prose-formula-statistics-notice")
       : null,
   };
 }

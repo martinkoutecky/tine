@@ -227,7 +227,7 @@ export function Sidebar(props: {
 // same). Falls back to "No graph" when none is loaded (e.g. mock/first run).
 function graphDisplayName(): string {
   const root = graphMeta()?.display_root ?? graphMeta()?.root;
-  if (!root) return "No graph";
+  if (!root) return t("navigation-prose-no-graph");
   const base = root.replace(/[/\\]+$/, "").split(/[/\\]/).pop();
   return base || root;
 }

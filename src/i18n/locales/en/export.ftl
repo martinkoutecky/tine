@@ -111,3 +111,7 @@ reference-evidence-occurrence-label =
         [1] Highlight mention { $index } of { $total }
        *[other] Jump to mention { $index } of { $total }
     }
+
+# Helper-return and component-prop interface text (GH #107).
+export-prose-plain-text-output-has-no-markup-markers-to-remove = Plain text output has no markup markers to remove
+export-prose-only-applies-to-plain-text-output = Only applies to plain text output

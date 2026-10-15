@@ -127,9 +127,9 @@ export function DiagnosticsTab(): JSX.Element {
         <span class="settings-hint" role="status">
           <Show
             when={rescanFinished()}
-            fallback="Re-reads every file in the open graph and rebuilds Tine's view of it."
+            fallback={t("settings-prose-re-reads-every-file-in-the-open-graph-and-rebuilds")}
           >
-            {(finished) => `Last rescan finished at ${new Date(finished()).toLocaleTimeString()}.`}
+            {(finished) => t("settings-prose-last-rescan", { time: new Date(finished()).toLocaleTimeString() })}
           </Show>
         </span>
       </div>

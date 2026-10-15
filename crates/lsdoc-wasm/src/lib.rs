@@ -89,6 +89,14 @@ pub fn split_linkable_property(value: &str) -> Vec<String> {
     value.split(block_regions::is_linkable_property_separator).map(str::to_owned).collect()
 }
 
+/// OG property tokens, shared with native property atomization. O(value bytes).
+#[wasm_bindgen]
+pub fn linkable_property_names(value: &str, is_org: bool) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    tine_outline::property_refs::linkable_names(value, is_org)
+        .into_iter().filter(|name| seen.insert(page_identity::page_key(name))).collect()
+}
+
 #[path = "../../tine-core/src/render_facets.rs"]
 mod render_facets;
 

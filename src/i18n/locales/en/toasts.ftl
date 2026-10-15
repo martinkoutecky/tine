@@ -1,4 +1,5 @@
 ## Toasts: the notification stack's own controls and notes
+image-copy-progress = Copying image…
 toast-copy = Copy
 toast-copy-title = Copy the full message
 toast-dismiss = Dismiss

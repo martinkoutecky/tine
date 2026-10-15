@@ -1,5 +1,13 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide teaches query answer continuity and Save then Escape", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
+  for (const outcome of ["Renaming keeps the current results visible", "unsaved text draft leaves the results unchanged", "Saving keeps focus in the editor", "returns focus to the query's **⋯** menu"]) expect(guide).toContain(outcome);
+});
+it("the Guide teaches inline checklist clicks, nesting, Org and own-content collapse", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/journals-tasks-scheduling.md", "utf8");
+  for (const outcome of ["**Shift+Enter**", "`+ [ ] item` in Org", "tick just that item without opening the editor", "same indent step as child blocks", "its own inline checklist stays visible"]) expect(guide).toContain(outcome);
+});
 it("the canonical Guide teaches linked property keys, shaded embeds and the tagged-page section", () => {
   const guide = readFileSync(new URL("../crates/tine-core/src/templates/pages-links-references-search.md", import.meta.url), "utf8");
   for (const outcome of ["click the key to open its page", "Later groups remain in the file", "shaded background in both light and dark", '**Pages tagged with "X"**', "before Linked References", "Inline block tags still belong to Linked References"]) expect(guide).toContain(outcome);

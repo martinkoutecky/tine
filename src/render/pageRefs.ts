@@ -6,9 +6,9 @@
 // code are literal, as in the backend. Names are returned as written; compare them
 // with `pageIdentityKey`. `blockRefsInText` answers the sibling question for `((uuid))`
 // from the same walk.
-import { reference_target_name, nested_reference_names } from "./wasm/lsdoc_wasm.js";
+import { reference_target_name, nested_reference_names, linkable_property_names } from "./wasm/lsdoc_wasm.js";
 import { parseBody, inlineText } from "./facets";
-import { isQuotedPagePropertyValue, normalizeImplicitPageName, propertyKeyNorm, splitLinkableProperty } from "./block";
+import { isQuotedPagePropertyValue, propertyKeyNorm } from "./block";
 import type { Block, Format, Inline, ListItem } from "./ast";
 
 /** Every page name `raw` references, in source order (may repeat). One lsdoc parse
@@ -60,12 +60,13 @@ function collectBlock(block: Block, format: Format, out: Found, properties: bool
       for (const [key, value] of block.props) {
         // A value's own `[[…]]`/`#…` references (a nested parse never recurses
         // into properties again, so this is bounded).
-        collectRaw(value, format, out, false);
+        const found: Found = { pages: [], blocks: [] };
+        collectRaw(value, format, found, false);
+        out.pages.push(...found.pages);
+        out.blocks.push(...found.blocks);
         if (propertyKeyNorm(key) !== "tags" || isQuotedPagePropertyValue(value)) continue;
-        for (const part of splitLinkableProperty(value)) {
-          const bare = part.trim();
-          if (bare && !bare.startsWith("[[") && !bare.startsWith("#")) out.pages.push(normalizeImplicitPageName(bare));
-        }
+        const explicit = new Set(found.pages);
+        out.pages.push(...linkable_property_names(value, format === "org").filter(name => !explicit.has(name)));
       }
       break;
   }

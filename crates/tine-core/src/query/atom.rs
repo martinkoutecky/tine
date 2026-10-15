@@ -212,52 +212,7 @@ fn sep_by_comma(value: &str) -> Vec<&str> {
 
 /// OG `get-ref-from-ast` (`text.cljs:100-119`) over one lsdoc inline node: a
 /// `Link` whose url is `Page_ref` or `Search`, a `Nested_link`, or a `Tag`.
-fn ref_from_inline(node: &lsdoc::ast::Inline, out: &mut Vec<String>) {
-    use lsdoc::ast::{Inline, Url};
-    match node {
-        Inline::Link { url, .. } => match url {
-            Url::PageRef { v } | Url::Search { v } => out.push(v.trim().to_string()),
-            _ => {}
-        },
-        Inline::NestedLink { content, .. } => out.push(content.trim().to_string()),
-        Inline::Tag { children, .. } => {
-            let mut text = String::new();
-            tag_plain_text(children, &mut text);
-            if !text.trim().is_empty() {
-                out.push(text.trim().to_string());
-            }
-        }
-        _ => {}
-    }
-}
-
-/// The text of a `Tag`'s children — OG's `get-ref-from-ast` `"Tag"` branch takes
-/// the first child's `Plain` text (or recurses into a link).
-fn tag_plain_text(children: &[lsdoc::ast::Inline], out: &mut String) {
-    use lsdoc::ast::{Inline, Url};
-    for child in children {
-        match child {
-            Inline::Plain { text, .. } => out.push_str(text),
-            Inline::Link { url, .. } => match url {
-                Url::PageRef { v } | Url::Search { v } => out.push_str(v),
-                _ => {}
-            },
-            Inline::NestedLink { content, .. } => out.push_str(content),
-            _ => {}
-        }
-    }
-}
-
-/// The plain-text segments of the parsed value — OG `extract-refs-by-commas`
-/// (`text.cljs:148-154`) reads exactly the `Plain` nodes.
-fn plain_segments(nodes: &[lsdoc::ast::Inline], out: &mut Vec<String>) {
-    use lsdoc::ast::Inline;
-    for node in nodes {
-        if let Inline::Plain { text, .. } = node {
-            out.push(text.clone());
-        }
-    }
-}
+use tine_outline::property_refs::{plain_segments, ref_from_inline};
 
 /// The ONE atomizer (SPEC §6.2), as Tine runs it. `key` is the raw source key;
 /// it is normalized with the existing [`property_key_norm`] before every rule

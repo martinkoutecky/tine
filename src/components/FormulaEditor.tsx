@@ -160,7 +160,7 @@ function formulaBuilderCanRenderRoot(ast: Ast): boolean {
 
 function literalLabel(value: string | number | boolean | null): string {
   if (typeof value === "string") return `"${value}"`;
-  return value === null ? "empty" : String(value);
+  return value === null ? t("formula-prose-empty") : String(value);
 }
 
 function opLabel(op: BinaryOp): string {
@@ -237,7 +237,7 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
   const existingNames = createMemo(() => new Set(props.target.formulas.map(([n]) => n)));
   const formulaChips = createMemo(() => props.target.formulas.map(([n]) => `formula.${n}`));
   const modeLabel = () =>
-    props.target.mode === "filter" ? "Edit filter" : props.target.mode === "edit" ? "Edit formula" : "Add formula";
+    props.target.mode === "filter" ? t("formula-prose-edit-filter") : props.target.mode === "edit" ? t("formula-prose-edit-formula") : t("formula-prose-add-formula");
 
   const parseResult = createMemo((): EditorParseResult => {
     const value = expr().trim();

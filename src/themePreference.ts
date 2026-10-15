@@ -1,6 +1,6 @@
 import { msg } from "./i18n";
 import { createSignal } from "solid-js";
-import { backend } from "./backend";
+import { syncSystemBarAppearance } from "./systemBars";
 import { pushToast } from "./toasts";
 import { persistThemePreference } from "./ui";
 
@@ -53,8 +53,8 @@ export function applyTheme() {
   const resolved = resolveTheme(appearancePreference());
   setTheme(resolved);
   document.documentElement.setAttribute("data-theme", resolved);
-  void backend().setSystemBarAppearance(resolved === "dark")
-    .catch(() => pushToast(msg("theme-preference-could-not-update-system-bar-appearance"), "error"));
+  syncSystemBarAppearance(resolved === "dark",
+    () => pushToast(msg("theme-preference-could-not-update-system-bar-appearance"), "error"));
   syncColorSchemeListener(appearancePreference());
 }
 

@@ -8,6 +8,7 @@
 // picker emits, the phrase each node reads as, and the tree edits.
 
 import { describe, it, expect } from "vitest";
+import { renderEnglish } from "../i18n";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -861,7 +862,7 @@ describe("filterPhrase / querySentence", () => {
     for (let i = 0; i < 64; i++) deep = { kind: "and", items: [pageRefFilter(`level${i}`), deep] };
     const sentence = querySentence({ anchor: "block", filter: deep });
     expect(sentence.length).toBeLessThan(24);
-    expect(said(sentence)).toContain(ADVANCED_PHRASE);
+    expect(said(sentence)).toContain(renderEnglish(ADVANCED_PHRASE));
     expect(said(sentence).length).toBeLessThan(240);
 
     // Relation predicates are levels too, so a deep `any(children, …)` chain
@@ -871,7 +872,7 @@ describe("filterPhrase / querySentence", () => {
       rel = { kind: "leaf", leaf: { kind: "rel", rel: "children", quant: "any", pred: rel } };
     }
     expect(filterLabel(rel).length).toBeLessThan(120);
-    expect(filterLabel(rel)).toContain(ADVANCED_PHRASE);
+    expect(filterLabel(rel)).toContain(renderEnglish(ADVANCED_PHRASE));
 
     // And so is `off`.
     let off: Filter = pageRefFilter("bottom");
@@ -1387,7 +1388,7 @@ describe("no ⟨advanced⟩ for a shape the builder wrote (GH #619 item 5)", () 
         kind: "and",
         items: [pageRefFilter("x"), { kind: "or", items: [filter, pageRefFilter("y")] }],
       };
-      expect(said(querySentence({ anchor: "block", filter: nested })), name).not.toContain(ADVANCED_PHRASE);
+      expect(said(querySentence({ anchor: "block", filter: nested })), name).not.toContain(renderEnglish(ADVANCED_PHRASE));
     }
   });
 
@@ -1403,7 +1404,7 @@ describe("no ⟨advanced⟩ for a shape the builder wrote (GH #619 item 5)", () 
     for (let i = 0; i < 64; i++) {
       rel = { kind: "leaf", leaf: { kind: "rel", rel: "page", quant: "any", pred: rel } };
     }
-    expect(filterLabel(rel)).toContain(ADVANCED_PHRASE);
+    expect(filterLabel(rel)).toContain(renderEnglish(ADVANCED_PHRASE));
     expect(filterLabel(rel).length).toBeLessThan(120);
   });
 });

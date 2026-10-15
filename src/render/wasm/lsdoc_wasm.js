@@ -289,6 +289,21 @@ function __tine_raw_last_panic() {
 }
 
 /**
+ * OG property tokens, shared with native property atomization. O(value bytes).
+ * @param {string} value
+ * @param {boolean} is_org
+ * @returns {string[]}
+ */
+function __tine_raw_linkable_property_names(value, is_org) {
+    const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.linkable_property_names(ptr0, len0, is_org);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
  * @param {string} raw
  * @param {boolean} is_org
  * @param {string} old_marker
@@ -1383,6 +1398,7 @@ export const install_panic_hook = __tineGuard("install_panic_hook", __tine_raw_i
 export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);
 export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
 export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
+export const linkable_property_names = __tineGuard("linkable_property_names", __tine_raw_linkable_property_names);
 export const logbook_apply_marker_transition = __tineGuard("logbook_apply_marker_transition", __tine_raw_logbook_apply_marker_transition);
 export const logbook_clock_in = __tineGuard("logbook_clock_in", __tine_raw_logbook_clock_in);
 export const logbook_clock_out = __tineGuard("logbook_clock_out", __tine_raw_logbook_clock_out);

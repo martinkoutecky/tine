@@ -5,7 +5,7 @@
     "purpose": "Stable 0.7.2, the release users describe as feeling great (Martin 2026-10-13, VY2). Moved from v0.4.7 because that anchor's own round-to-round variance kept failing reliability. Never advances automatically; only Martin moves it."
   },
   "previousRelease": {
-    "ref": "v0.7.2",
+    "ref": "v0.7.3",
     "selection": "latest-release",
     "purpose": "The latest published stable release (GitHub releases/latest); advances after each stable release (runbook F.2). Replaced the fixed v0.6.5 og-campaign anchor on 2026-10-13."
   },

@@ -93,3 +93,16 @@ plugins-audit-details = { $count ->
 # Remaining interface text (GH #107). Inline code and syntax stay unchanged.
 plugins-ui-could-not-cache-verified-plugin-registry = Could not cache verified plugin registry: { $value1 }
 plugins-ui-could-not-cache-plugin-safety-report = Could not cache plugin safety report.
+
+# Helper-return and component-prop interface text (GH #107).
+plugins-prose-information = Information
+plugins-prose-human-reviewed-before-publication = Human-reviewed before publication
+plugins-prose-low-risk-automated-pass = Low-risk automated pass
+plugins-prose-automated-review-passed = Automated review passed
+
+plugins-prose-risk-finding = { $severity ->
+        [low] Low-risk finding
+        [medium] Medium-risk finding
+        [critical] Critical-risk finding
+       *[high] High-risk finding
+    }

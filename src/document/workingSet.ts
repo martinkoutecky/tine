@@ -23,6 +23,7 @@ import { isBlockMoving } from "./edits/moves";
 import { journalTitle, appNow } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToastUnique } from "../toasts";
+import { renderEnglish } from "../i18n";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import { dbg } from "../debug";
 import { reportUiFailure } from "../uiFailure";
@@ -180,6 +181,15 @@ function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boo
   const folded = foldMarkedPageHeader(page);
   if (!folded || (dto.pre_block ?? null) !== (folded.preBlock ?? null)) return false;
   const roots = folded.rootIds;
+  // A file with no body (0 bytes, or page properties only) is shown as one empty
+  // bullet (`toLoadablePage`, `ensureEmptyBlock`), and saving that bullet writes
+  // no body: the same content. Otherwise the host's answer to the Open that a
+  // click on the bullet sends (or the echo of emptying a page) replaced the page
+  // under the new editor, which found no block and closed (GH #689).
+  if (dto.blocks.length === 0 && roots.length === 1) {
+    const only = doc.byId[roots[0]];
+    if (only && only.raw.trim() === "" && only.children.length === 0) return true; // same rule as pageToDto
+  }
   const eq = (b: BlockDto, id: string): boolean => {
     const n = doc.byId[id];
     if (!n || n.raw !== b.raw || n.children.length !== b.children.length) return false;
@@ -214,18 +224,21 @@ function slotRefusal(dto: PageDto & { id?: string }): PageLoadRefusal | null {
 
 /** Say why a page could not be loaded or written. Pure; O(1). */
 export function pageLoadRefusalMessage(refusal: PageLoadRefusal): string {
-  const holder = refusal.holder ?? "a new page that is not saved yet";
-  const requested = refusal.requested ?? "the page";
-  return `“${refusal.page}” is open from ${holder} with unsaved work, so ${requested} was not loaded. Finish or save that edit first.`;
+  return renderEnglish(msg("document-load-refused", pageLoadRefusalArgs(refusal)));
+}
+
+function pageLoadRefusalArgs(refusal: PageLoadRefusal, after = "") {
+  return { page: refusal.page, holder: refusal.holder ?? "", hasHolder: refusal.holder === null ? 0 : 1,
+    requested: refusal.requested ?? "", hasRequested: refusal.requested === null ? 0 : 1, after, hasAfter: after ? 1 : 0 };
 }
 
 /** Show `pageLoadRefusalMessage` as a sticky error (the user must act), once
  * while an identical one is visible. `after` is appended (what the refusal
  * stopped). Returns the message. O(visible toasts). */
 export function reportPageLoadRefusal(refusal: PageLoadRefusal, after?: string): string {
-  const message = after ? `${pageLoadRefusalMessage(refusal)} ${after}` : pageLoadRefusalMessage(refusal);
-  pushToastUnique(message, "error");
-  return message;
+  const message = msg("document-load-refused", pageLoadRefusalArgs(refusal, after));
+  pushToastUnique(msg("document-load-refused", pageLoadRefusalArgs(refusal, after)), "error");
+  return renderEnglish(message);
 }
 
 /** Load a page into the working set if it isn't already there (used by

@@ -1,11 +1,11 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import type { JSX } from "solid-js";
+import { createSignal, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
-import { blockProperty, resetStore, undo } from "../document";
+import { blockProperty, resetStore, setRaw, undo } from "../document";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { openJournals, openPage, route } from "../router";
@@ -14,7 +14,7 @@ import type { QueryExecution, QueryHit, RefGroup } from "../types";
 import { editingId, startEditing, endEdit } from "../editorController";
 import type { ParsedQuery, QueryResult, QueryTextDialect, Source } from "../editor/queryIr";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
-import { searchFilter } from "../editor/queryBuilder";
+import { searchFilter, taskFilter } from "../editor/queryBuilder";
 import { readEdnOptions } from "../editor/edn";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { bumpDataRev } from "../graphSession";
@@ -22,7 +22,7 @@ import * as blockRender from "../render/block";
 import { renderedBlocks, resetNearObserverForTests } from "../lazyObserve";
 import { openSwitcher, closeSwitcher } from "../ui";
 import { openCalmQuery } from "../tests/calmQueryActions";
-import { beginResultsChange } from "../queryResultsEpoch";
+import { beginResultsChange, installResultsPendingGate } from "../queryResultsEpoch";
 
 // These component fixtures do not bind a page host. Their source edits update
 // the working set; native coverage exercises actual publication and the epoch
@@ -189,6 +189,180 @@ function loadDamagedQueryDoc(raw: string) {
 }
 
 describe("QueryMacro sheet integration", () => {
+  it.each(["group", "aggregate"])("keeps membership visible through a %s option save", async option => {
+    const raw = '{{query (task TODO) {:title "Tasks"}}}';
+    loadQueryDoc(raw);
+    vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties = []) => {
+      const parsed = readQuery(text, dialect, properties);
+      return { ...parsed, view: properties.length ? option === "group" ? { group_by: "owner" }
+        : { aggregates: [["owner", "count"]] } : {} };
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let finish: (() => void) | undefined;
+    try {
+      await settleQuery();
+      finish = beginResultsChange();
+      setRaw("query", `${raw}\n${option === "group" ? "tine.group-field:: owner" : "tine.col-aggregates:: owner=count"}`);
+      await settleQuery();
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+      expect(root.querySelector(".query-group")?.textContent).toContain("From query");
+    } finally { finish?.(); dispose(); }
+  });
+  it("marks retained results busy until an ordinary save rerun actually lands", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let land: ((value: QueryResult) => void) | undefined;
+    try {
+      await settleQuery();
+      vi.mocked(backend().queryRun).mockImplementation(() => new Promise(resolve => { land = resolve; }));
+      bumpDataRev(); await settleQuery();
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+      expect(root.querySelector(".query-block")?.getAttribute("aria-busy")).toBe("true");
+      land!(blockRunResult(queryGroups(["todo"])));
+      await settleQuery();
+      expect(root.querySelector(".query-block")?.getAttribute("aria-busy")).not.toBe("true");
+    } finally { land?.(blockRunResult(queryGroups(["todo"]))); dispose(); }
+  });
+  it("retires the answer when an option save changes its authored dialect", async () => {
+    loadQueryDoc('{{query (task TODO) {:title "Tasks"}}}');
+    vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
+      const parsed = readQuery(text, dialect, properties);
+      return { ...parsed, query: { ...parsed.query, filter: taskFilter(["TODO"]) } };
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let finish: (() => void) | undefined;
+    try {
+      await settleQuery();
+      finish = beginResultsChange();
+      setRaw("query", '{{tine-query @block and task in (\'TODO\') {:title "Tasks"}}}\ntine.columns:: owner');
+      await settleQuery();
+      expect(root.querySelector(".query-group")).toBeNull();
+    } finally { finish?.(); dispose(); }
+  });
+  it("retires an OG answer when identical stored IR has different empty-task semantics in TQL", async () => {
+    loadQueryDoc("{{query (and (task) (task TODO))}}");
+    vi.mocked(backend().parseQuery).mockImplementation(async (text, dialect, properties) => {
+      const parsed = readQuery(text, dialect, properties);
+      return { ...parsed, query: { ...parsed.query, filter: { kind: "and", items: [taskFilter([]), taskFilter(["TODO"])] } } };
+    });
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let finish: (() => void) | undefined;
+    try {
+      await settleQuery();
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+      finish = beginResultsChange();
+      setRaw("query", "{{tine-query @block and task in () and task in ('TODO')}}");
+      await settleQuery();
+      expect(root.querySelector(".query-group")).toBeNull();
+    } finally { finish?.(); dispose(); }
+  });
+  it.each([
+    ['Notes: {{query (task TODO) {:title "Tasks"}}}', 0],
+    ['{{query (task TODO) {:title "Tasks"}}} and {{query (task TODO) {:title "Tasks"}}}', 1],
+  ] as const)("keeps an inline query's answer through rename in %s", async (raw, index) => {
+    loadQueryDoc(raw);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue('(task TODO) {:title "Renamed"}');
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let finish: (() => void) | undefined;
+    try {
+      await settleQuery();
+      const query = () => root.querySelectorAll(".query-block")[index];
+      expect(query().querySelector(".query-count")?.textContent).toBe("1");
+      finish = beginResultsChange();
+      query().querySelector<HTMLElement>(".query-title")!.click();
+      const input = query().querySelector<HTMLInputElement>(".query-title-input")!;
+      input.value = "Renamed";
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await settleQuery();
+      expect(query().querySelector(".query-title")?.textContent).toBe("Renamed");
+      expect(query().querySelector(".query-count")?.textContent).toBe("1");
+      expect(query().textContent).toContain("From query");
+      if (index === 1) expect(root.querySelector(".query-title")?.textContent).toBe("Tasks");
+    } finally { finish?.(); dispose(); }
+  });
+  it("keeps focus in View when saving removes the focused display control", async () => {
+    const original = '(and (task TODO) (sort-by owner asc)) {:title "Tasks"}';
+    loadQueryDoc(`{{query ${original}}}`);
+    vi.mocked(backend().parseQuery).mockResolvedValueOnce({ ...readQuery(original, "macro_query"), view: { sort: [["owner", "asc"]] } })
+      .mockResolvedValue(readQuery('(task TODO) {:title "Tasks"}', "macro_query"));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue('(task TODO) {:title "Tasks"}');
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const panel = await openCalmQuery(root, "View");
+      const remove = panel.querySelector<HTMLButtonElement>('button[aria-label="Remove owner"]')!;
+      expect(remove).not.toBeNull();
+      remove.focus(); remove.click();
+      await settleQuery();
+      expect(panel.querySelector('button[aria-label="Remove owner"]')).toBeNull();
+      expect(panel.contains(document.activeElement)).toBe(true);
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(root.querySelector(".qc-panel")).toBeNull();
+    } finally { dispose(); }
+  });
+  it("renames by Enter without losing results while its own publication delays adoption", async () => {
+    const [pending, setPending] = createSignal(false);
+    installResultsPendingGate(pending, "own-work");
+    loadQueryDoc('{{query (task TODO)}}\nowner:: Martin');
+    vi.spyOn(backend(), "printQuery").mockResolvedValue('(task TODO) {:title "Renamed"}');
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      setPending(true);
+      root.querySelector<HTMLElement>(".query-title")!.click();
+      const input = root.querySelector<HTMLInputElement>(".query-title-input")!;
+      input.value = "Renamed";
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await settleQuery();
+      expect(root.querySelector(".query-title")?.textContent).toBe("Renamed");
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+      expect(root.querySelector(".query-group")?.textContent).toContain("From query");
+      expect(backend().queryRun).toHaveBeenCalledTimes(1);
+      expect(root.querySelector(".query-block")?.getAttribute("aria-busy")).toBe("true");
+      setPending(false);
+      await vi.waitFor(() => expect(root.querySelector(".query-block")?.getAttribute("aria-busy")).not.toBe("true"));
+    } finally { setPending(false); dispose(); }
+  });
+  it("opens an advanced query's View panel with focus and returns it on Escape", async () => {
+    loadQueryDoc('{{query [:find ?b :where [?b :block/marker "TODO"]] {:title "Tasks"}}}');
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const panel = await openCalmQuery(root, "View");
+      await tick();
+      expect(document.activeElement).toBe(panel.querySelector(".qc-done"));
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(root.querySelector(".qc-panel")).toBeNull();
+      expect(document.activeElement).toBe(root.querySelector(".qc-actions > summary"));
+    } finally { dispose(); }
+  });
+  it.each([
+    ["md", "", '{:title "Renamed"}'],
+    ["md", "\ntine.view:: table", '{:title "Renamed" :collapsed false}'],
+    ["org", "\n:PROPERTIES:\n:tine.view: board\n:END:", '{:title "Renamed"}'],
+    ["org", "\n:PROPERTIES:\n:tine.view: search\n:END:", '{:title "Renamed" :collapsed false}'],
+  ] as const)("keeps the shown answer through %s options with %s while epochs invalidate actions", async (format, properties, options) => {
+    loadQueryDoc(`{{query (task TODO) {:title "Open tasks"}}}${properties}`);
+    setDoc("pages", 0, "format", format);
+    const { root, dispose } = mount(() => <Block id="query" />);
+    let finish: (() => void) | undefined;
+    try {
+      await settleQuery();
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+      finish = beginResultsChange();
+      setRaw("query", `{{query (task TODO) ${options}}}${properties}`);
+      await settleQuery();
+      expect(root.querySelector(".query-title")?.textContent).toBe("Renamed");
+      expect(root.querySelector(".query-count")?.textContent).toBe("1");
+      expect(root.querySelector(".query-block")?.textContent).toContain("From query");
+      expect(root.querySelector(".query-block")?.getAttribute("aria-busy")).toBe("true");
+      finish(); finish = undefined;
+      await vi.waitFor(() => expect(root.querySelector(".query-block")?.getAttribute("aria-busy")).not.toBe("true"));
+      finish = beginResultsChange();
+      setRaw("query", `{{query (task DONE) {:title "Renamed"}}}${properties}`);
+      await settleQuery();
+      expect(root.querySelector(".query-count")?.textContent).toBe("0");
+    } finally { finish?.(); dispose(); }
+  });
   it("persists Select none from default table columns and restores defaults on Undo", async () => {
     loadQueryDoc('{{query (task TODO)}}\ntine.view:: table');
     vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
@@ -1033,7 +1207,15 @@ describe("QueryMacro sheet integration", () => {
     ));
     await settleQuery();
 
-    await vi.waitFor(() => expect(root.querySelector(".query-adv-note")?.textContent ?? "").toContain("ran: task"));
+    await vi.waitFor(() => expect(root.querySelector(".query-header .query-count")).not.toBeNull());
+    // GH #502: at rest an advanced query shows its title and results only; which
+    // clauses ran is editing context, shown in its View panel.
+    expect(root.querySelector(".query-adv-note")).toBeNull();
+    const details = root.querySelector<HTMLDetailsElement>(".qc-actions")!;
+    details.open = true; details.dispatchEvent(new Event("toggle")); await tick();
+    const menuId = details.querySelector("summary")!.getAttribute("aria-controls")!;
+    [...document.getElementById(menuId)!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "View")!.click();
+    await vi.waitFor(() => expect(root.querySelector(".qc-panel .query-adv-note")?.textContent ?? "").toContain("ran: task"));
     // An advanced (datalog) query has no sentence and no sheet to offer.
     expect(root.querySelector(".qs-line")).toBeNull();
     expect(root.querySelector(".qs-sheet")).toBeNull();

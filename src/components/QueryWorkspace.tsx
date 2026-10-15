@@ -53,6 +53,7 @@ import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
 import { createPage, CreatePageRefusal, queryWorkspacePage } from "../document";
 import { internalLinkDest, internalLinkMouseDown, internalLinkAuxClick } from "../linkGesture";
+import { nextResultIndex } from "../resultNavigation";
 import { openRouteInOtherPane } from "../panes";
 import { openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
@@ -60,7 +61,7 @@ import { readLatestOr, readOr } from "../resourceRead";
 import { documentOf } from "../windowRealm";
 import type { QueryTextDialect } from "../editor/queryIr";
 import { QueryOgHint } from "./QueryResultParts";
-import { t } from "../i18n";
+import { t, msg } from "../i18n";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -260,7 +261,7 @@ export async function materializeQueryWorkspace(
     const detail = error instanceof Error ? error.message : String(error);
     if (!isCurrent()) return superseded();
     if (!owner()) {
-      pushToast(`Could not save “${name}”: ${detail}`, "error");
+      pushToast(msg("query-query-workspace-could-not-save", { value1: name, value2: detail }), "error");
       return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     }
     if (error instanceof CreatePageRefusal) {
@@ -337,7 +338,7 @@ function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult): Q
     cancelled: false,
     explanation: {
       branches: explanation?.rows.map((row) => ({
-        description: `${row.conjunct}: ${row.alone} alone${row.without === null || row.without === undefined ? "" : `, ${row.without} without it`}`,
+        get description() { return t("query-workspace-explanation", { conjunct: row.conjunct, alone: row.alone, without: row.without ?? 0, hasWithout: row.without == null ? 0 : 1 }); },
         children: [],
       })) ?? [],
     },
@@ -353,8 +354,8 @@ function hitPage(hit: QueryHit): string {
   return hit.entity === "page" ? hit.page.name : hit.page;
 }
 
-function hitKind(hit: QueryHit): "Page" | "Block" {
-  return hit.entity === "page" ? "Page" : "Block";
+function hitKind(hit: QueryHit): string {
+  return hit.entity === "page" ? t("query-prose-page") : t("query-prose-block");
 }
 
 function MarkedText(props: { text: string; spans: MatchSpan[] }): JSX.Element {
@@ -406,17 +407,19 @@ function ExplainTree(props: { nodes: QueryExplainNode[] }): JSX.Element {
 
 function friendlySummary(source: string): string {
   const parsed = parseSearchQuery(source);
-  if (parsed.kind === "empty") return "Type to search page names and block text.";
-  if (parsed.kind === "invalid") return `The regular expression is invalid: ${parsed.error}`;
-  if (parsed.kind === "regex") return `Matches page names or block text using the case-sensitive regular expression /${parsed.pattern}/.`;
-  const describeGroup = (group: typeof parsed.groups[number]) => group.map((term) => {
-    const value = term.quoted ? `the exact phrase “${term.text}”` : `“${term.text}”`;
-    return term.negated ? `excluding ${value}` : `containing ${value}`;
-  }).join(" and ");
+  if (parsed.kind === "empty") return t("query-prose-type-to-search-page-names-and-block-text");
+  if (parsed.kind === "invalid") return t("query-prose-invalid-regex", { error: parsed.error });
+  if (parsed.kind === "regex") return t("query-prose-regex-summary", { pattern: parsed.pattern });
+  const describeGroup = (group: typeof parsed.groups[number]) => group.map(term =>
+    t("query-prose-search-term", {
+      kind: term.negated ? (term.quoted ? "exclude-exact" : "exclude") : (term.quoted ? "exact" : "contains"),
+      value: term.text,
+    })
+  ).reduce((left, right) => t("query-prose-search-and", { left, right }));
   const groups = parsed.groups.map(describeGroup);
   return groups.length === 1
-    ? `Matches page names or block text ${groups[0]}.`
-    : `Matches page names or block text when it is ${groups.join("; or ")}.`;
+    ? t("query-prose-search-summary", { group: groups[0] })
+    : t("query-prose-search-groups-summary", { groups: groups.reduce((left, right) => t("query-prose-search-or", { left, right })) });
 }
 
 function filterWords(value: string): string[] {
@@ -652,10 +655,10 @@ function AdvancedModal(props: {
       >
         <header class="query-advanced-header">
           <div>
-            <h2 id="query-advanced-title">Filters and advanced query</h2>
-            <p>Use the friendly fields, or switch losslessly to the visual query builder.</p>
+            <h2 id="query-advanced-title">{t("query-query-workspace-filters-and-advanced-query")}</h2>
+            <p>{t("query-query-workspace-use-the-friendly-fields-or-switch-losslessly-to-the-visual")}</p>
           </div>
-          <button type="button" aria-label="Close filters" onClick={props.onClose}>×</button>
+          <button type="button" aria-label={t("query-query-workspace-close-filters")} onClick={props.onClose}>×</button>
         </header>
 
         <Show when={draftKind() === "search"} fallback={
@@ -667,15 +670,14 @@ function AdvancedModal(props: {
               sheetAlwaysOpen
               parentTransientId={props.layerId}
             />
-            <p class="query-advanced-note">Switching back to friendly fields is offered only when it can be lossless.</p>
+            <p class="query-advanced-note">{t("query-query-workspace-switching-back-to-friendly-fields-is-offered-only-when-it")}</p>
           </div>
         }>
           <Show when={structuredFriendly()} fallback={
             <div class="query-friendly-raw">
-              <p>This search uses a combination that cannot be split into fields without changing it.</p>
+              <p>{t("query-query-workspace-this-search-uses-a-combination-that-cannot-be-split-into")}</p>
               <label>
-                Friendly search syntax
-                <textarea
+                {t("query-query-workspace-friendly-search-syntax")}<textarea
                   ref={(element) => { firstField = element; }}
                   rows={4}
                   value={rawFriendly()}
@@ -684,34 +686,27 @@ function AdvancedModal(props: {
                 />
               </label>
               <button type="button" class="query-switch-to-dsl" onClick={switchToDsl}>
-                Edit as visual query
-              </button>
+                {t("query-query-workspace-edit-as-visual-query")}</button>
             </div>
           }>
           <div class="query-friendly-fields">
             <label>
-              All of these words
-              <input ref={(element) => { firstField = element; }} value={all()} onInput={(event) => { setAll(event.currentTarget.value); setFriendlyDirty(true); }} />
+              {t("query-query-workspace-all-of-these-words")}<input ref={(element) => { firstField = element; }} value={all()} onInput={(event) => { setAll(event.currentTarget.value); setFriendlyDirty(true); }} />
             </label>
             <label>
-              Any of these words
-              <input value={any()} onInput={(event) => { setAny(event.currentTarget.value); setFriendlyDirty(true); }} />
+              {t("query-query-workspace-any-of-these-words")}<input value={any()} onInput={(event) => { setAny(event.currentTarget.value); setFriendlyDirty(true); }} />
             </label>
             <label>
-              This exact phrase
-              <input value={exact()} onInput={(event) => { setExact(event.currentTarget.value); setFriendlyDirty(true); }} />
+              {t("query-query-workspace-this-exact-phrase")}<input value={exact()} onInput={(event) => { setExact(event.currentTarget.value); setFriendlyDirty(true); }} />
             </label>
             <label>
-              Exclude these words
-              <input value={exclude()} onInput={(event) => { setExclude(event.currentTarget.value); setFriendlyDirty(true); }} />
+              {t("query-query-workspace-exclude-these-words")}<input value={exclude()} onInput={(event) => { setExclude(event.currentTarget.value); setFriendlyDirty(true); }} />
             </label>
             <label>
-              Case-sensitive regular expression
-              <input value={regex()} onInput={(event) => { setRegex(event.currentTarget.value); setFriendlyDirty(true); }} placeholder="pattern without / /" />
+              {t("query-query-workspace-case-sensitive-regular-expression")}<input value={regex()} onInput={(event) => { setRegex(event.currentTarget.value); setFriendlyDirty(true); }} placeholder={t("query-query-workspace-pattern-without")} />
             </label>
             <button type="button" class="query-switch-to-dsl" onClick={switchToDsl}>
-              Edit as visual query
-            </button>
+              {t("query-query-workspace-edit-as-visual-query")}</button>
           </div>
           </Show>
         </Show>
@@ -720,8 +715,8 @@ function AdvancedModal(props: {
           <p class="query-advanced-error" role="alert">{error()}</p>
         </Show>
         <footer class="query-advanced-actions">
-          <button type="button" onClick={props.onClose}>Cancel</button>
-          <button type="button" class="primary" disabled={printing()} onClick={apply}>Apply</button>
+          <button type="button" onClick={props.onClose}>{t("query-query-sheet-parts-cancel")}</button>
+          <button type="button" class="primary" disabled={printing()} onClick={apply}>{t("query-query-sheet-parts-apply")}</button>
         </footer>
       </div>
     </div>
@@ -778,7 +773,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     const close = deps().closeSearchWorkspace;
     onCleanup(() => {
       if (owner() && close) void close(workspace, binding.backendGeneration)
-        .catch(() => { if (owner()) pushToast("Couldn’t stop this workspace’s search.", "warn"); });
+        .catch(() => { if (owner()) pushToast(msg("query-query-workspace-couldn-t-stop-this-workspace-s-search"), "warn"); });
     });
   }));
   let advancedButton!: HTMLButtonElement;
@@ -940,7 +935,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const hitRoute = (hit: QueryHit): Extract<Route, { kind: "page" }> => hit.entity === "page"
     ? { kind: "page", name: hit.page.name, pageKind: hit.page.kind, path: hit.page.path || undefined }
     : { kind: "page", name: hit.page, pageKind: hit.kind, path: hit.path || undefined, block: blockDtoExternalId(hit.block) };
-  const openHit = (hit: QueryHit, event?: MouseEvent) => {
+  const openHit = (hit: QueryHit, event?: Pick<MouseEvent, "shiftKey" | "ctrlKey" | "metaKey" | "altKey">) => {
     const target = hitRoute(hit);
     const dest = event ? internalLinkDest(event) : "default";
     if (dest === "sidebar") {
@@ -949,7 +944,58 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     } else if (dest === "pane") openRouteInOtherPane(target);
     else props.router.openInNewTab(target, dest !== "background");
   };
-  const resultActions = (hit: QueryHit): JSX.ButtonHTMLAttributes<HTMLButtonElement> => ({
+  const [activeResult, setActiveResult] = createSignal<string | null>(null);
+  // Navigation identity includes the physical owner: same-named page results
+  // can point at different files, and Enter must open the actual focused row.
+  const keyboardHitKey = (hit: QueryHit): string => JSON.stringify(hit.entity === "page"
+    ? [hit.entity, hit.page.kind, hit.page.path || hit.page.name]
+    : [hit.entity, hit.kind, hit.path || hit.page, hit.block.id]);
+  let workspace!: HTMLElement;
+  let focusedResult: HTMLElement | null = null;
+  createEffect(() => {
+    hits(); pageView(); blockView();
+    const previous = focusedResult;
+    // Result publication can remove a focused row. Once the DOM settles, keep
+    // keyboard focus in this Search tab; never reclaim it from another control.
+    queueMicrotask(() => {
+      if (alive && previous && !previous.isConnected && workspace?.isConnected
+        && previous.ownerDocument.activeElement === previous.ownerDocument.body) {
+        setActiveResult(null);
+        sourceInput?.focus();
+      }
+    });
+  });
+  // Roving focus keeps real buttons accessible in every presentation, including
+  // tables and boards. Read displayed rows so section order stays authoritative.
+  const resultKeyDown = (event: KeyboardEvent) => {
+    if (event.isComposing || event.keyCode === 229) return;
+    const target = event.target as HTMLElement;
+    const fromInput = target === sourceInput;
+    const key = target.dataset.queryResult;
+    if (!fromInput && !key) return;
+    const direction = event.key === "ArrowDown" || (event.ctrlKey && event.key.toLowerCase() === "n") ? 1
+      : event.key === "ArrowUp" || (event.ctrlKey && event.key.toLowerCase() === "p") ? -1 : 0;
+    if (direction) {
+      const rows = [...workspace.querySelectorAll<HTMLButtonElement>("button[data-query-result]")];
+      const index = nextResultIndex(fromInput ? -1 : rows.indexOf(target as HTMLButtonElement), direction, rows.length);
+      if (index < 0) return;
+      event.preventDefault(); event.stopPropagation();
+      rows[index].focus();
+      rows[index].scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter" && key) {
+      const hit = hits().find((hit) => keyboardHitKey(hit) === key);
+      if (!hit) return;
+      event.preventDefault(); event.stopPropagation();
+      openHit(hit, event);
+    }
+  };
+  const resultActions = (hit: QueryHit, keyboard = true): JSX.ButtonHTMLAttributes<HTMLButtonElement> & { "data-query-result"?: string } => ({
+    ...(keyboard ? {
+      "data-query-result": keyboardHitKey(hit),
+      tabIndex: activeResult() === keyboardHitKey(hit) ? 0 : -1,
+      classList: { active: activeResult() === keyboardHitKey(hit) },
+      onFocus: () => setActiveResult(keyboardHitKey(hit)),
+    } : {}),
     onMouseDown: internalLinkMouseDown,
     onClick: (event) => openHit(hit, event),
     onAuxClick: (event) => internalLinkAuxClick(event, () => props.router.openInNewTab(hitRoute(hit))),
@@ -1032,18 +1078,21 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   );
 
   return (
-    <section class="query-workspace" data-query-route-id={props.route.id} aria-label="Search and query workspace">
+    <section ref={workspace} onKeyDown={resultKeyDown} onFocusIn={(event) => {
+      const target = event.target as HTMLElement;
+      focusedResult = target.dataset.queryResult ? target : null;
+    }} class="query-workspace" data-query-route-id={props.route.id} aria-label={t("query-query-workspace-search-and-query-workspace")}>
       <header class="query-workspace-header">
         <div class="query-workspace-search-row">
           <label class="query-workspace-source-label">
-            <span class="sr-only">{sourceKind() === "search" ? "Search" : "Query DSL"}</span>
+            <span class="sr-only">{sourceKind() === "search" ? t("query-query-workspace-search") : t("query-query-workspace-query-dsl")}</span>
             <input
               ref={sourceInput}
               class="query-workspace-source"
               type="search"
               value={source()}
               onInput={(event) => updateSource(event.currentTarget.value)}
-              placeholder={sourceKind() === "search" ? "Search pages and blocks" : "Query DSL"}
+              placeholder={sourceKind() === "search" ? t("query-query-workspace-search-pages-and-blocks") : t("query-query-workspace-query-dsl")}
               aria-describedby="query-workspace-summary"
               spellcheck={false}
             />
@@ -1056,31 +1105,27 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
             aria-expanded={advancedOpen()}
             onClick={() => setAdvancedOpen(true)}
           >
-            Filters / Advanced
-          </button>
+            {t("query-query-workspace-filters-advanced")}</button>
         </div>
         <p id="query-workspace-summary" class="query-workspace-summary">
-          {sourceKind() === "search"
-            ? friendlySummary(source())
-            : "Runs the saved query expression against blocks. Its presentation is controlled separately."}
+          {sourceKind() === "search" ? friendlySummary(source()) : t("query-query-workspace-runs-the-saved-query-expression-against-blocks-its-presentation-is")}
         </p>
 
         <div class="query-workspace-controls">
           <Show when={sourceKind() === "search"}>
-            <label class="query-page-match-scope">Pages match
-              <select aria-label="Pages match" value={pageMatchScope()} onChange={(event) => {
+            <label class="query-page-match-scope">{t("query-query-workspace-pages-match")}<select aria-label={t("query-query-workspace-pages-match")} value={pageMatchScope()} onChange={(event) => {
                 const next = event.currentTarget.value as FriendlyPageMatchScope;
                 setPageMatchScope(next);
                 setPageMatchScopeExplicit(true);
                 props.router.updateActiveQuery({ pageMatchScope: next });
               }}>
-                <option value="names">Names and aliases</option>
-                <option value="content">Block content</option>
-                <option value="both">Names or content</option>
+                <option value="names">{t("query-query-workspace-names-and-aliases")}</option>
+                <option value="content">{t("query-query-workspace-block-content")}</option>
+                <option value="both">{t("query-query-workspace-names-or-content")}</option>
               </select>
             </label>
           </Show>
-          <div class="query-presentations" role="group" aria-label="Result presentation">
+          <div class="query-presentations" role="group" aria-label={t("query-query-workspace-result-presentation")}>
             <For each={VIEW_KINDS}>
               {(view) => (
                 <button
@@ -1100,21 +1145,21 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
             aria-pressed={explain()}
             onClick={() => setExplain((value) => !value)}
           >
-            {explain() ? "Hide explanation" : "Explain query"}
+            {explain() ? t("query-query-workspace-hide-explanation") : t("query-query-workspace-explain-query")}
           </button>
         </div>
 
         <form class="query-workspace-save" onSubmit={save}>
           <label>
-            <span class="sr-only">Page title</span>
+            <span class="sr-only">{t("query-query-workspace-page-title")}</span>
             <input
               value={title()}
               onInput={(event) => { setTitle(event.currentTarget.value); setSaveError(null); setSaveNotice(null); }}
-              placeholder="Name this search to save it as a page"
+              placeholder={t("query-query-workspace-name-this-search-to-save-it-as-a-page")}
               aria-invalid={!!saveError()}
             />
           </label>
-          <button type="submit" disabled={saving()}>{saving() ? "Saving…" : "Save page"}</button>
+          <button type="submit" disabled={saving()}>{saving() ? t("query-query-workspace-saving") : t("query-query-workspace-save-page")}</button>
         </form>
         <Show when={saveError()}>
           <p class="query-workspace-save-error" role="alert">{saveError()}</p>
@@ -1125,16 +1170,15 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       </header>
 
       <section class="query-workspace-status" aria-live="polite" aria-atomic="true">
-        <Show when={!source().trim()}>{sourceKind() === "search" ? "Enter a search to begin." : "Enter a query to begin."}</Show>
-        <Show when={!!source().trim() && execution.loading}>Searching…</Show>
+        <Show when={!source().trim()}>{sourceKind() === "search" ? t("query-query-workspace-enter-a-search-to-begin") : t("query-query-workspace-enter-a-query-to-begin")}</Show>
+        <Show when={!!source().trim() && execution.loading}>{t("query-query-workspace-searching")}</Show>
         <Show when={!!source().trim() && !execution.loading && execution.error}>
-          Search failed: {execution.error instanceof Error ? execution.error.message : String(execution.error)}
+          {t("query-workspace-search-failed", { detail: execution.error instanceof Error ? execution.error.message : String(execution.error) })}
         </Show>
         <Show when={!!source().trim() && !execution.loading && !execution.error && executed()?.cancelled}>
-          Search superseded by a newer request.
-        </Show>
+          {t("query-query-workspace-search-superseded-by-a-newer-request")}</Show>
         <Show when={!!source().trim() && !execution.loading && !execution.error && executed() && !executed()?.cancelled && !ogHint()?.date_windows}>
-          {hits().length} result{hits().length === 1 ? "" : "s"}
+          {t("query-workspace-result-count", { count: hits().length })}
         </Show>
       </section>
 
@@ -1151,7 +1195,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       </Show>
 
       <Show when={(executed()?.diagnostics.length ?? 0) > 0 && (!ogHint()?.date_windows || !ogHint()?.rewrites.length)}>
-        <ul class="query-workspace-diagnostics" aria-label="Query diagnostics">
+        <ul class="query-workspace-diagnostics" aria-label={t("query-query-workspace-query-diagnostics")}>
           <For each={executed()?.diagnostics ?? []}>{(diagnostic) => (
             <li role="alert" data-code={diagnostic.code}>{diagnostic.message}</li>
           )}</For>
@@ -1159,8 +1203,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       </Show>
 
       <Show when={explain() && (executed()?.explanation.branches.length ?? 0) > 0}>
-        <section class="query-workspace-explanation" aria-label="Query explanation">
-          <h2>How this query works</h2>
+        <section class="query-workspace-explanation" aria-label={t("query-query-workspace-query-explanation")}>
+          <h2>{t("query-query-workspace-how-this-query-works")}</h2>
           <ExplainTree nodes={executed()?.explanation.branches ?? []} />
         </section>
       </Show>
@@ -1177,7 +1221,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
             control: sectionControl("block"),
             body: <Switch>
         <Match when={blockView().view === "search"}>
-          <div class="query-results-search" role="list" aria-label="Block results">
+          <div class="query-results-search" role="list" aria-label={t("query-query-workspace-block-results")}>
             <For each={blockHits()}>{(hit) => (
               <div role="listitem">
                 {task(hit)}
@@ -1193,7 +1237,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         </Match>
 
         <Match when={blockView().view === "list"}>
-          <ul class="query-results-list" aria-label="Query results">
+          <ul class="query-results-list" aria-label={t("query-query-workspace-query-results")}>
             <For each={blockHits()}>{(hit) => (
               <li>
                 {task(hit)}
@@ -1209,13 +1253,13 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         <Match when={blockView().view === "table"}>
           <div class="query-results-table-wrap">
             <table class="query-results-table">
-              <caption class="sr-only">Query results</caption>
-              <thead><tr><th scope="col">Type</th><th scope="col">Page</th><th scope="col">Content</th></tr></thead>
+              <caption class="sr-only">{t("query-query-workspace-query-results")}</caption>
+              <thead><tr><th scope="col">{t("query-query-workspace-type")}</th><th scope="col">{t("query-query-workspace-page")}</th><th scope="col">{t("query-query-workspace-content")}</th></tr></thead>
               <tbody>
                 <For each={blockHits()}>{(hit) => (
                   <tr data-inpage-find-surface={hitSurfaceId(hit)}>
                     <td>{hitKind(hit)}</td>
-                    <td><button type="button" {...resultActions(hit)}>{hitPage(hit)}</button></td>
+                    <td><button type="button" {...resultActions(hit, false)}>{hitPage(hit)}</button></td>
                     <td>{task(hit)}<button type="button" {...resultActions(hit)}><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></button></td>
                   </tr>
                 )}</For>
@@ -1225,7 +1269,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         </Match>
 
         <Match when={blockView().view === "board"}>
-          <div class="query-results-board" aria-label="Query results grouped by page">
+          <div class="query-results-board" aria-label={t("query-query-workspace-query-results-grouped-by-page")}>
             <For each={boardGroups()}>{([page, pageHits]) => (
               <section class="query-board-column">
                 <h2>{page}<span class="query-board-count">{pageHits.length}</span></h2>

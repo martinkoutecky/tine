@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 // Static-export sheets (family 7). The Rust publisher hands the app one
 // `SheetInput` per `tine.view` block; this module answers it with a pure DATA
 // fragment (`SheetExport`) computed by the SAME functions the live views call
@@ -126,7 +127,7 @@ function tableBody(input: SheetInput, cfg: ReturnType<typeof sheetConfig>, rows:
     isFormulaField(field) ? formulaValueToFieldValue(formulaValue(row, field)) : readFormulaRowField(row, field);
   return {
     view: "table",
-    columns: [{ label: "Block", formula: false }, ...fields.map((f) => ({ label: fieldLabel(f), formula: isFormulaField(f) }))],
+    columns: [{ label: t("sheet-sheet-table-block"), formula: false }, ...fields.map((f) => ({ label: fieldLabel(f), formula: isFormulaField(f) }))],
     rows: kept.map((row) => ({
       ix: Number(row.id),
       title: tableRowTitle(row),

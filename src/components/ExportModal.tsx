@@ -534,9 +534,9 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
   const toggleDisabled = (t: ExportToggle) =>
     format() === "text"
       && ((t.sourceOnly && opts().content === "rendered") || (t.renderedOnly && opts().content !== "rendered"));
-  const toggleTitle = (t: ExportToggle) => {
-    if (format() === "text" && t.sourceOnly && opts().content === "rendered") return "Plain text output has no markup markers to remove";
-    if (format() === "text" && t.renderedOnly && opts().content !== "rendered") return "Only applies to plain text output";
+  const toggleTitle = (toggle: ExportToggle) => {
+    if (format() === "text" && toggle.sourceOnly && opts().content === "rendered") return t("export-prose-plain-text-output-has-no-markup-markers-to-remove");
+    if (format() === "text" && toggle.renderedOnly && opts().content !== "rendered") return t("export-prose-only-applies-to-plain-text-output");
     return undefined;
   };
 

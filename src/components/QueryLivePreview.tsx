@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { FailureBoundary } from "./FailureBoundary";
 /** GH #619 item 7: the results of the query AS THE SHEET NOW SHOWS IT, inside the sheet.
  *
@@ -144,21 +145,21 @@ function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]):
   const pending = () => request()?.key !== shown()?.key;
 
   return (
-    <div class="qs-live" role="region" aria-label="Live results" aria-busy={pending() ? "true" : "false"}
+    <div class="qs-live" role="region" aria-label={t("query-query-live-preview-live-results")} aria-busy={pending() ? "true" : "false"}
       classList={{ "qs-live-pending": pending() }}>
       <Show when={answer.error === undefined} fallback={
-        <p class="qs-live-count" role="alert">Results couldn't be loaded: {errorText(answer.error)}</p>}>
-        <Show when={shown()} fallback={<p class="qs-live-count" role="status">Running…</p>}>
+        <p class="qs-live-count" role="alert">{t("query-preview-load-failed", { detail: errorText(answer.error) })}</p>}>
+        <Show when={shown()} fallback={<p class="qs-live-count" role="status">{t("query-query-live-preview-running")}</p>}>
           {(current) => (
             <>
               <p class="qs-live-count" role="status">
                 <Show when={current().families} fallback={<>
-                  {current().total} {current().anchor === "page" ? (current().total === 1 ? "page" : "pages") : (current().total === 1 ? "result" : "results")}
-                  <Show when={current().total > PREVIEW_ROWS}> (showing the first {PREVIEW_ROWS})</Show>
+                  {t("query-preview-count", { kind: current().anchor, count: current().total })}
+                  <Show when={current().total > PREVIEW_ROWS}>{t("query-preview-limit", { count: PREVIEW_ROWS })}</Show>
                 </>}>
                   {(families) => <>
-                    {families().pageTotal} {families().pageTotal === 1 ? "page" : "pages"} · {families().blockTotal} {families().blockTotal === 1 ? "block" : "blocks"}
-                    <Show when={families().pageTotal > PREVIEW_ROWS || families().blockTotal > PREVIEW_ROWS}> (showing the first {PREVIEW_ROWS} of each)</Show>
+                    {t("query-preview-families", { pages: families().pageTotal, blocks: families().blockTotal })}
+                    <Show when={families().pageTotal > PREVIEW_ROWS || families().blockTotal > PREVIEW_ROWS}>{t("query-preview-family-limit", { count: PREVIEW_ROWS })}</Show>
                   </>}
                 </Show>
               </p>
@@ -166,11 +167,11 @@ function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]):
                 <p class="qs-live-diagnostics" role="alert">{current().diagnostics.join(" · ")}</p>
               </Show>
               <Show when={current().total === 0 && current().diagnostics.length === 0}>
-                <p class="qs-live-empty">Nothing matches these conditions.</p>
+                <p class="qs-live-empty">{t("query-query-live-preview-nothing-matches-these-conditions")}</p>
               </Show>
-              <ul class="qs-live-rows" aria-label="Live results">
+              <ul class="qs-live-rows" aria-label={t("query-query-live-preview-live-results")}>
                 <For each={current().pages.slice(0, PREVIEW_ROWS)}>{(row) => (
-                  <li class="qs-live-row qs-live-page"><span class="switcher-kind">page</span> <span>{row.name}</span></li>
+                  <li class="qs-live-row qs-live-page"><span class="switcher-kind">{t("query-query-live-preview-page")}</span> <span>{row.name}</span></li>
                 )}</For>
                 <For each={current().blocks.slice(0, PREVIEW_ROWS)}>{(row) => (
                   <li class="qs-live-row switcher-row block-result">
@@ -179,10 +180,10 @@ function QueryLivePreviewContent(props: Parameters<typeof QueryLivePreview>[0]):
                 )}</For>
               </ul>
               <Show when={current().families}>{(families) => <>
-                <Show when={families().pageNote}>{(note) => <p class="qs-live-diagnostics" role="note">Pages: {note()}</p>}</Show>
-                <Show when={families().blockNote}>{(note) => <p class="qs-live-diagnostics" role="note">Blocks: {note()}</p>}</Show>
-                <Show when={families().pageMore}><p class="qs-live-more">More pages match than are shown.</p></Show>
-                <Show when={families().blockMore}><p class="qs-live-more">More blocks match than are shown.</p></Show>
+                <Show when={families().pageNote}>{(note) => <p class="qs-live-diagnostics" role="note">{t("query-preview-pages-note", { detail: note() })}</p>}</Show>
+                <Show when={families().blockNote}>{(note) => <p class="qs-live-diagnostics" role="note">{t("query-preview-blocks-note", { detail: note() })}</p>}</Show>
+                <Show when={families().pageMore}><p class="qs-live-more">{t("query-query-live-preview-more-pages-match-than-are-shown")}</p></Show>
+                <Show when={families().blockMore}><p class="qs-live-more">{t("query-query-live-preview-more-blocks-match-than-are-shown")}</p></Show>
               </>}</Show>
             </>
           )}

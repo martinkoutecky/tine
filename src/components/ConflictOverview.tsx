@@ -22,18 +22,18 @@ const GROUPS: { source: ConflictSource; title: Msg }[] = [
 
 export function conflictSourceLabel(conflict: ConflictObject): string {
   const side = (role: "mine" | "theirs") => conflict.sides.find((s) => s.role === role)?.label;
-  if (conflict.source === "live-save") return "unsaved draft";
-  if (conflict.source === "duplicate-journal") return `${conflict.sides.length} files for one day`;
+  if (conflict.source === "live-save") return t("conflicts-prose-unsaved-draft");
+  if (conflict.source === "duplicate-journal") return t("conflicts-prose-day-files", { count: conflict.sides.length });
   return conflict.source === "sync-copy"
-    ? `sync copy · ${side("theirs") ?? "conflict copy"}`
-    : `merge markers · ${side("mine") ?? "local"} vs ${side("theirs") ?? "merged-in"}`;
+    ? t("conflicts-prose-sync-copy", { side: side("theirs") ?? t("conflicts-prose-copy-fallback") })
+    : t("conflicts-prose-merge-sides", { mine: side("mine") ?? t("conflicts-prose-local-fallback"), theirs: side("theirs") ?? t("conflicts-prose-incoming-fallback") });
 }
 
 /** Absent is not zero: a count Tine did not compute shows "—", never "0". */
 export function conflictBlockCount(conflict: ConflictObject): string {
   const count = conflict.block_conflicts;
   if (count === undefined || count === null) return "—";
-  return `${count} block${count === 1 ? "" : "s"}`;
+  return t("conflicts-prose-block-count", { count });
 }
 
 /** The conflict copy's own file, for a sync-copy object. */

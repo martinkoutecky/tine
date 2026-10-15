@@ -1,3 +1,4 @@
+import { t, msg } from "../i18n";
 /** The task checkbox of a block shown AWAY from its source outline: an inline
  * `((block reference))`, a not-yet-hydrated reference/query row, a hover peek
  * (GH #518). OG renders the same `block-checkbox` inside a block reference
@@ -39,7 +40,7 @@ export async function toggleTaskAtSource(ref: LoadedBlockRef, expectChecked: boo
   if (result && !source) { noticeChangedResults(1); return "stale"; }
   const id = source?.id ?? resolveBlockRef(ref);
   if (id === null || !docNode(id)) {
-    pushToast(`The task is no longer on "${ref.page}", so it was not changed.`, "error");
+    pushToast(msg("macro-source-task-checkbox-the-task-is-no-longer-on-so-it-was-not", { value1: ref.page }), "error");
     return "missing";
   }
   if (taskCheckboxState(leadingMarker(docNode(id).raw, formatForBlockId(id))) !== expectChecked) return "stale";
@@ -67,7 +68,7 @@ export function SourceTaskCheckbox(props: {
           style={props.style}
           role="checkbox"
           aria-checked={state() === true}
-          title={state() === true ? "Mark undone" : "Mark done"}
+          title={state() === true ? t("macro-source-task-checkbox-mark-undone") : t("macro-source-task-checkbox-mark-done")}
           onMouseDown={(e) => {
             e.stopPropagation();
             e.preventDefault();
@@ -76,7 +77,7 @@ export function SourceTaskCheckbox(props: {
             const checked = state();
             if (!ref || checked === null) return;
             void toggleTaskAtSource(ref, checked, props.result).catch(() => {
-              pushToast("Couldn't load the task's page, so the task was not changed.", "error");
+              pushToast(msg("macro-source-task-checkbox-couldn-t-load-the-task-s-page-so-the-task"), "error");
             });
           }}
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}

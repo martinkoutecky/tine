@@ -40,3 +40,7 @@ page-ui-previous = Previous
 page-ui-pull-unfinished-tasks-from-the-last-days-change-n = Pull unfinished tasks from the last { $value1 } days (change N in Settings)
 page-ui-carry-last-days = Carry last { $value1 } days
 page-ui-last-d = Last { $value1 }d
+
+page-prose-key-grammar = Keys may use only letters, numbers, _, ., / or -, so every Tine reader finds them again.
+page-prose-key-managed = "{ $key }" is managed by Tine and cannot be set here.
+page-prose-key-exists = "{ $key }" already exists; edit its row above.

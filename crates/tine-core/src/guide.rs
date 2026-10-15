@@ -304,6 +304,30 @@ mod journal_guide_tests {
                 "Guide is missing keyboard command: {label}"
             );
         }
+        for outcome in [
+            "each further press opens the next level",
+            "ignoring leaves",
+            "each press is one Undo step",
+        ] {
+            assert!(
+                tips.contains(outcome),
+                "missing progressive expansion outcome: {outcome}"
+            );
+        }
+        let search = include_str!("templates/pages-links-references-search.md");
+        for outcome in [
+            "press **ArrowDown**",
+            "page and block results",
+            "scroll the highlighted row",
+            "**Shift+Enter**",
+            "**Ctrl/Cmd+Enter**",
+            "**Alt+Enter**",
+        ] {
+            assert!(
+                search.contains(outcome),
+                "missing Search keyboard outcome: {outcome}"
+            );
+        }
     }
 
     #[test]
@@ -618,6 +642,9 @@ mod search_guide_tests {
             "Ctrl+K, search tabs and in-page Find still ignore case",
             "Commas split values only for",
             ":property/separated-by-commas",
+            "tags:: #eng #exec #founder",
+            "page and block properties",
+            "#[[multi word]]",
             "query-table:: true",
             "a trailing `table`",
             "never adds `query-table`",

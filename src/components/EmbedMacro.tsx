@@ -4,7 +4,8 @@ import { backend } from "../backend";
 import { pageIdentityKey } from "../ui";
 import { blocksContainEdit, createMembershipResource } from "../resultMembership";
 import { graphOwner, readOwned } from "../owned";
-import { pageByName, resolveGuidePageDto, node as docNode } from "../document";
+import { blockHasPageEmbed, pageByName, resolveGuidePageDto, node as docNode } from "../document";
+import { CollapseSurfaceContext } from "./Block";
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { PageEmbedHeader } from "./PageEmbedHeader";
@@ -19,6 +20,7 @@ import { readOr } from "../resourceRead";
 export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Element {
   const insidePeek = useContext(PeekContext);
   const linkDepth = useContext(LinkDepthContext);
+  const collapseSurface = useContext(CollapseSurfaceContext);
   if (linkDepth > MAX_DEPTH_OF_LINKS) return <LinkDepthWarning />;
 
   const target = () => props.body.replace(/^embed\s*/i, "").trim();
@@ -57,13 +59,18 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
   }, (value, id) => !!value && blocksContainEdit(value.blocks, id));
 
   const embedded = () => readOr(data, undefined, "embed");
+  const foldedPageBody = () => {
+    if (!pageTarget() || !props.blockId || !blockHasPageEmbed(props.blockId)) return false;
+    const stored = docNode(props.blockId)?.collapsed ?? false;
+    return collapseSurface?.collapsed(props.blockId, stored) ?? stored;
+  };
   return (
     <div class="embed-block" classList={{ "embed-page": !!pageTarget() }}>
       {/* GH #439: a page embed names its page (OG block.cljs `page-embed` header). */}
-      <Show when={pageTarget() && (selfPageEmbed() || embedded())}>
+      <Show when={pageTarget() && (selfPageEmbed() || embedded() || foldedPageBody())}>
         <PageEmbedHeader name={embedded()?.page ?? pageTarget()!} blockId={props.blockId} />
       </Show>
-      <Show when={!selfPageEmbed()}>
+      <Show when={!selfPageEmbed() && !foldedPageBody()}>
         <Show when={embedded()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
           <Show when={!pageTarget() && styleKnobValues()["embed-breadcrumbs"] === true}>
             <div class="embed-source-breadcrumb">

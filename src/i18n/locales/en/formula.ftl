@@ -61,3 +61,9 @@ formula-transform = Transform
 formula-raw-expression = Raw expression
 formula-number-literal = number literal
 formula-apply = Apply
+
+# Helper-return and component-prop interface text (GH #107).
+formula-prose-empty = empty
+formula-prose-edit-filter = Edit filter
+formula-prose-edit-formula = Edit formula
+formula-prose-add-formula = Add formula

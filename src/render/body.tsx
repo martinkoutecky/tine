@@ -5,7 +5,7 @@ import { TableWrap } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
-import { For, Show, createContext, createMemo, createResource, useContext, type JSX } from "solid-js";
+import { For, Index, Show, createContext, createMemo, createResource, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
@@ -22,6 +22,9 @@ import { parseBody, renderedProperties, stripPlanningLines } from "./facets";
 import { createNearBlockMount } from "../createNearBlockMount";
 import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
 import { readOr } from "../resourceRead";
+import { QueryMacro } from "../components/Macro";
+import { hasQueryMacroCandidate, queryMacroRenderExtents, queryMacroRenderRun } from "./queryMacroRender";
+import { PeekContext } from "./PeekPopup";
 
 function escapeHtml(code: string): string {
   return code.replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -455,6 +458,32 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
   // block has rendered (latched by id in `renderedBlocks`) it renders eagerly
   // forever — no second placeholder↔real transition, so zero scroll-height churn.
   const observe = createNearBlockMount(props);
+  const insidePeek = useContext(PeekContext);
+  // The general AST render rebuilds on raw text edits. Inline query blocks
+  // own resources/editor state, so keep their inline slots and pass fresh
+  // parser-owned spans as reactive props instead of rebuilding those hosts.
+  // Admission stays near-viewport and parser-confirmed; other AST shapes and
+  // previews retain their existing renderer.
+  const queryRuns = createMemo(() => {
+    if (!observe.near() || !parserReady() || insidePeek || props.macroExpansion || !props.raw.includes("{{")) return undefined;
+    const format = props.format ?? "md";
+    const parsed = parseBody(props.raw, format);
+    if (isQuarantined(parsed)) return undefined;
+    const blocks = bodyBlocks(parsed, props.raw);
+    if (!blocks.every(isInlineFlow)) return undefined;
+    const flows = blocks as Extract<AstBlock, { kind: "paragraph" | "bullet" | "heading" }>[];
+    const candidates = flows.map(flow => hasQueryMacroCandidate(flow.inline));
+    if (!candidates.some(Boolean)) return undefined;
+    const extents = queryMacroRenderExtents(props.raw);
+    const runs = blocks.map((block, index) => {
+      const flow = block as Extract<AstBlock, { kind: "paragraph" | "bullet" | "heading" }>;
+      return { entries: candidates[index] ? queryMacroRenderRun(flow.inline, props.raw, format, extents)
+        : flow.inline.map(inline => ({ inline, extent: undefined })), span: flow.span,
+        heading: flow.kind === "heading" ? flow.size && flow.size >= 1 && flow.size <= 6 ? flow.size : undefined
+          : index === 0 ? props.headingLevel : undefined };
+    });
+    return runs.some(run => run.entries.some(entry => entry.extent)) ? runs : undefined;
+  });
   return (
     <Show
       when={observe.near()}
@@ -469,7 +498,20 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
       }
     >
       <Show when={parserReady()} fallback={<span class="ast-fallback"><PlaceholderText raw={props.raw} /></span>}>
-        {renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false)}
+        <Show when={queryRuns()} fallback={renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false)}>
+          <Index each={queryRuns()}>{(run, blockIndex) => {
+            const content = <Index each={run().entries}>{entry => <Show when={!!entry().extent}
+              fallback={renderInlines([entry().inline], props.blockId, true, false, props.format, props.raw)}>
+              <QueryMacro body={`${entry().extent!.name} ${entry().extent!.argument}`} blockId={props.blockId}
+                sourceExtent={entry().extent} sourceRaw={props.raw.slice(entry().extent!.start, entry().extent!.end)} />
+            </Show>}</Index>;
+            return <><Show when={blockIndex > 0}><br /></Show>
+              <Show when={run().heading} fallback={content}>
+                <span class={`heading-text h${run().heading}`} {...(coarseSpanAttrs(run().span) ?? {})}>{content}</span>
+              </Show>
+            </>;
+          }}</Index>
+        </Show>
       </Show>
     </Show>
   );

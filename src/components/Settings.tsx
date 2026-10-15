@@ -1317,7 +1317,7 @@ function AssetsTab(): JSX.Element {
   const scanned = () => orphanScan() !== null;
   const [trashInfo, setTrashInfo] = createSignal<TrashStats>({ count: 0, bytes: 0, pages: 0, journals: 0, conflicts: 0, other: 0 });
 
-  const fmtSize = (n: number) => n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
+  const fmtSize = (n: number) => t("settings-prose-file-size", n >= 1 << 20 ? { value: (n / (1 << 20)).toFixed(1), unit: "MB" } : n >= 1024 ? { value: String(Math.round(n / 1024)), unit: "KB" } : { value: String(n), unit: "B" });
   const fmtDate = (secs: number | null) => secs == null ? "" : new Date(secs * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   const total = () => list().reduce((s, a) => s + a.size, 0);
   const protectedTrashCount = () =>

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderEnglish } from "../i18n";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -83,7 +84,7 @@ afterEach(() => {
 describe("I-22: a hostile query gets a bounded sentence and a bounded sheet", () => {
   it("reads a 64-deep single-item chain as a short line, not as 64 words", () => {
     const sentence = querySentence({ anchor: "block", filter: chain(64, taskFilter(["TODO"])) });
-    expect(sentence.map((segment) => segment.text).join("")).toBe(`Blocks where ${ADVANCED_PHRASE}`);
+    expect(sentence.map((segment) => segment.text).join("")).toBe(`Blocks where ${renderEnglish(ADVANCED_PHRASE)}`);
     expect(sentence).toHaveLength(3);
   });
 
@@ -101,7 +102,7 @@ describe("I-22: a hostile query gets a bounded sentence and a bounded sheet", ()
     const { host, open, source, dispose } = mountBuilder(tangle(64, propertyFilter("owner", "Ada")));
     try {
       const sentence = host.querySelector(".qs-sentence")!;
-      expect(sentence.textContent).toContain(ADVANCED_PHRASE);
+      expect(sentence.textContent).toContain(renderEnglish(ADVANCED_PHRASE));
       expect(sentence.querySelectorAll(".qs-seg").length).toBeLessThanOrEqual(12);
 
       const before = source();

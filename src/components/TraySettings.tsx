@@ -1,4 +1,4 @@
-import { msg } from "../i18n";
+import { msg, t } from "../i18n";
 import { createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { pushToast } from "../toasts";
@@ -53,20 +53,20 @@ export function TraySettings(): JSX.Element {
   return (
     <Show when={status()?.supported}>
       <Field
-        label="Show Tine in the system tray"
-        hint="Adds a tray / notification-area (macOS: menu-bar) icon. Click it to show or hide the main window; its menu has Open Tine, Quick Capture and Quit. Closing the window still quits Tine. Off by default."
+        label={t("settings-prose-show-tine-in-the-system-tray")}
+        hint={t("settings-prose-adds-a-tray-notification-area-macos-menu-bar-icon-click")}
       >
         <Toggle on={show()} onClick={() => toggleShow()} />
       </Field>
       <Field
-        label="Minimize to tray"
-        hint="Minimizing the main window hides the window instead of leaving it in the taskbar; restore it from the tray icon. Needs “Show Tine in the system tray”."
+        label={t("settings-prose-minimize-to-tray")}
+        hint={t("settings-prose-minimizing-the-main-window-hides-the-window-instead-of-leaving")}
       >
         <Toggle on={minimize()} disabled={!show()} onClick={() => toggleMinimize()} />
       </Field>
       <Field
-        label="Start minimized to tray"
-        hint="Launch with the main window hidden; open it from the tray icon. Launching Tine again, or opening a graph or link, always shows it. Needs “Show Tine in the system tray”."
+        label={t("settings-prose-start-minimized-to-tray")}
+        hint={t("settings-prose-launch-with-the-main-window-hidden-open-it-from-the")}
       >
         <Toggle on={start()} disabled={!show()} onClick={() => toggleStart()} />
       </Field>

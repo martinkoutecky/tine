@@ -1088,10 +1088,10 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         </Show>
         </div>
       </div>
-      <Show when={aliasNamesOf(headerProperties()).length}>
+      <Show when={aliasNamesOf(headerProperties(), props.page.format).length}>
         <div class="page-aliases" title={t("page-ui-also-known-as-other-names-that-link-here")} onClick={editPageHeader}>
           <span class="page-aliases-label">{t("page-ui-aka")}</span>
-          <For each={aliasNamesOf(headerProperties())}>
+          <For each={aliasNamesOf(headerProperties(), props.page.format)}>
             {(a) => <span class="alias-chip"><PageRef name={a} alias={a} /></span>}
           </For>
         </div>
