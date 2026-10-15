@@ -671,6 +671,15 @@ pub fn run() {
         matches!(cli::launch_request_env(), cli::LaunchRequest::Link(_))
     ));
 
+    // PROOF BRANCH ONLY (exp/appstore-shots): lets the screenshot job start the
+    // Simulator app in a chosen theme. Never integrated.
+    let builder = match std::env::var("TINE_SHOT_THEME").ok().filter(|t| t == "dark" || t == "light") {
+        Some(theme) => builder.append_invoke_initialization_script(format!(
+            "globalThis.__TINE_SHOT_THEME__ = {theme:?};"
+        )),
+        None => builder,
+    };
+
     let builder = match e2e_touch_gestures_platform() {
         Some(kind) => builder.append_invoke_initialization_script(format!(
             "globalThis.__TINE_E2E_TOUCH_GESTURES__ = {kind:?};"

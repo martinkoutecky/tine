@@ -7,6 +7,9 @@ const THEME_KEY = "logseq-claude.theme";
 export type ThemePreference = "light" | "dark" | "system";
 
 function loadThemePreference(): ThemePreference {
+  // PROOF BRANCH ONLY (exp/appstore-shots): screenshot job theme override.
+  const shot = (globalThis as { __TINE_SHOT_THEME__?: string }).__TINE_SHOT_THEME__;
+  if (shot === "dark" || shot === "light") return shot;
   try {
     const value = localStorage.getItem(THEME_KEY);
     if (value === "dark" || value === "light" || value === "system") return value;
