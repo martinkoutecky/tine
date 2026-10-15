@@ -125,10 +125,9 @@ export function insertChildIntoTarget(): string | null {
   return child;
 }
 
-/** GH #525: collapse or expand ONE level. For each target block, its immediate
- *  children (that have children themselves) are set; deeper levels keep the
- *  state the user built, and the target itself opens so the result shows. With
- *  nothing selected or edited, the page's top-level blocks are the level. */
+/** GH #525 / #696: collapse immediate children; expand the first level with
+ *  folded non-leaves, starting at the immediate children. The target opens so
+ *  the result shows. Without a target, start at the page's top-level blocks. */
 export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
   let parents: string[] = commandTargetIds();
   let pageRoots: string[] | null = null;
@@ -138,7 +137,15 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
     if (!pageRoots) return false;
     parents = [];
   }
-  const level = pageRoots ?? parents.flatMap((id) => docNode(id)?.children ?? []);
+  let level = pageRoots ?? parents.flatMap((id) => docNode(id)?.children ?? []);
+  if (!collapsed) {
+    // Breadth first: one press changes one depth across every target. Leaves
+    // never stop the search; all changes still use the existing undo/save path.
+    while (level.length && !level.some((id) => {
+      const n = docNode(id);
+      return n?.children.length && n.collapsed;
+    })) level = level.flatMap((id) => docNode(id)?.children ?? []);
+  }
   const pages = [...new Set([...parents, ...level].map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
   if (!pages.length) return false;
   withUndoUnit(collapsed ? "collapse-children" : "expand-children", pages, () => {

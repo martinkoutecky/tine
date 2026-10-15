@@ -7892,6 +7892,11 @@ html.tine-embed-shading-accent .embed-block {
 .switcher-row.active {
   background: var(--bg-tertiary);
 }
+.query-workspace button[data-query-result].active {
+  background: var(--bg-tertiary);
+  outline: 2px solid var(--text-muted);
+  outline-offset: -2px;
+}
 
 .switcher-kind {
   font-size: 11px;

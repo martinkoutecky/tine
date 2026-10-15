@@ -1,5 +1,6 @@
 import { Rich } from "../i18n/Rich";
 import { msg, t } from "../i18n";
+import { nextResultIndex } from "../resultNavigation";
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { bindingIdentity, captureBinding } from "../binding";
@@ -469,7 +470,7 @@ export function QuickSwitcher(): JSX.Element {
 
   const move = (d: number) => {
     const n = flat().length;
-    if (n) setSel((sel() + d + n) % n);
+    if (n) setSel(nextResultIndex(sel(), d, n));
   };
 
   const onKeyDown = (e: KeyboardEvent) => {

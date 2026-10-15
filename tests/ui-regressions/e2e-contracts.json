@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-search-tab-keyboard.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A bound Search tab shortcut opens the persistent input; typing finds pages, ArrowDown twice highlights the second displayed result with accessible focus, and Enter opens that page.","blocking":true}],
+      "acceptableVariations":["Result ordering, layout, focus styling and search latency may vary while keyboard selection and opened page agree."],
+      "nonRequirements":["Exact pixels, a particular fixture page ranking, or native certification outside Linux WebKitGTK; modifier destinations are covered in component tests."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-calm-query.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Query controls rename and edit inline while real Rust answers update; copy preserves page/date titles and hierarchy, task and fold changes save normally, Search opens the same query, and backlinks sort in All pages. Saved state survives restart and board drag does not navigate.","blocking":true}],
       "acceptableVariations":["Menu placement, styling, result order and save latency may vary while controls are reachable and semantic outcomes remain correct."],
