@@ -302,6 +302,39 @@
     },
     {
       "section": "Fixed",
+      "text": "On Linux and macOS, shutting down, logging out, closing Tine's terminal or pressing Ctrl+C now ends Tine through its normal Quit within a few seconds, so the next launch no longer says Tine did not close cleanly (GH #701).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH701-QUIT-SIGNAL"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog row UI-GH701-QUIT-SIGNAL is covered by the native journey scripts/e2e-quit-signal.mjs (app-only and whole-process-tree signals).",
+        "refs": [
+          "scripts/e2e-quit-signal.mjs",
+          "src-tauri/src/quit_signal.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "A bug fix with no documented workflow: quitting already ends Tine cleanly; the Guide's unclean-exit note (Help & diagnostics) stays accurate.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
       "text": "Image copy avoids redundant PNG encoding and base64 transport and immediately shows progress (GH #700).",
       "userVisible": true,
       "regressions": [
