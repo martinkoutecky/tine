@@ -9,7 +9,7 @@ import { sameRoute } from "./router";
 import { captureBinding, stillBound } from "./binding";
 import { searchSubstringSpans } from "./editor/searchQuery";
 import { rightSidebar, rightSidebarOpen, sidebarItemKey, searchRemoveAccents } from "./ui";
-import { activeDocument, activeElement, activeWindow, bodyOf, createRangeIn, isElementNode, queryAllWindows, queryAllWindowsAll, registeredWindows, requestFrame, viewportOf, windowOf } from "./windowRealm";
+import { activeDocument, activeElement, activeWindow, bodyOf, createRangeIn, isElementNode, isElementTag, selectionOf, queryAllWindows, queryAllWindowsAll, registeredWindows, requestFrame, viewportOf, windowOf } from "./windowRealm";
 
 export interface InPageFindMatch {
   blockId: string;
@@ -236,15 +236,25 @@ function findScopes(): { id: string; roots: readonly string[]; format: Format }[
 }
 
 export function openInPageFind() {
+  // Capture before the find input takes focus. Test line breaks before trimming:
+  // even a selection ending at the next line's start is a multiline selection.
+  const active = activeElement();
+  const input = isElementTag(active, "textarea") || isElementTag(active, "input")
+    ? active as HTMLTextAreaElement | HTMLInputElement : null;
+  const selection = input
+    ? input.value.slice(input.selectionStart ?? 0, input.selectionEnd ?? 0)
+    : selectionOf()?.toString() ?? "";
+  const seed = /[\r\n\u2028\u2029]/.test(selection) ? "" : selection.trim();
   if (typeof document !== "undefined") restoreFocusEl = activeElement() as HTMLElement | null;
   batch(() => {
     state.setPaneId(notesPaneId(focusedPaneId()));
     state.setPreserveEditorBlur(true);
     state.setOpen(true);
+    if (seed) state.setQuery(seed);
     state.setFocusRequest((n) => n + 1);
   });
   queueMicrotask(observeCurrentFindSurfaces);
-  if (state.query().trim()) activateInPageFindIndex(Math.max(0, state.activeIndex()));
+  if (state.query().trim()) activateInPageFindIndex(seed ? 0 : Math.max(0, state.activeIndex()));
 }
 
 export function closeInPageFind(opts: { restoreFocus?: boolean } = {}) {

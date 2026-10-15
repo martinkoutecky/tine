@@ -21,6 +21,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Page embeds can fold to their page-name line with the host block's mouse or keyboard fold; the choice is saved on the host without changing the embedded page (GH #694).
+- Find in page now prefills a single-line text selection and activates its first match; absent or multiline selections keep the previous query (GH #695).
+
 - Android: granting All files access while opening a graph now continues straight to the folder picker; it no longer needs a second tap (UI-ANDROID-ALL-FILES-ONE-TAP).
 - Phones: the left sidebar starts closed, so it no longer covers the journal after the first graph opens (UI-MOBILE-LEFT-DRAWER-STARTS-CLOSED).
 - Simplified Chinese now covers the complete interface catalog, including settings, queries, context menus and recovery dialogs (GH #107, GH #123).

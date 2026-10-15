@@ -78,6 +78,7 @@ function installFakeWindow() {
   const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
   const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
   const fakeWindow = {
+    getSelection: () => null,
     addEventListener(type: string, listener: EventListener, options?: boolean | AddEventListenerOptions) {
       listeners.push({ type, listener, capture: options === true || !!(options as AddEventListenerOptions | undefined)?.capture });
     },

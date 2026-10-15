@@ -63,7 +63,7 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
       <Show when={pageTarget() && (selfPageEmbed() || embedded())}>
         <PageEmbedHeader name={embedded()?.page ?? pageTarget()!} blockId={props.blockId} />
       </Show>
-      <Show when={!selfPageEmbed()}>
+      <Show when={!selfPageEmbed() && !(pageTarget() && props.blockId && docNode(props.blockId)?.collapsed)}>
         <Show when={embedded()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
           <Show when={!pageTarget() && styleKnobValues()["embed-breadcrumbs"] === true}>
             <div class="embed-source-breadcrumb">

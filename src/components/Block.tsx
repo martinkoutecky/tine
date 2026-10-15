@@ -96,6 +96,7 @@ import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
 import { Rendered, detectMacro } from "./Rendered";
+import { blockHasPageEmbed } from "../document";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
@@ -257,6 +258,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     return !surfaceKey.startsWith("ref:") && !surfaceKey.startsWith("embed:");
   };
   const hasChildren = () => node().children.length > 0;
+  const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id);
   const collapsed = () => collapseSurface?.collapsed(props.id, node().collapsed) ?? node().collapsed;
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {
@@ -360,7 +362,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         <div class="block-controls">
           <span
             class="collapse-toggle"
-            classList={{ "has-children": hasChildren(), disabled: readOnly() }}
+            classList={{ "has-children": hasFoldableBody(), disabled: readOnly() }}
             aria-disabled={readOnly() ? "true" : undefined}
             onClick={() => {
               if (readOnly()) return;
@@ -368,7 +370,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               else toggleCollapse(props.id);
             }}
           >
-            <Show when={hasChildren()}>
+            <Show when={hasFoldableBody()}>
               <svg viewBox="0 0 24 24" class="triangle">
                 <path d="M8 5l8 7-8 7z" />
               </svg>
@@ -376,7 +378,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </span>
           <span
             class="bullet-container"
-            classList={{ "bullet-closed": collapsed() && hasChildren(), ordered: !!orderMarker() }}
+            classList={{ "bullet-closed": collapsed() && hasFoldableBody(), ordered: !!orderMarker() }}
             title={translate("editor-block-click-to-zoom-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new-tab-alt-click-other-pane-drag-to-move")}
             onMouseDown={(e) => {
               // Shared link gesture contract (GH #207): suppress shift-range selection
