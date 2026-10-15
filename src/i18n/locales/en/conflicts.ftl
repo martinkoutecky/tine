@@ -159,3 +159,57 @@ journal-filename-panel-confirmation =
         [one] Rename { NUMBER($count, useGrouping: 0) } journal file to their date names?{ "\u000A\u000A" }A snapshot is taken first, so the original names stay in Backups & recovery. Nothing is overwritten: a file whose date name is taken is left alone.
        *[other] Rename { NUMBER($count, useGrouping: 0) } journal files to their date names?{ "\u000A\u000A" }A snapshot is taken first, so the original names stay in Backups & recovery. Nothing is overwritten: a file whose date name is taken is left alone.
     }
+
+# Helper-return and component-prop interface text (GH #107).
+conflicts-prose-unsaved-draft = unsaved draft
+conflicts-prose-mine = mine
+conflicts-prose-theirs = theirs
+conflicts-prose-mine-short = Mine
+conflicts-prose-theirs-short = Theirs
+conflicts-prose-unresolved-merge-from-your-version-control-tool = Unresolved merge from your version-control tool
+conflicts-prose-your-edits-and-a-newer-version-on-disk = Your edits and a newer version on disk
+conflicts-prose-this-day-has-more-than-one-file = This day has more than one file
+conflicts-prose-two-versions-of-this-page-arrived = Two versions of this page arrived
+conflicts-prose-proposed-by-your-merge-tool-s-suggested-resolution-still-applied = Proposed by your merge tool's suggested resolution — still applied only when you confirm.
+conflicts-prose-both-edits-combined-offered-because-they-touch-different-parts-of = Both edits combined — offered because they touch different parts of the same body
+conflicts-prose-both = Both
+conflicts-prose-merged = Merged
+conflicts-prose-keep = Keep
+conflicts-prose-drop = Drop
+conflicts-prose-skip = Skip
+conflicts-prose-pull-in = Pull in
+
+conflicts-prose-day-files = { NUMBER($count, useGrouping: 0) } files for one day
+conflicts-prose-sync-copy = sync copy · { $side }
+conflicts-prose-merge-sides = merge markers · { $mine } vs { $theirs }
+conflicts-prose-block-count = { NUMBER($count, useGrouping: 0) } { $count ->
+        [one] block
+       *[other] blocks
+    }
+
+conflicts-prose-copy-fallback = conflict copy
+conflicts-prose-local-fallback = local
+conflicts-prose-incoming-fallback = merged-in
+conflicts-prose-copy-month = { $month ->
+        [1] Jan
+        [2] Feb
+        [3] Mar
+        [4] Apr
+        [5] May
+        [6] Jun
+        [7] Jul
+        [8] Aug
+        [9] Sep
+        [10] Oct
+        [11] Nov
+        [12] Dec
+       *[other] { $month }
+    }
+conflicts-prose-dated-copy = Sync copy · { $month } { $day }{ $year ->
+        [current] { "" }
+       *[other] { " " }{ $year }
+    }
+
+conflicts-prose-local-side = Local side
+conflicts-prose-merged-side = Merged-in side
+conflicts-prose-conflict-copy = Conflict copy

@@ -380,7 +380,7 @@ export function SheetTable(props: {
     const current = sort();
     if (props.rowSource !== "query" || !current) return null;
     const field = columns()[current.col];
-    return `Table-only sort: ${field === "title" ? "Title" : fieldLabel(field)}`;
+    return t("sheet-prose-table-only-sort", { field: field === "title" ? t("sheet-prose-title") : fieldLabel(field) });
   };
 
   const createSchemaHome = (): SchemaHome | null => {

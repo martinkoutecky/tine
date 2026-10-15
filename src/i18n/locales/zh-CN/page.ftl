@@ -73,3 +73,7 @@ page-ui-pull-unfinished-tasks-from-the-last-days-change-n = 从最近 { $value1 
 page-ui-carry-last-days = 延续最近 { $value1 } 天
 
 page-ui-last-d = 最近 { $value1 } 天
+
+page-prose-key-grammar = 键只能包含字母、数字、_、.、/ 或 -，以便 Tine 的所有读取功能都能识别。
+page-prose-key-managed = “{ $key }”由 Tine 管理，无法在此设置。
+page-prose-key-exists = “{ $key }”已存在，请编辑上方对应的行。

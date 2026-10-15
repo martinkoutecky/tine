@@ -18,8 +18,8 @@ import { appNow } from "../journal";
  *  without the user's confirmation. */
 export function mergedTitle(source: MergedProposal["source"]): string {
   return source === "artifact"
-    ? "Proposed by your merge tool's suggested resolution — still applied only when you confirm."
-    : "Both edits combined — offered because they touch different parts of the same body";
+    ? t("conflicts-prose-proposed-by-your-merge-tool-s-suggested-resolution-still-applied")
+    : t("conflicts-prose-both-edits-combined-offered-because-they-touch-different-parts-of");
 }
 
 /** The effective decision for a row, given the surface's own default. */
@@ -122,10 +122,9 @@ export function humanizeSideLabel(label: string, now: Date = appNow()): { text: 
   const m = syncthing ?? dropbox;
   if (!m) return { text: label };
   const [, y, mo, d] = m;
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const month = months[Number(mo) - 1] ?? mo;
-  const year = now.getFullYear() === Number(y) ? "" : ` ${y}`;
-  return { text: `Sync copy · ${month} ${Number(d)}${year}`, title: label };
+  const month = t("conflicts-prose-copy-month", { month: Number(mo) });
+  const year = now.getFullYear() === Number(y) ? "current" : y;
+  return { text: t("conflicts-prose-dated-copy", { month, day: Number(d), year }), title: label };
 }
 
 /** The line index a collapsed row previews: the first line that differs, so a
@@ -261,18 +260,18 @@ export function DiffRowView(props: {
       </div>
       <div class="sync-merge-controls">
         <Show when={row().kind === "modified"}>
-          {seg("mine", props.labels.mine, "mine", "Mine")}
-          {seg("theirs", props.labels.theirs, "theirs", "Theirs")}
-          {seg("both", "Both", "theirs")}
-          <Show when={row().merged}>{seg("merged", "Merged", "merged")}</Show>
+          {seg("mine", props.labels.mine, "mine", t("conflicts-prose-mine-short"))}
+          {seg("theirs", props.labels.theirs, "theirs", t("conflicts-prose-theirs-short"))}
+          {seg("both", t("conflicts-prose-both"), "theirs")}
+          <Show when={row().merged}>{seg("merged", t("conflicts-prose-merged"), "merged")}</Show>
         </Show>
         <Show when={row().kind === "added"}>
-          {seg("mine", "Keep", "mine")}
-          {seg("theirs", "Drop", "theirs")}
+          {seg("mine", t("conflicts-prose-keep"), "mine")}
+          {seg("theirs", t("conflicts-prose-drop"), "theirs")}
         </Show>
         <Show when={row().kind === "removed"}>
-          {seg("mine", "Skip", "mine")}
-          {seg("theirs", "Pull in", "theirs")}
+          {seg("mine", t("conflicts-prose-skip"), "mine")}
+          {seg("theirs", t("conflicts-prose-pull-in"), "theirs")}
         </Show>
         <Show when={row().kind === "unchanged"}>
           <span class="sync-merge-unchanged-tag">{t("diff-rows-unchanged")}</span>

@@ -244,8 +244,8 @@ function PluginsTabContent(): JSX.Element {
   };
 
   const findingSeverityLabel = (severity: PluginSafetyReport["findings"][number]["severity"]): string => {
-    if (severity === "info") return "Information";
-    return `${severity[0].toUpperCase()}${severity.slice(1)}-risk finding`;
+    if (severity === "info") return t("plugins-prose-information");
+    return t("plugins-prose-risk-finding", { severity });
   };
 
   const installCommunity = async (plugin: RegistryPlugin, version: RegistryVersion) => {
@@ -368,10 +368,10 @@ function PluginsTabContent(): JSX.Element {
             };
             const safetyLabel = () =>
               version().audit.manualApproval
-                ? "Human-reviewed before publication"
+                ? t("plugins-prose-human-reviewed-before-publication")
                 : version().audit.risk === "low"
-                  ? "Low-risk automated pass"
-                  : "Automated review passed";
+                  ? t("plugins-prose-low-risk-automated-pass")
+                  : t("plugins-prose-automated-review-passed");
             return (
               <div class="settings-field">
                 <div class="settings-field-row">

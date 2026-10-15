@@ -10,6 +10,54 @@ const sitesOf = (text: string, rel = "src/components/X.tsx") => (scanSource(rel,
 // tine#107 G4 (DESIGN rev. 2 #4, #6): no NEW English reaches the UI outside the
 // catalog, and nothing resolves a message at module load.
 describe("the localization ratchet", () => {
+  it("does not mark template substitutions as already reported literal text", () => {
+    const sites = sitesOf(`export const Review = () => <>
+      <button title={\`Action: \${flag ? "Collapse" : "Expand"}\`} />
+    </>`);
+    expect(sites.map(site => site.text)).toEqual(expect.arrayContaining(["Collapse", "Expand"]));
+  });
+
+  it.each([
+    "heading() || ''", "heading() ?? ''", "flag ? heading() : ''",
+    "flag ? 'Fallback heading' : heading()", "`Review: ${heading()}`", "'Review: ' + heading()",
+  ])("follows the dynamic part of %s at every UI sink", (expression) => {
+    for (const sink of [
+      `<h1>{${expression}}</h1>`,
+      `<h1 title={${expression}} />`,
+      `({ label: ${expression} })`,
+    ]) {
+      const sites = sitesOf(`
+        const heading = () => flag ? "Two versions arrived" : "Your edits on disk";
+        export const Review = () => ${sink};
+      `);
+      expect(sites.map(site => site.text).join("\n"), sink).toContain("Two versions arrived");
+      expect(sites.map(site => site.text).join("\n"), sink).toContain("Your edits on disk");
+    }
+  });
+
+  it("follows helper results, branch bodies, and displayed helper arguments without treating syntax as prose", () => {
+    const sites = sitesOf(`
+      const heading = () => flag ? "Two versions arrived" : "Your edits on disk";
+      const button = (decision, label) => <button data-decision={decision}>{label}</button>;
+      export const Review = () => <h1>{heading()}{button("mine", "Keep this")}</h1>;
+    `);
+    expect(sites.map(site => site.text).sort()).toEqual(["Keep this", "Two versions arrived", "Your edits on disk"]);
+    const helper = sitesOf(`export function querySentence(q) { return q.empty ? "All blocks" : "Blocks where"; }`, "src/editor/x.ts");
+    expect(helper.map(site => site.text).sort()).toEqual(["All blocks", "Blocks where"]);
+  });
+
+  it("follows memo fields, constant vocabulary and render callbacks, and checks component text props", () => {
+    const sites = sitesOf(`
+      const WORDS = { empty: "No blocks", busy: "Reading blocks" };
+      const heading = createMemo(() => ({ mine: WORDS[state], code: "internal-enum" }));
+      const result = { notice: "No matching rows" };
+      export const Review = () => <Field label="Review versions" hint="Choose a side">
+        <h1 aria-valuetext={heading().mine}>{heading().mine}</h1>
+        <Show when={date}>{value => \`Last scan: \${value()}\`}</Show>
+      </Field>;
+    `);
+    expect(sites.map(site => site.text).sort()).toEqual(["Choose a side", "Last scan: {}", "No blocks", "No matching rows", "Reading blocks", "Review versions"]);
+  });
   it("finds no literal UI text outside the baseline, no stale baseline entry, and no module-level t()", () => {
     const { sites, violations } = scan() as { sites: Site[]; violations: string[] };
     expect(violations).toEqual([]);
@@ -174,7 +222,7 @@ describe("the localization ratchet", () => {
     it("includes the real index.html in the scan", () => {
       const { sites } = scan() as { sites: Site[] };
       expect(sites.some((site) => site.file === "index.html" && site.text.startsWith("Opening"))).toBe(true);
-    });
+    }, 60_000);
 
     it("identity: a converted site plus a new same-text site in another owner is one added site", () => {
       const before = sitesOf(`

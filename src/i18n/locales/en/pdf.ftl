@@ -73,3 +73,7 @@ pdf-couldn-t-open-this-pdf = { "Couldn't open this PDF: " }
 pdf-copy-ref = Copy ref
 pdf-linked-references = Linked references
 pdf-remove-highlight = Remove highlight
+pdf-outline-disclosure = { $state ->
+    [collapse] Collapse { $label }
+   *[expand] Expand { $label }
+    }

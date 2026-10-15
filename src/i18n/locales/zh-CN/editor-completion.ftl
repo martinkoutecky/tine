@@ -161,3 +161,5 @@ editor-completion-ascii = Ascii
 editor-completion-center = 居中
 
 editor-completion-comment = 注释
+
+editor-completion-prose-alias-of = { $owner } 的别名

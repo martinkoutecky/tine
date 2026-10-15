@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Conflict headings and choices, resting query sentences, and helper-produced interface text now follow Chinese and live language changes; the literal ratchet also follows UI helper results and displayed arguments (GH #107).
 - Simplified Chinese now covers the complete interface catalog, including settings, queries, context menus and recovery dialogs (GH #107, GH #123).
 - Query, sheet and date controls and document notices use the localization catalog while preserving authored query syntax (GH #107).
 - Remaining Settings, page actions and page notices use the localization catalog and follow live interface language changes (GH #107).

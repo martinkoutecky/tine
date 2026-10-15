@@ -1016,8 +1016,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     if (result.kind === "stale") return;
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
-        ? { label: name, insert: pageInsert(name), sub: aliasOfLabel(name, navigationName(name)) }
-        : { label: `#${name}`, insert: tagInsert(name), sub: aliasOfLabel(name, navigationName(name)) }; // tag context reads "#name"
+        ? { label: name, insert: pageInsert(name), get sub() { return aliasOfLabel(name, navigationName(name)); } }
+        : { label: `#${name}`, insert: tagInsert(name), get sub() { return aliasOfLabel(name, navigationName(name)); } }; // tag context reads "#name"
     const createItem: AcItem =
       t.kind === "page"
         ? { get label() { return translate("editor-block-create", { name: String(q) }); }, insert: pageInsert(q) }

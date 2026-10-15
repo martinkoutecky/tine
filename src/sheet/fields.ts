@@ -1,4 +1,4 @@
-import { msg } from "../i18n";
+import { msg, t } from "../i18n";
 import { formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnly, withUndoUnit, node as docNode } from "../document";
 import { facetsFromDto, facetsOf, inlineText, parseBody, tagIdentityKey, type Facets } from "../render/facets";
 import { isRenderHiddenProp } from "../render/block";
@@ -204,12 +204,12 @@ export function boardGroupByOptions(ownerId: string): FieldId[] {
 export function fieldLabel(field: FieldId): string {
   if (field.startsWith("prop:")) return field.slice(5);
   if (isFormulaField(field)) return field.slice("formula:".length);
-  if (field === "state") return "State";
-  if (field === "priority") return "Priority";
-  if (field === "scheduled") return "Scheduled";
-  if (field === "deadline") return "Deadline";
-  if (field === "tags") return "Tags";
-  return "Page";
+  if (field === "state") return t("sheet-prose-state");
+  if (field === "priority") return t("sheet-prose-priority");
+  if (field === "scheduled") return t("sheet-prose-scheduled");
+  if (field === "deadline") return t("sheet-prose-deadline");
+  if (field === "tags") return t("sheet-prose-tags");
+  return t("sheet-prose-page");
 }
 
 /** One field's value from a block's facets: the single reader behind both the

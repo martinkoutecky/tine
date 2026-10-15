@@ -1,4 +1,4 @@
-import { t, msg, render } from "../i18n";
+import { t, msg, render, type Msg } from "../i18n";
 import { Rich } from "../i18n/Rich";
 import { isLeafLike } from "../editor/queryIr";
 // The query sheet's parts: the resting sentence, the node model, the row
@@ -563,8 +563,8 @@ export function EnabledSwitch(props: {
 
 /** Why this item is greyed, in the sheet's own words. `null` when it runs. */
 export function offLabel(node: { disabled: boolean; inherited: boolean }): string | null {
-  if (node.inherited) return "disabled by group";
-  return node.disabled ? "disabled" : null;
+  if (node.inherited) return t("query-prose-disabled-by-group");
+  return node.disabled ? t("query-prose-disabled") : null;
 }
 
 /** The move entries every item's ⋮ menu carries, offered only where they mean
@@ -772,11 +772,11 @@ export function DateBoundInput(props: {
   );
 }
 
-export const BETWEEN_FIELD_LABEL: Record<BetweenField, string> = {
-  journal: "Journal date",
-  scheduled: "Scheduled",
-  deadline: "Deadline",
-  any: "Any date",
+export const BETWEEN_FIELD_LABEL: Record<BetweenField, Msg> = {
+  journal: msg("query-prose-journal-date"),
+  scheduled: msg("query-prose-scheduled"),
+  deadline: msg("query-prose-deadline"),
+  any: msg("query-prose-any-date"),
 };
 
 /** Date-range editor: which date, one-click relative presets, and two bound
@@ -803,7 +803,7 @@ export function BetweenPick(props: {
               classList={{ active: field() === f }}
               onClick={() => setField(f)}
             >
-              {BETWEEN_FIELD_LABEL[f]}
+              {render(BETWEEN_FIELD_LABEL[f])}
             </button>
           )}
         </For>
@@ -1000,7 +1000,7 @@ export function AnchorLine(props: {
           {(rootRef) => (
             <Listbox
               id={menuId}
-              label="What this query selects"
+              label={t("query-prose-what-this-query-selects")}
               rootRef={rootRef}
               options={options()}
               onPick={(key) => {
@@ -1100,7 +1100,7 @@ export function SelectionBar(props: {
           {(rootRef) => (
             <Listbox
               id={menuId}
-              label="Group the selected conditions"
+              label={t("query-prose-group-the-selected-conditions")}
               rootRef={rootRef}
               options={GROUP_CHOICES.map((option) => ({ ...option, label: render(option.label) }))}
               onPick={(key) => props.onGroup(key as GroupChoice)}
@@ -1352,7 +1352,7 @@ export function AddCondition(props: {
                         <Listbox
                           class="qs-inline-list"
                           id={`${chooserId}-op`}
-                          label="Condition operator"
+                          label={t("query-prose-condition-operator")}
                           options={propertyOperators(effective()).map((operator) => ({
                             key: operator.id,
                             label: operator.label,

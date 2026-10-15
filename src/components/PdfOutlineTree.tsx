@@ -1,4 +1,5 @@
 import { For, Show, type JSX } from "solid-js";
+import { t } from "../i18n";
 import type { PdfOutlineItem } from "./pdfOutline";
 
 /** Render the bounded document outline without loading PDF pages. */
@@ -22,7 +23,7 @@ export function PdfOutlineTree(props: {
                 <button
                   type="button"
                   class="pdf-outline-disclosure"
-                  aria-label={`${props.expanded(item.id) ? "Collapse" : "Expand"} ${item.label}`}
+                  aria-label={t("pdf-outline-disclosure", { state: props.expanded(item.id) ? "collapse" : "expand", label: item.label })}
                   aria-expanded={props.expanded(item.id)}
                   onClick={() => props.toggle(item.id)}
                 >

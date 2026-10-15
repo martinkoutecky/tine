@@ -13,3 +13,10 @@ journal-agenda-title = Scheduled & Deadline
 # $page (string): the sections page.
 settings-sections-page = Today's sections are defined on the page "{ $page }". Edit the agenda query there.
 settings-sections-open = Open page
+
+journals-prose-tasks-today = { NUMBER($count, useGrouping: 0) } { $count ->
+        [one] task
+       *[other] tasks
+    } today
+journals-prose-in-progress = { NUMBER($count, useGrouping: 0) } in progress
+journals-prose-task-summary = { $tasks }, { $progress }

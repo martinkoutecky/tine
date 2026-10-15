@@ -1,4 +1,4 @@
-import { msg, t } from "../i18n";
+import { msg, renderEnglish, t } from "../i18n";
 import { ErrorBoundary, Show, createMemo, type JSX } from "solid-js";
 import { writeClipboardText } from "../clipboard";
 import { slowBackendState } from "../slowBackend";
@@ -47,12 +47,13 @@ function FailureRegion(props: {
   dbg(`region failed: ${props.region}: ${String(props.error)}`);
   pushToastUnique(msg("failure-boundary-could-not-be-displayed", { region: String(props.region) }), "error");
 
-  const message = () => {
+  const errorText = () => {
     const error = props.error;
     if (error instanceof Error && error.message) return error.message;
     const text = typeof error === "string" ? error : "";
-    return text || "Unexpected failure.";
+    return text;
   };
+  const message = () => errorText() || t("app-prose-unexpected-failure");
 
   // The backend's own slowness, said out loud. GH #332's report carried a 37s
   // startup and a wall of commands past the slow threshold, and the app
@@ -78,7 +79,8 @@ function FailureRegion(props: {
       </Show>
       <div class="region-failure-actions">
         <button type="button" onClick={() => {
-          const details = `${props.region} could not be displayed.\n${props.error instanceof Error ? props.error.stack || message() : message()}`;
+          const detail = errorText() || renderEnglish(msg("app-prose-unexpected-failure"));
+          const details = `${props.region} could not be displayed.\n${props.error instanceof Error ? props.error.stack || detail : detail}`;
           void writeClipboardText(details).catch(() => pushToastUnique(msg("failure-boundary-couldn-t-copy-error-details-clipboard-write-failed"), "error"));
         }}>{t("failure-boundary-copy-details")}</button>
         <button type="button" class="region-failure-retry" onClick={() => props.onRetry()}>{t("failure-boundary-retry")}</button>

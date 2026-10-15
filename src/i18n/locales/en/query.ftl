@@ -617,3 +617,248 @@ query-operator-in-namespace = in namespace
 query-filter-not-in-namespace = not in namespace
 query-filter-matches = matches
 query-filter-does-not-match = does not match
+
+# Helper-return and component-prop interface text (GH #107).
+query-prose-open-tasks = Open tasks
+query-prose-any-task = Any task
+query-prose-a-b-or-c = A, B or C
+query-prose-move-group = Move group
+query-prose-select-group = Select group
+query-prose-group-actions = Group actions
+query-prose-group-enabled = Group enabled
+query-prose-move-condition = Move condition
+query-prose-select-condition = Select condition
+query-prose-condition-enabled = Condition enabled
+query-prose-row-actions = Row actions
+query-prose-condition-operator = Condition operator
+query-prose-page-property = Page property
+query-prose-property = Property
+query-prose-not = not
+query-prose-matches = matches
+query-prose-reading-this-graph-s-properties = Reading this graph's properties…
+query-prose-type-to-search-page-names-and-block-text = Type to search page names and block text.
+query-prose-page = Page
+query-prose-block = Block
+query-prose-what-this-query-selects = What this query selects
+query-prose-group-the-selected-conditions = Group the selected conditions
+query-prose-disabled-by-group = disabled by group
+query-prose-disabled = disabled
+query-prose-journal-date = Journal date
+query-prose-scheduled = Scheduled
+query-prose-deadline = Deadline
+query-prose-any-date = Any date
+query-prose-count = Count
+query-prose-sum = Sum
+query-prose-avg = Avg
+
+# Complete query clauses; variables containing chip segments may be reordered.
+query-prose-advanced = ⟨advanced⟩
+query-prose-today = today
+query-prose-yesterday = yesterday
+query-prose-tomorrow = tomorrow
+query-prose-journal-date-field = journal date
+query-prose-not-group = NOT
+query-prose-everything = everything
+query-prose-nothing = nothing
+query-prose-on-journal = on journal page
+query-prose-any-status = Any status
+query-prose-no-markers = no markers
+query-prose-no-levels = no levels
+query-prose-field-value = { $field }: { $value }
+query-prose-on-page = page: { $value }
+query-prose-in-namespace = namespace: { $value }
+query-prose-page-property-clause = page { $inner }
+query-prose-page-tags = page tags: { $value }
+query-prose-property-any = { $field }: any
+query-prose-task = task: { $value }
+query-prose-priority = priority: { $value }
+query-prose-content = text: "{ $value }"
+query-prose-search = search: { $value }
+query-prose-date-range = { $low } to { $high }
+query-prose-off = { $inner } (off)
+query-prose-negation = not { $inner }
+query-prose-parentheses = ({ $inner })
+query-prose-sentence = { $subject } where { $predicate }
+query-prose-attr-content = text
+query-prose-attr-task = task
+query-prose-attr-priority = priority
+query-prose-attr-scheduled = scheduled
+query-prose-attr-deadline = deadline
+query-prose-attr-created-at = created
+query-prose-attr-last-modified-at = last modified
+query-prose-attr-name = name
+query-prose-attr-journal = journal
+query-prose-attr-day = date
+query-prose-attr-namespace = namespace
+query-prose-attr-used-as-tag = used as a tag
+query-prose-attr-key = key
+query-prose-attr-value = value
+query-prose-attr-atom-count = values
+query-prose-property-operator =
+    { $op ->
+       *[is] { $cardinality ->
+                [list] contains this value
+               *[scalar] is
+            }
+        [is_not] { $cardinality ->
+                [list] does not contain this value
+               *[scalar] is not
+            }
+        [gt] is more than
+        [ge] is at least
+        [lt] is less than
+        [le] is at most
+        [between] is between
+        [before] before
+        [on_or_before] on or before
+        [after] after
+        [on_or_after] on or after
+        [contains] contains
+        [does_not_contain] does not contain
+        [starts_with] starts with
+        [ends_with] ends with
+        [references] references
+        [does_not_reference] does not reference
+        [is_checked] is checked
+        [is_unchecked] is unchecked
+        [is_set] is set
+        [is_not_set] is not set
+        [is_blank] is blank
+        [has_other_value] has a value other than
+    }
+query-prose-property-test =
+    { $op ->
+       *[is] { $field } is { $value }
+        [is_not] { $field } is not { $value }
+        [gt] { $field } is more than { $value }
+        [ge] { $field } is at least { $value }
+        [lt] { $field } is less than { $value }
+        [le] { $field } is at most { $value }
+        [between] { $field } is between { $value }
+        [before] { $field } before { $value }
+        [on_or_before] { $field } on or before { $value }
+        [after] { $field } after { $value }
+        [on_or_after] { $field } on or after { $value }
+        [contains] { $field } contains { $value }
+        [does_not_contain] { $field } does not contain { $value }
+        [starts_with] { $field } starts with { $value }
+        [ends_with] { $field } ends with { $value }
+        [references] { $field } references { $value }
+        [does_not_reference] { $field } does not reference { $value }
+        [is_checked] { $field } is checked
+        [is_unchecked] { $field } is unchecked
+        [is_set] { $field } is set
+        [is_not_set] { $field } is not set
+        [is_blank] { $field } is blank
+        [has_other_value] { $field } has a value other than { $value }
+    }
+query-prose-attribute-test =
+    { $op ->
+       *[eq] { $field } is { $value }
+        [not_eq] { $field } is not { $value }
+        [lt] { $field } < { $value }
+        [le] { $field } ≤ { $value }
+        [gt] { $field } > { $value }
+        [ge] { $field } ≥ { $value }
+        [between] { $field } between { $value }
+        [in] { $field } is one of { $value }
+        [not_in] { $field } is none of { $value }
+        [like] { $field } contains { $value }
+        [starts_with] { $field } starts with { $value }
+        [match] { $field } matches { $value }
+        [regex] { $field } matches regex { $value }
+        [is_set] { $field } is set
+        [is_not_set] { $field } is not set
+        [is_blank] { $field } is blank
+    }
+query-prose-boolean =
+    { $value ->
+        [true] yes
+       *[false] no
+    }
+query-prose-group =
+    { $kind ->
+       *[and] AND
+        [or] OR
+    }
+query-prose-subject =
+    { $family ->
+        [both] Pages and blocks
+        [page] Pages
+       *[block] Blocks
+    }
+query-prose-all =
+    { $family ->
+        [both] All pages and blocks
+        [page] All pages
+       *[block] All blocks
+    }
+query-prose-date-bound =
+    { $op ->
+       *[ge] from { $when }
+        [le] until { $when }
+    }
+query-prose-relative-days = { NUMBER($count, useGrouping: 0) } { $count ->
+        [one] day
+       *[other] days
+    } { $direction ->
+        [ago] ago
+       *[ahead] ahead
+    }
+query-prose-relative-weeks = { NUMBER($count, useGrouping: 0) } { $count ->
+        [one] week
+       *[other] weeks
+    } { $direction ->
+        [ago] ago
+       *[ahead] ahead
+    }
+query-prose-relative-months = { NUMBER($count, useGrouping: 0) } { $count ->
+        [one] month
+       *[other] months
+    } { $direction ->
+        [ago] ago
+       *[ahead] ahead
+    }
+query-prose-relative-years = { NUMBER($count, useGrouping: 0) } { $count ->
+        [one] year
+       *[other] years
+    } { $direction ->
+        [ago] ago
+       *[ahead] ahead
+    }
+query-prose-list = { $left }{ $position ->
+        [middle] { ", " }
+        [last-many] { $connector ->
+            [and] { ", and " }
+           *[or] { " or " }
+        }
+       *[last] { $connector ->
+            [and] { " and " }
+           *[or] { " or " }
+        }
+    }{ $right }
+query-prose-relation = { $quant } { $relation }: { $inner }
+
+query-prose-not-symbol = not { $symbol }
+query-prose-invalid-regex = The regular expression is invalid: { $error }
+query-prose-regex-summary = Matches page names or block text using the case-sensitive regular expression /{ $pattern }/.
+query-prose-search-summary = Matches page names or block text { $group }.
+query-prose-search-groups-summary = Matches page names or block text when it is { $groups }.
+query-prose-search-and = { $left } and { $right }
+query-prose-search-or = { $left }; or { $right }
+query-prose-search-term = { $kind ->
+        [exclude-exact] excluding the exact phrase “{ $value }”
+        [exclude] excluding “{ $value }”
+        [exact] containing the exact phrase “{ $value }”
+       *[contains] containing “{ $value }”
+    }
+query-prose-aggregate-field = { $verb } of { $field }
+
+query-prose-advanced-clause = { $advanced } { $clause }
+query-prose-aggregate-unavailable = Unavailable ({ $reason ->
+        [non_finite] non finite
+        [division_by_zero] division by zero
+        [empty_group] empty group
+       *[non_numeric] non numeric
+    })
+query-prose-formula-statistics-notice = Exact statistics by formula are not supported yet. Overall statistics are shown.

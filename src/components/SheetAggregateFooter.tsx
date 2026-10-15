@@ -83,14 +83,11 @@ export interface QueryFooterCell {
   set: (fn: QueryAggFn | null) => void;
 }
 
-const QUERY_AGGREGATE_LABELS: readonly (readonly [QueryAggFn, string])[] = [
-  ["count", "Count"],
-  ["sum", "Sum"],
-  ["avg", "Average"],
-];
+const QUERY_AGGREGATE_FNS: readonly QueryAggFn[] = ["count", "sum", "avg"];
+const queryAggregateLabel = (fn: QueryAggFn) => AGGREGATE_LABELS[fn === "avg" ? "average" : fn];
 
-function aggregateMenuItem<T>(label: string, value: T, current: T, set: (value: T) => void): ContextMenuAction {
-  return { label: current === value ? `✓ ${label}` : label, run: () => set(value) };
+function aggregateMenuItem<T>(label: () => string, value: T, current: T, set: (value: T) => void): ContextMenuAction {
+  return { get label() { return current === value ? `✓ ${label()}` : label(); }, run: () => set(value) };
 }
 
 export function SheetAggregateFooterCell(props: {
@@ -111,24 +108,24 @@ export function SheetAggregateFooterCell(props: {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const query = props.query;
     if (query) {
-      const item = (label: string, value: QueryAggFn | null) => aggregateMenuItem(label, value, query.fn ?? null, (value) => query.set(value));
+      const item = (label: () => string, value: QueryAggFn | null) => aggregateMenuItem(label, value, query.fn ?? null, (value) => query.set(value));
       openActionContextMenu(rect.left, rect.bottom + 4, [
-        item("None", null),
-        ...QUERY_AGGREGATE_LABELS.map(([fn, label]) => item(label, fn)),
+        item(() => t("sheet-aggregate-none"), null),
+        ...QUERY_AGGREGATE_FNS.map(fn => item(() => queryAggregateLabel(fn), fn)),
       ]);
       return;
     }
     const set = (value: AggregateFn | null) => setColumnAggregate(props.ownerId, props.columnKey, value);
-    const item = (label: string, value: AggregateFn | null) => aggregateMenuItem(label, value, props.fn ?? null, set);
+    const item = (label: () => string, value: AggregateFn | null) => aggregateMenuItem(label, value, props.fn ?? null, set);
     openActionContextMenu(rect.left, rect.bottom + 4, [
-      item("None", null),
-      ...AGGREGATE_FNS.map((fn) => item(AGGREGATE_LABELS[fn], fn)),
+      item(() => t("sheet-aggregate-none"), null),
+      ...AGGREGATE_FNS.map((fn) => item(() => AGGREGATE_LABELS[fn], fn)),
     ]);
   };
   const activeFn = () => (props.query ? props.query.fn : props.fn);
   const activeLabel = () => {
     const query = props.query;
-    if (query) return QUERY_AGGREGATE_LABELS.find(([fn]) => fn === query.fn)?.[1] ?? "";
+    if (query) return query.fn ? queryAggregateLabel(query.fn) : "";
     return props.fn ? AGGREGATE_LABELS[props.fn] : "";
   };
 

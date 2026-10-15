@@ -353,8 +353,8 @@ function hitPage(hit: QueryHit): string {
   return hit.entity === "page" ? hit.page.name : hit.page;
 }
 
-function hitKind(hit: QueryHit): "Page" | "Block" {
-  return hit.entity === "page" ? "Page" : "Block";
+function hitKind(hit: QueryHit): string {
+  return hit.entity === "page" ? t("query-prose-page") : t("query-prose-block");
 }
 
 function MarkedText(props: { text: string; spans: MatchSpan[] }): JSX.Element {
@@ -406,17 +406,19 @@ function ExplainTree(props: { nodes: QueryExplainNode[] }): JSX.Element {
 
 function friendlySummary(source: string): string {
   const parsed = parseSearchQuery(source);
-  if (parsed.kind === "empty") return "Type to search page names and block text.";
-  if (parsed.kind === "invalid") return `The regular expression is invalid: ${parsed.error}`;
-  if (parsed.kind === "regex") return `Matches page names or block text using the case-sensitive regular expression /${parsed.pattern}/.`;
-  const describeGroup = (group: typeof parsed.groups[number]) => group.map((term) => {
-    const value = term.quoted ? `the exact phrase “${term.text}”` : `“${term.text}”`;
-    return term.negated ? `excluding ${value}` : `containing ${value}`;
-  }).join(" and ");
+  if (parsed.kind === "empty") return t("query-prose-type-to-search-page-names-and-block-text");
+  if (parsed.kind === "invalid") return t("query-prose-invalid-regex", { error: parsed.error });
+  if (parsed.kind === "regex") return t("query-prose-regex-summary", { pattern: parsed.pattern });
+  const describeGroup = (group: typeof parsed.groups[number]) => group.map(term =>
+    t("query-prose-search-term", {
+      kind: term.negated ? (term.quoted ? "exclude-exact" : "exclude") : (term.quoted ? "exact" : "contains"),
+      value: term.text,
+    })
+  ).reduce((left, right) => t("query-prose-search-and", { left, right }));
   const groups = parsed.groups.map(describeGroup);
   return groups.length === 1
-    ? `Matches page names or block text ${groups[0]}.`
-    : `Matches page names or block text when it is ${groups.join("; or ")}.`;
+    ? t("query-prose-search-summary", { group: groups[0] })
+    : t("query-prose-search-groups-summary", { groups: groups.reduce((left, right) => t("query-prose-search-or", { left, right })) });
 }
 
 function filterWords(value: string): string[] {

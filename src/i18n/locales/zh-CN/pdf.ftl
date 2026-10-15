@@ -135,3 +135,7 @@ pdf-copy-ref = 复制引用
 pdf-linked-references = 链接引用
 
 pdf-remove-highlight = 移除高亮
+pdf-outline-disclosure = { $state ->
+    [collapse] 折叠 { $label }
+   *[expand] 展开 { $label }
+    }

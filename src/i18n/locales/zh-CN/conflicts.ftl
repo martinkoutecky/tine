@@ -162,3 +162,40 @@ journal-filename-panel-confirmation = { $count ->
     [one] 将 { NUMBER($count, useGrouping: 0) } 个日记文件重命名为日期吗？{ "\u000A\u000A" }会先创建快照，原文件名保留在“备份与恢复”中。不会覆盖任何文件：日期名称已被占用的文件会保持原样。
    *[other] 将 { NUMBER($count, useGrouping: 0) } 个日记文件重命名为日期吗？{ "\u000A\u000A" }会先创建快照，原文件名保留在“备份与恢复”中。不会覆盖任何文件：日期名称已被占用的文件会保持原样。
     }
+
+# Helper-return and component-prop interface text (GH #107).
+conflicts-prose-unsaved-draft = 未保存的草稿
+conflicts-prose-mine = 我的版本
+conflicts-prose-theirs = 对方的版本
+conflicts-prose-mine-short = 我的
+conflicts-prose-theirs-short = 对方
+conflicts-prose-unresolved-merge-from-your-version-control-tool = 版本控制工具留下的未解决合并
+conflicts-prose-your-edits-and-a-newer-version-on-disk = 你的编辑与磁盘上的较新版本
+conflicts-prose-this-day-has-more-than-one-file = 这一天有多个文件
+conflicts-prose-two-versions-of-this-page-arrived = 收到了此页面的两个版本
+conflicts-prose-proposed-by-your-merge-tool-s-suggested-resolution-still-applied = 合并工具建议的解决方案，仍需你确认后才会应用。
+conflicts-prose-both-edits-combined-offered-because-they-touch-different-parts-of = 已合并双方的编辑，因为它们修改了正文的不同部分
+conflicts-prose-both = 双方
+conflicts-prose-merged = 已合并
+conflicts-prose-keep = 保留
+conflicts-prose-drop = 舍弃
+conflicts-prose-skip = 跳过
+conflicts-prose-pull-in = 引入
+
+conflicts-prose-day-files = 这一天有 { $count } 个文件
+conflicts-prose-sync-copy = 同步副本 · { $side }
+conflicts-prose-merge-sides = 合并标记 · { $mine } 与 { $theirs }
+conflicts-prose-block-count = { $count } 个块
+
+conflicts-prose-copy-fallback = 冲突副本
+conflicts-prose-local-fallback = 本地
+conflicts-prose-incoming-fallback = 合入
+conflicts-prose-copy-month = { $month }月
+conflicts-prose-dated-copy = 同步副本 · { $year ->
+        [current] { "" }
+       *[other] { $year }年
+    }{ $month }{ $day }日
+
+conflicts-prose-local-side = 本地一方
+conflicts-prose-merged-side = 合入一方
+conflicts-prose-conflict-copy = 冲突副本

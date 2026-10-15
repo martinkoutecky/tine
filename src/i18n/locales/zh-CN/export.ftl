@@ -104,3 +104,7 @@ reference-evidence-occurrence-label = { $selecting ->
     [1] 高亮第 { $index } / { $total } 处提及
    *[other] 跳转到第 { $index } / { $total } 处提及
     }
+
+# Helper-return and component-prop interface text (GH #107).
+export-prose-plain-text-output-has-no-markup-markers-to-remove = 纯文本输出中没有需要移除的标记
+export-prose-only-applies-to-plain-text-output = 仅适用于纯文本输出

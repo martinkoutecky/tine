@@ -18,7 +18,7 @@ it("editor, PDF and rendering UI text uses the catalog while graph syntax stays 
   const templateSyntax = new Set(["today", "yesterday", "tomorrow", "current page", "time"]);
   const remaining = sites.filter((site: { file: string; owner: string; text: string }) =>
     !(site.file === "src/editor/autocomplete.ts" && site.owner === "COMMAND_DEFINITIONS" && syntax.has(site.text)) &&
-    !(site.file === "src/components/FormulaEditor.tsx" && site.text === "formula.") &&
+    !(site.file === "src/components/FormulaEditor.tsx" && (site.text === "formula." || site.text === "formula.{}")) &&
     !(site.file === "src/editor/templateVars.ts" && site.owner === "TEMPLATE_VARS" && templateSyntax.has(site.text)));
   expect(remaining).toEqual([]);
 });

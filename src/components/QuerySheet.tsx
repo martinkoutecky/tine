@@ -474,8 +474,8 @@ function GroupHeader(props: {
   };
   return (
     <div class="qs-group-header">
-      <DragHandle pos={props.pos} label="Move group" controls={props.controls} />
-      <SelectBox pos={props.pos} label="Select group" controls={props.controls} />
+      <DragHandle pos={props.pos} label={t("query-prose-move-group")} controls={props.controls} />
+      <SelectBox pos={props.pos} label={t("query-prose-select-group")} controls={props.controls} />
       <button
         type="button"
         class="qs-group-op"
@@ -512,7 +512,7 @@ function GroupHeader(props: {
           {(rootRef) => (
             <Listbox
               id={menuId}
-              label="Group actions"
+              label={t("query-prose-group-actions")}
               rootRef={rootRef}
               options={[
                 ...moveOptions(props.pos),
@@ -548,7 +548,7 @@ function GroupHeader(props: {
         loc={props.group.loc}
         disabled={props.group.disabled}
         inherited={props.group.inherited}
-        label="Group enabled"
+        label={t("query-prose-group-enabled")}
         controls={props.controls}
       />
       <Show when={offLabel(props.group)}>
@@ -593,7 +593,7 @@ function AdvancedChip(props: {
   controls: SheetControls;
   pos: SiblingPos;
 }): JSX.Element {
-  const phrase = () => `${ADVANCED_PHRASE} ${filterLabel(props.node.filter)}`;
+  const phrase = () => t("query-prose-advanced-clause", { advanced: render(ADVANCED_PHRASE), clause: filterLabel(props.node.filter) });
   return (
     <div
       class="qs-row qs-row-advanced"
@@ -606,8 +606,8 @@ function AdvancedChip(props: {
       }}
     >
       {/* A folded subtree is a sibling like any other: it selects, it moves and it disables. */}
-      <DragHandle pos={props.pos} label="Move condition" controls={props.controls} />
-      <SelectBox pos={props.pos} label="Select condition" controls={props.controls} />
+      <DragHandle pos={props.pos} label={t("query-prose-move-condition")} controls={props.controls} />
+      <SelectBox pos={props.pos} label={t("query-prose-select-condition")} controls={props.controls} />
       <Show
         when={props.sheet.onEditText}
         fallback={<span class="qs-advanced" title={t("query-query-sheet-edit-in-the-query-text-below")}>{phrase()}</span>}
@@ -629,7 +629,7 @@ function AdvancedChip(props: {
         loc={props.node.loc}
         disabled={props.node.disabled}
         inherited={props.node.inherited}
-        label="Condition enabled"
+        label={t("query-prose-condition-enabled")}
         controls={props.controls}
       />
       <Show when={offLabel(props.node)}>
@@ -691,7 +691,7 @@ function AdvancedMenu(props: {
           {(rootRef) => (
             <Listbox
               id={menuId}
-              label="Row actions"
+              label={t("query-prose-row-actions")}
               rootRef={rootRef}
               options={moveOptions(props.pos)}
               onPick={(key) => {
@@ -725,11 +725,11 @@ function QueryRow(props: {
   const effective = createMemo(() => effectiveFor(props.sheet.registry, property()?.key));
   const fieldLabel = () => {
     const test = property();
-    if (test) return test.throughPage ? "Page property" : "Property";
+    if (test) return test.throughPage ? t("query-prose-page-property") : t("query-prose-property");
     const k = kind();
     // A scheduled/deadline/journal-date range names its date, not the generic "Between dates" (GH #619 item 5).
     const dated = betweenRowField(core());
-    if (dated && dated !== "any") return BETWEEN_FIELD_LABEL[dated];
+    if (dated && dated !== "any") return render(BETWEEN_FIELD_LABEL[dated]);
     return k ? render(FIELD_LABELS[k]) : t("query-filter-condition");
   };
   const operatorLabel = () => {
@@ -740,10 +740,10 @@ function QueryRow(props: {
     if ((k === "scheduled" || k === "deadline") && filter.kind === "leaf" && filter.leaf.kind === "attr") {
       const op = filter.leaf.op;
       const symbol = { gt: ">", ge: "≥", eq: "=", lt: "<", le: "≤" }[op as "gt" | "ge" | "eq" | "lt" | "le"];
-      if (symbol) return props.node.negated ? `not ${symbol}` : symbol;
+      if (symbol) return props.node.negated ? t("query-prose-not-symbol", { symbol }) : symbol;
       if (op === "is_not_set") return render(props.node.negated ? KIND_PHRASE[k].positive : KIND_PHRASE[k].negative);
     }
-    if (!k) return props.node.negated ? "not" : "matches";
+    if (!k) return props.node.negated ? t("query-prose-not") : t("query-prose-matches");
     const phrase = KIND_PHRASE[k];
     return render(props.node.negated ? phrase.negative : phrase.positive);
   };
@@ -762,7 +762,7 @@ function QueryRow(props: {
   /** Why the row is waiting, in the control's own tooltip: an indexing read
   *  ends by itself, a failure does not, and the two must not read alike. */
   const propertyWaitReason = () =>
-    props.sheet.registry.failure()?.message ?? "Reading this graph's properties…";
+    props.sheet.registry.failure()?.message ?? t("query-prose-reading-this-graph-s-properties");
 
   const key = (purpose: string) => `${purpose}:${locKey(props.node.loc)}`;
   const menuOpen = (purpose: string) => props.sheet.openMenu() === key(purpose);
@@ -872,8 +872,8 @@ function QueryRow(props: {
       }}
     >
       {/* A disabled row is still a row: it can be selected, moved and dragged. */}
-      <DragHandle pos={props.pos} label="Move condition" controls={props.controls} />
-      <SelectBox pos={props.pos} label="Select condition" controls={props.controls} />
+      <DragHandle pos={props.pos} label={t("query-prose-move-condition")} controls={props.controls} />
+      <SelectBox pos={props.pos} label={t("query-prose-select-condition")} controls={props.controls} />
       <Show
         when={!raw()}
         fallback={
@@ -993,7 +993,7 @@ function QueryRow(props: {
                 fallback={
                   <Listbox
                     id={opMenuId}
-                    label="Condition operator"
+                    label={t("query-prose-condition-operator")}
                     rootRef={rootRef}
                     options={(() => {
                       const k = kind();
@@ -1027,7 +1027,7 @@ function QueryRow(props: {
                 {(test) => (
                   <Listbox
                     id={opMenuId}
-                    label="Condition operator"
+                    label={t("query-prose-condition-operator")}
                     rootRef={rootRef}
                     options={(() => {
                       const offered = propertyOperators(effective());
@@ -1114,7 +1114,7 @@ function QueryRow(props: {
         loc={props.node.loc}
         disabled={props.node.disabled}
         inherited={props.node.inherited}
-        label="Condition enabled"
+        label={t("query-prose-condition-enabled")}
         controls={props.controls}
       />
       <span class="qs-menu-wrap">
@@ -1142,7 +1142,7 @@ function QueryRow(props: {
           {(rootRef) => (
             <Listbox
               id={rowMenuId}
-              label="Row actions"
+              label={t("query-prose-row-actions")}
               rootRef={rootRef}
               options={[...moveOptions(props.pos), { key: "remove", label: t("query-query-sheet-remove") }]}
               onPick={(picked) => {

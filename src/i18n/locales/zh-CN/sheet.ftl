@@ -134,3 +134,33 @@ sheet-sheet-board-new-tag = 新标签
 sheet-sheet-board-new-tag-2 = new-tag
 
 sheet-sheet-board-card-menu = 卡片菜单
+
+# Helper-return and component-prop interface text (GH #107).
+sheet-prose-state = 状态
+sheet-prose-priority = 优先级
+sheet-prose-scheduled = 计划时间
+sheet-prose-deadline = 截止时间
+sheet-prose-tags = 标签
+sheet-prose-page = 页面
+
+sheet-prose-table-only-sort = 仅对表格排序：{ $field }
+sheet-prose-title = 标题
+sheet-board-empty-column = （无）
+sheet-aggregate-none = 无
+sheet-aggregate-name = { $fn ->
+    [sum] 求和
+    [average] 平均值
+    [median] 中位数
+    [min] 最小值
+    [max] 最大值
+    [range] 极差
+    [stddev] 标准差
+    [earliest] 最早
+    [latest] 最晚
+    [empty] 空值数
+    [filled] 非空值数
+    [unique] 唯一值数
+    [checked] 已勾选数
+    [unchecked] 未勾选数
+   *[count] 计数
+    }

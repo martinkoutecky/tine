@@ -1,5 +1,5 @@
 import { TableWrap } from "./TableWrap";
-import { t, msg } from "../i18n";
+import { t, msg, render } from "../i18n";
 import { Rich } from "../i18n/Rich";
 import { For, Match, Show, Switch, createMemo, type JSX } from "solid-js";
 import { pageRowFieldValue, type OgQueryHint, type PageRow, type Query, type QueryStatistics, type ViewKind } from "../editor/queryIr";
@@ -192,9 +192,9 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onC
 }
 
 const OG_REWRITE_LABEL = {
-  open_tasks: "Open tasks",
-  any_task: "Any task",
-  priorities: "A, B or C",
+  open_tasks: msg("query-prose-open-tasks"),
+  any_task: msg("query-prose-any-task"),
+  priorities: msg("query-prose-a-b-or-c"),
 };
 
 /** **The on-query cue for Logseq's "no condition" forms (D-18, GH #422).** A
@@ -233,7 +233,7 @@ export function QueryOgHint(props: { hint: OgQueryHint; onRewrite?: (query: Quer
                   props.onRewrite?.(rewrite.query);
                 }}
               >
-                {rewrite.rewrite === "convert" ? t("query-convert") : OG_REWRITE_LABEL[rewrite.rewrite]}
+                {rewrite.rewrite === "convert" ? t("query-convert") : render(OG_REWRITE_LABEL[rewrite.rewrite])}
               </button>
             )}
           </For>

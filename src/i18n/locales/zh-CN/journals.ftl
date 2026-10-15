@@ -15,3 +15,7 @@ journal-agenda-title = 计划与截止
 settings-sections-page = 今天的区域由页面“{ $page }”定义。请在该页面编辑日程查询。
 
 settings-sections-open = 打开页面
+
+journals-prose-tasks-today = 今天有 { $count } 项任务
+journals-prose-in-progress = { $count } 项进行中
+journals-prose-task-summary = { $tasks }，{ $progress }

@@ -14,6 +14,7 @@ import { isConflicted } from "../document/host/wiring";
 import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
 import { openAsLoaded } from "./hostConflict.test.support";
 import { setPinyinMatchingEnabled } from "../launcherRanking";
+import { setActiveLocale } from "../i18n";
 
 beforeAll(() => initParser());
 
@@ -149,6 +150,13 @@ describe("reference authoring", () => {
       expect(labels().filter((label) => !label?.startsWith("Create"))).toEqual([`${prefix}Tine`, `${prefix}TineOutline`, `${prefix}Tine Outliner`]);
       const row = [...document.body.querySelectorAll(".autocomplete .ac-label")].find((row) => row.textContent === `${prefix}TineOutline`)!.parentElement!;
       expect(row.querySelector(".ac-sub")?.textContent).toBe("alias of Tine");
+      try {
+        await setActiveLocale("zh-CN");
+        expect(row.querySelector(".ac-sub")?.textContent).toBe("Tine 的别名");
+        expect(labels()).toContain(`${prefix}TineOutline`);
+        await setActiveLocale("en");
+        expect(row.querySelector(".ac-sub")?.textContent).toBe("alias of Tine");
+      } finally { await setActiveLocale("en"); }
       if (kind === "tag") {
         const index = labels().indexOf(`${prefix}TineOutline`);
         for (let i = 0; i < index; i++) textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true }));

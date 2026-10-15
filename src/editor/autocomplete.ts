@@ -1,4 +1,4 @@
-import { msg, render, type Msg } from "../i18n";
+import { msg, render, t, type Msg } from "../i18n";
 // Pure autocomplete logic for the block editor: detect a `[[`, `#`, `/`, `<`, or property
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
@@ -827,5 +827,5 @@ export function filterAdvancedBlockCommands(query: string): AdvancedBlockCommand
  *  the page index resolves (an existing page wins), so an ordinary page gets
  *  no label. */
 export function aliasOfLabel(name: string, owner: string): string | undefined {
-  return pageIdentityKey(owner) === pageIdentityKey(name) ? undefined : `alias of ${owner}`;
+  return pageIdentityKey(owner) === pageIdentityKey(name) ? undefined : t("editor-completion-prose-alias-of", { owner });
 }

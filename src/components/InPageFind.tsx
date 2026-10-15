@@ -34,7 +34,7 @@ export function InPageFind(): JSX.Element {
   const countText = () => {
     const count = matchCount();
     if (count) return `${inPageFindActiveIndex() + 1} / ${count}`;
-    return draftQuery().trim() && draftQuery() === inPageFindQuery() ? "No results" : "";
+    return draftQuery().trim() && draftQuery() === inPageFindQuery() ? t("navigation-prose-no-results") : "";
   };
   const cancelScheduledQuery = () => {
     clearTimeout(queryTimer);

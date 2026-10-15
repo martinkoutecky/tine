@@ -73,3 +73,8 @@ macro-ref-blocks-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new = Shift-
 
 macro-ref-blocks-more-nested-blocks-are-available-on-the-page = More nested blocks are available on the page
 
+
+# Helper-return and component-prop interface text (GH #107).
+macro-prose-no-results = No results
+macro-prose-loading-query-results = Loading query results…
+macro-prose-query = Query

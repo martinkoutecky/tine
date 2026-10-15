@@ -450,7 +450,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const ranEmpty = () =>
     !!displayed() && !operation.loading && total() === 0 && blockingDiagnostics().length === 0
     && displayed()?.report?.supported !== false;
-  const emptyMessage = () => (ranEmpty() ? "No results" : "Loading query results…");
+  const emptyMessage = () => (ranEmpty() ? t("macro-prose-no-results") : t("macro-prose-loading-query-results"));
 
   // Why empty? (Q14, N19): which top-level conjunct emptied the query, asked
   // only once the run actually came back empty.
@@ -613,7 +613,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   // authored source verbatim, so renaming a partly understood query cannot
   // rewrite its filter.
   const [editingTitle, setEditingTitle] = createSignal(false);
-  const titleText = () => props.title ?? titleOption() ?? "Query";
+  const titleText = () => props.title ?? titleOption() ?? t("macro-prose-query");
   const titleEditable = () => !!props.blockId && props.title === undefined && !!reading();
   const setTitle = async (t: string) => {
     const blockId = props.blockId;

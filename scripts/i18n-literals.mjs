@@ -40,8 +40,8 @@ function skipped(rel) {
     || rel.endsWith(".gen.ts");
 }
 
-const UI_ATTRIBUTES = new Set(["title", "aria-label", "placeholder", "alt", "aria-description", "aria-roledescription"]);
-const UI_PROPERTIES = new Set(["label", "title", "description", "details", "hint", "placeholder", "tooltip"]);
+const UI_ATTRIBUTES = new Set(["title", "aria-label", "placeholder", "alt", "aria-description", "aria-roledescription", "aria-valuetext", "label", "hint", "tooltip", "fallback"]);
+const UI_PROPERTIES = new Set(["label", "title", "description", "details", "hint", "placeholder", "tooltip", "notice"]);
 const TOAST_CALLS = new Set(["pushToast", "pushToastUnique"]);
 const DIALOG_CALLS = new Set(["confirm", "alert", "ask"]);
 const RESOLVERS = new Set(["t", "render", "renderEnglish"]);
@@ -326,10 +326,62 @@ export function scanSource(rel, text) {
   const resolvers = new Set(imported.filter((name) => RESOLVERS.has(name.imported)).map((name) => name.local));
   const catalog = new Set([...imported.filter((name) => CATALOG_CALLS.has(name.imported)).map((name) => name.local), "msg", "rawText"]);
   const invoked = loadInvokedNames(source);
+  const covered = new Set();
+  const calls = [];
+  const declarations = new Map();
+  const index = (node) => {
+    if ((ts.isVariableDeclaration(node) || ts.isFunctionDeclaration(node) || ts.isParameter(node)) && node.name && ts.isIdentifier(node.name)) {
+      const entries = declarations.get(node.name.text) ?? [];
+      entries.push(node);
+      declarations.set(node.name.text, entries);
+    }
+    if (ts.isCallExpression(node)) calls.push(node);
+    ts.forEachChild(node, index);
+  };
+  index(source);
+  const scopeOf = (node) => {
+    for (let p = node.parent; p; p = p.parent) if (ts.isBlock(p) || ts.isFunctionLike(p) || ts.isSourceFile(p)) return p;
+    return source;
+  };
+  const resolvedDeclarations = new Map();
+  const declarationOf = (node) => {
+    if (resolvedDeclarations.has(node)) return resolvedDeclarations.get(node);
+    const entries = declarations.get(node.text) ?? [];
+    for (let p = node; p; p = p.parent) {
+      const found = entries.find(entry => scopeOf(entry) === p);
+      if (found) { resolvedDeclarations.set(node, found); return found; }
+    }
+    resolvedDeclarations.set(node, null);
+    return null;
+  };
+  // Index bindings once rather than searching every call for every displayed
+  // parameter/array reference (large components otherwise become quadratic).
+  const callsFor = new Map();
+  const pushesFor = new Map();
+  const remember = (map, key, values) => {
+    if (!key) return;
+    const entries = map.get(key) ?? [];
+    entries.push(...values);
+    map.set(key, entries);
+  };
+  for (const call of calls) {
+    if (ts.isIdentifier(call.expression)) remember(callsFor, declarationOf(call.expression), [call]);
+    else if (ts.isPropertyAccessExpression(call.expression) && call.expression.name.text === "push" && ts.isIdentifier(call.expression.expression)) {
+      remember(pushesFor, declarationOf(call.expression.expression), call.arguments);
+    }
+  }
   const site = (kind, value, node) => {
     const normalized = normalize(value);
     if (!isWords(normalized)) return;
     sites.push({ file: rel, kind, owner: ownerOf(node), text: normalized, line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1 });
+    const mark = (child) => {
+      if (ts.isStringLiteralLike(child) || ts.isTemplateExpression(child)) covered.add(child);
+      // literalOf(template) reports its static text with {} placeholders,
+      // not the values inside those placeholders. Flow must inspect those.
+      if (ts.isTemplateExpression(child)) return;
+      ts.forEachChild(child, mark);
+    };
+    mark(node);
   };
   const isCatalogCall = (node) => ts.isCallExpression(node) && catalog.has(calleeName(node) ?? "");
   /** `t(…)` / `render(…)` / `renderEnglish(…)` by a named import, or `ns.t(…)` by a namespace import. */
@@ -341,6 +393,7 @@ export function scanSource(rel, text) {
     }
     return null;
   };
+  const roots = [];
   const visit = (node) => {
     if (ts.isJsxText(node)) {
       site("jsx-text", node.text, node);
@@ -348,12 +401,17 @@ export function scanSource(rel, text) {
       const init = node.initializer;
       const value = ts.isStringLiteral(init) ? init.text : ts.isJsxExpression(init) && init.expression ? literalOf(init.expression) : null;
       if (value !== null) site(`attr:${node.name.getText(source)}`, value, node);
+      // A literal branch/template can coexist with helper-produced prose.
+      // Keep the direct site's identity, but also trace its dynamic values.
+      if (ts.isJsxExpression(init) && init.expression) roots.push(init.expression);
     } else if (ts.isJsxExpression(node) && node.expression && (ts.isJsxElement(node.parent) || ts.isJsxFragment(node.parent))) {
       const value = literalOf(node.expression);
       if (value !== null) site("jsx-text", value, node);
+      roots.push(node.expression);
     } else if (ts.isPropertyAssignment(node) && UI_PROPERTIES.has(node.name.getText(source).replace(/["']/g, ""))) {
       const value = literalOf(node.initializer);
       if (value !== null) site(`prop:${node.name.getText(source).replace(/["']/g, "")}`, value, node);
+      roots.push(node.initializer);
     } else if (ts.isCallExpression(node)) {
       const name = calleeName(node);
       const first = node.arguments[0];
@@ -372,6 +430,92 @@ export function scanSource(rel, text) {
     ts.forEachChild(node, visit);
   };
   visit(source);
+  // Follow values, never predicates, keys, event handlers or arbitrary call
+  // arguments. A parameter only carries the arguments at its actual call sites.
+  // This deliberately remains a single-file analysis; named prose producers are
+  // additional roots so exported .ts helpers are checked at their definition.
+  const seen = new Map();
+  const returned = new Map();
+  const returns = (fn, property = null) => {
+    const paths = returned.get(fn) ?? new Set();
+    if (paths.has(property)) return;
+    paths.add(property);
+    returned.set(fn, paths);
+    if (!fn.body) return;
+    if (!ts.isBlock(fn.body)) { flow(fn.body, property); return; }
+    const find = (node) => {
+      if (ts.isReturnStatement(node) && node.expression) flow(node.expression, property);
+      else if (!ts.isFunctionLike(node)) ts.forEachChild(node, find);
+    };
+    find(fn.body);
+  };
+  const flow = (node, property = null) => {
+    if (!node) return;
+    const paths = seen.get(node) ?? new Set();
+    if (paths.has(property)) return;
+    paths.add(property);
+    seen.set(node, paths);
+    if (ts.isFunctionLike(node)) returns(node, property);
+    else if (ts.isStringLiteralLike(node) || ts.isTemplateExpression(node)) {
+      if (!covered.has(node)) site("ui-flow", literalOf(node), node);
+      if (ts.isTemplateExpression(node)) for (const span of node.templateSpans) flow(span.expression);
+    } else if (transparent(node)) flow(node.expression, property);
+    else if (ts.isConditionalExpression(node)) { flow(node.whenTrue, property); flow(node.whenFalse, property); }
+    else if (ts.isBinaryExpression(node) && [ts.SyntaxKind.PlusToken, ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.AmpersandAmpersandToken].includes(node.operatorToken.kind)) {
+      if (node.operatorToken.kind !== ts.SyntaxKind.AmpersandAmpersandToken) flow(node.left, property);
+      flow(node.right, property);
+    } else if (ts.isIdentifier(node)) {
+      const decl = declarationOf(node);
+      if (decl && ts.isParameter(decl)) {
+        const fn = decl.parent;
+        const pos = fn.parameters.indexOf(decl);
+        const binding = ts.isVariableDeclaration(fn.parent) ? fn.parent : fn;
+        for (const call of callsFor.get(binding) ?? []) flow(call.arguments[pos], property);
+      } else if (decl && ts.isVariableDeclaration(decl)) {
+        flow(decl.initializer, property);
+        for (const argument of pushesFor.get(decl) ?? []) flow(argument, property);
+      }
+    } else if (ts.isCallExpression(node) && !isCatalogCall(node) && !resolverName(node)) {
+      if (ts.isIdentifier(node.expression)) {
+        const decl = declarationOf(node.expression);
+        const fn = decl && ts.isVariableDeclaration(decl) ? decl.initializer : decl;
+        if (fn && ts.isFunctionLike(fn)) returns(fn, property);
+        else if (fn && ts.isCallExpression(fn)) flow(fn, property);
+        else if (DEFERRING_CALLEES.has(node.expression.text) && node.arguments[0] && ts.isFunctionLike(node.arguments[0])) returns(node.arguments[0], property);
+      } else if (ts.isPropertyAccessExpression(node.expression) && ["join", "trim", "toLowerCase", "toUpperCase", "replace", "map", "flatMap", "filter", "slice"].includes(node.expression.name.text)) {
+        flow(node.expression.expression);
+        if (node.expression.name.text === "join") flow(node.arguments[0]);
+        if (["map", "flatMap"].includes(node.expression.name.text) && node.arguments[0] && ts.isFunctionLike(node.arguments[0])) returns(node.arguments[0]);
+      }
+    } else if (ts.isArrayLiteralExpression(node)) node.elements.forEach(item => flow(item, property));
+    else if (ts.isSpreadElement(node)) flow(node.expression);
+    else if (ts.isObjectLiteralExpression(node)) {
+      for (const prop of node.properties) {
+        const name = prop.name?.getText(source).replace(/["']/g, "");
+        if (property ? name !== property : ![...UI_PROPERTIES, "text"].includes(name)) continue;
+        if (ts.isPropertyAssignment(prop)) flow(prop.initializer);
+        else if (ts.isShorthandPropertyAssignment(prop)) flow(prop.name);
+      }
+    } else if (ts.isElementAccessExpression(node) || ts.isPropertyAccessExpression(node)) {
+      if (ts.isPropertyAccessExpression(node)) flow(node.expression, node.name.text);
+      // Constant vocabulary tables (ATTR_PHRASE[leaf.attr], etc.). Only the
+      // values are displayed; the table's keys and the lookup are syntax.
+      if (ts.isIdentifier(node.expression)) {
+        const decl = declarationOf(node.expression);
+        if (decl && ts.isVariableDeclaration(decl) && decl.initializer && ts.isObjectLiteralExpression(decl.initializer)) {
+          const key = ts.isPropertyAccessExpression(node) ? node.name.text : ts.isStringLiteralLike(node.argumentExpression) ? node.argumentExpression.text : null;
+          for (const prop of decl.initializer.properties) if (ts.isPropertyAssignment(prop) && (!key || prop.name.getText(source).replace(/["']/g, "") === key)) flow(prop.initializer);
+        }
+      }
+    }
+  };
+  for (const [name, entries] of declarations) if (/(?:Sentence|Phrase|Label|Title|Words)$/.test(name)) {
+    for (const decl of entries) {
+      const fn = ts.isVariableDeclaration(decl) ? decl.initializer : decl;
+      if (fn && ts.isFunctionLike(fn)) returns(fn);
+    }
+  }
+  roots.forEach(root => flow(root));
   return { sites, violations };
 }
 
@@ -442,6 +586,10 @@ export function identity(site) {
 }
 
 export function readBaseline(file = BASELINE) {
+  return baselineEntries(file).map(entry => typeof entry === "string" ? entry : entry.site);
+}
+
+function baselineEntries(file = BASELINE) {
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
 }
 
@@ -463,7 +611,9 @@ export function compare(sites, baseline) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const { sites, violations } = scan();
   if (process.argv.includes("--update")) {
-    const entries = sites.map(identity).sort();
+    // Preserve the justification attached to intentionally untranslated sites.
+    const retained = new Map(baselineEntries().filter(entry => typeof entry !== "string").map(entry => [entry.site, entry]));
+    const entries = sites.map(identity).sort().map(key => retained.get(key) ?? key);
     fs.writeFileSync(BASELINE, `${JSON.stringify(entries, null, 0).replace(/^\[/, "[\n").replace(/","/g, "\",\n\"").replace(/\]$/, "\n]")}\n`);
     console.log(`baseline: ${entries.length} literal sites`);
   }

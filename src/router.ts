@@ -218,17 +218,17 @@ export function tabRoute(t: Tab): Route {
 }
 
 export function routeTitle(r: Route): string {
-  if (r.kind === "journals") return "Journals";
-  if (r.kind === "conflicts") return "Conflicts";
-  if (r.kind === "all-pages") return "All pages";
+  if (r.kind === "journals") return translate("navigation-prose-journals");
+  if (r.kind === "conflicts") return translate("navigation-prose-conflicts");
+  if (r.kind === "all-pages") return translate("navigation-prose-all-pages");
   if (r.kind === "pdf") return r.label.trim() || r.filename;
   if (r.kind === "invalid") return r.title;
   if (r.kind === "query") {
     const source = r.source.trim().replace(/\s+/g, " ");
-    return source ? `Search: ${source.slice(0, 36)}${source.length > 36 ? "…" : ""}` : "Search";
+    return source ? translate("navigation-prose-search-source", { source: source.slice(0, 36) + (source.length > 36 ? "…" : "") }) : translate("navigation-prose-search");
   }
   if (r.name.startsWith("hls__")) return r.name.slice(5);
-  if (r.name === `${GUIDE_DISPLAY_PREFIX}Tine Guide`) return "Guide";
+  if (r.name === `${GUIDE_DISPLAY_PREFIX}Tine Guide`) return translate("navigation-prose-guide");
   if (isGuideRouteName(r.name)) return r.name.slice(GUIDE_DISPLAY_PREFIX.length);
   return r.name;
 }

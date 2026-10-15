@@ -113,3 +113,9 @@ formula-raw-expression = 原始表达式
 formula-number-literal = 数字字面值
 
 formula-apply = 应用
+
+# Helper-return and component-prop interface text (GH #107).
+formula-prose-empty = 空
+formula-prose-edit-filter = 编辑筛选条件
+formula-prose-edit-formula = 编辑公式
+formula-prose-add-formula = 添加公式

@@ -146,3 +146,16 @@ plugins-audit-details = { $count ->
 plugins-ui-could-not-cache-verified-plugin-registry = 无法缓存已验证的插件注册表：{ $value1 }
 
 plugins-ui-could-not-cache-plugin-safety-report = 无法缓存插件安全报告。
+
+# Helper-return and component-prop interface text (GH #107).
+plugins-prose-information = 信息
+plugins-prose-human-reviewed-before-publication = 发布前经过人工审核
+plugins-prose-low-risk-automated-pass = 自动审核通过，风险较低
+plugins-prose-automated-review-passed = 自动审核通过
+
+plugins-prose-risk-finding = { $severity ->
+        [low] 低风险项
+        [medium] 中风险项
+        [critical] 严重风险项
+       *[high] 高风险项
+    }

@@ -204,3 +204,14 @@ sidebar-conflict-count = { $count ->
     }
 
 tagged-pages-heading = { " " }带有“{ $name }”标签的页面
+
+# Helper-return and component-prop interface text (GH #107).
+navigation-prose-no-results = 没有结果
+navigation-prose-no-graph = 没有图谱
+navigation-prose-journals = 日记
+navigation-prose-conflicts = 冲突
+navigation-prose-all-pages = 所有页面
+navigation-prose-search = 搜索
+navigation-prose-guide = 指南
+
+navigation-prose-search-source = 搜索：{ $source }

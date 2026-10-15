@@ -113,3 +113,34 @@ sheet-sheet-board-new-tag-2 = new-tag
 
 
 sheet-sheet-board-card-menu = Card menu
+
+# Helper-return and component-prop interface text (GH #107).
+sheet-prose-state = State
+sheet-prose-priority = Priority
+sheet-prose-scheduled = Scheduled
+sheet-prose-deadline = Deadline
+sheet-prose-tags = Tags
+sheet-prose-page = Page
+
+sheet-prose-table-only-sort = Table-only sort: { $field }
+sheet-prose-title = Title
+sheet-board-empty-column = (none)
+sheet-aggregate-none = None
+# Display names only; stored function tokens remain unchanged.
+sheet-aggregate-name = { $fn ->
+    [sum] Sum
+    [average] Average
+    [median] Median
+    [min] Min
+    [max] Max
+    [range] Range
+    [stddev] Stddev
+    [earliest] Earliest
+    [latest] Latest
+    [empty] Empty
+    [filled] Filled
+    [unique] Unique
+    [checked] Checked
+    [unchecked] Unchecked
+   *[count] Count
+    }

@@ -49,3 +49,7 @@ app-pane-split-navigation = { $kind ->
     [pane-edge] <span>press outward again to widen the split · </span><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Esc</kbd> exit
    *[other] <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Esc</kbd> exit
     }
+
+# Helper-return and component-prop interface text (GH #107).
+app-prose-navigation-sidebar = Navigation sidebar
+app-prose-unexpected-failure = Unexpected failure.

@@ -70,3 +70,7 @@ app-pane-split-navigation = { $kind ->
     [pane-edge] <span>再次向外移动可扩大拆分范围 · </span><kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> 移动 · <kbd>Esc</kbd> 退出
    *[other] <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> 移动 · <kbd>Esc</kbd> 退出
     }
+
+# Helper-return and component-prop interface text (GH #107).
+app-prose-navigation-sidebar = 导航侧边栏
+app-prose-unexpected-failure = 发生意外错误。

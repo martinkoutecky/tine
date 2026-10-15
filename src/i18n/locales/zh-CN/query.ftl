@@ -649,3 +649,247 @@ query-filter-not-in-namespace = 不在命名空间
 query-filter-matches = 匹配
 
 query-filter-does-not-match = 不匹配
+
+# Helper-return and component-prop interface text (GH #107).
+query-prose-open-tasks = 未完成任务
+query-prose-any-task = 任意任务
+query-prose-a-b-or-c = A、B 或 C
+query-prose-move-group = 移动分组
+query-prose-select-group = 选择分组
+query-prose-group-actions = 分组操作
+query-prose-group-enabled = 启用分组
+query-prose-move-condition = 移动条件
+query-prose-select-condition = 选择条件
+query-prose-condition-enabled = 启用条件
+query-prose-row-actions = 行操作
+query-prose-condition-operator = 条件运算符
+query-prose-page-property = 页面属性
+query-prose-property = 属性
+query-prose-not = 不匹配
+query-prose-matches = 匹配
+query-prose-reading-this-graph-s-properties = 正在读取此图谱的属性…
+query-prose-type-to-search-page-names-and-block-text = 输入内容以搜索页面名称和块文本。
+query-prose-page = 页面
+query-prose-block = 块
+query-prose-what-this-query-selects = 此查询选择的内容
+query-prose-group-the-selected-conditions = 将所选条件分组
+query-prose-disabled-by-group = 已随分组停用
+query-prose-disabled = 已停用
+query-prose-journal-date-field = 日记日期
+query-prose-scheduled = 计划时间
+query-prose-deadline = 截止时间
+query-prose-any-date = 任意日期
+query-prose-count = 计数
+query-prose-sum = 总和
+query-prose-avg = 平均值
+
+# Complete query clauses; variables containing chip segments may be reordered.
+query-prose-advanced = ⟨高级条件⟩
+query-prose-today = 今天
+query-prose-yesterday = 昨天
+query-prose-tomorrow = 明天
+query-prose-journal-date = 日记日期
+query-prose-not-group = 非
+query-prose-everything = 全部内容
+query-prose-nothing = 无内容
+query-prose-on-journal = 位于日记页面
+query-prose-any-status = 任意状态
+query-prose-no-markers = 无任务标记
+query-prose-no-levels = 无优先级
+query-prose-field-value = { $field }：{ $value }
+query-prose-on-page = 页面：{ $value }
+query-prose-in-namespace = 命名空间：{ $value }
+query-prose-page-property-clause = 页面的{ $inner }
+query-prose-page-tags = 页面标签：{ $value }
+query-prose-property-any = { $field }：任意值
+query-prose-task = 任务：{ $value }
+query-prose-priority = 优先级：{ $value }
+query-prose-content = 文本：“{ $value }”
+query-prose-search = 搜索：{ $value }
+query-prose-date-range = { $low }至{ $high }
+query-prose-off = { $inner }（已停用）
+query-prose-negation = 非{ $inner }
+query-prose-parentheses = （{ $inner }）
+query-prose-sentence = 符合{ $predicate }的{ $subject }
+query-prose-attr-content = 文本
+query-prose-attr-task = 任务
+query-prose-attr-priority = 优先级
+query-prose-attr-scheduled = 计划时间
+query-prose-attr-deadline = 截止时间
+query-prose-attr-created-at = 创建时间
+query-prose-attr-last-modified-at = 最后修改时间
+query-prose-attr-name = 名称
+query-prose-attr-journal = 日记
+query-prose-attr-day = 日期
+query-prose-attr-namespace = 命名空间
+query-prose-attr-used-as-tag = 用作标签
+query-prose-attr-key = 键
+query-prose-attr-value = 值
+query-prose-attr-atom-count = 值
+query-prose-property-operator =
+    { $op ->
+       *[is] { $cardinality ->
+                [list] 包含此值
+               *[scalar] 是
+            }
+        [is_not] { $cardinality ->
+                [list] 不包含此值
+               *[scalar] 不是
+            }
+        [gt] 大于
+        [ge] 不小于
+        [lt] 小于
+        [le] 不大于
+        [between] 介于
+        [before] 早于
+        [on_or_before] 不晚于
+        [after] 晚于
+        [on_or_after] 不早于
+        [contains] 包含
+        [does_not_contain] 不包含
+        [starts_with] 开头是
+        [ends_with] 结尾是
+        [references] 引用
+        [does_not_reference] 不引用
+        [is_checked] 已勾选
+        [is_unchecked] 未勾选
+        [is_set] 已设置
+        [is_not_set] 未设置
+        [is_blank] 为空
+        [has_other_value] 有其他值，异于
+    }
+query-prose-property-test =
+    { $op ->
+       *[is] { $field }是{ $value }
+        [is_not] { $field }不是{ $value }
+        [gt] { $field }大于{ $value }
+        [ge] { $field }不小于{ $value }
+        [lt] { $field }小于{ $value }
+        [le] { $field }不大于{ $value }
+        [between] { $field }介于{ $value }
+        [before] { $field }早于{ $value }
+        [on_or_before] { $field }不晚于{ $value }
+        [after] { $field }晚于{ $value }
+        [on_or_after] { $field }不早于{ $value }
+        [contains] { $field }包含{ $value }
+        [does_not_contain] { $field }不包含{ $value }
+        [starts_with] { $field }开头是{ $value }
+        [ends_with] { $field }结尾是{ $value }
+        [references] { $field }引用{ $value }
+        [does_not_reference] { $field }不引用{ $value }
+        [is_checked] { $field }已勾选
+        [is_unchecked] { $field }未勾选
+        [is_set] { $field }已设置
+        [is_not_set] { $field }未设置
+        [is_blank] { $field }为空
+        [has_other_value] { $field }有其他值，异于{ $value }
+    }
+query-prose-attribute-test =
+    { $op ->
+       *[eq] { $field }是{ $value }
+        [not_eq] { $field }不是{ $value }
+        [lt] { $field }<{ $value }
+        [le] { $field }≤{ $value }
+        [gt] { $field }>{ $value }
+        [ge] { $field }≥{ $value }
+        [between] { $field }介于{ $value }
+        [in] { $field }属于{ $value }
+        [not_in] { $field }不属于{ $value }
+        [like] { $field }包含{ $value }
+        [starts_with] { $field }开头是{ $value }
+        [match] { $field }匹配{ $value }
+        [regex] { $field }匹配正则表达式{ $value }
+        [is_set] { $field }已设置
+        [is_not_set] { $field }未设置
+        [is_blank] { $field }为空
+    }
+query-prose-boolean =
+    { $value ->
+        [true] 是
+       *[false] 否
+    }
+query-prose-group =
+    { $kind ->
+       *[and] 且
+        [or] 或
+    }
+query-prose-subject =
+    { $family ->
+        [both] 页面和块
+        [page] 页面
+       *[block] 块
+    }
+query-prose-all =
+    { $family ->
+        [both] 所有页面和块
+        [page] 所有页面
+       *[block] 所有块
+    }
+query-prose-date-bound =
+    { $op ->
+       *[ge] 从{ $when }起
+        [le] 截至{ $when }
+    }
+query-prose-relative-days = { $count } 天{ $direction ->
+        [ago] 前
+       *[ahead] 后
+    }
+query-prose-relative-weeks = { $count } 周{ $direction ->
+        [ago] 前
+       *[ahead] 后
+    }
+query-prose-relative-months = { $count } 个月{ $direction ->
+        [ago] 前
+       *[ahead] 后
+    }
+query-prose-relative-years = { $count } 年{ $direction ->
+        [ago] 前
+       *[ahead] 后
+    }
+query-prose-list = { $left }{ $position ->
+        [middle] 、
+       *[last] { $connector ->
+            [and] 且
+           *[or] 或
+        }
+    }{ $right }
+query-prose-relation = { $quant ->
+        [every] 所有
+        [none] 无
+       *[any] 任意
+    }{ $relation ->
+        [page] 页面
+        [refs] 引用
+        [direct_refs] 直接引用
+        [tags] 标签
+        [props] 属性
+       *[children] 子块
+        [parent] 父块
+        [descendants] 后代块
+        [ancestors] 祖先块
+        [blocks] 块
+    }：{ $inner }
+
+query-prose-not-symbol = 非 { $symbol }
+query-prose-invalid-regex = 正则表达式无效：{ $error }
+query-prose-regex-summary = 使用区分大小写的正则表达式 /{ $pattern }/ 匹配页面名称或块文本。
+query-prose-search-summary = 匹配{ $group }的页面名称或块文本。
+query-prose-search-groups-summary = 匹配以下条件的页面名称或块文本：{ $groups }。
+query-prose-search-and = { $left }且{ $right }
+query-prose-search-or = { $left }；或{ $right }
+query-prose-search-term = { $kind ->
+        [exclude-exact] 不包含完整短语“{ $value }”
+        [exclude] 不包含“{ $value }”
+        [exact] 包含完整短语“{ $value }”
+       *[contains] 包含“{ $value }”
+    }
+query-prose-aggregate-field = { $field }的{ $verb }
+
+query-prose-advanced-clause = { $advanced } { $clause }
+query-prose-aggregate-unavailable = 不可用（{ $reason ->
+        [non_finite] 非有限数值
+        [division_by_zero] 除以零
+        [empty_group] 空分组
+       *[non_numeric] 非数值
+    }）
+query-prose-formula-statistics-notice = 暂不支持按公式精确统计，当前显示总体统计。

@@ -68,3 +68,8 @@ macro-ref-blocks-page-property-reference = 页面属性引用
 macro-ref-blocks-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new = Shift 点击 → 侧边栏；Ctrl/Cmd 点击或中键点击 → 新标签页；Alt 点击 → 另一窗格
 
 macro-ref-blocks-more-nested-blocks-are-available-on-the-page = 页面上还有更多嵌套块
+
+# Helper-return and component-prop interface text (GH #107).
+macro-prose-no-results = 没有结果
+macro-prose-loading-query-results = 正在加载查询结果…
+macro-prose-query = 查询

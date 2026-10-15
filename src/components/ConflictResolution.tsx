@@ -61,10 +61,10 @@ function segLabel(text: string, fallback: string): string {
 export function sideLabels(conflict: ConflictObject): { mine: string; theirs: string; theirsTitle?: string; base?: string } {
   const of = (role: "mine" | "theirs" | "base") => conflict.sides.find((s) => s.role === role)?.label ?? "";
   const markers = conflict.source === "vcs-markers";
-  const theirs = humanizeSideLabel(of("theirs") || (markers ? "Merged-in side" : "Conflict copy"));
-  if (conflict.source === "live-save") return { mine: of("mine") || "Your unsaved edits", theirs: of("theirs") || "The file on disk now" };
+  const theirs = humanizeSideLabel(of("theirs") || (markers ? t("conflicts-prose-merged-side") : t("conflicts-prose-conflict-copy")));
+  if (conflict.source === "live-save") return { mine: of("mine") || t("live-conflicts-your-unsaved-edits"), theirs: of("theirs") || t("live-conflicts-the-file-on-disk-now") };
   return {
-    mine: of("mine") || (markers ? "Local side" : "This device"),
+    mine: of("mine") || (markers ? t("conflicts-prose-local-side") : t("mock-conflicts-this-device")),
     theirs: theirs.text,
     theirsTitle: theirs.title,
     base: of("base") || undefined,
@@ -352,10 +352,10 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   };
 
   const markers = () => conflict().source === "vcs-markers";
-  const conflictTitle = () => markers() ? "Unresolved merge from your version-control tool"
-    : conflict().source === "live-save" ? "Your edits and a newer version on disk"
-    : conflict().source === "duplicate-journal" ? "This day has more than one file"
-    : "Two versions of this page arrived";
+  const conflictTitle = () => markers() ? t("conflicts-prose-unresolved-merge-from-your-version-control-tool")
+    : conflict().source === "live-save" ? t("conflicts-prose-your-edits-and-a-newer-version-on-disk")
+    : conflict().source === "duplicate-journal" ? t("conflicts-prose-this-day-has-more-than-one-file")
+    : t("conflicts-prose-two-versions-of-this-page-arrived");
   return (
     <>
     <div class="page-conflict-slot" ref={inlineSlot}>
@@ -429,9 +429,9 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
                   title={t("conflict-resolution-re-applies-tine-s-own-suggestions-a-merge")}
                 >{t("conflict-resolution-apply-all-suggested")}</button>
                 <button class="settings-btn" onClick={() => setAll("both")}>{t("conflict-resolution-keep-both-everywhere")}</button>
-                <button class="settings-btn" onClick={() => setAll("mine")} title={labels().mine}>{t("conflict-resolution-keep-side", { side: segLabel(labels().mine, "mine") })}
+                <button class="settings-btn" onClick={() => setAll("mine")} title={labels().mine}>{t("conflict-resolution-keep-side", { side: segLabel(labels().mine, t("conflicts-prose-mine")) })}
                 </button>
-                <button class="settings-btn" onClick={() => setAll("theirs")} title={labels().theirsTitle ?? labels().theirs}>{t("conflict-resolution-keep-side", { side: segLabel(labels().theirs, "theirs") })}
+                <button class="settings-btn" onClick={() => setAll("theirs")} title={labels().theirsTitle ?? labels().theirs}>{t("conflict-resolution-keep-side", { side: segLabel(labels().theirs, t("conflicts-prose-theirs")) })}
                 </button>
                 <label class="sync-merge-showunchanged">
                   <input type="checkbox" checked={showUnchanged()} onChange={(e) => setShowUnchanged(e.currentTarget.checked)} />{t("conflict-resolution-show-unchanged")}</label>
@@ -450,7 +450,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
                     decisions={decisions()}
                     setDecision={setDecision}
                     fallback="both"
-                    labels={{ mine: segLabel(labels().mine, "Mine"), theirs: segLabel(labels().theirs, "Theirs") }}
+                    labels={{ mine: segLabel(labels().mine, t("conflicts-prose-mine-short")), theirs: segLabel(labels().theirs, t("conflicts-prose-theirs-short")) }}
                   />
                 )}
               </For>
@@ -464,8 +464,8 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
                     onChange={(e) => setPreChoice(e.currentTarget.value as "mine" | "theirs" | "union")}
                   >
                     <option value="union">{t("conflict-resolution-both-merge")}</option>
-                    <option value="mine">{segLabel(labels().mine, "mine")}</option>
-                    <option value="theirs">{segLabel(labels().theirs, "theirs")}</option>
+                    <option value="mine">{segLabel(labels().mine, t("conflicts-prose-mine"))}</option>
+                    <option value="theirs">{segLabel(labels().theirs, t("conflicts-prose-theirs"))}</option>
                   </select>
                 </div>
               </div>

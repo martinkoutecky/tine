@@ -84,3 +84,5 @@ editor-completion-verse = Verse
 editor-completion-ascii = Ascii
 editor-completion-center = Center
 editor-completion-comment = Comment
+
+editor-completion-prose-alias-of = alias of { $owner }

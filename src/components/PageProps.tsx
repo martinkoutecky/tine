@@ -230,9 +230,9 @@ function AddRow(props: { scope: PropsPanelScope; write: Write }): JSX.Element {
   const refusal = createMemo(() => {
     const k = trimmed();
     if (!k) return null;
-    if (!isEditablePropertyKey(k)) return "Keys may use only letters, numbers, _, ., / or -, so every Tine reader finds them again.";
-    if (machineManaged(k)) return `"${k}" is managed by Tine and cannot be set here.`;
-    if (readOne(props.scope, k) !== null) return `"${k}" already exists; edit its row above.`;
+    if (!isEditablePropertyKey(k)) return t("page-prose-key-grammar");
+    if (machineManaged(k)) return t("page-prose-key-managed", { key: k });
+    if (readOne(props.scope, k) !== null) return t("page-prose-key-exists", { key: k });
     return null;
   });
   const valid = () => !!trimmed() && !refusal();
