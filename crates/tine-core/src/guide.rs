@@ -304,6 +304,30 @@ mod journal_guide_tests {
                 "Guide is missing keyboard command: {label}"
             );
         }
+        for outcome in [
+            "each further press opens the next level",
+            "ignoring leaves",
+            "each press is one Undo step",
+        ] {
+            assert!(
+                tips.contains(outcome),
+                "missing progressive expansion outcome: {outcome}"
+            );
+        }
+        let search = include_str!("templates/pages-links-references-search.md");
+        for outcome in [
+            "press **ArrowDown**",
+            "page and block results",
+            "scroll the highlighted row",
+            "**Shift+Enter**",
+            "**Ctrl/Cmd+Enter**",
+            "**Alt+Enter**",
+        ] {
+            assert!(
+                search.contains(outcome),
+                "missing Search keyboard outcome: {outcome}"
+            );
+        }
     }
 
     #[test]

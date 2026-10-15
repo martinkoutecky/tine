@@ -53,6 +53,7 @@ import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
 import { createPage, CreatePageRefusal, queryWorkspacePage } from "../document";
 import { internalLinkDest, internalLinkMouseDown, internalLinkAuxClick } from "../linkGesture";
+import { nextResultIndex } from "../resultNavigation";
 import { openRouteInOtherPane } from "../panes";
 import { openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
@@ -932,7 +933,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const hitRoute = (hit: QueryHit): Extract<Route, { kind: "page" }> => hit.entity === "page"
     ? { kind: "page", name: hit.page.name, pageKind: hit.page.kind, path: hit.page.path || undefined }
     : { kind: "page", name: hit.page, pageKind: hit.kind, path: hit.path || undefined, block: blockDtoExternalId(hit.block) };
-  const openHit = (hit: QueryHit, event?: MouseEvent) => {
+  const openHit = (hit: QueryHit, event?: Pick<MouseEvent, "shiftKey" | "ctrlKey" | "metaKey" | "altKey">) => {
     const target = hitRoute(hit);
     const dest = event ? internalLinkDest(event) : "default";
     if (dest === "sidebar") {
@@ -941,7 +942,58 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     } else if (dest === "pane") openRouteInOtherPane(target);
     else props.router.openInNewTab(target, dest !== "background");
   };
-  const resultActions = (hit: QueryHit): JSX.ButtonHTMLAttributes<HTMLButtonElement> => ({
+  const [activeResult, setActiveResult] = createSignal<string | null>(null);
+  // Navigation identity includes the physical owner: same-named page results
+  // can point at different files, and Enter must open the actual focused row.
+  const keyboardHitKey = (hit: QueryHit): string => JSON.stringify(hit.entity === "page"
+    ? [hit.entity, hit.page.kind, hit.page.path || hit.page.name]
+    : [hit.entity, hit.kind, hit.path || hit.page, hit.block.id]);
+  let workspace!: HTMLElement;
+  let focusedResult: HTMLElement | null = null;
+  createEffect(() => {
+    hits(); pageView(); blockView();
+    const previous = focusedResult;
+    // Result publication can remove a focused row. Once the DOM settles, keep
+    // keyboard focus in this Search tab; never reclaim it from another control.
+    queueMicrotask(() => {
+      if (alive && previous && !previous.isConnected && workspace?.isConnected
+        && previous.ownerDocument.activeElement === previous.ownerDocument.body) {
+        setActiveResult(null);
+        sourceInput?.focus();
+      }
+    });
+  });
+  // Roving focus keeps real buttons accessible in every presentation, including
+  // tables and boards. Read displayed rows so section order stays authoritative.
+  const resultKeyDown = (event: KeyboardEvent) => {
+    if (event.isComposing || event.keyCode === 229) return;
+    const target = event.target as HTMLElement;
+    const fromInput = target === sourceInput;
+    const key = target.dataset.queryResult;
+    if (!fromInput && !key) return;
+    const direction = event.key === "ArrowDown" || (event.ctrlKey && event.key.toLowerCase() === "n") ? 1
+      : event.key === "ArrowUp" || (event.ctrlKey && event.key.toLowerCase() === "p") ? -1 : 0;
+    if (direction) {
+      const rows = [...workspace.querySelectorAll<HTMLButtonElement>("button[data-query-result]")];
+      const index = nextResultIndex(fromInput ? -1 : rows.indexOf(target as HTMLButtonElement), direction, rows.length);
+      if (index < 0) return;
+      event.preventDefault(); event.stopPropagation();
+      rows[index].focus();
+      rows[index].scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter" && key) {
+      const hit = hits().find((hit) => keyboardHitKey(hit) === key);
+      if (!hit) return;
+      event.preventDefault(); event.stopPropagation();
+      openHit(hit, event);
+    }
+  };
+  const resultActions = (hit: QueryHit, keyboard = true): JSX.ButtonHTMLAttributes<HTMLButtonElement> & { "data-query-result"?: string } => ({
+    ...(keyboard ? {
+      "data-query-result": keyboardHitKey(hit),
+      tabIndex: activeResult() === keyboardHitKey(hit) ? 0 : -1,
+      classList: { active: activeResult() === keyboardHitKey(hit) },
+      onFocus: () => setActiveResult(keyboardHitKey(hit)),
+    } : {}),
     onMouseDown: internalLinkMouseDown,
     onClick: (event) => openHit(hit, event),
     onAuxClick: (event) => internalLinkAuxClick(event, () => props.router.openInNewTab(hitRoute(hit))),
@@ -1024,7 +1076,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   );
 
   return (
-    <section class="query-workspace" data-query-route-id={props.route.id} aria-label={t("query-query-workspace-search-and-query-workspace")}>
+    <section ref={workspace} onKeyDown={resultKeyDown} onFocusIn={(event) => {
+      const target = event.target as HTMLElement;
+      focusedResult = target.dataset.queryResult ? target : null;
+    }} class="query-workspace" data-query-route-id={props.route.id} aria-label={t("query-query-workspace-search-and-query-workspace")}>
       <header class="query-workspace-header">
         <div class="query-workspace-search-row">
           <label class="query-workspace-source-label">
@@ -1202,7 +1257,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
                 <For each={blockHits()}>{(hit) => (
                   <tr data-inpage-find-surface={hitSurfaceId(hit)}>
                     <td>{hitKind(hit)}</td>
-                    <td><button type="button" {...resultActions(hit)}>{hitPage(hit)}</button></td>
+                    <td><button type="button" {...resultActions(hit, false)}>{hitPage(hit)}</button></td>
                     <td>{task(hit)}<button type="button" {...resultActions(hit)}><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></button></td>
                   </tr>
                 )}</For>

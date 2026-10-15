@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-search-tab-keyboard.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A bound Search tab shortcut opens the persistent input; typing finds pages, ArrowDown twice highlights the second displayed result with accessible focus, and Enter opens that page.","blocking":true}],
+      "acceptableVariations":["Result ordering, layout, focus styling and search latency may vary while keyboard selection and opened page agree."],
+      "nonRequirements":["Exact pixels, a particular fixture page ranking, or native certification outside Linux WebKitGTK; modifier destinations are covered in component tests."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-calm-query.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Query controls rename and edit inline while real Rust answers update; copy preserves page/date titles and hierarchy, task and fold changes save normally, Search opens the same query, and backlinks sort in All pages. Saved state survives restart and board drag does not navigate.","blocking":true}],
       "acceptableVariations":["Menu placement, styling, result order and save latency may vary while controls are reachable and semantic outcomes remain correct."],
@@ -35,6 +41,12 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"Journals shows referenced fileless past days and future Upcoming entries without writing a journal; opening a future day and typing creates only its journal file.","blocking":true}],
       "acceptableVariations":["Disclosure styling, reference load latency and page layout may vary while counted references, collapsed Upcoming and saved body are correct."],
       "nonRequirements":["Exact pixels, a fixed horizon, specific DOM shape or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-empty-page-edit.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A page or journal whose file has no body (emptied in Tine, 0 bytes on disk, page properties only, Markdown or Org) shows one empty bullet that keeps the caret when clicked, and typed text is saved to that file.","blocking":true}],
+      "acceptableVariations":["Bullet styling, save latency and the bytes an emptied page saves (empty or a lone newline) may vary while typing reaches the file."],
+      "nonRequirements":["Exact pixels, caret blink timing, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-reference-alias-chips.mjs": {
@@ -77,6 +89,12 @@
       "contracts": [{"class":"core-operation","userOutcome":"A clicked in-block checkbox toggles its own token without entering edit; quote collapse survives save and route reopen without leaking metadata; Linux PRIMARY exports only the selected passage; malformed config EDN leaves existing pages readable while edits refuse.","blocking":true},{"class":"exact-safety-interoperability","userOutcome":"Checkbox and quote collapse writes preserve all unrelated file bytes.","blocking":true,"authority":"R2 editor-bugs lane byte-preservation contract and OG 0.10.9 property/insert-property quote placement."}],
       "acceptableVariations":["Navigation layout, glyph details and save latency may vary while text, collapse state and paste contents remain correct."],
       "nonRequirements":["Exact pixels, native screenshots, Tuta-specific clipboard negotiation or certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-inline-checkbox.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Markdown and Org inline checkbox clicks toggle the selected item without entering edit; reopening retains it; collapse hides child blocks while retaining own content.","blocking":true},{"class":"exact-safety-interoperability","userOutcome":"Ticking and unticking preserve every unrelated file byte.","blocking":true,"authority":"GH #691 lane guarded-save and exact parsed-source-position contract."},{"class":"flexible-presentation-heuristic","userOutcome":"Nested inline checklist hierarchy is clearly indented, comparable to ordinary child blocks.","blocking":false}],
+      "acceptableVariations":["List markers, font metrics, layout and save latency may vary while the hierarchy and checked state remain clear."],
+      "nonRequirements":["Exact pixels, hiding own content on collapse, changing OG parser classifications or certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-editor-context.mjs": {

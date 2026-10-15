@@ -51,6 +51,8 @@ describe("file links resolve from the graph folder (GH #457)", () => {
     ["[deep](../../../files/a.txt)", "/files/a.txt", "md"],
     ["[spaced](<../files/my file.txt>)", "/home/user/files/my file.txt", "md"],
     ["[escaped](../files/a%20b.txt)", "/home/user/files/a b.txt", "md"],
+    // GH #457: Logseq (mldoc) accepts plain spaces in a link destination.
+    ["[plain](../files/my report.pdf)", "/home/user/files/my report.pdf", "md"],
     ["[windows](..\\files\\a.txt)", "/home/user/files/a.txt", "md"],
     ["[scheme](file:../files/a.txt)", "/home/user/files/a.txt", "md"],
     ["[[file:../files/a.txt][org]]", "/home/user/files/a.txt", "org"],

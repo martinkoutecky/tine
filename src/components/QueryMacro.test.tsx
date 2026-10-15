@@ -1033,7 +1033,15 @@ describe("QueryMacro sheet integration", () => {
     ));
     await settleQuery();
 
-    await vi.waitFor(() => expect(root.querySelector(".query-adv-note")?.textContent ?? "").toContain("ran: task"));
+    await vi.waitFor(() => expect(root.querySelector(".query-header .query-count")).not.toBeNull());
+    // GH #502: at rest an advanced query shows its title and results only; which
+    // clauses ran is editing context, shown in its View panel.
+    expect(root.querySelector(".query-adv-note")).toBeNull();
+    const details = root.querySelector<HTMLDetailsElement>(".qc-actions")!;
+    details.open = true; details.dispatchEvent(new Event("toggle")); await tick();
+    const menuId = details.querySelector("summary")!.getAttribute("aria-controls")!;
+    [...document.getElementById(menuId)!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "View")!.click();
+    await vi.waitFor(() => expect(root.querySelector(".qc-panel .query-adv-note")?.textContent ?? "").toContain("ran: task"));
     // An advanced (datalog) query has no sentence and no sheet to offer.
     expect(root.querySelector(".qs-line")).toBeNull();
     expect(root.querySelector(".qs-sheet")).toBeNull();

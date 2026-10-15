@@ -8,7 +8,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
-import { ensurePageLoaded, flushAll, isDirty, loadFeed, pageByName, pinPageWhileDrafting, resetStore, setRaw } from "./index";
+import { ensureEmptyBlock, ensurePageLoaded, flushAll, isDirty, loadFeed, pageByName, pinPageWhileDrafting, resetStore, setRaw } from "./index";
 import { loadSingle, reloadDisposition, reloadPageIfStillSafe, registerPaneRouteProvider } from "./workingSet";
 import { doc } from "./model";
 import { editingId, endEdit, startEditing } from "../editorController";
@@ -168,6 +168,69 @@ describe("a same-file reload while a block is open in the editor", () => {
     expect(reloadPageIfStillSafe("P", page("P", ["a", "b on disk"]))).toBe(false);
     pushed(["a", "b on disk"]);
     expect(raws("P")).toEqual(["a", "b"]);
+  });
+});
+
+// GH #689: a file with no body (0 bytes, or only page properties) is shown as
+// one empty bullet. Clicking it opens the page at the host, whose answer is the
+// file's text: no blocks. That is the same content as the lone empty bullet
+// (saving it writes no body), so it must not replace the page under the
+// editor, which found no block at its position and closed: the caret flashed
+// and vanished on every click.
+describe("a body-less file's text is the lone empty bullet (GH #689)", () => {
+  let version = 6000;
+  const bodyless = (preBlock: string | null) => ({ ...page("P", []), pre_block: preBlock });
+  const cases: Array<[string, string | null]> = [["a 0-byte file", null], ["a file of page properties only", "tags:: alpha"]];
+
+  it.each(cases)("keeps the editor on the bullet of %s when the host answers its Open", async (_label, preBlock) => {
+    loadFeed([page("Journal", ["j"])]);
+    ensurePageLoaded(bodyless(preBlock));
+    const bullet = ensureEmptyBlock("P", { afterProperties: true })!;
+    startEditing(bullet, 0);
+    await vi.waitFor(() => expect(backend().pageOpen).toHaveBeenCalled());
+    const dto = bodyless(preBlock);
+    host.deliver({ key: dto.id, answer: null, page: mailPage(++version, dto) });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pageByName("P")!.roots).toEqual([bullet]);
+    expect(editingId()).toBe(bullet);
+  });
+
+  it("keeps the editor on a block the user just emptied when the file's echo arrives", async () => {
+    loadFeed([page("Journal", ["j"])]);
+    ensurePageLoaded(page("P", ["a word"]));
+    const only = pageByName("P")!.roots[0];
+    startEditing(only, 0);
+    setRaw(only, "");
+    expect(await flushAll()).toBe(true);
+    host.deliver({ key: "pages/P.md", answer: null, page: mailPage(++version, page("P", [])) });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pageByName("P")!.roots).toEqual([only]);
+    expect(editingId()).toBe(only);
+  });
+
+  it("keeps the editor on a whitespace-only bullet when the file's echo arrives (saved as no body)", async () => {
+    loadFeed([page("Journal", ["j"])]);
+    ensurePageLoaded(page("P", ["a word"]));
+    const only = pageByName("P")!.roots[0];
+    startEditing(only, 0);
+    setRaw(only, " ");
+    expect(await flushAll()).toBe(true);
+    host.deliver({ key: "pages/P.md", answer: null, page: mailPage(++version, page("P", [])) });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pageByName("P")!.roots).toEqual([only]);
+    expect(editingId()).toBe(only);
+  });
+
+  it("still reloads a real change to an empty file", async () => {
+    loadFeed([page("Journal", ["j"])]);
+    ensurePageLoaded(page("P", ["kept until disk says otherwise"]));
+    startEditing(pageByName("P")!.roots[0], 0);
+    await vi.waitFor(() => expect(backend().pageOpen).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    host.deliver({ key: "pages/P.md", answer: null, page: mailPage(++version, page("P", [])) });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pageByName("P")!.roots).toEqual([]);
+    expect(editingId()).toBeNull();
   });
 });
 
