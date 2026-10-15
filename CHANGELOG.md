@@ -28,7 +28,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- Adding a block on today's journal no longer makes the results under it (Scheduled & Deadline and other queries) briefly lose their children, dates and breadcrumbs until the query reruns.
+- Adding a block on today's journal no longer makes the results under it (Scheduled & Deadline and other queries) briefly lose their children, dates and breadcrumbs until the query reruns (UI-QUERY-RESULT-EPOCH-FLICKER).
 - On Linux and macOS, shutting down, logging out, closing Tine's terminal or pressing Ctrl+C now ends Tine through its normal Quit within a few seconds, so the next launch no longer says Tine did not close cleanly (GH #701).
 - Switching a query's view, grouping, columns or totals no longer rewrites the query text you wrote, such as `(todo …)` becoming `(task …)` (UI-QUERY-DISPLAY-KEEPS-AUTHORED-TEXT).
 - Image copy avoids redundant PNG encoding and base64 transport and immediately shows progress (GH #700).

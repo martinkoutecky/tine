@@ -2552,6 +2552,36 @@
         "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
         "refs": []
       }
+    },
+    {
+      "section": "Fixed",
+      "text": "Adding a block on today's journal no longer makes the results under it (Scheduled & Deadline and other queries) briefly lose their children, dates and breadcrumbs until the query reruns (UI-QUERY-RESULT-EPOCH-FLICKER).",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-RESULT-EPOCH-FLICKER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-QUERY-RESULT-EPOCH-FLICKER.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Removes a transient display glitch; query workflows are unchanged.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
     }
   ]
 }
