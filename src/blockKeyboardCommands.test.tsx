@@ -262,6 +262,37 @@ describe("insert child block (GH #634)", () => {
 });
 
 describe("collapse / expand one level (GH #525)", () => {
+  it.each(["md", "org"] as const)("GH #696: repeated presses skip open levels and leaves in %s, with one undo per press", (format) => {
+    loadSingle({ name: "P", kind: "page", title: "P", format, pre_block: null,
+      blocks: [block(A, "Parent", [block(C2, "Leaf"),
+        block(C1, "Child", [block(G1, "Grand", [block(B, "Deep")], true)], true),
+      ], true)] });
+    selectBlock(A);
+    run("editor/expand-children");
+    expect(doc.byId[A].collapsed).toBe(false);
+    expect(doc.byId[C1].collapsed).toBe(false);
+    expect(doc.byId[G1].collapsed).toBe(true);
+    run("editor/expand-children");
+    expect(doc.byId[G1].collapsed).toBe(false);
+    undo();
+    expect(doc.byId[G1].collapsed).toBe(true);
+    expect(doc.byId[C1].collapsed).toBe(false);
+    undo();
+    expect(doc.byId[A].collapsed).toBe(true);
+    expect(doc.byId[C1].collapsed).toBe(true);
+  });
+
+  it("GH #696: page scope advances past open roots and stops when everything is expanded", () => {
+    loadSingle({ name: "P", kind: "page", title: "P", format: "md", pre_block: null,
+      blocks: [block(A, "Parent", [block(C1, "Child", [block(G1, "Leaf")], true)]), block(B, "Leaf")] });
+    openPage("P", "page");
+    run("editor/expand-children");
+    expect(doc.byId[C1].collapsed).toBe(false);
+    run("editor/expand-children");
+    undo();
+    expect(doc.byId[C1].collapsed).toBe(true);
+  });
+
   it("collapses only the immediate children and leaves deeper folds and the block itself alone", () => {
     loadSingle({
       name: "P", kind: "page", title: "P", format: "md", pre_block: null,

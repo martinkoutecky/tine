@@ -191,6 +191,11 @@ jobs:
           npm run build
           cargo test --no-fail-fast -p tine --lib
 
+      # packaged_csp_tests compile only with custom-protocol (the production
+      # context); without this step nothing ever ran them (discussion #564).
+      - name: Packaged CSP test (production context)
+        run: cargo test --no-fail-fast -p tine --lib --features custom-protocol packaged_csp_tests
+
       - name: Standalone plugin template builds and conforms
         run: npm run plugin:template-check
 
