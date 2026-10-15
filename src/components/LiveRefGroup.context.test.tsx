@@ -12,6 +12,7 @@ import { LiveRefGroup } from "./LiveRefGroup";
 import { applySidebarSession, rightSidebar, setRightSidebar } from "../ui";
 import { route } from "../router";
 import { UnlinkedReferences } from "./UnlinkedReferences";
+import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
 
 beforeAll(async () => {
   await initParser();
@@ -110,6 +111,7 @@ describe("LiveRefGroup reference context", () => {
     };
     loadSingle(page);
     await bindTestHost();
+    adoptResults([first, second], captureResultsTicket());
     const save = vi.spyOn(backend(), "pageSubmit");
     const move = vi.spyOn(backend(), "pageMove");
     const renderGroup = () => <LiveRefGroup page={page.name} kind="page" blocks={[first, second]} surface={surface} showBreadcrumb eager />;

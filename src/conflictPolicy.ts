@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Concord P5 "always ask" (master; family 10). Tine's only silent adoption of
 // external bytes is freshness: a page you have loaded, with nothing unsaved,
 // changes on disk and Tine shows the new content (what VS Code and IntelliJ
@@ -14,6 +15,7 @@ import { backend, type GraphChange } from "./backend";
 import { graphScopedSignal } from "./binding";
 import { advanceRevision, currentRevision, readOwned, revisionOwner, writeOwned } from "./owned";
 import { pushToast } from "./toasts";
+import { installResultsPendingGate } from "./queryResultsEpoch";
 
 const KEY = "concord_always_ask";
 const [alwaysAsk, setAlwaysAsk] = createSignal(false);
@@ -29,7 +31,7 @@ export function setConflictPolicyAlwaysAsk(on: boolean): void {
   setAlwaysAsk(on);
   if (!on) clearHeldExternalChanges();
   void writeOwned(revisionOwner(preferenceKey, revision), backend().setAppBool(KEY, on))
-    .catch((error) => pushToast(`Could not remember “Always ask”: ${String(error)}`, "error"));
+    .catch((error) => pushToast(msg("ui-conflict-policy-could-not-remember-always-ask", { value1: String(error) }), "error"));
 }
 
 /** Load the persisted preference. Default off (silent freshness); a failed
@@ -40,13 +42,14 @@ export async function initConflictPolicy(): Promise<void> {
     const loaded = await readOwned(owner, backend().getAppBool(KEY, false));
     if (loaded.kind === "current") setAlwaysAsk(loaded.value);
   } catch (error) {
-    pushToast(`Could not load “Always ask”: ${String(error)}`, "error");
+    pushToast(msg("ui-conflict-policy-could-not-load-always-ask", { value1: String(error) }), "error");
   }
 }
 
 // Page name -> the newest held change. Graph-scoped: a graph switch drops it,
 // so a held change never applies in another graph.
 const [heldChanges, setHeldChanges] = graphScopedSignal<Record<string, GraphChange>>();
+installResultsPendingGate(() => Object.keys(heldChanges() ?? {}).length > 0);
 
 /** Whether page `name` has an external change waiting for its owner. */
 export function heldExternalChangeFor(name: string | undefined): boolean {

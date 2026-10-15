@@ -1,3 +1,4 @@
+import { openCalmQuery } from "../tests/calmQueryActions";
 // Ported from master src/components/QueryMacro.ir.test.tsx.
 // The seam between the block and the ONE query engine (SPEC §4.3.1, §7.1;
 // I-9, I-12, I-20, I-4).
@@ -35,7 +36,17 @@ import { toasts, setToasts } from "../toasts";
 import { bumpDataRev } from "../graphSession";
 import { resetQueryTextOpenForTests } from "../navSettings";
 
+// These component fixtures do not bind a page host. Their source edits update
+// the working set; native coverage exercises actual publication and the epoch
+// suite separately pins refusal while publication is pending.
+const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
+vi.mock("../document/host/wiring", () => new Proxy({}, {
+  get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty
+    : key === "persistTransfer" ? saveFixture.persistTransfer : saveFixture.actual?.[key as string],
+  has: () => true,
+}));
 beforeAll(async () => {
+  saveFixture.actual = await vi.importActual("../document/host/wiring");
   await initParser();
 });
 
@@ -361,17 +372,7 @@ describe("why empty? describes an answer, not the absence of one", () => {
  *  The sheet is portalled to <body>, so its contents are queried from the
  *  document rather than from the block's own element. */
 async function openSheet(root: HTMLElement): Promise<HTMLElement> {
-  const gear = await vi.waitFor(() => {
-    const found = root.querySelector<HTMLButtonElement>(".qs-gear");
-    if (!found) throw new Error("the query sentence never appeared");
-    return found;
-  });
-  if (!document.querySelector(".qs-sheet")) gear.click();
-  return await vi.waitFor(() => {
-    const sheet = document.querySelector<HTMLElement>(".qs-sheet");
-    if (!sheet) throw new Error("the sheet never opened");
-    return sheet;
-  });
+  return openCalmQuery(root, "View");
 }
 
 describe("Q4b: Display saves through the query block", () => {
@@ -383,7 +384,6 @@ describe("Q4b: Display saves through the query block", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       const sheet = await openSheet(root);
-      sheet.querySelector<HTMLButtonElement>(".qd-trigger")!.click();
       [...sheet.querySelectorAll<HTMLButtonElement>(".qd-panel button")]
         .find((button) => button.textContent === "+ count")!.click();
       await vi.waitFor(() => expect(blockProperty("query", "tine.col-aggregates")).toBe("count"));
@@ -399,7 +399,6 @@ describe("Q4b: Display saves through the query block", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       const sheet = await openSheet(root);
-      sheet.querySelector<HTMLButtonElement>(".qd-trigger")!.click();
       await vi.waitFor(() => expect(sheet.querySelector(".qd-panel")).not.toBeNull());
       [...sheet.querySelectorAll<HTMLButtonElement>(".qd-panel button")]
         .find((button) => button.textContent === "None")!.click();
@@ -415,7 +414,6 @@ describe("Q4b: Display saves through the query block", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       const sheet = await openSheet(root);
-      sheet.querySelector<HTMLButtonElement>(".qd-trigger")!.click();
       await vi.waitFor(() => expect(sheet.querySelector(".qd-panel")).not.toBeNull());
       const column = [...sheet.querySelectorAll<HTMLButtonElement>(".qd-add")]
         .find((button) => button.textContent?.includes("column"));
@@ -456,7 +454,7 @@ describe("Q4b: Display saves through the query block", () => {
  *  inside an open sheet the pane is visible and editable, so opening the sheet
  *  IS opening the pane (§7.5). The resting sentence still mounts none of it. */
 async function openPane(root: HTMLElement): Promise<HTMLTextAreaElement> {
-  const sheet = await openSheet(root);
+  const sheet = await openCalmQuery(root, "Edit as text");
   return await vi.waitFor(() => {
     const input = sheet.querySelector<HTMLTextAreaElement>(".query-text-pane-input");
     if (!input) throw new Error("the pane has no input");
@@ -657,11 +655,11 @@ describe("B5: the save path chooses the name and answers NotApplicable", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       const gears = await vi.waitFor(() => {
-        const found = root.querySelectorAll<HTMLButtonElement>(".qs-gear");
+        const found = root.querySelectorAll<HTMLButtonElement>(".qc-actions summary");
         if (found.length !== 2) throw new Error(`expected two query sheets, got ${found.length}`);
         return found;
       });
-      gears[1].click();
+      await openCalmQuery(gears[1].closest(".query-block")!, "Edit as text");
       const input = await vi.waitFor(() => {
         const found = document.querySelector<HTMLTextAreaElement>(".query-text-pane-input");
         if (!found) throw new Error("second query pane is absent");
@@ -691,11 +689,11 @@ describe("B5: the save path chooses the name and answers NotApplicable", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       const gears = await vi.waitFor(() => {
-        const found = root.querySelectorAll<HTMLButtonElement>(".qs-gear");
+        const found = root.querySelectorAll<HTMLButtonElement>(".qc-actions summary");
         if (found.length !== 2) throw new Error("two macros not rendered");
         return found;
       });
-      gears[1].click();
+      await openCalmQuery(gears[1].closest(".query-block")!, "Edit as text");
       const input = await vi.waitFor(() => {
         const found = document.querySelector<HTMLTextAreaElement>(".query-text-pane-input");
         if (!found) throw new Error("pane not open");
@@ -1179,7 +1177,7 @@ describe("item 9: a query can show pages and blocks together", () => {
     const { root, dispose } = mount(() => <Block id="query" />);
     try {
       await vi.waitFor(() => expect(root.textContent).toContain("A tracked row"));
-      root.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+      await openCalmQuery(root);
       await vi.waitFor(() => expect(document.querySelector(".qs-anchor-button")).not.toBeNull());
       document.querySelector<HTMLButtonElement>(".qs-anchor-button")!.click();
       const options = [...document.querySelectorAll<HTMLButtonElement>(".qs-option")];

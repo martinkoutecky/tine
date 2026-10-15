@@ -3,6 +3,7 @@ import { backend } from "./backend";
 import { toasts, setToasts } from "./toasts";
 import { conflictInventory, conflictQueue, setConflictInventory, settleArtifactConflict, syncConflicts } from "./conflictQueue";
 import { refreshSyncConflicts } from "./ui";
+import { render } from "./i18n";
 import type { ConflictInventory, ConflictObject } from "./types";
 
 // og 8c: the derived conflict queue. Recomputed from disk, never persisted.
@@ -36,7 +37,7 @@ describe("the derived conflict queue", () => {
     await refreshSyncConflicts();
     expect(toasts()).toEqual([]);
     await refreshSyncConflicts("new");
-    expect(toasts().map((t) => [t.message, t.action?.label])).toEqual([["1 new sync conflict needs review", "Review"]]);
+    expect(toasts().map((t) => [t.message, t.action && (typeof t.action.label === "string" ? t.action.label : render(t.action.label))])).toEqual([["1 new sync conflict needs review", "Review"]]);
     expect(conflictQueue().map((c) => c.page_name)).toEqual(["A", "B"]);
   });
 

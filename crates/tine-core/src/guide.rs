@@ -1232,6 +1232,17 @@ mod query_guide_tests {
             "**Show me**",
             "**Undo that change**",
             "**why empty?**",
+            "At rest a query block shows its title, result count and results",
+            "**⋯ → Edit**",
+            "the real results below it",
+            "**Select all** and **Select none**",
+            "today±N days",
+            "**⋯ → Collapse all / Expand all**",
+            "journals use their date titles",
+            "old results stay read-only",
+            "refuses the whole action",
+            "never means a negated date comparison",
+            "sortable **Backlinks** column",
         ] {
             assert!(
                 queries.contains(control),
@@ -1260,9 +1271,9 @@ mod query_guide_tests {
             "press **Edit as text**",
             "press the pencil beside a result to edit its properties",
             "**Grouped by**",
-            "Press **Clear** to remove grouping",
+            "**⋯ → View → Group by → None** to remove grouping",
             "instead of a table containing only `(none)`",
-            "the sentence then reads *Pages and blocks where …*",
+            "the builder then reads *Find pages and blocks*",
             "a section that a **Sample** cut short says *More pages match than are shown*",
         ] {
             assert!(
@@ -1344,8 +1355,8 @@ mod query_guide_tests {
     fn query_display_and_type_declarations_are_documented() {
         let queries = include_str!("templates/queries.md");
         for control in [
-            "press **Display**",
-            "Choosing **Page** in the column picker",
+            "Open **⋯ → View**",
+            "Choosing **Page** shows each block's owning page",
             "**complete sample**",
             "**Count**, **Sum**, **Average**, or **None**",
             "Built-in columns such as Page and State have no property total",

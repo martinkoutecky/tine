@@ -124,11 +124,29 @@ async function presentationButton(browser, label) {
   throw new Error(`missing ${label} presentation button`);
 }
 
-async function inlineQueryViewButton(browser, label) {
-  for (const button of await browser.$$(".query-view-switcher button")) {
-    if ((await button.getText()).trim() === label) return button;
-  }
-  throw new Error(`missing inline-query ${label} view button`);
+/** The calm query block keeps its view choice in one place: ⋯ → View. */
+async function chooseInlineQueryView(browser, view) {
+  await browser.execute(() => document.querySelector(".query-block .qc-actions > summary")?.scrollIntoView({ block: "center" }));
+  await browser.$(".query-block .qc-actions > summary").click();
+  await browser.waitUntil(() => browser.execute(() => {
+    const id = document.querySelector(".query-block .qc-actions > summary")?.getAttribute("aria-controls");
+    const button = [...(id ? document.getElementById(id)?.querySelectorAll("button") ?? [] : [])].find((b) => b.textContent === "View");
+    if (!button) return false;
+    button.setAttribute("data-e2e-query-action", "view");
+    return true;
+  }), { timeout: 10_000, timeoutMsg: "missing inline-query View action" });
+  await browser.$('[data-e2e-query-action="view"]').click();
+  const marked = await browser.execute((wanted) => {
+    const button = [...document.querySelectorAll('.query-block .qc-panel [aria-label="Query view"] button')].find((b) => b.textContent?.trim() === wanted);
+    button?.setAttribute("data-e2e-query-view", wanted);
+    return !!button;
+  }, view);
+  if (!marked) throw new Error(`missing inline-query ${view} view choice`);
+  await browser.$(`[data-e2e-query-view="${view}"]`).click();
+  await browser.execute(() => document.querySelector(".query-block .qc-panel .qc-done")?.click());
+  await browser.waitUntil(() => browser.execute(() => !document.querySelector(".query-block .qc-panel")), {
+    timeout: 10_000, timeoutMsg: "the inline-query view panel did not close",
+  });
 }
 
 async function assertInPageFind(browser, query, activeSelector, slowTyping = false) {
@@ -229,8 +247,7 @@ await withApp(0, async (browser) => {
     timeout: 10_000, timeoutMsg: "unlinked-reference content did not finish rendering",
   });
   await assertInPageFind(browser, "names Query parity near the start", ".unlinked-references .reference-blocks.inpage-find-active-block");
-  const inlineSearchButton = await inlineQueryViewButton(browser, "Search");
-  await inlineSearchButton.click();
+  await chooseInlineQueryView(browser, "search");
   await browser.waitUntil(async () => (await browser.$$(".query-search-results .query-search-hit")).length === 9, {
     timeout: 10_000, timeoutMsg: "Search presentation dropped ordinary DSL query results",
   });

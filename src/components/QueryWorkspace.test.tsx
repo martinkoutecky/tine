@@ -56,6 +56,14 @@ describe("D-18 workspace date-window serialization", () => {
     expect(result.ok && result.page.blocks[0].raw).toContain("\ntine.sample:: 7");
     vi.restoreAllMocks();
   });
+  it("a typed Tine macro that Logseq syntax could also express is saved as typed, not as {{query}}", async () => {
+    const source = "{{tine-query @block and task in ('TODO')}}";
+    const query: Query = { anchor: "block", filter: { kind: "true" }, source: { kind: "builder" }, diagnostics: [] };
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({ query, view: {} });
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    expect(await serializeWorkspaceDsl(source)).toEqual({ query: source, properties: [] });
+    vi.restoreAllMocks();
+  });
   it("saves the engine's Tine query spelling for an agenda window", async () => {
     const source = "(and (between scheduled today +7d) (task TODO))";
     const query: Query = { anchor: "block", filter: { kind: "true" }, source: { kind: "builder" }, diagnostics: [] };

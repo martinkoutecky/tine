@@ -1,5 +1,6 @@
+import { Rich } from "../i18n/Rich";
 import { BlockList } from "./BlockList";
-import { t } from "../i18n";
+import { t, msg } from "../i18n";
 import { reportUiFailure } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
@@ -177,7 +178,7 @@ async function refreshJournalFeedForCurrentDay(owner: JournalsFeedOwner): Promis
       recordFeedReason("template-error", ensured.error);
       if (ownerIsLive(liveOwner)) {
         pendingFeedRestart = true;
-        pushToast("Could not load journal feed. It will retry when the view refreshes.", "error");
+        pushToast(msg("page-ui-could-not-load-journal-feed-it-will-retry-when"), "error");
       }
       return ensured.error;
     }
@@ -274,7 +275,7 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
     // Focus, visibility, load-more, or the next calendar check will retry.
     if (generation === feedGeneration && ownerIsLive(owner)) {
       pendingFeedRestart = true;
-      pushToast("Could not load journal feed. It will retry when the view refreshes.", "error");
+      pushToast(msg("page-ui-could-not-load-journal-feed-it-will-retry-when"), "error");
     }
     return error;
   } finally {
@@ -645,17 +646,15 @@ export function PageView(): JSX.Element {
     <Show when={!loadError()} fallback={
       <div class="page">
         <div class="page-load-error">
-          Couldn't open this page: <code>{loadError()}</code>
-          <div class="page-load-error-hint">
-            Tine did not modify the file. Try reopening, or check the file on disk.
-          </div>
+          <Rich message={msg("page-open-failed", { error: loadError() ?? "" })} />
+          <div class="page-load-error-hint">{t("page-ui-tine-did-not-modify-the-file-try-reopening-or")}</div>
         </div>
       </div>
     }>
     <Show when={contentReady()} fallback={
       <div class="page-loading" role="status" aria-live="polite">
         <span class="page-loading-spinner" aria-hidden="true" />
-        <span>Loading page…</span>
+        <span>{t("page-ui-loading-page")}</span>
       </div>
     }>
       <Show when={zoomValid()} fallback={
@@ -681,11 +680,9 @@ export function PageView(): JSX.Element {
           </Show>
           <Show when={currentRoute().kind === "journals" && mainPages().length === 0 && !feedRefusal()}>
             <div class="page-load-error">
-              No journal entries found in this graph.
+              {t("page-no-journals")}
               <div class="page-load-error-hint">
-                Make sure you opened a Logseq graph (a folder with{" "}
-                <code>journals/</code> + <code>pages/</code>). Use{" "}
-                <button class="conflict-btn" onClick={() => void switchGraph()}>Open graph…</button>
+                <Rich message={msg("page-no-journals-hint")} slots={{ a: (children) => <button class="conflict-btn" onClick={() => void switchGraph()}>{children}</button> }} />
               </div>
             </div>
           </Show>
@@ -950,7 +947,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         return;
       }
     } catch (e) {
-      if (stillOnRenameTab()) alert(`Rename failed: ${String(e)}`);
+      if (stillOnRenameTab()) alert(t("page-ui-rename-failed", { value1: String(e) }));
     } finally {
       renameInFlight = false;
     }
@@ -990,7 +987,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           <h1
             class="page-title"
             classList={{ "journal-title": props.page.kind === "journal" }}
-            title={props.page.guide ? "Bundled Guide page" : props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar, ctrl/middle-click → new tab, alt-click → other pane)" : "Shift-click to open in sidebar, ctrl/middle-click → new tab, alt-click → other pane"}
+            title={props.page.guide ? t("page-ui-bundled-guide-page") : props.page.kind === "page" ? t("page-ui-double-click-to-rename-shift-click-sidebar-ctrl-middle") : t("page-ui-shift-click-to-open-in-sidebar-ctrl-middle-click")}
             onMouseDown={internalLinkMouseDown}
             onClick={(e) => {
               const dest = internalLinkDest(e);
@@ -1047,9 +1044,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           <TagTableToggle page={props.page} />
         </Show>
         <Show when={props.page.guide}>
-          <button class="guide-copy-btn" onClick={() => void copyGuideIntoGraph(props.page.name)}>
-            Copy the guide into your graph
-          </button>
+          <button class="guide-copy-btn" onClick={() => void copyGuideIntoGraph(props.page.name)}>{t("page-ui-copy-the-guide-into-your-graph")}</button>
         </Show>
         <Show when={!props.page.guide}>
           <button
@@ -1057,8 +1052,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
             type="button"
             class="page-actions-trigger"
             data-page-actions-trigger
-            title="Page actions"
-            aria-label="Page actions"
+            title={t("page-ui-page-actions")}
+            aria-label={t("page-ui-page-actions")}
             aria-haspopup="menu"
             aria-expanded={pageActionsOpen()}
             onClick={(e) => {
@@ -1077,7 +1072,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           <button
             class="fav-star"
             classList={{ active: isFavorite(props.page.name, props.page.kind) }}
-            title={isFavorite(props.page.name, props.page.kind) ? "Unfavorite" : "Add to favorites"}
+            title={isFavorite(props.page.name, props.page.kind) ? t("page-ui-unfavorite") : t("page-ui-add-to-favorites")}
             onClick={() => toggleFavorite(props.page.name, props.page.kind)}
           >
             <svg viewBox="0 0 24 24" class="star-icon" aria-hidden="true">
@@ -1094,8 +1089,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         </div>
       </div>
       <Show when={aliasNamesOf(headerProperties()).length}>
-        <div class="page-aliases" title="Also known as — other names that link here" onClick={editPageHeader}>
-          <span class="page-aliases-label">aka</span>
+        <div class="page-aliases" title={t("page-ui-also-known-as-other-names-that-link-here")} onClick={editPageHeader}>
+          <span class="page-aliases-label">{t("page-ui-aka")}</span>
           <For each={aliasNamesOf(headerProperties())}>
             {(a) => <span class="alias-chip"><PageRef name={a} alias={a} /></span>}
           </For>
@@ -1118,17 +1113,12 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
       </Show>
       <Show when={props.page.guide}>
         <div class="page-guide-banner">
-          Bundled Guide page - read-only and not written to your graph.
-          <button onClick={() => void copyGuideIntoGraph(props.page.name)}>
-            Copy the guide into your graph
-          </button>
+          {t("page-guide-read-only")}
+          <button onClick={() => void copyGuideIntoGraph(props.page.name)}>{t("page-ui-copy-the-guide-into-your-graph")}</button>
         </div>
       </Show>
       <Show when={props.page.readOnly && !props.page.guide}>
-        <div class="page-readonly-banner" title="Tine can't reproduce this .org file byte-for-byte, so it's shown read-only to avoid corrupting it. Edit it in Logseq/Emacs.">
-          Read-only — this <code>.org</code> file uses a structure Tine can't safely
-          round-trip yet, so it won't be edited here.
-        </div>
+        <div class="page-readonly-banner" title={t("page-ui-tine-can-t-reproduce-this-org-file-byte-for")}><Rich message={msg("page-ui-read-only-this-org-file-uses-a-structure-tine")} /></div>
       </Show>
       <ExternalChangeBar name={props.page.name} />
       {/* Concord: a queued conflict is resolved AT the page, block by block. */}
@@ -1146,7 +1136,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
               <div class="block-main">
                 <div class="block-controls">
                   <span class="collapse-toggle" />
-                  <span class="bullet-container" title="Click the text to turn it into an editable block">
+                  <span class="bullet-container" title={t("page-ui-click-the-text-to-turn-it-into-an-editable")}>
                     <span class="bullet" />
                   </span>
                 </div>
@@ -1202,11 +1192,11 @@ function TrailingBlockTarget(props: { onActivate: () => void }): JSX.Element {
     <button
       type="button"
       class="page-trailing-block-target"
-      aria-label="Focus or create a trailing block"
-      title="Click to continue writing below this page"
+      aria-label={t("page-ui-focus-or-create-a-trailing-block")}
+      title={t("page-ui-click-to-continue-writing-below-this-page")}
       onClick={props.onActivate}
     >
-      <span aria-hidden="true">+ Add block</span>
+      <span aria-hidden="true">{t("page-ui-add-block")}</span>
     </button>
   );
 }
@@ -1261,11 +1251,9 @@ export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
       <button
         class="tag-table-toggle"
         classList={{ active: enabled() }}
-        title={enabled() ? "Hide tag table" : "Show tagged blocks as a table"}
+        title={enabled() ? t("page-ui-hide-tag-table") : t("page-ui-show-tagged-blocks-as-a-table")}
         onClick={() => setPageProperty(props.page.name, TAG_TABLE_PROP, enabled() ? null : "true")}
-      >
-        ⊞ Table
-      </button>
+      >{t("page-ui-table")}</button>
     </Show>
   );
 }
@@ -1290,13 +1278,13 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
   return (
     <div class="tag-page-table">
       <ResourceFailure of={groupsResource} what="the tag table" onRetry={() => void refetch()} />
-      <Show when={!answer()?.error} fallback={<div role="alert">Tag table couldn't load: {answer()?.error}</div>}>
+      <Show when={!answer()?.error} fallback={<div role="alert">{t("page-ui-tag-table-couldn-t-load", { error: answer()?.error ?? "" })}</div>}>
         <SheetTable
           ownerId={`tag-page:${encodeURIComponent(props.pageName)}`}
           rowSource="query"
           groups={answer()?.groups ?? []}
           addRow={addRow}
-          addRowLabel={`Add ${tagRef(props.pageName)} row`}
+          addRowLabel={t("page-ui-add-row", { value1: tagRef(props.pageName) })}
           schemaPage={props.pageName}
         />
       </Show>
@@ -1322,29 +1310,29 @@ export function CarryActions(props: { page: FeedPage }): JSX.Element {
           fallback={
             <button
               class="carry-btn carry-btn-push"
-              title="Move this day's unfinished tasks to today"
+              title={t("page-ui-move-this-day-s-unfinished-tasks-to-today")}
               onClick={() => void carryDay(props.page.name)}
             >
-              <span class="carry-label-full">Carry unfinished tasks → today</span>
-              <span class="carry-label-short">To today</span>
+              <span class="carry-label-full">{t("page-ui-carry-unfinished-tasks-today")}</span>
+              <span class="carry-label-short">{t("page-ui-to-today")}</span>
             </button>
           }
         >
           <button
             class="carry-btn carry-btn-prev"
-            title="Pull unfinished tasks from the most recent day that has content"
+            title={t("page-ui-pull-unfinished-tasks-from-the-most-recent-day-that")}
             onClick={() => void carryPrevDay()}
           >
-            <span class="carry-label-full">Carry from previous day</span>
-            <span class="carry-label-short">Previous</span>
+            <span class="carry-label-full">{t("page-ui-carry-from-previous-day")}</span>
+            <span class="carry-label-short">{t("page-ui-previous")}</span>
           </button>
           <button
             class="carry-btn carry-btn-days"
-            title={`Pull unfinished tasks from the last ${carryDays()} days (change N in Settings)`}
+            title={t("page-ui-pull-unfinished-tasks-from-the-last-days-change-n", { value1: carryDays() })}
             onClick={() => void carryDaysBack(carryDays())}
           >
-            <span class="carry-label-full">Carry last {carryDays()} days</span>
-            <span class="carry-label-short">Last {carryDays()}d</span>
+            <span class="carry-label-full">{t("page-ui-carry-last-days", { value1: carryDays() })}</span>
+            <span class="carry-label-short">{t("page-ui-last-d", { value1: carryDays() })}</span>
           </button>
         </Show>
       </div>

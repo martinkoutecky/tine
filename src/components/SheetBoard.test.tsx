@@ -1,9 +1,10 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { createSignal, type JSX } from "solid-js";
+import { createMemo, createSignal, untrack, type ComponentProps, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
-import { __sheetBoardTestHooks, SheetBoard } from "./SheetBoard";
+import { __sheetBoardTestHooks, SheetBoard as ActualSheetBoard } from "./SheetBoard";
+import * as resultActions from "./QueryResultTask";
 import { initParser } from "../render/parse";
 import { blockProperty, hasSelection, resetStore, setRaw, undo } from "../document";
 import { type FeedPage, type Node as StoreNode } from "../document/model";
@@ -17,8 +18,26 @@ import { backend } from "../backend";
 import { installKeybindings } from "../keybindings";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { clearTransientLayersForTest, registerTransientLayer } from "../transientLayers";
+import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
+
+const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
+vi.mock("../document/host/wiring", () => new Proxy({}, {
+  get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty
+    : key === "persistTransfer" ? saveFixture.persistTransfer : saveFixture.actual?.[key as string],
+  has: () => true,
+}));
+// These widget fixtures supply engine answers directly and isolate publication.
+function SheetBoard(props: ComponentProps<typeof ActualSheetBoard>): JSX.Element {
+  const groups = createMemo(() => {
+    const next = props.groups;
+    if (next) untrack(() => adoptResults(next, captureResultsTicket()));
+    return next;
+  });
+  return <ActualSheetBoard {...props} groups={groups()} />;
+}
 
 beforeAll(async () => {
+  saveFixture.actual = await vi.importActual("../document/host/wiring");
   await initParser();
 });
 
@@ -37,6 +56,29 @@ afterEach(() => {
 
 beforeEach(() => {
   setWorkflow("todo");
+});
+
+it("keeps a query open after drag motion and opens the source on a genuine click", () => {
+  loadBoardDoc();
+  const open = vi.spyOn(resultActions, "openQueryResult").mockImplementation(() => {});
+  const { root, dispose } = mount(() => <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={queryGroups(["todo"])} />);
+  const oldElementFromPoint = document.elementFromPoint;
+  try {
+    const card = root.querySelector<HTMLElement>('[data-block-id="todo"]')!;
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, writable: true, value: () => card.closest(".sheet-board-column") });
+    card.dispatchEvent(pointer("pointerdown", 10, 10));
+    window.dispatchEvent(pointer("pointermove", 30, 30));
+    window.dispatchEvent(pointer("pointerup", 30, 30));
+    card.click();
+    expect(open).not.toHaveBeenCalled();
+    card.dispatchEvent(pointer("pointerdown", 10, 10));
+    window.dispatchEvent(pointer("pointerup", 10, 10));
+    card.click();
+    expect(open).toHaveBeenCalledTimes(1);
+  } finally {
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, writable: true, value: oldElementFromPoint });
+    dispose();
+  }
 });
 
 function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {
@@ -120,7 +162,7 @@ function tick(): Promise<void> {
 }
 
 function queryGroups(ids: string[]): RefGroup[] {
-  return [{
+  const groups: RefGroup[] = [{
     page: "Sheet",
     kind: "page",
     blocks: ids.map((id) => ({
@@ -130,6 +172,7 @@ function queryGroups(ids: string[]): RefGroup[] {
       children: [],
     })),
   }];
+  return adoptResults(groups, captureResultsTicket()) ?? groups;
 }
 
 function boardColumnBlockIds(root: ParentNode, col: number): string[] {
@@ -155,6 +198,7 @@ describe("SheetBoard", () => {
       { page: "Twin", kind: "page", blocks: [{ id: shared, raw: "TODO Page DTO", collapsed: false, children: [] }] },
       { page: "Twin", kind: "journal", blocks: [{ id: shared, raw: "DOING Journal DTO", marker: "DOING", collapsed: false, children: [] }] },
     ];
+    adoptResults(groups, captureResultsTicket());
     const { root, dispose } = mount(() => (
       <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups} />
     ));
@@ -522,6 +566,7 @@ describe("SheetBoard", () => {
     const target = "live-target";
     const blocks = Array.from({ length: 100_000 }, (_, i) => ({
       id: i === 0 ? target : `q${i}`,
+      has_id: false, // Rust query projection's parser-owned absence fact
       raw: `TODO Row ${i}`,
       marker: "TODO",
       collapsed: false,

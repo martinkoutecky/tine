@@ -91,10 +91,11 @@ pub mod bench_events;
 pub mod cost_counters;
 pub mod directory_durability;
 mod launch_diag;
-mod link_identity;
+pub mod link_identity;
 mod no_replace;
 #[cfg(test)]
 mod no_replace_tests;
+mod page_backlinks;
 mod page_host;
 /// Fault and abort plants in the page host's I/O (tests only, Q-P2b-2).
 #[cfg(feature = "test-faults")]

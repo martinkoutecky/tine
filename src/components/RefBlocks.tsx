@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 // Rendering of a BlockDto tree (read-only text; a task checkbox ticks the source block, GH #518). Shared by Linked References, query
 // results, and embeds. Mirrors the rendered (non-editing) block look.
 // Visits at most 64 ancestor levels per branch and shows a message below that;
@@ -34,6 +35,7 @@ export function RefBlocks(props: {
   /** GH #486: a click on a page-property row edits that page's properties
    *  (the caller owns the source page's edit path). Absent: read-only row. */
   onEditPageProperties?: (event: MouseEvent) => void;
+  queryResult?: boolean;
   readOnly?: boolean;
   onOpenBlock?: (id: string) => void;
 }): JSX.Element {
@@ -50,12 +52,14 @@ function RefBlocksAtDepth(props: {
   readOnly?: boolean;
   onOpenBlock?: (id: string) => void;
   treeDepth: number;
+  queryResult?: boolean;
 }): JSX.Element {
   return (
     <For each={props.blocks}>
       {(b) => (
         <RefBlock
           block={b}
+          queryResult={props.queryResult}
           page={props.page}
           pageKind={props.pageKind}
           path={props.path}
@@ -80,6 +84,7 @@ function RefBlock(props: {
   onOpenBlock?: (id: string) => void;
   depth: number;
   treeDepth: number;
+  queryResult?: boolean;
 }): JSX.Element {
   // Header facts (marker/done) off the one lsdoc parse (cache hit if the panel's
   // DTOs were seeded); the visible body lines via the shared body-text extractor.
@@ -123,7 +128,7 @@ function RefBlock(props: {
         <div class="block-controls">
           <span
             class="bullet-container"
-            title={props.block.page_property ? "Page property reference" : "Shift-click → sidebar; ctrl/cmd-click or middle-click → new tab; alt-click → other pane"}
+            title={props.block.page_property ? t("macro-ref-blocks-page-property-reference") : t("macro-ref-blocks-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new")}
             onMouseDown={(e) => {
               // GH #207's other half: suppress shift-range selection and
               // middle-button autoscroll / PRIMARY-paste for the gestures this
@@ -169,7 +174,8 @@ function RefBlock(props: {
             <Show when={!props.readOnly && taskCheckboxState(facets().marker) !== null && !props.block.page_property}>
               {/* GH #518: ticks the SOURCE block through its own checkbox path
                   (OG block-checkbox on a referenced block). */}
-              <SourceTaskCheckbox marker={facets().marker} target={refTarget} />{" "}
+              <SourceTaskCheckbox marker={facets().marker} target={refTarget}
+                result={props.queryResult ? { id: props.block.id, dto: props.block, page: props.page ?? "", kind: props.pageKind, path: props.path } : undefined} />{" "}
             </Show>
             <Show when={facets().marker}>
               <span class={`block-marker marker-${facets().marker?.toLowerCase()}`}>
@@ -231,6 +237,7 @@ function RefBlock(props: {
         <div class="block-children-container">
           <div class="block-children">
             <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind} path={props.path}
+              queryResult={props.queryResult}
               onEditPageProperties={props.onEditPageProperties}
               readOnly={props.readOnly} onOpenBlock={props.onOpenBlock}
               depth={props.depth + 1} treeDepth={props.treeDepth + 1} />
@@ -238,7 +245,7 @@ function RefBlock(props: {
         </div>
       </Show>
       <Show when={props.block.children.length && props.treeDepth >= MAX_REF_BLOCK_DEPTH}>
-        <div class="ref-block-depth-warning">More nested blocks are available on the page</div>
+        <div class="ref-block-depth-warning">{t("macro-ref-blocks-more-nested-blocks-are-available-on-the-page")}</div>
       </Show>
     </div>
   );

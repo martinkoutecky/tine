@@ -47,6 +47,8 @@ import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
 import { queryTextOpen, setQueryTextOpen as rememberTextOpen } from "../navSettings";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { QueryDisplay } from "./QueryDisplay";
+import { t, msg } from "../i18n";
+import { Rich } from "../i18n/Rich";
 import { QueryLivePreview } from "./QueryLivePreview";
 import { readLatestOr } from "../resourceRead";
 import { activeWindow, newResizeObserver, queryAllWindows, registeredWindows, requestFrame, viewportOf, windowOf } from "../windowRealm";
@@ -286,7 +288,7 @@ function QueryTextPane(props: {
   return (
     <div class="query-text-pane">
       <label class="query-text-pane-label" for={undefined}>
-        {props.dialect === "tql" ? "Query text" : "Raw query DSL"}
+        {props.dialect === "tql" ? t("query-query-builder-query-text") : t("query-query-builder-raw-query-dsl")}
       </label>
       <textarea
         ref={textarea}
@@ -294,7 +296,7 @@ function QueryTextPane(props: {
         classList={{ "query-text-pane-invalid": !!error() }}
         rows={3}
         spellcheck={false}
-        aria-label={props.dialect === "tql" ? "Query text (TQL)" : "Query expression"}
+        aria-label={props.dialect === "tql" ? t("query-query-builder-query-text-tql") : t("query-query-builder-query-expression")}
         aria-invalid={error() ? "true" : undefined}
         value={text()}
         disabled={!!refusal()}
@@ -309,7 +311,7 @@ function QueryTextPane(props: {
           <span class="query-text-pane-error" role="alert">{error()}</span>
         </Show>
         <Show when={pending() && !error()}>
-          <span class="query-text-pane-pending">Checking…</span>
+          <span class="query-text-pane-pending">{t("query-query-builder-checking")}</span>
         </Show>
         <button
           type="button"
@@ -317,8 +319,7 @@ function QueryTextPane(props: {
           disabled={!savable()}
           onClick={() => { const q = good(); if (q) props.onCommit(q); }}
         >
-          Save query text
-        </button>
+          {t("query-query-builder-save-query-text")}</button>
       </div>
       {/* The structured half of §4.3.2: the kind, the span, the parser's own
           alternatives, and whether the diagnostic is inside an `off` subtree. */}
@@ -333,7 +334,7 @@ function QueryTextPane(props: {
               >
                 <span class="query-text-pane-diagnostic-message">{diagnostic.message}</span>
                 <Show when={diagnostic.disabled}>
-                  <span class="query-text-pane-diagnostic-off"> (in a disabled condition — the query still runs)</span>
+                  <span class="query-text-pane-diagnostic-off"> {t("query-query-builder-in-a-disabled-condition-the-query-still-runs")}</span>
                 </Show>
                 <Show when={spanFor(diagnostic)}>
                   {(span) => (
@@ -342,8 +343,7 @@ function QueryTextPane(props: {
                       class="query-text-pane-locate"
                       onClick={() => select(span(), diagnostics()!.text)}
                     >
-                      Show me
-                    </button>
+                      {t("query-query-builder-show-me")}</button>
                   )}
                 </Show>
                 <Show when={diagnostic.suggestions?.length}>
@@ -360,7 +360,7 @@ function QueryTextPane(props: {
                 </Show>
                 <Show when={vocabularyNear(diagnostic).length}>
                   <span class="query-text-pane-diagnostic-alts">
-                    Properties in this graph: <For each={vocabularyNear(diagnostic)}>
+                    {t("query-query-builder-properties-in-this-graph")}<For each={vocabularyNear(diagnostic)}>
                       {(key, index) => (
                         <>
                           <Show when={index() > 0}>, </Show>
@@ -374,8 +374,7 @@ function QueryTextPane(props: {
                     route: the vocabulary above and the Guide's TQL reference. */}
                 <Show when={diagnostic.kind === "syntax" && !diagnostic.suggestions?.length}>
                   <span class="query-text-pane-diagnostic-alts">
-                    The fields and properties this graph has are in the picker above; the
-                    query language is in the Guide under <em>Find and revisit → Query text (TQL)</em>.
+                    <Rich message={msg("query-text-vocabulary-guide")} />
                   </span>
                 </Show>
               </li>
@@ -506,6 +505,8 @@ export function QueryBuilder(props: {
   onOpenChange?: (open: boolean) => void;
   /** The workspace's permanently expanded sheet (§7.2). */
   sheetAlwaysOpen?: boolean;
+  inline?: boolean;
+  openRequest?: () => { n: number; tab: "filter" | "display" | "text" } | null;
   /** The live result count, rendered beside the sentence (§7.2). */
   total?: JSX.Element;
   /** The pane's text no longer parses, so the rows on screen are the LAST reading that ran. */
@@ -519,17 +520,27 @@ export function QueryBuilder(props: {
   /** Display writes use the host's guarded query save. Workspace callers may
    * leave it absent until their route owns a display draft. */
   display?: { view: () => ViewSettings; apply: (view: ViewSettings) => void | Promise<boolean>;
+    defaultColumns?: () => readonly string[];
     formulas?: () => readonly string[] };
 }): JSX.Element {
   // The pane's last-good parse, not yet saved.
   const [paneQuery, setPaneQuery] = createSignal<Query | null>(null);
   const [stale, setStale] = createSignal(false);
   const [open, setOpen] = createSignal(false);
+  let builderEl: HTMLDivElement | undefined;
+  const [tab, setTab] = createSignal<"filter" | "display" | "text">("filter");
+  createEffect(() => {
+    const request = props.openRequest?.();
+    if (!request) return;
+    setTab(request.tab);
+    setOpen(true);
+  });
   // The text pane is mounted only while its toggle is on (default off, remembered).
   // The remembered state is a durable device preference (navSettings), not localStorage.
-  const textOpen = queryTextOpen;
+  const textOpen = () => props.inline ? tab() === "text" : queryTextOpen();
   const setTextOpen = (next: boolean) => {
-    rememberTextOpen(next);
+    if (props.inline) setTab(next ? "text" : "filter");
+    else rememberTextOpen(next);
     // A hidden pane cannot hold an unparsed draft, so nothing is left "stale" behind it.
     if (!next) {
       setStale(false);
@@ -587,7 +598,7 @@ export function QueryBuilder(props: {
       let alive = true;
       const take = () => {
         if (!alive || queryBuilderAutoOpen() !== props.blockId) return;
-        if (!props.sheetAlwaysOpen && !sentenceEl?.isConnected) {
+        if (!props.sheetAlwaysOpen && !(props.inline ? builderEl : sentenceEl)?.isConnected) {
           frame = nextFrame(take);
           return;
         }
@@ -704,7 +715,7 @@ export function QueryBuilder(props: {
   let sheetEl: HTMLDivElement | undefined;
   let sentenceEl: HTMLSpanElement | undefined;
 
-  const dismissable = () => open() && !props.sheetAlwaysOpen;
+  const dismissable = () => open() && !props.sheetAlwaysOpen && !props.inline;
   createEffect(() => {
     if (!dismissable()) return;
     const unregister = registerTransientLayer({
@@ -759,7 +770,7 @@ export function QueryBuilder(props: {
     return true;
   };
   createEffect(() => {
-    if (!open() || props.sheetAlwaysOpen) {
+    if (!open() || props.sheetAlwaysOpen || props.inline) {
       setRect(null);
       return;
     }
@@ -819,7 +830,7 @@ export function QueryBuilder(props: {
     <>
       {/* GH #619 item 7: the sheet covers the block's results, so it carries its own live ones. The
           workspace shows its results beside the sheet already. */}
-      <Show when={!props.sheetAlwaysOpen}>
+      <Show when={!props.sheetAlwaysOpen && !props.inline}>
         <QueryLivePreview
           query={() => session()?.query}
           view={() => session()?.view ?? {}}
@@ -828,22 +839,23 @@ export function QueryBuilder(props: {
           both={props.both?.on}
         />
       </Show>
-      <Show when={props.display}>{(display) => <QueryDisplay
-        view={display().view} apply={display().apply} registry={registry} formulas={display().formulas}
+      <Show when={props.display && (!props.inline || tab() === "display")}><QueryDisplay
+        view={props.display!.view} apply={props.display!.apply} registry={registry} formulas={props.display!.formulas}
+        defaultColumns={props.display!.defaultColumns}
+        inline={props.inline}
         rowKind={() => session()?.query.anchor ?? "block"}
-        parentTransientId={props.sheetAlwaysOpen ? props.parentTransientId : sheetLayerId} />}</Show>
+        parentTransientId={props.sheetAlwaysOpen ? props.parentTransientId : sheetLayerId} /></Show>
       {/* GH #619 item 4: the text is one toggle away, not in the way. The sheet's rows are the
           primary editor; "Edit as text" opens the pane (remembered across sheets), and a
           retained leaf that rows cannot edit opens it for the user. A resting sentence and a
           closed toggle mount no pane at all. */}
-      <button
+      <Show when={!props.inline}><button
         type="button"
         class="qs-text-toggle"
         aria-expanded={textOpen()}
         onClick={() => setTextOpen(!textOpen())}
       >
-        Edit as text
-      </button>
+        {t("query-query-sheet-edit-as-text")}</button></Show>
       <Show when={textOpen()} fallback={<Show when={props.notice}>{(render) => render()()}</Show>}>
         <QueryTextPane
           session={props.session}
@@ -900,8 +912,8 @@ export function QueryBuilder(props: {
   return (
     <Show when={session()}>
       {(current) => (
-        <div class="qs-builder">
-          <Show when={!props.sheetAlwaysOpen}>
+        <div class="qs-builder" ref={builderEl}>
+          <Show when={!props.sheetAlwaysOpen && !props.inline}>
             <QuerySentence
               query={current().query}
               both={props.both?.on}
@@ -916,12 +928,19 @@ export function QueryBuilder(props: {
           <Show when={previewError()}>
             {(message) => (
               <div class="qs-preview-error" role="alert">
-                The anchor wasn't changed: {message()}
+                {t("query-anchor-unchanged", { detail: message() })}
               </div>
             )}
           </Show>
           <Show when={props.sheetAlwaysOpen}>{sheet()}</Show>
-          <Show when={open() && !props.sheetAlwaysOpen && rect() !== null}>
+          <Show when={props.inline && open()}>
+            <div class="qc-panel" onClick={stop} onMouseDown={(event) => event.stopPropagation()}
+              onKeyDown={(event) => { event.stopPropagation(); if (event.key === "Escape") setOpen(false); }}>
+              <button type="button" class="qc-done" onClick={() => setOpen(false)}>{t("query-calm-done")}</button>
+              <Show when={tab() === "filter"} fallback={footer()}>{sheet()}</Show>
+            </div>
+          </Show>
+          <Show when={!props.inline && open() && !props.sheetAlwaysOpen && rect() !== null}>
             <FloatingPortal>
               <div
                 class="qs-overlay"

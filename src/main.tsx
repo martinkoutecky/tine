@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { render } from "solid-js/web";
 import { App } from "./App";
 import "./session";
@@ -37,6 +38,7 @@ import "./styles/themePresentation.css";
 import "./styles/pdf-workspace.css";
 import "./styles/settingsControls.css";
 import "./styles/query.css";
+import "./styles/query-calm.css";
 import "./styles/conflicts.css";
 import "./styles/allPages.css";
 import "./styles/region-failure.css";
@@ -61,10 +63,10 @@ if (isPublishedExport()) document.documentElement.classList.add("tine-published"
 const communityExtensionsReady = isPublishedExport() ? Promise.resolve() : startCommunityExtensions()
   .then(({ pluginInitialization }) => {
     void pluginInitialization.catch((error) =>
-      pushToast(`Plugins unavailable: ${String(error)}`, "error")
+      pushToast(msg("ui-main-plugins-unavailable", { value1: String(error) }), "error")
     );
   })
-  .catch((error) => pushToast(`Community extensions unavailable: ${String(error)}`, "error"));
+  .catch((error) => pushToast(msg("ui-main-community-extensions-unavailable", { value1: String(error) }), "error"));
 
 // Restore the saved tab session before first paint, so tabs come back without a
 // flash. Capped so a slow/stuck backend read can never block startup — worst

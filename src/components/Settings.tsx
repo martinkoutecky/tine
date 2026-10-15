@@ -1,3 +1,4 @@
+import { Rich } from "../i18n/Rich";
 import { codeWrapping, changeCodeWrapping } from "../codeDisplay";
 import { stickyParents, changeStickyParents } from "../stickyParents";
 import { graphConfigProblem } from "../graph";
@@ -61,7 +62,7 @@ import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { LanguageSetting } from "./LanguageSetting";
 import { GraphFolderSetting } from "./GraphFolderSetting";
-import { msg, render, renderEnglish } from "../i18n";
+import { msg, render, renderEnglish, t, type Msg } from "../i18n";
 import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
@@ -86,17 +87,17 @@ import { writePreference, loadPreference } from "../preferenceWrites";
 import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
 import { readOr } from "../resourceRead";
 import { activeWindow, listen, queryAllWindows, queryAllWindowsAll } from "../windowRealm";
-const TABS: { id: SettingsTabId; label: string }[] = [
-  { id: "appearance", label: "Appearance" },
-  { id: "editor", label: "Editor" },
-  { id: "journals", label: "Journals" },
-  { id: "files", label: "Files" },
-  { id: "backups", label: "Backups & recovery" },
-  { id: "graph", label: "Graph" },
-  { id: "plugins", label: "Plugins" },
-  { id: "diagnostics", label: "Help & diagnostics" },
-  { id: "shortcuts", label: "Keyboard shortcuts" },
-  { id: "about", label: "About" },
+const TABS: { id: SettingsTabId; label: Msg }[] = [
+  { id: "appearance", label: msg("settings-ui-appearance") },
+  { id: "editor", label: msg("settings-ui-editor") },
+  { id: "journals", label: msg("settings-ui-journals") },
+  { id: "files", label: msg("settings-ui-files") },
+  { id: "backups", label: msg("settings-ui-backups-recovery") },
+  { id: "graph", label: msg("settings-ui-graph") },
+  { id: "plugins", label: msg("settings-ui-plugins") },
+  { id: "diagnostics", label: msg("settings-ui-help-diagnostics") },
+  { id: "shortcuts", label: msg("settings-ui-keyboard-shortcuts") },
+  { id: "about", label: msg("settings-ui-about") },
 ];
 export function Settings(): JSX.Element {
   const [tab, setTab] = createSignal<SettingsTabId>("appearance");
@@ -191,7 +192,7 @@ export function Settings(): JSX.Element {
       <div class="modal-overlay" classList={{ "settings-maximized": settingsMaximized() }} onClick={closeSettings}>
         <div class="settings-modal" onClick={(e) => e.stopPropagation()}>
           <aside class="settings-nav">
-            <div class="settings-nav-title">Settings</div>
+            <div class="settings-nav-title">{t("settings-ui-settings")}</div>
             <For each={availableTabs()}>
               {(t) => (
                 <button
@@ -199,21 +200,21 @@ export function Settings(): JSX.Element {
                   classList={{ active: tab() === t.id }}
                   onClick={() => setTab(t.id)}
                 >
-                  {t.label}
+                  {render(t.label)}
                 </button>
               )}
             </For>
-            <div class="settings-nav-foot">Built {buildStamp()}</div>
+            <div class="settings-nav-foot">{t("settings-ui-built", { value1: buildStamp() })}</div>
           </aside>
 
           <div class="settings-pane">
             <div class="settings-pane-head">
-              <span>{availableTabs().find((t) => t.id === tab())?.label}</span>
+              <span>{render(availableTabs().find((t) => t.id === tab())!.label)}</span>
               <input
                 class="settings-search-input"
                 type="search"
-                placeholder={tab() === "shortcuts" ? "Search shortcuts…" : "Search settings…"}
-                aria-label={tab() === "shortcuts" ? "Search shortcuts" : "Search settings"}
+                placeholder={tab() === "shortcuts" ? t("settings-ui-search-shortcuts") : t("settings-ui-search-settings")}
+                aria-label={tab() === "shortcuts" ? t("settings-ui-search-shortcuts-2") : t("settings-ui-search-settings-2")}
                 value={settingsQuery()}
                 onInput={(event) => setSettingsQuery(event.currentTarget.value)}
                 onKeyDown={(event) => {
@@ -225,7 +226,7 @@ export function Settings(): JSX.Element {
                 }}
               />
               <button class="icon-btn settings-maximize" type="button"
-                aria-label={settingsMaximized() ? "Restore settings size" : "Maximize settings"}
+                aria-label={settingsMaximized() ? t("settings-ui-restore-settings-size") : t("settings-ui-maximize-settings")}
                 aria-pressed={settingsMaximized()}
                 onClick={() => setSettingsMaximized(!settingsMaximized())}>
                 {settingsMaximized() ? "❐" : "□"}
@@ -235,16 +236,16 @@ export function Settings(): JSX.Element {
               </button>
             </div>
             <div class="settings-pane-body">
-              <Show when={graphConfigProblem()}><p role="alert">config.edn could not be read. This graph is read-only. Repair the config and reopen the graph.</p></Show>
+              <Show when={graphConfigProblem()}><p role="alert">{t("settings-ui-config-edn-could-not-be-read-this-graph-is")}</p></Show>
               <Suspense fallback={<div class="settings-pane-pending" aria-hidden="true" />}>
               <Show when={settingsQuery().trim() && tab() !== "shortcuts"}>
                 <div class="settings-search-results" aria-live="polite">
-                  <Show when={matches().length} fallback={<div class="settings-search-empty">No matching settings</div>}>
+                  <Show when={matches().length} fallback={<div class="settings-search-empty">{t("settings-ui-no-matching-settings")}</div>}>
                     <For each={matches()}>
                       {(entry) => (
                         <button type="button" class="settings-search-result" onClick={() => openSearchResult(entry)}>
                           <span>{typeof entry.label === "string" ? entry.label : render(entry.label)}</span>
-                          <small>{TABS.find((candidate) => candidate.id === entry.tab)?.label}{entry.level === "advanced" ? " › Advanced" : ""}</small>
+                          <small>{t("settings-search-result-location", { tab: render(TABS.find((candidate) => candidate.id === entry.tab)!.label), level: entry.level ?? "basic" })}</small>
                         </button>
                       )}
                     </For>
@@ -307,7 +308,7 @@ export function Settings(): JSX.Element {
 function OgField(props: {
   label: string;
   hint?: JSX.Element;
-  ogNote: string;
+  ogNote: Msg;
   ogValue: boolean;
   on: boolean;
   onToggle: () => void;
@@ -319,7 +320,7 @@ function OgField(props: {
         <span class="settings-label">
           {props.label}
           <Show when={diverges()}>
-            <span class="og-badge" title="Tine's default differs from Logseq here">Differs from Logseq</span>
+            <span class="og-badge" title={t("settings-ui-tine-s-default-differs-from-logseq-here")}>{t("settings-ui-differs-from-logseq")}</span>
           </Show>
         </span>
         <div class="settings-field-control">
@@ -330,9 +331,9 @@ function OgField(props: {
         <div class="settings-hint settings-field-hint">{props.hint}</div>
       </Show>
       <div class="og-note">
-        <span class="og-logseq">Logseq: {props.ogNote}</span>
+        <span class="og-logseq">{render(props.ogNote)}</span>
         <Show when={diverges()}>
-          <button class="og-revert" onClick={props.onToggle}>↩ Match Logseq</button>
+          <button class="og-revert" onClick={props.onToggle}>{t("settings-ui-match-logseq")}</button>
         </Show>
       </div>
     </div>
@@ -344,13 +345,13 @@ function AdvancedSection(props: { tab: SettingsTabId; forceOpen: boolean; childr
   const key = `tine.settings.advanced.${props.tab}`;
   let initial = false;
   try { initial = localStorage.getItem(key) === "1"; }
-  catch { pushToast("Could not load Advanced section preference.", "error"); }
+  catch { pushToast(msg("settings-ui-could-not-load-advanced-section-preference"), "error"); }
   const [open, setOpen] = createSignal(initial);
   let button: HTMLButtonElement | undefined;
   const expanded = () => props.forceOpen || open();
   const persist = (value: boolean) => {
     try { localStorage.setItem(key, value ? "1" : "0"); }
-    catch { pushToast("Could not save Advanced section preference.", "error"); }
+    catch { pushToast(msg("settings-ui-could-not-save-advanced-section-preference"), "error"); }
   };
   const toggle = () => {
     const next = !open();
@@ -385,9 +386,7 @@ function AdvancedSection(props: { tab: SettingsTabId; forceOpen: boolean; childr
             queueMicrotask(() => button?.focus());
           }
         }}
-      >
-        <span aria-hidden="true">{expanded() ? "▾" : "▸"}</span> Advanced
-      </button>
+      ><Rich message={msg("settings-ui-advanced", { choice1: expanded() ? "yes" : "no" })} slots={{ "slot1": (children) => <span aria-hidden="true">{children}</span> }} /></button>
       <Show when={expanded()}>
         <div class="settings-advanced-body">{props.children}</div>
       </Show>
@@ -403,9 +402,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
     const next = !nativeFrameEnabled();
     try {
       await setNativeFrame(next);
-      pushToast("Saved. Restart Tine to apply the window-frame change.", "info");
+      pushToast(msg("settings-ui-saved-restart-tine-to-apply-the-window-frame-change"), "info");
     } catch (error) {
-      pushToast(`Couldn't save the window-frame setting. (${String(error)})`, "error");
+      pushToast(msg("settings-ui-couldn-t-save-the-window-frame-setting", { value1: String(error) }), "error");
     } finally {
       setSavingNativeFrame(false);
     }
@@ -416,14 +415,14 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       <LanguageSetting />
 
       <div class="settings-row">
-        <span class="settings-label">Mode</span>
+        <span class="settings-label">{t("settings-ui-mode")}</span>
         <ThemeChoice />
       </div>
 
       <ThemeSettings />
 
       <div class="settings-row">
-        <span class="settings-label">Accent color</span>
+        <span class="settings-label">{t("settings-ui-accent-color")}</span>
         <div>
           <input
             type="color"
@@ -432,40 +431,36 @@ function AppearanceTab(props: { search: string }): JSX.Element {
             onInput={(e) => changeAccent(e.currentTarget.value)}
           />
           <Show when={accentColor()}>
-            <button class="settings-btn" style={{ "margin-left": "8px" }} onClick={() => changeAccent(null)}>
-              Reset
-            </button>
+            <button class="settings-btn" style={{ "margin-left": "8px" }} onClick={() => changeAccent(null)}>{t("settings-ui-reset")}</button>
           </Show>
         </div>
       </div>
 
       <Field
-        label="Interface size"
-        hint="Zoom the whole interface — Ctrl + / Ctrl − / Ctrl 0, or Ctrl + scroll. Saved on this device. (Over/within the PDF pane, those zoom the PDF instead.)"
+        label={t("settings-ui-interface-size")}
+        hint={t("settings-ui-zoom-the-whole-interface-ctrl-ctrl-ctrl-0-or")}
       >
         <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
-          <button class="settings-btn" title="Smaller (Ctrl −)" onClick={zoomOut}>−</button>
+          <button class="settings-btn" title={t("settings-ui-smaller-ctrl")} onClick={zoomOut}>−</button>
           <span class="mono" style={{ "min-width": "3.4em", "text-align": "center" }}>
             {Math.round(interfaceZoom() * 100)}%
           </span>
-          <button class="settings-btn" title="Larger (Ctrl +)" onClick={zoomIn}>+</button>
+          <button class="settings-btn" title={t("settings-ui-larger-ctrl")} onClick={zoomIn}>+</button>
           <Show when={interfaceZoom() !== 1}>
-            <button class="settings-btn" style={{ "margin-left": "8px" }} onClick={zoomReset}>
-              Reset
-            </button>
+            <button class="settings-btn" style={{ "margin-left": "8px" }} onClick={zoomReset}>{t("settings-ui-reset")}</button>
           </Show>
         </div>
       </Field>
 
-      <Field label="Wide mode" hint="Drops the reading-width cap.">
+      <Field label={t("settings-ui-wide-mode")} hint={t("settings-ui-drops-the-reading-width-cap")}>
         <Toggle on={wideMode()} onClick={toggleWideMode} />
       </Field>
-      <Field label="Document mode" hint="Hides bullets and indent guides for a cleaner prose view.">
+      <Field label={t("settings-ui-document-mode")} hint={t("settings-ui-hides-bullets-and-indent-guides-for-a-cleaner-prose")}>
         <Toggle on={documentMode()} onClick={toggleDocumentMode} />
       </Field>
       <Field
-        label="Document-mode Enter creates a new block"
-        hint={<>Keep the normal Enter = new block and Shift + Enter = line break mapping while Document mode is on. Off (the default) swaps them, like Logseq. Saved to <code>:shortcut/doc-mode-enter-for-new-block?</code> in <code>config.edn</code>.</>}
+        label={t("settings-ui-document-mode-enter-creates-a-new-block")}
+        hint={<><Rich message={msg("settings-ui-keep-the-normal-enter-new-block-and-shift-enter")} /></>}
       >
         <Toggle
           on={docModeEnterForNewBlock()}
@@ -473,14 +468,14 @@ function AppearanceTab(props: { search: string }): JSX.Element {
         />
       </Field>
       <Field
-        label="Show brackets"
-        hint={<>Show the <code>[[ ]]</code> around page references. Saved to <code>:ui/show-brackets?</code> in <code>config.edn</code>; toggle with <code>mod+c mod+b</code>.</>}
+        label={t("settings-ui-show-brackets")}
+        hint={<><Rich message={msg("settings-ui-show-the-around-page-references-saved-to-ui-show")} /></>}
       >
         <Toggle on={showBrackets()} onClick={() => changeShowBrackets(!showBrackets())} />
       </Field>
       <Field
-        label="Typographic replacements"
-        hint="Show arrows and dashes as glyphs — `->` → →, `-->` → ⟶, `--` → – (en dash), `---` → — (em dash). “While reading” keeps your Markdown as ASCII and only changes the rendered view (like `\Delta` → Δ); “While typing” rewrites the source itself as you type. Off by default, as in Logseq: text renders as you typed it."
+        label={t("settings-ui-typographic-replacements")}
+        hint={t("settings-ui-show-arrows-and-dashes-as-glyphs-en-dash-em")}
       >
         <select
           class="settings-select"
@@ -490,44 +485,44 @@ function AppearanceTab(props: { search: string }): JSX.Element {
             setTypographyMode(v === "off" ? "off" : v === "type" ? "type" : "render");
           }}
         >
-          <option value="render">On (while reading)</option>
-          <option value="type">On (while typing)</option>
-          <option value="off">Off</option>
+          <option value="render">{t("settings-ui-on-while-reading")}</option>
+          <option value="type">{t("settings-ui-on-while-typing")}</option>
+          <option value="off">{t("settings-ui-off")}</option>
         </select>
       </Field>
 
-      <Field label="Wrap code lines" hint="Wrap long code lines in every code block while reading and editing. Off by default, as in Logseq. Saved on this device.">
+      <Field label={t("settings-ui-wrap-code-lines")} hint={t("settings-ui-wrap-long-code-lines-in-every-code-block-while")}>
         <Toggle on={codeWrapping()} onClick={() => changeCodeWrapping(!codeWrapping())} />
       </Field>
       <Field label={render(msg("setting-sticky-parents"))} hint={render(msg("setting-sticky-parents-hint"))}>
         <Toggle on={stickyParents()} onClick={() => changeStickyParents(!stickyParents())} />
       </Field>
       <Field
-        label="Auto-pair brackets & quotes"
-        hint="Typing ( [ { &quot; ` inserts the matching closer with the caret between, wraps a selection, types through a closer, and Backspace on an empty pair clears both. (Page-ref `[[ ]]` always auto-closes.) On by default, as in Logseq."
+        label={t("settings-ui-auto-pair-brackets-quotes")}
+        hint={t("settings-ui-typing-quot-inserts-the-matching-closer-with-the-caret")}
       >
         <Toggle on={autoPairing()} onClick={() => setAutoPairing(!autoPairing())} />
       </Field>
 
       <OgField
-        label="Space after inserting a reference"
-        hint="After you pick a page from [[…]] or a block from ((…)) autocomplete, the caret lands past the closing brackets. ON (Tine default) also drops a space there so the next word flows on without stepping over the brackets; a block-final space is trimmed on save, so it never persists."
-        ogNote="no space — the caret sits right after the closing brackets."
+        label={t("settings-ui-space-after-inserting-a-reference")}
+        hint={t("settings-ui-after-you-pick-a-page-from-or-a-block")}
+        ogNote={msg("settings-og-reference-spacing")}
         ogValue={false}
         on={spaceAfterRefCompletion()}
         onToggle={() => setSpaceAfterRefCompletion(!spaceAfterRefCompletion())}
       />
 
       <Field
-        label="Dim in focus mode"
-        hint="Auto-enable dim inactive blocks (t b) when entering focus mode (t f)."
+        label={t("settings-ui-dim-in-focus-mode")}
+        hint={t("settings-ui-auto-enable-dim-inactive-blocks-t-b-when-entering")}
       >
         <Toggle on={dimInFocus()} onClick={() => setDimInFocus(!dimInFocus())} />
       </Field>
 
       <Field
-        label="Load local-file images"
-        hint="Let raw-HTML <img> tags in notes load images from absolute paths anywhere on this computer (e.g. an imported note's <img src=&quot;/home/…/pic.png&quot;>). Off by default — this is a permission: a synced or imported note isn't self-authored, so only enable it for graphs you trust. In-graph images and https images always work regardless."
+        label={t("settings-ui-load-local-file-images")}
+        hint={t("settings-ui-let-raw-html-tags-in-notes-load-images-from")}
       >
         <Toggle on={allowLocalFileImages()} onClick={() => setAllowLocalFileImages(!allowLocalFileImages())} />
       </Field>
@@ -535,8 +530,8 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
         <ContentWidthFields />
         <Field
-          label="Smooth scrolling (experimental)"
-          hint="Animate the journal feed's scrolling to smooth out WebKitGTK's stepped mouse-wheel jumps. Off by default; this is a feel experiment — turn it off if it gets in the way."
+          label={t("settings-ui-smooth-scrolling-experimental")}
+          hint={t("settings-ui-animate-the-journal-feed-s-scrolling-to-smooth-out")}
         >
           <Toggle on={smoothScrollEnabled()} onClick={() => setSmoothScroll(!smoothScrollEnabled())} />
         </Field>
@@ -547,18 +542,18 @@ function AppearanceTab(props: { search: string }): JSX.Element {
           only meaningful — and only shown — on Linux/Windows. */}
       <Show when={isTauri() && !isMac}>
         <Field
-          label="System title bar & window controls"
-          hint="Use your OS's native window frame (title bar, minimize/maximize/close, rounded corners) instead of Tine's compact built-in controls. Restart Tine after changing this setting. Off by default — the built-in controls save a row of vertical space."
+          label={t("settings-ui-system-title-bar-window-controls")}
+          hint={t("settings-ui-use-your-os-s-native-window-frame-title-bar")}
         >
           <Toggle on={nativeFrameEnabled()} onClick={() => void changeNativeFrame()} />
         </Field>
       </Show>
       <Show when={isTauri() && isMac}>
         <Field
-          label="Window controls"
-          hint="macOS draws Tine with native rounded corners and traffic-light buttons."
+          label={t("settings-ui-window-controls")}
+          hint={t("settings-ui-macos-draws-tine-with-native-rounded-corners-and-traffic")}
         >
-          <span style={{ color: "var(--text-muted)", "font-size": "12px" }}>Native (macOS)</span>
+          <span style={{ color: "var(--text-muted)", "font-size": "12px" }}>{t("settings-ui-native-macos")}</span>
         </Field>
       </Show>
 
@@ -582,13 +577,9 @@ function JournalTemplateField(): JSX.Element {
   const missing = () => templatesResource.error === undefined && !templatesResource.loading && current() !== "" && !list().some((t) => t.name === current());
   return (
     <Field
-      label="New-journal template"
+      label={t("settings-ui-new-journal-template")}
       hint={
-        <>
-          Template inserted into a new day's journal. Saved to{" "}
-          <code>:default-templates {"{:journals …}"}</code> in <code>config.edn</code>. “(none)” →
-          blank days (the default). Make a template via a block's right-click menu.
-        </>
+        <><Rich message={msg("settings-ui-template-inserted-into-a-new-day-s-journal-saved")} /></>
       }
     >
       <div class="settings-jtmpl">
@@ -599,23 +590,21 @@ function JournalTemplateField(): JSX.Element {
           disabled={templatesResource.error !== undefined || templatesResource.loading}
           onChange={(e) => setJournalTemplate(e.currentTarget.value || null)}
         >
-          <option value="">(none) — blank days</option>
+          <option value="">{t("settings-ui-none-blank-days")}</option>
           <Show when={missing() || templatesResource.error !== undefined}>
-            <option value={current()}>{current()}{templatesResource.error === undefined ? " (not found)" : " (unavailable)"}</option>
+            <option value={current()}>{t("settings-journal-template-missing", { name: current(), state: templatesResource.error === undefined ? "missing" : "unavailable" })}</option>
           </Show>
           <For each={list()}>{(t) => <option value={t.name}>{t.name}</option>}</For>
         </select>
         <Show when={selected()}>
-          {(t) => (
+          {(template) => (
             <button
               class="settings-link"
               onClick={() => {
-                openPage(t().page, t().kind);
+                openPage(template().page, template().kind);
                 closeSettings();
               }}
-            >
-              Edit →
-            </button>
+            >{t("settings-ui-edit")}</button>
           )}
         </Show>
       </div>
@@ -665,62 +654,44 @@ function EditorTab(props: { search: string }): JSX.Element {
   return (
     <>
       <Field
-        label="File format"
+        label={t("settings-ui-file-format")}
         hint={
-          <>
-            Format for <strong>new</strong> pages and journals — Markdown or Org. Existing{" "}
-            <code>.md</code> and <code>.org</code> files keep their own format and are edited in
-            place. Saved to <code>:preferred-format</code> in <code>config.edn</code>.
-          </>
+          <><Rich message={msg("settings-ui-format-for-new-pages-and-journals-markdown-or-org")} /></>
         }
       >
         <div class="settings-segment">
           <button
             classList={{ active: (graphMeta()?.preferred_format ?? "md") === "md" }}
             onClick={() => changePreferredFormat("md")}
-          >
-            Markdown
-          </button>
+          >{t("settings-ui-markdown")}</button>
           <button
             classList={{ active: graphMeta()?.preferred_format === "org" }}
             onClick={() => changePreferredFormat("org")}
-          >
-            Org
-          </button>
+          >{t("settings-ui-org")}</button>
         </div>
       </Field>
 
       <Field
-        label="Spell checker"
+        label={t("settings-ui-spell-checker")}
         hint={
-          <>
-            Underline misspelled words while editing, with right-click suggestions and
-            “add to dictionary” (uses the system spell checker). <strong>On by default</strong>,
-            like Logseq. Applies live — no restart needed.
-          </>
+          <><Rich message={msg("settings-ui-underline-misspelled-words-while-editing-with-right-click-suggestions")} /></>
         }
       >
         <Toggle on={spellcheckEnabled()} onClick={() => setSpellcheckEnabled(!spellcheckEnabled())} />
       </Field>
 
       <Field
-        label="Logical outdenting"
-        hint={<>Move an outdented block after its parent while leaving following siblings in place. Off (the default) reparents those siblings beneath the moved block. Saved to <code>:editor/logical-outdenting?</code> in <code>config.edn</code>.</>}
+        label={t("settings-ui-logical-outdenting")}
+        hint={<><Rich message={msg("settings-ui-move-an-outdented-block-after-its-parent-while-leaving")} /></>}
       >
         <Toggle on={logicalOutdenting()} onClick={() => changeLogicalOutdenting(!logicalOutdenting())} />
       </Field>
 
       <Show when={spellcheckEnabled()}>
         <Field
-          label="Spellcheck languages"
+          label={t("settings-ui-spellcheck-languages")}
           hint={
-            <>
-              Tick the dictionaries to check — several at once is fine (e.g. English + Czech),
-              and a word valid in <em>any</em> ticked language isn’t flagged, so bilingual notes
-              don’t squiggle. <strong>None ticked → follows your OS locale</strong> (all Logseq
-              can do). Dictionaries are discovered from the system; install more with your
-              package manager (e.g. <code>hunspell-cs</code>), then Rescan.
-            </>
+            <><Rich message={msg("settings-ui-tick-the-dictionaries-to-check-several-at-once-is")} /></>
           }
         >
           <div class="spellcheck-dicts">
@@ -735,42 +706,38 @@ function EditorTab(props: { search: string }): JSX.Element {
                   <span class="spellcheck-dict-name">{row.name}</span>
                   <code>{row.code}</code>
                   <Show when={!row.installed}>
-                    <span class="spellcheck-dict-missing">not installed</span>
+                    <span class="spellcheck-dict-missing">{t("settings-ui-not-installed")}</span>
                   </Show>
                 </label>
               )}
             </For>
             <Show when={dictRows().length === 0}>
-              <div class="spellcheck-empty">
-                No dictionaries found. Install one (e.g. <code>hunspell-en-us</code>), then Rescan.
-              </div>
+              <div class="spellcheck-empty"><Rich message={msg("settings-ui-no-dictionaries-found-install-one-e-g-hunspell-en")} /></div>
             </Show>
-            <button class="spellcheck-rescan" type="button" onClick={() => void loadDictionaries()}>
-              ↻ Rescan
-            </button>
+            <button class="spellcheck-rescan" type="button" onClick={() => void loadDictionaries()}>{t("settings-ui-rescan")}</button>
           </div>
         </Field>
       </Show>
 
       <AdvancedSection tab="editor" forceOpen={advancedMatch("editor", props.search)}>
         <Field
-          label="Link autocomplete default"
-          hint="Controls Enter for non-exact [[name and #name completion. OG adaptive (default) picks the shortest lexical strict-prefix match and puts Create immediately after it; fuzzy-only matches leave Create first. Prefer existing always leads with a match; Prefer exactly what I typed leads with Create. Exact existing names always select the existing page."
+          label={t("settings-ui-link-autocomplete-default")}
+          hint={t("settings-ui-controls-enter-for-non-exact-name-and-name-completion")}
         >
           <select
-            aria-label="Link autocomplete default"
+            aria-label={t("settings-ui-link-autocomplete-default")}
             value={linkAutocompletePolicy()}
             onChange={(event) => setLinkAutocompletePolicy(event.currentTarget.value as LinkAutocompletePolicy)}
           >
-            <option value="adaptive">OG adaptive</option>
-            <option value="existing">Prefer existing</option>
-            <option value="typed">Prefer exactly what I typed</option>
+            <option value="adaptive">{t("settings-ui-og-adaptive")}</option>
+            <option value="existing">{t("settings-ui-prefer-existing")}</option>
+            <option value="typed">{t("settings-ui-prefer-exactly-what-i-typed")}</option>
           </select>
         </Field>
 
         <Field
-          label="Switch to an already-open tab when navigating"
-          hint="Plain navigation to a page, journal, or exact zoomed/file-pinned view focuses the matching tab if one is already open. Middle-click and explicit Open in new tab still create another tab."
+          label={t("settings-ui-switch-to-an-already-open-tab-when-navigating")}
+          hint={t("settings-ui-plain-navigation-to-a-page-journal-or-exact-zoomed")}
         >
           <Toggle on={navReuseTabs()} onClick={() => setNavReuseTabs(!navReuseTabs())} />
         </Field>
@@ -783,8 +750,8 @@ function EditorTab(props: { search: string }): JSX.Element {
         </Field>
 
         <Field
-          label="Learn Ctrl+K choices"
-          hint="After you deliberately open the same result more than once for a query, Ctrl+K may prefer it only among equally strong matches. History stays on this device and in this graph; saved searches and queries remain deterministic."
+          label={t("settings-ui-learn-ctrl-k-choices")}
+          hint={t("settings-ui-after-you-deliberately-open-the-same-result-more-than")}
         >
           <>
             <Toggle
@@ -796,27 +763,25 @@ function EditorTab(props: { search: string }): JSX.Element {
               class="og-revert"
               onClick={() => {
                 resetLauncherRanking(graphMeta()?.root ?? "");
-                pushToast("Ctrl+K ranking reset for this graph");
+                pushToast(msg("settings-ui-ctrl-k-ranking-reset-for-this-graph"));
               }}
-            >
-              Reset ranking
-            </button>
+            >{t("settings-ui-reset-ranking")}</button>
           </>
         </Field>
 
         <OgField
-        label="Copy a parent block's sub-blocks"
-        hint="When you copy/cut a selected block that has children: ON copies the whole sub-tree; OFF copies only the block(s) you actually selected. Tine defaults to OFF because selecting just the parent and getting its entire tree is surprising."
-        ogNote="always copies a selected block's whole sub-tree."
+        label={t("settings-ui-copy-a-parent-block-s-sub-blocks")}
+        hint={t("settings-ui-when-you-copy-cut-a-selected-block-that-has")}
+        ogNote={msg("settings-og-copy-subtree")}
         ogValue={true}
         on={copyIncludeSubtree()}
         onToggle={() => setCopyIncludeSubtree(!copyIncludeSubtree())}
       />
 
         <OgField
-        label="Strip collapsed:: when copying"
-        hint="A collapsed block carries a hidden collapsed:: true property (view state, not content). Tine defaults to ON (drops it from copied text for a cleaner paste); OFF keeps it. (id:: is always stripped from copies, like Logseq.)"
-        ogNote="keeps collapsed:: in the copied text (only id:: is stripped)."
+        label={t("settings-ui-strip-collapsed-when-copying")}
+        hint={t("settings-ui-a-collapsed-block-carries-a-hidden-collapsed-true-property")}
+        ogNote={msg("settings-og-copy-collapsed")}
         ogValue={false}
         on={copyStripCollapsed()}
         onToggle={() => setCopyStripCollapsed(!copyStripCollapsed())}
@@ -824,9 +789,9 @@ function EditorTab(props: { search: string }): JSX.Element {
       </AdvancedSection>
 
       <OgField
-        label="Click a block reference to zoom in"
-        hint="Plain-clicking an inline ((block reference)): ON zooms into the referenced block (opens it as its own page, like Logseq); OFF (Tine default) scrolls to it in place and flashes it. Shift-click always opens it in the sidebar."
-        ogNote="zooms into the referenced block on click."
+        label={t("settings-ui-click-a-block-reference-to-zoom-in")}
+        hint={t("settings-ui-plain-clicking-an-inline-block-reference-on-zooms-into")}
+        ogNote={msg("settings-og-reference-zoom")}
         ogValue={true}
         on={refClickZoom()}
         onToggle={() => setRefClickZoom(!refClickZoom())}
@@ -852,26 +817,18 @@ function JournalsTab(props: { search: string }): JSX.Element {
   return (
     <>
       <Field
-        label="Journal date format"
+        label={t("settings-ui-journal-date-format")}
         hint={
-          <>
-            How journal dates are displayed and how new <code>[[date]]</code> titles are written.
-            Display-only — your journal <em>file names</em> are untouched and existing journals keep
-            working. Saved to <code>:journal/page-title-format</code>.
-          </>
+          <><Rich message={msg("settings-ui-how-journal-dates-are-displayed-and-how-new-date")} /></>
         }
       >
         <DateFormatSelect />
       </Field>
 
       <Field
-        label="First day of week"
+        label={t("settings-ui-first-day-of-week")}
         hint={
-          <>
-            Starting column of the calendar and the scheduled/deadline date
-            pickers. Saved to <code>:start-of-week</code> in <code>config.edn</code>
-            (Logseq’s setting), so it travels with the graph.
-          </>
+          <><Rich message={msg("settings-ui-starting-column-of-the-calendar-and-the-scheduled-deadline")} /></>
         }
       >
         <select
@@ -880,37 +837,37 @@ function JournalsTab(props: { search: string }): JSX.Element {
           onChange={(e) => changeStartOfWeek(Number(e.currentTarget.value))}
         >
           {/* Logseq convention: 0=Monday … 6=Sunday. */}
-          <option value="0">Monday</option>
-          <option value="1">Tuesday</option>
-          <option value="2">Wednesday</option>
-          <option value="3">Thursday</option>
-          <option value="4">Friday</option>
-          <option value="5">Saturday</option>
-          <option value="6">Sunday</option>
+          <option value="0">{t("settings-ui-monday")}</option>
+          <option value="1">{t("settings-ui-tuesday")}</option>
+          <option value="2">{t("settings-ui-wednesday")}</option>
+          <option value="3">{t("settings-ui-thursday")}</option>
+          <option value="4">{t("settings-ui-friday")}</option>
+          <option value="5">{t("settings-ui-saturday")}</option>
+          <option value="6">{t("settings-ui-sunday")}</option>
         </select>
       </Field>
 
       <Field
-        label="Show carry-over buttons"
-        hint="Show the carry buttons next to journal titles. Off → use the right-click menu instead."
+        label={t("settings-ui-show-carry-over-buttons")}
+        hint={t("settings-ui-show-the-carry-buttons-next-to-journal-titles-off")}
       >
         <Toggle on={showCarryButtons()} onClick={() => setShowCarryButtons(!showCarryButtons())} />
       </Field>
 
       <Field
-        label="Carry-over keeps context"
-        hint="Move whole blocks that contain an open task (on) vs. pull out just the task (off)."
+        label={t("settings-ui-carry-over-keeps-context")}
+        hint={t("settings-ui-move-whole-blocks-that-contain-an-open-task-on")}
       >
         <Toggle on={carryKeepsContext()} onClick={() => setCarryKeepsContext(!carryKeepsContext())} />
       </Field>
 
-      <Field label="Carry-over header" hint="Add a “Carried over” heading above carried tasks.">
+      <Field label={t("settings-ui-carry-over-header")} hint={t("settings-ui-add-a-carried-over-heading-above-carried-tasks")}>
         <Toggle on={carryHeader()} onClick={() => setCarryHeader(!carryHeader())} />
       </Field>
 
       <Field
-        label="Carry “last N days”"
-        hint="N for the “Carry last N days” button on today’s journal (and the Ctrl-K command)."
+        label={t("settings-ui-carry-last-n-days")}
+        hint={t("settings-ui-n-for-the-carry-last-n-days-button-on")}
       >
         <input
           type="number"
@@ -923,36 +880,24 @@ function JournalsTab(props: { search: string }): JSX.Element {
       </Field>
 
       <Field
-        label="Task workflow"
+        label={t("settings-ui-task-workflow")}
         hint={
-          <>
-            Which markers Tab/⌘↵ cycle through and what new tasks use. Saved to{" "}
-            <code>:preferred-workflow</code> in <code>config.edn</code>, so it travels with the
-            graph.
-          </>
+          <><Rich message={msg("settings-ui-which-markers-tab-cycle-through-and-what-new-tasks")} /></>
         }
       >
         <div class="settings-segment">
           <button
             classList={{ active: workflow() === "todo" }}
             onClick={() => changeWorkflow("todo")}
-          >
-            TODO / DOING
-          </button>
-          <button classList={{ active: workflow() === "now" }} onClick={() => changeWorkflow("now")}>
-            NOW / LATER
-          </button>
+          >{t("settings-ui-todo-doing")}</button>
+          <button classList={{ active: workflow() === "now" }} onClick={() => changeWorkflow("now")}>{t("settings-ui-now-later")}</button>
         </div>
       </Field>
 
       <Field
-        label="Time tracking"
+        label={t("settings-ui-time-tracking")}
         hint={
-          <>
-            Marker transitions write OG-compatible <code>:LOGBOOK:</code> CLOCK rows. Saved to{" "}
-            <code>:feature/enable-timetracking?</code>; seconds mode follows{" "}
-            <code>:logbook/settings</code> and is {graphMeta()?.logbook_with_second_support ?? true ? "on" : "off"}.
-          </>
+          <><Rich message={msg("settings-ui-marker-transitions-write-og-compatible-logbook-clock-rows-saved", { choice1: graphMeta()?.logbook_with_second_support ?? true ? "yes" : "no" })} /></>
         }
       >
         <Toggle on={timetrackingEnabled()} onClick={() => changeTimetrackingEnabled(!timetrackingEnabled())} />
@@ -962,20 +907,17 @@ function JournalsTab(props: { search: string }): JSX.Element {
 
       <AdvancedSection tab="journals" forceOpen={advancedMatch("journals", props.search)}>
         <Field
-          label="Quick-capture Enter key"
-          hint={`In the quick-capture window: ON → Enter files the capture. OFF → Enter starts a new block; the “Quick-capture: file to today’s journal” shortcut files (default Ctrl+Shift+Enter, remappable under Keyboard shortcuts). Ctrl+Enter stays free for cycling the task marker.`}
+          label={t("settings-ui-quick-capture-enter-key")}
+          hint={t("settings-ui-in-the-quick-capture-window-on-enter-files-the")}
         >
           <Toggle on={captureEnterFiles()} onClick={toggleCaptureEnter} />
         </Field>
       </AdvancedSection>
 
       <Field
-        label="Agenda window"
+        label={t("settings-ui-agenda-window")}
         hint={
-          <>
-            Today’s “Scheduled &amp; Deadline” list shows items whose scheduled/deadline date is
-            within this window; older/further ones are hidden.
-          </>
+          <>{t("settings-ui-today-s-scheduled-deadline-list-shows-items-whose-scheduled")}</>
         }
       >
         <input
@@ -986,7 +928,7 @@ function JournalsTab(props: { search: string }): JSX.Element {
           value={agendaDaysBack()}
           onChange={(e) => setAgendaDaysBack(Number(e.currentTarget.value))}
         />
-        <span class="settings-hint">days back ·</span>
+        <span class="settings-hint">{t("settings-ui-days-back")}</span>
         <input
           type="number"
           min="0"
@@ -996,7 +938,7 @@ function JournalsTab(props: { search: string }): JSX.Element {
           disabled={graphMeta()?.scheduled_future_days != null}
           onChange={(e) => setAgendaDaysAhead(Number(e.currentTarget.value))}
         />
-        <span class="settings-hint">{graphMeta()?.scheduled_future_days != null ? "days ahead · set by :scheduled/future-days in config.edn" : "days ahead"}</span>
+        <span class="settings-hint">{t("settings-agenda-days-ahead", { source: graphMeta()?.scheduled_future_days != null ? "graph" : "device" })}</span>
         <SectionsPageNote />
       </Field>
     </>
@@ -1068,7 +1010,7 @@ function BackupsTab(): JSX.Element {
       if (result.kind === "stale") return;
       void refresh(); // a lower cap prunes immediately on the Rust side
     } catch (e) {
-      pushToast(`Couldn't save: ${String(e)}`, "error");
+      pushToast(msg("settings-ui-couldn-t-save", { value1: String(e) }), "error");
     }
   };
 
@@ -1079,13 +1021,9 @@ function BackupsTab(): JSX.Element {
 
   return (
     <>
-      <div class="settings-hint settings-block">
-        Tine snapshots your graph’s markdown to a local folder each time it opens
-        (outside the graph, so Syncthing never sees it). A safety net against a bad
-        write — independent of OG Logseq’s own backups.
-      </div>
+      <div class="settings-hint settings-block">{t("settings-ui-tine-snapshots-your-graph-s-markdown-to-a-local")}</div>
 
-      <Field label="Snapshots to keep" hint="Oldest snapshots beyond this are pruned.">
+      <Field label={t("settings-ui-snapshots-to-keep")} hint={t("settings-ui-oldest-snapshots-beyond-this-are-pruned")}>
         <input
           type="number"
           min="1"
@@ -1099,28 +1037,22 @@ function BackupsTab(): JSX.Element {
       <AlwaysAskSetting />
 
       <div class="settings-section">
-        Available snapshots
+        {t("settings-available-snapshots")}
         <button
           class="settings-btn"
           style={{ "margin-left": "10px" }}
           disabled={loading() || busy()}
           onClick={() => void refresh()}
-        >
-          Refresh
-        </button>
+        >{t("settings-ui-refresh")}</button>
       </div>
       <Show when={loading()}>
-        <div class="settings-hint settings-block" role="status">
-          Loading snapshot settings…
-        </div>
+        <div class="settings-hint settings-block" role="status">{t("settings-ui-loading-snapshot-settings")}</div>
       </Show>
       <Show when={loadError()}>
         {(error) => (
           <div class="settings-hint settings-block" role="alert">
-            Couldn&apos;t load backup settings: {error()}
-            <button class="settings-btn" style={{ "margin-left": "10px" }} onClick={() => void refresh()}>
-              Retry
-            </button>
+            {t("settings-backup-load-failed", { error: error() })}
+            <button class="settings-btn" style={{ "margin-left": "10px" }} onClick={() => void refresh()}>{t("settings-ui-retry")}</button>
           </div>
         )}
       </Show>
@@ -1128,7 +1060,7 @@ function BackupsTab(): JSX.Element {
         when={ready() && list().length}
         fallback={
           <Show when={ready()}>
-            <div class="settings-hint settings-block">No snapshots yet.</div>
+            <div class="settings-hint settings-block">{t("settings-ui-no-snapshots-yet")}</div>
           </Show>
         }
       >
@@ -1137,10 +1069,8 @@ function BackupsTab(): JSX.Element {
             {(b) => (
               <div class="settings-backup-row">
                 <span class="settings-backup-when">{fmtStamp(b.stamp)}</span>
-                <span class="settings-backup-files mono">{b.files} files</span>
-                <button class="settings-btn" disabled={!ready() || busy()} onClick={() => void restore(b)}>
-                  Restore
-                </button>
+                <span class="settings-backup-files mono">{t("settings-ui-files-2", { files: b.files })}</span>
+                <button class="settings-btn" disabled={!ready() || busy()} onClick={() => void restore(b)}>{t("settings-ui-restore")}</button>
               </div>
             )}
           </For>
@@ -1161,7 +1091,7 @@ function BackupsTab(): JSX.Element {
 // Duplicate journal days expose per-file reconcile actions.
 function JournalConflictsPanel(): JSX.Element {
   void refreshJournalConflicts(); // refresh when the Backups tab opens
-  const reconcile = async (op: () => Promise<void>, ok: string) => {
+  const reconcile = async (op: () => Promise<void>, ok: Msg) => {
     const owner = bindingOwner();
     try {
       const result = await writeOwned(owner, op());
@@ -1169,17 +1099,16 @@ function JournalConflictsPanel(): JSX.Element {
       pushToast(ok, "success");
       await refreshJournalConflicts();
     } catch (e) {
-      pushToast(`Couldn’t do that: ${String(e)}`, "error");
+      pushToast(msg("settings-ui-couldn-t-do-that", { value1: String(e) }), "error");
     }
   };
   const trashFile = async (name: string) => {
     const owner = bindingOwner();
     const confirmed = await readOwned(owner, backend().confirm(
-        `Move the journal file “${name}” to the trash?\n\n` +
-          `It's a duplicate of another file for the same day. It moves to logseq/.tine-trash (recoverable).`
+        t("settings-ui-move-the-journal-file-to-the-trash-it-s", { name: name })
       ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
-    await writeOwned(owner, reconcile(() => backend().trashJournalFile(name, "delete-page"), `Moved ${name} to trash`));
+    await writeOwned(owner, reconcile(() => backend().trashJournalFile(name, "delete-page"), msg("settings-ui-moved-to-trash", { name })));
   };
   const openFileRow = (file: JournalFile, title: string) => {
     openFile(file.path, title, "journal");
@@ -1191,17 +1120,8 @@ function JournalConflictsPanel(): JSX.Element {
   };
   return (
     <Show when={journalConflicts().length}>
-      <div class="settings-section" style={{ "margin-top": "18px" }}>
-        Duplicate journal days
-      </div>
-      <div class="settings-hint settings-block">
-        These days have more than one file (e.g. a <code>2026_06_26.org</code> and a
-        title-named <code>Friday, 26-06-2026.org</code>) — usually left over from changing the
-        date format. <strong>Open</strong> reaches a file directly (it's editable and saves back
-        to itself); <strong>Merge</strong> folds a stray into the canonical day;{" "}
-        <strong>Rename</strong> turns it into a normal page; <strong>Trash</strong> removes the
-        redundant one (recoverable).
-      </div>
+      <div class="settings-section" style={{ "margin-top": "18px" }}>{t("settings-ui-duplicate-journal-days")}</div>
+      <div class="settings-hint settings-block"><Rich message={msg("settings-ui-these-days-have-more-than-one-file-e-g")} /></div>
       <For each={journalConflicts()}>
         {(c) => {
           const canonical = c.files.find((f) => f.canonical);
@@ -1217,11 +1137,11 @@ function JournalConflictsPanel(): JSX.Element {
                     onOpen={() => openFileRow(f, c.title)}
                     onMerge={!f.canonical && canonical ? () => void reconcile(
                       () => backend().mergePages(f.path, canonical.path, ["insert-blocks", "delete-page"]),
-                      `Merged ${f.name} into ${canonical.name}`
+                      msg("settings-journal-file-merged", { name: f.name, canonical: canonical.name })
                     ) : undefined}
                     onRename={(n) => void reconcile(
                       () => backend().renameFileToPage(f.path, n, "rename-page"),
-                      `Renamed ${f.name} → ${n}`
+                      msg("settings-journal-file-renamed", { name: f.name, next: n })
                     )}
                     onTrash={() => void trashFile(f.name)}
                   />
@@ -1243,19 +1163,10 @@ function ConflictOverviewPointer(): JSX.Element {
   void refreshSyncConflicts(); // refresh when the Backups tab opens
   return (
     <Show when={pendingConflictCount()}>
-      <div class="settings-section" style={{ "margin-top": "18px" }}>
-        Conflicts
-      </div>
-      <div class="settings-hint settings-block">
-        {pendingConflictCount()} {pendingConflictCount() === 1 ? "item needs" : "items need"} a decision: sync conflict copies or
-        version-control merge markers. The Conflicts page lists them, with{" "}
-        <strong>Discard copy</strong> for sync copies; the <strong>N conflicts</strong> badge in the
-        sidebar opens it too.
-      </div>
+      <div class="settings-section" style={{ "margin-top": "18px" }}>{t("settings-ui-conflicts")}</div>
+      <div class="settings-hint settings-block"><Rich message={msg("settings-conflicts-summary", { count: pendingConflictCount() })} /></div>
       <span class="journal-conflict-actions">
-        <button class="settings-btn" onClick={() => { openConflicts(); closeSettings(); }}>
-          Open conflicts
-        </button>
+        <button class="settings-btn" onClick={() => { openConflicts(); closeSettings(); }}>{t("settings-ui-open-conflicts")}</button>
       </span>
     </Show>
   );
@@ -1283,19 +1194,11 @@ function FilesTab(props: { search: string }): JSX.Element {
   };
   return (
     <>
-      <div class="settings-section">Asset names</div>
+      <div class="settings-section">{t("settings-ui-asset-names")}</div>
       <Field
-        label="New asset filename"
+        label={t("settings-ui-new-asset-filename")}
         hint={
-          <>
-            How files are named when you paste, drag, or insert media into{" "}
-            <code>assets/</code>. Tokens: <code>%assetname</code> (the original file’s name),{" "}
-            <code>%ext</code>, <code>%yyyymmdd</code>, <code>%hhmmss</code> — also granular{" "}
-            <code>%yyyy</code> <code>%MM</code> <code>%dd</code> <code>%HH</code> <code>%mm</code>{" "}
-            <code>%ss</code>. Anything else is literal. A clipboard paste has no name, so{" "}
-            <code>%assetname</code> falls back to a timestamp. Device-local; Logseq keeps the
-            original name for dragged files.
-          </>
+          <><Rich message={msg("settings-ui-how-files-are-named-when-you-paste-drag-or")} /></>
         }
       >
         <input
@@ -1311,52 +1214,33 @@ function FilesTab(props: { search: string }): JSX.Element {
           <button
             classList={{ active: assetNameFormat() === DEFAULT_ASSET_NAME_FORMAT }}
             onClick={() => setAssetNameFormat(DEFAULT_ASSET_NAME_FORMAT)}
-          >
-            Original name
-          </button>
+          >{t("settings-ui-original-name")}</button>
           <button
             classList={{ active: assetNameFormat() === STAMPED_ASSET_NAME_FORMAT }}
             onClick={() => setAssetNameFormat(STAMPED_ASSET_NAME_FORMAT)}
-          >
-            Date + name
-          </button>
+          >{t("settings-ui-date-name")}</button>
         </div>
         <div class="asset-name-preview">
-          <div>
-            Drag <code class="mono">Holiday Photo.JPG</code> →{" "}
-            <code class="mono">{dragExample()}</code>
-          </div>
-          <div>
-            Paste an image → <code class="mono">{pasteExample()}</code>
-          </div>
+          <div><Rich message={msg("settings-ui-drag-holiday-photo-jpg", { value1: dragExample() })} slots={{ "slot1": (children) => <code class="mono">{children}</code>, "slot2": (children) => <code class="mono">{children}</code> }} /></div>
+          <div><Rich message={msg("settings-ui-paste-an-image", { value1: pasteExample() })} slots={{ "slot1": (children) => <code class="mono">{children}</code> }} /></div>
         </div>
       </div>
 
       <Field
-        label="Watch for external edits"
+        label={t("settings-ui-watch-for-external-edits")}
         hint={
-          <>
-            How Tine notices changes made outside it (OG Logseq, Syncthing, an
-            editor). <b>Live</b> uses the OS file watcher (inotify) — no idle CPU
-            wakeups; the right choice on a normal local disk. <b>Poll</b> rescans
-            every 3 seconds — only needed on filesystems where inotify is
-            unreliable (some network/NFS mounts). Saved per device.
-          </>
+          <><Rich message={msg("settings-ui-how-tine-notices-changes-made-outside-it-og-logseq")} slots={{ "slot1": (children) => <b>{children}</b>, "slot2": (children) => <b>{children}</b> }} /></>
         }
       >
         <div class="settings-segment">
           <button
             classList={{ active: watchMode() === "inotify" }}
             onClick={() => changeWatchMode("inotify")}
-          >
-            Live (inotify)
-          </button>
+          >{t("settings-ui-live-inotify")}</button>
           <button
             classList={{ active: watchMode() === "poll" }}
             onClick={() => changeWatchMode("poll")}
-          >
-            Poll (3s)
-          </button>
+          >{t("settings-ui-poll-3s")}</button>
         </div>
       </Field>
 
@@ -1380,27 +1264,20 @@ function MediaEditorsSection(): JSX.Element {
       const { command, applied } = await detectMediaEditorCommand(ed);
       if (!applied) return;
       if (command) {
-        pushToast(`Found: ${command}`, "success");
+        pushToast(msg("settings-ui-found", { command: command }), "success");
       } else {
-        pushToast("Couldn’t find it — set the command manually.", "error");
+        pushToast(msg("settings-ui-couldn-t-find-it-set-the-command-manually"), "error");
       }
     } catch {
-      pushToast("Autodetect failed.", "error");
+      pushToast(msg("settings-ui-autodetect-failed"), "error");
     } finally {
       setDetecting(null);
     }
   };
   return (
     <>
-      <div class="settings-section">Diagram editors</div>
-      <div class="settings-hint" style={{ "margin-bottom": "8px" }}>
-        Edit diagram assets in your own installed app. A <code class="mono">/drawio</code> command
-        creates a new editable <code>.drawio.svg</code>; hovering any matching image shows an
-        “Edit in …” button. Leave a command blank to use the system default opener. A{" "}
-        <code class="mono">{"{}"}</code> in the command is replaced by the file path (otherwise it’s
-        appended). Wrap a program or argument containing spaces in double quotes. Desktop only;
-        device-local.
-      </div>
+      <div class="settings-section">{t("settings-ui-diagram-editors")}</div>
+      <div class="settings-hint" style={{ "margin-bottom": "8px" }}><Rich message={msg("settings-ui-edit-diagram-assets-in-your-own-installed-app-a")} slots={{ "slot1": (children) => <code class="mono">{children}</code>, "slot2": (children) => <code class="mono">{children}</code> }} /></div>
       <For each={MEDIA_EDITORS}>
         {(ed) => (
           <Field label={ed.settingLabel}>
@@ -1408,7 +1285,7 @@ function MediaEditorsSection(): JSX.Element {
               <input
                 type="text"
                 class="settings-input mono"
-                placeholder="system default opener"
+                placeholder={t("settings-ui-system-default-opener")}
                 value={mediaEditorCommand(ed.settingKey)}
                 spellcheck={false}
                 onChange={(e) => setMediaEditorCommand(ed.settingKey, e.currentTarget.value)}
@@ -1419,7 +1296,7 @@ function MediaEditorsSection(): JSX.Element {
                   disabled={detecting() === ed.id}
                   onClick={() => void autodetect(ed)}
                 >
-                  {detecting() === ed.id ? "Detecting…" : "Autodetect"}
+                  {detecting() === ed.id ? t("settings-detecting") : t("settings-autodetect")}
                 </button>
               </Show>
             </div>
@@ -1445,15 +1322,10 @@ function AssetsTab(): JSX.Element {
   const total = () => list().reduce((s, a) => s + a.size, 0);
   const protectedTrashCount = () =>
     trashInfo().pages + trashInfo().journals + trashInfo().conflicts + trashInfo().other;
-  const protectedTrashLabel = () =>
-    [
-      trashInfo().pages ? `${trashInfo().pages} page${trashInfo().pages === 1 ? "" : "s"}` : "",
-      trashInfo().journals ? `${trashInfo().journals} journal${trashInfo().journals === 1 ? "" : "s"}` : "",
-      trashInfo().conflicts ? `${trashInfo().conflicts} conflict${trashInfo().conflicts === 1 ? "" : "s"}` : "",
-      trashInfo().other ? `${trashInfo().other} other` : "",
-    ]
-      .filter(Boolean)
-      .join(", ");
+  const protectedTrashArgs = () => {
+    const { pages, journals, conflicts, other } = trashInfo();
+    return { pages, journals, conflicts, other, beforeJournals: pages ? 1 : 0, beforeConflicts: pages || journals ? 1 : 0, beforeOther: pages || journals || conflicts ? 1 : 0 };
+  };
 
   const refreshTrash = async () => {
     const owner = latestOwner(requests, "trash-stats", graphOwner(() => alive));
@@ -1471,7 +1343,7 @@ function AssetsTab(): JSX.Element {
       // (and a just-inserted one counts as referenced).
       if (!(await flushAll())) {
         if (!owner()) return;
-        pushToast("Some pages couldn't be saved — resolve conflicts before scanning assets.", "error");
+        pushToast(msg("settings-ui-some-pages-couldn-t-be-saved-resolve-conflicts-before"), "error");
         return;
       }
       const assets = await readOwned(owner, backend().listOrphanAssets());
@@ -1491,7 +1363,7 @@ function AssetsTab(): JSX.Element {
     try {
       await readOwned(owner, backend().openAsset(a.name, binding.backendGeneration));
     } catch (e) {
-      pushToast(`Couldn’t open ${a.name}: ${String(e)}`, "error");
+      pushToast(msg("settings-ui-couldn-t-open", { name: a.name, value1: String(e) }), "error");
     }
   };
   const trash = async (a: AssetInfo) => {
@@ -1505,14 +1377,14 @@ function AssetsTab(): JSX.Element {
       if (result.value === "referenced") {
         // A page started using the file after the scan (typed outcome, GH #623): keep it.
         if (alive) setOrphanScan(list().filter((x) => x.name !== a.name));
-        pushToast(`${a.name} is used by a page now, so it was kept. Scan again to refresh the list.`, "info");
+        pushToast(msg("settings-ui-is-used-by-a-page-now-so-it-was", { name: a.name }), "info");
         return;
       }
       if (alive) setOrphanScan(list().filter((x) => x.name !== a.name));
-      pushToast(`Moved ${a.name} to trash`, "success");
+      pushToast(msg("settings-ui-moved-to-trash", { name: a.name }), "success");
       await refreshTrash();
     } catch (e) {
-      pushToast(`Couldn’t trash: ${String(e)}`, "error");
+      pushToast(msg("settings-ui-couldn-t-trash", { value1: String(e) }), "error");
     }
   };
   const emptyTrash = async () => {
@@ -1521,8 +1393,7 @@ function AssetsTab(): JSX.Element {
     const info = trashInfo();
     if (!info.count) return;
     const confirmed = await readOwned(owner, backend().confirm(
-        `Permanently delete ${info.count} asset file${info.count === 1 ? "" : "s"} (${fmtSize(info.bytes)}) in the trash?\n\n` +
-          `This cannot be undone. Page, journal, and conflict recovery files in logseq/.tine-trash will be kept.`
+        t("settings-asset-trash-confirmation", { count: info.count, size: fmtSize(info.bytes) })
       ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
@@ -1530,60 +1401,47 @@ function AssetsTab(): JSX.Element {
       if (result.kind === "stale") return;
       const n = result.value;
       setTrashInfo((t) => ({ ...t, count: 0, bytes: 0 }));
-      pushToast(`Emptied asset trash (${n} file${n === 1 ? "" : "s"})`, "success");
+      pushToast(msg("settings-asset-trash-emptied", { count: n }), "success");
     } catch (e) {
-      pushToast(`Couldn’t empty trash: ${String(e)}`, "error");
+      pushToast(msg("settings-ui-couldn-t-empty-trash", { value1: String(e) }), "error");
     }
   };
   return (
     <>
       <div class="settings-section">
-        Orphaned media
+        {t("settings-orphaned-media")}
         <button class="settings-btn" style={{ "margin-left": "10px" }} disabled={busy()} onClick={() => void refresh()}>
-          {busy() ? "Scanning…" : scanned() ? "Rescan" : "Scan for orphans"}
+          {busy() ? t("settings-scanning") : scanned() ? t("settings-rescan") : t("settings-scan-for-orphans")}
         </button>
         <Show when={trashInfo().count > 0}>
           <button
             class="settings-btn settings-btn-danger"
             style={{ "margin-left": "8px" }}
             onClick={() => void emptyTrash()}
-            title="Permanently delete asset files in logseq/.tine-trash"
-          >
-            Empty asset trash ({trashInfo().count})
-          </button>
+            title={t("settings-ui-permanently-delete-asset-files-in-logseq-tine-trash")}
+          >{t("settings-ui-empty-asset-trash", { count: trashInfo().count })}</button>
         </Show>
       </div>
       <Show when={protectedTrashCount() > 0}>
-        <div class="settings-hint settings-block">
-          Protected recovery trash kept: {protectedTrashLabel()}
-        </div>
+        <div class="settings-hint settings-block">{t("settings-trash-protected-summary", protectedTrashArgs())}</div>
       </Show>
-      <div class="settings-hint settings-block">
-        Files in <code>assets/</code> that no block links to. Deleting a block never
-        deletes its media (a safety net), so unused files can accumulate — review and
-        trash them here. Trashed files move to <code>logseq/.tine-trash</code> (recoverable);
-        click a name to open it in your default app.
-      </div>
+      <div class="settings-hint settings-block"><Rich message={msg("settings-ui-files-in-assets-that-no-block-links-to-deleting")} /></div>
       <Show when={scanned()}>
         <Show
           when={list().length}
-          fallback={<div class="settings-hint settings-block">No orphaned media — every asset is referenced. 🎉</div>}
+          fallback={<div class="settings-hint settings-block">{t("settings-ui-no-orphaned-media-every-asset-is-referenced")}</div>}
         >
-          <div class="settings-hint settings-block">
-            {list().length} orphan{list().length === 1 ? "" : "s"} · {fmtSize(total())} reclaimable
-          </div>
+          <div class="settings-hint settings-block">{t("settings-orphaned-assets-summary", { count: list().length, size: fmtSize(total()) })}</div>
           <div class="settings-backups">
             <For each={list()}>
               {(a) => (
                 <div class="settings-asset-row">
-                  <button class="settings-asset-name mono" title="Open in the default app" onClick={() => void open(a)}>
+                  <button class="settings-asset-name mono" title={t("settings-ui-open-in-the-default-app")} onClick={() => void open(a)}>
                     {a.name}
                   </button>
                   <span class="settings-asset-date">{fmtDate(a.modified)}</span>
                   <span class="settings-backup-files mono">{fmtSize(a.size)}</span>
-                  <button class="settings-btn" onClick={() => void trash(a)}>
-                    Trash
-                  </button>
+                  <button class="settings-btn" onClick={() => void trash(a)}>{t("settings-ui-trash")}</button>
                 </div>
               )}
             </For>

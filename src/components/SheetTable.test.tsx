@@ -1,9 +1,9 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
-import { createSignal, type JSX } from "solid-js";
+import { createMemo, createSignal, untrack, type ComponentProps, type JSX } from "solid-js";
 import { Block, SurfaceContext } from "./Block";
 import { ContextMenu } from "./ContextMenu";
-import { __sheetTableTestHooks, SheetTable } from "./SheetTable";
+import { __sheetTableTestHooks, SheetTable as ActualSheetTable } from "./SheetTable";
 import { DatePicker } from "./DatePicker";
 import { initParser } from "../render/parse";
 import { blockProperty, pageByName, readPageProperty, redo, resetStore, setRaw, undo } from "../document";
@@ -23,8 +23,27 @@ import { editingId, editingOwner } from "../editorController";
 import type { RefGroup } from "../types";
 import { installKeybindings } from "../keybindings";
 import { setToasts, toasts } from "../toasts";
+import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
+const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
+vi.mock("../document/host/wiring", () => new Proxy({}, {
+  get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty
+    : key === "persistTransfer" ? saveFixture.persistTransfer : saveFixture.actual?.[key as string],
+  has: () => true,
+}));
+
+// Directly supplied query groups stand in for newly adopted engine answers.
+// Stamp only when the fixture supplies a groups object, not on epoch changes.
+function SheetTable(props: ComponentProps<typeof ActualSheetTable>): JSX.Element {
+  const groups = createMemo(() => {
+    const next = props.groups;
+    if (next) untrack(() => adoptResults(next, captureResultsTicket()));
+    return next;
+  });
+  return <ActualSheetTable {...props} groups={groups()} />;
+}
 
 beforeAll(async () => {
+  saveFixture.actual = await vi.importActual("../document/host/wiring");
   await initParser();
 });
 
@@ -413,6 +432,7 @@ describe("SheetTable", () => {
     const target = "live-target";
     const blocks = Array.from({ length: 100_000 }, (_, i) => ({
       id: i === 0 ? target : `q${i}`,
+      has_id: false, // Rust query projection's parser-owned absence fact
       raw: `Row ${i}`,
       collapsed: false,
       children: [],
@@ -1259,7 +1279,8 @@ describe("SheetTable", () => {
     keydown(input!, "Enter");
 
     expect(doc.byId.r1.raw).toBe("Task\nbody line\nowner:: old");
-    expect(toasts().some((toast) => toast.kind === "error" && toast.message.includes("typed value"))).toBe(true);
+    expect(toasts().some((toast) => toast.kind === "error")).toBe(true);
+    expect(root.querySelector<HTMLInputElement>("input.sheet-prop-input")?.value).toBe("typed value");
     dispose();
   });
 

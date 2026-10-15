@@ -1,3 +1,4 @@
+import { openCalmQuery } from "../tests/calmQueryActions";
 // GH #615 current-base verification. The shared Rust printer's anchor round-trip
 // is pinned by an_anchor_the_og_form_would_lose_is_not_og_expressible.
 // These boundary fixtures exercise the actual builder/save/render interaction;
@@ -16,7 +17,19 @@ import { resetQueryTextOpenForTests } from "../navSettings";
 import type { ParsedQuery } from "../editor/queryIr";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 
-beforeAll(initParser);
+// These component fixtures do not bind a page host. Their source edits update
+// the working set; native coverage exercises actual publication and the epoch
+// suite separately pins refusal while publication is pending.
+const saveFixture = vi.hoisted(() => ({ actual: null as Record<string, unknown> | null, markDirty: vi.fn(), persistTransfer: vi.fn(async () => true) }));
+vi.mock("../document/host/wiring", () => new Proxy({}, {
+  get: (_target, key) => key === "then" ? undefined : key === "markDirty" ? saveFixture.markDirty
+    : key === "persistTransfer" ? saveFixture.persistTransfer : saveFixture.actual?.[key as string],
+  has: () => true,
+}));
+beforeAll(async () => {
+  saveFixture.actual = await vi.importActual("../document/host/wiring");
+  await initParser();
+});
 beforeEach(() => {
   resetQueryTextOpenForTests(false);
   // Exact empty-query fixtures, rather than a second parser or printer.
@@ -74,8 +87,8 @@ for (const entry of ["slash command", "existing OG query", "existing TQL query"]
         command.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
         await vi.waitFor(() => expect(editingId()).toBeNull());
       } else {
-        await vi.waitFor(() => expect(host.querySelector(".qs-gear")).not.toBeNull());
-        host.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+        await vi.waitFor(() => expect(host.querySelector(".qc-actions summary")).not.toBeNull());
+        await openCalmQuery(host);
       }
       await vi.waitFor(() => expect(document.querySelector(".qs-anchor-button")?.textContent).toContain("pages"));
       for (const [unit, witness] of [["blocks", "Block result witness"], ["pages", "Page result witness"]] as const) {
@@ -85,7 +98,7 @@ for (const entry of ["slash command", "existing OG query", "existing TQL query"]
         expect(option).toBeDefined();
         option!.click();
         await vi.waitFor(() => expect(doc.byId.query.raw).toBe(unit === "blocks" ? "{{tine-query @block}}" : "{{tine-query @page}}"));
-        await vi.waitFor(() => expect(host.querySelector(".qs-sentence")?.textContent?.toLowerCase()).toContain(unit));
+        await vi.waitFor(() => expect(host.querySelector(".qs-sheet")?.textContent?.toLowerCase()).toContain(unit));
         await vi.waitFor(() => expect(host.querySelector(unit === "pages" ? ".query-page-link" : ".query-group")?.textContent).toContain(witness));
       }
     } finally { dispose(); }

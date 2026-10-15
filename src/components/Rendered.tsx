@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { Show, Switch, Match, onMount, onCleanup, type JSX } from "solid-js";
+import { Show, Switch, Match, onMount, onCleanup, useContext, type JSX } from "solid-js";
 import { pageByName, blockPageReadOnly, blockExternalId, type OutlineScope, type Node as ReadonlyNode } from "../document";
 import { isPropertyLine } from "../render/block";
 import { renderedProperties, type Facets } from "../render/facets";
@@ -7,6 +7,7 @@ import { AstBody } from "../render/body";
 import { DeferredStandaloneMacro } from "./DeferredStandaloneMacro";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { timetrackingEnabled, openDatePicker } from "../ui";
+import { ResultWriteTargetContext } from "./queryResultIdentity";
 import { PropertyRows } from "../render/PropertyRows";
 import { taskCheckboxState } from "../markers";
 import { markerLabelClickable } from "../editor/repeat";
@@ -58,6 +59,8 @@ export function Rendered(props: {
   refCountBadge?: JSX.Element;
   outlineScope?: OutlineScope | null;
 }): JSX.Element {
+  // In a query result, Scheduled/Deadline resolve the result row again at commit.
+  const resultTarget = useContext(ResultWriteTargetContext);
   const node = props.node;
   const fmt = props.fmt;
   // Header facets (marker/priority/heading/scheduled/deadline/properties) off the
@@ -231,7 +234,7 @@ export function Rendered(props: {
           title={t("rendered-scheduled-click-to-change")}
           onClick={(e) => {
             e.stopPropagation();
-            openDatePicker(props.id, "scheduled", e.clientX, e.clientY);
+            openDatePicker(props.id, "scheduled", e.clientX, e.clientY, resultTarget(props.id));
           }}
         >
           <CalGlyph /> {facets().scheduled}
@@ -243,7 +246,7 @@ export function Rendered(props: {
           title={t("rendered-deadline-click-to-change")}
           onClick={(e) => {
             e.stopPropagation();
-            openDatePicker(props.id, "deadline", e.clientX, e.clientY);
+            openDatePicker(props.id, "deadline", e.clientX, e.clientY, resultTarget(props.id));
           }}
         >
           <CalGlyph /> {facets().deadline}

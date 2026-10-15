@@ -101,10 +101,13 @@ for (const [caseIndex, [format, collision]] of [["md", false], ["md", true], ["o
       const hint = [...document.querySelectorAll(".settings-hint")].find(node => node.textContent?.includes("Today's sections are defined"));
       return active === "Journals" && hint?.textContent?.toLowerCase().includes(wanted.toLowerCase());
     }, name), { timeout: 15_000, interval: 150, timeoutMsg: "Journals settings reset or failed to name the sections page" });
-    await browser.execute(() => {
+    // Find and click in one call: Settings may re-render the hint between calls.
+    await browser.waitUntil(() => browser.execute(() => {
       const hint = [...document.querySelectorAll(".settings-hint")].find(node => node.textContent?.includes("Today's sections are defined"));
-      hint.querySelector("button.settings-link").click();
-    });
+      const link = hint?.querySelector("button.settings-link");
+      link?.click();
+      return !!link;
+    }), { timeout: 15_000, interval: 150, timeoutMsg: "Journals settings lost the sections page link" });
     await browser.waitUntil(async () => (await currentPageTitle(browser)).toLowerCase() === name.toLowerCase(), { timeout: 15_000, timeoutMsg: "Settings did not open the active sections page" });
     check(!await browser.$(".settings-modal").isExisting(), "Open page left Settings open");
     proof.steps.push(journey);

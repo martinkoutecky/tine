@@ -41,7 +41,10 @@ import { displayPropertyPatch, queryScopedDisplayPropertyPatch } from "../editor
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { createQueryRegistryAccess } from "./QueryBuilder";
 import { QueryDisplay } from "./QueryDisplay";
+import { QueryResultsSelection } from "./QueryResultsSelection";
+import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
+import { queryWorkspaceDsl } from "./queryWorkspaceDsl";
 import { SearchResultRow } from "./SearchResultRow";
 import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
 import { QueryResultSections } from "./QueryResultSections";
@@ -55,10 +58,9 @@ import { openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../u
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { readLatestOr, readOr } from "../resourceRead";
 import { documentOf } from "../windowRealm";
-import { queryMacroExtent } from "../editor/queryMacro";
-import { macroTextDialect, type QueryTextDialect } from "../editor/queryIr";
+import type { QueryTextDialect } from "../editor/queryIr";
 import { QueryOgHint } from "./QueryResultParts";
-import { t } from "../i18n";
+import { t, msg } from "../i18n";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -135,7 +137,7 @@ async function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceK
   if (saved.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
   // A converted DSL workspace becomes one ordinary query block. Its effective
   // display must also be singular so the saved block keeps its sort/sample.
-  if (input.blockDisplay && workspaceQueryInput(dsl).dialect === "macro_tql") {
+  if (input.blockDisplay && queryWorkspaceDsl(dsl).dialect === "macro_tql") {
     for (const [key, value] of displayPropertyPatch({ ...input.blockDisplay, view: input.blockPresentation ?? input.presentation })) {
       if (value !== null) properties.push([key, value]);
     }
@@ -148,14 +150,15 @@ async function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceK
 export async function serializeWorkspaceDsl(source: string): Promise<{ query: string; properties: Array<[string, string]> }> {
   const api = backend();
   const owner = graphOwner();
-  const input = workspaceQueryInput(source);
+  const input = queryWorkspaceDsl(source);
   const parsed = await readOwned(owner, api.parseQuery(input.argument, input.dialect));
   if (parsed.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
   const { query, view } = parsed.value;
   const expressible = query.source.kind === "advanced" ? null : await readOwned(owner, api.queryOgExpressible(query, view));
   if (expressible?.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
   if (query.source.kind === "advanced" || expressible?.value) {
-    return { query: `{{${QUERY_MACRO_NAMES[0]} ${input.argument}}}`, properties: [] };
+    // The argument is in the dialect it was typed in: a Tine macro stays one.
+    return { query: input.dialect === "macro_tql" ? input.macro : `{{${QUERY_MACRO_NAMES[0]} ${input.argument}}}`, properties: [] };
   }
   const printed = await readOwned(owner, api.printQuery(query, view, "tql_macro"));
   if (printed.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
@@ -164,15 +167,6 @@ export async function serializeWorkspaceDsl(source: string): Promise<{ query: st
   if (view.sort?.length) properties.push(["tine.sort", view.sort.map(([field, direction]) => `${field} ${direction}`).join("; ")]);
   if (view.sample != null) properties.push(["tine.sample", String(view.sample)]);
   return { query: `{{${QUERY_MACRO_NAMES[1]} ${printed.value}}}`, properties };
-}
-
-/** A converted workspace keeps a complete macro, whose name owns its dialect. */
-function workspaceQueryInput(source: string): { argument: string; dialect: QueryTextDialect } {
-  if (!source.startsWith("{{")) return { argument: source, dialect: "macro_query" };
-  const extent = queryMacroExtent(source);
-  return extent?.start === 0 && extent.end === source.length
-    ? { argument: extent.argument, dialect: macroTextDialect(extent.name) }
-    : { argument: source, dialect: "macro_query" };
 }
 
 /** Is the input this attempt captured still the one the user is looking at?
@@ -266,7 +260,7 @@ export async function materializeQueryWorkspace(
     const detail = error instanceof Error ? error.message : String(error);
     if (!isCurrent()) return superseded();
     if (!owner()) {
-      pushToast(`Could not save “${name}”: ${detail}`, "error");
+      pushToast(msg("query-query-workspace-could-not-save", { value1: name, value2: detail }), "error");
       return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
     }
     if (error instanceof CreatePageRefusal) {
@@ -343,7 +337,7 @@ function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult): Q
     cancelled: false,
     explanation: {
       branches: explanation?.rows.map((row) => ({
-        description: `${row.conjunct}: ${row.alone} alone${row.without === null || row.without === undefined ? "" : `, ${row.without} without it`}`,
+        get description() { return t("query-workspace-explanation", { conjunct: row.conjunct, alone: row.alone, without: row.without ?? 0, hasWithout: row.without == null ? 0 : 1 }); },
         children: [],
       })) ?? [],
     },
@@ -528,16 +522,15 @@ function AdvancedModal(props: {
   const [draftKind, setDraftKind] = createSignal<QueryRoute["sourceKind"]>(props.sourceKind());
   const [dsl, setDsl] = createSignal(props.sourceKind() === "dsl" ? props.source() : "");
   const [error, setError] = createSignal<string | null>(null);
-  // The builder edits the ENGINE's reading of the draft and writes back the OG
-  // text the engine printed (I-12); a workspace materializes an OG `{{query}}`.
+  // The engine reads and prints the draft in the grammar its envelope carries.
   let mounted = true;
   onCleanup(() => { mounted = false; });
   const edits = {};
   const [printing, setPrinting] = createSignal(false);
   const [builderSession, { mutate }] = createResource(dsl, async (text): Promise<BuilderSession | undefined> => {
     const owner = graphOwner(() => mounted && dsl() === text, revisionOwner(edits, currentRevision(edits)));
-    const input = workspaceQueryInput(text);
-    const parsed = await readOwned(owner, backend().parseQuery(input.argument, input.dialect));
+    const source = queryWorkspaceDsl(text);
+    const parsed = await readOwned(owner, backend().parseQuery(source.argument, source.dialect));
     return parsed.kind === "current" && owner() ? { query: parsed.value.query, view: parsed.value.view } : readLatestOr(builderSession, undefined, "query text");
   });
   const applyBuilderEdit = async (next: BuilderSession) => {
@@ -548,11 +541,21 @@ function AdvancedModal(props: {
     setPrinting(true);
     const owner = latestOwner(edits, "print", graphOwner(() => mounted));
     try {
-      const expressible = await readOwned(owner, backend().queryOgExpressible(next.query, next.view));
-      if (expressible.kind === "stale" || !owner()) return;
-      const printed = await readOwned(owner, backend().printQuery(next.query, next.view, expressible.value ? "og" : "tql_macro"));
-      if (printed.kind === "stale" || !owner()) return;
-      setDsl(expressible.value ? printed.value : `{{${QUERY_MACRO_NAMES[1]} ${printed.value}}}`);
+      const source = queryWorkspaceDsl(dsl());
+      if (source.dialect === "macro_tql") {
+        const printed = await readOwned(owner, backend().printQuery(next.query, next.view, "tql_macro"));
+        if (printed.kind === "stale" || !owner()) return;
+        setDsl(`{{${source.name} ${printed.value}}}`);
+      } else {
+        // OG text stays OG when it can say the edit; otherwise it becomes a
+        // Tine query (D-18) rather than silently losing the condition.
+        const expressible = await readOwned(owner, backend().queryOgExpressible(next.query, next.view));
+        if (expressible.kind === "stale" || !owner()) return;
+        const printed = await readOwned(owner, backend().printQuery(next.query, next.view, expressible.value ? "og" : "tql_macro"));
+        if (printed.kind === "stale" || !owner()) return;
+        setDsl(!expressible.value ? `{{${QUERY_MACRO_NAMES[1]} ${printed.value}}}`
+          : source.wrapped ? `{{${source.name} ${printed.value}}}` : printed.value);
+      }
       setError(null);
     } catch (failure) {
       // The printer owns the refusal; leave the draft unchanged on failure.
@@ -649,10 +652,10 @@ function AdvancedModal(props: {
       >
         <header class="query-advanced-header">
           <div>
-            <h2 id="query-advanced-title">Filters and advanced query</h2>
-            <p>Use the friendly fields, or switch losslessly to the visual query builder.</p>
+            <h2 id="query-advanced-title">{t("query-query-workspace-filters-and-advanced-query")}</h2>
+            <p>{t("query-query-workspace-use-the-friendly-fields-or-switch-losslessly-to-the-visual")}</p>
           </div>
-          <button type="button" aria-label="Close filters" onClick={props.onClose}>×</button>
+          <button type="button" aria-label={t("query-query-workspace-close-filters")} onClick={props.onClose}>×</button>
         </header>
 
         <Show when={draftKind() === "search"} fallback={
@@ -660,19 +663,18 @@ function AdvancedModal(props: {
             <QueryBuilder
               session={() => (readLatestOr(builderSession, undefined, "query text"))}
               onChange={(next) => void applyBuilderEdit(next)}
-              paneDialect="og"
+              paneDialect={queryWorkspaceDsl(dsl()).dialect === "macro_tql" ? "tql" : "og"}
               sheetAlwaysOpen
               parentTransientId={props.layerId}
             />
-            <p class="query-advanced-note">Switching back to friendly fields is offered only when it can be lossless.</p>
+            <p class="query-advanced-note">{t("query-query-workspace-switching-back-to-friendly-fields-is-offered-only-when-it")}</p>
           </div>
         }>
           <Show when={structuredFriendly()} fallback={
             <div class="query-friendly-raw">
-              <p>This search uses a combination that cannot be split into fields without changing it.</p>
+              <p>{t("query-query-workspace-this-search-uses-a-combination-that-cannot-be-split-into")}</p>
               <label>
-                Friendly search syntax
-                <textarea
+                {t("query-query-workspace-friendly-search-syntax")}<textarea
                   ref={(element) => { firstField = element; }}
                   rows={4}
                   value={rawFriendly()}
@@ -681,34 +683,27 @@ function AdvancedModal(props: {
                 />
               </label>
               <button type="button" class="query-switch-to-dsl" onClick={switchToDsl}>
-                Edit as visual query
-              </button>
+                {t("query-query-workspace-edit-as-visual-query")}</button>
             </div>
           }>
           <div class="query-friendly-fields">
             <label>
-              All of these words
-              <input ref={(element) => { firstField = element; }} value={all()} onInput={(event) => { setAll(event.currentTarget.value); setFriendlyDirty(true); }} />
+              {t("query-query-workspace-all-of-these-words")}<input ref={(element) => { firstField = element; }} value={all()} onInput={(event) => { setAll(event.currentTarget.value); setFriendlyDirty(true); }} />
             </label>
             <label>
-              Any of these words
-              <input value={any()} onInput={(event) => { setAny(event.currentTarget.value); setFriendlyDirty(true); }} />
+              {t("query-query-workspace-any-of-these-words")}<input value={any()} onInput={(event) => { setAny(event.currentTarget.value); setFriendlyDirty(true); }} />
             </label>
             <label>
-              This exact phrase
-              <input value={exact()} onInput={(event) => { setExact(event.currentTarget.value); setFriendlyDirty(true); }} />
+              {t("query-query-workspace-this-exact-phrase")}<input value={exact()} onInput={(event) => { setExact(event.currentTarget.value); setFriendlyDirty(true); }} />
             </label>
             <label>
-              Exclude these words
-              <input value={exclude()} onInput={(event) => { setExclude(event.currentTarget.value); setFriendlyDirty(true); }} />
+              {t("query-query-workspace-exclude-these-words")}<input value={exclude()} onInput={(event) => { setExclude(event.currentTarget.value); setFriendlyDirty(true); }} />
             </label>
             <label>
-              Case-sensitive regular expression
-              <input value={regex()} onInput={(event) => { setRegex(event.currentTarget.value); setFriendlyDirty(true); }} placeholder="pattern without / /" />
+              {t("query-query-workspace-case-sensitive-regular-expression")}<input value={regex()} onInput={(event) => { setRegex(event.currentTarget.value); setFriendlyDirty(true); }} placeholder={t("query-query-workspace-pattern-without")} />
             </label>
             <button type="button" class="query-switch-to-dsl" onClick={switchToDsl}>
-              Edit as visual query
-            </button>
+              {t("query-query-workspace-edit-as-visual-query")}</button>
           </div>
           </Show>
         </Show>
@@ -717,8 +712,8 @@ function AdvancedModal(props: {
           <p class="query-advanced-error" role="alert">{error()}</p>
         </Show>
         <footer class="query-advanced-actions">
-          <button type="button" onClick={props.onClose}>Cancel</button>
-          <button type="button" class="primary" disabled={printing()} onClick={apply}>Apply</button>
+          <button type="button" onClick={props.onClose}>{t("query-query-sheet-parts-cancel")}</button>
+          <button type="button" class="primary" disabled={printing()} onClick={apply}>{t("query-query-sheet-parts-apply")}</button>
         </footer>
       </div>
     </div>
@@ -749,7 +744,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const ogHint = () => {
     const reading = dslReading();
     const hint = reading?.parsed.og_hint;
-    return sourceKind() === "dsl" && reading?.source === source() && hint?.date_windows ? hint : undefined;
+    return sourceKind() === "dsl" && reading?.source === source().trim() && hint?.date_windows ? hint : undefined;
   };
   // The workspace under an in-flight save is not frozen: the user can retype the
   // search, change the view, rename it, switch tab or graph. Every completion
@@ -775,7 +770,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     const close = deps().closeSearchWorkspace;
     onCleanup(() => {
       if (owner() && close) void close(workspace, binding.backendGeneration)
-        .catch(() => { if (owner()) pushToast("Couldn’t stop this workspace’s search.", "warn"); });
+        .catch(() => { if (owner()) pushToast(msg("query-query-workspace-couldn-t-stop-this-workspace-s-search"), "warn"); });
     });
   }));
   let advancedButton!: HTMLButtonElement;
@@ -846,8 +841,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         ));
         return result.kind === "current" && owner() ? result.value : cancelled;
       }
-      const input = workspaceQueryInput(request.source);
-      const parsed = await readOwned(owner, deps().parseQuery(input.argument, input.dialect));
+      const source = queryWorkspaceDsl(request.source);
+      const parsed = await readOwned(owner, deps().parseQuery(source.argument, source.dialect));
       if (parsed.kind === "stale" || !owner()) return cancelled;
       setDslReading({ source: request.source, parsed: parsed.value });
       const result = await readOwned(owner, deps().queryRun(parsed.value.query, queryDisplaySettings(blockDisplay(), parsed.value.view, presentation())));
@@ -859,6 +854,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       return irToExecution(result.value, explanation?.value);
     },
     (value, id) => value.hits.some((hit) => hit.entity === "block" && hit.block.id === id),
+    () => true,
+    true,
   );
 
   // Failure is drawn from `execution.error` below; a read never throws into render.
@@ -909,7 +906,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const convertDsl = async (query: Query) => {
     const before = source();
     const reading = dslReading();
-    if (!reading || reading.source !== before) return;
+    if (!reading || reading.source !== before.trim()) return;
     const revision = inputRevision();
     const owner = graphOwner(() => alive && inputRevision() === revision);
     try {
@@ -957,6 +954,9 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   });
   const hitSurfaceId = (hit: QueryHit) =>
     `query:${props.route.id}:${hit.entity}:${hit.entity === "page" ? hit.page.name : hit.block.id}`;
+  const task = (hit: Extract<QueryHit, { entity: "block" }>) => <SourceTaskCheckbox marker={hit.block.marker}
+    target={() => ({ uuid: blockDtoExternalId(hit.block), page: hit.page, pageKind: hit.kind, path: hit.path })}
+    result={{ id: hit.block.id, page: hit.page, kind: hit.kind, path: hit.path, dto: hit.block }} />;
   /** Everything one save attempt publishes, frozen at submit. */
   const captureSave = () => ({
     token: ++saveToken,
@@ -1024,18 +1024,18 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   );
 
   return (
-    <section class="query-workspace" data-query-route-id={props.route.id} aria-label="Search and query workspace">
+    <section class="query-workspace" data-query-route-id={props.route.id} aria-label={t("query-query-workspace-search-and-query-workspace")}>
       <header class="query-workspace-header">
         <div class="query-workspace-search-row">
           <label class="query-workspace-source-label">
-            <span class="sr-only">{sourceKind() === "search" ? "Search" : "Query DSL"}</span>
+            <span class="sr-only">{sourceKind() === "search" ? t("query-query-workspace-search") : t("query-query-workspace-query-dsl")}</span>
             <input
               ref={sourceInput}
               class="query-workspace-source"
               type="search"
               value={source()}
               onInput={(event) => updateSource(event.currentTarget.value)}
-              placeholder={sourceKind() === "search" ? "Search pages and blocks" : "Query DSL"}
+              placeholder={sourceKind() === "search" ? t("query-query-workspace-search-pages-and-blocks") : t("query-query-workspace-query-dsl")}
               aria-describedby="query-workspace-summary"
               spellcheck={false}
             />
@@ -1048,31 +1048,27 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
             aria-expanded={advancedOpen()}
             onClick={() => setAdvancedOpen(true)}
           >
-            Filters / Advanced
-          </button>
+            {t("query-query-workspace-filters-advanced")}</button>
         </div>
         <p id="query-workspace-summary" class="query-workspace-summary">
-          {sourceKind() === "search"
-            ? friendlySummary(source())
-            : "Runs the saved query expression against blocks. Its presentation is controlled separately."}
+          {sourceKind() === "search" ? friendlySummary(source()) : t("query-query-workspace-runs-the-saved-query-expression-against-blocks-its-presentation-is")}
         </p>
 
         <div class="query-workspace-controls">
           <Show when={sourceKind() === "search"}>
-            <label class="query-page-match-scope">Pages match
-              <select aria-label="Pages match" value={pageMatchScope()} onChange={(event) => {
+            <label class="query-page-match-scope">{t("query-query-workspace-pages-match")}<select aria-label={t("query-query-workspace-pages-match")} value={pageMatchScope()} onChange={(event) => {
                 const next = event.currentTarget.value as FriendlyPageMatchScope;
                 setPageMatchScope(next);
                 setPageMatchScopeExplicit(true);
                 props.router.updateActiveQuery({ pageMatchScope: next });
               }}>
-                <option value="names">Names and aliases</option>
-                <option value="content">Block content</option>
-                <option value="both">Names or content</option>
+                <option value="names">{t("query-query-workspace-names-and-aliases")}</option>
+                <option value="content">{t("query-query-workspace-block-content")}</option>
+                <option value="both">{t("query-query-workspace-names-or-content")}</option>
               </select>
             </label>
           </Show>
-          <div class="query-presentations" role="group" aria-label="Result presentation">
+          <div class="query-presentations" role="group" aria-label={t("query-query-workspace-result-presentation")}>
             <For each={VIEW_KINDS}>
               {(view) => (
                 <button
@@ -1092,21 +1088,21 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
             aria-pressed={explain()}
             onClick={() => setExplain((value) => !value)}
           >
-            {explain() ? "Hide explanation" : "Explain query"}
+            {explain() ? t("query-query-workspace-hide-explanation") : t("query-query-workspace-explain-query")}
           </button>
         </div>
 
         <form class="query-workspace-save" onSubmit={save}>
           <label>
-            <span class="sr-only">Page title</span>
+            <span class="sr-only">{t("query-query-workspace-page-title")}</span>
             <input
               value={title()}
               onInput={(event) => { setTitle(event.currentTarget.value); setSaveError(null); setSaveNotice(null); }}
-              placeholder="Name this search to save it as a page"
+              placeholder={t("query-query-workspace-name-this-search-to-save-it-as-a-page")}
               aria-invalid={!!saveError()}
             />
           </label>
-          <button type="submit" disabled={saving()}>{saving() ? "Saving…" : "Save page"}</button>
+          <button type="submit" disabled={saving()}>{saving() ? t("query-query-workspace-saving") : t("query-query-workspace-save-page")}</button>
         </form>
         <Show when={saveError()}>
           <p class="query-workspace-save-error" role="alert">{saveError()}</p>
@@ -1117,18 +1113,19 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       </header>
 
       <section class="query-workspace-status" aria-live="polite" aria-atomic="true">
-        <Show when={!source().trim()}>{sourceKind() === "search" ? "Enter a search to begin." : "Enter a query to begin."}</Show>
-        <Show when={!!source().trim() && execution.loading}>Searching…</Show>
+        <Show when={!source().trim()}>{sourceKind() === "search" ? t("query-query-workspace-enter-a-search-to-begin") : t("query-query-workspace-enter-a-query-to-begin")}</Show>
+        <Show when={!!source().trim() && execution.loading}>{t("query-query-workspace-searching")}</Show>
         <Show when={!!source().trim() && !execution.loading && execution.error}>
-          Search failed: {execution.error instanceof Error ? execution.error.message : String(execution.error)}
+          {t("query-workspace-search-failed", { detail: execution.error instanceof Error ? execution.error.message : String(execution.error) })}
         </Show>
         <Show when={!!source().trim() && !execution.loading && !execution.error && executed()?.cancelled}>
-          Search superseded by a newer request.
-        </Show>
+          {t("query-query-workspace-search-superseded-by-a-newer-request")}</Show>
         <Show when={!!source().trim() && !execution.loading && !execution.error && executed() && !executed()?.cancelled && !ogHint()?.date_windows}>
-          {hits().length} result{hits().length === 1 ? "" : "s"}
+          {t("query-workspace-result-count", { count: hits().length })}
         </Show>
       </section>
+
+      <QueryResultsSelection hits={hits()} />
 
       <Show when={ogHint()}>{(hint) => <QueryOgHint hint={hint()} onRewrite={(query) => { void convertDsl(query); }} />}</Show>
       <Show when={conversionUndo()?.converted === source()}>
@@ -1141,7 +1138,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       </Show>
 
       <Show when={(executed()?.diagnostics.length ?? 0) > 0 && (!ogHint()?.date_windows || !ogHint()?.rewrites.length)}>
-        <ul class="query-workspace-diagnostics" aria-label="Query diagnostics">
+        <ul class="query-workspace-diagnostics" aria-label={t("query-query-workspace-query-diagnostics")}>
           <For each={executed()?.diagnostics ?? []}>{(diagnostic) => (
             <li role="alert" data-code={diagnostic.code}>{diagnostic.message}</li>
           )}</For>
@@ -1149,8 +1146,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       </Show>
 
       <Show when={explain() && (executed()?.explanation.branches.length ?? 0) > 0}>
-        <section class="query-workspace-explanation" aria-label="Query explanation">
-          <h2>How this query works</h2>
+        <section class="query-workspace-explanation" aria-label={t("query-query-workspace-query-explanation")}>
+          <h2>{t("query-query-workspace-how-this-query-works")}</h2>
           <ExplainTree nodes={executed()?.explanation.branches ?? []} />
         </section>
       </Show>
@@ -1167,9 +1164,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
             control: sectionControl("block"),
             body: <Switch>
         <Match when={blockView().view === "search"}>
-          <div class="query-results-search" role="list" aria-label="Block results">
+          <div class="query-results-search" role="list" aria-label={t("query-query-workspace-block-results")}>
             <For each={blockHits()}>{(hit) => (
               <div role="listitem">
+                {task(hit)}
                 {resultButton(hit, <SearchResultRow
                     page={hit.page}
                     breadcrumb={hit.block.breadcrumb ?? []}
@@ -1182,9 +1180,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         </Match>
 
         <Match when={blockView().view === "list"}>
-          <ul class="query-results-list" aria-label="Query results">
+          <ul class="query-results-list" aria-label={t("query-query-workspace-query-results")}>
             <For each={blockHits()}>{(hit) => (
               <li>
+                {task(hit)}
                 <button type="button" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
                   <span class="query-list-context">{hitPage(hit)}</span>
                   <span class="query-list-text"><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></span>
@@ -1197,14 +1196,14 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         <Match when={blockView().view === "table"}>
           <div class="query-results-table-wrap">
             <table class="query-results-table">
-              <caption class="sr-only">Query results</caption>
-              <thead><tr><th scope="col">Type</th><th scope="col">Page</th><th scope="col">Content</th></tr></thead>
+              <caption class="sr-only">{t("query-query-workspace-query-results")}</caption>
+              <thead><tr><th scope="col">{t("query-query-workspace-type")}</th><th scope="col">{t("query-query-workspace-page")}</th><th scope="col">{t("query-query-workspace-content")}</th></tr></thead>
               <tbody>
                 <For each={blockHits()}>{(hit) => (
                   <tr data-inpage-find-surface={hitSurfaceId(hit)}>
                     <td>{hitKind(hit)}</td>
                     <td><button type="button" {...resultActions(hit)}>{hitPage(hit)}</button></td>
-                    <td><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></td>
+                    <td>{task(hit)}<button type="button" {...resultActions(hit)}><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></button></td>
                   </tr>
                 )}</For>
               </tbody>
@@ -1213,15 +1212,15 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         </Match>
 
         <Match when={blockView().view === "board"}>
-          <div class="query-results-board" aria-label="Query results grouped by page">
+          <div class="query-results-board" aria-label={t("query-query-workspace-query-results-grouped-by-page")}>
             <For each={boardGroups()}>{([page, pageHits]) => (
               <section class="query-board-column">
                 <h2>{page}<span class="query-board-count">{pageHits.length}</span></h2>
                 <div role="list">
                   <For each={pageHits}>{(hit) => (
-                    <button type="button" role="listitem" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
+                    <div role="listitem">{hit.entity === "block" && task(hit)}<button type="button" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} {...resultActions(hit)}>
                       <span class="sr-only">{hitKind(hit)}: </span><MarkedText text={hit.display_text} spans={hitSpans(hit)} />
-                    </button>
+                    </button></div>
                   )}</For>
                 </div>
               </section>

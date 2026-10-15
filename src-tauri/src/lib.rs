@@ -49,6 +49,7 @@ mod migrate_identifier;
 mod native_integrations;
 mod native_mouse_history;
 mod owner;
+mod page_backlinks;
 mod page_commands;
 mod pdf_crop_rollback;
 mod platform;
@@ -751,12 +752,6 @@ pub fn run() {
         crate::graph::app_platform()
     ));
 
-    #[cfg(desktop)]
-    let builder = builder.append_invoke_initialization_script(format!(
-        "globalThis.__TINE_LINK_LAUNCH__ = {};",
-        matches!(cli::launch_request_env(), cli::LaunchRequest::Link(_))
-    ));
-
     let builder = match e2e_touch_gestures_platform() {
         Some(kind) => builder.append_invoke_initialization_script(format!(
             "globalThis.__TINE_E2E_TOUCH_GESTURES__ = {kind:?};"
@@ -1043,6 +1038,7 @@ pub fn run() {
             android_system_bars::set_system_bar_appearance,
             page_inventory,
             page_modified,
+            page_backlinks::page_backlink_counts,
             journal_feed_page,
             get_page,
             graph_source_files,

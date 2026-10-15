@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as tauriCore from "@tauri-apps/api/core";
 import { setToasts, toasts } from "./toasts";
 import { backend } from "./backend";
+import * as deepLinkNavigation from "./deepLinkNavigation";
 import { installMobileExternalLinkHandler } from "./App";
 import { App } from "./App";
 import { render } from "solid-js/web";
@@ -441,19 +442,20 @@ describe("identifier migration notice", () => {
 
 describe("first load completion", () => {
   it("loads the remembered graph on a link launch before installing the link listener", async () => {
-    (window as any).__TINE_LINK_LAUNCH__ = true;
     setFirstLoadDone(false);
     vi.spyOn(backend(), "startupGraphPath").mockResolvedValue("/tmp/link-last-graph");
     const load = vi.spyOn(backend(), "loadGraph").mockRejectedValue(new Error("probe reached graph load"));
+    const install = vi.spyOn(deepLinkNavigation, "installTineLinks").mockResolvedValue(() => {});
     const host = document.createElement("div");
     document.body.append(host);
     const dispose = render(() => <App />, host);
     try {
       await vi.waitFor(() => expect(firstLoadDone()).toBe(true));
       expect(load).toHaveBeenCalledWith("/tmp/link-last-graph");
+      await vi.waitFor(() => expect(install).toHaveBeenCalled());
+      expect(load.mock.invocationCallOrder[0]).toBeLessThan(install.mock.invocationCallOrder[0]);
     } finally {
       dispose();
-      delete (window as any).__TINE_LINK_LAUNCH__;
     }
   });
   it("I-20: marks the first load done after the startup graph load retires its own binding", async () => {

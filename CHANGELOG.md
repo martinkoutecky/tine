@@ -21,6 +21,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Android: granting All files access while opening a graph now continues straight to the folder picker; it no longer needs a second tap (UI-ANDROID-ALL-FILES-ONE-TAP).
+- Phones: the left sidebar starts closed, so it no longer covers the journal after the first graph opens (UI-MOBILE-LEFT-DRAWER-STARTS-CLOSED).
+- Simplified Chinese now covers the complete interface catalog, including settings, queries, context menus and recovery dialogs (GH #107, GH #123).
+- Query, sheet and date controls and document notices use the localization catalog while preserving authored query syntax (GH #107).
+- Remaining Settings, page actions and page notices use the localization catalog and follow live interface language changes (GH #107).
+- Cold Tine block links skip loading known graphs that cannot contain the target, while preserving graph-copy choices and missing-target errors (GH #181).
 - Localized rich-text sentences share one renderer that preserves literal graph text, with clearer tags and variables for translators (GH #107).
 - Interface text across the app (shell, settings, help, plugins, editor, PDF, rendering, notices) now comes from the localization catalog, so it can be translated; English wording, graph syntax and English command matching are unchanged (GH #107).
 - Customize today's sections stays bound to the graph where it was clicked, and its Settings note loads without crashing or resetting the dialog (GH #605).
@@ -34,6 +40,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Referenced journal days appear in the Journals feed without creating a file; future mentions are grouped in collapsed Upcoming above today (GH #481).
 - Authored parent-relative and absolute file links can open outside the graph folder through the existing desktop file opener, with the resolved path on hover and no strike-through (GH #457).
 - NEXT journal queries saved in Logseq configs now support direct journal references and exclusive date bounds; unsupported config queries show their title and a plain explanation with expandable technical details (GH #690).
+- Open query date and enum controls recheck their source before saving; refused Table edits keep the typed draft, authored IDs resolve within their page, and clean host settlement avoids duplicate query reads (GH #585, GH #551).
+
+- Query and Search actions refuse stale positional results after external or structural changes and refresh once changes settle; saved planning comparisons offer correctly labelled operators (GH #387, GH #551, GH #585, GH #653).
+
+- Query and Search actions skip changed source results, task clicks retain their graph binding, saved date comparisons reopen intact, exports honor empty columns regardless of property case, and All pages coalesces backlink refreshes (GH #387, GH #585, GH #653, GH #680, GH #681).
+
+- Query blocks now rest with title, count and results, with inline editing and one accessible menu; task actions, result copy with page/date titles and hierarchy, visible column choices, relative date comparisons, bulk List folding and sortable All pages backlinks are available (GH #502, GH #585, GH #387, GH #619, GH #606, GH #680, GH #653, GH #551, GH #681).
 - **Crash recovery no longer switches off on Android** ("Crash recovery is off for this graph … Permission denied"). Tine tried to sync system folders above its own app data, which Android does not allow. GH #685
 - Tab drops at all four pane edges split the hovered pane, matching the drop preview even at the layout's outer edges (GH #499).
 - Raw HTML iframe dimensions honor numeric HTML attributes as pixels, percentages and inline sizing without the default embed width cap (GH #54).

@@ -1,3 +1,4 @@
+import { t, msg } from "../i18n";
 /** The task checkbox of a block shown AWAY from its source outline: an inline
  * `((block reference))`, a not-yet-hydrated reference/query row, a hover peek
  * (GH #518). OG renders the same `block-checkbox` inside a block reference
@@ -14,9 +15,11 @@
 import { Show, type JSX } from "solid-js";
 import { resolveBlockRef, node as docNode, type blockRef } from "../document";
 import { loadSourcePage } from "../sourcePage";
+import { bindingOwner } from "../owned";
 import { leadingMarker, taskCheckboxState } from "../markers";
 import { pushToast } from "../toasts";
 import { formatForBlockId, toggleBlockCheckbox } from "./blockParts";
+import { noticeChangedResults, resolveResultRow, type ResultRow } from "./queryResultIdentity";
 
 /** A durable reference to a block plus its exact owner page. */
 export type LoadedBlockRef = ReturnType<typeof blockRef>;
@@ -29,11 +32,15 @@ export type TaskToggleOutcome = "toggled" | "stale" | "missing" | "refused";
  * is written and the rendered state catches up instead, so a click never
  * acts on a state the user did not see. Cost: one page read when the source page
  * is not loaded, plus O(page blocks) for the load and the reference resolution. */
-export async function toggleTaskAtSource(ref: LoadedBlockRef, expectChecked: boolean): Promise<TaskToggleOutcome> {
+export async function toggleTaskAtSource(ref: LoadedBlockRef, expectChecked: boolean, result?: ResultRow): Promise<TaskToggleOutcome> {
+  const owner = bindingOwner();
   if (!(await loadSourcePage(ref, "The task was not changed."))) return "refused";
-  const id = resolveBlockRef(ref);
+  if (!owner()) return "stale";
+  const source = result ? resolveResultRow(result) : null;
+  if (result && !source) { noticeChangedResults(1); return "stale"; }
+  const id = source?.id ?? resolveBlockRef(ref);
   if (id === null || !docNode(id)) {
-    pushToast(`The task is no longer on "${ref.page}", so it was not changed.`, "error");
+    pushToast(msg("macro-source-task-checkbox-the-task-is-no-longer-on-so-it-was-not", { value1: ref.page }), "error");
     return "missing";
   }
   if (taskCheckboxState(leadingMarker(docNode(id).raw, formatForBlockId(id))) !== expectChecked) return "stale";
@@ -50,6 +57,7 @@ export function SourceTaskCheckbox(props: {
   marker: string | null | undefined;
   target: () => LoadedBlockRef | null;
   style?: JSX.CSSProperties;
+  result?: ResultRow;
 }): JSX.Element {
   const state = () => taskCheckboxState(props.marker);
   return (
@@ -60,7 +68,7 @@ export function SourceTaskCheckbox(props: {
           style={props.style}
           role="checkbox"
           aria-checked={state() === true}
-          title={state() === true ? "Mark undone" : "Mark done"}
+          title={state() === true ? t("macro-source-task-checkbox-mark-undone") : t("macro-source-task-checkbox-mark-done")}
           onMouseDown={(e) => {
             e.stopPropagation();
             e.preventDefault();
@@ -68,8 +76,8 @@ export function SourceTaskCheckbox(props: {
             const ref = props.target();
             const checked = state();
             if (!ref || checked === null) return;
-            void toggleTaskAtSource(ref, checked).catch(() => {
-              pushToast("Couldn't load the task's page, so the task was not changed.", "error");
+            void toggleTaskAtSource(ref, checked, props.result).catch(() => {
+              pushToast(msg("macro-source-task-checkbox-couldn-t-load-the-task-s-page-so-the-task"), "error");
             });
           }}
           onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
