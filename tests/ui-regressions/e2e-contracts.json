@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-sw-preview-tabs.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Page and block preview title, bullet and Open source clicks activate their destination tab. A preview remains visible while its page actions menu is open; Open in new tab confirms a new background tab, and closing the menu resumes hover dismissal.","blocking":true}],
+      "acceptableVariations":["Tab placement, preview placement, styling and navigation latency may vary while the active destination and preview/menu state remain correct."],
+      "nonRequirements":["Exact pixels, in-preview editing, new block-reference menu entries or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-tab-reuse.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"With tab reuse enabled, links, Ctrl+K Enter, Recent and Favorites activate the already-open destination tab and preserve the source tab and its content.","blocking":true}],
       "acceptableVariations":["Tab placement, styling and navigation latency may vary while the destination activates and the source content remains available."],

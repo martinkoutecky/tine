@@ -849,7 +849,7 @@ function PageMenu(props: {
   const items: { id: string; label: Msg; run: () => void; danger?: boolean }[] = [
     { id: "open", label: msg("context-menu-ui-open"), run: () => openPageTarget(target()) },
     { id: "open-sidebar", label: msg("context-menu-ui-open-in-sidebar"), run: () => openPageInSidebar(target()) },
-    { id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => openPageTargetInNewTab(target()) },
+    { id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => { openPageTargetInNewTab(target()); pushToast(msg("links-opened-in-new-tab")); } },
     ...(workspaceWindowsSupported() ? [{ id: "open-new-window", label: msg("context-menu-ui-open-in-new-window"), run: () => void openRouteInNewWindow({ ...target(), kind: "page" }) }] : []),
     { id: "favorite-toggle", label: fav() ? msg("context-menu-ui-remove-from-favorites") : msg("context-menu-ui-add-to-favorites"), run: () => toggleFavorite(props.name, props.pageKind) },
     { id: "copy-link", label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ page: props.name }) },
@@ -1115,7 +1115,7 @@ function blockActions(id: string, x: number, y: number): { label: Msg; run: () =
     return [
       { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
       { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-      { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); } },
+      { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
       { label: msg("context-menu-ui-copy", { count: ids.length }), run: copy },
       {
         label: msg("context-menu-ui-copy-export-as"),
@@ -1128,7 +1128,7 @@ function blockActions(id: string, x: number, y: number): { label: Msg; run: () =
   return [
     { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
     { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-    { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); } },
+    { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: msg("context-menu-ui-properties"), run: () => openBlockProps(id, x, y) },
     // The keyboard route to "a block above this one" is Enter at offset 0, which

@@ -11,6 +11,7 @@ references-filter-unlinked = 筛选未链接引用
 references-search-unlinked = 搜索未链接引用文本
 
 preview-open-source = 打开来源
+links-opened-in-new-tab = 已在新标签页中打开
 
 preview-page-actions = 页面操作
 
