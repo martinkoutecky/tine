@@ -10,7 +10,7 @@ import { leadingMarker, matchLeadingMarker } from "../markers";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { assetRelPath, extOf, mediaKind } from "../media";
-import { openPage, openPageInNewTab, openPageAtBlock, openInNewTab, focusBlock } from "../router";
+import { openPage, openPageInNewTab, openPageAtBlock, openInNewTab, zoomToBlock } from "../router";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
@@ -1403,7 +1403,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
               { kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) },
               pane?.paneId ?? focusedPaneId()
             );
-          else if (refClickZoom()) focusBlock(props.id);
+          else if (refClickZoom()) zoomToBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
           else openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
         }}
       >
