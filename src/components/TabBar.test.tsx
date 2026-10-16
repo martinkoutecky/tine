@@ -277,6 +277,35 @@ describe("TabBar pointer tab drag", () => {
     dispose();
   });
 
+  it.each(["top", "right"] as const)("GH #499: the %s content-edge preview matches the resulting local split", (side) => {
+    const { root, dispose } = renderSplit(["A", "B"], ["X"]);
+    const target = root.querySelector('[data-pane-id="pane-2"]')!;
+    const body = target.querySelector(".pane-main-content")!;
+    setRect(target, 300, 0, 300, 300);
+    setRect(target.querySelector(".tab-bar"), 300, 0, 300, 32);
+    const previous = document.elementFromPoint;
+    document.elementFromPoint = () => body;
+    try {
+      const [x, y] = side === "top" ? [450, 80] : [550, 150];
+      tab(root, "main", 1).dispatchEvent(pointer("pointerdown", 70, 10));
+      window.dispatchEvent(pointer("pointermove", x, y));
+      expect(target.querySelector(`.pane-tab-split-preview-${side}`)).not.toBeNull();
+      window.dispatchEvent(pointer("pointerup", x, y, { buttons: 0 }));
+      const created = layoutPaneIds().find((id) => id !== "main" && id !== "pane-2")!;
+      expect(namesForPane(created)).toEqual(["B"]);
+      expect(namesForPane("pane-2")).toEqual(["X"]);
+      expect(layoutRoot()).toMatchObject({ kind: "split", dir: "row", children: [
+        { kind: "pane", paneId: "main" },
+        { kind: "split", dir: side === "top" ? "col" : "row", children: side === "top"
+          ? [{ kind: "pane", paneId: created }, { kind: "pane", paneId: "pane-2" }]
+          : [{ kind: "pane", paneId: "pane-2" }, { kind: "pane", paneId: created }] },
+      ] });
+    } finally {
+      document.elementFromPoint = previous;
+      dispose();
+    }
+  });
+
   it("drops on a seam by creating a split and moving the tab into the new pane", () => {
     const { root, dispose } = renderSplit(["A", "B"], ["X"]);
     const dragged = tab(root, "main", 1);

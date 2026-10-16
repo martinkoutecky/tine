@@ -24,7 +24,6 @@ function closeOffered(router: PaneRouter, t: Tab): boolean {
 
 const MAX_TITLE = 32;
 const DRAG_THRESHOLD_PX = 4;
-const EDGE_ZONE_PX = 24;
 
 // A short, plain-text summary of a zoomed-into block, for the tab label. Drops
 // the hidden id::/collapsed:: lines, takes the first non-empty line, and reads it
@@ -132,13 +131,16 @@ function seamPreview(
   };
 }
 
-function edgeSideAt(x: number, y: number, rect: DOMRect): SplitSide | null {
+function edgeSideAt(x: number, y: number, rect: DOMRect, contentTop = rect.top): SplitSide | null {
+  const zone = (extent: number) => Math.max(24, Math.min(extent * 0.2, 96));
+  const horizontalZone = zone(rect.width);
+  const verticalZone = zone(rect.height);
   const hits = [
-    { side: "left" as const, dist: x - rect.left },
-    { side: "right" as const, dist: rect.right - x },
-    { side: "top" as const, dist: y - rect.top },
-    { side: "bottom" as const, dist: rect.bottom - y },
-  ].filter((h) => h.dist >= 0 && h.dist <= EDGE_ZONE_PX);
+    { side: "left" as const, dist: x - rect.left, zone: horizontalZone },
+    { side: "right" as const, dist: rect.right - x, zone: horizontalZone },
+    { side: "top" as const, dist: y - contentTop, zone: verticalZone },
+    { side: "bottom" as const, dist: rect.bottom - y, zone: verticalZone },
+  ].filter((h) => h.dist >= 0 && h.dist <= h.zone);
   hits.sort((a, b) => a.dist - b.dist);
   return hits[0]?.side ?? null;
 }
@@ -207,7 +209,12 @@ export function tabDropTargetAt(
   const pane = el.closest("[data-pane-id]") as HTMLElement | null;
   const paneId = pane?.dataset.paneId;
   if (!pane || !paneId || paneId === "pdf") return null;
-  const side = edgeSideAt(x, y, pane.getBoundingClientRect());
+  const rect = pane.getBoundingClientRect();
+  // The strip keeps its reorder/append meaning. Start the top split band
+  // directly below it, so every pane has a reachable top edge (GH #499).
+  const strip = pane.querySelector<HTMLElement>(":scope > .tab-bar");
+  const contentTop = Math.max(rect.top, strip?.getBoundingClientRect().bottom ?? rect.top);
+  const side = edgeSideAt(x, y, rect, contentTop);
   if (side) {
     // The preview occupies this pane, including at an outer layout edge.
     // GH #499: use that same region for the drop rather than splitting root.
