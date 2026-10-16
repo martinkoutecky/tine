@@ -12,9 +12,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Custom CSS can set `--tine-danger-color` to override error and destructive-action colors (UI-DANGER-THEME-CONTRAST).
 
+### Changed
+
+- Soft now uses EllisMorrow's refined middle-range palette, with darker light surfaces, brighter dark surfaces, warm highlights and quieter active navigation and scrollbars (GH #649).
+
 ### Fixed
 
 - Error and destructive-action text and error borders stay readable in every bundled light and dark color scheme (UI-DANGER-THEME-CONTRAST).
+- Today's journal waits for agenda and default-query results before showing their sections, avoiding a loading flash when switching graphs (discussion #617).
 - iOS: launching Tine no longer shows a red "Could not apply interface zoom." error; the interface zoom setting now applies on iOS (UI-IOS-ZOOM-TOAST-ON-LAUNCH).
 
 ## [0.8.0-beta.2] - 2026-10-15

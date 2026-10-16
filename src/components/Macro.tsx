@@ -186,7 +186,7 @@ export function QueryMacro(props: {
    *  with `unsupportedLabel` to avoid showing the source. */
   strictAdvanced?: boolean;
   unsupportedLabel?: string;
-  // Render nothing when there are no results: the app-inserted journal agenda
+  // Render nothing until there are results: the app-inserted journal agenda
   // and config.edn's default journal queries (OG query.cljs: a built-in query
   // with an empty result renders nothing).
   hideWhenEmpty?: boolean;
@@ -808,11 +808,14 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const stop = (e: MouseEvent) => e.stopPropagation();
   const arrow = (c: string) => (sortState()?.column === columnKey(c) ? (sortState()!.desc ? " ▼" : " ▲") : "");
 
-  // An advanced query Tine cannot run stays visible with its refusal: only a
-  // run that answered "none" hides.
+  // OG's journal sections have no pending shell (discussion #617). Keep an
+  // adopted answer during same-query reruns, but never reveal a new section
+  // before its first answer. Errors and unsupported queries remain visible.
   const hidden = () =>
-    props.hideWhenEmpty && !!displayed() && total() === 0 && blockingDiagnostics().length === 0
-    && (!isAdvanced() || advInfo()?.supported === true);
+    props.hideWhenEmpty && !loadError() && (!displayed() || (
+      total() === 0 && blockingDiagnostics().length === 0
+      && (!isAdvanced() || advInfo()?.supported === true)
+    ));
   const unsupportedAdvanced = () => {
     const info = advInfo();
     return isAdvanced() && info && (!info.supported || (props.strictAdvanced === true && (info.ignored ?? []).length > 0));

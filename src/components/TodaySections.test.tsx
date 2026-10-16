@@ -35,7 +35,7 @@ vi.mock("./Macro", () => ({
 }));
 vi.mock("./BeginQuery", () => ({
   inspectBeginQuery: (raw: string) => raw.startsWith("#+BEGIN_QUERY") ? { kind: "query", query: raw } : null,
-  BeginQuery: (props: { match: { query: string } }) => <div class="bq" data-body={props.match.query} />,
+  BeginQuery: (props: { match: { query: string }; hideWhenEmpty?: boolean }) => <div class="bq" data-body={props.match.query} data-hide-empty={String(!!props.hideWhenEmpty)} />,
 }));
 vi.mock("./Rendered", () => ({
   detectMacro: (raw: string) => {
@@ -87,6 +87,20 @@ beforeEach(() => {
 });
 
 describe("today's sections (GH #605)", () => {
+  it("does not show temporary config sections before the sections-page lookup settles", async () => {
+    let release!: () => void;
+    h.getPageWait = new Promise<void>((resolve) => { release = resolve; });
+    h.marked = ["My sections"];
+    h.pages.set("My sections", { name: "My sections", kind: "page", title: "My sections", pre_block: null,
+      blocks: [block("#+BEGIN_QUERY\n{:query (task NOW)}\n#+END_QUERY")] });
+    const { div, dispose } = await mount();
+    try {
+      expect(bodies(div)).toEqual([]);
+      release(); await settle(); await settle();
+      expect(div.querySelector(".bq")?.getAttribute("data-hide-empty")).toBe("true");
+    } finally { release(); dispose(); }
+  });
+
   it("a graph switch while parsing the marker query cannot run it in the replacement graph", async () => {
     let release!: () => void;
     h.parseWait = new Promise<void>((resolve) => { release = resolve; });

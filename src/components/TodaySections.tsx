@@ -77,9 +77,10 @@ export function TodaySections(props: { today: string }): JSX.Element {
     <>
       <ResourceFailure of={sections} what="today's sections" onRetry={() => void refetch()} />
       <Show when={current()} fallback={
-        // Config sections show at once and stay up while a refetch runs (every
-        // save bumps dataRev); only a found page or a failed locate replaces them.
-        <Show when={!sections.error}>
+        // Resolve which sections own this journal before showing the fallback;
+        // otherwise config results can flash before a sections page replaces them.
+        // A settled fallback stays mounted through ordinary save refetches.
+        <Show when={sections.state === "ready" || sections.state === "refreshing"}>
           <ConfigSections today={props.today} />
           <button class="today-sections-customize" type="button" disabled={busy()} onClick={customize}>
             {t("journal-sections-customize")}
@@ -100,7 +101,7 @@ export function TodaySections(props: { today: string }): JSX.Element {
                     {(macro) => <QueryMacro body={macro().inner} currentPage={props.today} hideWhenEmpty />}
                   </Match>
                   <Match when={item.kind === "begin-query" && inspectBeginQuery(item.raw, item.format)}>
-                    {(match) => <BeginQuery match={match()} currentPage={props.today} />}
+                    {(match) => <BeginQuery match={match()} currentPage={props.today} hideWhenEmpty />}
                   </Match>
                 </Switch>
               </div>}

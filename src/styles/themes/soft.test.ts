@@ -60,16 +60,20 @@ const SURFACES = [
   "--ls-tertiary-background-color",
   "--ls-page-inline-code-bg-color",
   "--ls-block-highlight-color",
+  "--soft-active-bg",
 ];
-/** The page and the sidebars are what selection and match overlays are painted over. */
-const UNDER_OVERLAY = ["--ls-primary-background-color", "--ls-secondary-background-color"];
+/** Include selected navigation, hover and code surfaces, not just the page. */
+const UNDER_OVERLAY = SURFACES;
 const BODY_TEXT = [
   "--ls-title-text-color",
   "--ls-primary-text-color",
   "--ls-secondary-text-color",
   "--ls-link-text-color",
+  "--ls-link-text-hover-color",
   "--ls-tag-text-color",
   "--text-muted",
+  "--marker-color",
+  "--done-color",
 ];
 /** Hover states (tab close, tab-overview handle) paint --bg-quaternary and switch to
     primary text (app.css .tab-close:hover, .tab-overview-*:hover): muted text never sits on it. */
@@ -86,6 +90,7 @@ const TEXT_ON: Record<string, string[]> = {
 };
 for (const name of ON_QUATERNARY) TEXT_ON[name].push("--ls-quaternary-background-color");
 TEXT_ON["--ls-link-text-color"].push("--ls-page-mark-bg-color");
+TEXT_ON["--ls-link-text-hover-color"].push("--ls-page-mark-bg-color");
 
 /** Overlay background -> foregrounds drawn through it (alpha-blended over the page and sidebar). */
 const OVERLAYS: Record<string, string[]> = {
@@ -173,10 +178,26 @@ describe("Soft palette (GH #649)", () => {
       const stockPage = luminance(resolve(block(shim, mode), "--ls-primary-background-color"));
       if (mode === "light") {
         expect(stockPage - page).toBeGreaterThan(0.1);
-        expect(page).toBeGreaterThan(0.5);
+        // Ellis's #cbc9c3 has luminance 0.584; allow one percentage point.
+        expect(page).toBeGreaterThan(0.574);
+        expect(page).toBeLessThan(0.594);
       } else {
         expect(page / stockPage).toBeGreaterThan(2);
-        expect(page).toBeLessThan(0.1);
+        // Ellis's #4c4e53 has luminance 0.076; same tolerance.
+        expect(page).toBeGreaterThan(0.066);
+        expect(page).toBeLessThan(0.086);
+      }
+    });
+
+    it(`${mode}: bullets and active bullets reach 3:1 on outline surfaces`, () => {
+      for (const fg of ["--ls-block-bullet-color", "--ls-block-bullet-active-color"]) {
+        for (const bg of SURFACES.filter((name) => name !== "--ls-page-inline-code-bg-color")) {
+          expect(ratio(at(fg), at(bg)), `${fg} on ${bg}`).toBeGreaterThanOrEqual(3);
+          for (const overlay of ["--ls-selection-background-color", "--ls-a-chosen-bg"]) {
+            const selected = over(resolve(vars, overlay), at(bg));
+            expect(ratio(at(fg), selected), `${fg} on ${overlay} over ${bg}`).toBeGreaterThanOrEqual(3);
+          }
+        }
       }
     });
   }
@@ -194,5 +215,12 @@ describe("Soft palette (GH #649)", () => {
     expect(theme?.modes).toEqual(["light", "dark"]);
     expect(theme?.name).toBe("Soft");
     expect(existsSync(`public${theme?.thumbnail}`)).toBe(true);
+  });
+
+  it("the Guide describes the coordinated middle-range surfaces and warm highlights", () => {
+    const guide = readFileSync("crates/tine-core/src/templates/customize-look.md", "utf8");
+    expect(guide).toContain("warm gray in light mode and lifted slate gray in dark mode");
+    expect(guide).toContain("warm highlights and quiet active tabs");
+    expect(guide).toContain("page, sidebars, menus, and code surfaces move together");
   });
 });

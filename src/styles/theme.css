@@ -67,7 +67,7 @@
    against all their surfaces in themes/danger.test.ts. Keep these outside the
    stock surface palette so themes can inherit them without copying colors. */
 :where(html[data-theme="light"]) {
-  --palette-danger: #701010;
+  --palette-danger: #661010;
 }
 :where(html[data-theme="dark"]) {
   --palette-danger: #ffd0cc;

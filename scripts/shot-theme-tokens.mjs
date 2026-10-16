@@ -217,12 +217,78 @@ try {
     if (bad) process.exit(1);
   } else if (command === "soft") {
     const { context, page } = await open(browser);
+    await page.setViewportSize({ width: 1280, height: 1700 });
+    // Author a highlight through the real editor, using the preview mock only.
+    const sample = page.locator(".block-content", { hasText: "Started the" }).first();
+    async function authorHighlight() {
+      await sample.click({ position: { x: 6, y: 8 } });
+      await page.locator(".block-editor").fill("Started the [[Tine]] rewrite — aiming for a #fast native feel, with ==warm highlights==.");
+      await page.keyboard.press("Escape");
+      await page.locator("mark").first().waitFor();
+    }
+    const observations = {};
+    for (const [label, m, theme] of [
+      ["light", "light", ""], ["dark", "dark", ""],
+      ["nord-light", "light", "nord"], ["nord-dark", "dark", "nord"],
+      ["soft-light", "light", "soft"], ["soft-dark", "dark", "soft"],
+    ]) {
+      await mode(page, m, theme);
+      await authorHighlight();
+      await page.screenshot({ path: `${out}/comparison-${label}.png` });
+      await page.locator(".page-title").first().click({ button: "right" });
+      await page.locator(".ctx-menu").first().waitFor();
+      await page.screenshot({ path: `${out}/menu-${label}.png` });
+      await page.keyboard.press("Escape");
+      observations[label] = await metrics(page);
+    }
     for (const m of ["light", "dark"]) {
       await mode(page, m, "soft");
+      await authorHighlight();
+      const navigation = await page.locator(".tab.active").first().evaluate((el) => getComputedStyle(el).backgroundColor);
+      const expected = m === "light" ? "rgb(185, 182, 174)" : "rgb(85, 88, 94)";
+      if (navigation !== expected) throw new Error(`active tab lost Soft surface: ${navigation}`);
+      const bracketOpacity = await page.locator(".page-ref .bracket").first().evaluate((el) => getComputedStyle(el).opacity);
+      if (bracketOpacity !== "0.55") throw new Error(`bracket dimming changed: ${bracketOpacity}`);
       await page.screenshot({ path: `${out}/soft-${m}.png` });
       const got = await metrics(page);
       console.log("soft", m, JSON.stringify(got.body));
+      await sample.click({ position: { x: 6, y: 8 } });
+      const editor = await page.locator(".block-editor").evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { style: s.outlineStyle, width: s.outlineWidth, color: s.outlineColor, accent: s.getPropertyValue("--accent").trim() };
+      });
+      // GH #649: the block editor stays borderless when entered (Soft adds no outline).
+      if (editor.style !== "none" && editor.width !== "0px") throw new Error(`block editor gained an outline: ${JSON.stringify(editor)}`);
+      await page.screenshot({ path: `${out}/editor-soft-${m}.png` });
+      await page.keyboard.press("Escape");
+      await page.locator('button.icon-btn[title^="Settings"]').first().click();
+      await page.locator(".settings-modal").waitFor();
+      await page.locator(".settings-nav-item", { hasText: "Appearance" }).click();
+      await page.screenshot({ path: `${out}/settings-soft-${m}.png` });
+      await page.keyboard.press("Escape");
+      observations[`editor-${m}`] = editor;
     }
+    // Switching away removes Soft's component rules as well as its colors.
+    await mode(page, "light");
+    const reset = await metrics(page);
+    if (reset.body["background-color"] !== observations.light.body["background-color"]) throw new Error("Soft leaked into Default");
+    await mode(page, "dark", "nord");
+    const nord = await metrics(page);
+    if (nord.body["background-color"] !== observations["nord-dark"].body["background-color"]) throw new Error("Soft leaked into Nord");
+    const custom = await open(browser, "html[data-theme] { --ls-primary-background-color: rgb(255, 105, 180); } .tab.active { background: rgb(255, 105, 180); }");
+    await mode(custom.page, "light", "soft");
+    const override = await metrics(custom.page);
+    const active = await custom.page.locator(".tab.active").first().evaluate((el) => getComputedStyle(el).backgroundColor);
+    if (override.body["background-color"] !== "rgb(255, 105, 180)" || active !== "rgb(255, 105, 180)") throw new Error("custom.css lost precedence over Soft");
+    await custom.page.locator('button.icon-btn[title^="Settings"]').first().click();
+    await custom.page.locator(".settings-nav-item", { hasText: "Appearance" }).click();
+    const safeMode = custom.page.locator('[data-setting-label="Disable custom CSS"] button[role="switch"]');
+    await safeMode.click();
+    if ((await metrics(custom.page)).body["background-color"] !== "rgb(203, 201, 195)") throw new Error("Disable custom CSS did not reveal Soft");
+    await safeMode.click();
+    if ((await metrics(custom.page)).body["background-color"] !== "rgb(255, 105, 180)") throw new Error("custom.css did not return after safe mode");
+    await custom.context.close();
+    writeFileSync(`${out}/comparison-metrics.json`, JSON.stringify(observations, null, 2) + "\n");
     await context.close();
     if (process.env.SOFT_THUMBNAIL) {
       // Same framing as scripts/shot-theme-gallery.mjs: 640x360 crop at 2x.
