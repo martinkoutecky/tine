@@ -187,8 +187,8 @@ describe("GH #422: the on-query hint for Logseq's no-condition forms", () => {
       expect(shown.textContent).toContain("(task) without markers adds no condition, as in Logseq.");
       expect(shown.textContent).toContain("On its own it matches nothing.");
       expect(buttons(shown)).toEqual(["Open tasks", "Any task"]);
-      // A cue, not a replacement: the block's own answer is still drawn.
-      await vi.waitFor(() => expect(root.querySelector(".query-empty")?.textContent).toContain("No results"));
+      // No-condition queries keep their rewrite cue and invite a condition.
+      await vi.waitFor(() => expect(root.querySelector(".query-empty")?.textContent).toContain("Add a condition to see results."));
 
       press(shown, "Open tasks");
       await vi.waitFor(() => expect(raw()).toBe(`{{query (task ${OPEN.join(" ")})}}`));

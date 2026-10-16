@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+it("the Guide teaches leaving selection mode and restoring an empty query", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
+  for (const outcome of ["Removing the last condition returns to that same empty state", "Selection actions stay above the result rows", "keep their page or block labels", "Press **Select results** again or **Done** to leave selection mode"]) expect(guide).toContain(outcome);
+});
 it("the Guide teaches query answer continuity and Save then Escape", () => {
   const guide = readFileSync("crates/tine-core/src/templates/queries.md", "utf8");
   for (const outcome of ["Renaming keeps the current results visible", "unsaved text draft leaves the results unchanged", "Saving keeps focus in the editor", "returns focus to the query's **⋯** menu"]) expect(guide).toContain(outcome);

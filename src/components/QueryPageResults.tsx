@@ -30,6 +30,22 @@ function PageText(props: { hit: QueryPageHit }): JSX.Element {
     ? <mark>{part.text}</mark> : part.text}</For>;
 }
 
+/** Shared visual identity for ordinary and selectable page results. */
+export function QueryPageResultContent(props: { hit: QueryPageHit }): JSX.Element {
+  const hit = () => props.hit;
+  return <><span class="switcher-kind">{t("query-page-results-page")}</span><span class="search-result-body">
+    <span class="search-result-context">{hit().page.kind === "journal" ? t("query-page-results-journal") : t("query-page-results-page-label")}</span>
+    <span class="search-result-excerpt"><PageText hit={hit()} /></span>
+    <Show when={hit().evidence.some((item) => item.field === "visible_content")}>
+      <span class="search-result-excerpt query-page-content-excerpt"><For each={buildSearchExcerpt(hit().display_text,
+        hit().evidence.filter((item) => item.field === "visible_content").flatMap((item) => item.spans))}>
+        {(part) => part.marked ? <mark>{part.text}</mark> : part.text}
+      </For></span>
+    </Show>
+    <Show when={hit().matched_alias}><span class="query-page-alias">{t("query-page-results-alias", { alias: hit().matched_alias! })}</span></Show>
+  </span></>;
+}
+
 /** Navigation-only page rows. Alias evidence labels its physical owner, and
  * content membership shows the matched block excerpt under that owner's name.
  * Order and bounds come from graph search; a Board groups adjacent values of
@@ -50,17 +66,7 @@ export function QueryPageResults(props: {
     class="query-result-row switcher-row"
     data-inpage-find-surface={props.surfaceId(hit)}
     {...(props.actions?.(hit) ?? { onClick: () => props.onOpen(hit) })}
-  ><span class="switcher-kind">{t("query-page-results-page")}</span><span class="search-result-body">
-    <span class="search-result-context">{hit.page.kind === "journal" ? t("query-page-results-journal") : t("query-page-results-page-label")}</span>
-    <span class="search-result-excerpt"><PageText hit={hit} /></span>
-    <Show when={hit.evidence.some((item) => item.field === "visible_content")}>
-      <span class="search-result-excerpt query-page-content-excerpt"><For each={buildSearchExcerpt(hit.display_text,
-        hit.evidence.filter((item) => item.field === "visible_content").flatMap((item) => item.spans))}>
-        {(part) => part.marked ? <mark>{part.text}</mark> : part.text}
-      </For></span>
-    </Show>
-    <Show when={hit.matched_alias}><span class="query-page-alias">{t("query-page-results-alias", { alias: hit.matched_alias! })}</span></Show>
-  </span></button>;
+  ><QueryPageResultContent hit={hit} /></button>;
   // Group adjacent rows so authored sort order remains authoritative.
   const boardGroups = createMemo(() => {
     const field = props.view?.group_by;
