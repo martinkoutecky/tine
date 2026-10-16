@@ -779,7 +779,9 @@ mod rename_guide_tests {
         for behavior in [
             "even without a journal file",
             "Viewing a fileless day creates no file",
-            "collapsed **Upcoming** group above today, nearest first",
+            "Upcoming is off by default",
+            "`{{upcoming}}`",
+            "query blocks and the Upcoming macro in outline order",
             "removing the last mention updates the feed",
         ] {
             assert!(

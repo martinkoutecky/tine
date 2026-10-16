@@ -10,10 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- The Journal sections page explains what it controls and links to its Guide in the right sidebar (GH #710).
 - Custom CSS can set `--tine-danger-color` to override error and destructive-action colors (UI-DANGER-THEME-CONTRAST).
 
 ### Changed
 
+- Upcoming is now off by default; add `{{upcoming}}` to the Journal sections page to show future journal references in that position (GH #710).
 - Soft now uses EllisMorrow's refined middle-range palette, with darker light surfaces, brighter dark surfaces, warm highlights and quieter active navigation and scrollbars (GH #649).
 - Tine Beta checks for updates at a fixed address on tine.page, and each Beta is published as its own release (`vX.Y.Z-beta.N`) instead of replacing the files of a moving `beta` release; older Betas still find this one (discussion #682).
 

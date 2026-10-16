@@ -30,10 +30,11 @@ export async function locateSectionsPages(): Promise<string[]> {
 }
 
 export type SectionItem =
+  | { kind: "upcoming"; raw: string; format: Format }
   | { kind: "query"; raw: string; format: Format }
   | { kind: "begin-query"; raw: string; format: Format };
 
-/** Query blocks of the page in outline order, any depth. Other text is the
+/** Query and Upcoming blocks of the page in outline order, any depth. Other text is the
  *  user's notes for themselves and stays on the page. `classify` is the block
  *  renderer's own detection (detectMacro / inspectBeginQuery), injected so this
  *  module never re-derives query syntax. */
@@ -61,7 +62,7 @@ export function seedSectionsPage(name: string, format: Format, agenda: string): 
   const block = (raw: string): BlockDto => ({ id: "", raw, collapsed: false, children: [] });
   const queries = (meta?.default_journal_queries ?? []).flatMap((query) => query.seed ? [block(query.seed)] : []);
   const blocks = [
-    block("Queries on this page show under today's journal in Tine, in this order. Logseq keeps using :default-queries in config.edn. Delete this page to go back to config.edn."),
+    block("Queries on this page show under today's journal in Tine, in this order. To show future journal references, add a separate block containing {{upcoming}}. Logseq keeps using :default-queries in config.edn. Delete this page to go back to config.edn."),
     ...queries,
     ...(meta?.disable_scheduled_and_deadline_query ? [] : [block(agenda)]),
   ];

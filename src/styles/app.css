@@ -7312,6 +7312,20 @@ img.emoji {
   opacity: 0;
   transition: opacity 0.15s;
 }
+
+.journal-sections-header {
+  color: var(--text-muted);
+  font-size: 0.875em;
+  margin: 0.5em 0 1em;
+}
+
+.journal-sections-header button {
+  color: inherit;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 0.15em 0.5em;
+  background: transparent;
+}
 .page-section:hover .today-sections-customize,
 .today-sections-customize:focus-visible {
   opacity: 1;

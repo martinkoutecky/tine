@@ -1,4 +1,5 @@
 journal-sections-customize = 自定义今天的区域…
+journal-sections-explanation = 此页面控制今天日记中显示的内容：查询块、日程和 { "{{upcoming}}" }。
 
 journal-sections-create-failed = 无法创建页面“{ $page }”：{ $error }
 
