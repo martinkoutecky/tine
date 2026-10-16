@@ -12,6 +12,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Soft now uses EllisMorrow's refined middle-range palette, with darker light surfaces, brighter dark surfaces, warm highlights and quieter active navigation and scrollbars (GH #649).
 
+### Fixed
+
+- iOS: launching Tine no longer shows a red "Could not apply interface zoom." error; the interface zoom setting now applies on iOS (UI-IOS-ZOOM-TOAST-ON-LAUNCH).
+
 ## [0.8.0-beta.2] - 2026-10-15
 
 ### Added
