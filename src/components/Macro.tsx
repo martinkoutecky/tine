@@ -206,7 +206,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   const sourceError = () => macroBody() === null ? "Query source could not be parsed. Edit the block text to repair the macro." : undefined;
   const macroName = (): string => macroBody()?.name ?? QUERY_MACRO_NAMES[0];
   const arg = () => macroBody()?.argument.trim() ?? "";
-  const emptyDraft = () => !!props.blockId && arg() === "";
+  // Ask the engine: removing the last builder row can print `(and)` or leave
+  // only view directives. Those are the same no-condition query as blank text.
+  const emptyDraft = () => arg() === "" || reading()?.og_hint?.no_conditions === true;
   const hostProperties = createMemo<[string, string][]>(() => {
     const id = props.blockId;
     const node = id ? docNode(id) : undefined;

@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-sw-queries.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Removing the last builder condition restores the empty prompt; Search selection toggles off and offers actions above rows with their ordinary page and block identities.","blocking":true}],
+      "acceptableVariations":["Layout, row ordering and parser latency may vary while the semantic outcomes remain correct."],
+      "nonRequirements":["Exact pixels, a specific blank-query serialization or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-agenda-flicker.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Switching to a graph with no agenda or default-query matches never flashes a pending section; switching back shows the matching sections ready.","blocking":true}],
       "acceptableVariations":["Result arrival time, layout and styling may vary; nonempty sections may appear as their results become ready."],

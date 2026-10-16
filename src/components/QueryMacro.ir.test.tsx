@@ -109,6 +109,47 @@ function load(raw: string, { readOnly = false }: { readOnly?: boolean } = {}): v
   });
 }
 
+it.each(["(and)", "(sort-by created-at)"])("restores the empty state after removing the last builder condition (%s)", async (blank) => {
+  load("{{query (task TODO)}}");
+  vi.spyOn(backend(), "parseQuery").mockImplementation(async text => ({
+    query: { anchor: "block", filter: text === "(task TODO)"
+      ? { kind: "leaf", leaf: { kind: "attr", attr: "task", op: "in", value: { kind: "list", items: [{ kind: "text", text: "TODO" }] } } }
+      : { kind: "and", items: [] }, source: { kind: "og", original: text, og_options: "" } },
+    view: {},
+    ...(text === "(task TODO)" ? {} : { og_hint: { bare: [], no_conditions: true, rewrites: [] } }),
+  }));
+  const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+  vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+  vi.spyOn(backend(), "printQuery").mockResolvedValue(blank);
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    await openCalmQuery(root);
+    await vi.waitFor(() => expect(root.querySelector(".qs-row-remove")).not.toBeNull());
+    run.mockClear();
+    root.querySelector<HTMLButtonElement>(".qs-row-remove")!.click();
+    await vi.waitFor(() => expect(doc.byId.query.raw).toContain(blank));
+    await settle();
+    expect(root.textContent).toContain("Add a condition to see results.");
+    expect(run).not.toHaveBeenCalled();
+    expect(root.querySelector(".query-group")).toBeNull();
+  } finally { dispose(); }
+});
+
+it.each(["(and)", "(sort-by created-at)"])("authored no-condition query %s also shows the empty prompt", async blank => {
+  load(`{{query ${blank}}}`);
+  vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+    query: { anchor: "page", filter: { kind: "and", items: [] }, source: { kind: "og", original: blank, og_options: "" } },
+    view: {}, og_hint: { bare: [], no_conditions: true, rewrites: [] },
+  });
+  const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    await settle();
+    expect(root.textContent).toContain("Add a condition to see results.");
+    expect(run).not.toHaveBeenCalled();
+  } finally { dispose(); }
+});
+
 /** A `{{tine-query …}}` block: TQL, which ONLY the IR evaluator can read. */
 const TQL_MACRO = "{{tine-query -- task TODO}}";
 

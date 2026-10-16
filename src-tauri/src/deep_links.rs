@@ -235,12 +235,20 @@ fn target_in_store(
     Ok(Some(target))
 }
 
+/// A closed graph's lookup: the read-only prefilter ruled the target out, or a
+/// full Store open answered (`None` = not there).
+enum ClosedLookup {
+    RuledOut,
+    Searched(Option<LinkTarget>),
+}
+
 fn target_in_closed_graph(
     root: &std::path::Path,
     request: &LinkRequest,
     approved_external_assets: Option<&std::path::Path>,
+    use_probe: bool,
     open: impl FnOnce() -> Result<Store, String>,
-) -> Result<Option<LinkTarget>, String> {
+) -> Result<ClosedLookup, String> {
     let probe = match (&request.block, &request.page) {
         (Some(id), _) => LinkProbe::Block {
             id,
@@ -252,12 +260,148 @@ fn target_in_closed_graph(
         },
         _ => LinkProbe::Identity,
     };
-    if !Store::read_link_identity_at(root, probe).target_possible {
-        return Ok(None);
+    if use_probe && !Store::read_link_identity_at(root, probe).target_possible {
+        return Ok(ClosedLookup::RuledOut);
     }
     let store = open()?;
-    target_in_store(&store, &root.display().to_string(), request)
+    target_in_store(&store, &root.display().to_string(), request).map(ClosedLookup::Searched)
 }
+
+/// One known graph, as the scan sees it before looking for the target.
+struct KnownRoot {
+    root: std::path::PathBuf,
+    identity: Result<Option<String>, String>,
+}
+
+/// The candidate list for one link. `lookup(root, use_probe)` answers for one
+/// graph (an open graph ignores `use_probe`). GH #181: the prefilter is only an
+/// optimisation, so when no graph resolved the target, every graph it ruled out
+/// gets a full open before "not found" (reported on Windows, beta.2). A found
+/// target keeps the fast path. O(known graphs) lookups, plus one full open per
+/// ruled-out graph only on a miss.
+fn resolve_link_candidates(
+    request: &LinkRequest,
+    known: Vec<KnownRoot>,
+    mut lookup: impl FnMut(&std::path::Path, bool) -> Result<ClosedLookup, String>,
+) -> Result<Vec<LinkTarget>, String> {
+    let mut candidates = Vec::new();
+    let mut missing_copies = Vec::new();
+    let mut errors = Vec::new();
+    let mut ruled_out = Vec::new();
+    let marker = |root_text: &str, id: String, error: Option<String>| LinkTarget {
+        display_root: tine_core::graph_paths::normalize_graph_path(root_text),
+        root: root_text.into(),
+        graph_id: Some(id),
+        name: request.page.clone(),
+        page_kind: None,
+        path: None,
+        block: request.block.clone(),
+        error,
+    };
+    for known in known {
+        let KnownRoot { root, identity } = known;
+        if let Some(id) = &request.graph {
+            match &identity {
+                Ok(Some(found)) if found.eq_ignore_ascii_case(id) => {}
+                Ok(_) => continue,
+                Err(e) => {
+                    errors.push(e.clone());
+                    continue;
+                }
+            }
+        }
+        let root_text = root.display().to_string();
+        if request.page.is_none() && request.block.is_none() {
+            candidates.push(LinkTarget {
+                display_root: tine_core::graph_paths::normalize_graph_path(&root_text),
+                root: root_text,
+                graph_id: identity.ok().flatten(),
+                name: None,
+                page_kind: None,
+                path: None,
+                block: None,
+                error: None,
+            });
+            continue;
+        }
+        let result = lookup(&root, true);
+        let result = match result {
+            Ok(ClosedLookup::RuledOut) => {
+                ruled_out.push((root.clone(), identity.clone()));
+                Ok(None)
+            }
+            Ok(ClosedLookup::Searched(found)) => Ok(found),
+            Err(e) => Err(e),
+        };
+        match result {
+            Ok(Some(mut target)) => {
+                target.graph_id = identity.ok().flatten();
+                candidates.push(target);
+            }
+            Ok(None) => {
+                if let Ok(Some(id)) = identity {
+                    // A remembered copy remains authoritative even if its
+                    // target was deleted. Never silently use another copy.
+                    let missing = marker(&root_text, id, None);
+                    if request.graph.is_some() {
+                        candidates.push(missing);
+                    } else {
+                        missing_copies.push(missing);
+                    }
+                }
+            }
+            Err(e) => {
+                errors.push(e.clone());
+                if let Ok(Some(id)) = identity {
+                    let unavailable = marker(&root_text, id, Some(e));
+                    if request.graph.is_some() {
+                        candidates.push(unavailable);
+                    } else {
+                        missing_copies.push(unavailable);
+                    }
+                }
+            }
+        }
+    }
+    let resolved =
+        |candidates: &[LinkTarget]| candidates.iter().any(|target| target.path.is_some());
+    if !ruled_out.is_empty() && !resolved(&candidates) {
+        let mut rescued = 0u64;
+        for (root, identity) in &ruled_out {
+            let root_text = root.display().to_string();
+            match lookup(root, false) {
+                Ok(ClosedLookup::Searched(Some(mut target))) => {
+                    rescued += 1;
+                    candidates.retain(|known| known.root != root_text);
+                    missing_copies.retain(|known| known.root != root_text);
+                    target.graph_id = identity.clone().ok().flatten();
+                    candidates.push(target);
+                }
+                Ok(_) => {}
+                Err(e) => errors.push(e),
+            }
+        }
+        crate::flight::link_probe_rescue(ruled_out.len() as u64, rescued);
+    }
+    let ids: std::collections::HashSet<_> = candidates
+        .iter()
+        .filter_map(|target| target.graph_id.clone())
+        .collect();
+    candidates.extend(
+        missing_copies
+            .into_iter()
+            .filter(|target| target.graph_id.as_ref().is_some_and(|id| ids.contains(id))),
+    );
+    if candidates.is_empty() {
+        let detail = errors
+            .first()
+            .map(|e| format!(" ({e})"))
+            .unwrap_or_default();
+        return Err(format!("Tine link target not found in any known graph. Open its graph in Tine first, then try the link again.{detail}"));
+    }
+    Ok(candidates)
+}
+
 #[tauri::command]
 pub(crate) async fn scan_known_graphs_for_link(
     request: LinkRequest,
@@ -266,65 +410,43 @@ pub(crate) async fn scan_known_graphs_for_link(
     validate(&request)?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
-        let mut candidates = Vec::new();
-        let mut missing_copies = Vec::new();
-        let mut errors = Vec::new();
         let mut roots = std::collections::HashSet::new();
-        for known in crate::settings::list_known_graphs(app.clone()) {
-            let Ok(root) = Store::canonical_root(std::path::Path::new(&known.path)) else { continue; };
-            if !roots.insert(root.clone()) { continue; }
-            let identity = Store::read_link_identity_at(&root, LinkProbe::Identity).identity;
-            if let Some(id) = &request.graph {
-                match &identity {
-                    Ok(Some(found)) if found.eq_ignore_ascii_case(id) => {}
-                    Ok(_) => continue,
-                    Err(e) => { errors.push(e.clone()); continue; }
-                }
-            }
-            let root_text = root.display().to_string();
-            if request.page.is_none() && request.block.is_none() {
-                candidates.push(LinkTarget { display_root: tine_core::graph_paths::normalize_graph_path(&root_text), root: root_text, graph_id: identity.ok().flatten(), name: None, page_kind: None, path: None, block: None, error: None });
+        let mut known = Vec::new();
+        for graph in crate::settings::list_known_graphs(app.clone()) {
+            let Ok(root) = Store::canonical_root(std::path::Path::new(&graph.path)) else {
+                continue;
+            };
+            if !roots.insert(root.clone()) {
                 continue;
             }
-            let owner = state.graphs.read().unwrap().owner(&root);
-            let result = if let Some(slot) = owner.and_then(|label| crate::state::slot_for_window(&state, &label).ok()) {
-                target_in_store(&slot.store, &root_text, &request)
-            } else {
-                let approved = crate::settings::approved_external_assets(&app, &root);
-                target_in_closed_graph(&root, &request, approved.as_deref(), || Store::open(&root, tine_store::OpenOptions {
-                    approved_external_assets: approved.clone(),
-                    ..Default::default()
-                }).map_err(|e| e.to_string()).map(|(store, _, _)| store))
-            };
-            match result {
-                Ok(Some(mut target)) => { target.graph_id = identity.ok().flatten(); candidates.push(target); },
-                Ok(None) => {
-                    if let Ok(Some(id)) = identity {
-                        // A remembered copy remains authoritative even if its
-                        // target was deleted. Never silently use another copy.
-                        let missing = LinkTarget { display_root: tine_core::graph_paths::normalize_graph_path(&root_text), root: root_text, graph_id: Some(id), name: request.page.clone(), page_kind: None, path: None, block: request.block.clone(), error: None };
-                        if request.graph.is_some() { candidates.push(missing); }
-                        else { missing_copies.push(missing); }
-                    }
-                },
-                Err(e) => {
-                    errors.push(e.clone());
-                    if let Ok(Some(id)) = identity {
-                        let unavailable = LinkTarget { display_root: tine_core::graph_paths::normalize_graph_path(&root_text), root: root_text, graph_id: Some(id), name: request.page.clone(), page_kind: None, path: None, block: request.block.clone(), error: Some(e) };
-                        if request.graph.is_some() { candidates.push(unavailable); }
-                        else { missing_copies.push(unavailable); }
-                    }
-                }
+            let identity = Store::read_link_identity_at(&root, LinkProbe::Identity).identity;
+            known.push(KnownRoot { root, identity });
+        }
+        resolve_link_candidates(&request, known, |root, use_probe| {
+            let root_text = root.display().to_string();
+            let owner = state.graphs.read().unwrap().owner(root);
+            if let Some(slot) =
+                owner.and_then(|label| crate::state::slot_for_window(&state, &label).ok())
+            {
+                return target_in_store(&slot.store, &root_text, &request)
+                    .map(ClosedLookup::Searched);
             }
-        }
-        let ids: std::collections::HashSet<_> = candidates.iter().filter_map(|target| target.graph_id.clone()).collect();
-        candidates.extend(missing_copies.into_iter().filter(|target| target.graph_id.as_ref().is_some_and(|id| ids.contains(id))));
-        if candidates.is_empty() {
-            let detail = errors.first().map(|e| format!(" ({e})")).unwrap_or_default();
-            return Err(format!("Tine link target not found in any known graph. Open its graph in Tine first, then try the link again.{detail}"));
-        }
-        Ok(candidates)
-    }).await.map_err(|e| e.to_string())?
+            let approved = crate::settings::approved_external_assets(&app, root);
+            target_in_closed_graph(root, &request, approved.as_deref(), use_probe, || {
+                Store::open(
+                    root,
+                    tine_store::OpenOptions {
+                        approved_external_assets: approved.clone(),
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| e.to_string())
+                .map(|(store, _, _)| store)
+            })
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub(crate) fn handoff_tine_link(
@@ -351,6 +473,108 @@ pub(crate) fn handoff_tine_link(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pre-rescue answer of one closed graph: ruled out reads as absent.
+    fn closed_lookup(
+        root: &std::path::Path,
+        request: &LinkRequest,
+        approved: Option<&std::path::Path>,
+        open: impl FnOnce() -> Result<Store, String>,
+    ) -> Result<Option<LinkTarget>, String> {
+        target_in_closed_graph(root, request, approved, true, open).map(|lookup| match lookup {
+            ClosedLookup::RuledOut => None,
+            ClosedLookup::Searched(target) => target,
+        })
+    }
+
+    #[test]
+    fn a_probe_miss_everywhere_falls_back_to_full_opens() {
+        // GH #181 (Windows, beta.2): the quick check ruled out the graph that
+        // held the block, so the link reported "not found in any known graph".
+        let temp = tempfile::tempdir().unwrap();
+        let id = "abcdefab-1111-4111-8111-111111111111";
+        let roots: Vec<_> = ["holder", "other"]
+            .map(|name| temp.path().join(name))
+            .into();
+        for root in &roots {
+            std::fs::create_dir_all(root.join("pages")).unwrap();
+        }
+        std::fs::write(
+            roots[0].join("pages/Note.md"),
+            format!("- target\n  id:: {id}\n"),
+        )
+        .unwrap();
+        std::fs::write(roots[1].join("pages/Other.md"), "- unrelated\n").unwrap();
+        let request = LinkRequest {
+            graph: None,
+            page: None,
+            block: Some(id.into()),
+        };
+        let known = || {
+            roots
+                .iter()
+                .map(|root| KnownRoot {
+                    root: root.clone(),
+                    identity: Ok(None),
+                })
+                .collect::<Vec<_>>()
+        };
+        let full_opens = std::cell::Cell::new(0);
+        // A prefilter that wrongly rules out every graph.
+        let lookup = |root: &std::path::Path, use_probe: bool| {
+            if use_probe {
+                return Ok(ClosedLookup::RuledOut);
+            }
+            full_opens.set(full_opens.get() + 1);
+            target_in_closed_graph(root, &request, None, false, || {
+                Store::open(root, Default::default())
+                    .map(|x| x.0)
+                    .map_err(|e| e.to_string())
+            })
+        };
+        let found = resolve_link_candidates(&request, known(), lookup).expect("the block is found");
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].root, roots[0].display().to_string());
+        assert_eq!(found[0].block.as_deref(), Some(id));
+        assert_eq!(
+            full_opens.get(),
+            2,
+            "only a miss everywhere opens the ruled-out graphs"
+        );
+
+        // A target the quick check finds never opens the graphs it ruled out.
+        let opens = std::cell::Cell::new(0);
+        let found = resolve_link_candidates(&request, known(), |root, use_probe| {
+            opens.set(opens.get() + 1);
+            target_in_closed_graph(root, &request, None, use_probe, || {
+                Store::open(root, Default::default())
+                    .map(|x| x.0)
+                    .map_err(|e| e.to_string())
+            })
+        })
+        .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(opens.get(), 2, "one lookup per graph, no rescue pass");
+
+        // A real miss still reports "not found" after the rescue pass.
+        let missing = LinkRequest {
+            block: Some("11111111-1111-4111-8111-111111111111".into()),
+            ..request.clone()
+        };
+        let error = resolve_link_candidates(&missing, known(), |root, use_probe| {
+            target_in_closed_graph(root, &missing, None, use_probe, || {
+                Store::open(root, Default::default())
+                    .map(|x| x.0)
+                    .map_err(|e| e.to_string())
+            })
+        })
+        .err()
+        .unwrap();
+        assert!(
+            error.starts_with("Tine link target not found in any known graph"),
+            "{error}"
+        );
+    }
     #[test]
     fn closed_graph_without_target_never_opens_a_store() {
         // Copy link persists v4 UUIDs; these must still skip unrelated graphs.
@@ -363,7 +587,7 @@ mod tests {
             page: None,
             block: Some("11111111-1111-4111-8111-111111111111".into()),
         };
-        assert!(target_in_closed_graph(temp.path(), &request, None, || {
+        assert!(closed_lookup(temp.path(), &request, None, || {
             opens.set(opens.get() + 1);
             Store::open(temp.path(), Default::default())
                 .map(|x| x.0)
@@ -381,7 +605,7 @@ mod tests {
             page: Some("Missing".into()),
             block: None,
         };
-        assert!(target_in_closed_graph(temp.path(), &page, None, || {
+        assert!(closed_lookup(temp.path(), &page, None, || {
             panic!("a missing page must not start a graph load")
         })
         .unwrap()
@@ -402,7 +626,7 @@ mod tests {
         std::fs::write(&path, format!("- prose mentions {}\n", id.to_uppercase())).unwrap();
         let opens = std::cell::Cell::new(0);
         let search = || {
-            target_in_closed_graph(temp.path(), &request, None, || {
+            closed_lookup(temp.path(), &request, None, || {
                 opens.set(opens.get() + 1);
                 Store::open(temp.path(), Default::default())
                     .map(|x| x.0)
@@ -448,7 +672,7 @@ mod tests {
             let began = std::time::Instant::now();
             let mut open_elapsed = std::time::Duration::ZERO;
             let mut opens = 0;
-            let result = target_in_closed_graph(root, &request, None, || {
+            let result = closed_lookup(root, &request, None, || {
                 opens += 1;
                 let began = std::time::Instant::now();
                 let store = Store::open(root, Default::default())
@@ -492,7 +716,7 @@ mod tests {
         store.close();
         drop(store);
         let opens = std::cell::Cell::new(0);
-        let cold = target_in_closed_graph(temp.path(), &request, None, || {
+        let cold = closed_lookup(temp.path(), &request, None, || {
             opens.set(opens.get() + 1);
             Store::open(temp.path(), Default::default())
                 .map(|x| x.0)
@@ -552,7 +776,7 @@ mod tests {
                 };
                 let full = target_in_store(&open().unwrap(), &root.display().to_string(), &request)
                     .unwrap();
-                let filtered = target_in_closed_graph(root, &request, None, open).unwrap();
+                let filtered = closed_lookup(root, &request, None, open).unwrap();
                 assert_eq!(
                     serde_json::to_value(&filtered).unwrap(),
                     serde_json::to_value(full).unwrap()
@@ -570,7 +794,7 @@ mod tests {
         let count = roots
             .iter()
             .filter(|root| {
-                target_in_closed_graph(root, &request, None, || {
+                closed_lookup(root, &request, None, || {
                     Store::open(root, Default::default())
                         .map(|x| x.0)
                         .map_err(|e| e.to_string())

@@ -19,11 +19,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Removing the last query condition restores the empty-state prompt (GH #551); Search tab selection toggles off, keeps actions above results and preserves page and block labels (GH #387).
 - All pages matches the typography of neighboring sidebar headings in English and Chinese (GH #335).
 - Search view labels, validation messages and deeper query options follow the interface language, including Simplified Chinese (GH #107).
 - Error and destructive-action text and error borders stay readable in every bundled light and dark color scheme (UI-DANGER-THEME-CONTRAST).
 - Today's journal waits for agenda and default-query results before showing their sections, avoiding a loading flash when switching graphs (discussion #617).
 - iOS: launching Tine no longer shows a red "Could not apply interface zoom." error; the interface zoom setting now applies on iOS (UI-IOS-ZOOM-TOAST-ON-LAUNCH).
+- A block link can no longer fail with "Tine link target not found in any known graph" when the quick check of closed graphs misses its block: Tine fully opens the graphs it ruled out before reporting the link as not found (GH #181).
 
 ## [0.8.0-beta.2] - 2026-10-15
 
