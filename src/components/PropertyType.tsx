@@ -51,14 +51,14 @@ export function PropertyType(props: {
           <span class="qb-prop-type-mismatch">{t("property-type-mismatches", { count: String(current().mismatch_count) })}</span>
         </Show>
         <Show when={!props.readOnly}>
-          <button type="button" disabled={busy()} onClick={() => setOpen(!open())}>{t("property-type-declare-type")}</button>
+          <button class="settings-btn" type="button" disabled={busy()} onClick={() => setOpen(!open())}>{t("property-type-declare-type")}</button>
           <Show when={open()}><span class="qb-prop-type-menu">
             <label><input type="checkbox" checked={many()} onChange={(event) => setMany(event.currentTarget.checked)} />{t("property-type-list-of")}</label>
-            <For each={DECLARABLE_TYPES}>{(type) => <button type="button"
+            <For each={DECLARABLE_TYPES}>{(type) => <button class="settings-btn" type="button"
               onClick={() => void write(declarationValue(type, many() ? "many" : "one"))}>
               {declarationValue(type, many() ? "many" : "one")}
             </button>}</For>
-            <Show when={current().declared}><button type="button" onClick={() => void write(null)}>{t("property-type-remove-declaration")}</button></Show>
+            <Show when={current().declared}><button class="settings-btn" type="button" onClick={() => void write(null)}>{t("property-type-remove-declaration")}</button></Show>
           </span></Show>
         </Show>
       </>}

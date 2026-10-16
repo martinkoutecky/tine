@@ -977,7 +977,7 @@ function PageIconMenu(props: { name: string; close: (restoreFocus?: boolean) => 
             else if (e.key === "Escape") { e.preventDefault(); setEditing(false); queueMicrotask(() => trigger?.focus()); }
           }} />
         <div class="pp-hint">{t("page-icon-hint")}</div>
-        <button class="ctx-item" onClick={() => write(value().trim() || null)}>{t("page-icon-save")}</button>
+        <button type="button" class="ctx-template-submit" onClick={() => write(value().trim() || null)}>{t("page-icon-save")}</button>
       </div>
     </Show>
     <Show when={readPageProperty(props.name, "icon")}>

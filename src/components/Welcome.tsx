@@ -86,7 +86,7 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
             <div class="welcome-recovery" role="alert"><p class="welcome-recovery-title">{t("welcome-tine-could-not-open-your-last-graph")}</p>
               <p class="welcome-recovery-path">{failed().path}</p>
               <p class="welcome-recovery-reason">{failed().message}</p>
-              <div class="welcome-recovery-actions"><button disabled={!!busy()} onClick={retry}>{t("welcome-try-again")}</button><button onClick={copyDetails}>{t("welcome-copy-details")}</button>
+              <div class="welcome-recovery-actions"><button class="settings-btn" type="button" disabled={!!busy()} onClick={retry}>{t("welcome-try-again")}</button><button class="settings-btn" type="button" onClick={copyDetails}>{t("welcome-copy-details")}</button>
               </div><p class="welcome-recovery-note">{t("welcome-nothing-was-changed-on-disk-you-can")}</p>
             </div>
           )}

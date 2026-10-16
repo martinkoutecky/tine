@@ -109,19 +109,19 @@ export function DiagnosticsTab(): JSX.Element {
       <p class="settings-hint diagnostics-privacy">{t("diagnostics-tab-it-does-not-record-graph-content-file-paths")}</p>
       <p class="settings-hint diagnostics-privacy">{t("diagnostics-tab-a-report-also-carries-statistics-about-your-graph")}</p>
       <div class="diagnostics-actions">
-        <button type="button" class="primary" disabled={busy()} onClick={() => void createReport()}>
+        <button type="button" class="settings-btn settings-btn-primary" disabled={busy()} onClick={() => void createReport()}>
           {busy() ? t("diagnostics-tab-creating") : t("diagnostics-tab-create-diagnostic-report")}
         </button>
         <Show when={report()}>
-          <button type="button" onClick={() => void copyReport()}>{t("diagnostics-tab-copy-report")}</button>
+          <button class="settings-btn" type="button" onClick={() => void copyReport()}>{t("diagnostics-tab-copy-report")}</button>
         </Show>
         <Show when={!isMobilePlatform}>
-          <button type="button" onClick={() => void saveReport()}>{t("diagnostics-tab-save-report")}</button>
+          <button class="settings-btn" type="button" onClick={() => void saveReport()}>{t("diagnostics-tab-save-report")}</button>
         </Show>
-        <button type="button" class="danger" onClick={() => void clearReport()}>{t("diagnostics-tab-clear-recorded-events")}</button>
+        <button type="button" class="settings-btn danger" onClick={() => void clearReport()}>{t("diagnostics-tab-clear-recorded-events")}</button>
       </div>
       <div class="diagnostics-rescan">
-        <button type="button" disabled={rescanning()} onClick={() => void rescanGraph()}>
+        <button class="settings-btn" type="button" disabled={rescanning()} onClick={() => void rescanGraph()}>
           {rescanning() ? t("diagnostics-tab-rescanning") : t("diagnostics-tab-rescan-graph")}
         </button>
         <span class="settings-hint" role="status">
