@@ -178,6 +178,7 @@ export interface PaneRouter {
     opts?: { inPlace?: boolean }
   ): void;
   focusBlock(id: string | null): void;
+  zoomToBlock(target: BlockTarget): void;
   openPageAtBlock(target: BlockTarget): void;
   openPageAtBlock(name: string, pageKind: PageKind, blockId: string, path?: string): void;
   openInNewTab(r: Route, foreground?: boolean): void;
@@ -739,6 +740,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     navigate({ kind: "page", ...pageTargetFromBlockRef(ref), block: ref.uuid });
   }
 
+  /** Zoom into a block named by its page target, loaded or not (GH #708: a
+   *  block reference's target usually lives on another page, which
+   *  `focusBlock` cannot see). Navigates in place, like `focusBlock`. */
+  function zoomToBlock(target: BlockTarget) {
+    navigate({ kind: "page", name: target.name, pageKind: target.pageKind, block: target.block, ...(target.path ? { path: target.path } : {}) });
+  }
+
   /** Open a page and scroll the given block into view (block search results jump
    *  to the specific block, not just the page top). */
   function openPageAtBlock(target: BlockTarget): void;
@@ -1152,6 +1160,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     resetTabsToJournals,
     openFile,
     focusBlock,
+    zoomToBlock,
     openPageAtBlock,
     openInNewTab,
     openPageTargetInNewTab,
@@ -1309,6 +1318,10 @@ export function openFile(
 
 export function focusBlock(id: string | null) {
   focusedRouterInstance().focusBlock(id);
+}
+
+export function zoomToBlock(target: BlockTarget) {
+  focusedRouterInstance().zoomToBlock(target);
 }
 
 export function openPageAtBlock(target: BlockTarget): void;

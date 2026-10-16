@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- With "Click a block reference to zoom in" turned on, clicking a reference to a block on another page now zooms into that block; before, nothing happened (GH #708).
+
 ## [0.7.4] - 2026-10-16
 
 ### Fixed
