@@ -35,6 +35,8 @@
 .all-pages-head, .all-pages-row { grid-template-columns: minmax(0, 1fr) 10.5em 6em 8em; }
 .all-pages-backlinks { text-align: right; }
 .query-copy-row { display: flex; gap: 8px; padding: 4px; }
+.query-selection-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0; }
+.query-results-selection > button[aria-pressed="true"] { background: var(--bg-tertiary); }
 @media (max-width: 600px) {
   .all-pages-head, .all-pages-row { grid-template-columns: minmax(0, 1fr) 7em 4em 6em; gap: 4px; }
 }
