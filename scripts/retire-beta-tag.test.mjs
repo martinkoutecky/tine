@@ -52,9 +52,9 @@ function legacyState() {
     pages: target.slice(1),
     tags: { beta: "c2", "v0.8.0-beta.2": "c2", [target]: "c3" },
     releases: [
-      { tagName: "beta", name: "Tine Beta 0.8.0-beta.2", isDraft: false, isPrerelease: true, target: "c2",
+      { tagName: "beta", name: `${IDENTITY.productName} 0.8.0-beta.2`, isDraft: false, isPrerelease: true, target: "c2",
         assets: { "latest.json": uploaded(JSON.stringify({ version: "0.8.0-beta.2" }), 900) } },
-      { tagName: target, name: `Tine Beta ${target.slice(1)}`, isDraft: false, isPrerelease: true, target: "c3", assets },
+      { tagName: target, name: `${IDENTITY.productName} ${target.slice(1)}`, isDraft: false, isPrerelease: true, target: "c3", assets },
     ],
   };
 }
@@ -85,7 +85,7 @@ function assertBridged(state) {
     assert.equal(bridge.assets[name].state, "uploaded", name);
     assert.equal(bridge.assets[name].data, source.assets[name].data, name);
   }
-  assert.ok(state.releases.some((release) => release.tagName === "v0.8.0-beta.2" && release.name === "Tine Beta 0.8.0-beta.2"));
+  assert.ok(state.releases.some((release) => release.tagName === "v0.8.0-beta.2" && release.name === `${IDENTITY.productName} 0.8.0-beta.2`));
 }
 
 /** Run once with `faults` (expected to fail), then until done; a further run changes nothing. */
