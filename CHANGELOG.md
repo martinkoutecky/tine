@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Soft now uses EllisMorrow's refined middle-range palette, with darker light surfaces, brighter dark surfaces, warm highlights and quieter active navigation and scrollbars (GH #649).
 - Existing `{{query}}` blocks with scheduled/deadline date windows now ask to be converted to `{{tine-query}}`, preserving their date-window meaning with Undo (GH #422).
 
 ### Fixed
