@@ -2330,6 +2330,20 @@ impl Graph {
         {
             Ok(())
         } else {
+            // DIAGNOSTIC ONLY (branch diag/e101-windows, never integrated).
+            eprintln!(
+                "E101DIAG root={:?} target={:?} within={} alias={} canon_root={:?} lstat={:?} canon={:?} stat={:?} ancestor={:?} parent_canon={:?}",
+                self.root,
+                target,
+                path_stays_within_root(&self.root, target),
+                path_uses_managed_alias(&self.root, target),
+                canonical_existing_path(&self.root).map_err(|e| (e.kind(), e.raw_os_error())),
+                fs::symlink_metadata(target).map(|m| m.file_type()).map_err(|e| (e.kind(), e.raw_os_error())),
+                fs::canonicalize(target).map_err(|e| (e.kind(), e.raw_os_error())),
+                fs::metadata(target).map(|m| m.len()).map_err(|e| (e.kind(), e.raw_os_error())),
+                canonical_existing_ancestor(target).map(|(p, r)| (p.to_path_buf(), r)).map_err(|e| (e.kind(), e.raw_os_error(), e.to_string())),
+                target.parent().map(|p| fs::canonicalize(p).map_err(|e| (e.kind(), e.raw_os_error()))),
+            );
             Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("write target escapes graph root: {}", target.display()),
