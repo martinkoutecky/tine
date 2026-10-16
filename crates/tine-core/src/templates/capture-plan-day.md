@@ -37,7 +37,8 @@ icon:: ✅
   - 1. Look at the bottom of today's block in the Journals feed (the first day): the **Scheduled & Deadline** list shows open items whose date is near today, wherever in the graph they were written.
   - 2. What you should see: your dated tasks, each with its date chip; click one to jump to it. Widen or narrow the range in Settings → **Journals** → **Agenda window** (default: a week back and a week ahead). The Agenda sits under today in the feed, not on a journal page you opened by itself, and the list vanishes when nothing is dated in range.
 - ## Carry-over: let unfinished tasks follow you
-  - 1. Scroll to a past day in the feed and click **Carry unfinished tasks → today** under its title. Blocks with open markers move to today; DONE and CANCELED stay put.
+  - 1. Scroll to a past day in the feed, hover its title row (or focus a title-row control with the keyboard), and click **Carry unfinished tasks → today** under its title. Blocks with open markers move to today; DONE and CANCELED stay put.
+  - On touch devices without hover, the carry buttons stay visible. The same controls appear on a journal page opened by itself.
   - 2. What you should see: a "Carried N items to today" toast — or "No unfinished tasks to carry" if none were open.
   - 3. Variants: on today, **Carry from previous day** pulls the latest earlier day in; **Carry last N days** goes further back (N is set in Settings, default 7). The past-day action is also on that day's right-click menu, and the command palette (Ctrl+Shift+P) has 7 / 30 / 365-day presets.
   - Settings → **Journals** also tunes it: hide the buttons (the right-click menu keeps working), move the whole block with its context or just the task line, add a “Carried over” heading.

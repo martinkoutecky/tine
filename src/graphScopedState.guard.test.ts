@@ -288,6 +288,7 @@ const CLASSIFIED_CONSUMERS: Record<string, string> = {
     + "while its target is bound (reads null after a switch). Every action that awaits before writing captures bindingOwner() first "
     + "and applies nothing when stale (make template, rename, delete, open file, copy as Markdown)",
   "src/components/Page.tsx#contextMenu": "reads whether its own page-actions menu is open (aria state); no write",
+  "src/render/PeekPopup.tsx#contextMenu": "reads only the page menu's opener identity to suspend hover/outside dismissal while its own menu is open; no graph write or delayed target action",
   "src/components/Block.tsx#blockReferencesRequest": "opens this block's own references panel when the request names it; no write",
   "src/components/ExportModal.tsx#exportModal": "exports the ids to the clipboard; never writes the graph",
   "src/components/PdfExportDialog.tsx#pdfExportPage": "prints the named page through the OS dialog; never writes the graph",

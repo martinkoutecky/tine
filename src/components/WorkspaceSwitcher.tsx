@@ -199,7 +199,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
                     if (event.key === "Escape") setEdit(null);
                   }}
                 />
-                <button type="submit" disabled={!editValue().trim()}>{state.kind === "new" ? t("workspace-switcher-create") : t("workspace-switcher-save")}</button>
+                <button class="settings-btn" type="submit" disabled={!editValue().trim()}>{state.kind === "new" ? t("workspace-switcher-create") : t("workspace-switcher-save")}</button>
               </form>
             )}
           </Show>

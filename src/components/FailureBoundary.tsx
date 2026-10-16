@@ -78,7 +78,7 @@ function FailureRegion(props: {
         )}
       </Show>
       <div class="region-failure-actions">
-        <button type="button" onClick={() => {
+        <button class="settings-btn" type="button" onClick={() => {
           const detail = errorText() || renderEnglish(msg("app-prose-unexpected-failure"));
           const details = `${props.region} could not be displayed.\n${props.error instanceof Error ? props.error.stack || detail : detail}`;
           void writeClipboardText(details).catch(() => pushToastUnique(msg("failure-boundary-couldn-t-copy-error-details-clipboard-write-failed"), "error"));

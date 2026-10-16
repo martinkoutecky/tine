@@ -24,10 +24,10 @@ it("keeps catalog emphasis while preserving external values as text and updating
   const host = document.createElement("div");
   document.body.append(host);
   const [name, setName] = createSignal("<code>notes & names</code>");
-  dispose = render(() => <Rich message={msg("improve-divergence-location", { path: name(), lineStart: 2, lineEnd: 8, detail: "<img src=x>" })} slots={{ "code": (children) => <code>{children}</code> }} />, host);
+  dispose = render(() => <Rich message={msg("page-open-failed", { error: name() })} slots={{ "code": (children) => <code>{children}</code> }} />, host);
   expect(host.querySelectorAll("code")).toHaveLength(1);
   expect(host.querySelector("code")?.textContent).toBe("<code>notes & names</code>");
-  expect(host.textContent).toBe("<code>notes & names</code> · lines 2-8 — <img src=x>");
+  expect(host.textContent).toBe("Couldn't open this page: <code>notes & names</code>");
   expect(host.querySelector("img")).toBeNull();
   setName("Another page");
   expect(host.querySelector("code")?.textContent).toBe("Another page");

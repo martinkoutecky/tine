@@ -203,7 +203,6 @@ diagnostics-tab-rescan-graph = 重新扫描图谱
 
 diagnostics-tab-large-report-this-preview-is-shortened-to-keep = 报告较大：为保持设置窗口流畅，此预览已缩短。“复制报告”会导出完整报告。
 
-diagnostics-tab-help-improve-tine-s-parser = 帮助改进 Tine 的解析器
 
 error-toast-history-recent-error-messages = 最近的错误消息
 

@@ -12,7 +12,16 @@ it("the Guide keeps census controls and workspace creation discoverable", () => 
 
 it("the Guide explains Settings search results, navigation and clearing", () => {
   const settings = guide("where-things-are");
-  for (const detail of ["only matching settings", "Choose a result", "including Advanced settings", "Clear the search", "filters commands and keys within that tab"]) expect(settings).toContain(detail);
+  for (const detail of ["only matching settings", "matching words highlighted", "Choose a result", "including Advanced settings", "Clear the search", "filters commands and keys within that tab"]) expect(settings).toContain(detail);
+});
+
+it("the Guide explains slash glosses, accessible carry controls and current Diagnostics tools", () => {
+  const tips = guide("tips");
+  for (const detail of ["English keyword followed by a Chinese gloss", "Chinese glosses are searchable", "focus one of its controls with the keyboard", "touch devices without hover", "**Rescan graph**", "**Verify synchronized graph**"]) expect(tips).toContain(detail);
+  expect(guide("capture-plan-day")).toContain("same controls appear on a journal page");
+  expect(guide("journals-tasks-scheduling")).toContain("focus a title-row control with the keyboard");
+  expect(guide("troubleshooting-recovery")).not.toContain("Run comparison");
+  expect(tips).not.toContain("Help improve Tine's parser");
 });
 
 it("the Guide makes Beta's unbound search, editing and tab commands discoverable", () => {

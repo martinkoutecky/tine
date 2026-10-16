@@ -7,6 +7,39 @@ import { msg, render, renderEnglish, type Msg } from "../i18n";
 import type { SettingsTabId } from "../ui";
 type Tab = SettingsTabId;
 
+/** Mark visible query terms without changing matching or interpreting label HTML.
+ * O(text length × query terms); overlapping matches form one highlighted span. */
+export function settingHighlight(text: string, query: string): { text: string; marked: boolean }[] {
+  const marked = new Uint8Array(text.length);
+  const folded = text.toLowerCase();
+  // Some Latin letters expand when lowercased (İ → i + combining dot).
+  // Keep folded offsets attached to their original visible characters.
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let offset = 0;
+  for (const char of text) {
+    for (let i = 0; i < char.toLowerCase().length; i++) {
+      starts.push(offset);
+      ends.push(offset + char.length);
+    }
+    offset += char.length;
+  }
+  for (const term of query.toLowerCase().trim().split(/\s+/).filter(Boolean)) {
+    let start = folded.indexOf(term);
+    while (start >= 0) {
+      marked.fill(1, starts[start], ends[start + term.length - 1]);
+      start = folded.indexOf(term, start + 1);
+    }
+  }
+  const parts: { text: string; marked: boolean }[] = [];
+  for (let start = 0, end = 0; start < text.length; start = end) {
+    end = start + 1;
+    while (end < text.length && marked[end] === marked[start]) end++;
+    parts.push({ text: text.slice(start, end), marked: !!marked[start] });
+  }
+  return parts;
+}
+
 export type SettingSearchEntry = { tab: Tab; label: string | Msg; description: string | Msg; keywords?: string | Msg; aliases?: string[]; level?: "advanced" };
 export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: msg("settings-search-language"), description: msg("settings-search-interface-translation-locale-menus"), aliases: ["语言", "中文", "Chinese", "English"] },
@@ -88,10 +121,6 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "diagnostics", label: msg("diagnostics-tab-rescan-graph"), description: msg("settings-prose-re-reads-every-file-in-the-open-graph-and-rebuilds") },
   { tab: "diagnostics", label: msg("error-toast-history-recent-error-messages"), description: msg("error-toast-history-the-last-20-red-error-messages-of-this") },
   { tab: "diagnostics", label: msg("graph-verification-verify-synchronized-graph"), description: msg("graph-verification-compare-the-exact-markdown-and-org-file-bytes") },
-  { tab: "diagnostics", label: msg("diagnostics-tab-help-improve-tine-s-parser"), description: msg("improve-what-to-run"), keywords: msg("improve-include-journals") },
-  { tab: "diagnostics", label: msg("improve-what-to-run"), description: msg("diagnostics-tab-help-improve-tine-s-parser"), keywords: msg("improve-divergences") },
-  { tab: "diagnostics", label: msg("improve-include-journals"), description: msg("diagnostics-tab-help-improve-tine-s-parser") },
-  { tab: "diagnostics", label: msg("improve-fast-scan"), description: msg("improve-faster-but-can-miss-or-invent-divergences") },
   { tab: "shortcuts", label: msg("settings-search-keyboard-shortcuts"), description: msg("settings-search-key-bindings-commands-remap") },
   { tab: "about", label: msg("settings-search-about"), description: msg("settings-search-version-licenses-updates") },
 ];

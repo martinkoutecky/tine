@@ -382,7 +382,7 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
       }>
         {(invalid) => <div class="pane-route-error" role="alert">
           <h2>{invalid().title}</h2>
-          <p>{invalid().message}</p><button type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>{t("app-close-tab")}</button>
+          <p>{invalid().message}</p><button class="settings-btn" type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>{t("app-close-tab")}</button>
         </div>}
       </Show>
     }>

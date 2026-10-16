@@ -13,6 +13,7 @@ import { backend } from "../backend";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
 import { setToasts, toasts } from "../toasts";
 import { focusedRouter } from "../panes";
+import { Toasts } from "./Toasts";
 import { bindTestHost } from "../document/host/wiring.test.support";
 import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { reloadPage } from "../document/workingSet";
@@ -76,6 +77,25 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       closeContextMenu();
       resetStore();
     }
+  });
+
+  it.each(["page", "writable block", "read-only block"])("GH #705: %s menu confirms a background tab", (source) => {
+    load(source === "read-only block");
+    const router = focusedRouter();
+    router.resetTabsToJournals();
+    const before = router.activeTab();
+    const count = router.tabs().length;
+    const dispose = mount(() => <><ContextMenu /><Toasts /></>);
+    try {
+      if (source === "page") openPageContextMenu(10, 10, "P");
+      else openContextMenu(10, 10, "leaf");
+      const action = [...document.querySelectorAll<HTMLElement>(".ctx-item")].find(el => el.textContent?.trim() === "Open in new tab")!;
+      action.click();
+      expect(router.tabs()).toHaveLength(count + 1);
+      expect(router.activeTab()).toBe(before);
+      expect(toasts().some(toast => toast.message === "Opened in a new tab" && toast.text.kind === "msg" && !toast.sticky)).toBe(true);
+      expect(document.querySelector(".toast-info .toast-msg")?.textContent).toBe("Opened in a new tab");
+    } finally { dispose(); router.resetTabsToJournals(); }
   });
 
   // The long-left swipe opens this menu on the selected block as the analogue of

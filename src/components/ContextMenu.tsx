@@ -872,7 +872,7 @@ function PageMenu(props: {
   const items: MenuAction[] = [
     { id: "open", label: msg("context-menu-ui-open"), run: () => openPageTarget(target()) },
     { id: "open-sidebar", label: msg("context-menu-ui-open-in-sidebar"), run: () => openPageInSidebar(target()) },
-    { id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => openPageTargetInNewTab(target()) },
+    { id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => { openPageTargetInNewTab(target()); pushToast(msg("links-opened-in-new-tab")); } },
     ...(workspaceWindowsSupported() ? [{ id: "open-new-window", label: msg("context-menu-ui-open-in-new-window"), run: () => void openRouteInNewWindow({ ...target(), kind: "page" }) }] : []),
     { id: "favorite-toggle", label: fav() ? msg("context-menu-ui-remove-from-favorites") : msg("context-menu-ui-add-to-favorites"), run: () => toggleFavorite(props.name, props.pageKind) },
     { id: "copy-as", label: msg("context-menu-ui-copy-as"), children: [
@@ -987,7 +987,7 @@ function PageIconMenu(props: { name: string; close: (restoreFocus?: boolean) => 
             else if (e.key === "Escape") { e.preventDefault(); setEditing(false); queueMicrotask(() => trigger?.focus()); }
           }} />
         <div class="pp-hint">{t("page-icon-hint")}</div>
-        <button class="ctx-item" onClick={() => write(value().trim() || null)}>{t("page-icon-save")}</button>
+        <button type="button" class="ctx-template-submit" onClick={() => write(value().trim() || null)}>{t("page-icon-save")}</button>
       </div>
     </Show>
     <Show when={readPageProperty(props.name, "icon")}>
@@ -1125,7 +1125,7 @@ function blockActions(id: string, x: number, y: number): MenuAction[] {
     return [
       { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
       { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-      { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); } },
+      { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
       { label: msg("context-menu-ui-copy", { count: ids.length }), run: copy },
       {
         label: msg("context-menu-ui-copy-export-as"),
@@ -1138,7 +1138,7 @@ function blockActions(id: string, x: number, y: number): MenuAction[] {
   return [
     { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
     { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-    { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); } },
+    { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: msg("context-menu-ui-properties"), run: () => openBlockProps(id, x, y) },
     // The keyboard route to "a block above this one" is Enter at offset 0, which

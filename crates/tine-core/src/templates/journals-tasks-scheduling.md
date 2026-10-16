@@ -62,6 +62,7 @@ icon:: 📅
   - A timed repeater such as `<2026-09-30 Wed 09:00 +1w>` advances to the next date while keeping `09:00`; the date picker keeps that time and repeater when you re-pick its date.
   - `+1w` advances from the stored date; `.+1w` counts from the day you complete it; `++1w` skips missed occurrences, landing past today. The repeater survives date re-picks in the calendar.
 - ## Carry-over
+  - In the feed and on a journal page, hover the day's title row or focus a title-row control with the keyboard to reveal the carry buttons. On touch devices without hover they stay visible.
   - On a past day, **Carry unfinished tasks → today** moves its open tasks (every marker except DONE / CANCELED / CANCELLED) to today. On today, **Carry from previous day** pulls from the most recent day that has content and **Carry last N days** goes further back. The same action is on a past journal day's right-click menu, and the command palette (**Ctrl+Shift+P**) has last-7 / 30 / 365-day presets.
   - Settings → **Journals** tunes it: **Show carry-over buttons**, **Carry-over keeps context** (on: move whole blocks that contain an open task; off: pull out just the task), **Carry-over header** (add a “Carried over” heading), and **Carry “last N days”**.
 - ## Settings quick map
