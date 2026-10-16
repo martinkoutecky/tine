@@ -29,7 +29,7 @@ fs.writeFileSync(`${graph}/pages/Planning.md`, [
   "- Overdue journey task", `  SCHEDULED: <${yesterday.iso} ${yesterday.weekday}>`,
   "- Upcoming journey task", `  SCHEDULED: <${tomorrow.iso} ${tomorrow.weekday}>`, "",
 ].join("\n"));
-fs.writeFileSync(`${graph}/pages/Links.md`, "- [[Tasks]] [[Tasks]]\n");
+fs.writeFileSync(`${graph}/pages/Links.md`, "- [[Tasks]] [[Tasks]]\n  unrelated-column:: only outside the task results\n");
 const queries = `${graph}/pages/Queries.md`;
 fs.writeFileSync(queries, [
   '- {{query (task TODO) {:title "Open tasks"}}}',
@@ -193,6 +193,16 @@ await session(1, async browser => {
   await action(browser, "View");
   const ownerColumn = await browser.$(`${active} [aria-label="Columns"] input[aria-label="owner"]`);
   assert.ok(await ownerColumn.isSelected(), "visible owner column starts selected");
+  phase = "column vocabulary belongs to the current results (GH #680)";
+  await browser.execute(selector => [...document.querySelectorAll(`${selector} [aria-label="Columns"] button`)]
+    .find(button => button.textContent?.includes("column"))?.click(), active);
+  const offeredColumns = await browser.execute(selector => [...document.querySelectorAll(`${selector} [aria-label="Columns"] [role="option"]`)]
+    .map(option => option.textContent?.trim()), active);
+  assert.ok(offeredColumns.includes("owner"), "result property is offered");
+  assert.ok(!offeredColumns.includes("unrelated-column"), "unrelated graph property is absent");
+  assert.ok(!offeredColumns.includes("scheduled"), "built-in absent from the task results is absent");
+  await browser.execute(selector => [...document.querySelectorAll(`${selector} [aria-label="Columns"] button`)]
+    .find(button => button.textContent?.includes("column"))?.click(), active);
   // Use an interior point of the content viewport, away from native window
   // resize grips. WebKit's automatic nearest-edge scroll can land on one.
   await browser.execute(selector => document.querySelector(`${selector} input[aria-label="owner"]`)?.scrollIntoView({ block: "center" }), active);

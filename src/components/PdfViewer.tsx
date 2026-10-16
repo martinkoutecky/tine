@@ -1,3 +1,4 @@
+import { shortcutKey } from "../shortcutKey";
 import { msg } from "../i18n";
 import { createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
@@ -1039,7 +1040,7 @@ export function PdfViewer(props: {
   // preventDefault stops the webview's own page zoom.
   const onKeyZoom = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-    if (e.key === "f" || e.key === "F") {
+    if (shortcutKey(e) === "f") {
       e.preventDefault();
       openFind();
       return;
@@ -1053,7 +1054,7 @@ export function PdfViewer(props: {
     } else if (e.key === "-" || e.key === "_") {
       e.preventDefault();
       zoomBy(1 / 1.1);
-    } else if (e.key === "0") {
+    } else if (shortcutKey(e) === "0") {
       e.preventDefault();
       setScale(fitWidthScale());
     }

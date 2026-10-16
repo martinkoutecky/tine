@@ -1,3 +1,4 @@
+import { shortcutKey } from "./shortcutKey";
 import { adjustSidebarWidth } from "./sidebarSizing";
 import { openCssEditor } from "./cssEditor";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
@@ -718,7 +719,7 @@ let superDown = false;
 
 function eventToChord(e: KeyboardEvent): Chord {
   // WebKitGTK reports Shift+Tab with e.key != "Tab"; e.code is reliable.
-  let key = e.code === "Tab" ? "tab" : e.key.toLowerCase();
+  let key = e.code === "Tab" ? "tab" : shortcutKey(e);
   // Real WebKitGTK reports Shift+/ as key "?"; Playwright/Chromium's synthetic
   // Shift+/ reports key "/". Normalize both to the binding string we expose.
   if (e.shiftKey && e.code === "Slash" && key === "/") key = "?";
@@ -898,14 +899,14 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (e.key === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
   if (e.key === "Backspace" || e.key === "Delete") return deleteSelection(), true;
   const mod = isMac ? e.metaKey : e.ctrlKey;
-  if (mod && e.key.toLowerCase() === "c") {
+  if (mod && shortcutKey(e) === "c") {
     const ids = selectedIds();
     const text = selectionMarkdown();
     void copyBlockOutline("copy", text, buildClipboardPayload(ids))
       .catch(() => pushToast(msg("commands-couldn-t-copy-selection-clipboard-write-failed"), "error"));
     return true;
   }
-  if (mod && e.key.toLowerCase() === "x") {
+  if (mod && shortcutKey(e) === "x") {
     const ids = selectedIds();
     // Cut deletes whole subtrees, so its public text carries them regardless of the copy preference.
     const text = selectionMarkdown(true);
@@ -915,7 +916,7 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
       .catch(() => pushToast(msg("commands-couldn-t-cut-selection-clipboard-write-failed"), "error"));
     return true;
   }
-  if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "a") {
+  if (mod && !e.shiftKey && !e.altKey && shortcutKey(e) === "a") {
     return expandBlockSelection(), true;
   }
   if (e.key === "Enter") {

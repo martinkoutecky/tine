@@ -1,3 +1,4 @@
+import { shortcutKey } from "../shortcutKey";
 import { msg } from "../i18n";
 import { createRoot, createSignal } from "solid-js";
 import { pushToast } from "../toasts";
@@ -1022,7 +1023,7 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
   const sel = cellSel();
   if (!sel) return false;
   const mod = e.ctrlKey || e.metaKey;
-  const key = e.key.toLowerCase();
+  const key = shortcutKey(e);
   const arrowDir = navDirectionForKey(e.key);
 
   // Sheet-specific chords first — mod/alt combos and Tab are surface commands,

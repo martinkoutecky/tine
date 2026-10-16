@@ -17,6 +17,7 @@ import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, setBl
 export { EmbedMacro } from "./EmbedMacro";
 import { QueryGroups } from "./QueryGroup";
 import { QueryDisplay } from "./QueryDisplay";
+import { queryBlockColumns } from "../queryResultColumns";
 import { startEditing } from "../editorController";
 import { collapseQueryResults } from "./QueryCollapse";
 import { QueryBuilder, createQueryRegistryAccess, type BuilderSession } from "./QueryBuilder";
@@ -746,9 +747,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
   };
   const showBuilder = () => !!props.blockId && !isAdvanced() && !!builderSession();
   const [paneStale, setPaneStale] = createSignal(false);
-  const [defaultColumns, setDefaultColumns] = createSignal<string[]>([], { equals: sameJson });
   const effectiveDefaultColumns = createMemo(() => reading()?.query.anchor === "page"
-    ? [...new Set((pageRows() ?? []).flatMap(row => row.properties.map(([key]) => key)))] : defaultColumns());
+    ? [...new Set((pageRows() ?? []).flatMap(row => row.properties.map(([key]) => key)))]
+    : queryBlockColumns(groups()));
   const displayView = (): ViewSettings => {
     const view = reading()?.view ?? {};
     return { ...view, columns: view.columns?.length || props.blockId && blockProperty(props.blockId, "tine.columns") !== null
@@ -1098,7 +1099,6 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                               <Match when={sheetFace() && !!props.blockId && blockFace() === "table"}>
                                 <SheetContainer>
                                   <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
-                                    onDefaultColumns={setDefaultColumns}
                                     queryDisplay={{ view: reading()?.view ?? {},
                                       ...(both().ownAnchor === "block" ? { statistics: displayed()?.statistics, statisticsView: runnable()?.view } : {}),
                                       apply: (next) => void applyDisplay(next) }} />
@@ -1135,7 +1135,6 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                         <Switch>
                           <Match when={blockFace() === "table"}>
                             <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups()}
-                              onDefaultColumns={setDefaultColumns}
                               queryDisplay={{ view: reading()?.view ?? {}, statistics: displayed()?.statistics, statisticsView: runnable()?.view, apply: (next) => void applyDisplay(next) }} />
                           </Match>
                           <Match when={blockFace() === "board"}>
