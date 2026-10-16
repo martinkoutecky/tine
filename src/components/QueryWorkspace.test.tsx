@@ -571,6 +571,8 @@ describe("QueryWorkspace", () => {
       expect(root.querySelector('[data-query-result-kind="block"] ul')).not.toBeNull();
       expect(root.querySelectorAll(".qd-trigger")).toHaveLength(2);
       root.querySelector<HTMLButtonElement>('[data-query-result-kind="page"] .qd-trigger')!.click();
+      expect([...root.querySelectorAll('[data-query-result-kind="page"] [aria-label="Columns"] input[type="checkbox"][aria-label]')]
+        .map(input => input.getAttribute("aria-label"))).toEqual(["kind", "Owner"]);
       root.querySelector<HTMLButtonElement>('[data-query-result-kind="page"] [role="group"][aria-label="Query view"] button:nth-child(4)')!.click();
       expect(router.updateActiveQuery).toHaveBeenCalledWith(expect.objectContaining({ pagePresentation: "board" }));
       expect(router.updateActiveQuery).not.toHaveBeenCalledWith(expect.objectContaining({ blockPresentation: "board" }));
