@@ -2,6 +2,8 @@
 // header's "⋯" menu), and replace-all over a block that is open in an editor.
 // UI-INPAGE-FIND-REPLACE-208, UI-INPAGE-FIND-MOBILE-ENTRY-338.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// The keyboard-free page-menu entry belongs to mobile (UI census 2026-10).
+vi.mock("./nativeChrome", async (original) => ({ ...(await original<typeof import("./nativeChrome")>()), isMobilePlatform: true }));
 import { For, Show } from "solid-js";
 import { loadSingle } from "./document/workingSet";
 import { pageByName, undo } from "./document";
@@ -48,7 +50,7 @@ afterEach(() => {
 });
 
 describe("GH #338: Find opens without a keyboard", () => {
-  it("the page header menu opens Find, and its replace row replaces every match", async () => {
+  it("the mobile page header menu opens Find, and its replace row replaces every match", async () => {
     loadSingle(page(NAME, [blk("a", "foo one"), blk("b", "two foo")]));
     const { root, dispose } = mount(() => <><ContextMenu /><InPageFind /></>);
     try {

@@ -382,6 +382,7 @@ export interface MessageArgs {
   "context-menu-ui-copied-page-as-markdown": {};
   "context-menu-ui-copied-page-ref": {};
   "context-menu-ui-copy": { "count": number };
+  "context-menu-ui-copy-as": {};
   "context-menu-ui-copy-block-embed": {};
   "context-menu-ui-copy-block-embeds": {};
   "context-menu-ui-copy-block-ref": {};

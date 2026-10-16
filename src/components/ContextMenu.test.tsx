@@ -379,16 +379,16 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
-  it("reports page Markdown Copy failure when the page read returns nothing", async () => {
+  it("keeps page references in Copy as and removes the duplicate Markdown row", async () => {
     load();
-    vi.spyOn(backend(), "getPage").mockResolvedValue(null);
-    const write = vi.spyOn(backend(), "writeText");
+    const write = vi.spyOn(backend(), "writeText").mockResolvedValue();
     const dispose = mount(() => <ContextMenu />);
     openPageContextMenu(10, 10, "P", "page");
-    document.querySelector<HTMLButtonElement>('[data-page-action-id="copy-page-markdown"]')!.click();
-    await vi.waitFor(() => expect(toasts().some((toast) => toast.kind === "error")).toBe(true));
-    expect(write).not.toHaveBeenCalled();
-    expect(toasts().some((toast) => toast.message === "Copied page as Markdown")).toBe(false);
+    expect(document.querySelector('[data-page-action-id="copy-page-markdown"]')).toBeNull();
+    const copyAs = document.querySelector('[data-page-action-id="copy-as"]')!;
+    expect(copyAs.textContent).toContain("Copy as");
+    copyAs.querySelector<HTMLButtonElement>('[data-page-action-id="copy-page-ref"]')!.click();
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith("[[P]]"));
     dispose();
   });
 
@@ -440,13 +440,11 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "open-sidebar",
       "open-new-tab",
       "favorite-toggle",
-      "copy-link", "copy-page-ref",
+      "copy-as", "copy-page-ref", "copy-link",
       "copy-export",
-      "copy-page-markdown",
       "export-pdf",
       "show-in-folder",
       "open-default-app",
-      "find-in-page",
       "page-properties",
       "set-page-icon",
       "rename-page",
@@ -476,7 +474,11 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     expect(activeId()).toBe("delete-page");
     press("Home");
     expect(activeId()).toBe("open");
-    expect(menu.querySelectorAll('[role="menuitem"]')).toHaveLength(16);
+    menu.querySelector<HTMLElement>('[data-page-action-id="copy-as"]')!.focus();
+    press("ArrowDown");
+    expect(activeId()).toBe("copy-page-ref");
+    press("ArrowDown");
+    expect(activeId()).toBe("copy-link");
     dispose();
   });
 
@@ -577,8 +579,8 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "P", "page", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
-      "show-in-folder", "open-default-app", "find-in-page",
+      "copy-as", "copy-page-ref", "copy-link", "copy-export", "export-pdf",
+      "show-in-folder", "open-default-app",
     ]);
     closeContextMenu();
 
@@ -589,20 +591,20 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "2000-01-01", "journal", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
-      "show-in-folder", "open-default-app", "find-in-page", "page-properties",
+      "copy-as", "copy-page-ref", "copy-link", "copy-export", "export-pdf",
+      "show-in-folder", "open-default-app", "page-properties",
       "set-page-icon",
       "carry-unfinished", "delete-journal",
     ]);
     dispose();
   });
 
-  it("opens the shared export modal with the page root forest and preserves page Markdown/PDF actions", () => {
+  it("opens the shared export modal with the page root forest and preserves PDF", () => {
     load();
     const dispose = mount(() => <ContextMenu />);
 
     openPageContextMenu(10, 10, "P", "page", true);
-    expect(menuLabels()).toContain("Copy page as Markdown");
+    expect(menuLabels()).not.toContain("Copy page as Markdown");
     expect(menuLabels()).toContain("Export to PDF…");
     document.querySelector<HTMLButtonElement>('[data-page-action-id="copy-export"]')!.click();
 

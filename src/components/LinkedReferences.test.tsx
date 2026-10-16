@@ -40,6 +40,28 @@ afterEach(() => {
 });
 
 describe("Linked References filters", () => {
+  it.each([false, true])("offers one bulk toggle for linked/unlinked groups (unlinked=%s)", async (unlinked) => {
+    const groups: RefGroup[] = ["A", "B"].map(page => ({ page, kind: "page", blocks: [block(page, "Target")] }));
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue(groups);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue(groups);
+    const { ReferenceSection } = await import("./LinkedReferences");
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <ReferenceSection name="Target" unlinked={unlinked} />, root);
+    try {
+      await tick(); await tick();
+      if (unlinked) root.querySelector<HTMLElement>(".references-header")!.click();
+      const controls = root.querySelectorAll<HTMLButtonElement>(".reference-bulk-controls button");
+      expect(controls).toHaveLength(1);
+      expect(controls[0].textContent).toBe("Collapse all");
+      root.querySelector<HTMLButtonElement>(".reference-group-disclosure")!.click();
+      expect(controls[0].textContent).toBe("Expand all");
+      controls[0].click();
+      expect(root.querySelectorAll(".test-ref-group")).toHaveLength(2);
+      expect(controls[0].textContent).toBe("Collapse all");
+      controls[0].click();
+      expect(root.querySelectorAll(".test-ref-group")).toHaveLength(0);
+    } finally { dispose(); }
+  });
   it("offers batch export for visible linked references", async () => {
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue([
       { page: "Source", kind: "page", blocks: [block("a", "[[Target]]")] },

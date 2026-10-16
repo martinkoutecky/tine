@@ -3180,7 +3180,8 @@ html[data-system-insets="native-viewport"] {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 }
 
-.ctx-submenu:hover > .ctx-submenu-menu {
+.ctx-submenu:hover > .ctx-submenu-menu,
+.ctx-submenu:focus-within > .ctx-submenu-menu {
   visibility: visible;
 }
 

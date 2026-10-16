@@ -378,8 +378,8 @@ mod journal_guide_tests {
         let context = include_str!("templates/keep-context-visible.md");
         for detail in [
             "**Close others**, **Collapse others**",
-            // GH #462: the per-item menu's own entries, named as the menu shows them.
-            "**Close** it, **Collapse** or **Expand** it",
+            "its ✕ closes it",
+            "sidebar header's ⋯ menu offers **Collapse all**, **Expand all**, and **Close all**",
             "for a page, **Open as page**",
             "Drag the sidebar's left edge to resize it",
             "Tabs stretch to fill the strip",
@@ -407,6 +407,17 @@ mod journal_guide_tests {
         }
         assert!(tips.contains("one Undo step"));
         assert!(tips.contains("complete subtrees for pasting"));
+        assert!(tips.contains(
+            "**Copy as ▸** holds **Copy block refs**, **Copy block embeds**, and **Copy link**"
+        ));
+        let references = include_str!("templates/pages-links-references-search.md");
+        assert!(references
+            .contains("**Expand all** if any group is folded, otherwise **Collapse all**"));
+        let research = include_str!("templates/research-document.md");
+        assert!(research.contains("**Copy / export as…** offers Markdown and rendered copies"));
+        assert!(!research.contains("Copy page as Markdown"));
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("**⋯ → Collapse all / Expand all** is one toggle"));
         let calendar = include_str!("templates/journals-tasks-scheduling.md");
         for behavior in [
             "keyboard focus",
