@@ -32,6 +32,7 @@ entry and a row here (the guard fails otherwise).
 
 | Token | Controls | Default (what Tine draws when it is unset) |
 |---|---|---|
+| `--tine-danger-color` | Error and destructive-action text, error borders, and the asset trash button's hover fill | `var(--palette-danger)`, a red checked for text contrast on every bundled theme's light/dark surfaces |
 | `--tine-embed-bg` | Background of an embedded block or page (`{{embed …}}`) | `var(--bg-secondary)`, the theme's secondary background |
 | `--tine-embed-accent` | The accent line and bullet of an embedded block | `var(--block-embed-accent)`, 35% accent mixed into the bullet color |
 | `--tine-bullet-color` | Color of the block bullet dot | `var(--bullet-color)`, i.e. `--ls-block-bullet-color` |

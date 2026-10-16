@@ -298,7 +298,7 @@ function PluginsTabContent(): JSX.Element {
               </button>
             </div>
             <Show when={plugin.error}>
-              <div class="settings-hint" style={{ color: "var(--danger, #c44)" }}>{plugin.error}</div>
+              <div class="settings-hint" style={{ color: "var(--tine-danger-color, var(--palette-danger))" }}>{plugin.error}</div>
             </Show>
           </div>
         )}
@@ -409,7 +409,7 @@ function PluginsTabContent(): JSX.Element {
                     <Show when={reportState() === "loading"}><div class="settings-hint">{t("plugins-verifying-the-signed-report")}</div>
                     </Show>
                     <Show when={reportState() === "error"}>
-                      <div class="settings-hint" style={{ color: "var(--danger, #c44)" }}>{t("plugins-the-report-could-not-be-fetched-and")}</div>
+                      <div class="settings-hint" style={{ color: "var(--tine-danger-color, var(--palette-danger))" }}>{t("plugins-the-report-could-not-be-fetched-and")}</div>
                     </Show>
                     <Show when={report()} keyed>
                       {(safety) => (
@@ -489,7 +489,7 @@ function PluginsTabContent(): JSX.Element {
                 </Show><br />{t("plugins-capabilities-list", { kind: plugin.manifest.capabilities.length ? "some" : "none", capabilities: plugin.manifest.capabilities.join(", ") })}{" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.manifest.source)}>{t("plugins-details-screenshots")}</button>
               </div>
               <Show when={plugin.error}>
-                <div class="settings-hint" style={{ color: "var(--danger, #c44)" }}>{plugin.error}</div>
+                <div class="settings-hint" style={{ color: "var(--tine-danger-color, var(--palette-danger))" }}>{plugin.error}</div>
               </Show>
             </div>
           )}

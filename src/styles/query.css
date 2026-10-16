@@ -71,7 +71,7 @@
 }
 .qs-preview-error {
   font-size: 12px;
-  color: var(--danger-color, #c0392b);
+  color: var(--tine-danger-color, var(--palette-danger));
 }
 /* --- the editing sheet --- */
 .qs-overlay {
@@ -834,7 +834,7 @@
   resize: vertical;
 }
 .query-text-pane-input.query-text-pane-invalid {
-  border-color: var(--danger-color, #c0392b);
+  border-color: var(--tine-danger-color, var(--palette-danger));
 }
 .query-text-pane-status {
   display: flex;
@@ -843,7 +843,7 @@
   gap: 8px;
 }
 .query-text-pane-error {
-  color: var(--danger-color, #c0392b);
+  color: var(--tine-danger-color, var(--palette-danger));
   font-size: 12px;
 }
 .query-text-pane-pending {
@@ -872,7 +872,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  border-left: 2px solid var(--danger-color, #c0392b);
+  border-left: 2px solid var(--tine-danger-color, var(--palette-danger));
   padding-left: 8px;
 }
 .query-text-pane-diagnostic-message {
@@ -928,7 +928,7 @@
 }
 /* The run's own diagnostics, distinct from a failed command. */
 .query-diagnostics {
-  color: var(--danger-color, #c0392b);
+  color: var(--tine-danger-color, var(--palette-danger));
 }
 /* One entry per requested aggregate, laid out on one line. */
 .query-summary .qs-entry + .qs-entry {

@@ -3,7 +3,7 @@ icon:: 🎨
 - # Customize Tine's look
   - Change colors, fonts, widths, bullets, and embed shading without a plugin: write a few lines of CSS in your graph's `logseq/custom.css`. This page shows where the file is, which names Tine promises to keep stable (the `--tine-*` tokens), ten copy-paste recipes, and how to find out what styles any element.
 - ## 1. Start from a color scheme
-  - 1. Open Settings (**t s**) → **Appearance** and look at **Color scheme**. Default, Nord, Solarized, Gruvbox, and **Soft** are built in. Soft is a gentler, medium-brightness take on Tine's own look: a warm medium-light in light mode and a neutral medium-dark in dark mode.
+  - 1. Open Settings (**t s**) → **Appearance** and look at **Color scheme**. Default, Nord, Solarized, Gruvbox, and **Soft** are built in. Soft is a medium-brightness palette: warm gray in light mode and lifted slate gray in dark mode, with warm highlights and quiet active tabs. Its page, sidebars, menus, and code surfaces move together while text stays readable.
   - 2. Pick one. It applies at once and is remembered on this device.
   - 3. Precedence, lowest to highest: Tine's stock palette, then the color scheme you picked, then the **Fine-tuning** choices below, then device-wide `global.css`, then your graph's `logseq/custom.css`. Your CSS always has the last word, and an installed theme package never edits it. A **Style** preset such as editorial reading type keeps its own look, but the font and size tokens below still override its fonts and text size.
   - 4. Below the gallery, **Fine-tuning** holds a few visual details that are not worth a theme of their own. **Embedded blocks** shows embeds as a shaded box (the default) or with only the accent line and dot. **Links to the web or a file** is a solid underline (the default), a dotted one, or none; links to pages never have one, so the two kinds read differently. **Links to pages that do not exist yet** is the dimmed link color (the default), a stronger one, or the same color as other links. Every choice starts at Tine's default look, takes effect at once, and has its own **Reset**.
@@ -19,9 +19,10 @@ icon:: 🎨
   - What you should see: a rule such as `:root { --tine-bullet-color: orange; }` recolors every bullet as soon as you save.
   - Something went wrong? **Settings → Appearance → Custom CSS → Disable custom CSS** ignores both CSS files and Fine-tuning for this session only. It is never saved, so restarting Tine always brings custom CSS back; fix the file, then switch it back on. If the stylesheet hides Settings itself, open the command palette (**Mod+Shift+P**) and run **Toggle custom CSS (safe mode, this session)**.
 - ## 3. The supported names: `--tine-*` tokens
-  - A token is a named setting. Each starts unset, which means "do what Tine always did", so nothing changes until you set one. Set tokens on `:root` or `html`, like the recipes below; any selector you write wins over Tine's own, because Tine declares them with no specificity. These fifteen names are the ones Tine promises to keep: if one is ever removed or renamed, the changelog says so.
+  - A token is a named setting. Each starts unset, which means "use the theme's default", so nothing changes until you set one. Set tokens on `:root` or `html`, like the recipes below; any selector you write wins over Tine's own, because Tine declares them with no specificity. These sixteen names are the ones Tine promises to keep: if one is ever removed or renamed, the changelog says so.
   - | Token | Controls | Default |
     | --- | --- | --- |
+    | `--tine-danger-color` | Error and destructive-action text and error borders (also the asset trash button's hover fill) | A contrast-checked red for the theme's light or dark mode |
     | `--tine-embed-bg` | Background of an embedded block or page | The theme's secondary background |
     | `--tine-embed-accent` | The accent line and bullet of an embedded block | 35% accent mixed into the bullet color |
     | `--tine-bullet-color` | Color of the block bullet dot | The theme's bullet color |
