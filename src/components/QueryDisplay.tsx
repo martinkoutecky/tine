@@ -19,6 +19,7 @@ export function QueryDisplay(props: {
   onOpenChange?: (open: boolean) => void;
   inline?: boolean;
   defaultColumns?: () => readonly string[];
+  availableColumns?: () => readonly string[];
 }): JSX.Element {
   const [open, setOpen] = createSignal(props.inline ?? false);
   createEffect(() => props.onOpenChange?.(open()));
@@ -36,7 +37,8 @@ export function QueryDisplay(props: {
   });
   const view = props.view;
   const columns = () => view().columns ?? [...props.defaultColumns?.() ?? []];
-  const availableColumns = () => [...new Set([...props.defaultColumns?.() ?? [], ...columns()])];
+  // Availability follows the answer; saved choices survive even while absent.
+  const availableColumns = () => [...new Set(props.availableColumns?.() ?? props.defaultColumns?.() ?? [])];
   const apply = (patch: Partial<ViewSettings>) => void props.apply({ ...view(), ...patch });
   const openPanel = () => {
     if (!open()) setSampleText(view().sample === undefined ? "" : String(view().sample));
@@ -54,10 +56,16 @@ export function QueryDisplay(props: {
     <button type="button" class="qd-add" onClick={() => setPicker(picker() === slot ? null : slot)}>{label}</button>
     <Show when={picker() === slot}>
       <QueryVocabularyPicker id={`${id}-${slot}`} anchor={props.rowKind()}
-        rows={props.registry.rows} pending={props.registry.pending}
-        failure={props.registry.failure} onRetry={props.registry.retry}
-        entries={(search) => displayFieldEntries({ slot, rowKind: props.rowKind(), rows: props.registry.rows(),
-          formulas: props.formulas?.(), search })}
+        rows={slot === "column" ? () => [] : props.registry.rows}
+        pending={slot === "column" ? undefined : props.registry.pending}
+        failure={slot === "column" ? undefined : props.registry.failure} onRetry={props.registry.retry}
+        entries={(search) => slot === "column"
+          ? availableColumns().filter(field => field.toLowerCase().includes(search.trim().toLowerCase())).map(field => ({
+            id: `field:${field}`, section: "Fields" as const, label: field === "page" ? t("sheet-prose-page") : field,
+            choice: { kind: "field" as const, field }, unit: props.rowKind() === "page" ? "pages" as const : "blocks" as const,
+          }))
+          : displayFieldEntries({ slot, rowKind: props.rowKind(), rows: props.registry.rows(),
+            formulas: props.formulas?.(), search })}
         onPick={(choice) => { if (choice.kind === "field") pick(slot, choice.field); }} />
     </Show>
   </>;

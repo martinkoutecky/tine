@@ -153,6 +153,25 @@ it.each(["(and)", "(sort-by created-at)"])("authored no-condition query %s also 
 /** A `{{tine-query …}}` block: TQL, which ONLY the IR evaluator can read. */
 const TQL_MACRO = "{{tine-query -- task TODO}}";
 
+it.each(["block", "page"] as const)("derives %s column choices from results before a table mounts (GH #680)", async anchor => {
+  load(TQL_MACRO);
+  vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+    query: { anchor, filter: { kind: "true" }, source: { kind: "tql", original: "-- task TODO", og_options: "" } },
+    view: {},
+  });
+  vi.spyOn(backend(), "queryRun").mockResolvedValue(anchor === "block" ? blockRunResult(groups()) : {
+    anchor: "page", pages: [{ path: "pages/Result.md", name: "Result", kind: "page", properties: [["owner", "Ada"]] }],
+    diagnostics: [], report: { supported: true, ran: [], ignored: [] }, total: 1, exceeded: false,
+  });
+  const { root, dispose } = mount(() => <Block id="query" />);
+  try {
+    await vi.waitFor(() => expect(root.querySelector(anchor === "page" ? ".query-page-link" : ".query-group")).not.toBeNull());
+    await openCalmQuery(root, "View");
+    expect([...root.querySelectorAll('[aria-label="Columns"] input[type="checkbox"][aria-label]')]
+      .map(input => input.getAttribute("aria-label"))).toEqual(anchor === "block" ? ["state", "page"] : ["owner"]);
+  } finally { dispose(); }
+});
+
 describe("B1: a TQL block executes through query_run", () => {
   it("renders a scoped block board without a singular tine.view property", async () => {
     load("{{tine-query -- task TODO}}\ntine.block-view:: board");
@@ -464,7 +483,7 @@ describe("Q4b: Display saves through the query block", () => {
         .find((button) => button.textContent?.trim() === "Page");
       expect(page).toBeDefined();
       page!.click();
-      await vi.waitFor(() => expect(blockProperty("query", "tine.columns")).toBe("page"));
+      await vi.waitFor(() => expect(blockProperty("query", "tine.columns")).toBe("state;page"));
       expect(blockProperty("query", "tine.fields")).toBeNull();
     } finally {
       dispose();

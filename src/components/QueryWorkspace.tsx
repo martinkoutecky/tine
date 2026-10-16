@@ -41,6 +41,7 @@ import { displayPropertyPatch, queryScopedDisplayPropertyPatch } from "../editor
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { createQueryRegistryAccess } from "./QueryBuilder";
 import { QueryDisplay } from "./QueryDisplay";
+import { queryRecordColumns } from "../queryResultColumns";
 import { QueryResultsSelection } from "./QueryResultsSelection";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
@@ -883,8 +884,15 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const [pageDisplayOpen, setPageDisplayOpen] = createSignal(false);
   const [blockDisplayOpen, setBlockDisplayOpen] = createSignal(false);
   const registry = createQueryRegistryAccess(() => pageDisplayOpen() || blockDisplayOpen());
+  const pageColumns = createMemo(() => [...new Set(["kind", ...pageHits().flatMap(hit =>
+    hit.row?.properties.map(([key]) => key) ?? [])])]);
+  const blockColumns = createMemo(() => queryRecordColumns(blockHits().map(hit => ({
+    id: hit.block.id, page: hit.page, kind: hit.kind, path: hit.path, dto: hit.block,
+  }))));
   const sectionControl = (kind: "page" | "block") => <QueryDisplay
     rowKind={() => kind}
+    defaultColumns={() => kind === "page" ? ["kind"] : []}
+    availableColumns={kind === "page" ? pageColumns : blockColumns}
     registry={registry}
     view={kind === "page" ? pageView : blockView}
     onOpenChange={kind === "page" ? setPageDisplayOpen : setBlockDisplayOpen}

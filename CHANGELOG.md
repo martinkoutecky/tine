@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Query table column choices now come from the current results instead of offering unrelated graph properties; saved choices survive changes to the results (GH #680).
 - With "Click a block reference to zoom in" turned on, clicking a reference to a block on another page now zooms into that block; before, nothing happened (GH #708).
 - Removing the last query condition restores the empty-state prompt (GH #551); Search tab selection toggles off, keeps actions above results and preserves page and block labels (GH #387).
 - Tab split drop zones grow with each pane on all four sides; dropping just below its tab strip now splits above it, matching the preview (GH #499).
