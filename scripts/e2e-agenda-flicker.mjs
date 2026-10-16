@@ -74,8 +74,9 @@ try {
   await chooseGraph(beta, "beta");
   console.log("Empty graph journal opened");
   await browser.$(".today-sections-customize").waitForExist({ timeout: 10_000 });
+  // No screenshot here: WebKitWebDriver screenshots stall under the gate's
+  // openbox session; the DOM samples below are the evidence.
   await sleep(1000);
-  await browser.saveScreenshot(`${out}/empty-journal.png`);
   await chooseGraph(alpha, "alpha");
   console.log("Nonempty graph journal reopened");
   await browser.waitUntil(() => browser.execute(() => document.querySelector(".agenda-block .query-block")?.textContent.includes("Scheduled fixture")
