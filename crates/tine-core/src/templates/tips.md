@@ -52,6 +52,7 @@ icon:: ⌨️
 - ## Tabs
 	- **Middle-click** any bullet, page, or search result to open it in a background tab. **Double-click** a tab to pin it, **drag** to reorder, **Ctrl+W** to close. Your tabs come back next launch. In a split view, a pane's only tab still has a close button (it closes the pane) unless it shows the journals.
 	- Bind **Activate tab 1** through **Activate tab 8**, or **Activate last tab**, in **Settings → Shortcuts** to jump within the focused pane's tab order. They start unbound because **Ctrl/Cmd+1–9** already focus panes. A numbered slot with no tab does nothing.
+	- Numbered tab/pane commands and sidebar/pane resize commands stay bindable in **Settings → Shortcuts** and are omitted from the command palette. **Carry unfinished tasks: last N days** uses the day count in Settings → Journals.
 	- **Page links, block references, an outline bullet's dot, backlink headers, the sidebar and query results all take the same modified clicks**: **Shift-click** opens the right sidebar, **Ctrl/Cmd-click** or **middle-click** opens a background tab, and **Alt-click** opens the other pane (splitting one off if you have only one).
 	- When a pane has more tabs than fit, use its tab-overview button to see every full title, activate or pin a tab, close it, or reorder it with the drag handle / **Alt+Up/Down** without guessing from truncated labels.
 	- Use the command palette to **Toggle maximize active pane** and use the pane-size commands to grow or shrink the active pane with the keyboard. Run **Reset interface zoom** to return to normal scale.

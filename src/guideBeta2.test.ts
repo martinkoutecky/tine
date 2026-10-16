@@ -3,6 +3,13 @@ import { expect, it } from "vitest";
 
 const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
 
+it("the Guide keeps census controls and workspace creation discoverable", () => {
+  expect(guide("where-things-are")).toContain("**Themes** is the first section");
+  expect(guide("where-things-are")).toContain("Namespaces appears only when");
+  expect(guide("customize-look")).toContain("**Appearance** → **Advanced** → **Custom CSS**");
+  expect(guide("keep-context-visible")).toContain("**New workspace…** from the command palette");
+});
+
 it("the Guide explains Settings search results, navigation and clearing", () => {
   const settings = guide("where-things-are");
   for (const detail of ["only matching settings", "Choose a result", "including Advanced settings", "Clear the search", "filters commands and keys within that tab"]) expect(settings).toContain(detail);

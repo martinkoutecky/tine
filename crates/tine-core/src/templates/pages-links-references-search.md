@@ -31,7 +31,7 @@ icon:: 🔗
 - ## Block references and embeds
   - Fold a page embed with the host bullet's arrow or the ordinary **Collapse/Expand** keyboard commands. Only its page-name line remains; expanding restores its content. The choice is saved on the host block, never the embedded page. If the host has children, the same fold hides those too. This works in the main pane and right sidebar.
   - Hover a page link or block reference for a read-only preview. An alias shows its source page's title and page properties. Click the title to open that page in a new tab, a block bullet to open that block in a new tab, or **Open source** to open the preview's source. Editing requires opening the source.
-  - **Settings → Appearance → Fine-tuning → Block embed breadcrumbs** optionally shows the source page and parent trail above a block embed. It starts off and is saved on this device.
+  - **Settings → Appearance → Advanced → Fine-tuning → Block embed breadcrumbs** optionally shows the source page and parent trail above a block embed. It starts off and is saved on this device.
   - A block embed has a subtle shaded background in both light and dark themes, so you can distinguish the embedded occurrence from an ordinary block.
   - Type `((` while editing: the popup searches blocks, and choosing one inserts a durable `((reference))`. Tine first writes a stable `id::` on the source block, so the reference survives renames, reloads, and restarts.
   - The reference renders as a link-styled copy of the source text and stays in sync: edit the source and every reference updates. A referenced task keeps its marker and checkbox; tick the checkbox inside the reference to complete or reopen the source task. A per-block reference-count badge reveals the referencing blocks.

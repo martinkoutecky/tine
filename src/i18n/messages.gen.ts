@@ -221,9 +221,6 @@ export interface MessageArgs {
   "command-tab-next": {};
   "command-tab-previous": {};
   "command-tab-reopen-closed": {};
-  "command-task-carry-30": {};
-  "command-task-carry-365": {};
-  "command-task-carry-7": {};
   "command-task-carry-n": {};
   "command-ui-open-settings": {};
   "command-ui-reset-zoom": {};
@@ -239,6 +236,7 @@ export interface MessageArgs {
   "command-ui-toggle-theme": {};
   "command-ui-toggle-wide-mode": {};
   "command-window-open-in-new-window": {};
+  "command-workspace-new": {};
   "commands-at-the-start-of-a-block-merges": {};
   "commands-closes-search-settings-first-outside-overlays": {};
   "commands-couldn-t-copy-selection-clipboard-write-failed": {};

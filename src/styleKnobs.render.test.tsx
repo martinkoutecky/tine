@@ -201,16 +201,17 @@ describe("Settings: Fine-tuning control", () => {
     dispose();
   });
 
-  it("Settings > Appearance shows Fine-tuning between Color scheme and Custom CSS, and search finds a knob", async () => {
+  it("Settings > Appearance keeps Fine-tuning and Custom CSS inside Advanced", async () => {
     await start("");
     const root = document.createElement("div");
     document.body.append(root);
     const dispose = render(() => <Settings />, root);
     openSettings("appearance");
     await tick();
-    const sections = [...root.querySelectorAll(".settings-section")].map((el) => el.textContent);
-    expect(sections.indexOf("Fine-tuning")).toBe(sections.indexOf("Color scheme") + 1);
-    expect(sections.indexOf("Custom CSS")).toBe(sections.indexOf("Fine-tuning") + 1);
+    expect(root.textContent).not.toContain("Fine-tuning");
+    root.querySelector<HTMLButtonElement>(".settings-advanced-toggle")!.click();
+    expect(root.querySelector(".settings-advanced-body")?.textContent).toContain("Fine-tuning");
+    expect(root.querySelector(".settings-advanced-body")?.textContent).toContain("Custom CSS");
     dispose();
   });
 });
