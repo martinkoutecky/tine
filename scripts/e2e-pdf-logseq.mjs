@@ -1543,7 +1543,18 @@ try {
     const scroll = document.querySelector(".pdf-scroll");
     const page = document.querySelector('.pdf-page[data-page="2"]');
     if (!(scroll instanceof HTMLElement) || !(page instanceof HTMLElement)) throw new Error("missing PDF page two");
+    // A trace for the failure message: the check flakes rarely and has not
+    // reproduced under diagnostics, so the next failure must carry its evidence.
+    const trace = [];
+    window.__gh672Trace = trace;
+    const start = performance.now();
+    const log = (what) => trace.push([Math.round(performance.now() - start), what, scroll.scrollTop,
+      document.querySelector(".pdf-page-input")?.value, document.activeElement?.className ?? null]);
+    scroll.addEventListener("scroll", () => log("scroll"));
+    for (let i = 1; i <= 12; i++) setTimeout(() => log("tick"), i * 250);
+    log("before");
     scroll.scrollTop = page.offsetTop;
+    log("set");
     scroll.dispatchEvent(new Event("scroll"));
   });
   // The page report is asynchronous; wait for it, then make sure no replayed
@@ -1553,7 +1564,18 @@ try {
   await sleep(500);
   const settledPage = await pageAfterScroll();
   if (settledPage !== "2") {
-    throw new Error(`GH #672: scrolling after a backlink replayed its page-one target (page input ${JSON.stringify(settledPage)})`);
+    const state = await browser.execute(() => {
+      const scroll = document.querySelector(".pdf-scroll");
+      return {
+        scrollTop: scroll?.scrollTop, clientHeight: scroll?.clientHeight, scrollHeight: scroll?.scrollHeight,
+        pages: [...document.querySelectorAll(".pdf-page")].slice(0, 4).map((el) => [el.getAttribute("data-page"), el.offsetTop, el.offsetHeight]),
+        zoom: document.querySelector(".pdf-zoom-level")?.textContent ?? null,
+        active: document.activeElement?.className ?? null, hidden: document.hidden,
+        target: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target") ?? null,
+        trace: window.__gh672Trace ?? null,
+      };
+    }).catch((error) => ({ unavailable: String(error) }));
+    throw new Error(`GH #672: scrolling after a backlink replayed its page-one target (page input ${JSON.stringify(settledPage)}); state ${JSON.stringify(state)}`);
   }
   await browser.$(`[data-block-ref="${SECOND_SECOND_ID}"]`).click();
   await browser.waitUntil(async () => await browser.$(".pdf-page-input").getValue() === "1", {
