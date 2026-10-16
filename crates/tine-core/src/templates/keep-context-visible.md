@@ -36,7 +36,7 @@ icon:: 📌
   - 4. Close it with its own title-bar button whenever you like — text you just typed is kept. Quitting Tine closes every window; the ones that were open come back, with their tabs, the next time you start Tine. Switching to another graph closes them.
   - What you should see: the same page in two windows on two screens, edited in either, with every change in the one file on disk.
 - ## Save the arrangement as a workspace
-  - 1. With the layout where you want it — splits, every pane's tabs and histories, both sidebars — click the workspace name at the top of the left sidebar and choose **+ New workspace**; name it once.
+  - 1. With the layout where you want it — splits, every pane's tabs and histories, both sidebars — click the workspace name at the top of the left sidebar and choose **+ New workspace**, or run **New workspace…** from the command palette (**Mod+Shift+P**); name it once.
   - 2. Come back to it from the same switcher: hover the name for a quick-switch list, or click it for the full menu with **Rename** and **Delete**. Each graph keeps its own set, and the active one comes back after a restart.
   - What you should see: the saved pane layout, tabs and histories, sidebars, and Recent return together. Workspaces are device-local session state — saving, switching, or deleting one never writes to your graph.
 - ## Clear everything else away

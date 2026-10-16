@@ -3,8 +3,6 @@ import { msg, t } from "../i18n";
 import { For, Show, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { ownedWhen, readOwned } from "../owned";
-import { CustomCssSettings } from "./CustomCssSettings";
-import { StyleKnobsSettings } from "./StyleKnobsSettings";
 import { COMMUNITY_REGISTRY_ENABLED, communityThemes, installCommunityTheme } from "../plugins/registry";
 import type { GalleryTheme } from "../styles/themes";
 import {
@@ -159,10 +157,6 @@ export function ThemeSettings(): JSX.Element {
         </For>
       </div>
       <div class="settings-hint theme-gallery-hint"><Rich message={msg("themes-style-and-colors-are-independent-theme-packages")} slots={{ "code": (children) => <code>{children}</code> }} /></div>
-
-      <StyleKnobsSettings />
-
-      <CustomCssSettings />
 
       <Show when={COMMUNITY_REGISTRY_ENABLED}><div class="settings-section">{t("themes-theme-packages")}</div>
       <Show when={communityThemes().length > 0}><div class="settings-hint theme-gallery-hint">{t("themes-signed-community-themes-inert-token-manifests")}</div>

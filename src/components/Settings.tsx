@@ -67,6 +67,8 @@ import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry 
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
 import { ThemeSettings } from "./ThemeSettings";
+import { CustomCssSettings } from "./CustomCssSettings";
+import { StyleKnobsSettings } from "./StyleKnobsSettings";
 import { flushAll } from "../document";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
@@ -428,14 +430,13 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 
   return (
     <>
+      <ThemeSettings />
       <LanguageSetting />
 
       <div class="settings-row">
         <span class="settings-label">{t("settings-ui-mode")}</span>
         <ThemeChoice />
       </div>
-
-      <ThemeSettings />
 
       <div class="settings-row">
         <span class="settings-label">{t("settings-ui-accent-color")}</span>
@@ -544,6 +545,8 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </Field>
 
       <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
+        <StyleKnobsSettings />
+        <CustomCssSettings />
         <ContentWidthFields />
         <Field
           label={t("settings-ui-smooth-scrolling-experimental")}

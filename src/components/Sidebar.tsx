@@ -13,7 +13,7 @@ import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type 
 import { reportGraphOpenFailure } from "../graphOpenFailure";
 import { backend } from "../backend";
 import { graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
-import { navigationName } from "../pageIndex";
+import { allPageNames, navigationName } from "../pageIndex";
 import { SidebarTitle } from "./SidebarTitle";
 import { NamespaceTree } from "./Namespace";
 import { SidebarFavorites } from "./SidebarFavorites";
@@ -203,7 +203,7 @@ export function Sidebar(props: {
           </button>
         </div>
 
-        <div class="nav-section">
+        <Show when={allPageNames().some((name) => name.includes("/"))}><div class="nav-section">
           <div
             class="nav-section-header nav-section-toggle"
             onClick={() => setShowNs(!showNs())}
@@ -212,7 +212,7 @@ export function Sidebar(props: {
           <Show when={showNs()}>
             <NamespaceTree onPageContextMenu={openRowMenu} onActiveNavigationComplete={props.onActiveNavigationComplete} />
           </Show>
-        </div>
+        </div></Show>
       </div>
 
       <div class="sidebar-footer">

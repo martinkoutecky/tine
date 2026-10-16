@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-census-settings.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"New workspace… in Commands opens the existing creation form with either switcher layout; submitting named workspaces persists both names in the graph's workspace registry.","blocking":true}],
+      "acceptableVariations":["Form placement, styling and persistence latency may vary while the same workspace creation flow remains available."],
+      "nonRequirements":["Exact pixels, a specific generated workspace ID, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-tab-reuse.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"With tab reuse enabled, links, Ctrl+K Enter, Recent and Favorites activate the already-open destination tab and preserve the source tab and its content.","blocking":true}],
       "acceptableVariations":["Tab placement, styling and navigation latency may vary while the destination activates and the source content remains available."],

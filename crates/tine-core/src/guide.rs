@@ -223,7 +223,8 @@ mod journal_guide_tests {
     #[test]
     fn the_language_setting_says_where_it_is_and_what_it_never_translates() {
         let places = include_str!("templates/where-things-are.md");
-        assert!(places.contains("**Language** is the first item under Settings → **Appearance**"));
+        assert!(places.contains("**Themes** is the first section under Settings → **Appearance**"));
+        assert!(places.contains("Settings search reveals these controls too"));
         assert!(places.contains("**System default** follows your system's language"));
         assert!(
             places.contains("Your notes, page names, properties and queries are never translated")

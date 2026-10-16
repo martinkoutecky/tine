@@ -124,11 +124,7 @@ command-ui-toggle-dim-blocks = 切换淡化非活动块
 
 command-ui-toggle-help = 切换帮助
 
-command-task-carry-7 = 延续未完成任务：最近 7 天
-
-command-task-carry-30 = 延续未完成任务：最近 30 天
-
-command-task-carry-365 = 延续未完成任务：最近 365 天
+command-workspace-new = 新建工作区…
 
 command-task-carry-n = 延续未完成任务：最近 N 天（见设置）
 

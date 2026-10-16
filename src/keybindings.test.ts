@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAIN_WINDOW_ID, registerWindow } from "./windowRealm";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
-import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal } from "./keybindings";
+import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture, paletteCommands, goAdjacentJournal, runGlobalCommand } from "./keybindings";
 import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setWorkflow, switcherEmbryo, switcherMode, switcherOpen, switcherPluginBlock } from "./ui";
 import { makePdfRoute } from "./router";
 import { bumpGraphEpoch, setGraphMeta } from "./graphSession";
@@ -238,15 +238,15 @@ it("GH #587 activates visible tab slots in the focused pane, with slot nine mean
   const other = splitRootAtEdge("right", "main", { snapshot })!;
   focusPane(other);
   for (const slot of [3, 8, 9, 1]) {
-    const command = paletteCommands().find((c) => c.id === `tab/activate-${slot}`);
+    const command = commandDefaults().find((c) => c.id === `tab/activate-${slot}`);
     expect(command).toBeDefined();
     expect(command!.binding).toBe("");
-    command!.run();
+    expect(runGlobalCommand(command!.id)).toBe(true);
     expect(paneRouter(other).route()).toMatchObject({ name: `Tab ${slot === 9 ? 11 : slot}` });
     expect(paneRouter("main").route()).toMatchObject({ name: "Main" });
   }
   resetPaneLayoutToSingle(pageSnapshot("Only"));
-  paletteCommands().find((c) => c.id === "tab/activate-8")!.run();
+  runGlobalCommand("tab/activate-8");
   expect(paneRouter("main").route()).toMatchObject({ name: "Only" });
 });
 
