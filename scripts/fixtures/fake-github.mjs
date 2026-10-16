@@ -10,7 +10,8 @@
 // its files as FAKE_GITHUB_PARTIAL says, one outcome per file in order
 // (complete | starter | absent; default "complete,starter"); other failed
 // mutations change nothing. FAKE_GITHUB_FAIL_READ=<text>:<n> fails the n-th
-// read whose arguments contain <text> with an HTTP 503.
+// read whose arguments contain <text> with an HTTP 503 (which `gh release
+// view` reports as "release not found", as the real CLI can).
 import fs from "node:fs";
 import path from "node:path";
 
@@ -39,7 +40,9 @@ const read = () => {
   if (!text || !args.join(" ").includes(text)) return;
   state.reads = { ...state.reads, [text]: (state.reads?.[text] ?? 0) + 1 };
   save();
-  if (state.reads[text] === Number(nth)) fail("HTTP 503: Service Unavailable");
+  if (state.reads[text] !== Number(nth)) return;
+  // gh 2.96 `release view` turns a REST outage into "release not found".
+  fail(args[0] === "release" ? "release not found" : "HTTP 503: Service Unavailable");
 };
 const store = (release, name, outcome) => {
   if (outcome === "absent") return;
@@ -48,6 +51,15 @@ const store = (release, name, outcome) => {
   release.assets[path.basename(name)] = { id: state.nextAsset, state: outcome === "starter" ? "starter" : "uploaded", data };
 };
 const complete = (asset) => asset?.state === "uploaded";
+// A release as GitHub's REST API returns it.
+const rest = (release, owner, repo) => ({
+  tag_name: release.tagName, name: release.name, draft: release.isDraft, prerelease: release.isPrerelease,
+  target_commitish: release.target,
+  assets: Object.entries(release.assets).map(([name, asset]) => ({
+    name, state: asset.state, size: Buffer.byteLength(asset.data, "latin1"),
+    url: `https://api.github.com/repos/${owner}/${repo}/releases/assets/${asset.id}`,
+  })),
+});
 const download = /^https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/download\/([^/]+)\/([^/?]+)$/;
 
 if (tool === "curl") {
@@ -76,6 +88,14 @@ if (tool === "curl") {
       if (!state.tags[tag]) fail("HTTP 422: Reference does not exist");
       mutate(() => delete state.tags[tag]);
     }
+  } else if (args.includes("--paginate")) {
+    const [owner, repo] = args.find((arg) => arg.startsWith("repos/")).split("/").slice(1, 3);
+    process.stdout.write(JSON.stringify([state.releases.map((release) => rest(release, owner, repo))]));
+  } else if (args[1].includes("/releases/tags/")) {
+    const [, owner, repo] = args[1].split("/");
+    const release = byTag(args[1].split("/releases/tags/")[1]);
+    if (!release || release.isDraft) fail("gh: Not Found (HTTP 404)");
+    process.stdout.write(JSON.stringify(rest(release, owner, repo)));
   } else {
     const ref = args[1].split("/commits/")[1];
     if (!state.tags[ref]) fail(`HTTP 422: No commit found for SHA: ${ref}`);
@@ -86,16 +106,9 @@ if (tool === "curl") {
   const release = byTag(tag);
   if (verb === "view") {
     read();
+    // Like gh 2.96, any failed lookup reads as "release not found".
     if (!release) fail("release not found");
-    const [owner, repo] = option("--repo").split("/");
-    process.stdout.write(JSON.stringify({
-      ...release,
-      targetCommitish: release.target,
-      assets: Object.entries(release.assets).map(([name, asset]) => ({
-        name, state: asset.state, size: Buffer.byteLength(asset.data, "latin1"),
-        apiUrl: `https://api.github.com/repos/${owner}/${repo}/releases/assets/${asset.id}`,
-      })),
-    }));
+    process.stdout.write(JSON.stringify(release));
   } else if (verb === "download") {
     if (!release) fail("release not found");
     const dir = option("--dir");

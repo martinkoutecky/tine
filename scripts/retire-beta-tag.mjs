@@ -125,9 +125,23 @@ function main() {
     // Each step below is resumable: a rerun after any failure finds the state
     // it left and continues from there.
     const bridgeTitle = `${IDENTITY.productName} update bridge`;
+    // The release at `beta`, from the REST API so that each answer keeps its
+    // status: `gh release view` can report "release not found" for an outage.
+    // A published release answers the tag endpoint; only after its 404 does a
+    // full authenticated listing decide whether a draft holds the tag.
+    const shape = (found) => ({
+      name: found.name,
+      isDraft: found.draft,
+      targetCommitish: found.target_commitish,
+      assets: found.assets.map((asset) => ({ name: asset.name, size: asset.size, state: asset.state, apiUrl: asset.url })),
+    });
     const view = () => {
-      const found = lookup(["release", "view", BETA_TAG, "--json", "name,isDraft,targetCommitish,assets", "--repo", repository], /release not found/i);
-      return found === null ? null : JSON.parse(found);
+      const published = lookup(["api", `repos/${repository}/releases/tags/${BETA_TAG}`], /HTTP 404/);
+      if (published !== null) return shape(JSON.parse(published));
+      const drafts = JSON.parse(ghApi("--paginate", "--slurp", `repos/${repository}/releases?per_page=100`))
+        .flat().filter((found) => found.draft && found.tag_name === BETA_TAG);
+      if (drafts.length > 1) throw new Error(`${drafts.length} draft releases name tag ${BETA_TAG}; delete the extra drafts first`);
+      return drafts.length ? shape(drafts[0]) : null;
     };
     let release = view();
     if (release && release.name !== bridgeTitle) {

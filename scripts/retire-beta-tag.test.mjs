@@ -142,7 +142,11 @@ test("a failed upload that leaves any mix of complete, empty (starter) and missi
 test("a failed read of the beta tag stops the run instead of leaving the bridge on the old commit", () => {
   // Reads of commits/beta: before the move, before re-creating, before publishing, in the final check.
   for (const nth of [1, 2, 3, 4]) recovers({ failRead: `commits/beta:${nth}` });
-  recovers({ failRead: "release view beta:2" });
+  // The release lookups at beta: an outage there must not read as "no release".
+  for (const nth of [1, 2, 3]) recovers({ failRead: `releases/tags/beta:${nth}` });
+  for (const nth of [1, 2]) recovers({ failRead: `releases?per_page:${nth}` });
+  // Re-review S1: an outage at the first release lookup, then a failed create.
+  recovers({ failRead: "releases/tags/beta:1", failAt: "2" });
 });
 
 test("a draft bridge left on the old beta tag is published at the new Beta's commit", () => {
