@@ -38,6 +38,7 @@ fn run_small_stack(store: &Store, query: String) -> bool {
 
 #[test]
 fn a_quoted_deep_nest_under_the_size_cap_does_not_overflow_the_stack() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = graph("quoted");
     let levels = 10_000;
     let query = format!(
@@ -67,6 +68,7 @@ fn a_quoted_deep_nest_under_the_size_cap_does_not_overflow_the_stack() {
 /// admission bound still answers, and an ordinary query is unchanged.
 #[test]
 fn deep_but_admitted_and_groups_still_answer() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = graph("benign");
     let levels = 100;
     let query = format!(

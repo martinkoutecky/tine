@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tine-graph-features"
 version.workspace = true
 edition.workspace = true
@@ -25,3 +26,8 @@ tine-graph-features = { path = ".", features = ["test-faults"] }
 serde_json = { workspace = true }
 sha2 = "0.10"
 tempfile = "3"
+
+# Keep all integration cases in one linked executable.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

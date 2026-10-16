@@ -3,6 +3,7 @@ use tine_store::{Area, Store};
 
 #[test]
 fn malformed_graph_view_config_keeps_pages_readable_at_graph_open() {
+    let _integration_guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     for dir in ["pages", "journals", "logseq"] {
         fs::create_dir(root.path().join(dir)).unwrap();

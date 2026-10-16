@@ -47,6 +47,7 @@ fn collect(root: &Path, rel: &str, out: &mut Vec<(String, Vec<u8>)>) {
 
 #[test]
 fn rename_paths_and_bytes_match_master_ddf408c55() {
+    let _integration_guard = crate::integration_lock();
     let input: Input = serde_json::from_str(include_str!(
         "../../../scripts/fixtures/og-rename-input.json"
     ))

@@ -89,6 +89,7 @@ fn child(root: &Path, worker: &str, boundary: usize) {
 
 #[test]
 fn crash_transaction_worker() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_CRASH_ROOT") else {
         return;
     };
@@ -123,12 +124,13 @@ fn crash_transaction_worker() {
 
 #[test]
 fn transaction_kill_reopen_preserves_each_old_or_new_file() {
+    let _integration_guard = crate::integration_lock();
     for boundary in 0..3 {
         let root = scratch("tx");
         fs::write(root.join("pages/A.md"), b"- old A\n").unwrap();
         fs::write(root.join("pages/B.md"), b"- old B\n").unwrap();
         fs::write(root.join("assets/c.bin"), b"old C").unwrap();
-        child(&root, "crash_transaction_worker", boundary);
+        child(&root, "i02_crash_gaps::crash_transaction_worker", boundary);
         let reopened = open(&root);
         reopened.whole_graph().unwrap();
         let a = fs::read(root.join("pages/A.md")).unwrap();
@@ -150,6 +152,7 @@ fn transaction_kill_reopen_preserves_each_old_or_new_file() {
 
 #[test]
 fn crash_block_reference_worker() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_CRASH_REF_ROOT") else {
         return;
     };
@@ -180,6 +183,7 @@ fn crash_block_reference_worker() {
 
 #[test]
 fn block_reference_target_is_durable_at_the_step_boundary_for_both_name_orders() {
+    let _integration_guard = crate::integration_lock();
     let uuid = "48ae2a7a-e09b-4a21-aa3a-010101010101";
     for source_name in ["A source", "Z source"] {
         let root = scratch("block-reference");
@@ -187,7 +191,7 @@ fn block_reference_target_is_durable_at_the_step_boundary_for_both_name_orders()
         fs::write(root.join("pages/M target.md"), b"- target\n").unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("crash_block_reference_worker")
+            .arg("i02_crash_gaps::crash_block_reference_worker")
             .env("TINE_CRASH_REF_ROOT", &root)
             .env("TINE_CRASH_REF_SOURCE", source_name)
             .output()
@@ -215,6 +219,7 @@ fn block_reference_target_is_durable_at_the_step_boundary_for_both_name_orders()
 
 #[test]
 fn crash_rewritten_move_worker() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_CRASH_MOVE_ROOT") else {
         return;
     };
@@ -242,6 +247,7 @@ fn crash_rewritten_move_worker() {
 
 #[test]
 fn rewritten_move_kill_reopen_has_one_live_page_at_each_internal_boundary() {
+    let _integration_guard = crate::integration_lock();
     for (point, expected) in [
         ("rename", b"- [[Old]]\n".as_slice()),
         ("rewrite", b"- [[New]]\n".as_slice()),
@@ -250,7 +256,7 @@ fn rewritten_move_kill_reopen_has_one_live_page_at_each_internal_boundary() {
         fs::write(root.join("pages/Old.md"), b"- [[Old]]\n").unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("crash_rewritten_move_worker")
+            .arg("i02_crash_gaps::crash_rewritten_move_worker")
             .arg("--nocapture")
             .env("TINE_CRASH_MOVE_ROOT", &root)
             .env("TINE_CRASH_MOVE_POINT", point)
@@ -273,6 +279,7 @@ fn rewritten_move_kill_reopen_has_one_live_page_at_each_internal_boundary() {
 
 #[test]
 fn rewritten_move_with_preamble_title_retries_after_rename_crash() {
+    let _integration_guard = crate::integration_lock();
     for (ext, old, new_title) in [
         ("md", "title:: Old\n- [[Old]]\n", "title:: New"),
         ("org", "#+TITLE: Old\n* [[Old]]\n", "#+TITLE: New"),
@@ -281,7 +288,7 @@ fn rewritten_move_with_preamble_title_retries_after_rename_crash() {
         fs::write(root.join(format!("pages/Old.{ext}")), old).unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("crash_rewritten_move_worker")
+            .arg("i02_crash_gaps::crash_rewritten_move_worker")
             .env("TINE_CRASH_MOVE_ROOT", &root)
             .env("TINE_CRASH_MOVE_EXT", ext)
             .env("TINE_CRASH_MOVE_POINT", "rename")
@@ -316,6 +323,7 @@ fn rewritten_move_with_preamble_title_retries_after_rename_crash() {
 
 #[test]
 fn failed_rewritten_move_removes_its_trash_copy_during_rollback() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("move-trash-rollback");
     let old = b"title:: Old\n- [[Old]]\n";
     fs::write(root.join("pages/Old.md"), old).unwrap();
@@ -365,6 +373,7 @@ fn failed_rewritten_move_removes_its_trash_copy_during_rollback() {
 
 #[test]
 fn crash_restore_worker() {
+    let _integration_guard = crate::integration_lock();
     if std::env::var("TINE_CRASH_KIND").as_deref() != Ok("restore") {
         return;
     }
@@ -389,6 +398,7 @@ fn crash_restore_worker() {
 
 #[test]
 fn restore_kill_reopen_keeps_live_or_recovery_bytes() {
+    let _integration_guard = crate::integration_lock();
     for boundary in 0..4 {
         let root = scratch("restore");
         fs::create_dir_all(root.join("snapshot")).unwrap();
@@ -402,7 +412,7 @@ fn restore_kill_reopen_keeps_live_or_recovery_bytes() {
         }
         let output = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("crash_restore_worker")
+            .arg("i02_crash_gaps::crash_restore_worker")
             .arg("--nocapture")
             .env("TINE_CRASH_KIND", "restore")
             .env("TINE_CRASH_ROOT", &root)
@@ -433,6 +443,7 @@ fn restore_kill_reopen_keeps_live_or_recovery_bytes() {
 
 #[test]
 fn crash_graph_restore_worker() {
+    let _integration_guard = crate::integration_lock();
     if std::env::var("TINE_CRASH_KIND").as_deref() != Ok("graph-restore") {
         return;
     }
@@ -460,6 +471,7 @@ fn crash_graph_restore_worker() {
 /// A kill at any of them leaves each file whole, live or in recovery.
 #[test]
 fn graph_restore_kill_reopen_keeps_live_or_recovery_bytes() {
+    let _integration_guard = crate::integration_lock();
     for boundary in 0..5 {
         let root = scratch("graph-restore");
         fs::create_dir_all(root.join("snapshot/pages")).unwrap();
@@ -471,7 +483,7 @@ fn graph_restore_kill_reopen_keeps_live_or_recovery_bytes() {
         fs::write(root.join("archive/Stale.md"), "stale").unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
-            .arg("crash_graph_restore_worker")
+            .arg("i02_crash_gaps::crash_graph_restore_worker")
             .arg("--nocapture")
             .env("TINE_CRASH_KIND", "graph-restore")
             .env("TINE_CRASH_ROOT", &root)
@@ -507,6 +519,7 @@ fn graph_restore_kill_reopen_keeps_live_or_recovery_bytes() {
 
 #[test]
 fn crash_feature_worker() {
+    let _integration_guard = crate::integration_lock();
     let Ok(journey) = std::env::var("TINE_CRASH_JOURNEY") else {
         return;
     };
@@ -641,6 +654,7 @@ fn rename_merge_boundary_holds(root: &Path, boundary: usize, done: bool) {
 
 #[test]
 fn feature_journeys_kill_reopen_keep_content() {
+    let _integration_guard = crate::integration_lock();
     for journey in ["merge", "rename", "rename-merge", "conflict"] {
         // rename-merge steps: save survivor, rewrite Ref.md, move Old/Kid, trash Old.
         for boundary in 0..if journey == "rename-merge" { 4 } else { 2 } {
@@ -681,7 +695,7 @@ fn feature_journeys_kill_reopen_keep_content() {
             }
             let output = Command::new(std::env::current_exe().unwrap())
                 .arg("--exact")
-                .arg("crash_feature_worker")
+                .arg("i02_crash_gaps::crash_feature_worker")
                 .arg("--nocapture")
                 .env("TINE_CRASH_JOURNEY", journey)
                 .env("TINE_CRASH_ROOT", &root)
@@ -748,6 +762,7 @@ fn feature_journeys_kill_reopen_keep_content() {
 
 #[test]
 fn durable_transition_inventory_names_crash_proofs() {
+    let _integration_guard = crate::integration_lock();
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for (file, owner, proof) in [
         (

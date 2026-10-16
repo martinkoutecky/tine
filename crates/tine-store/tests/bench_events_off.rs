@@ -10,6 +10,7 @@ fn threads() -> usize {
 
 #[test]
 fn unset_spawns_no_writer_thread() {
+    let _integration_guard = crate::integration_lock();
     assert!(std::env::var_os("TINE_BENCH_EVENTS").is_none());
     #[cfg(target_os = "linux")]
     let before = threads();

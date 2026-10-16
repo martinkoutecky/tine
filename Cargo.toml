@@ -31,3 +31,11 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [patch.crates-io]
 # GH #533: preserve absolute UNC paths reconstructed from retained Windows handles.
 cap-primitives = { path = "vendor/cap-primitives-4.0.2" }
+
+# Keep source locations for workspace backtraces without third-party debug data.
+# The test profile inherits these settings from dev.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

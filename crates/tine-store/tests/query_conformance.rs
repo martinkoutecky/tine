@@ -210,6 +210,7 @@ fn page_names(result: &QueryResult) -> Vec<String> {
 // and predicates together, then returns distinct find values).
 #[test]
 fn gh628_tagged_pages_are_page_rows_and_string_inputs_keep_og_case_semantics() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[
         (
             "pages/Flutter.md",
@@ -244,6 +245,7 @@ fn gh628_tagged_pages_are_page_rows_and_string_inputs_keep_og_case_semantics() {
 
 #[test]
 fn gh628_date_windows_keep_strict_inclusive_and_disjunctive_semantics() {
+    let _integration_guard = crate::integration_lock();
     let today = JournalDate::today();
     let date = |offset| today.add_days(offset).file_stem().replace('_', "-");
     let tasks = format!("- TODO lower\n  SCHEDULED: <{}>\n- TODO inside\n  SCHEDULED: <{}>\n- TODO upper\n  SCHEDULED: <{}>\n- TODO deadline only\n  DEADLINE: <{}>\n- TODO both outside and inside\n  SCHEDULED: <{}>\n  DEADLINE: <{}>\n- TODO absent\n", date(0), date(1), date(7), date(2), date(9), date(3));
@@ -313,6 +315,7 @@ fn gh628_date_windows_keep_strict_inclusive_and_disjunctive_semantics() {
 
 #[test]
 fn gh628_docs_wildcard_marker_and_page_ref_input_rules_answer_exactly() {
+    let _integration_guard = crate::integration_lock();
     let today = JournalDate::today();
     let journal_path = format!("journals/{}.md", today.file_stem());
     let fixture = open(&[(
@@ -346,6 +349,7 @@ fn gh628_docs_wildcard_marker_and_page_ref_input_rules_answer_exactly() {
 
 #[test]
 fn gh628_direct_reference_identity_joins_do_not_inherit_ancestors_or_owning_page() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[
         ("pages/Project.md", "- no explicit ref on the owning page\n"),
         (
@@ -408,6 +412,7 @@ fn gh628_direct_reference_identity_joins_do_not_inherit_ancestors_or_owning_page
 
 #[test]
 fn gh628_direct_refs_include_og_marker_priority_and_namespace_prefixes() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[("pages/Refs.md", "- TODO [#A] [[project/sub]]\n- plain\n")]);
     for page in ["todo", "a", "project", "project/sub"] {
         let source = format!(
@@ -430,6 +435,7 @@ fn gh628_direct_refs_include_og_marker_priority_and_namespace_prefixes() {
 
 #[test]
 fn gh628_docs_simple_query_map_uses_the_existing_simple_engine() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[(
         "pages/Tasks.md",
         "- DOING [#A] chosen\n- DOING [#B] other priority\n- TODO [#A] other marker\n",
@@ -449,6 +455,7 @@ fn gh628_docs_simple_query_map_uses_the_existing_simple_engine() {
 
 #[test]
 fn optional_block_attributes_are_two_valued() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let graph = &fixture.graph;
     case(
@@ -482,6 +489,7 @@ fn optional_block_attributes_are_two_valued() {
 
 #[test]
 fn d18_conversion_and_agenda_keep_the_previous_answers() {
+    let _integration_guard = crate::integration_lock();
     use tine_core::query::print::{query_print, PrintDialect};
     use tine_core::query::registry::Registry;
     use tine_core::query::wire_parse::{parse_query_pair, QueryTextDialect};
@@ -584,6 +592,7 @@ fn d18_conversion_and_agenda_keep_the_previous_answers() {
 
 #[test]
 fn property_leaves_are_two_valued_over_atoms() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let graph = &fixture.graph;
     case(
@@ -606,6 +615,7 @@ fn property_leaves_are_two_valued_over_atoms() {
 
 #[test]
 fn a_leaf_block_satisfies_every_over_its_empty_children() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let (query, _) = parse_query_text(
         "every(children, task = 'DONE')",
@@ -629,6 +639,7 @@ fn a_leaf_block_satisfies_every_over_its_empty_children() {
 
 #[test]
 fn any_over_children_is_false_on_a_leaf_block() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let result = run_text(
         &fixture.graph,
@@ -640,6 +651,7 @@ fn any_over_children_is_false_on_a_leaf_block() {
 
 #[test]
 fn the_page_anchor_returns_page_rows() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let (query, _) = parse_query_text(
         "@page and name like 'proj/%'",
@@ -663,6 +675,7 @@ fn the_page_anchor_returns_page_rows() {
 
 #[test]
 fn the_journal_page_attribute_is_a_page_row_leaf() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let result = run_text(
         &fixture.graph,
@@ -675,6 +688,7 @@ fn the_journal_page_attribute_is_a_page_row_leaf() {
 /// I-12 as a test: the OG and TQL spellings of one filter return the same rows.
 #[test]
 fn the_two_dialects_agree_row_for_row() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     let graph = &fixture.graph;
     for (og, tql) in [
@@ -697,6 +711,7 @@ fn the_two_dialects_agree_row_for_row() {
 /// the tag and is NOT an answer; `Target` is named by it and has no tags itself.
 #[test]
 fn all_page_tags_selects_every_page_some_page_uses_as_a_tag() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[
         ("pages/Alpha.md", "tags:: Target\n\n- a block on Alpha\n"),
         ("pages/Target.md", "- a block on the tag page\n"),
@@ -721,6 +736,7 @@ fn all_page_tags_selects_every_page_some_page_uses_as_a_tag() {
 /// (the one graph-wide read; every other leaf is page-local).
 #[test]
 fn all_page_tags_answer_follows_an_edit_of_another_pages_tags() {
+    let _integration_guard = crate::integration_lock();
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("pages")).unwrap();
     write(
@@ -779,6 +795,7 @@ fn all_page_tags_answer_follows_an_edit_of_another_pages_tags() {
 /// without a `tags::` of its own).
 #[test]
 fn all_page_tags_round_trips_through_tql() {
+    let _integration_guard = crate::integration_lock();
     use std::collections::BTreeSet;
     use tine_core::query::print::{query_print, PrintDialect};
 
@@ -838,6 +855,7 @@ fn all_page_tags_round_trips_through_tql() {
 /// REG-P0-QUERY-UNKNOWN-HEAD-001.
 #[test]
 fn an_unknown_head_returns_nothing_rather_than_a_shorter_query() {
+    let _integration_guard = crate::integration_lock();
     let fixture = truth_graph();
     assert_eq!(rows(&fixture.graph, "(task TODO)").len(), 4);
     case(&fixture.graph, "(and (task TODO) (frobnicate x))", &[]);
@@ -847,6 +865,7 @@ fn an_unknown_head_returns_nothing_rather_than_a_shorter_query() {
 /// the query spells its literal.
 #[test]
 fn property_atoms_compare_by_their_keys_effective_type() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[(
         "pages/Typed.md",
         "\
@@ -895,6 +914,7 @@ fn property_atoms_compare_by_their_keys_effective_type() {
 /// end to end.
 #[test]
 fn two_groups_of_the_same_name_are_ordered_journal_first() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[
         ("journals/2026_07_29.md", "- TODO from the journal\n"),
         ("pages/Jul 29th, 2026.md", "- TODO from the named page\n"),
@@ -922,6 +942,7 @@ fn two_groups_of_the_same_name_are_ordered_journal_first() {
 /// `SCHEDULED:` on the marker's own line.
 #[test]
 fn planning_on_the_markers_own_line() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[(
         "pages/Planning.md",
         "- TODO SCHEDULED: <2026-08-05 Wed>\n- TODO on its own\n  SCHEDULED: <2026-08-06 Thu>\n",
@@ -964,6 +985,7 @@ fn advanced_query(source: &str) -> Query {
 
 #[test]
 fn advanced_page_property_returns_the_bound_entity() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[
         (
             "pages/Alpha.md",
@@ -1023,6 +1045,7 @@ fn advanced_page_property_returns_the_bound_entity() {
 
 #[test]
 fn advanced_page_property_refreshes_after_save_and_reopen() {
+    let _integration_guard = crate::integration_lock();
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("pages")).unwrap();
     write(
@@ -1062,6 +1085,7 @@ fn advanced_page_property_refreshes_after_save_and_reopen() {
 
 #[test]
 fn one_parse_answers_differently_on_two_current_pages() {
+    let _integration_guard = crate::integration_lock();
     let fixture = binding_graph();
     let graph = &fixture.graph;
     let query = advanced_query(CURRENT_PAGE_QUERY);
@@ -1085,6 +1109,7 @@ fn one_parse_answers_differently_on_two_current_pages() {
 
 #[test]
 fn a_missing_runtime_input_is_strict_no_results_with_a_report() {
+    let _integration_guard = crate::integration_lock();
     let fixture = binding_graph();
     let query = advanced_query(CURRENT_PAGE_QUERY);
     let result = run_ir(
@@ -1100,6 +1125,7 @@ fn a_missing_runtime_input_is_strict_no_results_with_a_report() {
 
 #[test]
 fn a_relative_date_query_answers_for_the_execution_day_across_a_rollover() {
+    let _integration_guard = crate::integration_lock();
     let query = advanced_query("[:find (pull ?b [*]) :where (between ?b -7d today)]");
     let context = ExecutionContext::none();
     let thursday = JournalDate {
@@ -1121,6 +1147,7 @@ fn a_relative_date_query_answers_for_the_execution_day_across_a_rollover() {
 
 #[test]
 fn run_and_explain_agree_on_results_and_report() {
+    let _integration_guard = crate::integration_lock();
     let fixture = binding_graph();
     let query = advanced_query(CURRENT_PAGE_QUERY);
     let context = ExecutionContext::on_page("Beta");
@@ -1136,6 +1163,7 @@ fn run_and_explain_agree_on_results_and_report() {
 
 #[test]
 fn explain_empty_reports_a_failed_resolution_without_misleading_counts() {
+    let _integration_guard = crate::integration_lock();
     let fixture = binding_graph();
     let query = advanced_query(CURRENT_PAGE_QUERY);
     let explained = explain(&fixture.graph, &query, &ExecutionContext::none());
@@ -1151,6 +1179,7 @@ fn explain_empty_reports_a_failed_resolution_without_misleading_counts() {
 /// an unrelated edit keeps it (memoized, scoped invalidation).
 #[test]
 fn an_edit_moves_the_answer_and_an_unrelated_edit_keeps_it() {
+    let _integration_guard = crate::integration_lock();
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("pages")).unwrap();
     write(dir.path(), "pages/A.md", "- TODO first\n");
@@ -1194,6 +1223,7 @@ fn an_edit_moves_the_answer_and_an_unrelated_edit_keeps_it() {
 /// here) and did not answer.
 #[test]
 fn an_admitted_limit_like_pattern_over_long_blocks_answers_within_a_bound() {
+    let _integration_guard = crate::integration_lock();
     let block = format!("{}c", "a".repeat(128 * 1024));
     let page: String = (0..8).map(|_| format!("- {block}\n")).collect();
     let fixture = open(&[
@@ -1227,6 +1257,7 @@ fn an_admitted_limit_like_pattern_over_long_blocks_answers_within_a_bound() {
 /// unsampled query still reports the bound.
 #[test]
 fn a_sampled_page_query_over_the_row_bound_returns_its_sample() {
+    let _integration_guard = crate::integration_lock();
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("pages")).expect("pages");
     std::fs::create_dir_all(dir.path().join("journals")).expect("journals");
@@ -1252,6 +1283,7 @@ fn a_sampled_page_query_over_the_row_bound_returns_its_sample() {
 
 #[test]
 fn hierarchy_relations_select_anchors_through_tql() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[(
         "pages/Outline.md",
         "- project [[RootRef]]\n\t- middle\n\t\t- TODO needle\n\t\t- DONE other\n- outside\n",
@@ -1278,6 +1310,7 @@ fn hierarchy_relations_select_anchors_through_tql() {
 
 #[test]
 fn hierarchy_quantifiers_agree_with_strict_tree_sets() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[(
         "pages/Tree.md",
         "- root\n\t- TODO branch\n\t\t- DONE leaf\n\t- DONE sibling\n- TODO outside\n",
@@ -1338,6 +1371,7 @@ fn hierarchy_quantifiers_agree_with_strict_tree_sets() {
 
 #[test]
 fn hierarchy_rows_use_their_own_refs_and_refresh_after_an_edit() {
+    let _integration_guard = crate::integration_lock();
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("pages")).unwrap();
     write(
@@ -1395,6 +1429,7 @@ fn hierarchy_rows_use_their_own_refs_and_refresh_after_an_edit() {
 
 #[test]
 fn hierarchy_queries_work_in_org_and_crlf_markdown() {
+    let _integration_guard = crate::integration_lock();
     for (path, text) in [
         (
             "pages/Outline.org",
@@ -1420,6 +1455,7 @@ fn hierarchy_queries_work_in_org_and_crlf_markdown() {
 
 #[test]
 fn hierarchy_guide_example_runs_with_search_syntax_inside_relations() {
+    let _integration_guard = crate::integration_lock();
     let fixture = open(&[(
         "pages/Project.md",
         "- project\n\t- branch\n\t\t- budget action\n\t\t- approved\n\t\t- budget draft\n",

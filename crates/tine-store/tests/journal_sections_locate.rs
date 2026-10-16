@@ -13,6 +13,7 @@ use tine_store::{IrAnswer, IrRequest, Store};
 
 #[test]
 fn the_sections_marker_locates_markdown_and_org_pages_only() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     std::fs::create_dir(dir.path().join("journals")).unwrap();

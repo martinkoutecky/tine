@@ -6,6 +6,7 @@ use tine_store::{Day, Store};
 
 #[test]
 fn config_resolves_modern_then_legacy_then_default() {
+    let _integration_guard = crate::integration_lock();
     for (edn, expected) in [
         ("{}", None),
         (
@@ -36,6 +37,7 @@ fn config_resolves_modern_then_legacy_then_default() {
 
 #[test]
 fn feed_and_routed_page_use_every_og_format_without_rewriting_files() {
+    let _integration_guard = crate::integration_lock();
     let golden: serde_json::Value = serde_json::from_str(include_str!(
         "../../../tests/fixtures/og-journal-formats.json"
     ))
@@ -84,6 +86,7 @@ fn feed_and_routed_page_use_every_og_format_without_rewriting_files() {
 
 #[test]
 fn settings_modern_write_preserves_legacy_key_and_wins_after_reopen() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("logseq")).unwrap();
     let path = dir.path().join("logseq/config.edn");
@@ -108,6 +111,7 @@ fn settings_modern_write_preserves_legacy_key_and_wins_after_reopen() {
 
 #[test]
 fn bundled_guide_explains_legacy_precedence_and_weekday_choices() {
+    let _integration_guard = crate::integration_lock();
     let pages = tine_core::guide::bundled_guide_pages();
     let page = pages
         .iter()

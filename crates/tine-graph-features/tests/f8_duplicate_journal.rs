@@ -78,6 +78,7 @@ fn keep_both(rows: &[DiffRow], out: &mut HashMap<String, String>) {
 
 #[test]
 fn a_duplicate_journal_day_is_a_resolvable_queue_object_with_stable_id() {
+    let _integration_guard = crate::integration_lock();
     let root = duplicate_day("queue");
     let queue = conflicts::conflict_inventory(&open(&root)).unwrap().queue;
     let object = day(&queue).expect("the duplicate day is a queue object");
@@ -99,6 +100,7 @@ fn a_duplicate_journal_day_is_a_resolvable_queue_object_with_stable_id() {
 
 #[test]
 fn resolving_keep_both_folds_the_stray_in_trashes_it_and_leaves_the_queue() {
+    let _integration_guard = crate::integration_lock();
     let root = duplicate_day("resolve");
     let store = open(&root);
     let queue = ConflictQueue::default();
@@ -153,6 +155,7 @@ fn resolving_keep_both_folds_the_stray_in_trashes_it_and_leaves_the_queue() {
 
 #[test]
 fn resolving_refuses_files_of_different_days_and_a_non_canonical_target() {
+    let _integration_guard = crate::integration_lock();
     let root = duplicate_day("guard");
     fs::write(root.join("journals/2026_06_24.md"), "- other day\n").unwrap();
     let store = open(&root);
@@ -193,6 +196,7 @@ fn resolving_refuses_files_of_different_days_and_a_non_canonical_target() {
 
 #[test]
 fn a_stale_review_writes_nothing() {
+    let _integration_guard = crate::integration_lock();
     let root = duplicate_day("stale");
     let store = open(&root);
     let diff = conflicts::duplicate_journal_diff(&store, KEEPER, STRAY)
@@ -227,6 +231,7 @@ fn a_stale_review_writes_nothing() {
 
 #[test]
 fn a_cross_format_day_lists_its_files_offers_no_rows_and_refuses_a_fold() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("cross-format");
     fs::write(root.join(KEEPER), "- markdown\n").unwrap();
     fs::write(root.join("journals/Friday, 26-06-2026.org"), "* org\n").unwrap();
@@ -260,6 +265,7 @@ fn a_cross_format_day_lists_its_files_offers_no_rows_and_refuses_a_fold() {
 
 #[test]
 fn an_external_stray_enters_the_open_queue_on_its_change_event() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("external");
     fs::write(root.join(KEEPER), "- mine\n").unwrap();
     let store = open(&root);
@@ -277,6 +283,7 @@ fn an_external_stray_enters_the_open_queue_on_its_change_event() {
 
 #[test]
 fn a_journal_title_format_change_that_reveals_a_twin_queues_the_day() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("reveal");
     fs::write(root.join("logseq/config.edn"), "{}\n").unwrap();
     fs::write(root.join(KEEPER), "- mine\n").unwrap();
@@ -305,6 +312,7 @@ fn a_journal_title_format_change_that_reveals_a_twin_queues_the_day() {
 /// `page_path`; opening the day by its title must read that keeper file.
 #[test]
 fn opening_the_day_by_title_reads_the_file_the_queue_object_names() {
+    let _integration_guard = crate::integration_lock();
     let root = duplicate_day("open");
     let store = open(&root);
     store.refresh(tine_store::Depth::Stamps).unwrap();

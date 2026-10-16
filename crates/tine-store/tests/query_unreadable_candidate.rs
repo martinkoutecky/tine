@@ -16,6 +16,7 @@ static CASE_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn backlinks_after_a_candidate_file_is_damaged_or_deleted_on_disk_parse_nothing() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap();
     let dir = std::env::temp_dir().join(format!("tine-594-candidate-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);

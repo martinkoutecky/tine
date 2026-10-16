@@ -1,10 +1,8 @@
 //! Guard graph Tauri commands as transport adapters.
+use crate::test_cfg::cfg_test;
 use quote::ToTokens;
 use std::path::{Path, PathBuf};
 use syn::visit::{self, Visit};
-#[path = "../src/test_cfg.rs"]
-mod test_cfg;
-use test_cfg::cfg_test;
 
 // Device ingress and devtools own local OS data, not graph transport.
 const DEVICE_COMMAND_EXEMPTIONS: &[(&str, &str)] = &[
@@ -131,6 +129,7 @@ fn scan(source: &str) -> Vec<String> {
 
 #[test]
 fn graph_commands_are_thin_transport() {
+    let _integration_guard = crate::integration_lock();
     let source = include_str!("../../../src-tauri/src/commands.rs");
     // A command module split out of commands.rs stays under the same rule.
     let concord = include_str!("../../../src-tauri/src/commands/concord.rs");
@@ -141,6 +140,7 @@ fn graph_commands_are_thin_transport() {
 
 #[test]
 fn planted_graph_command_violation_is_detected() {
+    let _integration_guard = crate::integration_lock();
     let planted = r#"#[tauri::command]
         fn bad(state: GraphContext<'_>) {
             let _ = slot.block_search_lanes.lock().unwrap();
@@ -157,6 +157,7 @@ fn planted_graph_command_violation_is_detected() {
 
 #[test]
 fn second_store_call_is_detected() {
+    let _integration_guard = crate::integration_lock();
     let planted = r#"#[tauri::command]
         fn bad(state: GraphContext<'_>) {
             let _ = slot.store.page(&id);
@@ -173,6 +174,7 @@ fn second_store_call_is_detected() {
 
 #[test]
 fn graph_command_path_and_filesystem_calls_are_detected() {
+    let _integration_guard = crate::integration_lock();
     let planted = r#"#[tauri::command]
         fn bad(state: GraphContext<'_>) {
             let _ = std::path::PathBuf::from("root").join("pages");
@@ -185,6 +187,7 @@ fn graph_command_path_and_filesystem_calls_are_detected() {
 
 #[test]
 fn graph_command_retry_and_for_loop_are_detected() {
+    let _integration_guard = crate::integration_lock();
     let planted = r#"#[tauri::command]
         fn bad(state: GraphContext<'_>) {
             retry_save();
@@ -241,6 +244,7 @@ fn feature_files(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn graph_features_do_not_classify_error_text() {
+    let _integration_guard = crate::integration_lock();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tine-graph-features/src");
     let mut files = Vec::new();
     feature_files(&root, &mut files);
@@ -261,6 +265,7 @@ fn graph_features_do_not_classify_error_text() {
 
 #[test]
 fn planted_feature_error_text_match_is_detected() {
+    let _integration_guard = crate::integration_lock();
     let source = r#"fn bad(error: StoreError) {
         if let StoreError::InvalidTarget(reason) = error {
             let _ = reason.starts_with("symlink:");
@@ -273,6 +278,7 @@ fn planted_feature_error_text_match_is_detected() {
 /// is scanned.
 #[test]
 fn a_not_test_module_error_text_match_is_detected() {
+    let _integration_guard = crate::integration_lock();
     let source = r#"#[cfg(not(test))] mod live {
         fn bad(error: StoreError) {
             if let StoreError::InvalidTarget(reason) = error {

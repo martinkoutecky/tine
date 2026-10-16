@@ -30,7 +30,7 @@ mod unix {
         let mut command = Command::new(current_exe);
         command
             .arg("--exact")
-            .arg("unix::current_logseq_sidecar_parses_with_bounded_memory")
+            .arg("logseq_pdf_edn::unix::current_logseq_sidecar_parses_with_bounded_memory")
             .arg("--nocapture")
             .env(CHILD_ENV, "1");
 

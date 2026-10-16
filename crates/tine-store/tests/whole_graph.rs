@@ -15,6 +15,7 @@ struct Fixture(std::path::PathBuf);
 
 #[test]
 fn page_entry_empty_path_keeps_legacy_wire_form() {
+    let _integration_guard = crate::integration_lock();
     let entry = PageEntry {
         name: "Virtual".into(),
         kind: PageKind::Page,
@@ -70,6 +71,7 @@ impl Drop for Fixture {
 
 #[test]
 fn journal_content_days_preserves_prose_while_skipping_unicode_properties() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let journal = fixture.0.join("journals/2026_09_25.md");
     for (raw, has_content) in [
@@ -90,6 +92,7 @@ fn journal_content_days_preserves_prose_while_skipping_unicode_properties() {
 
 #[test]
 fn all_whole_graph_questions_use_the_public_view() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let view = fixture.view();
     let rev = view.rev();
@@ -164,6 +167,7 @@ fn all_whole_graph_questions_use_the_public_view() {
 
 #[test]
 fn bounded_and_cancelled_answers_are_typed() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let view = fixture.view();
     assert!(matches!(
@@ -189,6 +193,7 @@ fn bounded_and_cancelled_answers_are_typed() {
 
 #[test]
 fn identity_resolution_and_wire_paths() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     std::fs::write(fixture.0.join("pages/a.org"), "- org twin\n").unwrap();
     std::fs::write(fixture.0.join("pages/a.md"), "- md twin\n").unwrap();
@@ -237,6 +242,7 @@ fn identity_resolution_and_wire_paths() {
 
 #[test]
 fn query_and_scoped_search_use_page_identity() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     std::fs::write(
         fixture.0.join("pages/Named.md"),
@@ -329,6 +335,7 @@ fn query_and_scoped_search_use_page_identity() {
 
 #[test]
 fn scoped_search_keeps_block_allowance_when_page_limit_is_large() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let view = fixture.view();
     let hits = view
@@ -352,6 +359,7 @@ fn scoped_search_keeps_block_allowance_when_page_limit_is_large() {
 
 #[test]
 fn public_search_request_routes_page_content_membership() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let view = fixture.view();
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
@@ -387,6 +395,7 @@ fn public_search_request_routes_page_content_membership() {
 
 #[test]
 fn public_search_hydrates_authored_properties_only_for_physical_pages() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     std::fs::write(
         fixture.0.join("pages/Source.md"),
@@ -418,6 +427,7 @@ fn public_search_hydrates_authored_properties_only_for_physical_pages() {
 
 #[test]
 fn public_search_sorts_complete_sections_then_samples_them_independently() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     for (name, priority) in [("Alpha A", "C"), ("Alpha B", "B"), ("Alpha Z", "A")] {
         std::fs::write(
@@ -514,6 +524,7 @@ fn public_search_sorts_complete_sections_then_samples_them_independently() {
 
 #[test]
 fn simple_query_rejects_source_and_nesting_limits() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let graph = fixture.view();
     let oversized = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
@@ -530,6 +541,7 @@ fn simple_query_rejects_source_and_nesting_limits() {
 
 #[test]
 fn advanced_query_rejects_source_and_nesting_limits() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let graph = fixture.view();
     let oversized = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
@@ -546,6 +558,7 @@ fn advanced_query_rejects_source_and_nesting_limits() {
 
 #[test]
 fn journal_fallback_title_resolves_existing_day() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let graph = fixture.view();
     assert!(matches!(
@@ -560,6 +573,7 @@ fn journal_fallback_title_resolves_existing_day() {
 #[cfg(not(windows))]
 #[test]
 fn inventory_targets_agree_with_resolve_for_case_twins() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     std::fs::write(fixture.0.join("pages/Twin.md"), "- upper\n").unwrap();
     std::fs::write(fixture.0.join("pages/twin.md"), "- lower\n").unwrap();
@@ -603,6 +617,7 @@ fn inventory_targets_agree_with_resolve_for_case_twins() {
 #[cfg(windows)]
 #[test]
 fn case_twin_writes_fold_into_one_page_on_windows() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     std::fs::write(fixture.0.join("pages/Twin.md"), "- upper\n").unwrap();
     std::fs::write(fixture.0.join("pages/twin.md"), "- lower\n").unwrap();

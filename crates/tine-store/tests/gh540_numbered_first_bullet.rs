@@ -50,6 +50,7 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 
 #[test]
 fn an_empty_numbered_first_bullet_stays_a_list_item_and_the_page_keeps_saving() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("numbered");
     let store = Store::open(&root, Default::default()).unwrap().0;
     let id = PageId::from("pages/Dosa.md");

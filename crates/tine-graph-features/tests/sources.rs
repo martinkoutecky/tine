@@ -5,6 +5,7 @@ use tine_store::{OpenOptions, Store};
 
 #[test]
 fn parser_sources_keep_path_order_and_size_limit() {
+    let _integration_guard = crate::integration_lock();
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -56,6 +57,7 @@ fn parser_sources_keep_path_order_and_size_limit() {
 #[cfg(unix)]
 #[test]
 fn parser_sources_do_not_follow_links() {
+    let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::symlink;
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -84,6 +86,7 @@ fn parser_sources_do_not_follow_links() {
 /// extensions) has a format answer; imported or synced graphs carry them.
 #[test]
 fn parser_sources_accept_every_graph_text_extension() {
+    let _integration_guard = crate::integration_lock();
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()

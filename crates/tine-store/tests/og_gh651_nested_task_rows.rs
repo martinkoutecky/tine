@@ -90,6 +90,7 @@ fn names(list: &[&str]) -> Vec<String> {
 
 #[test]
 fn every_presentation_answers_one_membership_and_one_count() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = graph();
     // The reporter's query: all four parents match, so A1/B1/C1 sit under a matching parent and are not
     // results. The note's child and the done task's child have a non-matching parent: own rows.
@@ -128,6 +129,7 @@ fn every_presentation_answers_one_membership_and_one_count() {
 
 #[test]
 fn a_child_below_a_non_matching_parent_is_its_own_row() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = graph();
     let table = [("tine.view", "table")];
     // The reporter's narrowed case: B (DOING) no longer matches, so B1 is a result of its own. C1 is
@@ -152,6 +154,7 @@ fn a_child_below_a_non_matching_parent_is_its_own_row() {
 
 #[test]
 fn suppression_is_per_immediate_parent_at_every_depth() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = graph();
     let table = [("tine.view", "table")];
     // The grandchild's parent (a TODO child) matches, so it is absorbed; the child's parent (DONE) does not

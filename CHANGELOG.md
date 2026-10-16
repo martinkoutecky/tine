@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Build: consolidate Rust integration tests into one executable per crate and omit third-party debug data to reduce linking time and disk writes.
 - An Android share now opens the journal where it landed and reveals the last shared item in the batch, while keeping the Captured notice (GH #608).
 - Soft now uses EllisMorrow's refined middle-range palette, with darker light surfaces, brighter dark surfaces, warm highlights and quieter active navigation and scrollbars (GH #649).
 - Tine Beta checks for updates at a fixed address on tine.page, and each Beta is published as its own release (`vX.Y.Z-beta.N`) instead of replacing the files of a moving `beta` release; older Betas still find this one (discussion #682).

@@ -68,6 +68,7 @@ fn deep_outline() -> Vec<u8> {
 
 #[test]
 fn w2_rename_refuses_when_a_page_it_must_move_is_unreadable() {
+    let _integration_guard = crate::integration_lock();
     for (label, child) in [
         ("non-utf8", b"- child \xff\xfe\n".to_vec()),
         ("too-deep", deep_outline()),

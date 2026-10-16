@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tine-core"
 version.workspace = true
 edition.workspace = true
@@ -29,3 +30,8 @@ test-counters = []
 [dev-dependencies]
 libc = "0.2"
 pretty_assertions = "1"
+
+# Keep all integration cases in one linked executable.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

@@ -78,6 +78,7 @@ fn page_hits(store: &Store, text: &str) -> Vec<(String, String, Option<String>)>
 
 #[test]
 fn alias_reference_is_never_a_phantom_alias_page() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = graph();
     for (query, alias, owner) in [
         ("book", "book", "Research Hub"),

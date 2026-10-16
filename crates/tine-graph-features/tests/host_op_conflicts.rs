@@ -157,6 +157,7 @@ impl Fold {
 /// and the folded file's bytes stay recoverable in graph trash.
 #[test]
 fn a_fold_with_a_host_writes_what_the_plain_fold_writes() {
+    let _integration_guard = crate::integration_lock();
     for fold in [Fold::SyncCopy, Fold::DuplicateDay] {
         let plain = graph("plain");
         let store = open(&plain);
@@ -233,6 +234,7 @@ fn fold_changed_meanwhile(
 /// against the review, and refuses as before, writing nothing.
 #[test]
 fn a_page_changed_after_the_plan_is_never_overwritten() {
+    let _integration_guard = crate::integration_lock();
     for fold in [Fold::SyncCopy, Fold::DuplicateDay] {
         let (winner, other) = fold.pair();
         let (result, root) = fold_changed_meanwhile(fold, |root| {
@@ -264,6 +266,7 @@ fn a_page_changed_after_the_plan_is_never_overwritten() {
 /// that changed after the review is never trashed, and the error says so.
 #[test]
 fn a_sync_copy_changed_after_the_plan_is_never_trashed() {
+    let _integration_guard = crate::integration_lock();
     let (result, root) = fold_changed_meanwhile(Fold::SyncCopy, |root| {
         fs::write(root.join(COPY), "- theirs, delivered again\n").unwrap();
     });
@@ -295,6 +298,7 @@ fn a_sync_copy_changed_after_the_plan_is_never_trashed() {
 /// move, or the second step of a store transaction).
 #[test]
 fn crash_duplicate_day_fold_worker() {
+    let _integration_guard = crate::integration_lock();
     let (Ok(root), Ok(app_data)) = (
         std::env::var("TINE_FOLD_CRASH_ROOT"),
         std::env::var("TINE_FOLD_CRASH_APP_DATA"),
@@ -316,10 +320,15 @@ fn crash_duplicate_day_fold_worker() {
 /// relaunch: the stray leaves the graph and is never left to fold in again.
 #[test]
 fn a_duplicate_day_fold_killed_before_the_strays_deletion_completes_at_relaunch() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("crash");
     let app_data = tempfile::tempdir().unwrap();
     let output = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "crash_duplicate_day_fold_worker", "--nocapture"])
+        .args([
+            "--exact",
+            "host_op_conflicts::crash_duplicate_day_fold_worker",
+            "--nocapture",
+        ])
         .env("TINE_FOLD_CRASH_ROOT", &root)
         .env("TINE_FOLD_CRASH_APP_DATA", app_data.path())
         .output()
@@ -361,6 +370,7 @@ fn a_duplicate_day_fold_killed_before_the_strays_deletion_completes_at_relaunch(
 /// trashed recoverably with a host.
 #[test]
 fn a_sync_copy_is_never_a_page() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("copies");
     let copies = [
         COPY,
@@ -419,6 +429,7 @@ fn resolve_markers(
 /// operation (DESIGN §3.4 pre).
 #[test]
 fn a_marker_resolution_with_a_host_writes_what_the_plain_one_writes() {
+    let _integration_guard = crate::integration_lock();
     let plain = graph("markers-plain");
     fs::write(plain.join(MARKED), MARKED_TEXT).unwrap();
     let store = open(&plain);
@@ -459,6 +470,7 @@ fn a_marker_resolution_with_a_host_writes_what_the_plain_one_writes() {
 /// of the reviewed bytes stays in trash (DESIGN §3.4: harmless).
 #[test]
 fn a_marker_page_changed_after_the_plan_is_never_overwritten() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("markers-raced");
     fs::write(root.join(MARKED), MARKED_TEXT).unwrap();
     let app_data = tempfile::tempdir().unwrap();

@@ -56,6 +56,7 @@ fn assert_graph_serves_links(store: &Store, titled: &str) {
 
 #[test]
 fn a_property_node_with_a_folded_blank_line_leaves_every_page_openable() {
+    let _integration_guard = crate::integration_lock();
     for (rel, body, titled) in [
         (
             "pages/Other.md",

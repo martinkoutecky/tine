@@ -14,6 +14,7 @@ fn rust_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
 
 #[test]
 fn directory_sync_has_one_owner_and_no_discarded_result() {
+    let _integration_guard = crate::integration_lock();
     let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let owner = crate_root.join("src/directory_durability.rs");
     let helper = fs::read_to_string(&owner).unwrap();
@@ -61,6 +62,7 @@ fn directory_sync_has_one_owner_and_no_discarded_result() {
 #[cfg(unix)]
 #[test]
 fn directory_sync_tolerates_filesystems_without_directory_sync() {
+    let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::PermissionsExt;
     let base = std::env::temp_dir().join(format!("tine-dir-sync-errno-{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);

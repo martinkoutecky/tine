@@ -95,6 +95,7 @@ fn tasks_graph(name: &str) -> Graph {
 
 #[test]
 fn gh542_reporter_advanced_queries_answer_like_logseq() {
+    let _integration_guard = crate::integration_lock();
     let graph = tasks_graph("reporter");
 
     let (raws, result) = answer(
@@ -256,6 +257,7 @@ fn gh542_reporter_advanced_queries_answer_like_logseq() {
 /// may run as the part Tine understood.
 #[test]
 fn gh542_a_clause_tine_cannot_lower_refuses_the_whole_query() {
+    let _integration_guard = crate::integration_lock();
     let graph = open("partial", &[("journals/2026_06_20.md", TASKS)]);
 
     for query in [
@@ -284,6 +286,7 @@ fn gh542_a_clause_tine_cannot_lower_refuses_the_whole_query() {
 /// narrower or wider question.
 #[test]
 fn gh542_joins_are_not_lowered() {
+    let _integration_guard = crate::integration_lock();
     let graph = tasks_graph("join");
     let (raws, result) = answer(
         &graph,
@@ -303,6 +306,7 @@ fn gh542_joins_are_not_lowered() {
 /// none, stable among equals.
 #[test]
 fn ogs_now_transform_orders_by_priority_with_missing_last() {
+    let _integration_guard = crate::integration_lock();
     let graph = open(
         "now-order",
         &[(
@@ -344,6 +348,7 @@ fn ogs_now_transform_orders_by_priority_with_missing_last() {
 
 #[test]
 fn gh690_stock_next_uses_direct_refs_and_one_exclusive_date_range() {
+    let _integration_guard = crate::integration_lock();
     let today = tine_core::date::JournalDate::today();
     let title = |offset| today.add_days(offset).title();
     let tasks = format!("- TODO inside [[{}]]\n- NOW start [[{}]]\n- LATER end [[{}]]\n- TODO split [[{}]] [[{}]]\n- DONE closed [[{}]]\n- Parent [[{}]]\n  - TODO inherited only\n- TODO named [[Ordinary]]\n", title(3), title(0), title(14), title(-1), title(15), title(3), title(3));
@@ -364,6 +369,7 @@ fn gh690_stock_next_uses_direct_refs_and_one_exclusive_date_range() {
 
 #[test]
 fn gh690_referenced_journals_follow_title_format_before_safe_defaults() {
+    let _integration_guard = crate::integration_lock();
     let graph = open(
         "gh690-formats",
         &[

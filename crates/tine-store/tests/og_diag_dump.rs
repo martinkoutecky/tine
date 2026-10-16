@@ -63,6 +63,7 @@ fn n(value: &Value) -> u64 {
 
 #[test]
 fn the_dump_never_names_the_graph() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = fixture();
     let dump = store.diagnostics().to_string();
     let root = dir.path().to_string_lossy().to_string();
@@ -120,6 +121,7 @@ fn the_dump_never_names_the_graph() {
 
 #[test]
 fn shape_counts_what_the_graph_holds() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let shape = store.diagnostics()["shape"].clone();
     assert_eq!(shape["ready"], true);
@@ -144,6 +146,7 @@ fn shape_counts_what_the_graph_holds() {
 
 #[test]
 fn launch_phases_separate_reading_from_parsing() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let dump = store.diagnostics();
     let launch = &dump["launch"];
@@ -192,6 +195,7 @@ fn latest_diff(dump: &Value, trigger: &str) -> Option<Value> {
 
 #[test]
 fn rescan_and_saves_are_recorded() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let before = n(&store.diagnostics()["fullDiffs"]["total"]);
     store.refresh(tine_store::Depth::Stamps).unwrap();
@@ -230,6 +234,7 @@ fn rescan_and_saves_are_recorded() {
 /// write and a launch served from the checkpoint.
 #[test]
 fn the_checkpoint_section_is_closed_tokens_only() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = fixture();
     let cp_dir = tempfile::tempdir().unwrap();
     let cp = cp_dir.path().join("graph.bin");
@@ -305,6 +310,7 @@ fn the_checkpoint_section_is_closed_tokens_only() {
 
 #[test]
 fn page_reads_and_asset_walks_are_recorded_for_the_focus_return_diagnosis() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let before = store.diagnostics();
     let walks = n(&before["assetWalks"]["total"]);

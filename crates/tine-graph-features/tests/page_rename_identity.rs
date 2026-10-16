@@ -35,6 +35,7 @@ fn put(root: &Path, rel: &str, body: &str) {
 
 #[test]
 fn title_owned_rename_rebinds_identity_and_plain_rename_keeps_lookup() {
+    let _integration_guard = crate::integration_lock();
     for (label, physical, source) in [
         (
             "title",
@@ -107,6 +108,7 @@ fn title_owned_rename_rebinds_identity_and_plain_rename_keeps_lookup() {
 /// rewritten `[[Renamed]]` dangles (receipt 12B, differential).
 #[test]
 fn org_title_directive_rename_rebinds_identity() {
+    let _integration_guard = crate::integration_lock();
     for (label, before, after) in [
         (
             "upper",
@@ -172,6 +174,7 @@ fn org_title_directive_rename_rebinds_identity() {
 /// content: a rename of a different page never rewrites it.
 #[test]
 fn org_title_naming_another_page_is_left_alone() {
+    let _integration_guard = crate::integration_lock();
     let (root, _) = fixture("rename-org-title-other");
     put(
         &root,
@@ -195,6 +198,7 @@ fn org_title_naming_another_page_is_left_alone() {
 /// nothing moves (storage contract, `rewrite_move::ReadOnly`).
 #[test]
 fn org_title_rename_refuses_a_page_that_does_not_round_trip() {
+    let _integration_guard = crate::integration_lock();
     let (root, _) = fixture("rename-org-title-readonly");
     let source = "#+TITLE: Effective\n* Parent\n*** child\n";
     put(&root, "pages/Physical.org", source);
@@ -218,6 +222,7 @@ fn org_title_rename_refuses_a_page_that_does_not_round_trip() {
 /// reference rebind, and the file is not moved or duplicated.
 #[test]
 fn a_rename_whose_move_already_happened_rebinds_the_title_in_place() {
+    let _integration_guard = crate::integration_lock();
     let (root, _) = fixture("rename-interrupted");
     put(&root, "pages/New.md", "title:: Old\n\n- [[Old]] body\n");
     put(&root, "pages/Ref.md", "- [[Old]]\n");

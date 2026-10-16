@@ -135,6 +135,7 @@ fn same_with_a_host(
 /// deleted), and a non-round-tripping Org page refused with nothing written.
 #[test]
 fn highlight_writes_with_a_host_equal_the_plain_writer() {
+    let _integration_guard = crate::integration_lock();
     let paper = [
         ("assets/paper.edn", sidecar(&[(A, "aye")])),
         ("pages/hls__paper.md", page("paper.pdf", &[(A, "aye")])),
@@ -252,6 +253,7 @@ fn while_held(
 /// is released.
 #[test]
 fn the_annotation_page_under_its_encoded_name_is_admitted_by_the_host() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, root) = graph(&[]);
     let store = open(&root);
     let app_data = tempfile::tempdir().unwrap();
@@ -278,6 +280,7 @@ const ENCODED: &str = "pages/hls__half%25.md";
 /// publishes, then A resumes. A must merge B's sidecar again on its replan.
 #[test]
 fn a_page_replan_merges_the_other_savers_sidecar_again() {
+    let _integration_guard = crate::integration_lock();
     let loaded = vec![highlight(A, "yellow", None)];
     let (_dir, root) = graph(&[
         ("assets/half%.edn", &pdf::write_highlights(&loaded, "")),
@@ -324,6 +327,7 @@ fn a_page_replan_merges_the_other_savers_sidecar_again() {
 /// file and every save after the first failed.
 #[test]
 fn a_second_highlight_save_to_an_encoded_annotation_page_succeeds() {
+    let _integration_guard = crate::integration_lock();
     let result = same_with_a_host("second save", &[], |store, host, root| {
         let first = vec![highlight(A, "yellow", None)];
         features_pdf::write_highlights(store, host, "half%.pdf", "Half", &first, &[])
@@ -349,6 +353,7 @@ fn a_second_highlight_save_to_an_encoded_annotation_page_succeeds() {
 /// it): the first save creates it through the host's operation.
 #[test]
 fn a_first_highlight_save_with_its_encoded_annotation_page_open_succeeds() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, root) = graph(&[]);
     let store = open(&root);
     let app_data = tempfile::tempdir().unwrap();
@@ -375,6 +380,7 @@ fn a_first_highlight_save_with_its_encoded_annotation_page_open_succeeds() {
 /// again from the changed page, so the edit survives beside the new block.
 #[test]
 fn an_annotation_page_changed_after_the_plan_is_not_overwritten() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, root) = graph(&[
         ("assets/paper.edn", &sidecar(&[(A, "aye")])),
         ("pages/hls__paper.md", &page("paper.pdf", &[(A, "aye")])),

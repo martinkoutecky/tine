@@ -9,9 +9,7 @@ struct Mutations {
     hits: BTreeSet<(String, String)>,
 }
 
-#[path = "../src/test_cfg.rs"]
-mod test_cfg;
-use test_cfg::is_test as test_only;
+use crate::test_cfg::is_test as test_only;
 
 impl<'ast> Visit<'ast> for Mutations {
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
@@ -87,6 +85,7 @@ impl<'ast> Visit<'ast> for Mutations {
 
 #[test]
 fn every_content_mutation_has_a_reviewed_owner() {
+    let _integration_guard = crate::integration_lock();
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let files = [
         "crates/tine-store/src/model.rs",
@@ -189,6 +188,7 @@ fn every_content_mutation_has_a_reviewed_owner() {
 
 #[test]
 fn census_detects_an_unreviewed_direct_write() {
+    let _integration_guard = crate::integration_lock();
     let planted =
         syn::parse_file("fn rogue() { std::fs::write(\"page.md\", b\"lost\").unwrap(); }").unwrap();
     let mut visitor = Mutations::default();
@@ -203,6 +203,7 @@ fn census_detects_an_unreviewed_direct_write() {
 /// needs a reviewed owner like any other.
 #[test]
 fn census_detects_a_not_test_direct_write() {
+    let _integration_guard = crate::integration_lock();
     let planted = syn::parse_file(
         "#[cfg(not(test))] fn rogue() { std::fs::write(\"page.md\", b\"lost\").unwrap(); }",
     )

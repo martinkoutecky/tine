@@ -255,6 +255,7 @@ fn assert_owned(actual: &BTreeMap<(String, String), usize>) {
 
 #[test]
 fn production_acquisitions_have_owners() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut files = Vec::new();
     rust_sources(&root.join("crates/tine-store/src"), &root, &mut files);
@@ -287,6 +288,7 @@ fn production_acquisitions_have_owners() {
 
 #[test]
 fn planted_unowned_worker_fails() {
+    let _integration_guard = crate::integration_lock();
     let source = vec![(
         "src-tauri/src/new_worker.rs".to_owned(),
         "std::thread::spawn(move || {});".to_owned(),

@@ -50,6 +50,7 @@ fn drop_reference(store: &Store, name: &str) {
 
 #[test]
 fn a_referenced_asset_is_kept_with_a_typed_outcome_until_every_reference_is_saved_away() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(&[
         ("pages/P.md", "- see ![a](../assets/x.png)\n"),
         ("pages/Q.md", "- also ![a](../assets/x.png)\n"),
@@ -82,6 +83,7 @@ fn a_referenced_asset_is_kept_with_a_typed_outcome_until_every_reference_is_save
 
 #[test]
 fn other_trash_failures_stay_errors() {
+    let _integration_guard = crate::integration_lock();
     let (_root, store) = fixture(&[("pages/P.md", "- hi\n")]);
     assert!(assets::trash_asset(&store, "gone.png").is_err());
     assert!(assets::trash_asset(&store, "../pages/P.md").is_err());

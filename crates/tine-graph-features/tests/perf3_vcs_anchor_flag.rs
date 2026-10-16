@@ -140,6 +140,7 @@ fn answer(store: &Store) -> BTreeMap<String, Vec<String>> {
 
 #[test]
 fn the_flag_answer_equals_the_read_answer_over_the_marker_corpus() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("diff");
     write_corpus(&root);
     let store = Store::open(&root, Default::default()).unwrap().0;
@@ -168,6 +169,7 @@ fn the_flag_answer_equals_the_read_answer_over_the_marker_corpus() {
 
 #[test]
 fn the_flag_follows_external_edits_added_removed_and_moved() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("follow");
     write_corpus(&root);
     let store = Store::open(&root, Default::default()).unwrap().0;

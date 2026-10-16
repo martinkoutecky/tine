@@ -5,6 +5,7 @@ use tine_store::Store;
 
 #[test]
 fn a_killed_external_export_reopens_without_a_partial_site() {
+    let _integration_guard = crate::integration_lock();
     const CHILD: &str = "TINE_EXTERNAL_EXPORT_KILL_CHILD";
     if let Ok(base) = std::env::var(CHILD) {
         let base = std::path::PathBuf::from(base);
@@ -34,7 +35,7 @@ fn a_killed_external_export_reopens_without_a_partial_site() {
     fs::create_dir_all(base.join("out")).unwrap();
     let status = Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("a_killed_external_export_reopens_without_a_partial_site")
+        .arg("publish_external_kill::a_killed_external_export_reopens_without_a_partial_site")
         .env(CHILD, &base)
         .status()
         .unwrap();

@@ -91,11 +91,13 @@ fn live_reload_in(mode: WatchMode) {
 
 #[test]
 fn an_outside_config_edit_is_taken_in_by_the_notify_watcher() {
+    let _integration_guard = crate::integration_lock();
     live_reload_in(WatchMode::Notify);
 }
 
 #[test]
 fn an_outside_config_edit_is_taken_in_by_the_poll_watcher() {
+    let _integration_guard = crate::integration_lock();
     live_reload_in(WatchMode::Poll);
 }
 
@@ -104,6 +106,7 @@ fn an_outside_config_edit_is_taken_in_by_the_poll_watcher() {
 /// Syncthing redelivers it) must publish no configuration change.
 #[test]
 fn an_identical_config_rewrite_publishes_nothing() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("identical");
     std::fs::write(root.join("logseq/config.edn"), "{:preferred-format :md}\n").unwrap();
     let (store, subscription) = open(&root, WatchMode::Notify);
@@ -124,6 +127,7 @@ fn an_identical_config_rewrite_publishes_nothing() {
 #[cfg(unix)]
 #[test]
 fn an_unsafe_delivered_config_keeps_the_served_one_and_pages_stay_observed() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("unsafe");
     std::fs::write(root.join("logseq/config.edn"), "{:preferred-format :md}\n").unwrap();
     let outside = root.with_extension("outside");
@@ -155,6 +159,7 @@ fn an_unsafe_delivered_config_keeps_the_served_one_and_pages_stay_observed() {
 /// again.
 #[test]
 fn a_removed_config_keeps_its_settings_until_it_returns() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("removed");
     std::fs::write(root.join("logseq/config.edn"), "{:preferred-format :org}\n").unwrap();
     let (store, subscription) = open(&root, WatchMode::Poll);
@@ -194,6 +199,7 @@ fn a_removed_config_keeps_its_settings_until_it_returns() {
 /// still opens writable with Logseq's defaults.
 #[test]
 fn an_undownloaded_icloud_config_opens_the_graph_read_only() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("icloud-placeholder");
     std::fs::write(root.join("logseq/.config.edn.icloud"), b"bplist00").unwrap();
     let (store, _subscription) = open(&root, WatchMode::Poll);

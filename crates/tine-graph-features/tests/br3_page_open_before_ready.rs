@@ -19,6 +19,7 @@ fn ask(store: &Arc<Store>, name: &str) -> mpsc::Receiver<Option<PageRead>> {
 
 #[test]
 fn a_named_page_opens_before_ready_and_an_alias_waits_for_the_index() {
+    let _integration_guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(root.path().join("pages")).unwrap();
     std::fs::create_dir_all(root.path().join("journals")).unwrap();
