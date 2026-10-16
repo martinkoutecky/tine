@@ -35,7 +35,7 @@ export function ErrorToastHistory(): JSX.Element {
                 <Show when={entry.count > 1}>
                   <span class="diagnostics-error-count">×{entry.count}</span>
                 </Show>
-                <button type="button" onClick={() => void copy(entry.text)}>{t("error-toast-history-copy")}</button>
+                <button class="settings-btn" type="button" onClick={() => void copy(entry.text)}>{t("error-toast-history-copy")}</button>
               </li>
             )}
           </For>

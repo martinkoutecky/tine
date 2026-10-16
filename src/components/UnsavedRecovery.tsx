@@ -35,8 +35,8 @@ function RecoveryDraft(props: { page: PageDto }): JSX.Element {
   };
   return <div class="recovery-draft">
     <pre tabIndex={0}>{recoveryDraftText(props.page)}</pre>
-    <button onClick={() => void copy(false)}>{t("unsaved-recovery-copy-draft")}</button>
-    <button onClick={() => void copy(true)}>{t("unsaved-recovery-copy-complete-recovery-data")}</button>
+    <button class="settings-btn" type="button" onClick={() => void copy(false)}>{t("unsaved-recovery-copy-draft")}</button>
+    <button class="settings-btn" type="button" onClick={() => void copy(true)}>{t("unsaved-recovery-copy-complete-recovery-data")}</button>
     <p role="status">{message()}</p>
   </div>;
 }
@@ -79,13 +79,13 @@ function RecoveryPanel(): JSX.Element {
     <div ref={root} tabIndex={-1} class="unsaved-recovery-panel" role="dialog" aria-modal="true" aria-label={t("unsaved-recovery-unsaved-changes")}>
       <h2>{t("unsaved-recovery-unsaved-changes")}</h2>
       <p>{t("unsaved-recovery-summary", { count: pages().length })}</p>
-      <button disabled={busy()} onClick={() => void retry()}>{busy() ? t("unsaved-recovery-saving") : t("unsaved-recovery-retry-saving")}</button>
-      <button onClick={closeUnsavedRecovery}>{t("unsaved-recovery-keep-working")}</button>
+      <button class="settings-btn" type="button" disabled={busy()} onClick={() => void retry()}>{busy() ? t("unsaved-recovery-saving") : t("unsaved-recovery-retry-saving")}</button>
+      <button class="settings-btn" type="button" onClick={closeUnsavedRecovery}>{t("unsaved-recovery-keep-working")}</button>
       <p role="status">{message()}</p>
       <Show when={pages().length === 0}><p>{t("unsaved-recovery-no-pending-page-drafts-if-closing-still-fails")}</p></Show>
       <For each={pages()}>{(entry) => <section class="unsaved-recovery-entry">
         <h3>{entry.name} — {entry.state}</h3>
-        <button onClick={() => {
+        <button class="settings-btn" type="button" onClick={() => {
           const kind = entry.page?.kind ?? "page";
           closeUnsavedRecovery();
           if (entry.path) mainPaneRouter.openFile(entry.path, entry.name, kind, { inPlace: true });

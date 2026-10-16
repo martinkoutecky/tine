@@ -2962,6 +2962,17 @@ html[data-system-insets="native-viewport"] {
   cursor: pointer;
   vertical-align: middle;
 }
+/* Zero specificity keeps component families in charge; new and partially styled
+   actions use theme tokens instead of a native bevel. Spacing stays local. */
+:where(button) {
+  appearance: none;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  cursor: pointer;
+}
 .settings-btn {
   padding: 5px 12px;
   border: 1px solid var(--border-color);

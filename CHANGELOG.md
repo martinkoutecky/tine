@@ -14,11 +14,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- An Android share now opens the journal where it landed and reveals the last shared item in the batch, while keeping the Captured notice (GH #608).
 - Soft now uses EllisMorrow's refined middle-range palette, with darker light surfaces, brighter dark surfaces, warm highlights and quieter active navigation and scrollbars (GH #649).
 - Tine Beta checks for updates at a fixed address on tine.page, and each Beta is published as its own release (`vX.Y.Z-beta.N`) instead of replacing the files of a moving `beta` release; older Betas still find this one (discussion #682).
 
 ### Fixed
 
+- Preview source clicks switch to the opened tab, preview actions keep the preview open, and **Open in new tab** confirms its background tab on desktop and mobile (GH #363, GH #705).
+- Page icon saving and recovery, diagnostics, workspace and query actions use themed buttons instead of native browser bevels (UI-SW-BUTTONS).
 - Settings search highlights matching Latin and Chinese text in result labels (GH #706).
 - Chinese slash-menu rows show English keywords followed by Chinese glosses; English matching and inserted syntax stay unchanged (GH #107).
 - Journal carry buttons appear on title-row hover or keyboard focus, and stay visible on devices without hover (UI-CENSUS-7).

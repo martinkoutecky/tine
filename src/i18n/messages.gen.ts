@@ -1081,6 +1081,7 @@ export interface MessageArgs {
   "links-copy-title": {};
   "links-open-custom-scheme-confirm": { "scheme": string | number; "url": string | number };
   "links-open-custom-scheme-title": { "scheme": string | number };
+  "links-opened-in-new-tab": {};
   "links-outside-graph-title": {};
   "live-conflicts-the-file-on-disk-now": {};
   "live-conflicts-your-unsaved-edits": {};

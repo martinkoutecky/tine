@@ -75,6 +75,16 @@ for example in 0.7.3. The next stable cut absorbs those copies.)
   frozen there, above.)
 - Every published release has a tag.
 
+## Commit messages
+
+A commit that fixes or implements an issue cites it as `GH #N` in its
+message, and so does the merge commit that brings its branch into `og` or
+`master`, so the commit shows up in the issue's thread. We use a mention, not
+a closing keyword such as `fixes #N`: a closing keyword would close the issue
+as soon as the fix reaches `master`, before the release comment with the
+version and our confidence (below). Commits from before 2026-10-16 are
+inconsistent about this and are not rewritten.
+
 ## Issue labels
 
 `fixed-in-beta` means the fix is merged on the Beta line (`og`) and will ship

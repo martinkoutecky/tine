@@ -21,7 +21,7 @@ export function PlanningDatePick(props: { field: "scheduled" | "deadline"; initi
     </select>
     <Show when={!presence()}>
       <div class="qs-between-presets"><For each={["today", "yesterday", "tomorrow"] as const}>
-        {(value) => <button type="button" onClick={() => setDate(value)}>{t(`query-calm-${value}`)}</button>}
+        {(value) => <button class="settings-btn" type="button" onClick={() => setDate(value)}>{t(`query-calm-${value}`)}</button>}
       </For></div>
       <input class="qs-input" aria-label={t("query-calm-date")} value={date()}
         placeholder={t("query-calm-relative-date")} onInput={(event) => setDate(event.currentTarget.value)}

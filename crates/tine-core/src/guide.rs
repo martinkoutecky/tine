@@ -368,6 +368,9 @@ mod journal_guide_tests {
             "read-only preview",
             "**Open source**",
             "source page's title and page properties",
+            "These actions switch to the new tab",
+            "preview stays open while its **… → Page actions** menu is open",
+            "keeps your current tab active and confirms **Opened in a new tab**",
             "Block embed breadcrumbs",
         ] {
             assert!(
