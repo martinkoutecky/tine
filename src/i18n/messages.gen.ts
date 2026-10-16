@@ -1101,6 +1101,7 @@ export interface MessageArgs {
   "journal-sections-ambiguous": { "others": string | number; "page": string | number };
   "journal-sections-create-failed": { "error": string | number; "page": string | number };
   "journal-sections-customize": {};
+  "journal-sections-explanation": {};
   "journal-slash-thatday-is-only-available-on-journal-pages": {};
   "journal-slash-the-date-was-not-inserted-because-the-graph": {};
   "journals-prose-in-progress": { "count": string | number };

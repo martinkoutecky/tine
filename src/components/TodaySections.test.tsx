@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
+import { initParser } from "../render/parse";
+beforeAll(initParser);
 import { render } from "solid-js/web";
 import type { BlockDto, PageDto } from "../types";
 
@@ -14,6 +16,7 @@ const h = vi.hoisted(() => ({
   toasts: [] as string[],
   created: [] as PageDto[],
   opened: [] as string[],
+  sidebar: [] as string[],
   getPageWait: null as Promise<void> | null,
   createWait: null as Promise<void> | null,
   parseWait: null as Promise<void> | null,
@@ -44,8 +47,13 @@ vi.mock("./Rendered", () => ({
   },
 }));
 vi.mock("../ui", () => ({
+  openPageInSidebar: (name: string) => h.sidebar.push(name),
   agendaQuery: () => "query (agenda)",
   agendaTql: () => "agenda tql",
+}));
+vi.mock("../guide", () => ({
+  ensureGuidePagesLoaded: async () => [],
+  guidePageName: (title: string) => `Tine-guide/${title}`,
 }));
 vi.mock("../document", () => ({
   createPage: async (name: string, dto: PageDto) => { h.created.push(dto); await h.createWait; h.pages.set(name, dto); return null; },
@@ -57,7 +65,7 @@ vi.mock("../toasts", () => ({ pushToast: (text: string) => h.toasts.push(text) }
 import { bumpDataRev, bumpGraphEpoch, setGraphMeta } from "../graphSession";
 import { invalidateBinding } from "../binding";
 import { locateSectionsPages } from "../journalSections";
-import { TodaySections, customizeTodaySections } from "./TodaySections";
+import { JournalSectionsHeader, TodaySections, customizeTodaySections } from "./TodaySections";
 import type { GraphMeta } from "../types";
 
 const block = (raw: string, children: BlockDto[] = []): BlockDto => ({ id: "", raw, collapsed: false, children });
@@ -72,7 +80,7 @@ const meta = (extra: Partial<GraphMeta> = {}) => ({
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 async function mount() {
   const div = document.createElement("div");
-  const dispose = render(() => <TodaySections today="Oct 14th, 2026" />, div);
+  const dispose = render(() => <TodaySections today="Oct 14th, 2026" upcoming={<div class="upcoming-proof" />} />, div);
   await settle(); await settle();
   return { div, dispose };
 }
@@ -87,6 +95,43 @@ beforeEach(() => {
 });
 
 describe("today's sections (GH #605)", () => {
+  it("GH #710: explains sections and opens the scheduling Guide in the sidebar", async () => {
+    h.sidebar = [];
+    const div = document.createElement("div");
+    document.body.append(div);
+    const dispose = render(() => <JournalSectionsHeader />, div);
+    try {
+      expect(div.textContent).toContain("This page controls what shows with today's journal");
+      expect(div.textContent).toContain("{{upcoming}}");
+      div.querySelector("button")!.click(); await settle();
+      expect(h.sidebar).toEqual(["Tine-guide/Reference/Journals, tasks, and scheduling"]);
+    } finally { dispose(); div.remove(); }
+  });
+  it("GH #710: places Upcoming in outline order and hides it live on removal or page deletion", async () => {
+    h.marked = ["Sections"];
+    const page: PageDto = { name: "Sections", kind: "page", title: "Sections", pre_block: null,
+      blocks: [block("{{query (task TODO)}}"), block("notes", [block("{{upcoming}}")]), block("{{query (task DONE)}}")] };
+    h.pages.set(page.name, page);
+    const { div, dispose } = await mount();
+    try {
+      expect([...div.querySelectorAll(".q, .upcoming-proof")].map(e => e.className)).toEqual(["q", "upcoming-proof", "q"]);
+      h.pages.set(page.name, { ...page, blocks: [block("notes")] }); bumpDataRev();
+      await settle(); await settle();
+      expect(div.querySelector(".upcoming-proof")).toBeNull();
+      h.pages.set(page.name, page); bumpDataRev(); await settle(); await settle();
+      expect(div.querySelector(".upcoming-proof")).not.toBeNull();
+      h.marked = []; h.pages.delete(page.name); bumpDataRev(); await settle(); await settle();
+      expect(div.querySelector(".upcoming-proof")).toBeNull();
+    } finally { dispose(); }
+  });
+  it.each(["md", "org"] as const)("GH #710: only a standalone parsed Upcoming macro is a section in %s", async format => {
+    h.marked = ["Sections"];
+    h.pages.set("Sections", { name: "Sections", kind: "page", title: "Sections", pre_block: null, format,
+      blocks: [block("Example {{upcoming}}"), block("`{{upcoming}}`"), block("{{upcoming invalid}}"), block("{{upcoming}}") ] });
+    const { div, dispose } = await mount();
+    try { expect(div.querySelectorAll(".upcoming-proof")).toHaveLength(1); }
+    finally { dispose(); }
+  });
   it("does not show temporary config sections before the sections-page lookup settles", async () => {
     let release!: () => void;
     h.getPageWait = new Promise<void>((resolve) => { release = resolve; });
