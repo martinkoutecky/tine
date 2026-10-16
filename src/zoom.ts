@@ -61,20 +61,22 @@ export function applyAndroidInterfaceZoom(scale: number): void {
   document.documentElement.style.zoom = scale === 1 ? "" : String(scale);
 }
 
-/** Apply stored zoom asynchronously on Tauri: CSS zoom on Android, native zoom
- * elsewhere. Web build does nothing. Platform failures toast; return does not
+/** Apply stored zoom asynchronously on Tauri: CSS zoom on Android and iOS, native
+ * zoom on desktop. Web build does nothing. Platform failures toast; return does not
  * await the result. O(1) plus platform call latency. */
 export function applyZoom(): void {
   if (!isTauri()) return;
   void platformKind()
     .then((kind) => {
       const scale = interfaceZoom();
-      if (kind === "android") {
+      // Tauri registers the native webview zoom command for desktop only, so
+      // iOS uses the same CSS document zoom as Android (WebKit supports it).
+      if (kind === "android" || kind === "ios") {
         applyAndroidInterfaceZoom(scale);
         return;
       }
       // Clear an Android fallback left behind by an unusual hot-reload before
-      // handing scaling back to the native desktop/iOS webview implementation.
+      // handing scaling back to the native desktop webview implementation.
       document.documentElement.style.zoom = "";
       return getCurrentWebview().setZoom(scale);
     })
