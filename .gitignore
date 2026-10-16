@@ -42,3 +42,6 @@ reddit-backup/
 # (scripts/derive-flatpak-identity.mjs); never committed.
 /flatpak/*.ci.yml
 /flatpak/derived/
+
+# Generated in CI by scripts/pages-beta-manifest.mjs (pages.yml)
+/website/updates/

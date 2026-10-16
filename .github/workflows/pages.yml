@@ -21,6 +21,7 @@ on:
     paths:
       - 'website/**'
       - '.github/workflows/pages.yml'
+      - 'scripts/pages-beta-manifest.mjs'
   workflow_dispatch:
 
 # Allow one concurrent deployment; let an in-progress run finish.
@@ -42,6 +43,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Tine Beta 0.8.0-beta.3 and later read their updates from
+      # tine.page/updates/beta/. Copy the newest Beta release's manifest and
+      # AppImage zsync files into the site (docs/VERSIONING.md). The release
+      # workflow dispatches this workflow after publishing a Beta.
+      - name: Serve the Beta update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/pages-beta-manifest.mjs website
       - uses: actions/upload-pages-artifact@v3
         with:
           path: website
