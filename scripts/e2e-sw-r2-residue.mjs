@@ -87,13 +87,15 @@ try {
   await search("Source"); // Make the query result's source a loaded edit owner.
   await search("Residue");
   const drag = async alt => {
-    const points = await browser.execute(() => {
+    // Query results render asynchronously after navigation; wait for them instead of sampling once.
+    let points = null;
+    await browser.waitUntil(async () => (points = await browser.execute(() => {
       const hit = [...document.querySelectorAll(".query-group .ls-block, .query-results .ls-block, .ref-blocks .ls-block")].find(el => el.textContent.includes("native drag source"));
       const target = [...document.querySelectorAll(".ls-block")].find(el => el.querySelector(":scope > .block-main .block-content")?.textContent.trim() === "Drop here");
       if (!hit || !target) return null;
       const a = hit.querySelector(".bullet-container").getBoundingClientRect(), b = target.getBoundingClientRect();
       return { from: { x: Math.round(a.left + a.width / 2), y: Math.round(a.top + a.height / 2) }, to: { x: Math.round(b.left + 15), y: Math.round(b.bottom - 2) } };
-    });
+    })) !== null, { timeout: 15000, interval: 200 }).catch(() => {});
     assert(points, "query result bullet / drop target missing");
     if (alt) await browser.performActions([{ type: "key", id: "modifier", actions: [{ type: "keyDown", value: "\uE00A" }] }]);
     await browser.performActions([{ type: "pointer", id: "drag", parameters: { pointerType: "mouse" }, actions: [
