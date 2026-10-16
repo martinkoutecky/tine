@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-sw-r2-residue.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Markdown and Org highlights appear in routed pages and journals; native Ctrl+A selects code body then full source; Alt-dragging a single query result creates a saved reference while ordinary dragging moves the source and preserves the query.","blocking":true}],
+      "acceptableVariations":["Highlight colors, block layout and save latency may vary while highlighted text, selected/copied content and persisted block identities agree."],
+      "nonRequirements":["Exact pixels, query-table drag handles absent from OG 0.10.9, selected-row CSS classes or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-tab-reuse.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"With tab reuse enabled, links, Ctrl+K Enter, Recent and Favorites activate the already-open destination tab and preserve the source tab and its content.","blocking":true}],
       "acceptableVariations":["Tab placement, styling and navigation latency may vary while the destination activates and the source content remains available."],
