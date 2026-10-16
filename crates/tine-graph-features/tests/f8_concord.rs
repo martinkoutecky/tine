@@ -85,6 +85,7 @@ fn marker_copies(root: &Path, name: &str) -> Vec<String> {
 
 #[test]
 fn conflict_queue_derives_both_artifact_sources_and_survives_a_restart() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("queue");
     fs::write(root.join("pages/Notes.md"), "- winner text\n").unwrap();
     fs::write(root.join("pages").join(COPY), "- copy text\n").unwrap();
@@ -192,6 +193,7 @@ fn conflict_queue_derives_both_artifact_sources_and_survives_a_restart() {
 
 #[test]
 fn marker_conflict_diff_reads_the_pages_own_sides_without_writing() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("marker-diff");
     fs::write(root.join("pages/Merged.md"), DIFF3).unwrap();
     fs::write(root.join("pages/Calm.md"), "- fine\n").unwrap();
@@ -226,6 +228,7 @@ fn marker_conflict_diff_reads_the_pages_own_sides_without_writing() {
 
 #[test]
 fn resolving_markers_keep_both_writes_sibling_blocks_and_clears_the_quarantine() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("keep-both");
     let file = root.join("pages/Merged.md");
     fs::write(&file, DIFF3).unwrap();
@@ -274,6 +277,7 @@ fn resolving_markers_keep_both_writes_sibling_blocks_and_clears_the_quarantine()
 
 #[test]
 fn resolving_markers_stages_the_preresolution_file_in_recoverable_trash() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("stage");
     let file = root.join("pages/Merged.md");
     fs::write(&file, DIFF3).unwrap();
@@ -316,6 +320,7 @@ fn resolving_markers_stages_the_preresolution_file_in_recoverable_trash() {
 
 #[test]
 fn resolving_markers_can_apply_a_confirmed_merged_body() {
+    let _integration_guard = crate::integration_lock();
     const DISJOINT: &str = concat!(
         "- shared top\n",
         "<<<<<<< HEAD\n- the shared desktop machine label\n",
@@ -361,6 +366,7 @@ fn resolving_markers_can_apply_a_confirmed_merged_body() {
 
 #[test]
 fn resolving_fossil_markers_can_apply_the_suggested_resolution() {
+    let _integration_guard = crate::integration_lock();
     const FOSSIL: &str = concat!(
         "- shared top\n",
         "<<<<<<< BEGIN MERGE CONFLICT: local copy shown first <<<<<<<<<<<<<<<\n",
@@ -425,6 +431,7 @@ fn resolving_fossil_markers_can_apply_the_suggested_resolution() {
 
 #[test]
 fn a_fossil_suggestion_equal_to_a_side_offers_nothing_and_writes_nothing() {
+    let _integration_guard = crate::integration_lock();
     const FOSSIL: &str = concat!(
         "- shared top\n",
         "<<<<<<< BEGIN MERGE CONFLICT: local copy shown first <<<<<<<<<<<<<<<\n",
@@ -463,6 +470,7 @@ fn a_fossil_suggestion_equal_to_a_side_offers_nothing_and_writes_nothing() {
 
 #[test]
 fn markers_without_an_ancestor_refuse_a_forged_merged_decision() {
+    let _integration_guard = crate::integration_lock();
     const NO_BASE: &str = concat!(
         "- shared top\n",
         "<<<<<<< HEAD\n- the shared desktop machine label\n",
@@ -495,6 +503,7 @@ fn markers_without_an_ancestor_refuse_a_forged_merged_decision() {
 
 #[test]
 fn marker_resolution_is_guarded_and_never_leaves_the_file_writable() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("guards");
     let file = root.join("pages/Merged.md");
     fs::write(&file, DIFF3).unwrap();
@@ -592,6 +601,7 @@ fn marker_resolution_is_guarded_and_never_leaves_the_file_writable() {
 
 #[test]
 fn a_sync_copy_resolve_refuses_a_forged_merged_decision() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("copy-forged");
     fs::write(root.join("pages/Notes.md"), "- the quick brown fox\n").unwrap();
     fs::write(root.join("pages").join(COPY), "- the quick brown cat\n").unwrap();
@@ -628,6 +638,7 @@ fn a_sync_copy_resolve_refuses_a_forged_merged_decision() {
 
 #[test]
 fn a_sync_copy_resolve_against_a_marker_winner_writes_nothing() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("copy-marker-winner");
     fs::write(root.join("pages/Merged.md"), DIFF3).unwrap();
     let copy = "pages/Merged.sync-conflict-20260817-101010-ABCDEFG.md";
@@ -707,6 +718,7 @@ fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
 
 #[test]
 fn write_highlights_refuses_a_marker_bearing_hls_page() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("hls-markers");
     let store = open(&root);
     let h = highlight("11111111-1111-1111-1111-111111111111", 1);
@@ -739,6 +751,7 @@ fn write_highlights_refuses_a_marker_bearing_hls_page() {
 /// after trees are printed for the lane receipt; the after-bytes are pinned.
 #[test]
 fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("e2e");
     fs::write(root.join("pages/Merged.md"), DIFF3).unwrap();
     fs::write(root.join("pages/Notes.md"), "- shared\n- winner edit\n").unwrap();
@@ -834,6 +847,7 @@ fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
 /// the highlight byte-for-byte, with its indentation.
 #[test]
 fn resaving_highlights_leaves_unchanged_files_and_hand_notes_alone() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("hls-churn");
     let store = open(&root);
     let h = highlight("11111111-1111-1111-1111-111111111111", 1);
@@ -892,6 +906,7 @@ fn resaving_highlights_leaves_unchanged_files_and_hand_notes_alone() {
 /// re-saves the same highlight set.
 #[test]
 fn resaving_highlights_leaves_a_restyled_hls_page_byte_identical() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("hls-restyled");
     let store = open(&root);
     let h = highlight("11111111-1111-1111-1111-111111111111", 1);

@@ -29,6 +29,7 @@ fn backdate(path: &std::path::Path) {
 
 #[test]
 fn the_inventory_reads_only_pages_that_may_carry_an_anchor_line() {
+    let _integration_guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     for dir in ["pages", "journals", "assets", "logseq"] {
         fs::create_dir_all(root.path().join(dir)).unwrap();

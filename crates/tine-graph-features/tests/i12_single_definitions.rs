@@ -79,6 +79,7 @@ fn assert_clean(file: &str, source: &str) {
 
 #[test]
 fn shared_answers_have_one_definition() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for file in [
         "crates/tine-graph-features/src/pages.rs",
@@ -158,6 +159,7 @@ fn shared_answers_have_one_definition() {
 
 #[test]
 fn planted_duplicate_classifier_fails() {
+    let _integration_guard = crate::integration_lock();
     let fake = "fn is_graph_text(p: &Path) -> bool { true }";
     assert!(
         std::panic::catch_unwind(|| assert_clean("restore.rs", fake)).is_err(),
@@ -206,6 +208,7 @@ fn sheet_semantics(source: &str) -> Vec<String> {
 
 #[test]
 fn static_export_sheets_compute_nothing() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let source =
         fs::read_to_string(root.join("crates/tine-graph-features/src/render_sheets.rs")).unwrap();
@@ -218,6 +221,7 @@ fn static_export_sheets_compute_nothing() {
 
 #[test]
 fn planted_sheet_semantics_in_the_static_export_fail() {
+    let _integration_guard = crate::integration_lock();
     for planted in [
         "fn aggregate(values: &[f64]) -> f64 { values.iter().sum() }",
         "let g = props.get(\"tine.group-by\");",

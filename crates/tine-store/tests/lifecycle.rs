@@ -49,6 +49,7 @@ fn compare_checked_open(root: &Path, approved: Option<&Path>, expected_error: Op
 
 #[test]
 fn checked_open_matches_legacy_layout_and_consent() {
+    let _integration_guard = crate::integration_lock();
     let ordinary = Fixture::new("ordinary");
     std::fs::write(ordinary.root().join("pages/A.md"), "- hello\n").unwrap();
     compare_checked_open(ordinary.root(), None, None);
@@ -119,6 +120,7 @@ fn checked_open_matches_legacy_layout_and_consent() {
 
 #[test]
 fn inspection_does_not_write() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new("inspect");
     let before: Vec<_> = std::fs::read_dir(fixture.root())
         .unwrap()
@@ -140,6 +142,7 @@ fn inspection_does_not_write() {
 #[cfg(unix)]
 #[test]
 fn external_assets_consent_compares_live_canonical_target() {
+    let _integration_guard = crate::integration_lock();
     let graph = Fixture::new("consent-graph");
     let first = Fixture::new("consent-first");
     let second = Fixture::new("consent-second");
@@ -156,6 +159,7 @@ fn external_assets_consent_compares_live_canonical_target() {
 
 #[test]
 fn unreadable_config_reports_problem_without_changing_legacy_defaults() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new("bad-config");
     std::fs::create_dir_all(fixture.root().join("logseq")).unwrap();
     std::fs::write(fixture.root().join("logseq/config.edn"), [0xff]).unwrap();
@@ -172,6 +176,7 @@ fn unreadable_config_reports_problem_without_changing_legacy_defaults() {
 
 #[test]
 fn close_releases_load_waiter_and_refuses_commit() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new("close-loading");
     for i in 0..1200 {
         std::fs::write(fixture.root().join(format!("pages/{i}.md")), "- load\n").unwrap();
@@ -204,6 +209,7 @@ fn close_releases_load_waiter_and_refuses_commit() {
 
 #[test]
 fn whole_graph_taken_before_close_keeps_answering() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new("old-view");
     std::fs::write(fixture.root().join("pages/A.md"), "- hello\n").unwrap();
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
@@ -219,6 +225,7 @@ fn whole_graph_taken_before_close_keeps_answering() {
 
 #[test]
 fn same_root_scan_keeps_old_commands_open() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new("scan-load");
     std::fs::write(fixture.root().join("pages/A.md"), "- before\n").unwrap();
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();
@@ -233,6 +240,7 @@ fn same_root_scan_keeps_old_commands_open() {
 
 #[test]
 fn journal_identity_stays_available_after_close_without_disk() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new("closed-journal-id");
     std::fs::write(fixture.root().join("journals/2026_09_25.md"), "- one\n").unwrap();
     let (store, _, _) = Store::open(fixture.root(), OpenOptions::default()).unwrap();

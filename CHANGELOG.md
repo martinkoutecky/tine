@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Appearance starts with Themes and keeps fine-tuning, Custom CSS and content widths in searchable Advanced settings; numbered tab/pane and resize commands stay in Shortcuts, task carry uses the configured day count, empty Namespaces stays hidden, and Commands offers New workspace… (UI census 2026-10).
 - Page and block menus group reference, embed and link copying under **Copy as ▸**; page menus omit duplicate Markdown copying and show Find in page only on mobile, sidebar item menus keep contextual actions, and references and query results use one fold toggle (UI census 2026-10).
 - Upcoming is now off by default; add `{{upcoming}}` to the Journal sections page to show future journal references in that position (GH #710).
+- Build: consolidate Rust integration tests into one executable per crate and omit third-party debug data to reduce linking time and disk writes.
 - An Android share now opens the journal where it landed and reveals the last shared item in the batch, while keeping the Captured notice (GH #608).
 - Soft now uses EllisMorrow's refined middle-range palette, with darker light surfaces, brighter dark surfaces, warm highlights and quieter active navigation and scrollbars (GH #649).
 - Tine Beta checks for updates at a fixed address on tine.page, and each Beta is published as its own release (`vX.Y.Z-beta.N`) instead of replacing the files of a moving `beta` release; older Betas still find this one (discussion #682).

@@ -57,8 +57,8 @@ rtk cp scripts/og-master-page-oracle.rs test-results/master-ddf408c/crates/tine-
 rtk cargo run --quiet --release --manifest-path test-results/master-ddf408c/Cargo.toml -p tine-core --example og_diff_pages -- scripts/fixtures/og-differential-pages.json > scripts/fixtures/og-master-pages-golden.json
 rtk cp scripts/og-master-rename-oracle.rs test-results/master-ddf408c/crates/tine-core/examples/og_rename_oracle.rs
 rtk cargo run --quiet --release --manifest-path test-results/master-ddf408c/Cargo.toml -p tine-core --example og_rename_oracle -- scripts/fixtures/og-rename-input.json > scripts/fixtures/og-master-rename-golden.json
-rtk cargo test -p tine-core --test og_differential_pages
-rtk cargo test -p tine-store --test og_differential_rename
+rtk cargo test -p tine-core --test integration og_differential_pages::
+rtk cargo test -p tine-store --test integration og_differential_rename::
 ```
 
 For other rename scenarios, use the same scratch worktree's real

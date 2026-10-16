@@ -32,6 +32,7 @@ fn proposal(from: &str, to: &str) -> JournalFilenameMigration {
 
 #[test]
 fn apply_renames_only_the_confirmed_proposals() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("confirmed", &["Jun 19th, 2026.md", "Jun 21st, 2026.md"]);
     let listed = journals::journal_filename_migrations(&store).unwrap();
     assert_eq!(
@@ -63,6 +64,7 @@ fn apply_renames_only_the_confirmed_proposals() {
 
 #[test]
 fn listed_proposals_are_exactly_what_apply_performs() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "exact",
         &[

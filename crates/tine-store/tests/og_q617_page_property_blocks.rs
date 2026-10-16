@@ -93,6 +93,7 @@ fn set(names: &[&str]) -> BTreeSet<String> {
 
 #[test]
 fn gh699_space_and_comma_property_tokens_agree_in_queries_and_backlinks() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     for (name, value) in [
@@ -146,6 +147,7 @@ fn gh699_space_and_comma_property_tokens_agree_in_queries_and_backlinks() {
 
 #[test]
 fn gh699_mixed_properties_keep_explicit_refs_and_linkable_plain_values() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     for (name, text) in [
@@ -177,6 +179,7 @@ fn gh699_mixed_properties_keep_explicit_refs_and_linkable_plain_values() {
 
 #[test]
 fn property_query_matches_header_page_properties_in_every_value_spelling() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     let expected = set(&[
         "PageLink",
@@ -212,6 +215,7 @@ fn property_query_matches_header_page_properties_in_every_value_spelling() {
 
 #[test]
 fn header_property_hit_is_the_read_only_page_property_row() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     let hits = rows(&graph, "(property type [[Person]])");
     let header = hits.iter().find(|(page, _)| page == "PageLink").unwrap();
@@ -230,6 +234,7 @@ fn header_property_hit_is_the_read_only_page_property_row() {
 
 #[test]
 fn every_block_anchored_predicate_sees_the_pre_block() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     // Tags and arbitrary page properties.
     assert_eq!(pages(&graph, "(property tags research)"), set(&["Tagged"]));

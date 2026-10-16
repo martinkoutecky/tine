@@ -26,6 +26,7 @@ fn fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, Arc<Store>) {
 
 #[test]
 fn an_operation_publishes_no_pre_operation_bytes_of_the_pages_it_takes_on() {
+    let _integration_guard = crate::integration_lock();
     const GONE: &str = "- gone\n";
     const REF: &str = "- see [[Target]]\n";
     let (root, store) = fixture(&[

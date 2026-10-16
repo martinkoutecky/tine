@@ -36,6 +36,7 @@ fn bundle() -> Vec<(String, Vec<u8>)> {
 
 #[test]
 fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
+    let _integration_guard = crate::integration_lock();
     let (graph, _output, store) = fixture();
     let request = QueryExportRequest {
         argument: "(task TODO)".into(),
@@ -92,6 +93,7 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
 
 #[test]
 fn live_publication_is_selection_closed_and_only_uses_a_picked_external_folder() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     let public = publish_live(&store, &output, "Public site", false, &bundle()).unwrap();
     assert_eq!(public.pages, 1);
@@ -110,6 +112,7 @@ fn live_publication_is_selection_closed_and_only_uses_a_picked_external_folder()
 
 #[test]
 fn live_snapshot_bakes_queries_on_selected_pages_and_closes_their_rows() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
@@ -132,6 +135,7 @@ fn live_snapshot_bakes_queries_on_selected_pages_and_closes_their_rows() {
 /// pages outside a query export. Exercise both page and block query renderers.
 #[test]
 fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
+    let _integration_guard = crate::integration_lock();
     let (graph, _output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
@@ -168,6 +172,7 @@ fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
 
 #[test]
 fn static_fallback_renders_tql_page_rows_from_the_ir_answerer() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
@@ -184,6 +189,7 @@ fn static_fallback_renders_tql_page_rows_from_the_ir_answerer() {
 
 #[test]
 fn selected_static_page_keeps_outside_references_inert() {
+    let _integration_guard = crate::integration_lock();
     let (graph, _output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
@@ -213,6 +219,7 @@ fn selected_static_page_keeps_outside_references_inert() {
 
 #[test]
 fn live_export_artifact_cost_is_bounded_per_selected_block() {
+    let _integration_guard = crate::integration_lock();
     fn bytes_under(path: &std::path::Path) -> u64 {
         fs::read_dir(path)
             .unwrap()
@@ -269,6 +276,7 @@ fn live_export_artifact_cost_is_bounded_per_selected_block() {
 #[test]
 #[ignore = "run with TINE_QUERY_E2E_PARENT and a built dist/ for the browser smoke"]
 fn build_real_query_site_for_browser_smoke() {
+    let _integration_guard = crate::integration_lock();
     let parent = PathBuf::from(std::env::var("TINE_QUERY_E2E_PARENT").unwrap());
     fs::create_dir_all(&parent).unwrap();
     let graph_path = std::env::var("TINE_QUERY_E2E_GRAPH").ok();
@@ -316,6 +324,7 @@ fn build_real_query_site_for_browser_smoke() {
 /// these is ordinary text a user can type; none may abort the export.
 #[test]
 fn live_publication_survives_multibyte_text_at_every_probed_offset() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
@@ -343,6 +352,7 @@ fn live_publication_survives_multibyte_text_at_every_probed_offset() {
 /// a graph with no `public:: true` page; nothing non-public reaches the export.
 #[test]
 fn live_publication_of_a_graph_without_public_pages_exports_nothing() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     fs::write(graph.join("pages/Public.md"), "- alpha body\n").unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
@@ -372,6 +382,7 @@ fn live_publication_of_a_graph_without_public_pages_exports_nothing() {
 
 #[test]
 fn query_export_uses_the_graph_leaf_and_reports_missing_assets() {
+    let _integration_guard = crate::integration_lock();
     let (graph, _output, store) = fixture();
     fs::write(
         graph.join("pages/Public.md"),
@@ -410,6 +421,7 @@ fn query_export_uses_the_graph_leaf_and_reports_missing_assets() {
 
 #[test]
 fn query_export_default_budget_accepts_assets_above_the_old_ceiling() {
+    let _integration_guard = crate::integration_lock();
     let (graph, _output, store) = fixture();
     fs::create_dir_all(graph.join("assets")).unwrap();
     fs::File::create(graph.join("assets/video.mp4"))
@@ -444,6 +456,7 @@ fn query_export_default_budget_accepts_assets_above_the_old_ceiling() {
 
 #[test]
 fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
+    let _integration_guard = crate::integration_lock();
     let (graph, output, store) = fixture();
     for (path, bytes) in [
         ("left/pic.png", b"left".as_slice()),

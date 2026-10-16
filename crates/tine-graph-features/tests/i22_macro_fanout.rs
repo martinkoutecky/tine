@@ -38,6 +38,7 @@ const ID: &str = "6a1c0c3e-0000-4000-8000-000000000001";
 
 #[test]
 fn self_embedding_fan_out_is_cut_with_a_visible_marker() {
+    let _integration_guard = crate::integration_lock();
     let embeds = format!("{{{{embed (({ID}))}}}} ").repeat(24);
     let root = graph(
         "hostile",
@@ -56,6 +57,7 @@ fn self_embedding_fan_out_is_cut_with_a_visible_marker() {
 
 #[test]
 fn an_embed_chain_at_the_depth_cap_renders_in_full() {
+    let _integration_guard = crate::integration_lock();
     let ids: Vec<String> = (0..4)
         .map(|n| format!("6a1c0c3e-0000-4000-8000-00000000010{n}"))
         .collect();
@@ -79,6 +81,7 @@ fn an_embed_chain_at_the_depth_cap_renders_in_full() {
 
 #[test]
 fn a_wide_shallow_page_renders_every_embed() {
+    let _integration_guard = crate::integration_lock();
     let mut text = String::new();
     for _ in 0..300 {
         text.push_str(&format!("- {{{{embed (({ID}))}}}}\n"));

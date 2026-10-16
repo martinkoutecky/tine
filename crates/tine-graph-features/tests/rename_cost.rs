@@ -84,6 +84,7 @@ fn rename_timed(pages_count: usize, referrers: usize) -> (Counts, Duration) {
 
 #[test]
 fn rename_cost_is_linear_in_referrers_and_flat_in_graph_size() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let few = rename(60, 2);
     let many = rename(60, 30);
@@ -149,6 +150,7 @@ fn rename_cost_is_linear_in_referrers_and_flat_in_graph_size() {
 /// before (GH #623) are no longer on a rename's path.
 #[test]
 fn rename_publication_work_is_linear() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     for referrers in [8, 64] {
         let counts = rename(80, referrers);
@@ -164,6 +166,7 @@ fn rename_publication_work_is_linear() {
 
 #[test]
 fn rename_publication_parses_only_changed_documents() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     for referrers in [8, 64] {
         let counts = rename(80, referrers);
@@ -174,6 +177,7 @@ fn rename_publication_parses_only_changed_documents() {
 
 #[test]
 fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     for (blocks, bytes) in [(1, 300), (60, 4137)] {
         let root = tempfile::tempdir().unwrap();
@@ -315,6 +319,7 @@ fn rename_through_cleanup(
 /// vehicle per page: O(referrers²).
 #[test]
 fn rename_host_work_is_linear() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     // Every size is measured before any is judged, so a failure shows the growth.
     let measured = [100u64, 200, 400].map(|referrers| {
@@ -402,12 +407,14 @@ fn release_rename_gate(referrers: usize) {
 #[test]
 #[ignore = "release availability gate: scripts/rename-thousand-referrers.sh"]
 fn a_thousand_referrer_rename_completes_inside_the_caller_bound() {
+    let _integration_guard = crate::integration_lock();
     release_rename_gate(1000);
 }
 
 #[test]
 #[ignore = "release availability gate: scripts/rename-thousand-referrers.sh"]
 fn a_250_referrer_rename_completes_inside_the_caller_bound() {
+    let _integration_guard = crate::integration_lock();
     release_rename_gate(250);
 }
 
@@ -417,6 +424,7 @@ fn a_250_referrer_rename_completes_inside_the_caller_bound() {
 /// runs decides.
 #[test]
 fn a_small_rename_is_not_floored_by_the_edit_debounce() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let runs = [0; 3].map(|_| {
         let (_, call, heard) = rename_through_cleanup(20, 2);
@@ -460,8 +468,9 @@ fn walk_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
 /// G1 timing probe, not a gate: a rename's wall time on this platform's
 /// filesystem (hosted Windows decides card B's priority, Martin 2026-10-11).
 #[test]
-#[ignore = "timing probe: cargo test -p tine-graph-features --test rename_cost probe_rename_wall_time -- --ignored --nocapture"]
+#[ignore = "timing probe: cargo test -p tine-graph-features --test integration rename_cost::probe_rename_wall_time -- --ignored --nocapture"]
 fn probe_rename_wall_time() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     for (pages_count, referrers) in [(60, 2), (60, 30), (600, 30)] {
         let mut times: Vec<_> = (0..5)

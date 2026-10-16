@@ -1,7 +1,7 @@
 //! Checkpoint-5 packet R (I-12): the frontend's `facetsOf` (src/render/facets.ts)
 //! and Rust's block projection answer the same header facts. Both languages read
 //! `tests/fixtures/block-facets.json`; `src/render/facetsParity.test.ts` asserts the
-//! TS half. `TINE_REGEN_FACETS=1 cargo test -p tine-core --test og_r_facets_fixture`
+//! TS half. `TINE_REGEN_FACETS=1 cargo test -p tine-core --test integration og_r_facets_fixture::`
 //! rewrites the expectations from Rust (review the diff by eye: Rust is the owner).
 use serde_json::{json, Value};
 use tine_core::doc::DocBlock;

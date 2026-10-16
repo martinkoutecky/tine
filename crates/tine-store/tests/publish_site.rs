@@ -4,6 +4,7 @@ use tine_store::{OpenOptions, Store};
 
 #[test]
 fn staged_writer_publishes_files_and_retires_previous_site() {
+    let _integration_guard = crate::integration_lock();
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()

@@ -118,6 +118,7 @@ fn setters() -> Vec<(&'static str, Setter, fn(&Config) -> bool)> {
 /// byte-for-byte and write its own key at the top level.
 #[test]
 fn every_setter_edits_the_top_level_key_never_a_nested_shadow() {
+    let _integration_guard = crate::integration_lock();
     for (key, set, reads_new) in setters() {
         let shadow = format!(":shadow {{{key} {{:journals \"Shadow\"}} :other 1}}");
         let input = format!(
@@ -155,6 +156,7 @@ fn every_setter_edits_the_top_level_key_never_a_nested_shadow() {
 /// entry after it, deleting the unrelated `:private` setting.
 #[test]
 fn every_setter_leaves_a_keyword_value_that_spells_its_key_alone() {
+    let _integration_guard = crate::integration_lock();
     for (key, set, reads_new) in setters() {
         let input = format!("{{:backup {key} :private \"keep\"}}\n");
         let dir = scratch("keyword-value", Some(&input));
@@ -174,6 +176,7 @@ fn every_setter_leaves_a_keyword_value_that_spells_its_key_alone() {
 /// The reported S1 input exactly: the real key comes after the keyword value.
 #[test]
 fn a_real_key_after_a_keyword_value_is_the_one_replaced() {
+    let _integration_guard = crate::integration_lock();
     let input = "{:favorites-backup :favorites :private \"keep\" :favorites [\"Real\"]}\n";
     let dir = scratch("keyword-value-real", Some(input));
     let store = open(&dir);
@@ -189,6 +192,7 @@ fn a_real_key_after_a_keyword_value_is_the_one_replaced() {
 /// (`:default-home {:page …}`, `:default-templates {:journals …}`).
 #[test]
 fn a_keyword_value_in_a_nested_map_is_not_its_key_either() {
+    let _integration_guard = crate::integration_lock();
     let dir = scratch(
         "keyword-value-nested",
         Some("{:default-home {:alias :page :other 1}}\n"),
@@ -232,6 +236,7 @@ fn a_keyword_value_in_a_nested_map_is_not_its_key_either() {
 /// shadow is replaced in place, the shadow untouched.
 #[test]
 fn an_existing_top_level_key_after_a_nested_shadow_is_replaced_in_place() {
+    let _integration_guard = crate::integration_lock();
     let input = "{:default-queries {:preferred-format :org}\n :preferred-format \"Markdown\"}\n";
     let dir = scratch("dup3-existing", Some(input));
     let store = open(&dir);
@@ -255,6 +260,7 @@ fn an_existing_top_level_key_after_a_nested_shadow_is_replaced_in_place() {
 /// settings change; its bytes stay exactly as delivered.
 #[test]
 fn every_setter_refuses_a_config_that_is_not_a_balanced_map() {
+    let _integration_guard = crate::integration_lock();
     for malformed in [
         "{:favorites [\"A\"] :default-home {:page \"H\"",
         "{:favorites [\"A\"]\n :shadow {:start-of-week 1\n",
@@ -281,6 +287,7 @@ fn every_setter_refuses_a_config_that_is_not_a_balanced_map() {
 /// setting write creates a map and keeps the comments.
 #[test]
 fn a_missing_or_comment_only_config_gets_a_map_and_keeps_its_comments() {
+    let _integration_guard = crate::integration_lock();
     for (input, expected) in [
         (None, "{\n :start-of-week 3\n}\n"),
         (Some(""), "{:start-of-week 3}\n"),
@@ -302,6 +309,7 @@ fn a_missing_or_comment_only_config_gets_a_map_and_keeps_its_comments() {
 /// readable, and the served configuration is the default one.
 #[test]
 fn a_malformed_config_never_blocks_open() {
+    let _integration_guard = crate::integration_lock();
     for malformed in ["{:favorites [\"A\"", "\u{0}\u{1}garbage", "}}}{{{"] {
         let dir = scratch("open", Some(malformed));
         fs::write(dir.join("pages/Kept.md"), "- still here\n").unwrap();
@@ -317,6 +325,7 @@ fn a_malformed_config_never_blocks_open() {
 
 #[test]
 fn crash_config_write_worker() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_CONFIG_CRASH_ROOT") else {
         return;
     };
@@ -331,10 +340,15 @@ fn crash_config_write_worker() {
 /// reopened store serves it.
 #[test]
 fn a_config_write_killed_after_its_step_reopens_whole() {
+    let _integration_guard = crate::integration_lock();
     let before = ";; keep\n{:favorites [\"Before\"]\n :unknown {:a [1 2]}}\n";
     let dir = scratch("crash", Some(before));
     let output = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "crash_config_write_worker", "--nocapture"])
+        .args([
+            "--exact",
+            "config_writes::crash_config_write_worker",
+            "--nocapture",
+        ])
         .env("TINE_CONFIG_CRASH_ROOT", &dir)
         .output()
         .unwrap();
@@ -364,6 +378,7 @@ fn a_config_write_killed_after_its_step_reopens_whole() {
 /// `create`), never a filesystem call. Exemplar: `config::set_start_of_week`.
 #[test]
 fn every_config_setter_goes_through_the_one_guarded_update() {
+    let _integration_guard = crate::integration_lock();
     const SOURCE: &str = include_str!("../src/config.rs");
     assert_eq!(
         SOURCE.matches("store.transaction(").count(),
@@ -391,6 +406,7 @@ fn every_config_setter_goes_through_the_one_guarded_update() {
 /// exists, so the contract cannot outlive its evidence.
 #[test]
 fn the_config_contract_cites_only_existing_tests() {
+    let _integration_guard = crate::integration_lock();
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../");
     let contract =
         std::fs::read_to_string(format!("{root}docs/contracts/config-live-reload.md")).unwrap();

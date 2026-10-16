@@ -1,5 +1,6 @@
 #[test]
 fn filename_codec_is_shared_by_native_and_wasm() {
+    let _integration_guard = crate::integration_lock();
     let model = include_str!("../../tine-core/src/model.rs");
     let wasm = include_str!("../../lsdoc-wasm/src/lib.rs");
     let refs = include_str!("../../../src/render/pageRefs.ts");

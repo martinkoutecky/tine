@@ -4,9 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use syn::visit::{self, Visit};
 
-#[path = "../src/test_cfg.rs"]
-mod test_cfg;
-use test_cfg::cfg_test;
+use crate::test_cfg::cfg_test;
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -172,6 +170,7 @@ fn scan(source: &str) -> Vec<String> {
 
 #[test]
 fn clients_never_operate_on_graph_root_paths() {
+    let _integration_guard = crate::integration_lock();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut files = Vec::new();
     for dir in ["src-tauri/src", "crates/tine-graph-features/src"] {
@@ -189,6 +188,7 @@ fn clients_never_operate_on_graph_root_paths() {
 
 #[test]
 fn planted_graph_root_violation_is_detected() {
+    let _integration_guard = crate::integration_lock();
     let planted = r#"fn bad(slot: &GraphSlot) {
         let graph_file = slot.root_key.join("pages/Secret.md");
         let _ = std::fs::read(graph_file);
@@ -198,6 +198,7 @@ fn planted_graph_root_violation_is_detected() {
 
 #[test]
 fn planted_handoff_path_write_is_detected() {
+    let _integration_guard = crate::integration_lock();
     let planted = r#"fn bad(store: &Store, file: &FileId) {
         let path = store.path_for_os_handoff(file, false).unwrap();
         std::fs::write(&path, b"bad").unwrap();
@@ -228,6 +229,7 @@ fn planted_handoff_path_write_is_detected() {
 /// and is scanned.
 #[test]
 fn a_not_test_graph_root_read_is_detected() {
+    let _integration_guard = crate::integration_lock();
     let planted = r#"#[cfg(not(test))] fn bad(slot: &GraphSlot) {
         let graph_file = slot.root_key.join("pages/Secret.md");
         let _ = std::fs::read(graph_file);

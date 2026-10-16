@@ -15,6 +15,7 @@ fn hosted<T>(
 
 #[test]
 fn uppercase_org_conflict_diff_keeps_outline_blocks_out_of_preamble() {
+    let _integration_guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("pages")).unwrap();
     let winner = "pages/Note.ORG";
@@ -37,6 +38,7 @@ fn uppercase_org_conflict_diff_keeps_outline_blocks_out_of_preamble() {
 
 #[test]
 fn uppercase_org_merge_keeps_source_header_and_outline() {
+    let _integration_guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("pages")).unwrap();
     fs::write(

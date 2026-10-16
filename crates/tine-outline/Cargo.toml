@@ -3,6 +3,7 @@
 # tine-store, the page host, the CLI) and to wasm32 (lsdoc-wasm, in the window).
 # Dependencies stay `lsdoc` + `serde`/`serde_json`: anything heavier breaks the wasm size gate.
 [package]
+autotests = false
 name = "tine-outline"
 version.workspace = true
 edition.workspace = true
@@ -15,3 +16,8 @@ serde_json = "1"
 # Keep this tag IN SYNC with crates/tine-core/Cargo.toml and crates/lsdoc-wasm/Cargo.toml
 # (scripts/build-wasm.mjs checks all three).
 lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.8" }
+
+# Keep all integration cases in one linked executable.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

@@ -112,6 +112,7 @@ fn shape(doc: &PageDto) -> Vec<(String, usize)> {
 
 #[test]
 fn lone_cr_page_parses_like_its_lf_twin() {
+    let _integration_guard = crate::integration_lock();
     let lf = Page::new(&source(|_| "\n"));
     let cr = Page::new(&source(|_| "\r"));
     let (lf_doc, cr_doc) = (lf.doc(), cr.doc());
@@ -127,6 +128,7 @@ fn lone_cr_page_parses_like_its_lf_twin() {
 
 #[test]
 fn lone_cr_page_keeps_its_bytes_through_saves() {
+    let _integration_guard = crate::integration_lock();
     let original = source(|_| "\r");
     let page = Page::new(&original);
     for _ in 0..3 {
@@ -152,6 +154,7 @@ fn lone_cr_page_keeps_its_bytes_through_saves() {
 
 #[test]
 fn mixed_crlf_and_cr_page_keeps_each_untouched_terminator() {
+    let _integration_guard = crate::integration_lock();
     let original = source(|i| if i % 2 == 0 { "\r\n" } else { "\r" });
     let page = Page::new(&original);
     assert_eq!(page.doc().blocks.len(), 3);
@@ -174,6 +177,7 @@ fn mixed_crlf_and_cr_page_keeps_each_untouched_terminator() {
 
 #[test]
 fn mixed_crlf_and_lf_page_keeps_each_untouched_terminator() {
+    let _integration_guard = crate::integration_lock();
     let original = source(|i| if i % 3 == 0 { "\r\n" } else { "\n" });
     let page = Page::new(&original);
     let edited = page.save(EditKind::SaveBlock, |doc| {
@@ -184,6 +188,7 @@ fn mixed_crlf_and_lf_page_keeps_each_untouched_terminator() {
 
 #[test]
 fn lone_cr_page_without_a_final_terminator_keeps_its_last_line() {
+    let _integration_guard = crate::integration_lock();
     let original = "- a\r- b\r\t- c";
     let page = Page::new(original);
     assert_eq!(page.doc().blocks.len(), 2);
@@ -217,6 +222,7 @@ fn org_source(ending: impl Fn(usize) -> &'static str) -> String {
 
 #[test]
 fn lone_cr_org_page_is_editable_and_parses_like_its_lf_twin() {
+    let _integration_guard = crate::integration_lock();
     let lf = Page::at("pages/p.org", &org_source(|_| "\n"));
     let cr = Page::at("pages/p.org", &org_source(|_| "\r"));
     let (lf_doc, cr_doc) = (lf.doc(), cr.doc());
@@ -227,6 +233,7 @@ fn lone_cr_org_page_is_editable_and_parses_like_its_lf_twin() {
 
 #[test]
 fn lone_cr_org_page_keeps_its_bytes_through_saves() {
+    let _integration_guard = crate::integration_lock();
     let original = org_source(|_| "\r");
     let page = Page::at("pages/p.org", &original);
     for _ in 0..3 {
@@ -255,6 +262,7 @@ fn lone_cr_org_page_keeps_its_bytes_through_saves() {
 
 #[test]
 fn mixed_crlf_and_cr_org_page_keeps_each_untouched_terminator() {
+    let _integration_guard = crate::integration_lock();
     let original = org_source(|i| if i % 2 == 0 { "\r\n" } else { "\r" });
     let page = Page::at("pages/p.org", &original);
     assert!(!page.doc().read_only);

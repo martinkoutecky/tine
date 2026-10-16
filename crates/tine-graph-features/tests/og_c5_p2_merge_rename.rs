@@ -59,6 +59,7 @@ fn owner(store: &Store, name: &str) -> Option<String> {
 /// with a boundary slash, which the page key strips.
 #[test]
 fn namespace_rename_keeps_the_child_suffix_across_spellings() {
+    let _integration_guard = crate::integration_lock();
     for (label, parent_title, child_title, typed_old) in [
         ("nfd-parent", "e\u{301}", "\u{e9}/x", "e\u{301}"),
         ("nfc-parent", "\u{e9}", "e\u{301}/x", "\u{e9}"),
@@ -108,6 +109,7 @@ fn namespace_rename_keeps_the_child_suffix_across_spellings() {
 /// (duplicate-journal) merge.
 #[test]
 fn merge_keeps_a_fenced_preamble_line_inside_its_fence() {
+    let _integration_guard = crate::integration_lock();
     let fenced = "```\nnote:: keep me\n```";
     for (label, survivor) in [
         ("equal", "note:: keep me\n\n- destination body\n"),
@@ -173,6 +175,7 @@ fn merge_keeps_a_fenced_preamble_line_inside_its_fence() {
 /// directive, so the merge never drops it as equal to the survivor's directive.
 #[test]
 fn org_merge_keeps_a_directive_example_inside_its_block() {
+    let _integration_guard = crate::integration_lock();
     let example = "#+BEGIN_EXAMPLE\n#+CATEGORY: work\n#+END_EXAMPLE";
     let (root, store) = fixture(
         "org-example",
@@ -199,6 +202,7 @@ fn org_merge_keeps_a_directive_example_inside_its_block() {
 /// dropped the source's copy on a first merge.
 #[test]
 fn rename_merge_keeps_a_source_block_equal_to_a_survivor_block() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "identical-block",
         &[

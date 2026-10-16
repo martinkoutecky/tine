@@ -95,6 +95,7 @@ fn edited_between_plan_and_admission(
 
 #[test]
 fn a_rescue_with_a_host_moves_the_file_unchanged() {
+    let _integration_guard = crate::integration_lock();
     let f = hosted(&[
         ("journals/Loose.md", "- loose\n"),
         ("pages/Taken.md", "- taken\n"),
@@ -128,6 +129,7 @@ fn a_rescue_with_a_host_moves_the_file_unchanged() {
 /// the host, including the host's publication and edit-kind delivery.
 #[test]
 fn a_non_page_rescue_is_published_by_the_host() {
+    let _integration_guard = crate::integration_lock();
     let src = "pages/A.sync-conflict-20261012-000000-DEVICE.md";
     let f = hosted(&[(src, "- rescued copy\n")]);
     assert!(f
@@ -161,6 +163,7 @@ fn a_non_page_rescue_is_published_by_the_host() {
 
 #[test]
 fn a_non_page_rescue_preserves_invalid_utf8_with_and_without_a_host() {
+    let _integration_guard = crate::integration_lock();
     let src = "pages/A.sync-conflict-20261012-000000-DEVICE.md";
     let bytes = b"- imported \xff\n";
     for hosted_path in [false, true] {
@@ -180,6 +183,7 @@ fn a_non_page_rescue_preserves_invalid_utf8_with_and_without_a_host() {
 
 #[test]
 fn a_rescue_planned_before_an_external_edit_moves_the_edited_bytes() {
+    let _integration_guard = crate::integration_lock();
     let f = hosted(&[("journals/Loose.md", "- planned\n")]);
     edited_between_plan_and_admission(&f, "journals/Loose.md", "- edited\n", |store, host| {
         pages::rename_file_to_page(store, Some(host), "journals/Loose.md", "Rescued")
@@ -195,6 +199,7 @@ fn a_rescue_planned_before_an_external_edit_moves_the_edited_bytes() {
 
 #[test]
 fn a_journal_migration_with_a_host_moves_each_file_unchanged() {
+    let _integration_guard = crate::integration_lock();
     let f = hosted(&[
         ("journals/Jun 19th, 2026.md", "- a\n"),
         ("journals/Jun 21st, 2026.md", "- b\n"),
@@ -218,6 +223,7 @@ fn a_journal_migration_with_a_host_moves_each_file_unchanged() {
 
 #[test]
 fn a_journal_migration_planned_before_an_external_edit_moves_the_edited_bytes() {
+    let _integration_guard = crate::integration_lock();
     let f = hosted(&[("journals/Jun 19th, 2026.md", "- planned\n")]);
     let listed = journals::journal_filename_migrations(&f.store).unwrap();
     edited_between_plan_and_admission(
@@ -242,6 +248,7 @@ fn a_journal_migration_planned_before_an_external_edit_moves_the_edited_bytes() 
 /// skipped, and neither file changes.
 #[test]
 fn a_journal_target_that_appears_after_the_listing_is_never_overwritten() {
+    let _integration_guard = crate::integration_lock();
     let f = hosted(&[("journals/Jun 19th, 2026.md", "- mine\n")]);
     let listed = journals::journal_filename_migrations(&f.store).unwrap();
     assert_eq!(listed.len(), 1, "{listed:?}");

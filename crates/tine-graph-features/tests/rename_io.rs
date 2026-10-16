@@ -101,6 +101,7 @@ fn rename_then(pages_count: usize, referrers: usize, settle: bool) -> Counts {
 
 #[test]
 fn rename_planner_name_work_is_flat_in_graph_size() {
+    let _integration_guard = crate::integration_lock();
     let small = rename(60, 2);
     let large = rename(600, 2);
     assert_eq!(
@@ -114,6 +115,7 @@ fn rename_planner_name_work_is_flat_in_graph_size() {
 
 #[test]
 fn rename_rewrites_each_referrer_once_outside_the_writer() {
+    let _integration_guard = crate::integration_lock();
     let few = rename(60, 2);
     let many = rename(60, 30);
     assert_eq!(
@@ -126,6 +128,7 @@ fn rename_rewrites_each_referrer_once_outside_the_writer() {
 
 #[test]
 fn rename_reads_each_referrer_once_per_guard() {
+    let _integration_guard = crate::integration_lock();
     let few = rename(60, 2);
     let many = rename(60, 30);
     assert!(
@@ -156,6 +159,7 @@ fn rename_reads_each_referrer_once_per_guard() {
 /// measured window and were billed to publication.
 #[test]
 fn rename_publication_reopens_no_referrer() {
+    let _integration_guard = crate::integration_lock();
     let few = rename_then(60, 2, true);
     let many = rename_then(60, 30, true);
     assert_eq!(
@@ -198,6 +202,7 @@ fn rename_publication_reopens_no_referrer() {
 /// the rename's measured window and broke its publishing bound.
 #[test]
 fn a_forwarded_echo_bills_as_an_observation_read() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("graph");

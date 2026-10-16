@@ -23,6 +23,7 @@ fn written(root: &std::path::Path) -> String {
 
 #[test]
 fn favorites_page_key_is_written_with_membership_like_master() {
+    let _integration_guard = crate::integration_lock();
     // Master's two writes on `{}`: the page key inserted after `{`, then the
     // membership vector inserted after `{` in front of it.
     let (root, store) = graph("empty", Some("{}\n"));
@@ -63,6 +64,7 @@ fn favorites_page_key_is_written_with_membership_like_master() {
 
 #[test]
 fn favorites_page_key_preserves_unknown_keys_and_comments() {
+    let _integration_guard = crate::integration_lock();
     let input = "{ ; keep me\n :favorites [\"Old\"]\n :unrelated 42}\n";
     let (root, store) = graph("typical", Some(input));
     config::set_favorites(&store, &["New".into()], Some("Favorites")).unwrap();
@@ -176,6 +178,7 @@ fn value_of(forms: &[String], key: &str) -> Option<String> {
 
 #[test]
 fn any_existing_value_shape_is_replaced_whole_and_the_file_stays_parsable() {
+    let _integration_guard = crate::integration_lock();
     for (label, input) in [
         (
             "nil-page",
@@ -225,6 +228,7 @@ fn any_existing_value_shape_is_replaced_whole_and_the_file_stays_parsable() {
 
 #[test]
 fn a_config_it_cannot_edit_safely_is_refused_unchanged() {
+    let _integration_guard = crate::integration_lock();
     for (label, input) in [
         ("list-value", "{:favorites (\"A\") :x 1}\n"),
         ("not-a-map", "[:favorites]\n"),
@@ -244,6 +248,7 @@ fn a_config_it_cannot_edit_safely_is_refused_unchanged() {
 
 #[test]
 fn every_config_writer_inserts_into_the_map_not_a_brace_in_a_comment() {
+    let _integration_guard = crate::integration_lock();
     let input = "; a { in a comment\n{:x 1}\n";
     let (root, store) = graph("sibling-writers", Some(input));
     config::set_preferred_workflow(&store, "todo").unwrap();

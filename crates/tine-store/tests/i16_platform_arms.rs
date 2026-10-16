@@ -235,6 +235,7 @@ fn family_errors(file: &str, source: &str) -> (usize, Vec<String>) {
 
 #[test]
 fn host_publication_witnesses_cover_exactly_the_five_shipped_targets() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut checked = 0;
     for entry in walk(&root.join("src")) {
@@ -270,6 +271,7 @@ fn host_publication_witnesses_cover_exactly_the_five_shipped_targets() {
 /// even when the target is still spelled elsewhere in the file.
 #[test]
 fn platform_family_guard_rejects_a_dropped_ios_arm() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = fs::read_to_string(root.join("src/atomic_file.rs")).unwrap();
     let positive = "#[cfg(any(\n        target_os = \"linux\",\n        target_os = \"android\",\n        target_os = \"macos\",\n        target_os = \"ios\"\n    ))]\n    {\n        fs::rename";
@@ -294,6 +296,7 @@ fn platform_family_guard_rejects_a_dropped_ios_arm() {
 /// must be rejected by the same guard the real check runs.
 #[test]
 fn every_positive_ios_cfg_omission_is_rejected() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut probed = 0;
     for file in [
@@ -349,6 +352,7 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
 
 #[test]
 fn one_no_replace_owner_covers_all_shipped_targets() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let owner = fs::read_to_string(root.join("src/no_replace.rs")).unwrap();
     for target in ["linux", "android", "macos", "ios", "windows"] {
@@ -400,6 +404,7 @@ fn second_owner(source: &str) -> Option<&'static str> {
 
 #[test]
 fn no_replace_guard_rejects_a_second_owner() {
+    let _integration_guard = crate::integration_lock();
     let fake = "fn another() { MoveFileExW(src, dest, 0); }";
     assert_eq!(
         second_owner(fake),
@@ -411,6 +416,7 @@ fn no_replace_guard_rejects_a_second_owner() {
 #[cfg(windows)]
 #[test]
 fn windows_no_replace_keeps_the_existing_destination() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-i16-windows-{}", std::process::id()));
     fs::create_dir_all(root.join("pages")).unwrap();
     let source = root.join("pages/source.md");

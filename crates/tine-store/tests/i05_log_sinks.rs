@@ -67,6 +67,7 @@ fn assert_clean(file: &str, source: &str) {
 
 #[test]
 fn rust_log_sinks_keep_private_data_off_stderr() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for file in [
         "src-tauri/src/debug.rs",
@@ -92,6 +93,7 @@ fn rust_log_sinks_keep_private_data_off_stderr() {
 
 #[test]
 fn planted_private_stderr_call_fails() {
+    let _integration_guard = crate::integration_lock();
     let fake = r#"diag(format!("page {name}")); eprintln!("path {path}");"#;
     assert!(
         std::panic::catch_unwind(|| assert_clean("planted.rs", fake)).is_err(),
@@ -161,6 +163,7 @@ fn production_print_sites(dir: &Path, root: &Path, found: &mut Vec<String>) {
 /// `tine_core::diag_line::diagnostic_line`, which also reaches the log.
 #[test]
 fn production_crates_write_stderr_only_through_diagnostic_line() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut found = Vec::new();
     for krate in [

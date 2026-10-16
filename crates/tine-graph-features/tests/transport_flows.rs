@@ -30,6 +30,7 @@ impl Drop for Fixture {
 
 #[test]
 fn journal_template_save_matches_master_bytes() {
+    let _integration_guard = crate::integration_lock();
     // The same DTO/action as master's journal_template_bytes_survive_reopen_and_idempotent_resave.
     let fixture = Fixture::new();
     let store = fixture.store();
@@ -101,6 +102,7 @@ fn journal_template_save_matches_master_bytes() {
 
 #[test]
 fn page_resolution_and_force_save_preserve_the_live_revision_guard() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let store = fixture.store();
     let alias = pages::get_page(&store, "Shortcut", PageKind::Page)
@@ -149,6 +151,7 @@ fn page_resolution_and_force_save_preserve_the_live_revision_guard() {
 
 #[test]
 fn asset_path_import_read_and_trash_summary_keep_one_file_semantics() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let store = fixture.store();
     let source = fixture.0.with_extension("source.bin");
