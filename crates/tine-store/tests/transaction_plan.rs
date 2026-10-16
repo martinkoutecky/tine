@@ -17,6 +17,7 @@ fn graph() -> (tempfile::TempDir, std::sync::Arc<Store>) {
 
 #[test]
 fn a_save_plan_stages_the_same_bytes_as_commit_without_publishing() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = graph();
     let page = PageId::from("pages/A.md");
     fs::write(dir.path().join(page.as_str()), "- original\n").unwrap();
@@ -58,6 +59,7 @@ fn a_save_plan_stages_the_same_bytes_as_commit_without_publishing() {
 
 #[test]
 fn a_non_page_step_refuses_without_creating_either_file() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = graph();
     let mut tx = store.transaction(Some(EditKind::ReplacePage));
     tx.create(
@@ -78,6 +80,7 @@ fn a_non_page_step_refuses_without_creating_either_file() {
 
 #[test]
 fn a_move_plan_keeps_the_source_exception_and_publication_order() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = graph();
     fs::write(dir.path().join("journals/Jun 19th, 2026.md"), "- source\n").unwrap();
     store.refresh(tine_store::Depth::Bytes).unwrap();
@@ -105,6 +108,7 @@ fn a_move_plan_keeps_the_source_exception_and_publication_order() {
 
 #[test]
 fn a_repeated_file_has_the_same_preflight_refusal() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = graph();
     let file = store.file_id(Area::Pages, "A.md").unwrap();
     let transaction = || {
@@ -124,6 +128,7 @@ fn a_repeated_file_has_the_same_preflight_refusal() {
 
 #[test]
 fn a_merge_declares_its_move_after_planning_and_keeps_both_kinds() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = graph();
     for name in ["A", "B"] {
         fs::write(
@@ -162,6 +167,7 @@ fn a_merge_declares_its_move_after_planning_and_keeps_both_kinds() {
 
 #[test]
 fn admission_retains_the_raw_create_and_dto_name_distinction() {
+    let _integration_guard = crate::integration_lock();
     for structured in [false, true] {
         let (dir, store) = graph();
         let page = PageId::from("pages/A.md");
@@ -199,6 +205,7 @@ fn admission_retains_the_raw_create_and_dto_name_distinction() {
 
 #[test]
 fn two_unique_creates_allocate_the_same_names_as_commit() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = graph();
     let transaction = || {
         let mut tx = store.transaction(Some(EditKind::ReplacePage));
@@ -235,6 +242,7 @@ fn two_unique_creates_allocate_the_same_names_as_commit() {
 
 #[test]
 fn a_declared_transfer_keeps_create_news_dto_name_check() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = graph();
     let src = PageId::from("pages/Src.md");
     let dst = PageId::from("pages/A.md");
@@ -282,6 +290,7 @@ fn a_declared_transfer_keeps_create_news_dto_name_check() {
 
 #[test]
 fn independent_save_and_trash_do_not_infer_a_transfer() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = graph();
     let src = PageId::from("pages/Src.md");
     fs::write(dir.path().join(src.as_str()), b"- source\n").unwrap();

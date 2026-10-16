@@ -15,7 +15,7 @@
 //! readiness state; the operation total is derived and must match
 //! `docs/storage-contract.md`. SURFACE.txt's header states the rules.
 //!
-//! `TINE_SHALLOW_PRINT=1 cargo test -p tine-store --test shallow_ratchet`
+//! `TINE_SHALLOW_PRINT=1 cargo test -p tine-store --test integration shallow_ratchet::`
 //! prints the current listing.
 
 use std::collections::BTreeSet;
@@ -558,6 +558,7 @@ fn surface_with_faults(src: &Path) -> Surface {
 /// are separate crate roots and carry no library surface.
 #[test]
 fn the_surface_scan_reaches_every_source_file() {
+    let _integration_guard = crate::integration_lock();
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
     let visited: BTreeSet<PathBuf> = surface(&src)
         .visited
@@ -699,6 +700,7 @@ impl SurfaceFile {
 
 #[test]
 fn shallow_surface_only_shrinks() {
+    let _integration_guard = crate::integration_lock();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let public = public_items(&root.join("src"));
     if std::env::var_os("TINE_SHALLOW_PRINT").is_some() {
@@ -768,6 +770,7 @@ fn shallow_surface_only_shrinks() {
 /// item of the concept that cannot answer the need with a parameter.
 #[test]
 fn surface_concepts_stay_within_their_ceilings() {
+    let _integration_guard = crate::integration_lock();
     let file = SurfaceFile::read();
     assert!(
         file.unsectioned.is_empty(),
@@ -831,6 +834,7 @@ fn surface_concepts_stay_within_their_ceilings() {
 /// contract's stated operation count, which must agree.
 #[test]
 fn derived_totals_match_the_storage_contract() {
+    let _integration_guard = crate::integration_lock();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let surface = surface(&root.join("src"));
     let items = &surface.items;
@@ -872,6 +876,7 @@ fn derived_totals_match_the_storage_contract() {
 
 #[test]
 fn public_paths_are_only_inputs_and_handoffs() {
+    let _integration_guard = crate::integration_lock();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
     let actual = surface(&root).paths;
     // Each path is a user-selected OS path input or a path handed to the OS or
@@ -1124,6 +1129,7 @@ fn consumer_reach() -> BTreeSet<String> {
 /// miss; types are reached through the signatures that carry them.
 #[test]
 fn surface_items_have_a_production_caller_or_are_gated_oracles() {
+    let _integration_guard = crate::integration_lock();
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
     let production = surface(&src).items;
     let gated: BTreeSet<String> = surface_with_faults(&src)
@@ -1193,6 +1199,7 @@ fn state_words(text: &str) -> Vec<String> {
 /// mechanism are listed with why they promise no caller-visible state.
 #[test]
 fn no_cache_or_readiness_state_on_the_surface() {
+    let _integration_guard = crate::integration_lock();
     let s = surface(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src"));
     let named: Vec<String> = s
         .items

@@ -17,7 +17,7 @@ import { readPageProperty, setPageProperty } from "../document";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, dtoSubtreeMarkdown, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
+import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
 import { favoriteBlock } from "../favorites";
@@ -328,6 +328,27 @@ function ShowChildrenAsSubmenu(props: { id: string; close: () => void }): JSX.El
   );
 }
 
+interface MenuAction {
+  id?: string;
+  label: Msg;
+  run?: () => void;
+  danger?: boolean;
+  children?: MenuAction[];
+}
+
+/** Reuses the existing hover/touch submenu and viewport placement. */
+function CopyAsSubmenu(props: { items: MenuAction[]; page?: boolean; close: () => void }): JSX.Element {
+  return <div class="ctx-item ctx-submenu" role="menuitem" tabIndex={-1} aria-haspopup="menu"
+    data-page-action-id={props.page ? "copy-as" : undefined}>
+    <span>{t("context-menu-ui-copy-as")} ▸</span>
+    <div class="ctx-submenu-menu" role="menu">
+      <For each={props.items}>{item => <button type="button" class="ctx-item ctx-page-item" role="menuitem" tabIndex={-1}
+        data-page-action-id={props.page ? item.id : undefined}
+        onClick={() => { item.run?.(); props.close(); }}>{renderUiText(item.label)}</button>}</For>
+    </div>
+  </div>;
+}
+
 function BlockMenu(props: { id: string; x: number; y: number; close: () => void }): JSX.Element {
   const hasChildren = () => (docNode(props.id)?.children.length ?? 0) > 0;
   const readOnly = () => blockPageReadOnly(props.id);
@@ -365,13 +386,15 @@ function BlockMenu(props: { id: string; x: number; y: number; close: () => void 
 
       <For each={blockActions(props.id, props.x, props.y)}>
         {(it) => (
+          <Show when={it.children} fallback={
           <div
             class="ctx-item"
             classList={{ danger: !!it.danger }}
-            onClick={() => { it.run(); props.close(); }}
+            onClick={() => { it.run?.(); props.close(); }}
           >
             {renderUiText(it.label)}
           </div>
+          }>{children => <CopyAsSubmenu items={children()} close={props.close} />}</Show>
         )}
       </For>
 
@@ -846,14 +869,16 @@ function PageMenu(props: {
       })
       .catch(error => { if (owner()) pushToast(msg("delete-failed", { reason: String(error) }), "error"); });
   };
-  const items: { id: string; label: Msg; run: () => void; danger?: boolean }[] = [
+  const items: MenuAction[] = [
     { id: "open", label: msg("context-menu-ui-open"), run: () => openPageTarget(target()) },
     { id: "open-sidebar", label: msg("context-menu-ui-open-in-sidebar"), run: () => openPageInSidebar(target()) },
-    { id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => openPageTargetInNewTab(target()) },
+    { id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => { openPageTargetInNewTab(target()); pushToast(msg("links-opened-in-new-tab")); } },
     ...(workspaceWindowsSupported() ? [{ id: "open-new-window", label: msg("context-menu-ui-open-in-new-window"), run: () => void openRouteInNewWindow({ ...target(), kind: "page" }) }] : []),
     { id: "favorite-toggle", label: fav() ? msg("context-menu-ui-remove-from-favorites") : msg("context-menu-ui-add-to-favorites"), run: () => toggleFavorite(props.name, props.pageKind) },
-    { id: "copy-link", label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ page: props.name }) },
-    { id: "copy-page-ref", label: msg("context-menu-ui-copy-page-ref"), run: () => reportCopy(writeClipboardText(`[[${props.name}]]`), msg("context-menu-ui-copied-page-ref")) },
+    { id: "copy-as", label: msg("context-menu-ui-copy-as"), children: [
+      { id: "copy-page-ref", label: msg("context-menu-ui-copy-page-ref"), run: () => reportCopy(writeClipboardText(`[[${props.name}]]`), msg("context-menu-ui-copied-page-ref")) },
+      { id: "copy-link", label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ page: props.name }) },
+    ] },
     {
       id: "copy-export",
       label: msg("context-menu-ui-copy-export-as"),
@@ -869,23 +894,6 @@ function PageMenu(props: {
         openExportModal([...page!.roots]);
       },
     },
-    {
-      id: "copy-page-markdown",
-      label: msg("context-menu-ui-copy-page-as-markdown"),
-      run: () => {
-        const owner = graphOwner();
-        const request = path
-          ? backend().getPageByPath(path)
-          : backend().getPage(props.name, props.pageKind);
-        void readOwned(owner, request).then((result) => {
-          if (result.kind === "stale") return;
-          const p = result.value;
-          if (!p) throw new Error("Page unavailable");
-          return writeClipboardText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
-        }).then(() => { if (owner()) pushToast(msg("context-menu-ui-copied-page-as-markdown"), "success"); })
-          .catch(() => { if (owner()) pushToast(msg("context-menu-ui-couldn-t-copy-page-as-markdown"), "error"); });
-      },
-    },
     ...(!isMobilePlatform ? [{ id: "export-pdf", label: msg("context-menu-ui-export-to-pdf"), run: () => openPdfExport(props.name) }] : []),
     ...(props.fileActions && !pageByName(props.name)?.guide
       ? [
@@ -895,7 +903,7 @@ function PageMenu(props: {
       : []),
     // GH #338: phones have no Mod+F. The page header's menu opens Find, whose
     // bar holds the replace row (GH #208).
-    ...(props.fileActions ? [{ id: "find-in-page", label: msg("context-menu-ui-find-in-page"), run: () => openInPageFind() }] : []),
+    ...(props.fileActions && isMobilePlatform ? [{ id: "find-in-page", label: msg("context-menu-ui-find-in-page"), run: () => openInPageFind() }] : []),
     ...(!readOnly() ? [{ id: "page-properties", label: msg("context-menu-ui-page-properties"), run: () => openPageProps(props.name, props.x, props.y) }] : []),
     // Carry a past day's unfinished tasks to today (journal days only, not today).
     ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(appNow())
@@ -907,6 +915,7 @@ function PageMenu(props: {
       <For each={items}>
         {(it) => (
           <>
+          <Show when={it.children} fallback={
           <button
             type="button"
             class="ctx-item ctx-page-item"
@@ -914,10 +923,11 @@ function PageMenu(props: {
             role="menuitem"
             tabIndex={-1}
             data-page-action-id={it.id}
-            onClick={() => { it.run(); props.close(false); }}
+            onClick={() => { it.run?.(); props.close(false); }}
           >
             {renderUiText(it.label)}
           </button>
+          }>{children => <CopyAsSubmenu items={children()} page close={() => props.close(false)} />}</Show>
           <Show when={it.id === "page-properties" && !openedPage?.guide}>
             <PageIconMenu name={props.name} close={props.close} />
           </Show>
@@ -977,7 +987,7 @@ function PageIconMenu(props: { name: string; close: (restoreFocus?: boolean) => 
             else if (e.key === "Escape") { e.preventDefault(); setEditing(false); queueMicrotask(() => trigger?.focus()); }
           }} />
         <div class="pp-hint">{t("page-icon-hint")}</div>
-        <button class="ctx-item" onClick={() => write(value().trim() || null)}>{t("page-icon-save")}</button>
+        <button type="button" class="ctx-template-submit" onClick={() => write(value().trim() || null)}>{t("page-icon-save")}</button>
       </div>
     </Show>
     <Show when={readPageProperty(props.name, "icon")}>
@@ -1094,7 +1104,7 @@ function RenamePage(props: {
   );
 }
 
-function blockActions(id: string, x: number, y: number): { label: Msg; run: () => void; danger?: boolean }[] {
+function blockActions(id: string, x: number, y: number): MenuAction[] {
   const selected = selectedIds();
   const multi = selected.length > 1 && selected.includes(id);
   const ids = multi ? selected : [id];
@@ -1115,7 +1125,7 @@ function blockActions(id: string, x: number, y: number): { label: Msg; run: () =
     return [
       { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
       { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-      { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); } },
+      { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
       { label: msg("context-menu-ui-copy", { count: ids.length }), run: copy },
       {
         label: msg("context-menu-ui-copy-export-as"),
@@ -1128,7 +1138,7 @@ function blockActions(id: string, x: number, y: number): { label: Msg; run: () =
   return [
     { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
     { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-    { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); } },
+    { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: msg("context-menu-ui-properties"), run: () => openBlockProps(id, x, y) },
     // The keyboard route to "a block above this one" is Enter at offset 0, which
@@ -1141,9 +1151,11 @@ function blockActions(id: string, x: number, y: number): { label: Msg; run: () =
         if (inserted) startEditing(inserted, 0);
       },
     },
-    { label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ blocks: ids }) },
-    { label: multi ? msg("context-menu-ui-copy-block-refs") : msg("context-menu-ui-copy-block-ref"), run: () => void copyBlockLink(ids, "ref") },
-    { label: multi ? msg("context-menu-ui-copy-block-embeds") : msg("context-menu-ui-copy-block-embed"), run: () => void copyBlockLink(ids, "embed") },
+    { label: msg("context-menu-ui-copy-as"), children: [
+      { label: multi ? msg("context-menu-ui-copy-block-refs") : msg("context-menu-ui-copy-block-ref"), run: () => void copyBlockLink(ids, "ref") },
+      { label: multi ? msg("context-menu-ui-copy-block-embeds") : msg("context-menu-ui-copy-block-embed"), run: () => void copyBlockLink(ids, "embed") },
+      { label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ blocks: ids }) },
+    ] },
     ...(!multi ? [{ label: msg("favorites-block-action"), run: () => void favoriteBlock(id) }] : []),
     { label: msg("context-menu-ui-copy", { count: ids.length }), run: copy },
     // Open the export modal for the whole selection (if this block is part of a

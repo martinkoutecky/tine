@@ -63,10 +63,12 @@ import { HomePageSetting } from "./HomePageSetting";
 import { LanguageSetting } from "./LanguageSetting";
 import { GraphFolderSetting } from "./GraphFolderSetting";
 import { msg, render, renderEnglish, t, type Msg } from "../i18n";
-import { SETTING_SEARCH, settingMatches, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
+import { SETTING_SEARCH, settingMatches, settingHighlight, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
 import { ThemeSettings } from "./ThemeSettings";
+import { CustomCssSettings } from "./CustomCssSettings";
+import { StyleKnobsSettings } from "./StyleKnobsSettings";
 import { flushAll } from "../document";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import { restoreBackupFromSettings } from "../backupRestore";
@@ -258,7 +260,9 @@ export function Settings(): JSX.Element {
                     <For each={matches()}>
                       {(entry) => (
                         <button type="button" class="settings-search-result" onClick={() => openSearchResult(entry)}>
-                          <span>{typeof entry.label === "string" ? entry.label : render(entry.label)}</span>
+                          <span><For each={settingHighlight(typeof entry.label === "string" ? entry.label : render(entry.label), settingsQuery())}>
+                            {(part) => part.marked ? <mark>{part.text}</mark> : part.text}
+                          </For></span>
                           <small>{t("settings-search-result-location", { tab: render(TABS.find((candidate) => candidate.id === entry.tab)!.label), level: entry.level ?? "basic" })}</small>
                         </button>
                       )}
@@ -428,14 +432,13 @@ function AppearanceTab(props: { search: string }): JSX.Element {
 
   return (
     <>
+      <ThemeSettings />
       <LanguageSetting />
 
       <div class="settings-row">
         <span class="settings-label">{t("settings-ui-mode")}</span>
         <ThemeChoice />
       </div>
-
-      <ThemeSettings />
 
       <div class="settings-row">
         <span class="settings-label">{t("settings-ui-accent-color")}</span>
@@ -544,6 +547,8 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       </Field>
 
       <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
+        <StyleKnobsSettings />
+        <CustomCssSettings />
         <ContentWidthFields />
         <Field
           label={t("settings-ui-smooth-scrolling-experimental")}

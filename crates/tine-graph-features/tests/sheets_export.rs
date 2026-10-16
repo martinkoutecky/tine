@@ -73,6 +73,7 @@ fn sheets_html(base: &Path) -> String {
 
 #[test]
 fn inputs_for_the_fixture_match_the_golden_handoff() {
+    let _integration_guard = crate::integration_lock();
     let (_base, store) = open_fixture();
     let inputs = sheet_export_inputs(&store, None, None).unwrap();
     let actual = serde_json::to_string_pretty(&inputs).unwrap() + "\n";
@@ -97,6 +98,7 @@ fn exports() -> Vec<SheetExport> {
 
 #[test]
 fn the_apps_export_lays_out_as_table_board_and_grid() {
+    let _integration_guard = crate::integration_lock();
     let (base, store) = open_fixture();
     publish_live_with_sheets(
         &store,
@@ -131,6 +133,7 @@ fn the_apps_export_lays_out_as_table_board_and_grid() {
 
 #[test]
 fn sheets_export_without_frontend_keeps_the_outline() {
+    let _integration_guard = crate::integration_lock();
     // Named divergence (Guide > Exporting): the CLI has no evaluator, so a sheet block
     // publishes as the plain outline of its rows, never as a table.
     let (base, store) = open_fixture();
@@ -181,6 +184,7 @@ fn export_html(sheets: Vec<SheetExport>) -> String {
 
 #[test]
 fn a_sheet_that_failed_to_compute_exports_the_outline_and_a_visible_note() {
+    let _integration_guard = crate::integration_lock();
     let html = export_html(mutate(raw_exports(), |x| {
         if x["view"] == "table" {
             *x = serde_json::json!({"page": x["page"], "path": x["path"], "fp": x["fp"],
@@ -202,6 +206,7 @@ fn a_sheet_that_failed_to_compute_exports_the_outline_and_a_visible_note() {
 
 #[test]
 fn a_stale_fingerprint_is_refused_with_a_note() {
+    let _integration_guard = crate::integration_lock();
     let html = export_html(mutate(raw_exports(), |x| {
         if x["view"] == "board" {
             x["fp"] = "0000000000000000".into();
@@ -214,6 +219,7 @@ fn a_stale_fingerprint_is_refused_with_a_note() {
 
 #[test]
 fn hostile_export_data_is_escaped_bounded_and_never_fails_the_export() {
+    let _integration_guard = crate::integration_lock();
     let html = export_html(mutate(raw_exports(), |x| {
         if x["view"] == "table" && x["query"] != true {
             x["rows"][0]["bg"] = "red;background:url(javascript:alert(1))".into();
@@ -242,6 +248,7 @@ fn hostile_export_data_is_escaped_bounded_and_never_fails_the_export() {
 
 #[test]
 fn an_oversized_export_is_dropped_to_the_outline_not_rendered_unboundedly() {
+    let _integration_guard = crate::integration_lock();
     let huge: Vec<SheetExport> = mutate(raw_exports(), |x| {
         if x["view"] == "grid" {
             x["cols"] = 1_000_000u64.into();
@@ -304,6 +311,7 @@ fn landmarks(html: &str) -> Vec<String> {
 
 #[test]
 fn exported_sheets_have_the_structure_of_masters_static_export() {
+    let _integration_guard = crate::integration_lock();
     // `master-oracle.html` is the outline of master 5dfc84503's `publish_security_fixture`
     // run over this same fixture graph (master computes sheets in Rust; og does not).
     let oracle = fs::read_to_string(fixtures().join("master-oracle.html")).unwrap();
@@ -335,6 +343,7 @@ fn exported_sheets_have_the_structure_of_masters_static_export() {
 
 #[test]
 fn inputs_sent_to_the_app_are_bounded() {
+    let _integration_guard = crate::integration_lock();
     // I-22: a hostile or huge sheet cannot make the hand-off unbounded. Rows past the
     // bound are counted (`omitted`, shown as a note), never silently dropped.
     let (base, store) = open_fixture();
@@ -355,6 +364,7 @@ fn inputs_sent_to_the_app_are_bounded() {
 
 #[test]
 fn a_sheet_inside_a_grid_cell_is_found_by_its_path_and_laid_out_in_the_cell() {
+    let _integration_guard = crate::integration_lock();
     let (base, store) = open_fixture();
     fs::write(
         base.join("graph/pages/Nested.md"),
@@ -401,6 +411,7 @@ fn a_sheet_inside_a_grid_cell_is_found_by_its_path_and_laid_out_in_the_cell() {
 /// and search entry appear once, so every `id` names exactly one element (I-12).
 #[test]
 fn a_card_in_two_board_columns_keeps_page_anchors_unique() {
+    let _integration_guard = crate::integration_lock();
     let (base, store) = open_fixture();
     let mut exports: Value =
         serde_json::from_str(&fs::read_to_string(fixtures().join("exports.json")).unwrap())
@@ -437,6 +448,7 @@ fn tail_queries_html(base: &Path) -> String {
 
 #[test]
 fn query_backed_sheets_lay_out_as_table_and_board_in_place_of_the_result_list() {
+    let _integration_guard = crate::integration_lock();
     let (base, store) = open_fixture();
     publish_live_with_sheets(
         &store,
@@ -477,6 +489,7 @@ fn query_backed_sheets_lay_out_as_table_and_board_in_place_of_the_result_list() 
 
 #[test]
 fn a_query_sheet_whose_result_changed_is_refused_with_a_note_and_shows_the_results() {
+    let _integration_guard = crate::integration_lock();
     let html = {
         let mut all = raw_exports();
         for x in all
@@ -521,6 +534,7 @@ fn export_html_of(all: &[Value]) -> (Scratch, String) {
 
 #[test]
 fn a_query_sheet_leaves_out_a_row_on_an_unpublished_page_and_keeps_the_rest() {
+    let _integration_guard = crate::integration_lock();
     // Master filters the row and keeps the sheet. The row is dropped BEFORE the app
     // computes cells, counts and aggregates, so no trace of it can reach the table.
     let (base, store) = open_fixture();
@@ -578,6 +592,7 @@ fn a_query_sheet_leaves_out_a_row_on_an_unpublished_page_and_keeps_the_rest() {
 
 #[test]
 fn the_scope_the_app_sends_deserializes_as_the_wire_shape() {
+    let _integration_guard = crate::integration_lock();
     // `src/sheet/staticExport.ts::SheetScope` is the other half of this contract.
     let live: SheetScope =
         serde_json::from_value(serde_json::json!({"kind": "live", "allPages": true})).unwrap();
@@ -592,6 +607,7 @@ fn the_scope_the_app_sends_deserializes_as_the_wire_shape() {
 
 #[test]
 fn grid_render_uses_only_rows_sent_for_aggregates_and_charges_their_area() {
+    let _integration_guard = crate::integration_lock();
     for (cols, admitted) in [(1, true), (21, false)] {
         let (base, store) = open_fixture();
         let mut page = String::from("public:: true\n\n- Big\n  tine.view:: grid\n");

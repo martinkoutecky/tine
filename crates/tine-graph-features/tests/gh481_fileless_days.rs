@@ -3,6 +3,7 @@ use tine_store::{Depth, Store};
 
 #[test]
 fn referenced_fileless_past_days_are_paged_without_writing_files() {
+    let _integration_guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir(root.path().join("pages")).unwrap();
     std::fs::create_dir(root.path().join("journals")).unwrap();
@@ -57,6 +58,7 @@ fn referenced_fileless_past_days_are_paged_without_writing_files() {
 
 #[test]
 fn future_references_are_upcoming_and_deleting_a_referenced_file_keeps_the_day() {
+    let _integration_guard = crate::integration_lock();
     use tine_store::{EditKind, SaveBase, SaveOutcome};
     let root = tempfile::tempdir().unwrap();
     for directory in ["pages", "journals"] {
@@ -119,6 +121,7 @@ fn future_references_are_upcoming_and_deleting_a_referenced_file_keeps_the_day()
 
 #[test]
 fn ordinary_date_pages_and_query_only_dates_do_not_become_journal_rows() {
+    let _integration_guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     for directory in ["pages", "journals"] {
         std::fs::create_dir(root.path().join(directory)).unwrap();

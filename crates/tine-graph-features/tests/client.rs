@@ -128,6 +128,7 @@ fn fixture(label: &str) -> (PathBuf, Store) {
 
 #[test]
 fn source_scan_guard_clients_touch_no_path() {
+    let _integration_guard = crate::integration_lock();
     for (name, source) in [
         ("lib", include_str!("../src/lib.rs")),
         ("assets", include_str!("../src/assets.rs")),
@@ -235,6 +236,7 @@ fn assert_tree_is(root: &std::path::Path, expected: &std::collections::BTreeMap<
 
 #[test]
 fn guide_creation_writes_the_bundled_templates_and_chooses_a_folder() {
+    let _integration_guard = crate::integration_lock();
     // Literal spot checks pin the independent file-name oracle itself.
     let tree = expected_demo_tree();
     assert_eq!(
@@ -307,6 +309,7 @@ fn guide_creation_writes_the_bundled_templates_and_chooses_a_folder() {
 
 #[test]
 fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
+    let _integration_guard = crate::integration_lock();
     // Independent rewrite oracle: a Guide link `[[T]]` to a bundled page T
     // becomes `[[tine-guide/T]]` everywhere except inside fenced code, and a
     // leading `title:: T` line is renamed. Plain string work, no parser.
@@ -425,6 +428,7 @@ fn guide_copy_rewrites_inter_guide_links_and_keeps_existing_files() {
 
 #[test]
 fn config_setters_match_legacy_values_and_bytes() {
+    let _integration_guard = crate::integration_lock();
     type New = fn(&Store) -> std::io::Result<()>;
     let operations: [(&str, New); 11] = [
         ("favorites", |s| {
@@ -478,6 +482,7 @@ fn config_setters_match_legacy_values_and_bytes() {
 
 #[test]
 fn custom_css_matches_legacy_present_absent_and_unreadable() {
+    let _integration_guard = crate::integration_lock();
     for (index, (name, contents)) in [
         ("present", Some(b"body { color: red }".as_slice())),
         ("absent", None),
@@ -503,6 +508,7 @@ fn custom_css_matches_legacy_present_absent_and_unreadable() {
 
 #[test]
 fn config_retry_reapplies_edit_over_external_write() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("config-retry");
     fs::create_dir_all(root.join("logseq")).unwrap();
     fs::write(root.join("logseq/config.edn"), "{:start-of-week 0}\n").unwrap();
@@ -515,6 +521,7 @@ fn config_retry_reapplies_edit_over_external_write() {
 
 #[test]
 fn config_invalid_utf8_error_matches_legacy() {
+    let _integration_guard = crate::integration_lock();
     let (new_root, store) = fixture("config-invalid-utf8-new");
     fs::create_dir_all(new_root.join("logseq")).unwrap();
     fs::write(new_root.join("logseq/config.edn"), b"\xff").unwrap();
@@ -530,6 +537,7 @@ fn config_invalid_utf8_error_matches_legacy() {
 
 #[test]
 fn conflict_clients_match_legacy_values_and_disk_bytes() {
+    let _integration_guard = crate::integration_lock();
     use std::collections::HashMap;
     let (new_root, store) = fixture("conflict-matrix-new");
     let conflict_name = "Foo.sync-conflict-20260705-120000-ABCDEFG.md";
@@ -583,6 +591,7 @@ fn conflict_clients_match_legacy_values_and_disk_bytes() {
 
 #[test]
 fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
+    let _integration_guard = crate::integration_lock();
     let (new_root, store) = fixture("journal-matrix-new");
     fs::create_dir_all(new_root.join("journals")).unwrap();
     for (name, body) in [
@@ -638,6 +647,7 @@ fn journal_clients_match_legacy_feed_conflicts_read_trash_and_migration() {
 
 #[test]
 fn external_write_during_resolve_rolls_back_winner_and_keeps_external_copy() {
+    let _integration_guard = crate::integration_lock();
     use std::collections::HashMap;
     let (root, store) = fixture("resolve-external");
     fs::write(root.join("pages/Foo.md"), "- mine\n").unwrap();
@@ -666,6 +676,7 @@ fn external_write_during_resolve_rolls_back_winner_and_keeps_external_copy() {
 
 #[test]
 fn resolve_preblock_keep_choices_match_legacy_bytes() {
+    let _integration_guard = crate::integration_lock();
     use std::collections::HashMap;
     for (index, choice) in ["mine", "theirs"].into_iter().enumerate() {
         let (new_root, store) = fixture(&format!("choice-{choice}-new"));
@@ -703,6 +714,7 @@ fn resolve_preblock_keep_choices_match_legacy_bytes() {
 
 #[test]
 fn failed_journal_repair_restores_legacy_filename() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("journal-repair-rollback");
     fs::create_dir_all(root.join("journals")).unwrap();
     fs::write(root.join("journals/Jun 18th, 2026.md"), "- preserve\n").unwrap();
@@ -719,6 +731,7 @@ fn failed_journal_repair_restores_legacy_filename() {
 
 #[test]
 fn save_and_stream_import_match_legacy_collision_names_and_bytes() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("asset-new");
     assert_eq!(assets::save_asset(&store, "X", b"one").unwrap(), "X");
     assert_eq!(assets::save_asset(&store, "X", b"two").unwrap(), "X_1");
@@ -757,6 +770,7 @@ fn save_and_stream_import_match_legacy_collision_names_and_bytes() {
 
 #[test]
 fn asset_collisions_put_the_counter_before_a_whole_compound_extension() {
+    let _integration_guard = crate::integration_lock();
     // GH #38: the counter goes BEFORE `.drawio.svg` / `.excalidraw.png` so the
     // collided name still matches the editor affordance; a naive last-dot split
     // would give `flow.drawio_1.svg`. Matching is case-insensitive and keeps the
@@ -794,6 +808,7 @@ fn asset_collisions_put_the_counter_before_a_whole_compound_extension() {
 
 #[test]
 fn an_asset_name_that_leaves_assets_is_refused_by_every_import_door() {
+    let _integration_guard = crate::integration_lock();
     // F5: a frontend-supplied name with a separator or a `.`/`..` component must
     // not reach outside `assets/`; a plain top-level name still works.
     let (root, store) = fixture("asset-traversal");
@@ -817,6 +832,7 @@ fn an_asset_name_that_leaves_assets_is_refused_by_every_import_door() {
 
 #[test]
 fn stream_cap_and_missing_trash_leave_no_asset() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("cap");
     let source = root.join("oversize");
     fs::write(&source, b"123456").unwrap();
@@ -840,6 +856,7 @@ fn stream_cap_and_missing_trash_leave_no_asset() {
 
 #[test]
 fn asset_import_creates_missing_assets_directory() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!("tine-missing-assets-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("pages")).unwrap();
@@ -854,6 +871,7 @@ fn asset_import_creates_missing_assets_directory() {
 
 #[test]
 fn pdf_area_image_create_then_replace() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("pdf");
     let name = pdf::write_pdf_area_image(&store, "paper.pdf", 2, "id", 42, b"first").unwrap();
     assert_eq!(name, "paper/2_id_42.png");
@@ -888,6 +906,7 @@ fn highlight(id: &str) -> Highlight {
 
 #[test]
 fn pdf_open_is_read_only_until_first_annotation() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("pdf-read-only");
     let before = disk_tree(&root);
     for _ in 0..2 {
@@ -916,6 +935,7 @@ fn pdf_open_is_read_only_until_first_annotation() {
 
 #[test]
 fn pdf_open_preserves_sidecars_and_never_repairs_missing_notes() {
+    let _integration_guard = crate::integration_lock();
     for pdf_name in ["paper.pdf", "My Paper.pdf"] {
         for key in [
             tine_core::pdf::asset_key(pdf_name),
@@ -970,6 +990,7 @@ fn pdf_open_preserves_sidecars_and_never_repairs_missing_notes() {
 
 #[test]
 fn highlights_first_write_and_update_persist_both_artifacts() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("hl-new");
     for (items, base) in [
         (vec![highlight("a")], vec![]),
@@ -985,6 +1006,7 @@ fn highlights_first_write_and_update_persist_both_artifacts() {
 
 #[test]
 fn highlight_save_preserves_external_recolour_when_local_value_is_unchanged() {
+    let _integration_guard = crate::integration_lock();
     let (_root, store) = fixture("hl-external-recolour");
     let loaded = highlight("a");
     pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
@@ -1020,6 +1042,7 @@ fn highlight_save_preserves_external_recolour_when_local_value_is_unchanged() {
 
 #[test]
 fn highlight_save_merges_disjoint_local_and_external_fields() {
+    let _integration_guard = crate::integration_lock();
     let (_root, store) = fixture("hl-disjoint-fields");
     let loaded = highlight("a");
     pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
@@ -1048,6 +1071,7 @@ fn highlight_save_merges_disjoint_local_and_external_fields() {
 
 #[test]
 fn highlight_save_keeps_external_deletion_when_local_value_is_unchanged() {
+    let _integration_guard = crate::integration_lock();
     let (_root, store) = fixture("hl-external-deletion");
     let loaded = highlight("a");
     pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
@@ -1070,6 +1094,7 @@ fn highlight_save_keeps_external_deletion_when_local_value_is_unchanged() {
 
 #[test]
 fn highlight_save_conflicts_when_local_edit_meets_external_deletion() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("hl-edit-after-delete");
     let loaded = highlight("a");
     pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
@@ -1094,6 +1119,7 @@ fn highlight_save_conflicts_when_local_edit_meets_external_deletion() {
 
 #[test]
 fn highlight_save_conflicts_when_local_deletion_meets_external_edit() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("hl-delete-after-edit");
     let loaded = highlight("a");
     pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[loaded.clone()], &[]).unwrap();
@@ -1126,6 +1152,7 @@ fn highlight_save_conflicts_when_local_deletion_meets_external_edit() {
 
 #[test]
 fn old_vs_new_matrix_on_identical_fixtures() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("matrix-new");
     fs::write(a.join("pages/Refs.md"), "- ![](../assets/referenced.png)\n").unwrap();
     fs::write(a.join("assets/referenced.png"), b"kept").unwrap();
@@ -1315,6 +1342,7 @@ fn old_vs_new_matrix_on_identical_fixtures() {
 
 #[test]
 fn trash_retries_external_write_without_losing_its_bytes() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("retry-trash");
     fs::write(root.join("assets/throwaway"), b"old").unwrap();
     store.inject_fault(FaultPoint::Stage2Mismatch);
@@ -1329,6 +1357,7 @@ fn trash_retries_external_write_without_losing_its_bytes() {
 
 #[test]
 fn area_image_retries_external_write_in_place() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("retry-image");
     pdf::write_pdf_area_image(&store, "paper.pdf", 2, "crop", 12, b"old").unwrap();
     store.inject_fault(FaultPoint::Stage2Mismatch);
@@ -1341,6 +1370,7 @@ fn area_image_retries_external_write_in_place() {
 
 #[test]
 fn highlights_retry_external_sidecar_write_and_preserve_foreign_data() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("retry-highlights");
     fs::write(
         root.join("assets/other.edn"),
@@ -1360,6 +1390,7 @@ fn highlights_retry_external_sidecar_write_and_preserve_foreign_data() {
 
 #[test]
 fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("migration-new");
     let pdf_name = "My Paper.pdf";
     let key = tine_core::pdf::asset_key(pdf_name);
@@ -1411,6 +1442,7 @@ fn legacy_pdf_artifacts_stay_on_open_and_match_after_write_migration() {
 /// store's config/layout answer without changing the text).
 #[test]
 fn asset_error_names_the_absolute_trash_location() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("trash-display");
     let shown = assets::error_for_user(
         &store,
@@ -1427,6 +1459,7 @@ fn asset_error_names_the_absolute_trash_location() {
 
 #[test]
 fn blocked_trash_keeps_asset_and_legacy_error_text() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("blocked-new");
     fs::create_dir_all(a.join("logseq")).unwrap();
     fs::write(a.join("logseq/.tine-trash"), b"blocked").unwrap();
@@ -1457,6 +1490,7 @@ fn blocked_trash_keeps_asset_and_legacy_error_text() {
 
 #[test]
 fn malformed_sidecar_refusal_matches_legacy_text_and_keeps_bytes() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("malformed-new");
     let malformed = b"{:highlights []} trailing";
     fs::write(a.join("assets/paper.edn"), malformed).unwrap();
@@ -1484,6 +1518,7 @@ fn malformed_sidecar_refusal_matches_legacy_text_and_keeps_bytes() {
 
 #[test]
 fn annotation_notes_survive_update_with_legacy_bytes() {
+    let _integration_guard = crate::integration_lock();
     let h = highlight("one");
     let mut doc = tine_core::pdf::hls_page_document_for_format(
         "paper.pdf",
@@ -1519,6 +1554,7 @@ fn annotation_notes_survive_update_with_legacy_bytes() {
 
 #[test]
 fn empty_sanitized_pdf_key_keeps_legacy_crop_location() {
+    let _integration_guard = crate::integration_lock();
     let (a, store) = fixture("empty-key-new");
     let pdf_name = "??.pdf";
     assert_eq!(tine_core::pdf::asset_key(pdf_name), "");
@@ -1558,6 +1594,7 @@ fn operation_result(result: &std::io::Result<()>, root: &std::path::Path) -> Str
 
 #[test]
 fn page_rename_matches_legacy_for_refs_namespace_case_and_tags() {
+    let _integration_guard = crate::integration_lock();
     for (index, (label, old_name, new_name, files, config)) in [
         (
             "plain",
@@ -1657,6 +1694,7 @@ fn page_rename_matches_legacy_for_refs_namespace_case_and_tags() {
 
 #[test]
 fn page_rename_refusals_match_legacy_and_keep_disk() {
+    let _integration_guard = crate::integration_lock();
     for (index, (label, files)) in [
         (
             "target-exists",
@@ -1699,6 +1737,7 @@ fn page_rename_refusals_match_legacy_and_keep_disk() {
 
 #[test]
 fn page_merge_delete_and_rescue_match_legacy_bytes() {
+    let _integration_guard = crate::integration_lock();
     let (a, _) = fixture("page-operations-new");
     put(
         &a,
@@ -1772,6 +1811,7 @@ fn page_merge_delete_and_rescue_match_legacy_bytes() {
 
 #[test]
 fn merge_keeps_source_preamble_text_and_conflicting_properties() {
+    let _integration_guard = crate::integration_lock();
     let (root, _) = fixture("merge-source-preamble");
     put(
         &root,
@@ -1795,6 +1835,7 @@ fn merge_keeps_source_preamble_text_and_conflicting_properties() {
 
 #[test]
 fn org_merge_and_binary_rescue_match_legacy() {
+    let _integration_guard = crate::integration_lock();
     let (a, _) = fixture("org-merge-new");
     put(&a, "pages/src.org", "* moved\n");
     put(&a, "pages/dst.org", "* kept\n");
@@ -1821,6 +1862,7 @@ fn org_merge_and_binary_rescue_match_legacy() {
 /// trashed, so `[[x]]` keeps resolving; the other pages complete forward.
 #[test]
 fn page_rename_keeps_an_external_referrer_change_and_a_failed_draft_changes_nothing() {
+    let _integration_guard = crate::integration_lock();
     use tine_store::host_faults::{fail, Phase};
     let (a, _) = fixture("rename-fault-external");
     put(&a, "pages/x.md", "- [[x]]\n");
@@ -1888,6 +1930,7 @@ fn page_rename_keeps_an_external_referrer_change_and_a_failed_draft_changes_noth
 /// did this only with a warm reference index; its full-scan fallback rewrote them.
 #[test]
 fn page_rename_leaves_query_only_mentions_alone() {
+    let _integration_guard = crate::integration_lock();
     let (a, _) = fixture("rename-query-only");
     put(&a, "pages/x.md", "- body\n");
     put(

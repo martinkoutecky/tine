@@ -1,6 +1,6 @@
 //! Rename unit-cost probe (I-25, fam 16). Ignored: run with
 //! `TINE_RENAME_PROBE_ROOT=<copy of a generated 10k graph> TINE_RENAME_PROBE_OLD=..`
-//! `cargo test -p tine-graph-features --release --test rename_cost_probe -- --ignored --nocapture`.
+//! `cargo test -p tine-graph-features --release --test integration rename_cost_probe:: -- --ignored --nocapture`.
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -45,6 +45,7 @@ fn bytes_read() -> u64 {
 #[test]
 #[ignore]
 fn rename_cost_at_scale() {
+    let _integration_guard = crate::integration_lock();
     let root = std::path::PathBuf::from(std::env::var("TINE_RENAME_PROBE_ROOT").unwrap());
     let old = std::env::var("TINE_RENAME_PROBE_OLD").unwrap();
     let new = format!("{old} renamed");

@@ -137,6 +137,7 @@ fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
 
 #[test]
 fn an_ordinary_edit_is_one_guarded_save_with_no_draft() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for blocks in [1, 60] {
         let (one, len) = edit(blocks, 1, ALONE);
@@ -162,6 +163,7 @@ fn an_ordinary_edit_is_one_guarded_save_with_no_draft() {
 
 #[test]
 fn a_burst_of_submits_is_bounded_by_its_submits() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Five submits answered back to back (the window sends at most one per
     // debounce, 400 ms with a 1 s max wait): the host saves at most once per
@@ -184,6 +186,7 @@ fn a_burst_of_submits_is_bounded_by_its_submits() {
 
 #[test]
 fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // REVIEW-3b-P2b R4(a): the path from submit to publication (save, index
     // publication, the waiter) reads and stamps the edited page only, on an
@@ -222,6 +225,7 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
 
 #[test]
 fn an_edit_among_many_held_pages_visits_what_changed() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // M4 (REVIEW-progress-plan R5): one edit while the window holds many
     // other pages open. Reconcile, draft-index and worker-key work follows

@@ -2,6 +2,7 @@ use tine_store::{Depth, EditKind, PageId, QueryDialect, QueryResult, SaveBase, S
 
 #[test]
 fn linkable_page_headers_match_queries_and_linked_references() {
+    let _integration_guard = crate::integration_lock();
     for (extension, header) in [
         ("md", "related:: Alpha，Beta\nalias:: Editor\n\n- body\n"),
         ("org", "#+related: Alpha，Beta\n#+alias: Editor\n\n* body\n"),
@@ -51,6 +52,7 @@ fn linkable_page_headers_match_queries_and_linked_references() {
 
 #[test]
 fn property_references_refresh_after_guarded_saves_and_config_changes() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     std::fs::create_dir(dir.path().join("logseq")).unwrap();

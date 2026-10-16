@@ -23,6 +23,7 @@ fn recoveries(root: &Path) -> Vec<std::path::PathBuf> {
 }
 #[test]
 fn replace_reports_the_leaf_that_arrived_after_review_and_leaves_siblings() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     old(root);
@@ -64,6 +65,7 @@ fn replace_reports_the_leaf_that_arrived_after_review_and_leaves_siblings() {
 
 #[test]
 fn publication_child() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_QUERY_COMMIT_CHILD") else {
         return;
     };
@@ -93,7 +95,11 @@ fn publication_child() {
 }
 fn child(root: &Path, point: &str, replace: bool) -> Child {
     Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "publication_child", "--nocapture"])
+        .args([
+            "--exact",
+            "query_publication_commit::publication_child",
+            "--nocapture",
+        ])
         .env("TINE_QUERY_COMMIT_CHILD", root)
         .env("TINE_QUERY_REPLACE", if replace { "yes" } else { "no" })
         .env("TINE_PUBLICATION_PAUSE", point)
@@ -125,6 +131,7 @@ fn paused(root: &Path, child: &mut Child) {
 }
 #[test]
 fn killed_replace_reopens_with_the_complete_previous_leaf_in_recovery() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     old(root);
@@ -161,6 +168,7 @@ fn killed_replace_reopens_with_the_complete_previous_leaf_in_recovery() {
 }
 #[test]
 fn concurrent_create_and_replace_winners_are_never_clobbered() {
+    let _integration_guard = crate::integration_lock();
     for replace in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -200,6 +208,7 @@ fn concurrent_create_and_replace_winners_are_never_clobbered() {
 
 #[test]
 fn graph_site_and_query_leaf_have_one_commit_answerer() {
+    let _integration_guard = crate::integration_lock();
     let source = include_str!("../src/publish.rs");
     let production = source.split("#[cfg(all(test, unix))]").next().unwrap();
     // Count CALLS, whatever the receiver or argument spelling: every occurrence of the
@@ -248,6 +257,7 @@ fn graph_site_and_query_leaf_have_one_commit_answerer() {
 
 #[test]
 fn review_suggestions_remain_portable_at_the_folder_limit() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("pages")).unwrap();
     let folder = "a".repeat(80);
@@ -273,6 +283,7 @@ fn review_suggestions_remain_portable_at_the_folder_limit() {
 #[cfg(unix)]
 #[test]
 fn review_refuses_an_unsafe_existing_leaf() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("pages")).unwrap();
     fs::create_dir_all(dir.path().join("published-queries")).unwrap();

@@ -92,6 +92,7 @@ fn reads(counts: &cost_counters::Counts) -> u64 {
 
 #[test]
 fn a_cold_launch_reads_each_graph_file_once_and_stamps_it_from_the_listing() {
+    let _integration_guard = crate::integration_lock();
     // The config-only graph measures the fixed reads of config.edn itself.
     let empty = graph_with(0);
     let fixed = launch_reads(empty.path());

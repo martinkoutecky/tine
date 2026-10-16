@@ -30,7 +30,7 @@ const page = (): PageDto => ({
 });
 
 describe("Block selection drag ownership (GH #240)", () => {
-  it("drags the captured selection when the pointer bullet is outside it", async () => {
+  it.each([false, true])("drags the captured selection when the pointer bullet is outside it (Alt: %s)", async (altKey) => {
     loadSingle(page());
     selectBlock("B");
     extendSelectionTo("C");
@@ -74,7 +74,7 @@ describe("Block selection drag ownership (GH #240)", () => {
         clientX: 10,
         clientY: 120,
       }));
-      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, altKey }));
       await vi.waitFor(() => expect(pageByName("Drag")!.roots).toEqual(["A", "D", "E", "B", "C"]));
       expect(pageByName("Drag")!.roots).toEqual(["A", "D", "E", "B", "C"]);
       expect(doc.byId.A.raw).toBe("A");

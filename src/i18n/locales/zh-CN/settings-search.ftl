@@ -202,7 +202,7 @@ settings-search-home-start-startup-page = 首页 开始 启动 页面
 
 settings-search-help-diagnostics = 帮助与诊断
 
-settings-search-diagnostic-report-crash-unclean-exit-save-slow = 诊断 报告 崩溃 异常退出 保存 缓慢 隐私 帮助 重新扫描 图谱 计时 统计 改进 解析器 差异 匿名化
+settings-search-diagnostic-report-crash-unclean-exit-save-slow = 诊断 报告 崩溃 异常退出 保存 缓慢 隐私 帮助 重新扫描 图谱 计时 统计
 
 settings-search-keyboard-shortcuts = 键盘快捷键
 

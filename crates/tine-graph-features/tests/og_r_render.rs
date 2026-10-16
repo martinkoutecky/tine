@@ -71,6 +71,7 @@ fn printed(label: &str, config: &str, pages: &[(&str, &str)], page: &str) -> Str
 /// A fenced `public:: true` example in the preamble is code, not the page's flag.
 #[test]
 fn fenced_public_example_does_not_publish_a_page() {
+    let _integration_guard = crate::integration_lock();
     let (files, count) = published(
         "fence-public",
         "{}\n",
@@ -90,6 +91,7 @@ fn fenced_public_example_does_not_publish_a_page() {
 /// A fenced `public:: false` example cannot veto a real `public:: true`.
 #[test]
 fn fenced_public_false_example_does_not_veto_a_public_page() {
+    let _integration_guard = crate::integration_lock();
     let (files, count) = published(
         "fence-veto",
         "{}\n",
@@ -109,6 +111,7 @@ fn fenced_public_false_example_does_not_veto_a_public_page() {
 /// `:block-hidden-properties`; an arbitrary `logseq.*` key is a visible chip.
 #[test]
 fn export_hides_the_property_chips_the_app_hides() {
+    let _integration_guard = crate::integration_lock();
     let page = "public:: true\n\n- body\n  title:: SHOWN_TITLE_TOKEN\n  hl-color:: HLCOLOR_TOKEN\n  \
                 tine.view:: TINEVIEW_TOKEN\n  logseq.table.version:: TABLEVER_TOKEN\n  \
                 Created_At:: CREATED_TOKEN\n  mine:: USERHIDDEN_TOKEN\n  logseq.custom:: CUSTOM_VISIBLE_TOKEN\n  \
@@ -145,6 +148,7 @@ fn export_hides_the_property_chips_the_app_hides() {
 /// `{{embed [[É]]}}` finds the page `é` (Logseq page identity folds Unicode case).
 #[test]
 fn print_embed_finds_a_page_by_unicode_identity() {
+    let _integration_guard = crate::integration_lock();
     let html = printed(
         "embed-identity",
         "{}\n",
@@ -160,6 +164,7 @@ fn print_embed_finds_a_page_by_unicode_identity() {
 /// An NFD spelling of a page link reaches the NFC page's selected file.
 #[test]
 fn published_link_slug_is_found_by_page_identity() {
+    let _integration_guard = crate::integration_lock();
     // "Caf" takes the plain slug, so the NFC page gets a hashed one; the link
     // is spelled NFD.
     let (files, _) = published(
@@ -189,6 +194,7 @@ const ORG_PAGE: &str = "* ORGHEAD *bold-org* and ~code-org~\n:PROPERTIES:\n:ID: 
 
 #[test]
 fn org_print_renders_org_markup() {
+    let _integration_guard = crate::integration_lock();
     let html = printed("org-print", "{}\n", &[("Notes.org", ORG_PAGE)], "Notes");
     assert!(html.contains("<strong>bold-org</strong>"), "{html}");
     assert!(html.contains(">code-org</code>"), "{html}");
@@ -198,6 +204,7 @@ fn org_print_renders_org_markup() {
 
 #[test]
 fn org_publish_renders_org_markup() {
+    let _integration_guard = crate::integration_lock();
     let (files, _) = published(
         "org-publish",
         "{:publishing/all-pages-public? true}\n",
@@ -218,6 +225,7 @@ fn org_publish_renders_org_markup() {
 /// `src/render/ogRTwins.test.ts` asserts the same spellings).
 #[test]
 fn ordered_blocks_number_under_the_shared_property_key_fold() {
+    let _integration_guard = crate::integration_lock();
     let html = printed(
         "ordered-fold",
         "{}\n",

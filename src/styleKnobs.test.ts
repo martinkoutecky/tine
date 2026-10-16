@@ -191,14 +191,6 @@ describe("guards", () => {
     }
   });
 
-  it("the Settings control sits between Color scheme and Custom CSS", () => {
-    const source = readFileSync("src/components/ThemeSettings.tsx", "utf8");
-    const at = (needle: string) => source.indexOf(needle);
-    expect(at('t("themes-color-scheme")')).toBeGreaterThan(-1);
-    expect(at("<StyleKnobsSettings />")).toBeGreaterThan(at("Color scheme"));
-    expect(at("<StyleKnobsSettings />")).toBeLessThan(at("<CustomCssSettings />"));
-  });
-
   it("the Guide page names the Fine-tuning section and the device preference key (K5)", () => {
     const guide = readFileSync("crates/tine-core/src/templates/customize-look.md", "utf8");
     expect(existsSync("crates/tine-core/src/templates/customize-look.md")).toBe(true);

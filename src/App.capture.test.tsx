@@ -4,6 +4,7 @@ import { backend } from "./backend";
 import { loadSingle } from "./document/workingSet";
 import { resetStore, pageByName } from "./document";
 import { bindTestHost, submittedPages } from "./document/host/wiring.test.support";
+import { mainPaneRouter, route } from "./router";
 
 import { initParser } from "./render/parse";
 beforeAll(() => initParser());
@@ -42,12 +43,15 @@ it("saves one bound capture and acknowledges its retry without writing again", a
   loadSingle({ name: "A", kind: "page", title: "A", id: "pages/A.md", pre_block: null, blocks: [] });
   // Graph A's binding: its page-host session is the write's binding.
   const host = await bindTestHost();
+  mainPaneRouter.openPage("A");
+  const editingRoute = route();
   const dispose = await installQuickCaptureReceiver();
   const payload = { id: "current", target: "main", bindingGeneration: 11, title: "Destination", text: "- belongs to A" };
   await h.receive!({ payload });
   expect(save).toHaveBeenCalledOnce();
   expect(submittedPages(save)[0].blocks[0].raw).toBe("belongs to A");
   expect(save.mock.calls[0][0]).toBe(host.session);
+  expect(route()).toEqual(editingRoute);
   resetStore(); generation = 12;
   await h.receive!({ payload });
   expect(save).toHaveBeenCalledOnce();

@@ -48,6 +48,7 @@ fn on_small_stack(work: impl FnOnce() + Send) {
 
 #[test]
 fn deep_trash_directory_is_counted_and_purged_iteratively() {
+    let _integration_guard = crate::integration_lock();
     let dir = graph("trash");
     let root = dir.path().to_path_buf();
     let entry = root.join("logseq/.tine-trash/assets/entry");
@@ -66,6 +67,7 @@ fn deep_trash_directory_is_counted_and_purged_iteratively() {
 
 #[test]
 fn deep_asset_directory_is_scanned_iteratively() {
+    let _integration_guard = crate::integration_lock();
     let dir = graph("scan");
     let root = dir.path().to_path_buf();
     deep_tree(&root.join("assets"));
@@ -82,6 +84,7 @@ fn deep_asset_directory_is_scanned_iteratively() {
 
 #[test]
 fn restore_retires_extras_from_a_deep_page_directory_iteratively() {
+    let _integration_guard = crate::integration_lock();
     let dir = graph("restore");
     let root = dir.path().to_path_buf();
     fs::create_dir_all(root.join("logseq")).unwrap();

@@ -46,6 +46,7 @@ const CONFLICTED: &str =
 
 #[test]
 fn rename_skips_marker_bearing_referrers_and_reports_them() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph(
         "referrer",
         &[
@@ -84,6 +85,7 @@ fn rename_skips_marker_bearing_referrers_and_reports_them() {
 /// descendant that moves keeps its bytes exactly.
 #[test]
 fn namespace_rename_also_skips_marker_bearing_referrers_and_moves_them_verbatim() {
+    let _integration_guard = crate::integration_lock();
     let conflicted = "- intro\n<<<<<<< HEAD\n- [[Parent]] and [[Parent/Child]]\n=======\n- [[Parent/Child]] only\n>>>>>>> branch\n";
     let child = "- child of [[Parent]]\n<<<<<<< HEAD\n- a\n=======\n- b\n>>>>>>> x\n";
     let (root, store) = graph(
@@ -123,6 +125,7 @@ fn namespace_rename_also_skips_marker_bearing_referrers_and_moves_them_verbatim(
 /// file is refused whoever asks; the bytes stay.
 #[test]
 fn the_store_refuses_a_reference_rewrite_inside_a_marker_bearing_file() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("backstop", &[("pages/Conflicted.md", CONFLICTED)]);
     let id = PageId::from("pages/Conflicted.md");
     let (_, rev) = store.read(&id.file(), None).unwrap();

@@ -60,6 +60,7 @@ fn raws(store: &Store, id: &PageId) -> Vec<String> {
 /// the newer bytes (own save, and an external/Syncthing write alike).
 #[test]
 fn f1_custom_journal_format_reload_serves_disk_and_never_clobbers_newer_bytes() {
+    let _integration_guard = crate::integration_lock();
     for (format, stem) in [
         ("dd-MM-yyyy", "24-06-2026"),
         ("yyyyMMdd", "20260624"),
@@ -125,11 +126,16 @@ fn f1_custom_journal_format_reload_serves_disk_and_never_clobbers_newer_bytes() 
 #[cfg(feature = "test-faults")]
 #[test]
 fn f2_crash_in_multi_page_undo_keeps_each_pages_old_bytes() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("f2");
     fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
     fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
     let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "f2_undo_crash_worker", "--nocapture"])
+        .args([
+            "--exact",
+            "c3s_content_loss::f2_undo_crash_worker",
+            "--nocapture",
+        ])
         .env("TINE_C3S_ROOT", &root)
         .output()
         .unwrap();
@@ -165,6 +171,7 @@ fn f2_crash_in_multi_page_undo_keeps_each_pages_old_bytes() {
 #[cfg(feature = "test-faults")]
 #[test]
 fn f2_completed_undo_restores_old_bytes_and_leaves_no_staged_copy() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("f2-ok");
     fs::write(root.join("pages/A.md"), "- old A\n").unwrap();
     fs::write(root.join("pages/B.md"), "- old B\n").unwrap();
@@ -236,6 +243,7 @@ fn two_page_entries(
 #[cfg(feature = "test-faults")]
 #[test]
 fn f2_undo_crash_worker() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_C3S_ROOT") else {
         return;
     };
@@ -254,6 +262,7 @@ fn f2_undo_crash_worker() {
 /// (pinned by `src/editor/leadingMarkerSplice.test.ts`).
 #[test]
 fn f3_extra_space_after_bullet_stays_in_the_block_raw() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("f3");
     fs::write(root.join("pages/T.md"), "-  TODO buy milk\n").unwrap();
     let store = Store::open(&root, Default::default()).unwrap().0;

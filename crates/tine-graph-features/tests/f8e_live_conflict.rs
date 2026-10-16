@@ -125,6 +125,7 @@ fn decisions(diff: &tine_core::sync_diff::SyncConflictDiff) -> HashMap<String, S
 /// guarded save at the reviewed disk revision.
 #[test]
 fn a_live_conflict_uses_the_editor_base_and_guarded_resolution() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("three-way");
     fs::write(root.join(PAGE), BASE).unwrap();
     let store = open(&root);
@@ -164,6 +165,7 @@ fn a_live_conflict_uses_the_editor_base_and_guarded_resolution() {
 /// pre-selected (keep both), and a forged `"merged"` decision refuses.
 #[test]
 fn without_the_editor_base_the_review_is_two_way_and_keeps_both() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("two-way");
     fs::write(root.join(PAGE), BASE).unwrap();
     let store = open(&root);
@@ -214,6 +216,7 @@ fn without_the_editor_base_the_review_is_two_way_and_keeps_both() {
 /// review of the newer disk then resolves.
 #[test]
 fn a_newer_external_write_refuses_and_writes_nothing_until_rereviewed() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("newer");
     fs::write(root.join(PAGE), BASE).unwrap();
     let store = open(&root);
@@ -263,6 +266,7 @@ fn a_newer_external_write_refuses_and_writes_nothing_until_rereviewed() {
 /// against a base the user did not see; the draft and disk are untouched.
 #[test]
 fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("stale-base");
     const ID: &str = "aaaaaaaa-0000-0000-0000-0000000000e8";
     let body = |text: &str| format!("- shared intro\n- {text}\n  id:: {ID}\n");
@@ -317,6 +321,7 @@ fn a_stale_ledger_base_refuses_a_merged_row_and_loses_nothing() {
 /// ledger now lists it among newer texts; the disk is untouched.
 #[test]
 fn a_merge_reads_the_reviewed_base_by_its_name_and_writes_nothing() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("merge-read-only");
     const ID: &str = "aaaaaaaa-0000-0000-0000-0000000000e9";
     let body = |text: &str| format!("- shared intro\n- {text}\n  id:: {ID}\n");
@@ -361,6 +366,7 @@ fn a_merge_reads_the_reviewed_base_by_its_name_and_writes_nothing() {
 /// and a file that reappeared meanwhile (even empty) refuses the apply.
 #[test]
 fn an_absent_file_review_is_read_only_and_apply_recreates_only_if_still_absent() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("absent");
     fs::write(root.join(PAGE), BASE).unwrap();
     let store = open(&root);

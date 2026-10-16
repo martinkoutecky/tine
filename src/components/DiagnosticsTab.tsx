@@ -2,8 +2,7 @@ import { msg, t } from "../i18n";
 // Settings → Help & diagnostics: review, copy, save (desktop) or clear the
 // privacy-safe diagnostic report of this run and the previous one (GH #343,
 // og ADR 0058), verify a synchronized graph's exact bytes against another
-// device, list this session's recent error messages (memory only), and run the parser comparison
-// ("Help improve Tine's parser"). Nothing here is uploaded automatically.
+// device, list this session's recent error messages (memory only). Nothing here is uploaded automatically.
 import { Show, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend, type DiagnosticReport } from "../backend";
 import { writeClipboardText } from "../clipboard";
@@ -14,7 +13,6 @@ import { rescanGraphNowFromSettings } from "../reloadOnFocus";
 import { pushToast } from "../toasts";
 import { ErrorToastHistory } from "./ErrorToastHistory";
 import { GraphVerification } from "./GraphVerification";
-import { ImproveTab } from "./ImproveTab";
 import "../styles/diagnostics.css";
 
 export const DIAGNOSTIC_PREVIEW_LIMIT = 64 * 1024;
@@ -109,19 +107,19 @@ export function DiagnosticsTab(): JSX.Element {
       <p class="settings-hint diagnostics-privacy">{t("diagnostics-tab-it-does-not-record-graph-content-file-paths")}</p>
       <p class="settings-hint diagnostics-privacy">{t("diagnostics-tab-a-report-also-carries-statistics-about-your-graph")}</p>
       <div class="diagnostics-actions">
-        <button type="button" class="primary" disabled={busy()} onClick={() => void createReport()}>
+        <button type="button" class="settings-btn settings-btn-primary" disabled={busy()} onClick={() => void createReport()}>
           {busy() ? t("diagnostics-tab-creating") : t("diagnostics-tab-create-diagnostic-report")}
         </button>
         <Show when={report()}>
-          <button type="button" onClick={() => void copyReport()}>{t("diagnostics-tab-copy-report")}</button>
+          <button class="settings-btn" type="button" onClick={() => void copyReport()}>{t("diagnostics-tab-copy-report")}</button>
         </Show>
         <Show when={!isMobilePlatform}>
-          <button type="button" onClick={() => void saveReport()}>{t("diagnostics-tab-save-report")}</button>
+          <button class="settings-btn" type="button" onClick={() => void saveReport()}>{t("diagnostics-tab-save-report")}</button>
         </Show>
-        <button type="button" class="danger" onClick={() => void clearReport()}>{t("diagnostics-tab-clear-recorded-events")}</button>
+        <button type="button" class="settings-btn danger" onClick={() => void clearReport()}>{t("diagnostics-tab-clear-recorded-events")}</button>
       </div>
       <div class="diagnostics-rescan">
-        <button type="button" disabled={rescanning()} onClick={() => void rescanGraph()}>
+        <button class="settings-btn" type="button" disabled={rescanning()} onClick={() => void rescanGraph()}>
           {rescanning() ? t("diagnostics-tab-rescanning") : t("diagnostics-tab-rescan-graph")}
         </button>
         <span class="settings-hint" role="status">
@@ -146,10 +144,6 @@ export function DiagnosticsTab(): JSX.Element {
       </Show>
       <ErrorToastHistory />
       <GraphVerification />
-      <div class="diagnostics-improve">
-        <h3>{t("diagnostics-tab-help-improve-tine-s-parser")}</h3>
-        <ImproveTab />
-      </div>
     </section>
   );
 }

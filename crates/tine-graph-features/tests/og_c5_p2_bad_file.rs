@@ -42,6 +42,7 @@ const BAD_UTF8: &[u8] = b"- bad \xff\n";
 
 #[test]
 fn journal_feed_serves_readable_days_and_reports_the_bad_one() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "feed",
         &[
@@ -85,6 +86,7 @@ fn journal_feed_serves_readable_days_and_reports_the_bad_one() {
 
 #[test]
 fn duplicate_days_list_every_day_and_name_the_unreadable_file() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "duplicates",
         &[
@@ -122,6 +124,7 @@ const COPY: &str = "pages/Foo.sync-conflict-20260705-120000-ABCDEFG.md";
 
 #[test]
 fn conflict_inventory_keeps_healthy_conflicts_beside_bad_files() {
+    let _integration_guard = crate::integration_lock();
     let big = {
         let mut bytes = b"<<<<<<< HEAD\n".to_vec();
         bytes.resize(tine_store::PARSE_INPUT_MAX_BYTES as usize + 16, b'x');
@@ -192,33 +195,6 @@ fn conflict_inventory_keeps_healthy_conflicts_beside_bad_files() {
         .unreadable
         .iter()
         .any(|row| row.starts_with("pages/Late.md")));
-    store.close();
-    let _ = fs::remove_dir_all(root);
-}
-
-#[test]
-fn parser_sources_report_what_they_skip() {
-    let (root, store) = fixture(
-        "sources",
-        &[("pages/Good.md", b"- good\n"), ("pages/Bad.md", BAD_UTF8)],
-    );
-    let sources = tine_graph_features::sources::graph_source_files(&store, false).unwrap();
-    assert_eq!(
-        sources
-            .files
-            .iter()
-            .map(|f| f.rel.as_str())
-            .collect::<Vec<_>>(),
-        ["pages/Good.md"]
-    );
-    assert!(
-        sources
-            .skipped
-            .iter()
-            .any(|row| row.starts_with("pages/Bad.md")),
-        "{:?}",
-        sources.skipped
-    );
     store.close();
     let _ = fs::remove_dir_all(root);
 }

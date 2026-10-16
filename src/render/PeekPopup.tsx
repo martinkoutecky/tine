@@ -1,7 +1,7 @@
 import { For, Show, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { openInNewTab } from "../router";
 import { t } from "../i18n";
-import { openPageContextMenu } from "../ui";
+import { contextMenu, openPageContextMenu } from "../ui";
 import { PagePropertyValue } from "../components/PagePropertyValue";
 import { FloatingPortal } from "../components/FloatingPortal";
 import { RefBlocks } from "../components/RefBlocks";
@@ -85,9 +85,23 @@ export function PeekPopup(props: {
   const ownerWindow = useOwnerWindow();
   const layerId = `peek-popup-${createUniqueId()}`;
   const [style, setStyle] = createSignal<Record<string, string>>({});
+  // Page menus live outside the preview DOM. Identify this preview's menu by
+  // its exact opener, so unrelated menus retain normal outside dismissal.
+  const ownsMenu = () => {
+    const menu = contextMenu();
+    return menu?.kind === "page" && !!menu.focusOwner && !!popupEl?.contains(menu.focusOwner);
+  };
+  let menuWasOpen = false;
+  let pointerInside = false;
+  createEffect(() => {
+    const open = ownsMenu();
+    if (open) props.onPointerEnter(); // cancel any pending hover-close timer
+    else if (menuWasOpen && !pointerInside) props.onPointerLeave(); // resume the ordinary grace period
+    menuWasOpen = open;
+  });
   const openSource = (block?: string) => {
     if (!props.page) return;
-    openInNewTab({ kind: "page", name: props.page, pageKind: props.pageKind ?? "page", ...(block ? { block } : {}) });
+    openInNewTab({ kind: "page", name: props.page, pageKind: props.pageKind ?? "page", ...(block ? { block } : {}) }, true);
     props.onDismiss();
   };
 
@@ -130,7 +144,7 @@ export function PeekPopup(props: {
     });
     onCleanup(unregister);
   });
-  dismissOnOutsidePointer({ open: () => true, inside: () => [popupEl, props.anchor()], dismiss: props.onDismiss });
+  dismissOnOutsidePointer({ open: () => !ownsMenu(), inside: () => [popupEl, props.anchor()], dismiss: props.onDismiss });
 
   onMount(() => {
     const close = () => props.onDismiss();
@@ -138,6 +152,7 @@ export function PeekPopup(props: {
     // popup's own overflow body (or drags its scrollbar) — capture-phase scroll
     // fires for every scroller, so filter out events originating inside the popup.
     const onScroll = (e: Event) => {
+      if (ownsMenu()) return;
       const t = e.target as Node | null;
       if (popupEl && t && (popupEl === t || popupEl.contains(t))) return;
       close();
@@ -159,8 +174,8 @@ export function PeekPopup(props: {
         tabIndex={-1}
         data-lenis-prevent
         style={style()}
-        onMouseEnter={props.onPointerEnter}
-        onMouseLeave={props.onPointerLeave}
+        onMouseEnter={() => { pointerInside = true; props.onPointerEnter(); }}
+        onMouseLeave={() => { pointerInside = false; if (!ownsMenu()) props.onPointerLeave(); }}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <Show when={props.title}>
@@ -173,8 +188,7 @@ export function PeekPopup(props: {
                   const rect = event.currentTarget.getBoundingClientRect();
                   const page = props.page!;
                   const kind = props.pageKind ?? "page";
-                  props.onDismiss();
-                  openPageContextMenu(rect.left, rect.bottom, page, kind);
+                  openPageContextMenu(rect.left, rect.bottom, page, kind, false, event.currentTarget);
                 }}>…</button>
             </Show>
           </div>

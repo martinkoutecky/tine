@@ -883,21 +883,6 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async resolvePage(name: string, kind: "journal" | "page") {
       return mockResolve(name, kind);
     },
-    async graphSourceFiles(includeJournals: boolean) {
-      // Synthetic sources so the diff panel is exercisable against the mock
-      // backend (the real comparison still needs mldoc + lsdoc-wasm at runtime).
-      const files = [
-        { rel: "pages/welcome.md", text: "# Welcome\n- a **bold** note with [[Link]]\n", format: "md" as const },
-        { rel: "pages/tasks.md", text: "- TODO finish #project\n- DONE ship it\n", format: "md" as const },
-      ];
-      if (includeJournals) {
-        files.push({ rel: "journals/2026_07_04.md", text: "- met with [[Alice]] re: $$x^2$$\n", format: "md" as const });
-      }
-      return {
-        files: files.map((f) => ({ ...f, bytes: new TextEncoder().encode(f.text).length })),
-        skipped: [],
-      };
-    },
     graphBindingGeneration: () => 1,
     ...mockPageHost((path) => all.find((p) => mockPagePath(p) === path) ?? null, (name, kind) => mockResolve(name, kind)),
     async guidePages(): Promise<GuidePage[]> {

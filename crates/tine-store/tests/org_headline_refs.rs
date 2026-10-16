@@ -2,6 +2,7 @@ use tine_store::{QueryDialect, Store};
 
 #[test]
 fn org_headline_tags_are_page_refs() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     std::fs::write(

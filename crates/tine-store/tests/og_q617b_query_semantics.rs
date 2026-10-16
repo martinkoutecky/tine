@@ -101,6 +101,7 @@ fn fixture() -> (tempfile::TempDir, WholeGraph) {
 
 #[test]
 fn priority_accepts_the_vector_form_like_og() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     let a_only = set(&graph, "(priority A)");
     assert_eq!(a_only.len(), 2, "{a_only:?}");
@@ -125,6 +126,7 @@ fn priority_accepts_the_vector_form_like_og() {
 
 #[test]
 fn task_accepts_the_vector_form_like_og() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     let todo = set(&graph, "(task TODO)");
     assert!(todo.iter().any(|b| b.contains("open")), "{todo:?}");
@@ -144,6 +146,7 @@ fn task_accepts_the_vector_form_like_og() {
 /// Org pages answer alike.
 #[test]
 fn bare_task_and_priority_add_no_condition_as_in_og_in_markdown_and_org() {
+    let _integration_guard = crate::integration_lock();
     let open = [
         "TODO",
         "DOING",
@@ -223,6 +226,7 @@ fn bare_task_and_priority_add_no_condition_as_in_og_in_markdown_and_org() {
 
 #[test]
 fn page_tags_accepts_the_vector_form_like_og() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     let work = page_names(&graph, "(page-tags alpha)");
     assert_eq!(work.len(), 1, "{work:?}");
@@ -234,6 +238,7 @@ fn page_tags_accepts_the_vector_form_like_og() {
 
 #[test]
 fn bare_string_search_sees_property_lines_like_og_raw_content() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     // `quuxvalue` occurs only in the `foo:: quuxvalue` line.
     for q in [
@@ -251,6 +256,7 @@ fn bare_string_search_sees_property_lines_like_og_raw_content() {
 
 #[test]
 fn page_ref_and_not_task_returns_the_pages_other_blocks() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     // #619 4a. OG path-refs include the block's own page, so every block of
     // BugQueries that is not a TODO task qualifies (the host block is dropped
@@ -271,6 +277,7 @@ fn page_ref_and_not_task_returns_the_pages_other_blocks() {
 /// the same, for every form that takes it.
 #[test]
 fn every_collection_spelling_answers_the_same_for_task_priority_and_page_tags() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     // (form, one-argument spellings of the same list, expected is non-empty)
     let blocks: [(&str, &[&str]); 3] = [
@@ -360,6 +367,7 @@ fn every_collection_spelling_answers_the_same_for_task_priority_and_page_tags() 
 /// query fail there; Tine reports it instead of matching a guess.
 #[test]
 fn a_nested_or_unclosed_collection_is_a_query_error_not_a_guess() {
+    let _integration_guard = crate::integration_lock();
     for q in ["(task [TODO [DOING]])", "(task #{TODO", "(priority (A ])"] {
         let (query, _view) = parse_query_input(
             q,
@@ -382,6 +390,7 @@ fn a_nested_or_unclosed_collection_is_a_query_error_not_a_guess() {
 /// datalog `(not a b)`, which drops a row only when ALL its clauses hold.
 #[test]
 fn not_negates_the_conjunction_of_all_its_operands() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     let work = set(&graph, "(page \"Work\")");
     let urgent: BTreeSet<String> = work
@@ -435,6 +444,7 @@ fn priorities(graph: &WholeGraph, q: &str) -> Vec<char> {
 /// keyword is exactly `asc`.
 #[test]
 fn sort_by_defaults_to_descending_like_og() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     let base = "(and (page \"Work\") (priority A B C)";
     assert_eq!(
@@ -467,6 +477,7 @@ fn sort_by_defaults_to_descending_like_og() {
 /// Audit #6: a query made only of directives is OG's nil query: it runs nothing.
 #[test]
 fn a_query_of_only_directives_returns_nothing_like_og() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     for q in [
         "(sort-by priority)",
@@ -568,6 +579,7 @@ fn want(items: &[&str]) -> BTreeSet<String> {
 /// query matched nothing.
 #[test]
 fn between_created_at_is_a_half_open_range_over_the_timestamp_property() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = timestamp_graph();
     let jan_1_2 = "[[Jan 1st, 2024]] [[Jan 2nd, 2024]]";
     let expected = want(&["first-instant", "noon", "snake"]);
@@ -599,6 +611,7 @@ fn between_created_at_is_a_half_open_range_over_the_timestamp_property() {
 
 #[test]
 fn between_timestamp_bounds_read_now_and_h_n_offsets_like_og_to_timestamp() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = timestamp_graph();
     // The wall clock decides where `now` falls relative to the midnight-anchored
     // blocks, so each assertion looks only at the family it is about.
@@ -643,6 +656,7 @@ fn between_timestamp_bounds_read_now_and_h_n_offsets_like_og_to_timestamp() {
 
 #[test]
 fn between_timestamp_with_an_unresolvable_or_missing_bound_is_invalid() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = timestamp_graph();
     for q in [
         "(between created-at nonsense today)",
@@ -670,6 +684,7 @@ fn between_timestamp_with_an_unresolvable_or_missing_bound_is_invalid() {
 /// descendants.
 #[test]
 fn simple_namespace_is_immediate_children_only_while_advanced_stays_recursive() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     std::fs::create_dir(dir.path().join("journals")).unwrap();
@@ -747,6 +762,7 @@ fn simple_namespace_is_immediate_children_only_while_advanced_stays_recursive() 
 /// that are not journals come after them.
 #[test]
 fn journal_result_groups_run_newest_first_when_no_sort_is_given() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     std::fs::create_dir(dir.path().join("journals")).unwrap();

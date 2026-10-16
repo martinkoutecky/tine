@@ -1,6 +1,7 @@
 //! I-15/I-12: parsers at preparation, indexed identity at move preflight.
 #[test]
 fn save_publication_reuses_only_verified_prepared_bytes() {
+    let _integration_guard = crate::integration_lock();
     let tx = include_str!("../src/transaction/publication.rs");
     assert!(tx.contains(".filter(|plan| plan.new.as_deref() == now.as_deref())"),
         "I-4/I-15: publish a prepared parse only for its exact final bytes; exemplar transaction/publication.rs post-apply sweep");
@@ -25,6 +26,7 @@ fn save_publication_reuses_only_verified_prepared_bytes() {
 
 #[test]
 fn move_twin_checks_use_the_published_name_answerer() {
+    let _integration_guard = crate::integration_lock();
     let tx = include_str!("../src/transaction.rs");
     let twin = tx
         .split("fn twin(")

@@ -90,22 +90,6 @@ export interface GraphConfigChange {
   meta: GraphMeta;
 }
 
-/** One raw graph file, as returned by `graphSourceFiles` — the input to the
- *  in-app lsdoc↔mldoc diff panel. `text` is the file's bytes exactly as on disk. */
-export interface GraphSourceFile {
-  rel: string;
-  text: string;
-  format: "md" | "org";
-  bytes: number;
-}
-
-/** The parser-comparison input: every eligible file, and `path: reason` for
- *  each file left out (unreadable, undecodable, over the size limit). */
-export interface GraphSources {
-  files: GraphSourceFile[];
-  skipped: string[];
-}
-
 export type GraphFolderPickResult =
   | { status: "picked"; path: string }
   // Android could not resolve the selected provider folder to local files.

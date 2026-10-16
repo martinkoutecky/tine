@@ -23,6 +23,7 @@ fn block(id: &str, raw: &str) -> BlockDto {
 
 #[test]
 fn removing_a_header_property_beside_a_fenced_example_is_not_a_reclassification() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
     let path = dir.path().join("pages").join("Doc.md");
@@ -54,6 +55,7 @@ fn removing_a_header_property_beside_a_fenced_example_is_not_a_reclassification(
 
 #[test]
 fn a_real_property_block_moved_out_of_the_header_is_still_refused() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
     let path = dir.path().join("pages").join("Doc.md");

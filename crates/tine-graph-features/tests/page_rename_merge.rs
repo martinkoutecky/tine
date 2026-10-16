@@ -61,6 +61,7 @@ fn trashed(root: &Path, bytes: &str) -> bool {
 /// Master `rename_collision_merges_content_and_rewrites_graph_refs`, in meaning.
 #[test]
 fn rename_collision_merges_content_and_rewrites_graph_refs() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "master",
         &[
@@ -124,6 +125,7 @@ fn rename_collision_merges_content_and_rewrites_graph_refs() {
 /// source's identity (`title::`) never renames the survivor, and aliases join.
 #[test]
 fn rename_merge_keeps_survivor_identity_and_joins_aliases() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "aliases",
         &[
@@ -170,6 +172,7 @@ fn rename_merge_keeps_survivor_identity_and_joins_aliases() {
 
 #[test]
 fn rename_merge_refuses_before_writing_when_its_confirmation_is_stale() {
+    let _integration_guard = crate::integration_lock();
     let files = [
         ("logseq/config.edn", LOWBAR),
         ("pages/Old.md", "- old\n"),
@@ -207,6 +210,7 @@ fn rename_merge_refuses_before_writing_when_its_confirmation_is_stale() {
 
 #[test]
 fn rename_merge_refuses_mixed_formats() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "formats",
         &[("pages/Old.org", "* old\n"), ("pages/New.md", "- new\n")],
@@ -225,6 +229,7 @@ fn rename_merge_refuses_mixed_formats() {
 /// through a parent rename, for the page and its descendants.
 #[test]
 fn namespaced_title_pages_rebind_their_own_title_on_rename() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "ns-title",
         &[
@@ -272,6 +277,7 @@ fn namespaced_title_pages_rebind_their_own_title_on_rename() {
 /// no `title::` of its own, the survivor used to take it and change identity.
 #[test]
 fn plain_merge_never_carries_the_source_title_into_the_survivor_header() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "plain-title",
         &[
@@ -296,6 +302,7 @@ fn plain_merge_never_carries_the_source_title_into_the_survivor_header() {
 /// same confirmation as renaming onto a page file, and merges into the owner.
 #[test]
 fn renaming_onto_an_alias_needs_the_merge_confirmation() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "alias-target",
         &[
@@ -338,6 +345,7 @@ fn renaming_onto_an_alias_needs_the_merge_confirmation() {
 /// needs the confirmation instead of silently merging.
 #[test]
 fn reference_only_rename_onto_an_existing_page_needs_the_confirmation() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "ref-only",
         &[
@@ -384,6 +392,7 @@ fn reference_only_rename_onto_an_existing_page_needs_the_confirmation() {
 /// GH #609: a case-only rename changes spelling and reports the move.
 #[test]
 fn case_only_rename_reports_renamed() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("case-only", &[("pages/Old.md", "- body\n")]);
     let outcome = hosted(&store, |host| {
         pages::rename_or_merge_page(&store, host, "Old", "old", None, None, &[])
@@ -413,6 +422,7 @@ fn case_only_rename_reports_renamed() {
 /// directives join the header or move as a block like Markdown properties.
 #[test]
 fn org_merge_keeps_the_source_directives() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "org-directives",
         &[
@@ -452,6 +462,7 @@ fn org_merge_keeps_the_source_directives() {
 /// Rule 2 B4: a plain merge unites aliases exactly as a rename-merge does.
 #[test]
 fn plain_merge_unites_aliases_like_the_rename_merge() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "plain-alias",
         &[
@@ -474,6 +485,7 @@ fn plain_merge_unites_aliases_like_the_rename_merge() {
 /// observed must survive the merge, in the survivor and in the source.
 #[test]
 fn merge_keeps_edits_held_pages_have_not_indexed() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(
         "held",
         &[("pages/src.md", "- moved\n"), ("pages/dst.md", "- kept\n")],

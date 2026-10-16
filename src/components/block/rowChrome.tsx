@@ -1,6 +1,7 @@
 import { t } from "../../i18n";
 import { createMemo, type JSX } from "solid-js";
 import { collapsibleDescendantIds, node as docNode, setCollapsedDescendants } from "../../document";
+import { bulkCollapseTarget } from "../../collapseToggle";
 import type { CollapseSurfaceApi } from "../Block";
 import { acceptsPluginColor, type PluginSettingValue } from "../../plugins/settings";
 
@@ -60,7 +61,7 @@ export function CollapseAllBorder(props: { id: string; readOnly: boolean; surfac
   const collapseSurface = props.surface;
   const collapsibleDescendants = createMemo(() => collapsibleDescendantIds(props.id));
   const hasCollapsedDescendant = createMemo(() =>
-    collapsibleDescendants().some((id) => {
+    !bulkCollapseTarget(collapsibleDescendants(), (id) => {
       const descendant = docNode(id);
       return descendant
         ? collapseSurface?.collapsed(id, descendant.collapsed) ?? descendant.collapsed

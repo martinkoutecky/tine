@@ -124,6 +124,7 @@ const BUSY: &str = "Another rename of these pages is still finishing; try again 
 
 #[test]
 fn a_merge_over_a_running_renames_destination_waits_until_the_order_ends() {
+    let _integration_guard = crate::integration_lock();
     let f = conflicted_rename();
     let (root, store, host) = (&f.root, &*f.store, &f.host);
     std::thread::scope(|scope| {
@@ -169,6 +170,7 @@ fn a_merge_over_a_running_renames_destination_waits_until_the_order_ends() {
 /// ends the same merge runs.
 #[test]
 fn a_merge_over_a_conflicted_running_rename_is_told_busy_after_the_bound() {
+    let _integration_guard = crate::integration_lock();
     let f = conflicted_rename();
     let (root, store, host) = (&f.root, &*f.store, &f.host);
     std::thread::scope(|scope| {

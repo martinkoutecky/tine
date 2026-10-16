@@ -6,7 +6,8 @@
  * - `beginDrag(id, e)` arms a bullet drag from a mousedown. Past a 4 px
  *   threshold it ends editing, tracks a drop indicator (`dropInd`) under the
  *   pointer and, on mouseup, moves the active selection (or just the block) with
- *   one `moveBlocksRelative` call. The move is refused when the graph changed
+ *   one `moveBlocksRelative` call. Alt-drop of one block inserts a durable ref.
+ *   The move is refused when the graph changed
  *   during the drag (binding check) or when the target is inside a moved subtree.
  * - `beginEditGesture(...)` starts editing at the captured offset on mousedown
  *   (OG, GH #368); a drag inside the block selects editor text, and one that
@@ -14,7 +15,9 @@
  *   know the listeners. */
 import { createSignal } from "solid-js";
 import { captureBinding, bindingCurrent } from "../binding";
-import { clearSelection, extendSelectionTo, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
+import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
+import { msg } from "../i18n";
+import { pushToast } from "../toasts";
 import { endEdit, startEditing } from "../editorController";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
 import { codeFences } from "../editor/fences";
@@ -112,7 +115,7 @@ export function beginDrag(id: string, e: MouseEvent) {
       setDropInd(null);
     }
   };
-  const onUp = () => {
+  const onUp = (ev: MouseEvent) => {
     doc.removeEventListener("mousemove", onMove);
     doc.removeEventListener("mouseup", onUp);
     setDragSelectionSuppressed(false);
@@ -120,7 +123,14 @@ export function beginDrag(id: string, e: MouseEvent) {
     if (bindingCurrent(binding) && dragMoved && ind && docNode(ind.id)) {
       // One transaction: normalizes nested captures, refuses a drop into a
       // moved subtree, and persists a cross-page move as one save group.
-      void moveBlocksRelative(capturedIds ?? [id], ind.id, ind.position);
+      const ids = capturedIds ?? [id];
+      // OG 0.10.9 handler/dnd.cljs move-blocks: Alt at drop time references a
+      // single block; a multiple-block selection still moves together.
+      if (ev.altKey && ids.length === 1) {
+        void referenceDrop(ids[0], ind.id, ind.position);
+      } else {
+        void moveBlocksRelative(ids, ind.id, ind.position);
+      }
     }
     setDragId(null);
     setDropInd(null);
@@ -128,6 +138,30 @@ export function beginDrag(id: string, e: MouseEvent) {
   };
   doc.addEventListener("mousemove", onMove);
   doc.addEventListener("mouseup", onUp);
+}
+
+/** Publish the source ID through the guarded save path before inserting a ref.
+ * A failed save or a changed graph/owner during that barrier inserts nothing. */
+async function referenceDrop(sourceId: string, targetId: string, position: BlockDropPosition) {
+  const binding = captureBinding();
+  const source = docNode(sourceId), target = docNode(targetId);
+  if (!source || !target || !blockWritable(sourceId) || !blockWritable(targetId)) return;
+  const sourcePage = source.page, targetPage = target.page;
+  try {
+    const uuid = await ensureBlockId(sourceId);
+    if (!bindingCurrent(binding) || docNode(sourceId) !== source || docNode(targetId) !== target
+      || source.page !== sourcePage || target.page !== targetPage) return;
+    if (!uuid || blockExternalId(sourceId) !== uuid) {
+      pushToast(msg("editor-block-could-not-save-the-block-reference-resolve-the-page-save-and-try-again"), "error");
+      return;
+    }
+    const outline = [{ raw: `((${uuid}))`, children: [] }];
+    if (position === "child") insertOutlineChildren(targetId, outline);
+    else if (position === "before") insertOutlineBefore(targetId, outline);
+    else insertOutlineAfter(targetId, outline);
+  } catch (error) {
+    if (bindingCurrent(binding)) pushToast(msg("editor-block-could-not-save-the-block-reference", { detail: String(error) }), "error");
+  }
 }
 
 // --- Click / drag gesture on rendered block content -------------------------

@@ -83,6 +83,7 @@ fn assert_table(actual: &BTreeMap<String, usize>, expected: &BTreeMap<String, us
 
 #[test]
 fn all_production_refusals_have_scenarios() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     // The whole `transaction` module: a refusal moved into a `transaction/` child
     // file must stay counted, or splitting the file would silently empty the table.
@@ -119,6 +120,7 @@ fn all_production_refusals_have_scenarios() {
 
 #[test]
 fn planted_refusal_fails_table() {
+    let _integration_guard = crate::integration_lock();
     let mut actual = BTreeMap::new();
     actual.insert("transaction.rs::new_operation::Twin".to_owned(), 1);
     assert!(

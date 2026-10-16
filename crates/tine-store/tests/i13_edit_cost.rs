@@ -69,6 +69,7 @@ fn edit(pages: usize, blocks: usize) -> (Counts, usize) {
 
 #[test]
 fn edit_cost_is_page_bounded() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap();
     for blocks in [1, 60] {
         let (small, small_len) = edit(20, blocks);
@@ -115,6 +116,7 @@ fn edit_cost_is_page_bounded() {
 
 #[test]
 fn memo_carry_checks_only_the_changed_page() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap();
     let mut max_probes = 0;
     for blocks in [1, 60] {
@@ -147,6 +149,7 @@ fn memo_carry_checks_only_the_changed_page() {
 
 #[test]
 fn held_snapshot_edit_and_icon_request_have_bounded_page_work() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap();
     for blocks in [1, 60] {
         for pages in [1, 1000] {
@@ -179,6 +182,7 @@ fn held_snapshot_edit_and_icon_request_have_bounded_page_work() {
 
 #[test]
 fn single_page_print_builds_one_corpus() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap();
     for pages in [20, 2000] {
         let (_dir, store, _) = graph(pages, 1);
@@ -201,6 +205,7 @@ fn single_page_print_builds_one_corpus() {
 
 #[test]
 fn full_publish_builds_one_corpus() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap();
     let (_dir, store, _) = graph(20, 1);
     cost_counters::reset();

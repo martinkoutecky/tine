@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 set +u; source scripts/env.sh >/dev/null; set -u
-cargo test --release -p tine-graph-features --test rename_cost -- \
+cargo test --release -p tine-graph-features --test integration -- \
   --ignored --exact --nocapture \
-  a_250_referrer_rename_completes_inside_the_caller_bound \
-  a_thousand_referrer_rename_completes_inside_the_caller_bound
+  rename_cost::a_250_referrer_rename_completes_inside_the_caller_bound \
+  rename_cost::a_thousand_referrer_rename_completes_inside_the_caller_bound

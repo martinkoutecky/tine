@@ -15,6 +15,7 @@ fn hosted<T>(
 
 #[test]
 fn rename_does_not_read_unrelated_page_headers() {
+    let _integration_guard = crate::integration_lock();
     for pages in [32, 256] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();

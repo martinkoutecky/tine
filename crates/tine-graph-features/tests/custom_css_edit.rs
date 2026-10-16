@@ -26,6 +26,7 @@ fn open(root: &std::path::Path) -> Store {
 
 #[test]
 fn a_missing_custom_css_is_created_commented_and_then_left_alone() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("create");
     let store = open(&root);
     assert!(!root.join("logseq/custom.css").exists());
@@ -60,6 +61,7 @@ fn a_missing_custom_css_is_created_commented_and_then_left_alone() {
 
 #[test]
 fn an_oversized_existing_custom_css_can_still_be_opened_for_repair() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("oversized");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     let big = vec![b'a'; 70 * 1024 * 1024];
@@ -82,6 +84,7 @@ fn an_oversized_existing_custom_css_can_still_be_opened_for_repair() {
 
 #[test]
 fn a_directory_named_custom_css_is_refused_not_replaced() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("dir");
     std::fs::create_dir_all(root.join("logseq/custom.css")).unwrap();
     let store = open(&root);

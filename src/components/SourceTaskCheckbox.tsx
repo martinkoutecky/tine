@@ -80,7 +80,8 @@ export function SourceTaskCheckbox(props: {
               pushToast(msg("macro-source-task-checkbox-couldn-t-load-the-task-s-page-so-the-task"), "error");
             });
           }}
-          onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
+          // Keep this a direct touch-adjustment candidate like the source box.
+          on:click={(e) => { e.stopPropagation(); e.preventDefault(); }}
           onAuxClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
         />
     </Show>

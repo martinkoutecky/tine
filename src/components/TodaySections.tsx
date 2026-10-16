@@ -10,7 +10,8 @@ import { bindingOwner, graphOwner, readOwned } from "../owned";
 import { errorFamily } from "../errorFamily";
 import { macroNameForDialect } from "../editor/queryMacroName";
 import { readOr } from "../resourceRead";
-import { agendaQuery, agendaTql } from "../ui";
+import { agendaQuery, agendaTql, openPageInSidebar } from "../ui";
+import { ensureGuidePagesLoaded, guidePageName } from "../guide";
 import { openPage } from "../router";
 import { createPage } from "../document";
 import { pushToast } from "../toasts";
@@ -21,11 +22,31 @@ import { detectMacro } from "./Rendered";
 import { ResourceFailure } from "./ResourceFailure";
 import { DEFAULT_JOURNAL_SECTIONS_PAGE, locateSectionsPages, sectionItems, seedSectionsPage, type SectionItem } from "../journalSections";
 import type { Format } from "../types";
+import { soleBlockMacro } from "../render/parse";
 
-const classify = (raw: string, format: Format): SectionItem["kind"] | null =>
-  detectMacro(raw, format)?.kind === "query" ? "query" : inspectBeginQuery(raw, format) ? "begin-query" : null;
+const classify = (raw: string, format: Format): SectionItem["kind"] | null => {
+  const macro = soleBlockMacro(raw, format);
+  if (macro?.name === "upcoming" && macro.args.length === 0) return "upcoming";
+  return detectMacro(raw, format)?.kind === "query" ? "query" : inspectBeginQuery(raw, format) ? "begin-query" : null;
+};
 
 type Sections = { page: string; items: SectionItem[]; ambiguous: string[] } | null;
+
+export function JournalSectionsHeader(): JSX.Element {
+  const openGuide = async () => {
+    const owner = graphOwner();
+    try {
+      await ensureGuidePagesLoaded();
+      if (owner()) openPageInSidebar(guidePageName("Reference/Journals, tasks, and scheduling"));
+    } catch (error) {
+      if (owner()) pushToast(t("guide-couldn-t-open-the-guide", { error: String(error) }), "error");
+    }
+  };
+  return <div class="journal-sections-header">
+    <span>{t("journal-sections-explanation")}</span>{" "}
+    <button type="button" onClick={() => void openGuide()}>{t("help-guide")}</button>
+  </div>;
+}
 
 async function readSections(): Promise<Sections> {
   const owner = graphOwner();
@@ -64,7 +85,7 @@ export async function customizeTodaySections(): Promise<void> {
   }
 }
 
-export function TodaySections(props: { today: string }): JSX.Element {
+export function TodaySections(props: { today: string; upcoming?: JSX.Element }): JSX.Element {
   const [sections, { refetch }] = createResource(() => `${graphEpoch()}\0${dataRev()}`, readSections);
   const current = () => readOr(sections, null, "today sections");
   const [busy, setBusy] = createSignal(false);
@@ -97,6 +118,7 @@ export function TodaySections(props: { today: string }): JSX.Element {
             <For each={found().items}>
               {(item) => <div class="default-journal-query">
                 <Switch>
+                  <Match when={item.kind === "upcoming"}>{props.upcoming}</Match>
                   <Match when={item.kind === "query" && detectMacro(item.raw, item.format)}>
                     {(macro) => <QueryMacro body={macro().inner} currentPage={props.today} hideWhenEmpty />}
                   </Match>

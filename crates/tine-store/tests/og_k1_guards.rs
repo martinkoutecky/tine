@@ -84,6 +84,7 @@ fn scan(path: &Path, violations: &mut Vec<String>) {
 
 #[test]
 fn fixed_byte_prefixes_are_checked_throughout_core_and_store() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut violations = Vec::new();
     for source in ["tine-core/src", "tine-store/src"] {
@@ -96,6 +97,7 @@ fn fixed_byte_prefixes_are_checked_throughout_core_and_store() {
 
 #[test]
 fn prefix_guard_rejects_length_only_and_accepts_checked_or_byte_access() {
+    let _integration_guard = crate::integration_lock();
     let mut guard = PrefixSlices::default();
     guard.visit_file(
         &syn::parse_file(
@@ -112,6 +114,7 @@ fn prefix_guard_rejects_length_only_and_accepts_checked_or_byte_access() {
 
 #[test]
 fn transaction_unchanged_path_checks_the_same_guard_as_changed_writes() {
+    let _integration_guard = crate::integration_lock();
     let source = include_str!("../src/transaction.rs");
     let start = source
         .find("Step::Save { .. } | Step::Replace { .. } | Step::Rewrite { .. } =>")
@@ -124,6 +127,7 @@ fn transaction_unchanged_path_checks_the_same_guard_as_changed_writes() {
 
 #[test]
 fn disabled_tql_diagnostics_have_one_owner() {
+    let _integration_guard = crate::integration_lock();
     let source = include_str!("../../tine-core/src/query/tql.rs");
     assert_eq!(
         source.matches("self.diagnostics.push(").count(),

@@ -810,9 +810,6 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async defaultGraphParent() {
       return "";
     },
-    async graphSourceFiles() {
-      return { files: [], skipped: [] };
-    },
     async conflictInventory() {
       return { sync_conflicts: [], vcs_markers: [], queue: [] };
     },
@@ -1000,7 +997,6 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "captureTarget",
   "bindCaptureGraph",
   "defaultGraphParent",
-  "graphSourceFiles",
   "conflictInventory",
   "listJournalConflicts",
   "listSyncConflicts",

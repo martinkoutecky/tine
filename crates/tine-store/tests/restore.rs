@@ -67,6 +67,7 @@ fn recovery_dir(root: &Path) -> PathBuf {
 
 #[test]
 fn restore_recovery_roots_live_on_the_filesystems_they_detach_from() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("recovery-roots");
     let graph_root = root.join("graph");
     let store = graph(&graph_root, None);
@@ -99,6 +100,7 @@ fn restore_recovery_roots_live_on_the_filesystems_they_detach_from() {
 
 #[test]
 fn restore_does_not_publish_recovery_sidecars_as_live_assets() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("recovery-feed");
     let graph_root = root.join("graph");
     let store = graph(&graph_root, None);
@@ -123,6 +125,7 @@ fn restore_does_not_publish_recovery_sidecars_as_live_assets() {
 
 #[test]
 fn restore_refuses_config_with_unsafe_directories_before_retiring_pages() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("unsafe-config");
     let graph_root = root.join("graph");
     let store = graph(&graph_root, None);
@@ -148,6 +151,7 @@ fn restore_refuses_config_with_unsafe_directories_before_retiring_pages() {
 
 #[test]
 fn restore_journal_updates_day_and_view() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("journal-index");
     let graph_root = root.join("graph");
     let store = graph(&graph_root, None);
@@ -189,6 +193,7 @@ fn restore_journal_updates_day_and_view() {
 #[cfg(unix)]
 #[test]
 fn restore_recovery_symlink_cannot_redirect_or_replace_outside() {
+    let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::symlink;
     let root = scratch("recovery-symlink");
     let graph_root = root.join("graph");
@@ -212,6 +217,7 @@ fn restore_recovery_symlink_cannot_redirect_or_replace_outside() {
 #[cfg(unix)]
 #[test]
 fn restore_recovery_path_swap_stays_on_the_bound_directory() {
+    let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::symlink;
     let root = scratch("recovery-swap");
     let graph_root = root.join("graph");
@@ -248,6 +254,7 @@ fn restore_recovery_path_swap_stays_on_the_bound_directory() {
 #[cfg(unix)]
 #[test]
 fn restore_live_path_swap_cannot_move_or_publish_outside() {
+    let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::symlink;
     let root = scratch("live-swap");
     let graph_root = root.join("graph");
@@ -290,6 +297,7 @@ fn restore_live_path_swap_cannot_move_or_publish_outside() {
 
 #[test]
 fn restore_recovery_never_replaces_an_existing_entry() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("recovery-no-replace");
     let graph_root = root.join("graph");
     let store = graph(&graph_root, None);
@@ -324,6 +332,7 @@ fn restore_recovery_never_replaces_an_existing_entry() {
 
 #[test]
 fn partial_restore_reports_completed_files_and_preserves_the_failing_target() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("partial-report");
     let graph_root = root.join("graph");
     let store = graph(&graph_root, None);
@@ -373,6 +382,7 @@ fn partial_restore_reports_completed_files_and_preserves_the_failing_target() {
 
 #[test]
 fn restore_asset_sidecars_dir_restores_sidecars_and_leaves_binary_assets() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("sidecars");
     let graph_root = root.join("graph");
     let store = graph(&graph_root, None);
@@ -421,6 +431,7 @@ fn restore_asset_sidecars_dir_restores_sidecars_and_leaves_binary_assets() {
 
 #[test]
 fn graph_text_backup_and_restore_include_nested_pages() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("nested-pages");
     let graph_root = root.join("graph");
     let store = graph(&graph_root, None);
@@ -466,6 +477,7 @@ fn graph_text_backup_and_restore_include_nested_pages() {
 #[cfg(unix)]
 #[test]
 fn complete_restore_crosses_from_app_data_to_a_distinct_live_filesystem() {
+    let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::MetadataExt;
     let app_data = scratch("cross-device-source");
     let live_root = PathBuf::from("/dev/shm").join(format!(
@@ -567,6 +579,7 @@ fn complete_restore_crosses_from_app_data_to_a_distinct_live_filesystem() {
 #[cfg(unix)]
 #[test]
 fn approved_external_assets_restore_keeps_recovery_on_target() {
+    let _integration_guard = crate::integration_lock();
     use std::os::unix::fs::symlink;
     let root = scratch("external-assets");
     let graph_root = root.join("graph");
@@ -603,6 +616,7 @@ fn approved_external_assets_restore_keeps_recovery_on_target() {
 /// so it must stay live.
 #[test]
 fn graph_restore_places_text_anywhere_and_retires_by_the_recorded_scope() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("graph-wide");
     let graph_root = root.join("graph");
     let store = graph(&graph_root, None);
@@ -668,6 +682,7 @@ fn graph_restore_places_text_anywhere_and_retires_by_the_recorded_scope() {
 /// Either mismatch refuses before any live file moves.
 #[test]
 fn graph_restore_refuses_text_outside_its_recorded_scope() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("graph-refuse");
     let graph_root = root.join("graph");
     let store = graph(&graph_root, None);
@@ -703,6 +718,7 @@ fn graph_restore_refuses_text_outside_its_recorded_scope() {
 /// process kill cannot show this; the recorded directory syncs can.
 #[test]
 fn restore_makes_the_recovery_tree_durable_before_publishing_replacements() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("recovery-durable");
     let graph_root = root.join("graph");
     let store = graph(&graph_root, None);

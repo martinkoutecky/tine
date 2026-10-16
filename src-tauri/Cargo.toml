@@ -1,4 +1,5 @@
 [package]
+autotests = false
 name = "tine"
 version.workspace = true
 edition.workspace = true
@@ -137,3 +138,8 @@ x11 = { version = "2.21.0", features = ["xlib"] }
 # SIGKILL WebKitGTK's helper subprocesses at quit so they don't run their GL/EGL
 # driver atexit teardown (which double-frees → SIGABRT coredump on many Mesa/driver
 # combos). See platform::kill_webkit_children and GH #28.
+
+# Keep all integration cases in one linked executable.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"

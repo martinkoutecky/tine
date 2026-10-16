@@ -37,6 +37,7 @@ fn run(store: &Store) -> Manifest {
 
 #[test]
 fn real_nested_sources_are_hashed_exactly_without_mutation() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("exact");
     let before = fs::read(root.join("pages/nested/Unicode 題.md")).unwrap();
     let manifest = run(&store);
@@ -63,6 +64,7 @@ fn real_nested_sources_are_hashed_exactly_without_mutation() {
 
 #[test]
 fn the_report_round_trips_and_a_foreign_format_is_refused() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("report");
     let manifest = run(&store);
     let text = manifest.to_report().unwrap();
@@ -79,6 +81,7 @@ fn the_report_round_trips_and_a_foreign_format_is_refused() {
 
 #[test]
 fn a_same_size_byte_change_moves_the_aggregate_and_the_file_digest() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("aggregate");
     let first = run(&store);
     fs::write(root.join("archive/deep/Elsewhere.org"), b"* elsewherE\n").unwrap();
@@ -92,6 +95,7 @@ fn a_same_size_byte_change_moves_the_aggregate_and_the_file_digest() {
 
 #[test]
 fn cancellation_stops_the_run_and_leaves_the_bytes_alone() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("cancel");
     let before = fs::read(root.join("archive/deep/Elsewhere.org")).unwrap();
     let result = verify_graph_bytes(&store, &|| true, &mut |_, _| {});
@@ -115,6 +119,7 @@ fn cancellation_stops_the_run_and_leaves_the_bytes_alone() {
 
 #[test]
 fn a_file_set_that_changes_mid_run_is_incomplete_never_a_match() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("race-add");
     let manifest = verify_graph_bytes(&store, &|| false, &mut |done, _| {
         if done == 1 {
@@ -133,6 +138,7 @@ fn a_file_set_that_changes_mid_run_is_incomplete_never_a_match() {
 
 #[test]
 fn a_file_removed_after_listing_is_reported_by_path() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("race-remove");
     let manifest = verify_graph_bytes(&store, &|| false, &mut |done, total| {
         if done == 0 && total > 0 {
@@ -150,6 +156,7 @@ fn a_file_removed_after_listing_is_reported_by_path() {
 
 #[test]
 fn atomic_replacement_of_open_descriptor_is_incomplete() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = graph("replace-descriptor");
     let target = root.join("archive/deep/Elsewhere.org");
     let polls = Cell::new(0);

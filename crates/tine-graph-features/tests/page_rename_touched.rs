@@ -62,6 +62,7 @@ fn touched(path: &str, moved: bool) -> TouchedPage {
 
 #[test]
 fn a_rename_reports_every_page_it_moved_or_rewrote_and_nothing_else() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("report");
     let mut report = hosted(&store, |host| {
         pages::rename_or_merge_page(&store, host, "Target", "Renamed", None, None, &[])
@@ -86,6 +87,7 @@ fn a_rename_reports_every_page_it_moved_or_rewrote_and_nothing_else() {
 
 #[test]
 fn a_rename_refuses_to_write_a_file_with_unsaved_edits_and_changes_nothing() {
+    let _integration_guard = crate::integration_lock();
     for blocked in ["pages/Referrer.md", "pages/Target___Child.md"] {
         let (root, store) = fixture("guarded");
         let before = snapshot(&root);
@@ -113,6 +115,7 @@ fn a_rename_refuses_to_write_a_file_with_unsaved_edits_and_changes_nothing() {
 
 #[test]
 fn unsaved_edits_on_an_untouched_page_do_not_block_the_rename() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("untouched");
     let report = hosted(&store, |host| {
         pages::rename_or_merge_page(
@@ -135,6 +138,7 @@ fn unsaved_edits_on_an_untouched_page_do_not_block_the_rename() {
 
 #[test]
 fn a_merge_reports_its_survivor_and_source_and_honours_unsaved_paths() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("merge");
     fs::write(root.join("pages/Survivor.md"), "- kept\n").unwrap();
     let store = {

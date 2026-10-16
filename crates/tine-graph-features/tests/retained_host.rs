@@ -152,6 +152,7 @@ fn with_a_host(
 /// plain rename's, which they were pinned equal to before its deletion).
 #[test]
 fn page_renames_with_a_host_write_the_renamed_graph() {
+    let _integration_guard = crate::integration_lock();
     let files = [
         ("pages/Start.md", "- home [[Other]]\n"),
         (
@@ -252,6 +253,7 @@ fn page_renames_with_a_host_write_the_renamed_graph() {
 
 #[test]
 fn other_census_writers_with_a_host_write_what_the_plain_writers_write() {
+    let _integration_guard = crate::integration_lock();
     let files = [
         ("pages/A.md", "- a body\n"),
         ("pages/B.md", "- b body\n"),
@@ -398,6 +400,7 @@ fn waits_for_a_reservation(
 
 #[test]
 fn a_census_writer_waits_for_a_reservation_of_its_page() {
+    let _integration_guard = crate::integration_lock();
     waits_for_a_reservation(
         "fence",
         &[("pages/A.md", "- a\n"), ("pages/B.md", "- b\n")],
@@ -415,6 +418,7 @@ fn a_census_writer_waits_for_a_reservation_of_its_page() {
 /// holds as a fileless draft is not created behind it.
 #[test]
 fn the_guide_copy_waits_for_a_reservation_of_its_page() {
+    let _integration_guard = crate::integration_lock();
     let page = format!(
         "pages/{}.md",
         tine_core::model::encode_page_name(
@@ -471,6 +475,7 @@ fn hosted(label: &str, files: &[(&str, &str)]) -> (PathBuf, PathBuf, Arc<Store>,
 /// touching it. B's page, held elsewhere, never blocks A's migration.
 #[test]
 fn a_stale_journal_proposal_never_blocks_another() {
+    let _integration_guard = crate::integration_lock();
     let (dir, app_data, store, host) = hosted(
         "r3-journals",
         &[
@@ -502,6 +507,7 @@ fn a_stale_journal_proposal_never_blocks_another() {
 /// A-R3: each eligible proposal still reserves the pages it moves.
 #[test]
 fn a_journal_migration_waits_for_a_reservation_of_its_page() {
+    let _integration_guard = crate::integration_lock();
     waits_for_a_reservation(
         "r3-journal-fence",
         &[("journals/Jun 19th, 2026.md", "- a\n")],
@@ -523,6 +529,7 @@ fn a_journal_migration_waits_for_a_reservation_of_its_page() {
 /// referrer is rewritten.
 #[test]
 fn a_host_rename_does_not_wait_for_a_referrer_it_skips() {
+    let _integration_guard = crate::integration_lock();
     let marked = "- [[Old]]\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n";
     let (dir, app_data, store, host) = hosted(
         "r3a-host-rename",
@@ -559,6 +566,7 @@ fn a_host_rename_does_not_wait_for_a_referrer_it_skips() {
 /// completion.
 #[test]
 fn a_refusing_rename_does_not_reserve_a_referrer_it_skips() {
+    let _integration_guard = crate::integration_lock();
     let marked = "- [[Old]]\n<<<<<<< ours\n- x\n=======\n- y\n>>>>>>> theirs\n";
     let (dir, app_data, store, host) = hosted(
         "r3-rename",

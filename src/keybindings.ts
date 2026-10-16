@@ -1,4 +1,5 @@
 import { shortcutKey } from "./shortcutKey";
+import { openWorkspaceCreation } from "./workspaceCreation";
 import { adjustSidebarWidth } from "./sidebarSizing";
 import { openCssEditor } from "./cssEditor";
 import { openWorkspaceWindow, workspaceWindowsSupported } from "./workspaceWindows";
@@ -18,7 +19,7 @@ import { msg, render, renderEnglish, type UiText, type Msg } from "./i18n";
 import { customCssDisabled, setCustomCssDisabled } from "./customCss";
 import { restoreDrawerFocus } from "./mobileDrawers";
 import { zoomReset } from "./zoom";
-import { onEachWindow, queryAllWindows } from "./windowRealm";
+import { activeWindowId, MAIN_WINDOW_ID, onEachWindow, queryAllWindows } from "./windowRealm";
 import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
 import {
@@ -123,6 +124,8 @@ interface Chord {
 export type ShortcutScope = "global" | "editor" | "select";
 
 interface CommandDef {
+  /** Keep bindable commands in Shortcuts while omitting them from launchers. */
+  paletteHidden?: boolean;
   id: string;
   binding: string;
   /** Human label for the palette and the Settings reference: a catalog message
@@ -324,6 +327,7 @@ const COMMANDS: CommandDef[] = [
   // mod+1..9 belong to pane focus. Leave these browser-style slots bindable.
   ...Array.from({ length: 9 }, (_, i): CommandDef => ({
     id: `tab/activate-${i + 1}`,
+    paletteHidden: true,
     binding: "",
     label: i === 8 ? msg("command-tab-activate-last") : msg("command-tab-activate-n", { index: i + 1 }),
     scope: "global",
@@ -340,20 +344,21 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/close", binding: "", label: msg("command-pane-close"), scope: "global", run: () => void closePane(focusedPaneId()), global: true },
   { id: "pane/toggle-maximize", binding: "mod+alt+m", label: msg("command-pane-toggle-maximize"), scope: "global", run: () => { togglePaneMaximize(); }, global: true },
   { id: "window/open-in-new-window", binding: "", label: msg("command-window-open-in-new-window"), scope: "global", available: () => workspaceWindowsSupported(), run: () => { if (workspaceWindowsSupported()) openWorkspaceWindow({ snapshot: focusedRouter().duplicateActiveSnapshot() }); }, global: true },
-  { id: "sidebar/grow-width", binding: "", label: msg("command-sidebar-grow-width"), scope: "global", run: () => adjustSidebarWidth("left", true), global: true },
-  { id: "sidebar/shrink-width", binding: "", label: msg("command-sidebar-shrink-width"), scope: "global", run: () => adjustSidebarWidth("left", false), global: true },
-  { id: "right-sidebar/grow-width", binding: "", label: msg("command-right-sidebar-grow-width"), scope: "global", run: () => adjustSidebarWidth("right", true), global: true },
-  { id: "right-sidebar/shrink-width", binding: "", label: msg("command-right-sidebar-shrink-width"), scope: "global", run: () => adjustSidebarWidth("right", false), global: true },
+  { id: "sidebar/grow-width", paletteHidden: true, binding: "", label: msg("command-sidebar-grow-width"), scope: "global", run: () => adjustSidebarWidth("left", true), global: true },
+  { id: "sidebar/shrink-width", paletteHidden: true, binding: "", label: msg("command-sidebar-shrink-width"), scope: "global", run: () => adjustSidebarWidth("left", false), global: true },
+  { id: "right-sidebar/grow-width", paletteHidden: true, binding: "", label: msg("command-right-sidebar-grow-width"), scope: "global", run: () => adjustSidebarWidth("right", true), global: true },
+  { id: "right-sidebar/shrink-width", paletteHidden: true, binding: "", label: msg("command-right-sidebar-shrink-width"), scope: "global", run: () => adjustSidebarWidth("right", false), global: true },
   { id: "go/search-tab", binding: "", label: msg("command-go-search-tab"), scope: "global", run: () => { closeSwitcher(); openQueryInNewTab("", "search", true); }, global: true },
-  { id: "pane/grow-width", binding: "", label: msg("command-pane-grow-width"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", true); }, global: true },
-  { id: "pane/shrink-width", binding: "", label: msg("command-pane-shrink-width"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", false); }, global: true },
-  { id: "pane/grow-height", binding: "", label: msg("command-pane-grow-height"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", true); }, global: true },
-  { id: "pane/shrink-height", binding: "", label: msg("command-pane-shrink-height"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", false); }, global: true },
+  { id: "pane/grow-width", paletteHidden: true, binding: "", label: msg("command-pane-grow-width"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", true); }, global: true },
+  { id: "pane/shrink-width", paletteHidden: true, binding: "", label: msg("command-pane-shrink-width"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "width", false); }, global: true },
+  { id: "pane/grow-height", paletteHidden: true, binding: "", label: msg("command-pane-grow-height"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", true); }, global: true },
+  { id: "pane/shrink-height", paletteHidden: true, binding: "", label: msg("command-pane-shrink-height"), scope: "global", run: () => { adjustPaneSize(focusedPaneId(), "height", false); }, global: true },
   // Palette-discoverable entry into pane-select (it's otherwise only reachable
   // via Esc-with-nothing-open, which users won't guess — Martin didn't).
   { id: "pane/select-mode", binding: "", label: msg("command-pane-select-mode"), scope: "global", run: enterPaneSelectFromFocus, global: true },
   ...Array.from({ length: 9 }, (_, i): CommandDef => ({
     id: `pane/focus-${i + 1}`,
+    paletteHidden: true,
     binding: `mod+${i + 1}`,
     label: msg("command-pane-focus-n", { index: i + 1 }),
     scope: "global",
@@ -396,11 +401,10 @@ const COMMANDS: CommandDef[] = [
   // shifted character. OG stores "shift+/" and rewrites it for display; Tine
   // matches eventToChord's actual output instead.
   { id: "ui/toggle-help", binding: "shift+?", label: msg("command-ui-toggle-help"), scope: "global", run: toggleHelpPopup },
-  // Carry unfinished tasks forward. Palette-only (no default binding); the presets
-  // and the settings-configured N are all surfaced in Ctrl-K.
-  { id: "task/carry-7", binding: "", label: msg("command-task-carry-7"), scope: "global", run: () => void carryDaysBack(7) },
-  { id: "task/carry-30", binding: "", label: msg("command-task-carry-30"), scope: "global", run: () => void carryDaysBack(30) },
-  { id: "task/carry-365", binding: "", label: msg("command-task-carry-365"), scope: "global", run: () => void carryDaysBack(365) },
+  // Saved-workspace management belongs to the main window; secondary workspace
+  // windows have no switcher or saved-layout registry controls.
+  { id: "workspace/new", binding: "", label: msg("command-workspace-new"), scope: "global", available: () => activeWindowId() === MAIN_WINDOW_ID, run: openWorkspaceCreation },
+  // Carry the Settings-configured number of days.
   { id: "task/carry-n", binding: "", label: msg("command-task-carry-n"), scope: "global", run: () => void carryDaysBack(carryDays()) },
   { id: "editor/undo", binding: "mod+z", label: msg("command-editor-undo"), scope: "global", run: undo, global: true },
   // Logseq binds redo to mod+shift+z alone, and that stays the binding Settings
@@ -792,7 +796,7 @@ export function editorCommandFor(e: KeyboardEvent): string | null {
 export function paletteCommands(
   focusedPluginBlock: OwnedPluginBlockSnapshot | null = pluginFocusedBlock() ?? null
 ): { id: string; label: string; english: string; binding: string; run: () => void }[] {
-  const builtIn = COMMANDS.filter((c) => c.scope === "global" && c.run && c.id !== "go/search" && (!c.available || c.available()))
+  const builtIn = COMMANDS.filter((c) => c.scope === "global" && c.run && !c.paletteHidden && c.id !== "go/search" && (!c.available || c.available()))
     .map((c) => ({
       id: c.id,
       label: render(c.label),
@@ -941,6 +945,12 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   overridesApplied = overrides;
   bindings = {};
   const allCommands = [...COMMANDS, ...pluginCommandDefs()];
+  const knownIds = new Set(allCommands.map((command) => command.id));
+  if (Object.keys(overrides).some((id) => !knownIds.has(id))) {
+    // Keep user-authored config values out of console sinks (I-5). The original
+    // entries remain in config.edn/device overrides for inspection and repair.
+    console.warn("[shortcuts] Ignoring unknown command ids; check shortcut configuration.");
+  }
   for (const c of allCommands) {
     const b = overrides[c.id] ?? c.binding;
     if (b !== "false") bindings[c.id] = parseBinding(b);

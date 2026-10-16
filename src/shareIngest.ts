@@ -42,6 +42,7 @@ import { journalTitle, appNow } from "./journal";
 import { appendToJournalDay, flushPage, formatForPage, pageByName, trackAssetWrite } from "./document";
 import { assetFileName, assetMarkdown } from "./media";
 import { asOutlineBlock, captureTime, shapeShare } from "./shareShape";
+import { openPageAtBlock, type BlockTarget } from "./router";
 import type { NativeShareInbox, ShareInboxItem, SharePrepared } from "./nativeTineLinks";
 
 /** The toast the in-app quick capture shows (App.tsx `installQuickCaptureReceiver`). */
@@ -99,9 +100,12 @@ async function shape(item: ShareInboxItem, day: string, live: () => boolean): Pr
   return { markdown: content === null ? null : asOutlineBlock(content), assets: names };
 }
 
-async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: () => boolean): Promise<Outcome> {
+async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: () => boolean): Promise<Outcome | BlockTarget> {
   const graph = graphMeta()?.root;
   if (!graph) return "stale";
+  // Android's share Activity brings Tine forward. iOS shares/App Intents
+  // save without opening it. Recovery is deliberately silent navigation-wise.
+  const reveal = item.source === "android" && !item.prepared;
   let prepared: SharePrepared | null = item.prepared ?? null;
   if (prepared?.written) {
     // Its block reached disk before this record did: flush whatever of that
@@ -160,7 +164,10 @@ async function ingestOne(inbox: NativeShareInbox, item: ShareInboxItem, owner: (
   if (written.kind === "stale") return "stale";
   if (!written.value) return "kept";
   entry.durable = true;
-  return acknowledge(inbox, item.id, armed);
+  await acknowledge(inbox, item.id, armed);
+  return reveal && entry.ids.length
+    ? { name: entry.day, pageKind: "journal", block: entry.ids[0], path: pageByName(entry.day)?.id }
+    : "done";
 }
 
 /** Save journal `day` of the bound graph through the audited path: "done"
@@ -184,12 +191,13 @@ export async function ingestShares(): Promise<void> {
   const inbox = backend().tineLinks?.inbox;
   if (!inbox || !graphMeta()) return;
   const owner = bindingOwner();
+  let landing: BlockTarget | undefined;
   try {
     const listing = await inbox.list();
     if (listing.rejected > 0 && owner()) pushToast(
       msg("share-ingest-rejected", { count: listing.rejected }), "error");
     for (const item of listing.items) {
-      let outcome: Outcome;
+      let outcome: Outcome | BlockTarget;
       try {
         outcome = await ingestOne(inbox, item, owner);
       } catch (error) {
@@ -197,14 +205,16 @@ export async function ingestShares(): Promise<void> {
         pushToast(msg("share-ingest-a-shared-item-couldn-t-be-added-to", { error: String(error) }), "error");
         continue;
       }
-      if (outcome === "stale") return;
+      if (!owner() || outcome === "stale") return;
       if (outcome === "elsewhere") continue;
       if (outcome === "kept") {
         pushToast(msg("share-ingest-shared-item-retry"), "error");
         continue;
       }
+      if (typeof outcome !== "string") landing = outcome;
       pushToast(msg(CAPTURED_TOAST.id), "info");
     }
+    if (landing && owner()) openPageAtBlock(landing);
   } catch (error) {
     if (owner()) pushToast(msg("share-ingest-couldn-t-read-tine-s-share-inbox", { error: String(error) }), "error");
   }

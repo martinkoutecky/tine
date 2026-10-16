@@ -6,6 +6,7 @@ static CASE_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn transaction_moves_sync_each_distinct_parent_once() {
+    let _integration_guard = crate::integration_lock();
     let _lock = CASE_LOCK.lock().unwrap();
     for (target, expected_syncs) in [("moved.bin", 1), ("other/moved.bin", 2)] {
         let dir = tempfile::tempdir().unwrap();

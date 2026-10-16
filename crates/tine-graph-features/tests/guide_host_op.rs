@@ -61,6 +61,7 @@ fn read(root: &Path, rel: &str) -> String {
 /// its bytes and is reported skipped, and a second copy creates nothing.
 #[test]
 fn with_a_host_the_guide_copy_creates_absent_pages_and_skips_existing_ones() {
+    let _integration_guard = crate::integration_lock();
     let (name, rel) = first_copy();
     let g = hosted(&[(&rel, "- mine\n")]);
     let copied = guide::copy_guide_into_graph(&g.store, Some(&g.host), "Tine Guide").unwrap();
@@ -100,6 +101,7 @@ fn with_a_host_the_guide_copy_creates_absent_pages_and_skips_existing_ones() {
 /// file's bytes are never overwritten.
 #[test]
 fn a_guide_page_that_appears_after_the_plan_is_never_overwritten() {
+    let _integration_guard = crate::integration_lock();
     let (name, rel) = first_copy();
     let g = hosted(&[]);
     let held = g
@@ -137,6 +139,7 @@ fn a_guide_page_that_appears_after_the_plan_is_never_overwritten() {
 #[cfg(unix)]
 #[test]
 fn with_a_host_a_swapped_pages_folder_refuses_the_copy() {
+    let _integration_guard = crate::integration_lock();
     let g = hosted(&[]);
     let outside = tempfile::tempdir().unwrap();
     fs::remove_dir(g.root.join("pages")).unwrap();
@@ -151,6 +154,7 @@ fn with_a_host_a_swapped_pages_folder_refuses_the_copy() {
 /// `IsADirectory` was.
 #[test]
 fn with_a_host_a_folder_at_a_guide_page_path_is_skipped() {
+    let _integration_guard = crate::integration_lock();
     let (name, rel) = first_copy();
     let g = hosted(&[]);
     fs::create_dir(g.root.join(&rel)).unwrap();
@@ -164,6 +168,7 @@ fn with_a_host_a_folder_at_a_guide_page_path_is_skipped() {
 /// every destination absent.
 #[test]
 fn an_unreadable_owner_refuses_the_guide_copy_with_and_without_a_host() {
+    let _integration_guard = crate::integration_lock();
     let (name, rel) = first_copy();
     for running in [false, true] {
         let g = hosted(&[]);
@@ -187,6 +192,7 @@ fn an_unreadable_owner_refuses_the_guide_copy_with_and_without_a_host() {
 /// reports the Guide page skipped, rather than leaving unfinished work.
 #[test]
 fn a_guide_twin_that_arrives_after_the_plan_is_reported_skipped() {
+    let _integration_guard = crate::integration_lock();
     let (name, rel) = first_copy();
     let g = hosted(&[]);
     let held = g

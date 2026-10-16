@@ -223,7 +223,8 @@ mod journal_guide_tests {
     #[test]
     fn the_language_setting_says_where_it_is_and_what_it_never_translates() {
         let places = include_str!("templates/where-things-are.md");
-        assert!(places.contains("**Language** is the first item under Settings → **Appearance**"));
+        assert!(places.contains("**Themes** is the first section under Settings → **Appearance**"));
+        assert!(places.contains("Settings search reveals these controls too"));
         assert!(places.contains("**System default** follows your system's language"));
         assert!(
             places.contains("Your notes, page names, properties and queries are never translated")
@@ -368,6 +369,9 @@ mod journal_guide_tests {
             "read-only preview",
             "**Open source**",
             "source page's title and page properties",
+            "These actions switch to the new tab",
+            "preview stays open while its **… → Page actions** menu is open",
+            "keeps your current tab active and confirms **Opened in a new tab**",
             "Block embed breadcrumbs",
         ] {
             assert!(
@@ -378,8 +382,8 @@ mod journal_guide_tests {
         let context = include_str!("templates/keep-context-visible.md");
         for detail in [
             "**Close others**, **Collapse others**",
-            // GH #462: the per-item menu's own entries, named as the menu shows them.
-            "**Close** it, **Collapse** or **Expand** it",
+            "its ✕ closes it",
+            "sidebar header's ⋯ menu offers **Collapse all**, **Expand all**, and **Close all**",
             "for a page, **Open as page**",
             "Drag the sidebar's left edge to resize it",
             "Tabs stretch to fill the strip",
@@ -407,6 +411,17 @@ mod journal_guide_tests {
         }
         assert!(tips.contains("one Undo step"));
         assert!(tips.contains("complete subtrees for pasting"));
+        assert!(tips.contains(
+            "**Copy as ▸** holds **Copy block refs**, **Copy block embeds**, and **Copy link**"
+        ));
+        let references = include_str!("templates/pages-links-references-search.md");
+        assert!(references
+            .contains("**Expand all** if any group is folded, otherwise **Collapse all**"));
+        let research = include_str!("templates/research-document.md");
+        assert!(research.contains("**Copy / export as…** offers Markdown and rendered copies"));
+        assert!(!research.contains("Copy page as Markdown"));
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("**⋯ → Collapse all / Expand all** is one toggle"));
         let calendar = include_str!("templates/journals-tasks-scheduling.md");
         for behavior in [
             "keyboard focus",
@@ -787,7 +802,9 @@ mod rename_guide_tests {
         for behavior in [
             "even without a journal file",
             "Viewing a fileless day creates no file",
-            "collapsed **Upcoming** group above today, nearest first",
+            "Upcoming is off by default",
+            "`{{upcoming}}`",
+            "query blocks and the Upcoming macro in outline order",
             "removing the last mention updates the feed",
         ] {
             assert!(
@@ -1156,11 +1173,13 @@ mod rename_guide_tests {
     }
 
     #[test]
-    fn parser_comparison_guide_says_intentional_differences_are_not_bugs() {
-        // Master c0c2ff11b: a known intentional lsdoc difference is suppressed,
-        // not offered as a reportable parser bug.
+    fn diagnostics_guide_keeps_reporting_and_graph_tools_without_parser_runner() {
         let recovery = include_str!("templates/troubleshooting-recovery.md");
-        assert!(recovery.contains("Known intentional parser differences are not offered as bugs"));
+        assert!(recovery.contains("**Create diagnostic report**"));
+        assert!(recovery.contains("**Rescan graph**"));
+        assert!(recovery.contains("**Create graph verification report**"));
+        assert!(!recovery.contains("Help improve Tine's parser"));
+        assert!(!recovery.contains("Run comparison"));
     }
 
     #[test]

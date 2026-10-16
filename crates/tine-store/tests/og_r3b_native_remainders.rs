@@ -15,6 +15,7 @@ fn hosted<T>(
 
 #[test]
 fn hard_linked_pages_save_and_rename_with_master_bytes() {
+    let _integration_guard = crate::integration_lock();
     for placement in ["annex", "external"] {
         let root = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
@@ -83,6 +84,7 @@ fn hard_linked_pages_save_and_rename_with_master_bytes() {
 
 #[test]
 fn a_missing_journal_baseline_cannot_overwrite_sync_delivered_bytes() {
+    let _integration_guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("journals")).unwrap();
     fs::create_dir(root.path().join("logseq")).unwrap();

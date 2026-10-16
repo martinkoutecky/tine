@@ -5,6 +5,8 @@ import { initParser } from "./parse";
 import { LONG_PRESS_DELAY } from "./longPress";
 import { contextMenu, closeContextMenu, openPageContextMenu } from "../ui";
 import { ContextMenu } from "../components/ContextMenu";
+import { focusedRouter } from "../panes";
+import { setToasts, toasts } from "../toasts";
 import { openPage, route } from "../router";
 import { readFileSync } from "node:fs";
 
@@ -42,6 +44,18 @@ it.each(["[[Tine]]", "#Tine"])("GH #655: holding %s keeps preview and page actio
     expect(contextMenu()).toMatchObject({ kind: "page", name: "Tine", fileActions: false });
     expect(actionIds()).toEqual(expected);
     expect(route()).toMatchObject({ name: "Before" });
+    expect(document.querySelector(".peek-popup")).not.toBeNull();
+    const before = focusedRouter().activeTab();
+    const count = focusedRouter().tabs().length;
+    setToasts([]);
+    document.querySelector<HTMLElement>('[data-page-action-id="open-new-tab"]')!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" }));
+    expect(document.querySelector(".peek-popup")).not.toBeNull();
+    document.querySelector<HTMLElement>('[data-page-action-id="open-new-tab"]')!.click();
+    expect(focusedRouter().tabs()).toHaveLength(count + 1);
+    expect(focusedRouter().activeTab()).toBe(before);
+    expect(toasts().some(toast => toast.message === "Opened in a new tab")).toBe(true);
+    expect(document.querySelector(".peek-popup")).not.toBeNull();
+    pointer(document.body, "pointerdown");
     expect(document.querySelector(".peek-popup")).toBeNull();
   } finally { dispose(); }
 });

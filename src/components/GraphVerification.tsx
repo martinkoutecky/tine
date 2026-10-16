@@ -127,16 +127,16 @@ export function GraphVerification(): JSX.Element {
       <h3>{t("graph-verification-verify-synchronized-graph")}</h3>
       <p>{t("graph-verification-compare-the-exact-markdown-and-org-file-bytes")}</p>
       <div class="diagnostics-actions">
-        <button type="button" class="primary" disabled={operation() !== null} onClick={() => void create()}>
+        <button type="button" class="settings-btn settings-btn-primary" disabled={operation() !== null} onClick={() => void create()}>
           {operation() ? t("graph-verification-verifying") : t("graph-verification-create-graph-verification-report")}
         </button>
         <Show when={operation()}>
-          <button type="button" onClick={() => void cancel()}>{t("graph-verification-cancel")}</button>
+          <button class="settings-btn" type="button" onClick={() => void cancel()}>{t("graph-verification-cancel")}</button>
         </Show>
         <Show when={report()}>
-          <button type="button" onClick={() => void copy()}>{t("graph-verification-copy-graph-report")}</button>
+          <button class="settings-btn" type="button" onClick={() => void copy()}>{t("graph-verification-copy-graph-report")}</button>
           <Show when={!isMobilePlatform}>
-            <button type="button" onClick={() => void save()}>{t("graph-verification-save-graph-report")}</button>
+            <button class="settings-btn" type="button" onClick={() => void save()}>{t("graph-verification-save-graph-report")}</button>
           </Show>
         </Show>
       </div>
@@ -165,7 +165,7 @@ export function GraphVerification(): JSX.Element {
                 placeholder={t("graph-verification-paste-the-graph-verification-report-here")}
               />
             </label>
-            <button type="button" class="primary" disabled={!other().trim()} onClick={compare}>{t("graph-verification-compare-reports")}</button>
+            <button type="button" class="settings-btn settings-btn-primary" disabled={!other().trim()} onClick={compare}>{t("graph-verification-compare-reports")}</button>
           </>
         )}
       </Show>

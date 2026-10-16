@@ -2,6 +2,7 @@ use tine_core::guide::bundled_guide_pages;
 
 #[test]
 fn guide_explains_existing_code_block_deletion_paths() {
+    let _integration_guard = crate::integration_lock();
     let tips = bundled_guide_pages()
         .into_iter()
         .find(|page| page.title == "Features/Tips & shortcuts")

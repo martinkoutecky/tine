@@ -21,6 +21,7 @@ fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
 
 #[test]
 fn full_width_comma_separator_has_one_definition() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut files = Vec::new();
     for dir in ["crates", "src-tauri/src"] {

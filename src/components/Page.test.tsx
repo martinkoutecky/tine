@@ -96,6 +96,25 @@ function feedResponse(pages: PageDto[], patch: Partial<JournalFeedPage> = {}): J
   return { pages: pages.map(unpinned), next_before_day: null, done: true, as_of_day: localDay(), ...patch };
 }
 
+it.each([
+  ["page", "md"], ["journal", "md"], ["page", "org"], ["journal", "org"],
+] as const)("highlights survive the %s %s view boundary (GH #243)", async (kind, format) => {
+  const name = kind === "journal" ? journalTitle(new Date()) : "Highlights";
+  const dto: PageDto = { name, title: name, kind, pre_block: null, format,
+    blocks: [{ id: "highlights", raw: format === "md" ? "a ==one== b ^^two^^ c" : "a ^^one^^ b ^^two^^ c", children: [], collapsed: false }] };
+  if (kind === "journal") {
+    vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([dto]));
+  } else {
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto as PageRead);
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name, pageKind: kind });
+  }
+  const mounted = mount(() => <PageView />);
+  try {
+    await vi.waitFor(() => expect([...mounted.root.querySelectorAll(".block-content mark")].map(el => el.textContent)).toEqual(["one", "two"]));
+    expect(mounted.root.querySelector("textarea.block-editor")).toBeNull();
+  } finally { mounted.dispose(); }
+});
+
 describe("Journals feed generation lifecycle", () => {
   it.each([false, true])("adds a new day around an active editor (dirty: %s)", async (dirty) => {
     vi.stubGlobal("IntersectionObserver", class {

@@ -168,8 +168,8 @@ try {
     .map((item) => item.getAttribute("data-page-action-id")));
   const expectedIds = [
     "open", "open-sidebar", "open-new-tab", "open-new-window", "favorite-toggle",
-    "copy-link", "copy-page-ref", "copy-export", "copy-page-markdown", "export-pdf",
-    "show-in-folder", "open-default-app", "find-in-page", "page-properties", "set-page-icon",
+    "copy-as", "copy-page-ref", "copy-link", "copy-export", "export-pdf",
+    "show-in-folder", "open-default-app", "page-properties", "set-page-icon",
     "rename-page", "delete-page",
   ];
   if (JSON.stringify(ids) !== JSON.stringify(expectedIds)) {

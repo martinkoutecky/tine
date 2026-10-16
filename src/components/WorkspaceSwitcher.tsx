@@ -6,6 +6,7 @@ import { EmojiText } from "../render/emoji";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { pushToast } from "../toasts";
 import { hoverIntent } from "./hoverIntent";
+import { useOwnerWindow, listen } from "../windowRealm";
 import {
   activeWorkspaceId,
   createWorkspace,
@@ -35,6 +36,11 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
     setEditValue(state.value);
     setEdit(state);
   };
+  onCleanup(listen(useOwnerWindow(), "tine-new-workspace", () => {
+    setHoverOpen(false);
+    setMenuOpen(true);
+    openEdit({ kind: "new", value: "" });
+  }));
   const active = createMemo(() => workspaces().find((workspace) => workspace.id === activeWorkspaceId()));
 
   const closeMenu = () => {
@@ -193,7 +199,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
                     if (event.key === "Escape") setEdit(null);
                   }}
                 />
-                <button type="submit" disabled={!editValue().trim()}>{state.kind === "new" ? t("workspace-switcher-create") : t("workspace-switcher-save")}</button>
+                <button class="settings-btn" type="submit" disabled={!editValue().trim()}>{state.kind === "new" ? t("workspace-switcher-create") : t("workspace-switcher-save")}</button>
               </form>
             )}
           </Show>

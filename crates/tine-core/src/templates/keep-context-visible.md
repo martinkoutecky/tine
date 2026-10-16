@@ -11,7 +11,7 @@ icon:: 📌
 - ## Park a source in the right sidebar
   - 1. On the page you're writing, **Shift-click** a link (or a bullet's dot) to open it in the right sidebar. It's a full editor, not a preview — you can write in either place.
   - 2. Two more ways to park things: in **Ctrl+K**, press **Shift+Enter** on any page or block result; while editing, **Ctrl+Shift+O** sends the link at the caret across.
-  - 3. Crowded? Fold an item with its arrow and keep just its title in reach, or use the ⋯ menu on an item: **Close** it, **Collapse** or **Expand** it, **Close others**, **Collapse others**, **Collapse all**, **Expand all**, **Close all**, and, for a page, **Open as page** to move it into the main pane (the sidebar's own ⋯ menu has the three bulk ones). Drag the sidebar's left edge to resize it — up to 70% of the window, always leaving the page beside it room to work. Folding or closing never strands half-typed text — Tine commits the active edit first.
+  - 3. Crowded? Fold an item with its arrow and keep just its title in reach; its ✕ closes it. The item's ⋯ menu offers **Close others**, **Collapse others**, and, for a page, **Open as page** to move it into the main pane. The sidebar header's ⋯ menu offers **Collapse all**, **Expand all**, and **Close all**. Drag the sidebar's left edge to resize it — up to 70% of the window, always leaving the page beside it room to work. Folding or closing never strands half-typed text — Tine commits the active edit first.
   - 4. Press **t r** to hide the whole sidebar and **t r** again to bring it back just as it was; its items are restored with your session.
   - What you should see: the source parked beside your page, both editable — and it stays parked while the main page navigates elsewhere.
 - ## Gather places in tabs, and pin the ones you live in
@@ -36,7 +36,7 @@ icon:: 📌
   - 4. Close it with its own title-bar button whenever you like — text you just typed is kept. Quitting Tine closes every window; the ones that were open come back, with their tabs, the next time you start Tine. Switching to another graph closes them.
   - What you should see: the same page in two windows on two screens, edited in either, with every change in the one file on disk.
 - ## Save the arrangement as a workspace
-  - 1. With the layout where you want it — splits, every pane's tabs and histories, both sidebars — click the workspace name at the top of the left sidebar and choose **+ New workspace**; name it once.
+  - 1. With the layout where you want it — splits, every pane's tabs and histories, both sidebars — click the workspace name at the top of the left sidebar and choose **+ New workspace**, or run **New workspace…** from the command palette (**Mod+Shift+P**); name it once.
   - 2. Come back to it from the same switcher: hover the name for a quick-switch list, or click it for the full menu with **Rename** and **Delete**. Each graph keeps its own set, and the active one comes back after a restart.
   - What you should see: the saved pane layout, tabs and histories, sidebars, and Recent return together. Workspaces are device-local session state — saving, switching, or deleting one never writes to your graph.
 - ## Clear everything else away

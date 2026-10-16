@@ -11,6 +11,7 @@ use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
 
 #[test]
 fn favorites_arrangement_page_bytes() {
+    let _integration_guard = crate::integration_lock();
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-fav-bytes-{}-{}",
@@ -50,6 +51,7 @@ fn favorites_arrangement_page_bytes() {
 
 #[test]
 fn favorites_arrangement_page_in_an_org_preferred_graph() {
+    let _integration_guard = crate::integration_lock();
     // The DTO the frontend sends in an Org-preferred graph
     // (favoritesArrangementPage with format "org"): the store puts a new page
     // at pages/Favorites.org, so the marker is an Org file property and

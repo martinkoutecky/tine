@@ -3,6 +3,7 @@ use tine_store::{Area, Store};
 
 #[test]
 fn favorites_setter_and_reload_read_the_same_root_entry() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir_all(dir.path().join("logseq")).unwrap();
     let original = "{:extension {:favorites [\"Shadow\"]} :favorites [\"Real\"]}\n";
