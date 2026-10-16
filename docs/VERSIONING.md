@@ -7,7 +7,7 @@ the Beta. Discussion: [#682](https://github.com/martinkoutecky/tine/discussions/
 
 | Line | Branch | Release tags | Installed app |
 |---|---|---|---|
-| **Beta** | `og` (to be renamed `beta`) | `vX.Y.Z-beta.N` | Tine Beta (separate app identity, installs next to stable) |
+| **Beta** | `og` | `vX.Y.Z-beta.N` | Tine Beta (separate app identity, installs next to stable) |
 | **Stable** | `master` | `vX.Y.Z` | Tine |
 
 All work lands on the Beta line first. Work happens on short-lived topic
@@ -22,13 +22,19 @@ To follow the latest Beta code, check out `og` and `git pull`.
 A Beta release is a commit on `og`, tagged `vX.Y.Z-beta.N` when it is published.
 Betas come often; anything merged since the last one ships in the next.
 
-Tags should not move. The `beta` tag is the one exception, for now: installed
-Betas fetch their updates from `releases/download/beta/latest.json`, so it has
-pointed at the latest Beta release. After 0.8.0-beta.2 the Beta update manifest
-moves to a fixed address on tine.page. `beta` then moves one last time, to the
-first Beta that reads the new address, so existing installs reach it, and is
-then frozen and later removed. `og` is renamed `beta` once the tag is gone (a
-branch and a tag with the same name would be ambiguous).
+Each Beta is published as its own GitHub release at that tag, marked as a
+prerelease. From 0.8.0-beta.3 on, installed Betas read their updates from a
+fixed address, `https://tine.page/updates/beta/latest.json` (AppImages: the
+`amd64`/`aarch64.AppImage.zsync` files next to it). After a Beta is published,
+the release workflow redeploys tine.page, which copies the newest Beta's
+update files from its release (`scripts/pages-beta-manifest.mjs`).
+
+Betas up to 0.8.0-beta.2 read their updates from the release at the old moving
+tag `beta`. That tag moves one last time, to 0.8.0-beta.3, and then stays
+frozen: its release holds only 0.8.0-beta.3's update files and links to its downloads,
+so any older Beta, whenever it next checks, updates to 0.8.0-beta.3 and from
+there follows tine.page. It is kept for good; removing it would strand Betas
+that have not updated yet (`scripts/retire-beta-tag.mjs` makes the move).
 
 ## Stable releases
 
@@ -65,8 +71,8 @@ for example in 0.7.3. The next stable cut absorbs those copies.)
 ## Rules we keep
 
 - `og` and `master` are never force-pushed.
-- Version tags never move. `beta` is the one exception until the updater
-  leaves it (above).
+- Tags never move. (`beta` moved with each Beta up to 0.8.0-beta.3 and is
+  frozen there, above.)
 - Every published release has a tag.
 
 ## Issue labels

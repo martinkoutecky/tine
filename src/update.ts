@@ -38,7 +38,7 @@ function isMacDesktop(): boolean {
 
 /** THE update channel. Each build reads only its own channel, named by the identity switch:
  * stable Tine (`page.tine.Tine`) reads `releases/latest`, Tine Beta (`page.tine.TineBeta`)
- * reads the fixed-tag GitHub release `beta`. A cross-channel offer would replace one app
+ * reads the Beta manifest on tine.page. A cross-channel offer would replace one app
  * with the other's build. What the channel offers is answered ONCE, by the Tauri updater
  * plugin: `check()` reads the endpoint in `tauri.conf.json` (Rust-side, so no
  * webview CORS problem: GitHub release-asset downloads send no
@@ -49,7 +49,8 @@ function isMacDesktop(): boolean {
 const STABLE = APP_UPDATE_CHANNEL === "stable";
 const RELEASES_PAGE = STABLE
   ? "https://github.com/martinkoutecky/tine/releases/latest"
-  : "https://github.com/martinkoutecky/tine/releases/tag/beta";
+  // Each Beta has its own release v<version>; the list shows the newest first.
+  : "https://github.com/martinkoutecky/tine/releases";
 
 /** Acquire only this build's channel: a Beta build takes only `-beta.N` versions, a stable
  * build only plain ones. A cross-channel payload is a publication mistake: close its

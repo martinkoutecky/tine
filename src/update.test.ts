@@ -399,7 +399,7 @@ describe("update checks", () => {
 
     update.openReleasesPage();
 
-    expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/beta");
+    expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases");
   });
 
   it.each(["android", "ios"] as const)("never checks or offers self-update on %s", async (platform) => {

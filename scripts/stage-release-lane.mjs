@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { releaseLayout } from "./release-layout.mjs";
 
-import { releaseChannel } from "./release-policy.mjs";
+import { BETA_TAG, releaseChannel, updaterAssetUrl } from "./release-policy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const [lane, outputRoot = "release-candidate", commit = process.env.GITHUB_SHA] = process.argv.slice(2);
@@ -45,8 +45,11 @@ for (const name of laneLayout.assets) {
   }
   const target = path.join(destination, name);
   fs.copyFileSync(matches[0], target);
-  // zsync's relative target must name the published AppImage, not Tauri's
-  // space-bearing local file. This changes metadata, never signed bundle bytes.
+  // zsync's target must name the published AppImage, not Tauri's space-bearing
+  // local file. Stable keeps a relative URL (it sits beside the AppImage); a
+  // Beta's zsync is also served from tine.page and from the legacy `beta`
+  // release, so it names the AppImage in its own immutable release.
+  // This changes metadata, never signed bundle bytes.
   if (name.endsWith(".zsync")) {
     const bytes = fs.readFileSync(target);
     const headerEnd = bytes.indexOf("\n\n");
@@ -57,7 +60,9 @@ for (const name of laneLayout.assets) {
       throw new Error(`${lane}: zsync lacks Filename/URL headers`);
     }
     const header = text.replace(/^Filename: .+$/m, `Filename: ${appimage}`)
-      .replace(/^URL: .+$/m, `URL: ${appimage}`);
+      .replace(/^URL: .+$/m, `URL: ${channel === BETA_TAG
+        ? updaterAssetUrl(process.env.GITHUB_REPOSITORY ?? "martinkoutecky/tine", appimage, channel, version)
+        : appimage}`);
     fs.writeFileSync(target, Buffer.concat([Buffer.from(header), bytes.subarray(headerEnd)]));
   }
   const bytes = fs.readFileSync(target);

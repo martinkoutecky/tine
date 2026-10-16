@@ -49,7 +49,7 @@ describe("app identity switch", () => {
     const conf = JSON.parse(fs.readFileSync(path.join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
     const endpoints = conf.plugins?.updater?.endpoints;
     expect(endpoints).toEqual([SHIP === "experiment"
-      ? "https://github.com/martinkoutecky/tine/releases/download/beta/latest.json"
+      ? "https://tine.page/updates/beta/latest.json"
       : "https://github.com/martinkoutecky/tine/releases/latest/download/latest.json"]);
     expect(/-beta\.\d+$/.test(conf.version)).toBe(SHIP === "experiment");
   });

@@ -201,11 +201,11 @@ export function candidateProblems(directory, version, channel = "stable") {
         const url = new URL(entry.url);
         const parts = url.pathname.split("/");
         inBeta = url.protocol === "https:" && url.hostname === "github.com"
-          && parts.at(-3) === "download" && parts.at(-2) === BETA_TAG && parts.at(-1) === asset;
+          && parts.at(-3) === "download" && parts.at(-2) === `v${version}` && parts.at(-1) === asset;
       } catch {
         inBeta = false;
       }
-      if (!inBeta) problems.push(`latest.json ${platform} escapes beta`);
+      if (!inBeta) problems.push(`latest.json ${platform} escapes v${version}`);
     }
     if (entry && channel === STABLE_CHANNEL) {
       let stable = false;

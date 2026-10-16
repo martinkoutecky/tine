@@ -134,7 +134,7 @@ assert.match(flatpakWorkflow, /derive-flatpak-identity\.mjs --identity "\$FLATPA
   "the Flatpak workflow must derive its manifest through the identity-aware script");
 assert.match(
   releaseWorkflow,
-  /name: Verify Linux AppImage update information[\s\S]*?\.\/src-tauri\/\$zsync_name[\s\S]*?readelf --string-dump=\.upd_info "\$appimage"[\s\S]*?gh-releases-zsync\|/,
+  /name: Verify Linux AppImage update information[\s\S]*?\.\/src-tauri\/\$zsync_name[\s\S]*?readelf --string-dump=\.upd_info "\$appimage"[\s\S]*?gh-releases-zsync\\\|\|zsync\\\|https:\/\/tine\\\.page\/updates\/beta\//,
   "release workflow verify step must search src-tauri/ for the .zsync (appimagetool writes it into the build CWD) and fail closed when update information is absent"
 );
 assert.match(
