@@ -436,7 +436,7 @@ html[data-system-insets="native-viewport"] {
   font-size: 10px;
 }
 .workspace-menu-action:hover { color: var(--text-title); }
-.workspace-menu-action.danger:hover { color: var(--danger, #c44); }
+.workspace-menu-action.danger:hover { color: var(--tine-danger-color, var(--palette-danger)); }
 .workspace-edit-form {
   display: flex;
   gap: 5px;
@@ -1604,7 +1604,7 @@ html[data-system-insets="native-viewport"] {
 .export-modal.graph-name-prompt { width: min(420px, 100%); box-sizing: border-box; overflow-y: auto; }
 .graph-name-field { display: flex; flex-direction: column; gap: 8px; padding: 16px; }
 .graph-name-field input { width: 100%; box-sizing: border-box; font: inherit; padding: 8px; }
-.graph-name-error { padding: 0 16px; color: var(--error, #b42318); overflow-wrap: anywhere; }
+.graph-name-error { padding: 0 16px; color: var(--tine-danger-color, var(--palette-danger)); overflow-wrap: anywhere; }
 .export-modal {
   width: 620px;
   max-width: 94vw;
@@ -2065,7 +2065,7 @@ html[data-system-insets="native-viewport"] {
 }
 .plugin-finding-severity.severity-high,
 .plugin-finding-severity.severity-critical {
-  color: var(--danger, #b33);
+  color: var(--tine-danger-color, var(--palette-danger));
   background: rgba(190, 45, 45, 0.14);
 }
 .plugin-settings-nav {
@@ -4194,7 +4194,7 @@ html[data-system-insets="native-viewport"] {
 
 /* Voice-memo button while recording: red + a filled stop square + a soft pulse. */
 .mobile-keyboard-toolbar-btn.recording {
-  color: var(--danger, #c0392b);
+  color: var(--tine-danger-color, var(--palette-danger));
   animation: tine-rec-pulse 1.1s ease-in-out infinite;
 }
 .mobile-keyboard-toolbar-btn.recording svg {
@@ -4704,7 +4704,8 @@ mark {
   background: rgba(0, 0, 0, 0.75);
 }
 .asset-action-btn.asset-action-trash:hover {
-  background: var(--danger, #c0392b);
+  background: var(--tine-danger-color, var(--palette-danger));
+  color: var(--bg-primary);
 }
 
 /* Inline video/audio asset players + the click-to-open fallback chip. */
@@ -6999,7 +7000,7 @@ img.emoji {
 }
 
 .reference-filter-error {
-  color: var(--danger, #dc2626);
+  color: var(--tine-danger-color, var(--palette-danger));
 }
 
 .reference-filter-warning {
@@ -7951,7 +7952,7 @@ html.tine-embed-shading-accent .embed-block {
 }
 
 .switcher-empty.switcher-error {
-  color: var(--error, #d33);
+  color: var(--tine-danger-color, var(--palette-danger));
 }
 
 .switcher-group-header {

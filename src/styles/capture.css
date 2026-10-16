@@ -66,7 +66,7 @@ body {
 }
 
 .capture-status-error {
-  color: var(--danger, #b42318);
+  color: var(--tine-danger-color, var(--palette-danger));
 }
 
 .capture-actions {

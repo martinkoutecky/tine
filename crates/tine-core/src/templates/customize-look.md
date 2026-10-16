@@ -19,9 +19,10 @@ icon:: 🎨
   - What you should see: a rule such as `:root { --tine-bullet-color: orange; }` recolors every bullet as soon as you save.
   - Something went wrong? **Settings → Appearance → Custom CSS → Disable custom CSS** ignores both CSS files and Fine-tuning for this session only. It is never saved, so restarting Tine always brings custom CSS back; fix the file, then switch it back on. If the stylesheet hides Settings itself, open the command palette (**Mod+Shift+P**) and run **Toggle custom CSS (safe mode, this session)**.
 - ## 3. The supported names: `--tine-*` tokens
-  - A token is a named setting. Each starts unset, which means "do what Tine always did", so nothing changes until you set one. Set tokens on `:root` or `html`, like the recipes below; any selector you write wins over Tine's own, because Tine declares them with no specificity. These fifteen names are the ones Tine promises to keep: if one is ever removed or renamed, the changelog says so.
+  - A token is a named setting. Each starts unset, which means "use the theme's default", so nothing changes until you set one. Set tokens on `:root` or `html`, like the recipes below; any selector you write wins over Tine's own, because Tine declares them with no specificity. These sixteen names are the ones Tine promises to keep: if one is ever removed or renamed, the changelog says so.
   - | Token | Controls | Default |
     | --- | --- | --- |
+    | `--tine-danger-color` | Error and destructive-action text and error borders (also the asset trash button's hover fill) | A contrast-checked red for the theme's light or dark mode |
     | `--tine-embed-bg` | Background of an embedded block or page | The theme's secondary background |
     | `--tine-embed-accent` | The accent line and bullet of an embedded block | 35% accent mixed into the bullet color |
     | `--tine-bullet-color` | Color of the block bullet dot | The theme's bullet color |
