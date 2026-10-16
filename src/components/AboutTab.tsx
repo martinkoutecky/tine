@@ -129,7 +129,7 @@ export function AboutTab(): JSX.Element {
       </Show>
       <Show when={status()}>
         <div class="settings-hint about-status">
-          {render(status()!)}{" "}<button class="about-linkbtn" onClick={() => openReleasesPage()}>{t("about-releases")}</button>
+          {render(status()!)}{" "}<button class="about-linkbtn" onClick={() => { const shown = status(); openReleasesPage(shown?.kind === "available" ? shown.version : undefined); }}>{t("about-releases")}</button>
         </div>
       </Show><div class="settings-hint about-build">{t("about-built", { buildStamp: buildStamp() })}</div>
 

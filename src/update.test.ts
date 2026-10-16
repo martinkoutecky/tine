@@ -533,6 +533,33 @@ describe("update checks", () => {
     expect(diagnosticFrontendEventMock).not.toHaveBeenCalledWith("updater_failure", expect.anything());
   });
 
+  it("the Install update action keeps the offered Beta when its fresh check fails or finds nothing", async () => {
+    for (const recheck of ["rejects", "null"] as const) {
+      mockLatest("v0.6.0-beta.1");
+      const { update, pushToastMock, updaterCheckMock, openExternalMock, relaunchMock } =
+        await loadUpdate({ platform: "desktop", packaging: "native", version: "0.5.3" });
+      await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "available", version: "0.6.0-beta.1" });
+      const offer = toastCalls(pushToastMock).find(([, , options]) => options?.action?.label === "Install update");
+      if (recheck === "rejects") updaterCheckMock.mockRejectedValueOnce(new Error("network unreachable"));
+      else updaterCheckMock.mockResolvedValueOnce(null);
+      offer?.[2]?.action?.run();
+      await vi.waitFor(() => expect(openExternalMock, recheck).toHaveBeenCalledOnce());
+      expect(openExternalMock).toHaveBeenCalledWith("https://github.com/martinkoutecky/tine/releases/tag/v0.6.0-beta.1");
+      expect(relaunchMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it("the About tab's Releases link opens the version it shows as available", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update, openExternalMock } = await loadUpdate({ platform: "desktop", packaging: "native", version: "0.5.3" });
+    update.openReleasesPage("0.6.0-beta.1");
+    update.openReleasesPage();
+    expect(openExternalMock.mock.calls).toEqual([
+      ["https://github.com/martinkoutecky/tine/releases/tag/v0.6.0-beta.1"],
+      ["https://github.com/martinkoutecky/tine/releases"],
+    ]);
+  });
+
   it("a stale Install update action on a Flatpak opens the releases page instead of installing", async () => {
     mockLatest("v0.6.0-beta.1");
     const { update, updaterCheckMock, openExternalMock, relaunchMock } =

@@ -296,16 +296,16 @@ export async function restartTine(): Promise<void> {
 
 /** @internal The toast action's body, exported so a test can prove that a
  * stale "Install update" action cannot install on a manual-only surface. */
-export const installUpdateForTest = (): Promise<void> => applyUpdateOrOpen();
+export const installUpdateForTest = (offered?: string): Promise<void> => applyUpdateOrOpen(offered);
 
-/** The toast's "Install update" action. Desktop packaged app → run the Tauri updater
- *  in place and relaunch; any updater failure → open
- *  the releases page. Never throws. */
-async function applyUpdateOrOpen(): Promise<void> {
+/** The toast's "Install update" action for the `offered` version. Desktop
+ *  packaged app → run the Tauri updater in place and relaunch; any updater
+ *  failure → open the offered version's releases page. Never throws. */
+async function applyUpdateOrOpen(offered?: string): Promise<void> {
   const mode = await updateMode(true);
   if (mode === "unavailable") return;
   if (mode === "manual") {
-    openReleases();
+    openReleases(offered);
     return;
   }
   let update: Awaited<ReturnType<(typeof import("@tauri-apps/plugin-updater"))["check"]>>;
@@ -313,12 +313,12 @@ async function applyUpdateOrOpen(): Promise<void> {
     update = await checkedChannelUpdate();
   } catch (error) {
     reportUpdaterFailure("check", error);
-    openReleases();
+    openReleases(offered);
     return;
   }
   if (!update) {
     // No signed `latest.json` yet (or already current) → manual path.
-    openReleases();
+    openReleases(offered);
     return;
   }
   try {
@@ -412,7 +412,7 @@ export async function offerUpdate(version: string, current: string, live: () => 
     "info",
     {
       sticky: true,
-      action: { label: msg("update-install-update"), run: () => void applyUpdateOrOpen() },
+      action: { label: msg("update-install-update"), run: () => void applyUpdateOrOpen(version) },
     },
   );
   return { manual };
@@ -489,7 +489,8 @@ export async function checkForUpdateNow(): Promise<UpdateStatus> {
   }
 }
 
-/** Open this channel's releases page (exported for the About tab's manual link). */
-export function openReleasesPage(): void {
-  openReleases();
+/** Open this channel's releases page, or the `version` offered to the About
+ *  tab when it knows one (exported for the About tab's manual link). */
+export function openReleasesPage(version?: string): void {
+  openReleases(version);
 }

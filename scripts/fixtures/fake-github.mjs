@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 // A stand-in for `gh` and `curl` that keeps GitHub's release state in a JSON
 // file (FAKE_GITHUB_STATE), for scripts/retire-beta-tag.test.mjs. It covers only
-// the calls retire-beta-tag.mjs makes. FAKE_GITHUB_FAIL_AT=n makes the n-th
-// mutating call fail without applying it (an upload first stores one file, as a
-// dropped connection can).
+// the calls retire-beta-tag.mjs makes, with GitHub's documented behaviour where
+// it matters: a release created on an existing tag keeps that tag's commit, a
+// draft's tag is created when it is published, and a failed asset upload can
+// leave an empty asset in state "starter".
+//
+// FAKE_GITHUB_FAIL_AT=n fails the n-th mutating call. A failed upload leaves
+// its files as FAKE_GITHUB_PARTIAL says, one outcome per file in order
+// (complete | starter | absent; default "complete,starter"); other failed
+// mutations change nothing. FAKE_GITHUB_FAIL_READ=<text>:<n> fails the n-th
+// read whose arguments contain <text> with an HTTP 503.
 import fs from "node:fs";
 import path from "node:path";
 
@@ -27,6 +34,20 @@ const mutate = (apply, partial = () => {}) => {
   apply();
   save();
 };
+const read = () => {
+  const [text, nth] = (process.env.FAKE_GITHUB_FAIL_READ ?? "").split(":");
+  if (!text || !args.join(" ").includes(text)) return;
+  state.reads = { ...state.reads, [text]: (state.reads?.[text] ?? 0) + 1 };
+  save();
+  if (state.reads[text] === Number(nth)) fail("HTTP 503: Service Unavailable");
+};
+const store = (release, name, outcome) => {
+  if (outcome === "absent") return;
+  const data = outcome === "starter" ? "" : fs.readFileSync(name, "latin1");
+  state.nextAsset = (state.nextAsset ?? 0) + 1;
+  release.assets[path.basename(name)] = { id: state.nextAsset, state: outcome === "starter" ? "starter" : "uploaded", data };
+};
+const complete = (asset) => asset?.state === "uploaded";
 const download = /^https:\/\/github\.com\/[^/]+\/[^/]+\/releases\/download\/([^/]+)\/([^/?]+)$/;
 
 if (tool === "curl") {
@@ -35,43 +56,64 @@ if (tool === "curl") {
   const release = match && byTag(match[1]);
   const asset = release && !release.isDraft ? release.assets[match[2]] : undefined;
   if (args.includes("-w")) {
-    process.stdout.write(asset === undefined ? "404" : "200");
-    process.exit(asset === undefined ? 22 : 0);
+    process.stdout.write(complete(asset) ? "200" : "404");
+    process.exit(complete(asset) ? 0 : 22);
   }
   if (url === "https://tine.page/updates/beta/latest.json") process.stdout.write(JSON.stringify({ version: state.pages }));
-  else if (asset !== undefined) process.stdout.write(asset);
+  else if (complete(asset)) process.stdout.write(asset.data);
   else fail(`curl: (22) 404 ${url}`, 22);
 } else if (args[0] === "api") {
+  read();
   if (args[1] === "-X" && args[2] === "DELETE") {
-    const tag = args[3].split("/git/refs/tags/")[1];
-    if (!state.tags[tag]) fail("HTTP 422: Reference does not exist");
-    mutate(() => delete state.tags[tag]);
+    const endpoint = args[3];
+    const assetId = Number(/\/releases\/assets\/(\d+)$/.exec(endpoint)?.[1]);
+    if (assetId) {
+      const owner = state.releases.find((release) => Object.values(release.assets).some((asset) => asset.id === assetId));
+      if (!owner) fail("HTTP 404: Not Found");
+      mutate(() => { for (const [name, asset] of Object.entries(owner.assets)) if (asset.id === assetId) delete owner.assets[name]; });
+    } else {
+      const tag = endpoint.split("/git/refs/tags/")[1];
+      if (!state.tags[tag]) fail("HTTP 422: Reference does not exist");
+      mutate(() => delete state.tags[tag]);
+    }
   } else {
     const ref = args[1].split("/commits/")[1];
-    if (!state.tags[ref]) fail("HTTP 422: No commit found");
+    if (!state.tags[ref]) fail(`HTTP 422: No commit found for SHA: ${ref}`);
     process.stdout.write(`${state.tags[ref]}\n`);
   }
 } else if (args[0] === "release") {
   const [, verb, tag] = args;
   const release = byTag(tag);
   if (verb === "view") {
+    read();
     if (!release) fail("release not found");
-    process.stdout.write(JSON.stringify({ ...release, assets: Object.keys(release.assets).map((name) => ({ name })) }));
+    const [owner, repo] = option("--repo").split("/");
+    process.stdout.write(JSON.stringify({
+      ...release,
+      targetCommitish: release.target,
+      assets: Object.entries(release.assets).map(([name, asset]) => ({
+        name, state: asset.state, size: Buffer.byteLength(asset.data, "latin1"),
+        apiUrl: `https://api.github.com/repos/${owner}/${repo}/releases/assets/${asset.id}`,
+      })),
+    }));
   } else if (verb === "download") {
     if (!release) fail("release not found");
     const dir = option("--dir");
     fs.mkdirSync(dir, { recursive: true });
     const patterns = args.flatMap((arg, i) => (args[i - 1] === "--pattern" ? [arg] : []));
     for (const name of patterns) {
-      if (release.assets[name] === undefined) fail(`no asset ${name}`);
-      fs.writeFileSync(path.join(dir, name), release.assets[name], "latin1");
+      if (!complete(release.assets[name])) fail(`no asset ${name}`);
+      if (fs.existsSync(path.join(dir, name)) && !args.includes("--clobber")) fail(`${name} already exists`);
+      fs.writeFileSync(path.join(dir, name), release.assets[name].data, "latin1");
     }
   } else if (verb === "edit") {
     if (!release) fail("release not found");
     mutate(() => {
       if (option("--tag")) release.tagName = option("--tag");
+      if (option("--target")) release.target = option("--target");
       if (args.includes("--draft=false")) {
         release.isDraft = false;
+        // Publishing uses an existing tag as it is; only a missing one is created.
         state.tags[release.tagName] ??= release.target;
       }
     });
@@ -82,7 +124,15 @@ if (tool === "curl") {
   } else if (verb === "upload") {
     if (!release) fail("release not found");
     const files = args.slice(3).filter((arg) => arg.startsWith("/"));
-    const store = (name) => { release.assets[path.basename(name)] = fs.readFileSync(name, "latin1"); };
-    mutate(() => files.forEach(store), () => store(files[0]));
+    const clobber = args.includes("--clobber");
+    if (!clobber && files.some((name) => release.assets[path.basename(name)])) fail("asset under the same name already exists");
+    const outcomes = (process.env.FAKE_GITHUB_PARTIAL ?? "complete,starter").split(",");
+    mutate(
+      () => files.forEach((name) => store(release, name, "complete")),
+      () => files.forEach((name, i) => {
+        if (clobber) delete release.assets[path.basename(name)];
+        store(release, name, outcomes[i] ?? "absent");
+      }),
+    );
   } else fail(`fake gh: unsupported release ${verb}`);
 } else fail(`fake gh: unsupported ${args.join(" ")}`);
