@@ -4,7 +4,7 @@ import { PageView } from "./Page";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
 import { resetStore, flushAll } from "../document";
-import { resetTabsToJournals } from "../router";
+import { openPage, resetTabsToJournals } from "../router";
 import { currentDayKey, journalTitle } from "../journal";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import { setGraphMeta, bumpDataRev } from "../graphSession";
@@ -114,7 +114,7 @@ it("the feed displays a counted reference header on the mentioned day, even with
   } finally { dispose(); }
 });
 
-it("GH #481: fileless mentions render without writes and Upcoming keeps today first in the main feed", async () => {
+it("GH #710: fileless mentions render without writes and Upcoming is opt-in, keeping today first", async () => {
   setGraphMeta({ linked_references_collapsed_threshold: 0 } as GraphMeta);
   vi.stubGlobal("IntersectionObserver", class {
     constructor(private callback: IntersectionObserverCallback) {}
@@ -128,13 +128,19 @@ it("GH #481: fileless mentions render without writes and Upcoming keeps today fi
   const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({ pages: [past], upcoming: [future], as_of_day: currentDayKey(), next_before_day: null, done: true } as JournalFeedPage);
   vi.spyOn(backend(), "getBacklinks").mockImplementation(async name => name === today ? [] : [{ page: "Planning", kind: "page", blocks: [{ id: `mention-${name}`, raw: `Remember [[${name}]]`, children: [], collapsed: false }] }]);
   const save = vi.spyOn(backend(), "pageSubmit");
+  const locate = vi.spyOn(backend(), "queryRun").mockResolvedValue({ anchor: "page", pages: [] } as never);
+  const sectionsPage: PageRead = { id: "pages/Sections.md", name: "Sections", title: "Sections", kind: "page", pre_block: "tine/journal-sections:: true", blocks: [{ id: "upcoming", raw: "{{upcoming}}", children: [], collapsed: false }] };
+  vi.spyOn(backend(), "getPage").mockImplementation(async name => name === "Sections" ? sectionsPage : null);
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <PageView />, host);
   try {
     await vi.waitFor(() => expect(host.querySelectorAll(".page-section")).toHaveLength(2));
     expect(host.querySelector(".page-section")?.textContent).toContain(today);
+    expect(host.querySelector(".journal-upcoming")).toBeNull();
+    locate.mockResolvedValue({ anchor: "page", pages: [{ name: "Sections" }] } as never);
+    bumpDataRev();
+    await vi.waitFor(() => expect(host.querySelector(".journal-upcoming")).not.toBeNull());
     const upcoming = host.querySelector<HTMLDetailsElement>(".journal-upcoming")!;
-    expect(upcoming).not.toBeNull();
     expect(upcoming.open).toBe(false);
     expect(upcoming.textContent).toContain("Upcoming");
     upcoming.open = true; upcoming.dispatchEvent(new Event("toggle"));
@@ -144,6 +150,12 @@ it("GH #481: fileless mentions render without writes and Upcoming keeps today fi
     await vi.waitFor(() => expect(entry.querySelector(".references-count")?.textContent).toBe("1"));
     expect(entry.querySelector(".ref-collapse.collapsed")).not.toBeNull();
     expect(entry.querySelector("a")).not.toBeNull();
+    // A direct today route also has the opted-in section, independently of
+    // the Journals route's cached feed metadata.
+    openPage(today, "journal");
+    await vi.waitFor(() => expect(host.querySelectorAll(".page-section")).toHaveLength(1));
+    await vi.waitFor(() => expect(host.querySelector(".journal-upcoming")).not.toBeNull());
+    resetTabsToJournals();
     await flushAll();
     expect(save).not.toHaveBeenCalled();
     feed.mockResolvedValue({ pages: [], upcoming: [], as_of_day: currentDayKey(), next_before_day: null, done: true } as JournalFeedPage);

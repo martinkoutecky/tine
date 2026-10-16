@@ -198,31 +198,3 @@ fn conflict_inventory_keeps_healthy_conflicts_beside_bad_files() {
     store.close();
     let _ = fs::remove_dir_all(root);
 }
-
-#[test]
-fn parser_sources_report_what_they_skip() {
-    let _integration_guard = crate::integration_lock();
-    let (root, store) = fixture(
-        "sources",
-        &[("pages/Good.md", b"- good\n"), ("pages/Bad.md", BAD_UTF8)],
-    );
-    let sources = tine_graph_features::sources::graph_source_files(&store, false).unwrap();
-    assert_eq!(
-        sources
-            .files
-            .iter()
-            .map(|f| f.rel.as_str())
-            .collect::<Vec<_>>(),
-        ["pages/Good.md"]
-    );
-    assert!(
-        sources
-            .skipped
-            .iter()
-            .any(|row| row.starts_with("pages/Bad.md")),
-        "{:?}",
-        sources.skipped
-    );
-    store.close();
-    let _ = fs::remove_dir_all(root);
-}

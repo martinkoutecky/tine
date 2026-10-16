@@ -2,7 +2,7 @@
 // page "⋯" menu's Find in page plus the open replace row at phone width.
 // Headless Chromium over the mock backend. Usage (after `source scripts/env.sh
 // && npm run build`): node scripts/shot-find-replace.mjs
-import { chromium } from "playwright";
+import { chromium, devices } from "playwright";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -17,7 +17,8 @@ try {
   await wait(`http://localhost:${PORT}/`);
   const browser = await chromium.launch({ args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"] });
   for (const [name, viewport, touch] of [["find-replace-desktop", { width: 1280, height: 800 }, false], ["find-replace-phone", { width: 390, height: 844 }, true]]) {
-    const page = await browser.newPage({ viewport, deviceScaleFactor: 2, hasTouch: touch, isMobile: touch });
+    const page = await browser.newPage({ viewport, deviceScaleFactor: 2, hasTouch: touch, isMobile: touch,
+      userAgent: touch ? devices["Pixel 7"].userAgent : undefined });
     page.on("pageerror", (e) => console.log("pageerror:", String(e).split("\n")[0]));
     await page.goto(`http://localhost:${PORT}/`);
     await page.waitForSelector(".page-title", { timeout: 8000 });
@@ -26,11 +27,12 @@ try {
       await page.locator("[data-mobile-drawer-scrim]").click({ position: { x: 380, y: 400 } });
       await sleep(400);
     }
-    if (!touch) await page.locator(".page-title-row").first().hover();
-    await page.locator("[data-page-actions-trigger]").first().click();
-    await page.waitForSelector('[data-page-action-id="find-in-page"]', { timeout: 3000 });
-    await page.screenshot({ path: `${OUT}/${name}-menu.png` });
-    await page.locator('[data-page-action-id="find-in-page"]').click();
+    if (touch) {
+      await page.locator("[data-page-actions-trigger]").first().click();
+      await page.waitForSelector('[data-page-action-id="find-in-page"]', { timeout: 3000 });
+      await page.screenshot({ path: `${OUT}/${name}-menu.png` });
+      await page.locator('[data-page-action-id="find-in-page"]').click();
+    } else await page.keyboard.press("Control+f");
     await page.waitForSelector(".inpage-find-input", { timeout: 3000 });
     await page.locator(".inpage-replace-toggle").click();
     await page.locator(".inpage-find-input").fill("the");

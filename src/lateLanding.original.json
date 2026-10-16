@@ -42,7 +42,6 @@
   "src/components/Sidebar.tsx#openKnownGraph.openNewWindow",
   "src/components/WorkspaceSwitcher.tsx#WorkspaceSwitcher.remove",
   "src/debug.ts#initDebug",
-  "src/devtools/lsdoc-diff/orchestrator.ts#runComparison",
   "src/document/edits/capture.ts#captureOutlineInto",
   "src/document/edits/identity.ts#persistBlockRefTarget",
   "src/document/edits/paste.ts#pasteClipboardPayload",

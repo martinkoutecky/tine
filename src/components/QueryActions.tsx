@@ -14,6 +14,7 @@ export function QueryActions(props: {
   search: () => void;
   export: () => void;
   fold?: (collapsed: boolean) => void;
+  folded?: boolean;
 }): JSX.Element {
   const [open, setOpen] = createSignal(false);
   const [position, setPosition] = createSignal({ left: 0, top: 0 });
@@ -57,8 +58,7 @@ export function QueryActions(props: {
       </Show>
       <button type="button" disabled={!props.results} onClick={() => run(props.copy)}>{t("query-calm-copy")}</button>
       <Show when={props.fold}>
-        <button type="button" disabled={!props.results} onClick={() => run(() => props.fold?.(true))}>{t("query-calm-collapse")}</button>
-        <button type="button" disabled={!props.results} onClick={() => run(() => props.fold?.(false))}>{t("query-calm-expand")}</button>
+        <button type="button" disabled={!props.results} onClick={() => run(() => props.fold?.(!props.folded))}>{t(props.folded ? "query-calm-expand" : "query-calm-collapse")}</button>
       </Show>
       <button type="button" onClick={() => run(props.search)}>{t("query-calm-search")}</button>
       <button type="button" disabled={!props.results} onClick={() => run(props.export)}>{t("query-calm-export")}</button>

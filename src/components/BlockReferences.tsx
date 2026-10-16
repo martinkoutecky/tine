@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { bulkCollapseTarget } from "../collapseToggle";
 import { For, Show, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
@@ -58,8 +59,7 @@ export function BlockReferences(props: { id: string }): JSX.Element {
         </div>
         <Show when={(groups() ?? []).length > 1}>
           <div class="reference-bulk-controls" aria-label={t("editor-references-reference-page-groups")}>
-            <button type="button" onClick={() => setAllGroups(true)}>{t("editor-references-collapse-all")}</button>
-            <button type="button" onClick={() => setAllGroups(false)}>{t("editor-references-expand-all")}</button>
+            <button type="button" onClick={() => setAllGroups(bulkCollapseTarget(groups() ?? [], groupCollapsed))}>{t(bulkCollapseTarget(groups() ?? [], groupCollapsed) ? "editor-references-collapse-all" : "editor-references-expand-all")}</button>
           </div>
         </Show>
         <For each={groups()}>

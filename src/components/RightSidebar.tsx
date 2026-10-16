@@ -294,11 +294,10 @@ function SidebarItemView(props: {
   );
 }
 
-/** The per-item "more actions" menu with the item's close button (GH #462). Same
- * entries as OG's sidebar item menu (og-1.0.0 components/right_sidebar.cljs
- * `x-menu-content`): Close, Close others, Close all; Collapse or Expand this item,
- * Collapse others, Collapse all, Expand all; Open as page for a page item. The
- * "others/all" entries need a second item. The menu floats out of the item (the
+/** The per-item "more actions" menu with the item's close button (GH #462).
+ * Close others and Collapse others need a second item; Open as page is page-only.
+ * Item toggles and header bulk actions retain the other operations.
+ * The menu floats out of the item (the
  * item clips its overflow) and closes on an outside press or Escape. */
 function ItemActions(props: { index: number; surfaceKey: string; page?: { name: string; pageKind: "journal" | "page"; path?: string }; collapsed: boolean; onClose: () => void }): JSX.Element {
   const [open, setOpen] = createSignal(false);
@@ -346,6 +345,7 @@ function ItemActions(props: { index: number; surfaceKey: string; page?: { name: 
   };
   return (
     <div class="rs-item-actions">
+      <Show when={count() > 1 || props.page}>
       <button
         ref={button}
         class="rs-actions-button"
@@ -358,6 +358,7 @@ function ItemActions(props: { index: number; surfaceKey: string; page?: { name: 
         data-right-sidebar-item-actions
         onClick={toggleOpen}
       >⋯</button>
+      </Show>
       <button class="rs-close" onClick={props.onClose} title={t("right-sidebar-close")}>✕</button>
       <Show when={open()}>
         <FloatingPortal>
@@ -369,21 +370,9 @@ function ItemActions(props: { index: number; surfaceKey: string; page?: { name: 
             style={{ top: `${pos().top}px`, right: `${pos().right}px` }}
             onKeyDown={onKeyDown}
           >
-            <button type="button" role="menuitem" data-right-sidebar-item-action="close" onClick={run(props.onClose)}>{t("right-sidebar-close")}</button>
             <Show when={count() > 1}>
               <button type="button" role="menuitem" data-right-sidebar-item-action="close-others" onClick={run(() => { prepareOthers(); closeOtherRightSidebarItems(props.index); })}>{t("right-sidebar-close-others")}</button>
-              <button type="button" role="menuitem" data-right-sidebar-item-action="close-all" onClick={run(() => { rightSidebar().forEach((it) => prepareSurfaceForUnmount(surfaceKey(it))); closeAllRightSidebarItems(); })}>{t("right-sidebar-close-all")}</button>
-            </Show>
-            <Show
-              when={props.collapsed}
-              fallback={<button type="button" role="menuitem" data-right-sidebar-item-action="collapse" onClick={run(() => { prepareSurfaceForUnmount(props.surfaceKey); setRightSidebarItemCollapsed(props.index, true); })}>{t("right-sidebar-collapse")}</button>}
-            >
-              <button type="button" role="menuitem" data-right-sidebar-item-action="expand" onClick={run(() => setRightSidebarItemCollapsed(props.index, false))}>{t("right-sidebar-expand")}</button>
-            </Show>
-            <Show when={count() > 1}>
               <button type="button" role="menuitem" data-right-sidebar-item-action="collapse-others" onClick={run(() => { prepareOthers(); collapseOtherRightSidebarItems(props.index); })}>{t("right-sidebar-collapse-others")}</button>
-              <button type="button" role="menuitem" data-right-sidebar-item-action="collapse-all" onClick={run(() => { rightSidebar().forEach((it) => prepareSurfaceForUnmount(surfaceKey(it))); setAllRightSidebarItemsCollapsed(true); })}>{t("right-sidebar-collapse-all")}</button>
-              <button type="button" role="menuitem" data-right-sidebar-item-action="expand-all" onClick={run(() => setAllRightSidebarItemsCollapsed(false))}>{t("right-sidebar-expand-all")}</button>
             </Show>
             <Show when={props.page}>
               {(p) => <button type="button" role="menuitem" data-right-sidebar-item-action="open-as-page" onClick={run(() => openPageTarget({ name: p().name, pageKind: p().pageKind, path: p().path }))}>{t("right-sidebar-open-as-page")}</button>}

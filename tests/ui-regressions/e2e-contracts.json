@@ -1,6 +1,24 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-sw-r2-residue.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Markdown and Org highlights appear in routed pages and journals; native Ctrl+A selects code body then full source; Alt-dragging a single query result creates a saved reference while ordinary dragging moves the source and preserves the query.","blocking":true}],
+      "acceptableVariations":["Highlight colors, block layout and save latency may vary while highlighted text, selected/copied content and persisted block identities agree."],
+      "nonRequirements":["Exact pixels, query-table drag handles absent from OG 0.10.9, selected-row CSS classes or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-census-settings.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"New workspace… in Commands opens the existing creation form with either switcher layout; submitting named workspaces persists both names in the graph's workspace registry.","blocking":true}],
+      "acceptableVariations":["Form placement, styling and persistence latency may vary while the same workspace creation flow remains available."],
+      "nonRequirements":["Exact pixels, a specific generated workspace ID, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-sw-r2-polish2.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Settings highlights matching English and Chinese labels; Diagnostics retains real reporting, clear and rescan without the parser comparison runner.","blocking":true}],
+      "acceptableVariations":["Typography, matching counts and diagnostic report content may vary while matches are highlighted and the remaining tools work."],
+      "nonRequirements":["Exact pixels, automatic uploads, native certification outside Linux WebKitGTK or exercising native save/clipboard dialogs."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sw-preview-tabs.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Page and block preview title, bullet and Open source clicks activate their destination tab. A preview remains visible while its page actions menu is open; Open in new tab confirms a new background tab, and closing the menu resumes hover dismissal.","blocking":true}],
       "acceptableVariations":["Tab placement, preview placement, styling and navigation latency may vary while the active destination and preview/menu state remain correct."],

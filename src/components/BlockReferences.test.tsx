@@ -134,13 +134,16 @@ it("collapses every block-reference location and reopens one source", async () =
   try {
     await vi.waitFor(() => expect(root.querySelectorAll(".reference-group").length).toBe(2));
     const controls = root.querySelectorAll<HTMLButtonElement>(".reference-bulk-controls button");
-    expect(controls.length).toBe(2);
+    expect(controls.length).toBe(1);
+    expect(controls[0].textContent).toBe("Collapse all");
     controls[0].click();
     expect(root.querySelectorAll(".reference-blocks").length).toBe(0);
     root.querySelector<HTMLButtonElement>('.reference-group-disclosure[aria-label*="B"]')!.click();
     expect(root.querySelectorAll(".reference-blocks").length).toBe(1);
-    controls[1].click();
+    expect(controls[0].textContent).toBe("Expand all");
+    controls[0].click();
     expect(root.querySelectorAll(".reference-blocks").length).toBe(2);
+    expect(controls[0].textContent).toBe("Collapse all");
   } finally { dispose(); }
 });
 

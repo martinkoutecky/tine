@@ -39,12 +39,6 @@
   overflow: auto;
 }
 
-.diagnostics-improve {
-  border-top: 1px solid var(--border-color);
-  margin-top: 1.5rem;
-  padding-top: 1.25rem;
-}
-
 .diagnostics-errors {
   border-top: 1px solid var(--border-color);
   margin-top: 1.5rem;

@@ -453,6 +453,8 @@ describe("QueryMacro sheet integration", () => {
         const details = root.querySelector<HTMLDetailsElement>(".qc-actions")!;
         details.open = true; details.dispatchEvent(new Event("toggle")); await tick();
         const id = details.querySelector("summary")!.getAttribute("aria-controls")!;
+        const folds = [...document.getElementById(id)!.querySelectorAll<HTMLButtonElement>("button")].filter(button => ["Collapse all", "Expand all"].includes(button.textContent ?? ""));
+        expect(folds).toHaveLength(1);
         const button = [...document.getElementById(id)!.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === label);
         expect(button).toBeDefined(); button!.click();
       };

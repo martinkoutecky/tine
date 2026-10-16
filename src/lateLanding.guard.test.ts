@@ -138,7 +138,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "captureTarget", "bindCaptureGraph", "listKnownGraphs", "revealKnownGraph", "appPlatform", "listInstalledPlugins",
   "readPluginEntry", "verifyPluginRegistry", "loadPluginRegistryCache", "defaultGraphParent", "suggestGraphName",
   "closeGraphWindow", "trayApply", "openDevtools", "pageInventory", "pageModified", "pageBacklinkCounts", "journalFeedPage", "journalContentDays",
-  "getPage", "resolvePage", "graphSourceFiles",
+  "getPage", "resolvePage",
   // The page host's reads and controls: opening a page takes custody and writes
   // nothing; the mail and graph-open events, the publication barrier and debt
   // queries, the draft I/O re-probe, the v1 drafts path, the read-only merge.
@@ -167,7 +167,6 @@ const OWNER_PARAM_HELPERS = new Set([
   "src/carry.ts#ensureLoaded",
   "src/components/ExportModal.tsx#warmMacro",
   "src/components/ExportModal.tsx#warmQueryMacros",
-  "src/devtools/lsdoc-diff/orchestrator.ts#runComparison",
   "src/document/workingSet.ts#admitPageFile",
   "src/guide.ts#markGuideAnnounced",
   "src/queryTwin.ts#bothFamilies",

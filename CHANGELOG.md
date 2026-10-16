@@ -10,10 +10,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- The Journal sections page explains what it controls and links to its Guide in the right sidebar (GH #710).
 - Custom CSS can set `--tine-danger-color` to override error and destructive-action colors (UI-DANGER-THEME-CONTRAST).
 
 ### Changed
 
+- Appearance starts with Themes and keeps fine-tuning, Custom CSS and content widths in searchable Advanced settings; numbered tab/pane and resize commands stay in Shortcuts, task carry uses the configured day count, empty Namespaces stays hidden, and Commands offers New workspace… (UI census 2026-10).
+- Page and block menus group reference, embed and link copying under **Copy as ▸**; page menus omit duplicate Markdown copying and show Find in page only on mobile, sidebar item menus keep contextual actions, and references and query results use one fold toggle (UI census 2026-10).
+- Upcoming is now off by default; add `{{upcoming}}` to the Journal sections page to show future journal references in that position (GH #710).
 - Build: consolidate Rust integration tests into one executable per crate and omit third-party debug data to reduce linking time and disk writes.
 - An Android share now opens the journal where it landed and reveals the last shared item in the batch, while keeping the Captured notice (GH #608).
 - Soft now uses EllisMorrow's refined middle-range palette, with darker light surfaces, brighter dark surfaces, warm highlights and quieter active navigation and scrollbars (GH #649).
@@ -23,6 +27,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Preview source clicks switch to the opened tab, preview actions keep the preview open, and **Open in new tab** confirms its background tab on desktop and mobile (GH #363, GH #705).
 - Page icon saving and recovery, diagnostics, workspace and query actions use themed buttons instead of native browser bevels (UI-SW-BUTTONS).
+- Settings search highlights matching Latin and Chinese text in result labels (GH #706).
+- Chinese slash-menu rows show English keywords followed by Chinese glosses; English matching and inserted syntax stay unchanged (GH #107).
+- Journal carry buttons appear on title-row hover or keyboard focus, and stay visible on devices without hover (UI-CENSUS-7).
+- Removed the parser comparison runner from Help & diagnostics; diagnostic reports, rescan and graph verification remain available (UI-CENSUS-18).
+- Alt-dragging one block from a query result or an ordinary outline bullet now inserts a saved block reference while keeping the source in place (GH #494).
+
 - Plain navigation now switches to an already-open page tab even when one route uses the page name and the other its file path, preserving the source tab (GH #711).
 - Query table column choices now come from the current results instead of offering unrelated graph properties; saved choices survive changes to the results (GH #680).
 - Shortcuts and shortcut recording recognize the physical Latin letter or digit on non-Latin keyboard layouts, including Cyrillic, while text input and Latin layouts keep their behavior (GH #709).

@@ -142,7 +142,6 @@ diagnostics-tab-rescan-graph = Rescan graph
 
 diagnostics-tab-large-report-this-preview-is-shortened-to-keep = Large report: this preview is shortened to keep Settings responsive. Copy report exports the complete report.
 
-diagnostics-tab-help-improve-tine-s-parser = Help improve Tine's parser
 
 error-toast-history-recent-error-messages = Recent error messages
 

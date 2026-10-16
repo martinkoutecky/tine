@@ -63,6 +63,15 @@ editor-completion-visual-basic-net = Visual Basic .NET
 editor-completion-webassembly = WebAssembly
 
 editor-completion-priority-a = 优先级 A
+editor-completion-todo = 待办
+editor-completion-doing = 进行中
+editor-completion-later = 稍后处理
+editor-completion-now = 正在处理
+editor-completion-done = 已完成
+editor-completion-waiting = 等待中
+editor-completion-wait = 等待
+editor-completion-in-progress = 进行中
+editor-completion-canceled = 已取消
 
 editor-completion-priority-b = 优先级 B
 
@@ -104,7 +113,13 @@ editor-completion-calculator = 计算器
 
 editor-completion-quote = 引用文本
 
-editor-completion-admonition = 提示框：{ $type }
+editor-completion-admonition = { $type ->
+    [note] 备注提示框
+    [tip] 技巧提示框
+    [important] 重要提示框
+    [warning] 警告提示框
+   *[caution] 注意提示框
+    }
 
 editor-completion-divider = 分隔线
 

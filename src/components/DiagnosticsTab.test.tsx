@@ -26,7 +26,7 @@ describe("Help & diagnostics (GH #343)", () => {
     document.body.appendChild(host);
     const dispose = render(() => <DiagnosticsTab />, host);
     expect(host.querySelector("h2")?.textContent).toBe("Help & diagnostics");
-    expect(host.textContent).toContain("Help improve Tine's parser");
+    expect(host.textContent).not.toContain("Help improve Tine's parser");
 
     button(host, "Create diagnostic report").click();
     await flush();

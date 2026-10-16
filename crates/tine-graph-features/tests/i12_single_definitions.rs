@@ -26,7 +26,7 @@ fn violations(file: &str, source: &str) -> Vec<String> {
     {
         found.push("graph-text client does not use file_kind".to_owned());
     }
-    if ["journals.rs", "pages.rs", "conflicts.rs", "sources.rs"]
+    if ["journals.rs", "pages.rs", "conflicts.rs"]
         .iter()
         .any(|name| file.ends_with(name))
         && !source.contains("tine_store::is_graph_text(")
@@ -92,7 +92,6 @@ fn shared_answers_have_one_definition() {
         "crates/tine-store/src/query_plan.rs",
         "crates/tine-graph-features/src/journals.rs",
         "crates/tine-graph-features/src/conflicts.rs",
-        "crates/tine-graph-features/src/sources.rs",
         "crates/tine-graph-features/src/pdf.rs",
     ] {
         let mut source = fs::read_to_string(root.join(file)).unwrap();

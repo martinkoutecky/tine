@@ -383,26 +383,6 @@ pub(crate) async fn resolve_page(
     .map_err(|error| error.to_string())?
 }
 
-/// Raw text of every Markdown/Org file in the open graph (`pages/`, plus
-/// `journals/` when `include_journals`), for the "Help improve Tine" diff panel.
-/// Mirrors `lsdoc/tools/graph-check.mjs`'s file scan: skips files over 8 MB, tags
-/// format by extension, returns graph-root-relative paths sorted for stable
-/// output, and names every file it skipped. Read-only and local — the panel
-/// makes no network calls.
-#[tauri::command]
-pub(crate) async fn graph_source_files(
-    include_journals: bool,
-    state: GraphContext<'_>,
-) -> Result<tine_graph_features::sources::GraphSources, String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::sources::graph_source_files(&slot.store, include_journals)
-            .map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
 #[cfg(test)]
 mod wire_family_tests {
     use super::*;

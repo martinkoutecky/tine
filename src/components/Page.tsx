@@ -25,7 +25,7 @@ import { LinkedReferences } from "./LinkedReferences";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { FailureBoundary } from "./FailureBoundary";
 import { UnlinkedReferences } from "./UnlinkedReferences";
-import { TodaySections } from "./TodaySections";
+import { JournalSectionsHeader, TodaySections } from "./TodaySections";
 import { SheetTable } from "./SheetTable";
 import { TodayTaskSummary } from "./TodayTaskSummary";
 import { selectedThemePresentation } from "../themeGallery";
@@ -659,15 +659,12 @@ export function PageView(): JSX.Element {
     }>
       <Show when={zoomValid()} fallback={
         <div class="page">
-          <Show when={currentRoute().kind === "journals" && upcomingDays().length > 0}>
-            <UpcomingJournals pages={upcomingDays()} />
-          </Show>
           <For each={pagesToRender()}>
             {(p) => (
               <PageSection page={p}>
                 {/* OG page/today-queries and journal: queries precede agenda. */}
                 <Show when={p.kind === "journal" && p.name === journalTitle(localDateFromDayKey(currentDayKey()))}>
-                  <TodaySections today={p.name} />
+                  <TodaySections today={p.name} upcoming={<UpcomingSection feed={currentRoute().kind === "journals"} />} />
                 </Show>
                 <Show when={currentRoute().kind === "journals"}>
                   <JournalLinkedReferences name={p.name} />
@@ -719,6 +716,23 @@ export function PageView(): JSX.Element {
     </Show>
     </Show>
   );
+}
+
+// A directly routed today page has no journal-feed metadata yet. Read only
+// when the opted-in section mounts; Journals reuses its existing feed read.
+function UpcomingSection(props: { feed: boolean }): JSX.Element {
+  const [days, { refetch }] = createResource(
+    () => props.feed ? null : `${graphEpoch()}\0${dataRev()}`,
+    async () => {
+      const result = await readOwned(graphOwner(), backend().journalFeedPage(1, null));
+      return result.kind === "current" ? result.value.upcoming ?? [] : [];
+    },
+  );
+  const pages = () => props.feed ? upcomingDays() : readOr(days, [], "upcoming journals") ?? [];
+  return <>
+    <ResourceFailure of={days} what="upcoming journals" onRetry={() => void refetch()} />
+    <Show when={pages().length > 0}><UpcomingJournals pages={pages()} /></Show>
+  </>;
 }
 
 function UpcomingJournals(props: { pages: PageRead[] }): JSX.Element {
@@ -1110,6 +1124,9 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
             )}
           </For>
         </div>
+      </Show>
+      <Show when={props.page.kind === "page" && headerProperties().some(([key, value]) => key.toLowerCase() === "tine/journal-sections" && value.trim().toLowerCase() === "true")}>
+        <JournalSectionsHeader />
       </Show>
       <Show when={props.page.guide}>
         <div class="page-guide-banner">

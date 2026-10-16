@@ -1,4 +1,5 @@
 import { createReferenceGroupCollapse } from "../referenceGroupCollapse";
+import { bulkCollapseTarget } from "../collapseToggle";
 import { t } from "../i18n";
 import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
@@ -460,8 +461,7 @@ export function ReferenceSection(props: { name: string; unlinked?: boolean; jour
           </Show>
           <Show when={shown().length > 1}>
             <div class="reference-bulk-controls" aria-label={t(props.unlinked ? "references-groups-unlinked" : "references-groups-linked")}>
-              <button type="button" onClick={() => setAllGroups(true)}>{t("references-collapse-all")}</button>
-              <button type="button" onClick={() => setAllGroups(false)}>{t("references-expand-all")}</button>
+              <button type="button" onClick={() => setAllGroups(bulkCollapseTarget(shown(), groupCollapsed))}>{t(bulkCollapseTarget(shown(), groupCollapsed) ? "references-collapse-all" : "references-expand-all")}</button>
             </div>
           </Show>
           <For each={shown().map(groupKey)}>

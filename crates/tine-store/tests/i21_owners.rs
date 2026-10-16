@@ -137,7 +137,8 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // on the blocking pool, awaited by its future like open_asset.
         // +1 GH #616: reveal_export awaits the shared OS reveal helper.
         // -1 GH #481: moved to commands/journals_feed.rs, same awaited owner.
-        38,
+        // -1 UI-CENSUS-18: the unused graph_source_files command was removed.
+        37,
         "command future",
         "caller awaits blocking result",
     ),

@@ -1,4 +1,4 @@
-import { msg, render, t, type Msg } from "../i18n";
+import { activeLocale, msg, render, t, type Msg } from "../i18n";
 // Pure autocomplete logic for the block editor: detect a `[[`, `#`, `/`, `<`, or property
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
@@ -559,15 +559,15 @@ export interface Command {
 type CommandDefinition = Omit<Command, "matchTieOrder" | "bareOrder" | "label"> & { label?: string; labelMessage?: Msg };
 
 const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
-  { label: "TODO", action: "task-marker", taskMarker: "TODO" },
-  { label: "DOING", action: "task-marker", taskMarker: "DOING" },
-  { label: "LATER", action: "task-marker", taskMarker: "LATER" },
-  { label: "NOW", action: "task-marker", taskMarker: "NOW" },
-  { label: "DONE", action: "task-marker", taskMarker: "DONE" },
-  { label: "WAITING", action: "task-marker", taskMarker: "WAITING" },
-  { label: "WAIT", action: "task-marker", taskMarker: "WAIT" },
-  { label: "IN-PROGRESS", action: "task-marker", taskMarker: "IN-PROGRESS" },
-  { label: "CANCELED", action: "task-marker", taskMarker: "CANCELED" },
+  { matchLabel: "TODO", labelMessage: msg("editor-completion-todo"), action: "task-marker", taskMarker: "TODO" },
+  { matchLabel: "DOING", labelMessage: msg("editor-completion-doing"), action: "task-marker", taskMarker: "DOING" },
+  { matchLabel: "LATER", labelMessage: msg("editor-completion-later"), action: "task-marker", taskMarker: "LATER" },
+  { matchLabel: "NOW", labelMessage: msg("editor-completion-now"), action: "task-marker", taskMarker: "NOW" },
+  { matchLabel: "DONE", labelMessage: msg("editor-completion-done"), action: "task-marker", taskMarker: "DONE" },
+  { matchLabel: "WAITING", labelMessage: msg("editor-completion-waiting"), action: "task-marker", taskMarker: "WAITING" },
+  { matchLabel: "WAIT", labelMessage: msg("editor-completion-wait"), action: "task-marker", taskMarker: "WAIT" },
+  { matchLabel: "IN-PROGRESS", labelMessage: msg("editor-completion-in-progress"), action: "task-marker", taskMarker: "IN-PROGRESS" },
+  { matchLabel: "CANCELED", labelMessage: msg("editor-completion-canceled"), action: "task-marker", taskMarker: "CANCELED" },
   { matchLabel: "Priority A", labelMessage: UI_MESSAGES["editor-completion-priority-a"], action: "priority-a", key: "A" },
   { matchLabel: "Priority B", labelMessage: UI_MESSAGES["editor-completion-priority-b"], action: "priority-b", key: "B" },
   { matchLabel: "Priority C", labelMessage: UI_MESSAGES["editor-completion-priority-c"], action: "priority-c", key: "C" },
@@ -644,7 +644,11 @@ const BARE_ORDER = new Map<string, number>([
 export const COMMANDS: readonly Command[] = Object.freeze(COMMAND_DEFINITIONS.map((command, matchTieOrder) =>
   Object.freeze({
     ...command,
-    get label() { return command.labelMessage ? render(command.labelMessage) : command.label!; },
+    get label() {
+      const translated = command.labelMessage ? render(command.labelMessage) : command.label!;
+      return activeLocale() === "zh-CN" ? `${command.matchLabel ?? command.label} (${translated})`
+        : command.taskMarker ? command.matchLabel! : translated;
+    },
     matchTieOrder,
     bareOrder: BARE_ORDER.get(command.matchLabel ?? command.label!) ?? 1000 + matchTieOrder,
   }),
@@ -724,7 +728,8 @@ export function codeLanguageItems(query: string): CodeLanguageItem[] {
 /** Fuzzy score for a command against `query`: the best of its label and its
  *  optional short `key` (so a one-letter query can surface it first). */
 export function commandScore(query: string, c: Command): number {
-  return Math.max(fuzzyScore(query, c.matchLabel ?? c.label), c.key ? fuzzyScore(query, c.key) : 0);
+  return Math.max(fuzzyScore(query, c.matchLabel ?? c.label), c.key ? fuzzyScore(query, c.key) : 0,
+    activeLocale() === "zh-CN" && /[^\x00-\x7f]/.test(query) ? fuzzyScore(query, c.label) : 0);
 }
 
 /** Slash-command matches for `query`, ranked best-first (OG-style). An empty
