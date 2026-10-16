@@ -21,7 +21,7 @@ icon:: ⌨️
 	- While editing, **Ctrl+A** first selects the block's text; press it again to select the block with its children, and keep pressing to widen the selection to each parent and finally the whole page. **Shift+Up** onto a parent always takes all of that parent's children with it.
 	- **Edit selected block** returns one selected block to editing. It starts unbound; assign a key in **Settings → Shortcuts**. You can bind it to **Escape** if you prefer that way back into editing; without that binding, Escape keeps its ordinary selection steps.
 - ## Copy a link to a block — Ctrl+C
-	- With several blocks selected, right-click any selected bullet: **Copy blocks**, **Cut blocks**, **Copy block refs**, **Copy block embeds**, and **Delete blocks** act on the selection. Cut and delete take one Undo step; cutting keeps the complete subtrees for pasting. Right-clicking an unselected bullet acts on that bullet.
+	- With several blocks selected, right-click any selected bullet: **Copy blocks**, **Cut blocks**, and **Delete blocks** act on the selection; **Copy as ▸** holds **Copy block refs**, **Copy block embeds**, and **Copy link** for the same selection. Cut and delete take one Undo step; cutting keeps the complete subtrees for pasting. Right-clicking an unselected bullet acts on that bullet.
 	- While editing with no text selected, **Ctrl/Cmd+C** copies a reference `((id))` to the block and **Ctrl/Cmd+Shift+C** copies an embed `{{embed ((id))}}`. With text selected, both keep their ordinary copy meaning.
 - ## Insert a block above
 	- To put a bullet *above* an existing one, press **Enter** with the caret at its very start. Some bullets keep Enter for themselves — inside a code block it adds a line of code — so for those, right-click the bullet's dot and choose **Insert block above**. That works on any bullet, including the first one on a page.
@@ -34,7 +34,7 @@ icon:: ⌨️
 	- **Duplicate block above (with children)** does the same above the original. The caret follows the new copy, so repeated presses stack copies upwards. It also ships without a key; bind it under **Settings → Shortcuts**.
 	- **Insert child block** adds an empty last child under the block and starts editing it, which works where **Enter** then **Tab** cannot, such as an embedded block with no children yet. A folded block opens so the new child shows.
 	- **Collapse children (one level)** folds only the immediate children of the block. **Expand children (one level)** starts with the immediate children; each further press opens the next level with folded children, ignoring leaves, until everything is expanded. The block itself opens, and each press is one Undo step. With nothing selected they start at the page's top-level blocks.
-	- **Copy block refs of the selected blocks** copies a `((id))` reference for each selected block, one per line in the order you see them, the same text as **Copy block refs** in the block context menu.
+	- **Copy block refs of the selected blocks** copies a `((id))` reference for each selected block, one per line in the order you see them, the same text as **Copy as ▸ → Copy block refs** in the block context menu.
 	- **Search for the selected text** opens search with the selection already typed in. The ready-made key for it, **Ctrl/Cmd+Shift+F**, is Logseq's *toggle favorite*, so it is left for you to choose.
 - ## Create one yourself
 	- 1. Press **Ctrl+K**.

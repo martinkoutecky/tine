@@ -84,35 +84,31 @@ describe("right sidebar per-item menu (GH #462)", () => {
     } finally { dispose(); }
   });
 
-  it("Close closes this item; Close all empties the sidebar", () => {
+  it("keeps only others/page actions in the item menu and bulk actions in the header", () => {
     const { root, dispose } = mount();
     try {
       openMenu(root, 0);
-      choose("close");
-      expect(names()).toEqual(["block:im-one", "block:im-two"]);
-      openMenu(root, 0);
-      choose("close-all");
-      expect(rightSidebar()).toEqual([]);
+      expect([...document.querySelectorAll("[data-right-sidebar-item-action]")].map(el => el.getAttribute("data-right-sidebar-item-action")))
+        .toEqual(["close-others", "collapse-others", "open-as-page"]);
+      document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      root.querySelector<HTMLButtonElement>("[data-right-sidebar-actions]")!.click();
+      const bulk = (action: string) => document.querySelector<HTMLButtonElement>(`[data-right-sidebar-action="${action}"]`)!;
+      expect(bulk("collapse-all")).not.toBeNull();
+      expect(bulk("expand-all")).not.toBeNull();
+      expect(bulk("close-all")).not.toBeNull();
     } finally { dispose(); }
   });
 
-  it("offers Collapse on an open item and Expand on a collapsed one; Collapse all and Expand all act on every item", () => {
+  it("retains the item's own collapse toggle and close button", () => {
     const { root, dispose } = mount();
     try {
-      openMenu(root, 1);
-      expect(document.querySelector('[data-right-sidebar-item-action="expand"]')).toBeNull();
-      choose("collapse");
+      expect(root.querySelectorAll(".rs-item .rs-close")).toHaveLength(3);
+      root.querySelectorAll<HTMLButtonElement>("[data-right-sidebar-item-toggle]")[1].click();
       expect(collapsed()).toEqual([false, true, false]);
-      openMenu(root, 1);
-      expect(document.querySelector('[data-right-sidebar-item-action="collapse"]')).toBeNull();
-      choose("expand");
+      root.querySelectorAll<HTMLButtonElement>("[data-right-sidebar-item-toggle]")[1].click();
       expect(collapsed()).toEqual([false, false, false]);
-      openMenu(root, 0);
-      choose("collapse-all");
-      expect(collapsed()).toEqual([true, true, true]);
-      openMenu(root, 0);
-      choose("expand-all");
-      expect(collapsed()).toEqual([false, false, false]);
+      root.querySelector<HTMLButtonElement>(".rs-item .rs-close")!.click();
+      expect(names()).toEqual(["block:im-one", "block:im-two"]);
     } finally { dispose(); }
   });
 
@@ -122,12 +118,11 @@ describe("right sidebar per-item menu (GH #462)", () => {
       setRightSidebar([{ kind: "page", name: page.name, pageKind: "page" }]);
       openMenu(root, 0);
       const entries = [...document.querySelectorAll("[data-right-sidebar-item-action]")].map((el) => el.getAttribute("data-right-sidebar-item-action"));
-      expect(entries).toEqual(["close", "collapse", "open-as-page"]);
+      expect(entries).toEqual(["open-as-page"]);
       choose("open-as-page");
       expect(route()).toMatchObject({ kind: "page", name: page.name });
       setRightSidebar([{ kind: "block", uuid: "im-one", page: page.name, pageKind: "page" }]);
-      openMenu(root, 0);
-      expect(document.querySelector('[data-right-sidebar-item-action="open-as-page"]')).toBeNull();
+      expect(root.querySelector("[data-right-sidebar-item-actions]")).toBeNull();
     } finally { dispose(); }
   });
 });

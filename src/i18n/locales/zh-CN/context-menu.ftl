@@ -73,6 +73,7 @@ context-menu-ui-open-in-sidebar = 在侧边栏打开
 context-menu-ui-go-to-block = 前往块
 
 context-menu-ui-copy-link = 复制链接
+context-menu-ui-copy-as = 复制为
 
 context-menu-ui-copy-block-ref = 复制块引用
 

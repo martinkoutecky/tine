@@ -4,7 +4,37 @@ import { loadSourcePage } from "../sourcePage";
 import { graphOwner } from "../owned";
 import { t } from "../i18n";
 import { pushToast } from "../toasts";
-import type { RefGroup } from "../types";
+import type { BlockDto, RefGroup } from "../types";
+
+/** Read current source folds, including Undo; unopened sources use their answer.
+ * This does not hydrate pages just to choose a menu label. */
+export function queryResultsHaveCollapsed(groups: RefGroup[]): boolean {
+  for (const group of groups) for (const block of group.blocks) {
+    if (block.page_property) continue;
+    const source = resolveResultRow({ id: block.id, dto: block, page: group.page, kind: group.kind, path: group.path }, "mount");
+    if (source) {
+      const pending = [source.id];
+      const seen = new Set<string>();
+      while (pending.length) {
+        const id = pending.pop()!;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const current = node(id);
+        if (!current?.children.length) continue;
+        if (current.collapsed) return true;
+        pending.push(...current.children);
+      }
+    } else {
+      const pending: BlockDto[] = [block];
+      while (pending.length) {
+        const current = pending.pop()!;
+        if (current.children.length && current.collapsed) return true;
+        pending.push(...current.children);
+      }
+    }
+  }
+  return false;
+}
 
 /** Collapse is an ordinary source edit, never a new query property or writer. */
 export async function collapseQueryResults(groups: RefGroup[], collapsed: boolean): Promise<ReadonlyMap<string, number> | null> {

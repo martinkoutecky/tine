@@ -8,6 +8,7 @@ import { pushToastUnique } from "../toasts";
 import { t } from "../i18n";
 import { QueryActions } from "./QueryActions";
 import { openQueryResultsCopy } from "./queryResultsCopy";
+import { queryResultsHaveCollapsed } from "./QueryCollapse";
 
 /** Graph-owned macro actions. Editing, export and folding enter the host's
  * existing guarded paths; this component introduces no writer. */
@@ -36,5 +37,6 @@ export function QueryMacroActions(props: {
     );
   };
   return <QueryActions editable={props.editable} results={props.results} edit={props.edit} fold={props.fold}
+    folded={queryResultsHaveCollapsed(props.groups())}
     copy={() => { void openQueryResultsCopy(props.groups(), props.pages()); }} search={search} export={props.export} />;
 }

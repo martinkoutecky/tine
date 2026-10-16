@@ -15,6 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- Page and block menus group reference, embed and link copying under **Copy as ▸**; page menus omit duplicate Markdown copying and show Find in page only on mobile, sidebar item menus keep contextual actions, and references and query results use one fold toggle (UI census 2026-10).
 - Upcoming is now off by default; add `{{upcoming}}` to the Journal sections page to show future journal references in that position (GH #710).
 - An Android share now opens the journal where it landed and reveals the last shared item in the batch, while keeping the Captured notice (GH #608).
 - Soft now uses EllisMorrow's refined middle-range palette, with darker light surfaces, brighter dark surfaces, warm highlights and quieter active navigation and scrollbars (GH #649).

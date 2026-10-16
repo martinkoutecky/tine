@@ -49,6 +49,7 @@ context-menu-ui-flatten = Flatten
 context-menu-ui-open-in-sidebar = Open in sidebar
 context-menu-ui-go-to-block = Go to block
 context-menu-ui-copy-link = Copy link
+context-menu-ui-copy-as = Copy as
 context-menu-ui-copy-block-ref = Copy block ref
 context-menu-ui-copied-block-ref = Copied block ref
 context-menu-ui-copy-block-embed = Copy block embed
