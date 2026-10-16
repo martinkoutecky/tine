@@ -59,7 +59,12 @@ warn the first time — here's how to get past it:
 
 - **Linux** — the **AppImage** runs on any distro with no install: `chmod +x Tine_*.AppImage`, then
   run it. Or use the **`.deb`** (Debian/Ubuntu) or **`.rpm`** (Fedora/openSUSE).
-- **macOS** — open the **`.dmg`** and drag Tine into Applications. If Tine
+  Prefer Flatpak? The community repository [FlatPark](https://flatpark.org) packages the official
+  `.deb` (unofficial, but approved by us; packaging issues go to FlatPark's tracker):
+  `flatpak --user remote-add --if-not-exists flatpark https://dl.flatpark.org/flatpark.flatpakrepo`,
+  then `flatpak --user install flatpark page.tine.Tine`.
+- **macOS** — `brew install --cask tine` with [Homebrew](https://brew.sh), or open the **`.dmg`**
+  and drag Tine into Applications. If Tine
   **keeps asking to access your Documents folder on every launch**, see the
   [workaround](#macos-repeated-documents-permission-prompt) below.
 - **Windows** — run the **`.exe`** installer; if SmartScreen appears, click **More info → Run
@@ -70,6 +75,11 @@ warn the first time — here's how to get past it:
 - **iPhone and iPad** — Tine is in public beta on **[TestFlight](https://testflight.apple.com/join/rpGGpTVW)**:
   install Apple's TestFlight app, open the link, and install Tine (it appears as *TineOutline*).
   Graphs live in **On My iPhone → TineOutline** or **iCloud Drive → TineOutline**.
+
+**Updates.** On desktop, Tine tells you when a new version is out and installs it in place when
+you click **Install update**: this covers the AppImage, `.deb`, `.rpm`, macOS app and Windows
+installer. The raw Linux binary and Flatpak builds update through their own channel instead
+(`flatpak update` for FlatPark).
 
 (Want to hack on Tine instead? Build from source — see [Build & run](#build--run).)
 

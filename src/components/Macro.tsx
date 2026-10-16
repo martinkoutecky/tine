@@ -542,8 +542,16 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
     const current = macroName();
     let name = current;
     let dialect = macroPrintDialect(name);
-    let printed: Owned<string>;
-    try {
+    let printed: Owned<string> | undefined;
+    // **A display edit is not a filter conversion (§4.3.1)**: unless sort or sample
+    // (the view fields OG prints inside the query) change, re-emit the authored text.
+    const before = displayEdit ? reading()?.view : undefined;
+    if (before && sameJson(before.sort ?? [], next.view.sort ?? []) && before.sample === next.view.sample) try {
+      printed = await readOwned(owner, backend().printQuery(next.query, next.view, dialect, true));
+    } catch (error) {
+      if (!(error instanceof QueryPrintRefusedError && error.isNotApplicable)) { setPrintError(rawText(errorText(error))); return false; }
+    }
+    if (!printed) try {
       const expressible = await readOwned(owner, backend().queryOgExpressible(next.query, next.view));
       if (expressible.kind === "stale") {
         return refuseChanged();
@@ -565,7 +573,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       return false;
     }
     const node = docNode(blockId);
-    if (printed.kind === "stale" || !node) {
+    if (!printed || printed.kind === "stale" || !node) {
       return refuseChanged();
     }
     // A page that turned read-only while the print was in flight refuses the

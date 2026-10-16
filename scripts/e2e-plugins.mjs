@@ -39,14 +39,15 @@ try {
   await page.getByTitle("Settings (t s)").click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   try {
-    await page.getByText("Bullet threading v0.2.0", { exact: true }).waitFor({ timeout: 15_000 });
+    // The listing is the live signed registry, so versions move as plugins publish.
+    await page.getByText(/^Bullet threading v\d+\.\d+\.\d+$/).waitFor({ timeout: 15_000 });
   } catch (error) {
     console.error(await page.locator(".settings-pane-body").innerText());
     console.error(pageErrors.join("\n"));
     throw error;
   }
-  await page.getByText("Query filter shortcuts v0.2.0", { exact: true }).waitFor();
-  await page.getByText("Heading level shortcuts v0.1.0", { exact: true }).waitFor();
+  await page.getByText(/^Query filter shortcuts v\d+\.\d+\.\d+$/).waitFor();
+  await page.getByText(/^Heading level shortcuts v\d+\.\d+\.\d+$/).waitFor();
   await page.getByText(/Signed registry.*automated deterministic.*AI audits/).waitFor();
 
   const bullet = page.locator(".settings-field", { hasText: "Bullet threading" });
@@ -77,13 +78,13 @@ try {
   await page.getByText(/installed disabled/i).waitFor({ timeout: 15_000 });
   const installed = page.locator(".plugin-detail-page", { hasText: "page.tine.bullet-threading" });
   await installed.waitFor();
-  const toggle = installed.locator(".settings-toggle");
+  const toggle = installed.locator(".plugin-detail-heading .settings-toggle");
   await toggle.click();
   try {
     await page.waitForFunction(
       () => [...document.querySelectorAll(".plugin-detail-page")]
         .find((element) => element.textContent?.includes("page.tine.bullet-threading"))
-        ?.querySelector(".settings-toggle")
+        ?.querySelector(".plugin-detail-heading .settings-toggle")
         ?.getAttribute("aria-checked") === "true",
       undefined,
       { timeout: 10_000 }
