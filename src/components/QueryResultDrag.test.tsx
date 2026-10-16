@@ -16,6 +16,8 @@ import { resetSharedQueryResultsForTests } from "../queryResultCache";
 import { clearTransientLayersForTest } from "../transientLayers";
 import type { ParsedQuery } from "../editor/queryIr";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
+import * as identity from "../document/edits/identity";
+import { invalidateBinding } from "../binding";
 
 beforeAll(initParser);
 beforeEach(() => {
@@ -32,10 +34,27 @@ afterEach(() => {
   vi.restoreAllMocks();
   resetSharedQueryResultsForTests();
   resetStore();
+  Reflect.deleteProperty(document, "elementFromPoint");
   document.body.replaceChildren();
 });
 
-it("dragging a list-view query result's bullet moves that block, not the query", async () => {
+it.each([
+  { label: "query move", altKey: false },
+  { label: "query Alt reference after", altKey: true },
+  { label: "query Alt reference before", altKey: true, y: 2 },
+  { label: "query Alt reference child", altKey: true, x: 60 },
+  { label: "ordinary Alt reference", altKey: true, ordinary: true },
+  { label: "failed ID save", altKey: true, failed: true },
+  { label: "graph changed during ID save", altKey: true, stale: true },
+])("dragging the result uses its source identity: $label", async (scenario) => {
+  const { altKey } = scenario;
+  const durableId = "626f9045-b663-48af-8bb7-3457a97e5bcd";
+  const saveId = vi.spyOn(identity, "ensureBlockId").mockImplementation(async (id) => {
+    if ("failed" in scenario) return null;
+    setDoc("byId", id, "raw", `${doc.byId[id].raw}\nid:: ${durableId}`);
+    if ("stale" in scenario) invalidateBinding();
+    return durableId;
+  });
   setDoc({
     byId: {
       query: { id: "query", raw: "{{tine-query @block}}", parent: null, children: [], page: "Host", collapsed: false },
@@ -51,10 +70,10 @@ it("dragging a list-view query result's bullet moves that block, not the query",
   });
   const host = document.createElement("div");
   document.body.append(host);
-  const dispose = render(() => <For each={pageByName("Host")?.roots ?? []}>{(id) => <Block id={id} />}</For>, host);
+  const dispose = render(() => <><For each={pageByName("Host")?.roots ?? []}>{(id) => <Block id={id} />}</For>{"ordinary" in scenario && <Block id="hit" />}</>, host);
   try {
     const bullet = await vi.waitFor(() => {
-      const el = host.querySelector<HTMLElement>('[data-block-id="query"] [data-block-id="hit"] .bullet-container');
+      const el = host.querySelector<HTMLElement>("ordinary" in scenario ? ':scope > [data-block-id="hit"] .bullet-container' : '[data-block-id="query"] [data-block-id="hit"] .bullet-container');
       expect(el).not.toBeNull();
       return el!;
     });
@@ -65,11 +84,29 @@ it("dragging a list-view query result's bullet moves that block, not the query",
     vi.spyOn(target, "getBoundingClientRect").mockReturnValue({ top: 0, bottom: 20, left: 0, right: 400, height: 20, width: 400 } as DOMRect);
     vi.spyOn(target.querySelector<HTMLElement>(".block-main")!, "getBoundingClientRect")
       .mockReturnValue({ top: 0, bottom: 20, left: 0, right: 400, height: 20, width: 400 } as DOMRect);
-    document.dispatchEvent(new MouseEvent("mousemove", { clientX: 10, clientY: 18 }));
-    document.dispatchEvent(new MouseEvent("mouseup"));
-    await vi.waitFor(() => expect(doc.byId.hit?.page).toBe("Host"));
-    expect(pageByName("Host")!.roots.filter((id) => id !== "query" && id !== "target").concat(doc.byId.target.children)).toContain("hit");
-    expect(pageByName("Src")!.roots).toEqual(["before"]);
+    document.dispatchEvent(new MouseEvent("mousemove", { clientX: "x" in scenario ? scenario.x : 10, clientY: "y" in scenario ? scenario.y : 18 }));
+    document.dispatchEvent(new MouseEvent("mouseup", { altKey }));
+    if (altKey) {
+      await vi.waitFor(() => expect(saveId).toHaveBeenCalledOnce());
+      await Promise.resolve();
+      const references = () => pageByName("Host")!.roots.concat(doc.byId.target.children).filter(id => doc.byId[id].raw === `((${durableId}))`);
+      if ("failed" in scenario || "stale" in scenario) {
+        expect(references()).toEqual([]);
+      } else {
+        await vi.waitFor(() => expect(references()).toHaveLength(1));
+        const ref = references()[0];
+        if ("x" in scenario) expect(doc.byId.target.children).toEqual([ref]);
+        else expect(pageByName("Host")!.roots).toEqual("y" in scenario ? ["query", ref, "target"] : ["query", "target", ref]);
+      }
+      expect(saveId).toHaveBeenCalledWith("hit");
+      expect(doc.byId.hit.page).toBe("Src");
+      expect(pageByName("Src")!.roots).toEqual(["before", "hit"]);
+    } else {
+      await vi.waitFor(() => expect(doc.byId.hit?.page).toBe("Host"));
+      expect(pageByName("Host")!.roots.filter((id) => id !== "query" && id !== "target").concat(doc.byId.target.children)).toContain("hit");
+      expect(pageByName("Src")!.roots).toEqual(["before"]);
+      expect(saveId).not.toHaveBeenCalled();
+    }
     expect(doc.byId.query.raw).toBe("{{tine-query @block}}");
     expect(editingId()).toBeNull();
   } finally {
