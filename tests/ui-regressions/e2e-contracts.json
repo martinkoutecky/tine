@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-agenda-flicker.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Switching to a graph with no agenda or default-query matches never flashes a pending section; switching back shows the matching sections ready.","blocking":true}],
+      "acceptableVariations":["Result arrival time, layout and styling may vary; nonempty sections may appear as their results become ready."],
+      "nonRequirements":["Reserved blank space, exact pixels or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-quit-signal.mjs": {
       "contracts": [{"class":"exact-safety-interoperability","userOutcome":"SIGTERM, SIGHUP and SIGINT, to the app alone or to it and its WebKit helpers at once, end the app within 30 s and remove the unclean-exit marker; signalled alone, an edit typed within the save debounce is on disk.","blocking":true,"authority":"GH #701; data safety (pending saves flush on an orderly quit) and the ADR 0058 unclean-exit marker contract."}],
       "acceptableVariations":["Exit latency within the 30 s bound and the order of window teardown may vary."],

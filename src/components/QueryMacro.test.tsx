@@ -17,7 +17,8 @@ import { blockRunResult } from "../tests/queryReadingsTestkit";
 import { searchFilter, taskFilter } from "../editor/queryBuilder";
 import { readEdnOptions } from "../editor/edn";
 import { resetSharedQueryResultsForTests } from "../queryResultCache";
-import { bumpDataRev } from "../graphSession";
+import { bumpDataRev, bumpGraphEpoch } from "../graphSession";
+import { QueryMacro } from "./Macro";
 import * as blockRender from "../render/block";
 import { renderedBlocks, resetNearObserverForTests } from "../lazyObserve";
 import { openSwitcher, closeSwitcher } from "../ui";
@@ -189,6 +190,52 @@ function loadDamagedQueryDoc(raw: string) {
 }
 
 describe("QueryMacro sheet integration", () => {
+  it.each(["agenda", "config", "sections page"])("keeps the %s absent while a replacement graph's answer is pending then empty", async (surface) => {
+    loadQueryDoc("{{query (task TODO)}}");
+    const { root, dispose } = mount(() => <QueryMacro body="query (task TODO)" title="Scheduled & Deadline"
+      hideWhenEmpty builtIn={surface === "agenda"} configQuery={surface === "config"} />);
+    let land: ((value: QueryResult) => void) | undefined;
+    try {
+      await settleQuery();
+      expect(root.textContent).toContain("From query");
+      vi.mocked(backend().queryRun).mockImplementation(() => new Promise(resolve => { land = resolve; }));
+      bumpGraphEpoch(); await settleQuery();
+      expect(land).toBeDefined();
+      expect(root.querySelector(".query-block")).toBeNull();
+      land!(blockRunResult([])); await settleQuery();
+      expect(root.querySelector(".query-block")).toBeNull();
+    } finally { land?.(blockRunResult([])); dispose(); }
+  });
+
+  it("reveals a journal section only when its first nonempty answer is ready and retains it during save reruns", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    let land!: (value: QueryResult) => void;
+    vi.mocked(backend().queryRun).mockImplementation(() => new Promise(resolve => { land = resolve; }));
+    const { root, dispose } = mount(() => <QueryMacro body="query (task TODO)" title="Scheduled & Deadline" hideWhenEmpty builtIn />);
+    try {
+      await settleQuery();
+      expect(root.querySelector(".query-block")).toBeNull();
+      land(blockRunResult(queryGroups(["todo"]))); await settleQuery();
+      expect(root.textContent).toContain("From query");
+      bumpDataRev(); await settleQuery();
+      expect(root.textContent).toContain("From query");
+      expect(root.textContent).not.toContain("Loading query results");
+      land(blockRunResult(queryGroups(["todo"]))); await settleQuery();
+      expect(root.textContent).toContain("From query");
+    } finally { land(blockRunResult([])); dispose(); }
+  });
+
+  it("keeps the loading placeholder for ordinary authored queries", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    let land!: (value: QueryResult) => void;
+    vi.mocked(backend().queryRun).mockImplementation(() => new Promise(resolve => { land = resolve; }));
+    const { root, dispose } = mount(() => <QueryMacro body="query (task TODO)" />);
+    try {
+      await settleQuery();
+      expect(root.textContent).toContain("Loading query results");
+    } finally { land(blockRunResult([])); dispose(); }
+  });
+
   it.each(["group", "aggregate"])("keeps membership visible through a %s option save", async option => {
     const raw = '{{query (task TODO) {:title "Tasks"}}}';
     loadQueryDoc(raw);
