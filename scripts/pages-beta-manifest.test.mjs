@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { IDENTITIES } from "./lib/app-identity.mjs";
+import { releaseLayout } from "./release-layout.mjs";
 import { selectBetaRelease, servingProblems, zsyncAssetName } from "./pages-beta-manifest.mjs";
 
 const repository = "martinkoutecky/tine";
@@ -22,24 +24,37 @@ const tag = "v0.8.0-beta.3";
 const base = `https://github.com/${repository}/releases/download/${tag}/`;
 const zsync = (arch, url = `${base}Tine-Beta_0.8.0-beta.3_${arch}.AppImage`) =>
   `zsync: 0.6.2\nFilename: Tine-Beta_0.8.0-beta.3_${arch}.AppImage\nURL: ${url}\nSHA-1: 00\n\n\u0001\u0002`;
-const good = {
+const platforms = () => Object.fromEntries(Object.entries(releaseLayout("0.8.0-beta.3", IDENTITIES.experiment).updaterPlatforms)
+  .map(([platform, [asset]]) => [platform, { url: `${base}${asset}`, signature: "sig" }]));
+const good = () => ({
   repository,
   tag,
-  manifest: { version: "0.8.0-beta.3", platforms: { "linux-x86_64": { url: `${base}Tine-Beta_0.8.0-beta.3_amd64.AppImage`, signature: "sig" } } },
+  manifest: { version: "0.8.0-beta.3", platforms: platforms() },
   zsync: { amd64: zsync("amd64"), aarch64: zsync("aarch64") },
+});
+const withPlatforms = (edit) => {
+  const value = good();
+  edit(value.manifest.platforms);
+  return value;
 };
 
-test("a release whose manifest and zsync files point into its own tag is servable", () => {
-  assert.deepEqual(servingProblems(good), []);
+test("a complete Beta manifest whose assets and zsync files are in its own tag is servable", () => {
+  assert.deepEqual(servingProblems(good()), []);
   assert.equal(zsyncAssetName(tag, "amd64"), "Tine-Beta_0.8.0-beta.3_amd64.AppImage.zsync");
+  // A Beta may add an updater target before this branch's layout knows it.
+  assert.deepEqual(servingProblems(withPlatforms((p) => { p["darwin-new"] = { url: `${base}Tine-Beta_0.8.0-beta.3_new.tar.gz`, signature: "s" }; })), []);
 });
 
-test("refuses manifests that escape the release, mismatch its version, lack signatures, or relative zsync URLs", () => {
-  const legacy = { ...good, manifest: { ...good.manifest, platforms: { "linux-x86_64": { url: `https://github.com/${repository}/releases/download/beta/x.AppImage`, signature: "sig" } } } };
-  assert.match(servingProblems(legacy).join("\n"), /does not point into v0\.8\.0-beta\.3/);
-  assert.match(servingProblems({ ...good, manifest: { ...good.manifest, version: "0.8.0-beta.2" } }).join("\n"), /version is 0\.8\.0-beta\.2/);
-  const unsigned = { ...good, manifest: { ...good.manifest, platforms: { "linux-x86_64": { url: `${base}a`, signature: "" } } } };
-  assert.match(servingProblems(unsigned).join("\n"), /no signature/);
-  assert.match(servingProblems({ ...good, zsync: { ...good.zsync, amd64: zsync("amd64", "Tine-Beta_0.8.0-beta.3_amd64.AppImage") } }).join("\n"), /amd64\.AppImage\.zsync URL is/);
-  assert.match(servingProblems({ ...good, zsync: { amd64: good.zsync.amd64 } }).join("\n"), /aarch64\.AppImage\.zsync is missing/);
+test("refuses incomplete, crossed, wrong-identity, wrong-version, unsigned or escaping manifests", () => {
+  const refuse = (value, pattern) => assert.match(servingProblems(value).join("\n"), pattern);
+  refuse(withPlatforms((p) => { for (const key of Object.keys(p)) if (key !== "linux-x86_64") delete p[key]; }), /is missing linux-aarch64/);
+  refuse(withPlatforms((p) => { p["linux-aarch64"].url = p["linux-x86_64"].url; }), /linux-aarch64 is .*amd64/);
+  refuse(withPlatforms((p) => { for (const entry of Object.values(p)) entry.url = entry.url.replace("Tine-Beta_0.8.0-beta.3", "Tine_0.7.4").replace("Tine-Beta-0.8.0-beta.3", "Tine-0.7.4"); }), /expected/);
+  refuse(withPlatforms((p) => { p["linux-x86_64"].url = base; }), /linux-x86_64 is/);
+  refuse(withPlatforms((p) => { p["darwin-new"] = { url: `${base}Tine_0.8.0-beta.3_new.tar.gz`, signature: "s" }; }), /darwin-new is/);
+  refuse(withPlatforms((p) => { p["linux-x86_64"].url = p["linux-x86_64"].url.replace(tag, "beta"); }), /linux-x86_64 is/);
+  refuse(withPlatforms((p) => { p["linux-x86_64"].signature = ""; }), /no signature/);
+  refuse({ ...good(), manifest: { ...good().manifest, version: "0.8.0-beta.2" } }, /version is 0\.8\.0-beta\.2/);
+  refuse({ ...good(), zsync: { ...good().zsync, amd64: zsync("amd64", "Tine-Beta_0.8.0-beta.3_amd64.AppImage") } }, /amd64\.AppImage\.zsync URL is/);
+  refuse({ ...good(), zsync: { amd64: good().zsync.amd64 } }, /aarch64\.AppImage\.zsync is missing/);
 });

@@ -17,6 +17,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { IDENTITIES } from "./lib/app-identity.mjs";
+import { releaseLayout } from "./release-layout.mjs";
 
 export const FIRST_FIXED_MANIFEST_BETA = "0.8.0-beta.3";
 export const ZSYNC_ARCHES = ["amd64", "aarch64"];
@@ -48,16 +50,28 @@ export function zsyncAssetName(tag, arch) {
   return `Tine-Beta_${tag.slice(1)}_${arch}.AppImage.zsync`;
 }
 
-/** Problems with a release's manifest and zsync files; empty when servable. */
-export function servingProblems({ repository, tag, manifest, zsync }) {
+/**
+ * Problems with a release's manifest and zsync files; empty when servable.
+ * Every updater target this checkout's release layout knows for the Beta
+ * identity must be present and name exactly its asset in this release. A Beta
+ * may add targets before this branch learns them: those must still name a Beta
+ * asset of this version in this release.
+ */
+export function servingProblems({ repository, tag, manifest, zsync, identity = IDENTITIES.experiment }) {
   const problems = [];
+  const version = tag.slice(1);
   const base = `https://github.com/${repository}/releases/download/${tag}/`;
-  if (manifest?.version !== tag.slice(1)) problems.push(`latest.json version is ${manifest?.version}, expected ${tag.slice(1)}`);
-  const platforms = Object.entries(manifest?.platforms ?? {});
-  if (platforms.length === 0) problems.push("latest.json has no platforms");
-  for (const [platform, entry] of platforms) {
-    if (typeof entry?.url !== "string" || !entry.url.startsWith(base) || entry.url.slice(base.length).includes("/")) {
-      problems.push(`latest.json ${platform} does not point into ${tag}`);
+  const known = releaseLayout(version, identity).updaterPlatforms;
+  const product = identity.productName.replace(/\s+/g, "-");
+  if (manifest?.version !== version) problems.push(`latest.json version is ${manifest?.version}, expected ${version}`);
+  const platforms = manifest?.platforms ?? {};
+  for (const platform of Object.keys(known)) if (!platforms[platform]) problems.push(`latest.json is missing ${platform}`);
+  for (const [platform, entry] of Object.entries(platforms)) {
+    const asset = typeof entry?.url === "string" && entry.url.startsWith(base) ? entry.url.slice(base.length) : null;
+    const expected = known[platform]?.[0];
+    if (expected ? asset !== expected
+      : !asset || asset.includes("/") || !(asset.startsWith(`${product}_${version}_`) || asset.startsWith(`${product}-${version}-`))) {
+      problems.push(`latest.json ${platform} is ${entry?.url}, expected ${base}${expected ?? `${product}_${version}_…`}`);
     }
     if (typeof entry?.signature !== "string" || entry.signature.length === 0) problems.push(`latest.json ${platform} has no signature`);
   }
