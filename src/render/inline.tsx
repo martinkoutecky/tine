@@ -90,7 +90,7 @@ function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], raw
   if (/^youtube-timestamp\b/i.test(body)) return <YoutubeTimestamp body={body} />;
   if (/^(video|youtube|vimeo|bilibili)\b/i.test(body)) return <VideoMacro body={body} />;
   if (/^(tweet|twitter)\b/i.test(body)) return <TweetMacro body={body} />;
-  if (/^img\b/i.test(body)) return renderImgMacro(body);
+  if (/^img\b/i.test(body)) return renderImgMacro(body, blockId);
   if (/^cloze\b/i.test(body)) return <ClozeMacro body={body} />;
   if (/^zotero-(imported|linked)-file\b/i.test(body)) return <ZoteroMacro body={body} />;
   if (/^namespace\b/i.test(body)) {
@@ -818,7 +818,9 @@ function AssetImage(props: {
   // which bumps that version after invalidating the cache — re-runs this resource
   // and the <img> re-reads the new bytes from disk.
   const [diskSrc, setDiskSrc] = createSignal("");
+  const [previewUnavailable, setPreviewUnavailable] = createSignal(false);
   createEffect(() => {
+    setPreviewUnavailable(false);
     const r = rel();
     if (!r) {
       setDiskSrc("");
@@ -835,6 +837,7 @@ function AssetImage(props: {
         return;
       }
       release = lease.release;
+      setPreviewUnavailable(!!lease.failure && lease.failure !== "not-found");
       setDiskSrc(lease.url);
     });
     onCleanup(() => {
@@ -929,18 +932,22 @@ function AssetImage(props: {
 
   return (
     <Show
-      when={external || src()}
+      when={external || src() || previewUnavailable()}
       fallback={<span class="inline-image-missing">🖼 {props.alt || assetRelPath(props.url)}</span>}
     >
       <span ref={wrapEl} class="inline-image-wrap" style={wrapStyle()} {...(props.spanAttrs ?? {})}>
-        <img
-          ref={imgEl}
-          class="inline-image"
-          src={src()!}
-          alt={props.alt}
-          style={imgStyle()}
-          onClick={(e) => { e.stopPropagation(); openLightbox(src()!, galleryFor(e.currentTarget)); }}
-        />
+        <Show when={src()} fallback={
+          <span class="inline-image-unavailable">🖼 {props.alt || rel()} — {t("render-image-preview-unavailable")}</span>
+        }>
+          <img
+            ref={imgEl}
+            class="inline-image"
+            src={src()!}
+            alt={props.alt}
+            style={imgStyle()}
+            onClick={(e) => { e.stopPropagation(); openLightbox(src()!, galleryFor(e.currentTarget)); }}
+          />
+        </Show>
         <Show when={assetActions()}>
           <span class="asset-action-bar" aria-hidden="true">
             <Show when={editor()}>
@@ -957,14 +964,16 @@ function AssetImage(props: {
                 <path d="M5 15V5a2 2 0 0 1 2-2h10" />
               </svg>
             </button>
-            <button class="asset-action-btn asset-action-trash" title={t("render-trash-image")} onClick={onTrashAsset}>
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-              </svg>
-            </button>
+            <Show when={props.token}>
+              <button class="asset-action-btn asset-action-trash" title={t("render-trash-image")} onClick={onTrashAsset}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                </svg>
+              </button>
+            </Show>
           </span>
         </Show>
-        <Show when={props.blockId}>
+        <Show when={props.blockId && props.token?.full.startsWith("![") && src()}>
           <span class="img-resize-grip" title={t("render-drag-to-resize")} onPointerDown={onGripDown} />
         </Show>
       </span>
@@ -976,7 +985,7 @@ function AssetImage(props: {
 // `{{img url left|right|center}}` (OG). Numeric W/H → px; left/right/center wrap
 // the image in an alignment span (float / centered block); a 4th non-align token is
 // treated as a user CSS class. Reuses AssetImage (graph assets + external URLs).
-function renderImgMacro(body: string): JSX.Element {
+function renderImgMacro(body: string, blockId?: string): JSX.Element {
   const toks = body.replace(/^img\s*/i, "").trim().split(/\s+/).filter(Boolean);
   const url = toks[0] ?? "";
   const ALIGN = new Set(["left", "right", "center"]);
@@ -992,7 +1001,7 @@ function renderImgMacro(body: string): JSX.Element {
     if (toks[3]) (ALIGN.has(toks[3].toLowerCase()) ? (align = toks[3].toLowerCase()) : (cls = toks[3]));
   }
   const px = (v?: string) => (v ? (/^\d+$/.test(v) ? `${v}px` : v) : undefined);
-  const img = <AssetImage url={url} alt="" width={px(width)} height={px(height)} />;
+  const img = <AssetImage url={url} alt="" width={px(width)} height={px(height)} blockId={blockId} />;
   if (!align && !cls) return img;
   const classes: Record<string, boolean> = {};
   if (align) classes[`img-align-${align}`] = true;

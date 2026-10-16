@@ -4656,6 +4656,11 @@ mark {
   line-height: 0;
   max-width: 100%;
 }
+.inline-image-unavailable {
+  display: inline-block;
+  line-height: 1.5;
+  padding: 8px 100px 8px 8px;
+}
 .img-resize-grip {
   position: absolute;
   right: 0;

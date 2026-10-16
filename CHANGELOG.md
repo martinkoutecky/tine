@@ -14,12 +14,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
-- Desktop image copy offers the original graph asset file without a size cap or byte transfer through the app window, plus a bounded bitmap for image-only apps (GH #700).
+- Desktop image copy offers the original graph asset file even when its preview exceeds the limit, plus a bitmap for image-only apps after validating the decoded size, including PNG headers (GH #700).
 - Soft now uses EllisMorrow's refined middle-range palette, with darker light surfaces, brighter dark surfaces, warm highlights and quieter active navigation and scrollbars (GH #649).
 - Tine Beta checks for updates at a fixed address on tine.page, and each Beta is published as its own release (`vX.Y.Z-beta.N`) instead of replacing the files of a moving `beta` release; older Betas still find this one (discussion #682).
 
 ### Fixed
 
+- Image macros retain Copy image when previews are unavailable, and an open image viewer keeps file copy after an asset refresh (GH #700).
 - Plain navigation now switches to an already-open page tab even when one route uses the page name and the other its file path, preserving the source tab (GH #711).
 - Query table column choices now come from the current results instead of offering unrelated graph properties; saved choices survive changes to the results (GH #680).
 - Shortcuts and shortcut recording recognize the physical Latin letter or digit on non-Latin keyboard layouts, including Cyrillic, while text input and Latin layouts keep their behavior (GH #709).

@@ -33,6 +33,7 @@ render-image-removed-from-this-block-but-its-file-couldn-t-be-moved-to-the-trash
 render-couldn-t-open = 无法打开 { $label }
 
 render-copy-image = 复制图片
+render-image-preview-unavailable = 无法预览
 
 render-trash-image = 将图片移入回收站
 

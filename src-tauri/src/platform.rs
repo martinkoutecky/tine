@@ -46,13 +46,16 @@ fn copy_asset_file(path: &std::path::Path) -> Result<(), String> {
         if bytes.len() <= 64 * 1024 * 1024 {
             if cfg!(not(target_os = "windows")) && bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
                 // Linux/macOS accept encoded PNG directly. Preserve it rather
-                // than decoding and re-encoding the compatibility flavour.
-                let format = if cfg!(target_os = "macos") {
-                    "public.png"
-                } else {
-                    "image/png"
-                };
-                contents.push(ClipboardContent::Other(format.into(), bytes));
+                // than re-encoding, but validate IHDR and the decoded/RGBA
+                // budget first, just like the decoding route below.
+                if validate_clipboard_png(&bytes).is_ok() {
+                    let format = if cfg!(target_os = "macos") {
+                        "public.png"
+                    } else {
+                        "image/png"
+                    };
+                    contents.push(ClipboardContent::Other(format.into(), bytes));
+                }
             } else if let Ok(image) = decode_clipboard_image(&bytes) {
                 contents.push(ClipboardContent::Image(
                     clipboard_rs::RustImageData::from_dynamic_image(image),
@@ -183,9 +186,46 @@ fn file_uri_paths(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
-#[cfg(all(test, desktop))]
+#[cfg(desktop)]
+#[cfg(test)]
 mod asset_copy_tests {
     use super::*;
+
+    fn oversized_png(original: &[u8]) -> Vec<u8> {
+        // Rewrite IHDR and its CRC without allocating the described pixels.
+        let mut bytes = original.to_vec();
+        bytes[16..20].copy_from_slice(&16384_u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&16384_u32.to_be_bytes());
+        let mut crc = !0_u32;
+        for byte in &bytes[12..29] {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xedb88320_u32 & 0_u32.wrapping_sub(crc & 1));
+            }
+        }
+        bytes[29..33].copy_from_slice(&(!crc).to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn png_header_and_rgba_budget_are_checked_without_decoding_pixels() {
+        let image = image::GrayImage::new(2, 3);
+        let mut png = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let original = png.into_inner();
+        assert!(validate_clipboard_png(&original).is_ok());
+        let oversized = oversized_png(&original);
+        assert!(validate_clipboard_png(&oversized)
+            .unwrap_err()
+            .contains("limit"));
+        assert!(decode_clipboard_image(&oversized)
+            .unwrap_err()
+            .contains("limit"));
+        assert!(validate_clipboard_png(b"\x89PNG\r\n\x1a\n").is_err());
+        let mut bad_crc = original;
+        bad_crc[16] ^= 1;
+        assert!(validate_clipboard_png(&bad_crc).is_err());
+    }
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     #[test]
@@ -241,6 +281,23 @@ mod asset_copy_tests {
             2
         );
         assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(read("image/png"), original);
+        // A tiny encoded PNG can describe an RGBA buffer above the budget.
+        // Rewrite IHDR dimensions and CRC without allocating those pixels.
+        let oversized = oversized_png(&original);
+        assert!(decode_clipboard_image(&oversized)
+            .unwrap_err()
+            .contains("limit"));
+        for refused in [oversized, b"\x89PNG\r\n\x1a\n".to_vec()] {
+            std::fs::write(&path, &refused).unwrap();
+            copy_asset_file(&path).unwrap();
+            assert_eq!(
+                file_uri_paths(&read("text/uri-list")),
+                vec![path.to_string_lossy()]
+            );
+            assert!(!String::from_utf8_lossy(&read("TARGETS")).contains("image/png"));
+            assert_eq!(std::fs::read(&path).unwrap(), refused);
+        }
         std::fs::OpenOptions::new()
             .write(true)
             .open(&path)
@@ -569,6 +626,14 @@ fn decode_clipboard_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
         .with_guessed_format()
         .map_err(|e| e.to_string())?;
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    check_clipboard_image_budget(&decoder)?;
+    let orientation = decoder.orientation().map_err(|e| e.to_string())?;
+    let mut image = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+    image.apply_orientation(orientation);
+    Ok(image)
+}
+
+fn check_clipboard_image_budget(decoder: &impl image::ImageDecoder) -> Result<(), String> {
     // Unlike ImageReader::decode, into_decoder doesn't reserve the output
     // buffer. Bound both the decoded buffer and the eventual RGBA conversion
     // before allocating either (a small JPEG can describe enormous dimensions).
@@ -579,11 +644,18 @@ fn decode_clipboard_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
                 .total_bytes()
                 .max((u64::from(width) * u64::from(height)).saturating_mul(4)),
         )
-        .map_err(|e| e.to_string())?;
-    let orientation = decoder.orientation().map_err(|e| e.to_string())?;
-    let mut image = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
-    image.apply_orientation(orientation);
-    Ok(image)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(desktop)]
+fn validate_clipboard_png(bytes: &[u8]) -> Result<(), String> {
+    // The PNG decoder validates IHDR (including CRC, colour/depth and nonzero
+    // dimensions) without allocating the pixel buffer or re-encoding bytes.
+    let decoder =
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png)
+            .into_decoder()
+            .map_err(|e| e.to_string())?;
+    check_clipboard_image_budget(&decoder)
 }
 
 #[cfg(any(target_os = "android", all(test, target_os = "linux")))]

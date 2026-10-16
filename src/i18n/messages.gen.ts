@@ -1992,6 +1992,7 @@ export interface MessageArgs {
   "render-expand": {};
   "render-icon": { "name": string | number };
   "render-image-copied-to-clipboard": {};
+  "render-image-preview-unavailable": {};
   "render-image-removed-from-this-block-but-its-file-couldn-t-be-moved-to-the-trash": { "detail": string | number };
   "render-image-removed-from-this-block-the-file-stays-in-assets-because-it-is-still-used-elsewhere": {};
   "render-more-blocks": { "count": string | number };

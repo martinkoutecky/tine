@@ -1,4 +1,4 @@
-import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, untrack, type JSX } from "solid-js";
 import { toasts, dismissToast, pushToast, toUiText } from "../toasts";
 import { t, msg, render, t as tr } from "../i18n";
 import { writeClipboardText } from "../clipboard";
@@ -8,6 +8,8 @@ import { stepIndex } from "../imageGallery";
 import { copyImageFromSrc as copyLightboxImage } from "../copyImage";
 import { registerTransientLayer } from "../transientLayers";
 import { queryAllWindows } from "../windowRealm";
+import { assetNameForBlobUrl } from "../assetCache";
+import { bindingOwner } from "../owned";
 
 // Bottom-right transient notifications.
 export function Toasts(): JSX.Element {
@@ -81,8 +83,10 @@ export function Lightbox(): JSX.Element {
     setMenu(null);
     const src = lightbox();
     if (!src) return;
+    const files = assetFiles();
+    if (!files.current()) return;
     try {
-      await copyLightboxImage(src);
+      await copyLightboxImage(src, files.names[slot()]);
       pushToast(msg("toasts-image-copied"), "success");
     } catch {
       pushToast(msg("toasts-couldn-t-copy-the-image"), "error");
@@ -108,6 +112,12 @@ export function Lightbox(): JSX.Element {
     const at = lightboxIndex();
     return list[at] !== undefined && list[at] === lightbox() ? list : lightbox() ? [lightbox()!] : [];
   });
+  // Keep file identities for this viewer session even if a live asset refresh
+  // revokes the inline preview URLs and removes their cache entries.
+  const assetFiles = createMemo(() => ({
+    names: gallery().map(assetNameForBlobUrl),
+    current: untrack(bindingOwner),
+  }));
   const slot = () => (gallery().length === 1 ? 0 : lightboxIndex());
   const [controls, setControls] = createSignal(true);
   const [view, setView] = createSignal<{ t: Transform; dx: number; dy: number }>({ t: { scale: 1, x: 0, y: 0 }, dx: 0, dy: 0 });

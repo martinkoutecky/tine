@@ -1989,6 +1989,7 @@
   "render-expand": "edcfc2d46a912466",
   "render-icon": "0ad47cb1155d2abb",
   "render-image-copied-to-clipboard": "e72d9c6631e1b336",
+  "render-image-preview-unavailable": "d2bad13ac255ae88",
   "render-image-removed-from-this-block-but-its-file-couldn-t-be-moved-to-the-trash": "b3f2d58bbefd2d3f",
   "render-image-removed-from-this-block-the-file-stays-in-assets-because-it-is-still-used-elsewhere": "7b9884ac88fcde9c",
   "render-more-blocks": "a8ced4f4354ff583",

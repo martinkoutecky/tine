@@ -1,7 +1,7 @@
 import { createStore, reconcile } from "solid-js/store";
 import { backend } from "./backend";
 import { dbg } from "./debug";
-import { errorFamily } from "./errorFamily";
+import { errorFamily, type ErrorFamily } from "./errorFamily";
 import { graphOwner } from "./owned";
 import { clearOnBindingInvalidated } from "./binding";
 import { reportUiFailure } from "./uiFailure";
@@ -17,12 +17,13 @@ import { mime_from_path } from "./render/wasm/lsdoc_wasm";
 // same asset share one read. Bound both count and retained backing bytes: Blob
 // URLs keep their Blob alive even after every image unmounts.
 interface CacheEntry {
+  failure?: ErrorFamily;
   promise: Promise<string>;
   bytes: number;
   leases: number;
   evicted: boolean;
 }
-export interface BlobLease { url: string; release: () => void }
+export interface BlobLease { url: string; release: () => void; failure?: ErrorFamily }
 const cache = new Map<string, CacheEntry>();
 // Entries evicted from the retained LRU while still displayed remain keyed here
 // (but do not count toward the idle cache cap), so a repeated reference shares
@@ -132,7 +133,10 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
       // not start an IPC allocation for a URL nobody is waiting to cache.
       if (cache.get(key) !== entry) return "";
       const bytes = await read();
-      if (!bytes.length) return "";
+      if (!bytes.length) {
+        entry.failure = "unknown";
+        return "";
+      }
       const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mime_from_path(typePath) }));
       if (kind === "graph" && owner()) assetNamesByUrl.set(url, key);
       if (cache.get(key) === entry) {
@@ -142,6 +146,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
       }
       return url;
     } catch (error) {
+      entry.failure = errorFamily(error);
       if (cache.get(key) === entry) cache.delete(key);
       if (kind === "graph" && errorFamily(error) !== "not-found" && owner()) reportUiFailure("asset-read", error);
       else dbg(`asset read failed (${kind}) ${key}: ${String(error)}`);
@@ -167,7 +172,7 @@ async function acquire(entry: CacheEntry): Promise<BlobLease> {
   };
   const url = await entry.promise;
   if (!url) release();
-  return { url, release };
+  return { url, release, ...(entry.failure ? { failure: entry.failure } : {}) };
 }
 
 /** A blob URL for the asset at `rel` (relative to `assets/`), reading it over IPC

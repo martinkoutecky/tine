@@ -526,6 +526,11 @@ mod journal_guide_tests {
         // og-J2 (master d017d1afc): assets refresh in place after an outside change.
         assert!(files.contains("Files in `assets/` are watched too"));
         assert!(files.contains("offers the original asset file"));
+        assert!(files.contains("hover over **Preview unavailable** to use **Copy image**"));
+        assert!(files.contains("`{{img ...}}` image macros"));
+        assert!(files
+            .contains("image viewer keeps copying the original file after an outside asset edit"));
+        assert!(files.contains("Missing files keep their missing-image placeholder"));
         assert!(files.contains("import their original bytes unchanged"));
         assert!(files.contains("pixel-only clipboard image is saved as PNG"));
         assert!(files.contains("An open PDF, audio, or video is not swapped while you use it"));

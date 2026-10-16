@@ -17,8 +17,13 @@ const out = path.join(fixtures, `native-${Date.now()}`);
 const graph = path.join(out, "graph");
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
 for (const name of ["photo.jpg", "screenshot.png"]) fs.copyFileSync(path.join(fixtures, name), path.join(graph, "assets", name));
+// A real file above both the preview and bitmap budgets; sparse padding keeps
+// fixture setup cheap while the unchanged original PNG remains the file source.
+const largePath = path.join(graph, "assets", "large.png");
+fs.copyFileSync(path.join(fixtures, "screenshot.png"), largePath);
+fs.truncateSync(largePath, 65 * 1024 * 1024);
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{}\n");
-fs.writeFileSync(path.join(graph, "pages/Image Copy.md"), "- ![photo](../assets/photo.jpg)\n- ![screenshot](../assets/screenshot.png)\n");
+fs.writeFileSync(path.join(graph, "pages/Image Copy.md"), "- ![photo](../assets/photo.jpg)\n- ![screenshot](../assets/screenshot.png)\n- ![large](../assets/large.png)\n- {{img ../assets/large.png}}\n- ![absent](../assets/absent.png)\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth()+1).padStart(2,"0")}_${String(now.getDate()).padStart(2,"0")}`;
 fs.writeFileSync(path.join(graph, "journals", `${journal}.md`), "- [[Image Copy]]\n");
@@ -46,7 +51,16 @@ function readCopiedImage() {
  return { targets, png };
 }
 try {
- await sleep(2000);
+ const deadline = Date.now() + 15000;
+ while (true) {
+  if (driver.exitCode !== null) throw new Error(`tauri-driver exited before readiness (${driver.exitCode})`);
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error("tauri-driver did not become ready within 15 seconds");
+  try {
+   if ((await fetch("http://127.0.0.1:4570/status", { signal: AbortSignal.timeout(Math.min(1000, remaining)) })).ok) break;
+  } catch {}
+  await sleep(Math.min(100, Math.max(0, deadline - Date.now())));
+ }
  browser = await remote({ hostname:"127.0.0.1",port:4570,path:"/",logLevel:"error",connectionRetryCount:0,connectionRetryTimeout:60000, capabilities:{browserName:"wry","wdio:enforceWebDriverClassic":true,"tauri:options":{application:process.env.TINE_APP || path.join(root,"target/debug/tine")}} });
  console.log("session",browser.sessionId);
  await browser.setTimeout({ script: 30000, implicit: 0, pageLoad: 30000 });
@@ -123,15 +137,48 @@ try {
  const lightboxCopy = readCopiedImage();
  assert.ok(lightboxCopy.targets.includes("text/uri-list"), lightboxCopy.targets);
  assert.equal(execFileSync(xclip,["-o","-selection","clipboard","-t","text/uri-list"],{encoding:"utf8"}).trim(), new URL(`file://${path.join(graph,"assets","photo.jpg")}`).href);
+ await browser.keys("Escape");
+ await browser.$(".inline-image-unavailable").waitForExist({timeout:15000});
+ const unavailableImages = await browser.$$(".inline-image-wrap:has(.inline-image-unavailable)");
+ assert.equal(unavailableImages.length,2,"Markdown and macro refused previews");
+ for (const unavailable of unavailableImages) {
+  await unavailable.scrollIntoView();
+  await unavailable.moveTo();
+  const largeCopy = await unavailable.$('button[title="Copy image"]');
+  seedClipboard();
+  await largeCopy.click();
+  await browser.waitUntil(async () => {
+   const targets = execFileSync(xclip,["-o","-selection","clipboard","-t","TARGETS"],{encoding:"utf8"});
+   return targets.includes("text/uri-list");
+  },{timeout:15000});
+  const largeTargets = execFileSync(xclip,["-o","-selection","clipboard","-t","TARGETS"],{encoding:"utf8"});
+  assert.ok(!largeTargets.includes("image/png"),largeTargets);
+  assert.equal(execFileSync(xclip,["-o","-selection","clipboard","-t","text/uri-list"],{encoding:"utf8"}).trim(),new URL(`file://${largePath}`).href);
+  assert.equal(fs.statSync(largePath).size,65*1024*1024);
+ }
+ // An outside replacement revokes the inline blob; the already-open viewer
+ // must still copy the graph file without fetching its stale preview URL.
+ await (await browser.$$(".page-blocks img"))[0].scrollIntoView();
+ await (await browser.$$(".page-blocks img"))[0].click();
+ fs.copyFileSync(largePath,path.join(graph,"assets","photo.jpg"));
+ await browser.waitUntil(()=>browser.execute(()=>[...document.querySelectorAll(".inline-image-unavailable")].some(el=>el.textContent.includes("photo"))),{timeout:15000});
+ seedClipboard();
+ await browser.$(".lightbox-copy").click();
+ await browser.waitUntil(()=>execFileSync(xclip,["-o","-selection","clipboard","-t","TARGETS"],{encoding:"utf8"}).includes("text/uri-list"),{timeout:15000});
+ const refreshedTargets = execFileSync(xclip,["-o","-selection","clipboard","-t","TARGETS"],{encoding:"utf8"});
+ assert.ok(!refreshedTargets.includes("image/png"),refreshedTargets);
+ assert.equal(execFileSync(xclip,["-o","-selection","clipboard","-t","text/uri-list"],{encoding:"utf8"}).trim(),new URL(`file://${path.join(graph,"assets","photo.jpg")}`).href);
+ await browser.keys("Escape");
+ assert.equal(await browser.$(".inline-image-missing").getText(),"🖼 absent");
  fs.writeFileSync(path.join(out,"native-stages.json"),JSON.stringify(timings,null,2));
  await browser.saveScreenshot(path.join(out,"copy-success.png"));
- console.log("PASS inline JPEG/PNG and lightbox copy advertise the original asset file and image/png on the Linux clipboard",JSON.stringify(timings));
+ console.log("PASS inline JPEG/PNG and lightbox copy offer file and pixels; Markdown and macro refused 65 MiB previews offer file only; open viewer retains file copy after live refresh; missing asset retains placeholder",JSON.stringify(timings));
 } catch (error) {
  await browser?.saveScreenshot(path.join(out,"failure.png")).catch(()=>{});
  fs.writeFileSync(path.join(out,"failure.json"), JSON.stringify({
   commit: execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),
-  journey: "inline JPEG/PNG and lightbox image copy",
-  expected: "progress followed by original asset text/uri-list plus image/png on the OS clipboard",
+  journey: "inline JPEG/PNG, lightbox, Markdown/macro refused previews and open-viewer live refresh copy",
+  expected: "loaded images offer original asset URI plus image/png; refused previews and the refreshed open viewer offer their original file only; missing assets retain their placeholder",
   observed: String(error), screenshot: "failure.png", log: "native.log",
   classification: "ambiguous",
  },null,2));

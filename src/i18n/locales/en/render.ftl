@@ -17,6 +17,7 @@ render-asset-moved-to-trash = Asset moved to trash
 render-image-removed-from-this-block-but-its-file-couldn-t-be-moved-to-the-trash = Image removed from this block, but its file couldn't be moved to the trash ({ $detail })
 render-couldn-t-open = Couldn't open { $label }
 render-copy-image = Copy image
+render-image-preview-unavailable = Preview unavailable
 render-trash-image = Trash image
 render-drag-to-resize = Drag to resize
 render-open-in-the-default-player = Open in the default player
