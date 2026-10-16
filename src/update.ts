@@ -49,7 +49,8 @@ function isMacDesktop(): boolean {
 const STABLE = APP_UPDATE_CHANNEL === "stable";
 const RELEASES_PAGE = STABLE
   ? "https://github.com/martinkoutecky/tine/releases/latest"
-  // Each Beta has its own release v<version>; the list shows the newest first.
+  // Each Beta has its own release v<version> (openReleases opens it when the
+  // offered version is known); the list is the fallback.
   : "https://github.com/martinkoutecky/tine/releases";
 
 /** Acquire only this build's channel: a Beta build takes only `-beta.N` versions, a stable
@@ -194,7 +195,7 @@ export function safeUpdaterErrorChain(error: unknown): string {
 /** Record a failed update step (fixed tokens only; the scrubbed chain goes to
  * the opt-in log) and tell the user which stage failed, with a way to the
  * Diagnostics report. */
-function reportUpdaterFailure(phase: UpdaterFailurePhase, error: unknown): void {
+function reportUpdaterFailure(phase: UpdaterFailurePhase, error: unknown, version?: string): void {
   const failure = classifyUpdaterFailure(phase, error);
   void recordDiagnostic("updater_failure", { updaterStage: failure.stage, updaterCause: failure.cause });
   dbg(`updater failure stage=${failure.stage} cause=${failure.cause}: ${safeUpdaterErrorChain(error)}`);
@@ -212,7 +213,7 @@ function reportUpdaterFailure(phase: UpdaterFailurePhase, error: unknown): void 
       bundle: `${APP_PRODUCT_NAME} (previous version).app`,
     });
     pushToast(location ? `${guidance} ${t("update-mac-backup-location", { path: location })}` : guidance,
-      "error", { sticky: true, action: { label: t("update-download-manually"), run: openReleases } });
+      "error", { sticky: true, action: { label: t("update-download-manually"), run: () => openReleases(version) } });
     return;
   }
   pushToast(msg("update-failure-notice", { phase, stage: failure.stage }), "error", {
@@ -241,7 +242,7 @@ function offerManualOnly(version: string): number {
   return pushToast(
     msg("update-is-available-but-automatic-updates-are", { product: APP_PRODUCT_NAME, version: version }),
     "warn",
-    { sticky: true, action: { label: msg("update-download-manually"), run: openReleases } },
+    { sticky: true, action: { label: msg("update-download-manually"), run: () => openReleases(version) } },
   );
 }
 
@@ -251,13 +252,16 @@ function offerFlatpakManual(version: string): number {
   return pushToast(
     msg("update-is-available-the-flatpak-cannot-update", { product: APP_PRODUCT_NAME, version: version }),
     "info",
-    { sticky: true, action: { label: msg("update-download-manually"), run: openReleases } },
+    { sticky: true, action: { label: msg("update-download-manually"), run: () => openReleases(version) } },
   );
 }
 
-/** Open the GitHub releases page in the system browser (the manual fallback). */
-function openReleases(): void {
-  void backend().openExternal(RELEASES_PAGE).catch((error) => reportUiFailure("external-link", error));
+/** Open the releases page in the system browser (the manual fallback). A Beta
+ * whose offered version is known opens that Beta's own release, so the page
+ * never shows the other channel's installers; otherwise the channel's page. */
+function openReleases(version?: string): void {
+  const page = !STABLE && version ? `${RELEASES_PAGE}/tag/v${version}` : RELEASES_PAGE;
+  void backend().openExternal(page).catch((error) => reportUiFailure("external-link", error));
 }
 
 /** The window's one persistence-before-exit transaction (App's `safeClose`),
@@ -325,8 +329,8 @@ async function applyUpdateOrOpen(): Promise<void> {
       await update.download();
     } catch (error) {
       dismissToast(progressId);
-      reportUpdaterFailure("apply", error);
-      openReleases(); // signature/verify/network failure → never brick, just offer the page
+      reportUpdaterFailure("apply", error, update.version);
+      openReleases(update.version); // signature/verify/network failure → never brick, just offer the page
       return;
     }
     // Every in-flight save and at-risk draft is flushed (bounded), and a failed
@@ -347,8 +351,8 @@ async function applyUpdateOrOpen(): Promise<void> {
     } catch (error) {
       exitGuard?.reset();
       dismissToast(progressId);
-      reportUpdaterFailure("install", error);
-      openReleases();
+      reportUpdaterFailure("install", error, update.version);
+      openReleases(update.version);
       return;
     }
     if (isMacDesktop()) {
@@ -367,8 +371,8 @@ async function applyUpdateOrOpen(): Promise<void> {
     } catch (error) {
       exitGuard?.reset();
       dismissToast(progressId);
-      reportUpdaterFailure("relaunch", error);
-      openReleases();
+      reportUpdaterFailure("relaunch", error, update.version);
+      openReleases(update.version);
     }
   } finally {
     try { await update.close(); }

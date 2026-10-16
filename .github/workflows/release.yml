@@ -875,14 +875,17 @@ jobs:
       # deploys from master (its github-pages environment allows only master),
       # so dispatch that deploy and wait until it serves this version.
       - name: Serve a published Beta on tine.page
+        timeout-minutes: 25
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           version=$(node -p 'require("./src-tauri/tauri.conf.json").version')
           case "$version" in *-beta.*) ;; *) echo "stable $version: nothing to serve"; exit 0;; esac
           gh workflow run pages.yml --ref master
-          for attempt in $(seq 1 80); do
-            served=$(curl -fsSL "https://tine.page/updates/beta/latest.json?run=${{ github.run_id }}-$attempt" | jq -r .version 2>/dev/null || true)
+          deadline=$((SECONDS + 1200)) attempt=0 served=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            attempt=$((attempt + 1))
+            served=$(curl -fsSL --connect-timeout 10 --max-time 30 "https://tine.page/updates/beta/latest.json?run=${{ github.run_id }}-$attempt" | jq -r .version 2>/dev/null || true)
             if [ "$served" = "$version" ]; then echo "tine.page serves Beta $version"; exit 0; fi
             sleep 15
           done

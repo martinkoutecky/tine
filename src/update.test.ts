@@ -391,10 +391,10 @@ describe("update checks", () => {
     expect(download).toHaveBeenCalledOnce();
     expect(install).not.toHaveBeenCalled();
     expect(prepare).not.toHaveBeenCalled();
-    expect(loaded.openExternalMock).toHaveBeenCalledOnce();
+    expect(loaded.openExternalMock).toHaveBeenCalledExactlyOnceWith("https://github.com/martinkoutecky/tine/releases/tag/v0.6.0-beta.1");
   });
 
-  it("points the manual releases fallback at the beta release page", async () => {
+  it("without a known offered version, the manual fallback opens the releases list (each Beta has its own release)", async () => {
     const { update, openExternalMock } = await loadUpdate({ platform: "desktop", version: "0.5.3" });
 
     update.openReleasesPage();
@@ -525,7 +525,8 @@ describe("update checks", () => {
     expect(toastCalls(pushToastMock).some(([, , options]) => options?.action?.label === "Install update")).toBe(false);
 
     offer?.[2]?.action?.run();
-    expect(openExternalMock).toHaveBeenCalledOnce();
+    // The offered Beta's own release, never a page listing the other channel's installers.
+    expect(openExternalMock).toHaveBeenCalledExactlyOnceWith("https://github.com/martinkoutecky/tine/releases/tag/v0.6.0-beta.1");
     // Only the version check ran: nothing downloaded, installed or relaunched, nothing failed.
     expect(updaterCheckMock).toHaveBeenCalledOnce();
     expect(toastCalls(pushToastMock).some(([, kind]) => kind === "error")).toBe(false);

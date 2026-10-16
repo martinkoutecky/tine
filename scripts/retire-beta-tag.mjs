@@ -51,26 +51,43 @@ export function bridgeNotes(repository, tag, layout) {
   ].join("\n");
 }
 
+function compare(a, b) {
+  for (let i = 0; i < 4; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return 0;
+}
+
+/** Download URLs of a manifest and its zsync files that do not answer 200. */
+function unreachable(manifest, zsync) {
+  const urls = [
+    ...Object.values(manifest.platforms ?? {}).map((entry) => entry.url),
+    ...Object.values(zsync).map((text) => /^URL: (.+)$/m.exec(text.slice(0, text.indexOf("\n\n")))?.[1]),
+  ];
+  return [...new Set(urls)].flatMap((url) => {
+    const status = spawnSync("curl", ["-fsIL", "--max-time", "60", "-o", "/dev/null", "-w", "%{http_code}", url], { encoding: "utf8" }).stdout;
+    return status === "200" ? [] : [`${url} answers ${status || "nothing"}`];
+  });
+}
+
 function main() {
   const [tag, flag] = process.argv.slice(2);
   const execute = flag === "--execute";
   const repository = process.env.GITHUB_REPOSITORY ?? "martinkoutecky/tine";
   const version = betaVersion(tag);
   const floor = betaVersion(`v${FIRST_FIXED_MANIFEST_BETA}`);
-  const first = version?.findIndex((part, i) => part !== floor[i]) ?? -1;
-  if (!version || (first >= 0 && version[first] < floor[first])) {
+  if (!version || compare(version, floor) < 0) {
     throw new Error(`usage: retire-beta-tag.mjs v<X.Y.Z-beta.N ≥ ${FIRST_FIXED_MANIFEST_BETA}> [--execute]`);
   }
   const gh = (...args) => execFileSync("gh", [...args, "--repo", repository], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
   const ghApi = (...args) => execFileSync("gh", ["api", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
-  const fetchText = (url) => execFileSync("curl", ["-fsSL", url], { encoding: "latin1" });
+  const fetchText = (url) => execFileSync("curl", ["-fsSL", "--max-time", "60", url], { encoding: "latin1" });
   const step = (text, action) => {
     console.log(`${execute ? "DO " : "PLAN"} ${text}`);
     if (execute) action();
   };
 
-  // The new Beta must be published, servable, and already on tine.page.
-  const target = JSON.parse(gh("release", "view", tag, "--json", "tagName,isDraft,isPrerelease,targetCommitish"));
+  // Preflight, with no mutation: the new Beta is published, complete, its
+  // downloads answer, and tine.page serves it (or a newer Beta, on a rerun).
+  const target = JSON.parse(gh("release", "view", tag, "--json", "tagName,isDraft,isPrerelease"));
   if (target.isDraft || !target.isPrerelease) throw new Error(`${tag} is not a published prerelease`);
   const commit = ghApi(`repos/${repository}/commits/${tag}`, "--jq", ".sha").trim();
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tine-retire-beta-"));
@@ -81,49 +98,76 @@ function main() {
     const manifest = JSON.parse(read("latest.json"));
     const zsync = Object.fromEntries(ZSYNC_ARCHES.map((arch) => [arch, read(zsyncAssetName(tag, arch))]));
     const problems = servingProblems({ repository, tag, manifest, zsync });
+    problems.push(...unreachable(manifest, zsync));
     if (problems.length) throw new Error(`${tag} cannot be the bridge target:\n  ${problems.join("\n  ")}`);
-    const served = JSON.parse(fetchText(`${BETA_ENDPOINT}?retire=${Date.now()}`)).version;
-    if (served !== tag.slice(1)) throw new Error(`tine.page serves ${served}, not ${tag.slice(1)}; dispatch pages.yml on master first`);
-    console.log(`${tag} (${commit}) is published and tine.page serves it.`);
+    const served = betaVersion(`v${JSON.parse(fetchText(`${BETA_ENDPOINT}?retire=${Date.now()}`)).version}`);
+    if (!served || compare(served, version) < 0) throw new Error(`tine.page does not serve ${tag} or later yet; dispatch pages.yml on master first`);
+    console.log(`${tag} (${commit}) is published, complete, reachable, and tine.page serves it or a later Beta.`);
 
-    // Where the `beta` release stands now.
-    const legacy = spawnSync("gh", ["release", "view", BETA_TAG, "--json", "assets,name", "--repo", repository], { encoding: "utf8" });
-    let current = null;
-    if (legacy.status === 0) {
+    // Each step below is resumable: a rerun after any failure finds the state
+    // it left and continues from there.
+    const bridgeTitle = `${IDENTITY.productName} update bridge`;
+    const view = () => {
+      const result = spawnSync("gh", ["release", "view", BETA_TAG, "--json", "name,isDraft,assets", "--repo", repository], { encoding: "utf8" });
+      return result.status === 0 ? JSON.parse(result.stdout) : null;
+    };
+    let release = view();
+    if (release && release.name !== bridgeTitle) {
+      // (1) An older Beta's release still holds `beta`: give it its own tag.
       gh("release", "download", BETA_TAG, "--dir", path.join(temporary, "legacy"), "--pattern", "latest.json");
-      current = JSON.parse(fs.readFileSync(path.join(temporary, "legacy", "latest.json"), "utf8")).version;
-    }
-    if (current === tag.slice(1)) {
-      console.log(`The ${BETA_TAG} release already bridges to ${tag}; verifying only.`);
-    } else {
-      if (!current || !betaVersion(`v${current}`)) throw new Error(`the ${BETA_TAG} release holds ${current ?? "nothing"}, not an older Beta`);
+      const current = JSON.parse(fs.readFileSync(path.join(temporary, "legacy", "latest.json"), "utf8")).version;
+      const currentVersion = betaVersion(`v${current}`);
+      if (!currentVersion || compare(currentVersion, version) >= 0) throw new Error(`the ${BETA_TAG} release holds ${current}, not a Beta older than ${tag}`);
       const own = `v${current}`;
       const ownCommit = ghApi(`repos/${repository}/commits/${own}`, "--jq", ".sha").trim();
       const betaCommit = ghApi(`repos/${repository}/commits/${BETA_TAG}`, "--jq", ".sha").trim();
       if (ownCommit !== betaCommit) throw new Error(`${own} is ${ownCommit} but ${BETA_TAG} is ${betaCommit}; tag ${own} at the Beta's commit first`);
       step(`move the ${current} release from tag ${BETA_TAG} to its own tag ${own}`, () => gh("release", "edit", BETA_TAG, "--tag", own));
-      step(`delete tag ${BETA_TAG} (${betaCommit}) so it can be re-created at ${commit}`, () => ghApi("-X", "DELETE", `repos/${repository}/git/refs/tags/${BETA_TAG}`));
+      release = execute ? view() : null;
+      if (release) throw new Error(`a release is still at ${BETA_TAG} after moving ${current} away`);
+    }
+    if (!release) {
+      // (2) Re-create `beta` at the new Beta's commit as a draft bridge.
+      const tagged = spawnSync("gh", ["api", `repos/${repository}/commits/${BETA_TAG}`, "--jq", ".sha"], { encoding: "utf8" });
+      const betaCommit = tagged.status === 0 ? tagged.stdout.trim() : null;
+      if (betaCommit && betaCommit !== commit) {
+        step(`delete tag ${BETA_TAG} (${betaCommit}) so it can be re-created at ${commit}`, () => ghApi("-X", "DELETE", `repos/${repository}/git/refs/tags/${BETA_TAG}`));
+      }
       const notes = path.join(temporary, "notes.md");
       fs.writeFileSync(notes, `${bridgeNotes(repository, tag, releaseLayout(tag.slice(1)))}\n`);
-      step(`create the frozen bridge release ${BETA_TAG} at ${commit} with ${bridgeFiles.join(", ")}`, () => {
-        gh("release", "create", BETA_TAG, "--target", commit, "--prerelease", "--latest=false", "--title", `${IDENTITY.productName} update bridge`, "--notes-file", notes,
-          ...bridgeFiles.map((name) => path.join(temporary, name)));
+      step(`create the draft bridge release ${BETA_TAG} at ${commit}`, () => {
+        gh("release", "create", BETA_TAG, "--draft", "--target", commit, "--prerelease", "--latest=false", "--title", bridgeTitle, "--notes-file", notes);
       });
-      if (!execute) {
-        console.log(`Dry run only. Bridge notes:\n\n${fs.readFileSync(notes, "utf8")}`);
-        return;
-      }
+      if (!execute) console.log(`Bridge notes:\n\n${fs.readFileSync(notes, "utf8")}`);
+      release = execute ? view() : { name: bridgeTitle, isDraft: true, assets: [] };
+      if (!release) throw new Error(`the draft bridge release ${BETA_TAG} was not created`);
+    }
+    // (3) Complete the bridge's files, then publish it.
+    if (release.assets.some((asset) => asset.name === "latest.json")) {
+      gh("release", "download", BETA_TAG, "--dir", path.join(temporary, "bridge"), "--pattern", "latest.json", "--clobber");
+      const bridged = JSON.parse(fs.readFileSync(path.join(temporary, "bridge", "latest.json"), "utf8")).version;
+      if (bridged !== tag.slice(1)) throw new Error(`the ${BETA_TAG} bridge is frozen at ${bridged}, not ${tag.slice(1)}; leave it`);
+    }
+    const names = new Set(release.assets.map((asset) => asset.name));
+    const unexpected = [...names].filter((name) => !bridgeFiles.includes(name));
+    if (unexpected.length) throw new Error(`the ${BETA_TAG} bridge holds unexpected files: ${unexpected.join(", ")}`);
+    const missing = bridgeFiles.filter((name) => !names.has(name));
+    if (missing.length) {
+      step(`upload ${missing.join(", ")} to the ${BETA_TAG} bridge`, () => gh("release", "upload", BETA_TAG, "--clobber", ...missing.map((name) => path.join(temporary, name))));
+    }
+    if (release.isDraft) {
+      step(`publish the ${BETA_TAG} bridge (prerelease, never latest)`, () => gh("release", "edit", BETA_TAG, "--draft=false", "--prerelease", "--latest=false"));
+    }
+    if (!execute) {
+      console.log("Dry run only: nothing was changed.");
+      return;
     }
 
     // Verify through the public URLs old installs actually use.
     const bridged = JSON.parse(fetchText(`${LEGACY_BETA_ENDPOINT}?retire=${Date.now()}`));
     const bridgedZsync = Object.fromEntries(ZSYNC_ARCHES.map((arch) => [arch,
       fetchText(`https://github.com/${repository}/releases/download/${BETA_TAG}/${zsyncAssetName(tag, arch)}`)]));
-    const bridgeProblems = servingProblems({ repository, tag, manifest: bridged, zsync: bridgedZsync });
-    for (const entry of Object.values(bridged.platforms ?? {})) {
-      const status = spawnSync("curl", ["-fsIL", "-o", "/dev/null", "-w", "%{http_code}", entry.url], { encoding: "utf8" }).stdout;
-      if (status !== "200") bridgeProblems.push(`${entry.url} answers ${status}`);
-    }
+    const bridgeProblems = [...servingProblems({ repository, tag, manifest: bridged, zsync: bridgedZsync }), ...unreachable(bridged, bridgedZsync)];
     if (bridgeProblems.length) throw new Error(`the ${BETA_TAG} bridge is broken:\n  ${bridgeProblems.join("\n  ")}`);
     console.log(`Bridge OK: ${LEGACY_BETA_ENDPOINT} and both zsync files lead to ${tag}. Keep this release.`);
   } finally {
