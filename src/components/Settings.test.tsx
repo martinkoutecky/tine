@@ -1,12 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Settings } from "./Settings";
 import { setGraphConfigProblem } from "../graph";
 import { closeSettings, openSettings } from "../ui";
+import { setActiveLocale } from "../i18n";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 afterEach(() => {
+  void setActiveLocale("en");
   closeSettings();
   setGraphConfigProblem(null);
   document.body.innerHTML = "";
@@ -14,6 +16,55 @@ afterEach(() => {
 });
 
 describe("Settings progressive disclosure and search", () => {
+  it.each(["en", "zh-CN"] as const)("shows only matching settings and restores the tab when cleared (%s, GH #706)", async (locale) => {
+    await setActiveLocale(locale);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    openSettings("appearance");
+    await tick();
+    const search = root.querySelector<HTMLInputElement>(".settings-search-input")!;
+    search.focus();
+    for (const query of [locale === "en" ? "sticky" : "父", "no-such-setting-706"]) {
+      search.value = query;
+      search.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await tick();
+      expect(root.querySelector(".settings-field")).toBeNull();
+      expect(root.querySelector(".settings-search-results")).not.toBeNull();
+      expect(document.activeElement).toBe(search);
+      if (query === "no-such-setting-706") expect(root.querySelector(".settings-search-empty")).not.toBeNull();
+      else expect(root.querySelectorAll(".settings-search-result").length).toBeGreaterThan(0);
+    }
+    search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    await tick();
+    expect(root.querySelector(".settings-search-results")).toBeNull();
+    expect(root.querySelector(".settings-field")).not.toBeNull();
+    expect(document.activeElement).toBe(search);
+    dispose();
+  });
+
+  it.each(["en", "zh-CN"] as const)("opens and scrolls to a translated matching control (%s)", async (locale) => {
+    await setActiveLocale(locale);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+    openSettings("editor");
+    await tick();
+    const search = root.querySelector<HTMLInputElement>(".settings-search-input")!;
+    search.value = "sticky";
+    search.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await tick();
+    root.querySelector<HTMLButtonElement>(".settings-search-result")!.click();
+    await tick();
+    expect(search.value).toBe("");
+    expect(scroll).toHaveBeenCalled();
+    expect((scroll.mock.contexts.at(-1) as HTMLElement).querySelector('[role="switch"]')).not.toBeNull();
+    expect(document.activeElement).toBe(search);
+    scroll.mockRestore();
+    dispose();
+  });
+
   it("searches shortcut commands and unbinds a key without hiding its command", async () => {
     const root = document.createElement("div");
     document.body.append(root);
@@ -74,6 +125,9 @@ describe("Settings progressive disclosure and search", () => {
     search.dispatchEvent(new InputEvent("input", { bubbles: true }));
     await tick();
     expect(root.textContent).toContain("Link autocomplete default");
+    root.querySelector<HTMLButtonElement>(".settings-search-result")!.click();
+    await tick();
+    expect(search.value).toBe("");
     const policy = root.querySelector<HTMLSelectElement>('select[aria-label="Link autocomplete default"]');
     expect(policy?.value).toBe("adaptive");
     expect([...policy!.options].map((option) => option.text)).toEqual([

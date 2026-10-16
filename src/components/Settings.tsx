@@ -102,6 +102,11 @@ const TABS: { id: SettingsTabId; label: Msg }[] = [
 export function Settings(): JSX.Element {
   const [tab, setTab] = createSignal<SettingsTabId>("appearance");
   const [settingsQuery, setSettingsQuery] = createSignal("");
+  // A result opens its tab with the matching Advanced section revealed, even
+  // though navigation ends the search and restores the normal tab body.
+  const [revealedQuery, setRevealedQuery] = createSignal("");
+  const searching = () => !!settingsQuery().trim() && tab() !== "shortcuts";
+  let searchInput: HTMLInputElement | undefined;
   const [settingsPlatform] = createResource(platformKind);
   // Unknown native platforms fail closed: do not reveal a package host whose
   // platform policy could not be established (ADR 0052; master b89a9e77f).
@@ -112,14 +117,20 @@ export function Settings(): JSX.Element {
   const availableTabs = createMemo(() => pluginsAvailable() ? TABS : TABS.filter((entry) => entry.id !== "plugins"));
   const matches = createMemo(() => {
     const query = settingsQuery();
-    return query.trim() ? SETTING_SEARCH.filter((entry) => settingMatches(entry, query)) : [];
+    return query.trim() ? SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && settingMatches(entry, query)) : [];
   });
   const openSearchResult = (entry: SettingSearchEntry) => {
+    setRevealedQuery(settingsQuery());
+    setSettingsQuery("");
     setTab(entry.tab);
     queueMicrotask(() => {
       const fields = queryAllWindowsAll<HTMLElement>("[data-setting-label]");
-      const label = typeof entry.label === "string" ? entry.label : renderEnglish(entry.label);
-      fields.find((field) => field.dataset.settingLabel === label)?.scrollIntoView({ block: "center" });
+      const labels = typeof entry.label === "string" ? [entry.label] : [render(entry.label), renderEnglish(entry.label)];
+      const target = fields.find((field) => labels.includes(field.dataset.settingLabel ?? ""))
+        ?? queryAllWindowsAll<HTMLElement>(".settings-label, .settings-section, .settings-row h2, .settings-row h3, .diagnostics-tab h3")
+          .find((field) => labels.includes(field.textContent?.trim() ?? ""));
+      target?.scrollIntoView({ block: "center" });
+      searchInput?.focus({ preventScroll: true });
     });
   };
 
@@ -143,6 +154,7 @@ export function Settings(): JSX.Element {
     if (!requested) return;
     if (requested === "plugins" && settingsPlatform.loading) return;
     setTab(requested === "plugins" && !pluginsAvailable() ? "appearance" : requested);
+    setRevealedQuery("");
     clearSettingsTabRequest();
   });
 
@@ -198,7 +210,7 @@ export function Settings(): JSX.Element {
                 <button
                   class="settings-nav-item"
                   classList={{ active: tab() === t.id }}
-                  onClick={() => setTab(t.id)}
+                  onClick={() => { setRevealedQuery(""); setTab(t.id); }}
                 >
                   {render(t.label)}
                 </button>
@@ -211,17 +223,19 @@ export function Settings(): JSX.Element {
             <div class="settings-pane-head">
               <span>{render(availableTabs().find((t) => t.id === tab())!.label)}</span>
               <input
+                ref={searchInput}
                 class="settings-search-input"
                 type="search"
                 placeholder={tab() === "shortcuts" ? t("settings-ui-search-shortcuts") : t("settings-ui-search-settings")}
                 aria-label={tab() === "shortcuts" ? t("settings-ui-search-shortcuts-2") : t("settings-ui-search-settings-2")}
                 value={settingsQuery()}
-                onInput={(event) => setSettingsQuery(event.currentTarget.value)}
+                onInput={(event) => { setRevealedQuery(""); setSettingsQuery(event.currentTarget.value); }}
                 onKeyDown={(event) => {
                   if (event.isComposing || event.keyCode === 229) return;
                   if (event.key === "Escape" && settingsQuery()) {
                     event.preventDefault();
                     setSettingsQuery("");
+                    setRevealedQuery("");
                   }
                 }}
               />
@@ -238,7 +252,7 @@ export function Settings(): JSX.Element {
             <div class="settings-pane-body">
               <Show when={graphConfigProblem()}><p role="alert">{t("settings-ui-config-edn-could-not-be-read-this-graph-is")}</p></Show>
               <Suspense fallback={<div class="settings-pane-pending" aria-hidden="true" />}>
-              <Show when={settingsQuery().trim() && tab() !== "shortcuts"}>
+              <Show when={searching()}>
                 <div class="settings-search-results" aria-live="polite">
                   <Show when={matches().length} fallback={<div class="settings-search-empty">{t("settings-ui-no-matching-settings")}</div>}>
                     <For each={matches()}>
@@ -252,17 +266,18 @@ export function Settings(): JSX.Element {
                   </Show>
                 </div>
               </Show>
+              <Show when={!searching()}>
               <Show when={tab() === "appearance"}>
-                <AppearanceTab search={settingsQuery()} />
+                <AppearanceTab search={revealedQuery()} />
               </Show>
               <Show when={tab() === "editor"}>
-                <EditorTab search={settingsQuery()} />
+                <EditorTab search={revealedQuery()} />
               </Show>
               <Show when={tab() === "journals"}>
-                <JournalsTab search={settingsQuery()} />
+                <JournalsTab search={revealedQuery()} />
               </Show>
               <Show when={tab() === "files"}>
-                <FilesTab search={settingsQuery()} />
+                <FilesTab search={revealedQuery()} />
               </Show>
               <Show when={tab() === "backups"}>
                 <BackupsTab />
@@ -290,6 +305,7 @@ export function Settings(): JSX.Element {
               </Show>
               <Show when={tab() === "about"}>
                 <AboutTab />
+              </Show>
               </Show>
               </Suspense>
             </div>

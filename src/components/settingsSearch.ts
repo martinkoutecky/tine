@@ -2,6 +2,7 @@
 // one label/description and optionally aliases; search matches all terms within
 // that entry. Cost O(entries × query length), no I/O or failure.
 import { KNOBS } from "../styleKnobs";
+import { MEDIA_EDITORS } from "../mediaEditors";
 import { msg, render, renderEnglish, type Msg } from "../i18n";
 import type { SettingsTabId } from "../ui";
 type Tab = SettingsTabId;
@@ -12,6 +13,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: msg("settings-search-theme-mode"), description: msg("settings-search-light-dark-system") },
   { tab: "appearance", label: msg("settings-search-style"), description: msg("settings-search-typography-journal-headings-presentation-theme") },
   { tab: "appearance", label: msg("settings-search-color-scheme"), description: msg("settings-search-default-nord-solarized-gruvbox-soft-medium-light") },
+  { tab: "appearance", label: msg("themes-install-a-token-theme"), description: msg("themes-theme-packages-contain-only-whitelisted-color-tokens") },
   // Fine-tuning: one entry per knob in the table, so a new knob is searchable with no code here.
   ...KNOBS.filter((knob) => knob.type !== "heading").map((knob): SettingSearchEntry => ({
     tab: "appearance",
@@ -49,12 +51,17 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "editor", label: msg("settings-search-learn-ctrl-k-choices"), description: msg("settings-search-adaptive-launcher-ranking-reset-history"), level: "advanced" },
   { tab: "editor", label: msg("settings-pinyin-label"), description: msg("settings-pinyin-description"), aliases: ["pinyin"], level: "advanced" },
   { tab: "editor", label: msg("settings-search-spell-checker"), description: msg("settings-search-dictionaries-languages-spelling") },
+  { tab: "editor", label: msg("settings-ui-spellcheck-languages"), description: msg("settings-ui-tick-the-dictionaries-to-check-several-at-once-is") },
   { tab: "editor", label: msg("settings-search-copy-a-parent-block-s-sub-blocks"), description: msg("settings-search-clipboard-subtree"), level: "advanced" },
   { tab: "editor", label: msg("settings-search-strip-collapsed-when-copying"), description: msg("settings-search-clipboard-properties"), level: "advanced" },
   { tab: "editor", label: msg("settings-search-click-a-block-reference-to-zoom-in"), description: msg("settings-search-reference-navigation") },
   { tab: "journals", label: msg("settings-search-journal-date-format"), description: msg("settings-search-display-titles") },
   { tab: "journals", label: msg("settings-search-first-day-of-week"), description: msg("settings-search-calendar-monday-sunday") },
   { tab: "journals", label: msg("settings-search-carry-over"), description: msg("settings-search-buttons-context-header-last-days") },
+  { tab: "journals", label: msg("settings-ui-show-carry-over-buttons"), description: msg("settings-ui-show-the-carry-buttons-next-to-journal-titles-off") },
+  { tab: "journals", label: msg("settings-ui-carry-over-keeps-context"), description: msg("settings-ui-move-whole-blocks-that-contain-an-open-task-on") },
+  { tab: "journals", label: msg("settings-ui-carry-over-header"), description: msg("settings-ui-add-a-carried-over-heading-above-carried-tasks") },
+  { tab: "journals", label: msg("settings-ui-carry-last-n-days"), description: msg("settings-ui-n-for-the-carry-last-n-days-button-on") },
   { tab: "journals", label: msg("settings-search-task-workflow"), description: msg("settings-search-todo-doing-now-later") },
   { tab: "journals", label: msg("settings-search-time-tracking"), description: msg("settings-search-logbook-clock") },
   { tab: "journals", label: msg("settings-search-new-journal-template"), description: msg("settings-search-default-journal-template") },
@@ -62,13 +69,27 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "journals", label: msg("settings-search-agenda-window"), description: msg("settings-search-scheduled-deadline-days") },
   { tab: "files", label: msg("settings-search-new-asset-filename"), description: msg("settings-search-paste-drag-media-names") },
   { tab: "files", label: msg("settings-search-watch-for-external-edits"), description: msg("settings-search-inotify-polling-network-filesystem") },
-  { tab: "files", label: msg("settings-search-diagram-editors"), description: msg("settings-search-drawio-excalidraw-commands"), level: "advanced" },
+  { tab: "files", label: msg("settings-search-diagram-editors"), description: msg("settings-search-drawio-excalidraw-commands"), aliases: MEDIA_EDITORS.map((editor) => editor.settingLabel), level: "advanced" },
+  { tab: "files", label: msg("settings-orphaned-media"), description: msg("settings-ui-files-in-assets-that-no-block-links-to-deleting"), keywords: msg("settings-ui-permanently-delete-asset-files-in-logseq-tine-trash") },
   { tab: "backups", label: msg("settings-search-snapshots-to-keep"), description: msg("settings-search-recovery-retention-conflicts") },
   { tab: "backups", label: msg("settings-search-always-ask-before-applying-an-external-change"), description: msg("settings-search-external-edits-disk-reload-keep-mine-conflict") },
+  { tab: "backups", label: msg("settings-ui-duplicate-journal-days"), description: msg("settings-ui-these-days-have-more-than-one-file-e-g") },
+  { tab: "backups", label: msg("journal-filename-panel-journal-files-named-by-title"), description: msg("journal-filename-panel-these-journal-files-aren-t-named-after-their") },
+  { tab: "backups", label: msg("settings-ui-conflicts"), description: msg("settings-ui-open-conflicts") },
   { tab: "graph", label: msg("settings-search-graph"), description: msg("settings-search-folder-export-publish") },
   { tab: "graph", label: msg("settings-graph-folder-label"), description: msg("settings-graph-folder-search-description"), aliases: ["open graph folder"] },
   { tab: "graph", label: msg("settings-search-home-page"), description: msg("settings-search-home-start-startup-page") },
+  { tab: "graph", label: msg("graph-publish-publish"), description: msg("graph-publish-choose-a-destination-outside-the-graph-the-export"), keywords: msg("graph-publish-export-name") },
+  { tab: "graph", label: msg("query-export-limit-setting-query-export-size-limit"), description: msg("query-export-limit-setting-default-1-gi-b-copied-assets-must-fit") },
+  { tab: "plugins", label: msg("settings-ui-plugins"), description: msg("plugins-open-settings") },
   { tab: "diagnostics", label: msg("settings-search-help-diagnostics"), description: msg("settings-search-diagnostic-report-crash-unclean-exit-save-slow") },
+  { tab: "diagnostics", label: msg("diagnostics-tab-rescan-graph"), description: msg("settings-prose-re-reads-every-file-in-the-open-graph-and-rebuilds") },
+  { tab: "diagnostics", label: msg("error-toast-history-recent-error-messages"), description: msg("error-toast-history-the-last-20-red-error-messages-of-this") },
+  { tab: "diagnostics", label: msg("graph-verification-verify-synchronized-graph"), description: msg("graph-verification-compare-the-exact-markdown-and-org-file-bytes") },
+  { tab: "diagnostics", label: msg("diagnostics-tab-help-improve-tine-s-parser"), description: msg("improve-what-to-run"), keywords: msg("improve-include-journals") },
+  { tab: "diagnostics", label: msg("improve-what-to-run"), description: msg("diagnostics-tab-help-improve-tine-s-parser"), keywords: msg("improve-divergences") },
+  { tab: "diagnostics", label: msg("improve-include-journals"), description: msg("diagnostics-tab-help-improve-tine-s-parser") },
+  { tab: "diagnostics", label: msg("improve-fast-scan"), description: msg("improve-faster-but-can-miss-or-invent-divergences") },
   { tab: "shortcuts", label: msg("settings-search-keyboard-shortcuts"), description: msg("settings-search-key-bindings-commands-remap") },
   { tab: "about", label: msg("settings-search-about"), description: msg("settings-search-version-licenses-updates") },
 ];

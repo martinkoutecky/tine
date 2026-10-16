@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-sw-settings-search.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Settings search displays matching results alone, restores controls when cleared and reveals an Advanced control when its result is chosen in English and Chinese at desktop and narrow widths.","blocking":true}],
+      "acceptableVariations":["Matching counts, typography, layout and result order may vary while unrelated controls stay hidden during search."],
+      "nonRequirements":["Exact pixels, matching-word highlighting, native backend I/O or Android runtime certification."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sw-queries.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Removing the last builder condition restores the empty prompt; Search selection toggles off and offers actions above rows with their ordinary page and block identities.","blocking":true}],
       "acceptableVariations":["Layout, row ordering and parser latency may vary while the semantic outcomes remain correct."],

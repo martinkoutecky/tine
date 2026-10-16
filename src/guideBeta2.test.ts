@@ -3,6 +3,11 @@ import { expect, it } from "vitest";
 
 const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
 
+it("the Guide explains Settings search results, navigation and clearing", () => {
+  const settings = guide("where-things-are");
+  for (const detail of ["only matching settings", "Choose a result", "including Advanced settings", "Clear the search", "filters commands and keys within that tab"]) expect(settings).toContain(detail);
+});
+
 it("the Guide makes Beta's unbound search, editing and tab commands discoverable", () => {
   const tips = guide("tips");
   for (const detail of ["**Search page names**", "**Search block content**", "**Edit selected block**", "**Activate tab 1**", "**Activate last tab**", "Ctrl/Cmd+1–9", "every included chip"]) {
