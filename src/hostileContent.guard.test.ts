@@ -24,7 +24,6 @@ describe("I-22 hostile-content link shape (master b61bb9d25303)", () => {
       if (path === "src/components/ExternalLink.tsx") return [];
       const text = source(path);
       return [...text.matchAll(/<a\b[\s\S]{0,240}?\bhref\s*=/g)].flatMap((match) => {
-        if (path === "src/components/ImproveTab.tsx" && text.slice(match.index, match.index + 300).includes("href={ISSUES_URL}")) return [];
         // A hand-written anchor must cancel the default navigation itself.
         const opening = text.slice(match.index, text.indexOf("</a>", match.index));
         return opening.includes("preventDefault()") ? [] : [`${path}@${match.index}`];

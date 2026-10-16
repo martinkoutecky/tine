@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-sw-r2-polish2.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Settings highlights matching English and Chinese labels; Diagnostics retains real reporting, clear and rescan without the parser comparison runner.","blocking":true}],
+      "acceptableVariations":["Typography, matching counts and diagnostic report content may vary while matches are highlighted and the remaining tools work."],
+      "nonRequirements":["Exact pixels, automatic uploads, native certification outside Linux WebKitGTK or exercising native save/clipboard dialogs."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-tab-reuse.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"With tab reuse enabled, links, Ctrl+K Enter, Recent and Favorites activate the already-open destination tab and preserve the source tab and its content.","blocking":true}],
       "acceptableVariations":["Tab placement, styling and navigation latency may vary while the destination activates and the source content remains available."],

@@ -42,7 +42,7 @@ import type {
   QueryPublicationPlan,
   PublicationReceipt,
 } from "./types";
-import type { GraphSources, GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, GraphAccessInspection, TrayStatus } from "./backendTypes";
+import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, GraphAccessInspection, TrayStatus } from "./backendTypes";
 import type { EditKinds } from "./editKind";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import type { NativeTineLinks } from "./nativeTineLinks";
@@ -110,9 +110,6 @@ export interface Backend {
   journalContentDays(): Promise<number[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<import("./types").PageRead | null>;
   resolvePage(name: string, kind: "journal" | "page"): Promise<import("./types").ResolvedPage>;
-  /** Raw source text of every md/org file in the open graph (+journals when
-   *  asked), for the "Help improve Tine" diff panel. Read-only, local. */
-  graphSourceFiles(includeJournals: boolean): Promise<GraphSources>;
   /** The page host (STEP3-DESIGN §3; `src-tauri/src/page_commands.rs`): the only
    * page persistence of a window. Only `src/document/host/wiring.ts` calls these
    * (I-1). Mutating commands carry the window's session and a request id and go

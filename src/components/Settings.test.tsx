@@ -33,7 +33,12 @@ describe("Settings progressive disclosure and search", () => {
       expect(root.querySelector(".settings-search-results")).not.toBeNull();
       expect(document.activeElement).toBe(search);
       if (query === "no-such-setting-706") expect(root.querySelector(".settings-search-empty")).not.toBeNull();
-      else expect(root.querySelectorAll(".settings-search-result").length).toBeGreaterThan(0);
+      else {
+        expect(root.querySelectorAll(".settings-search-result").length).toBeGreaterThan(0);
+        const marks = [...root.querySelectorAll(".settings-search-result mark")];
+        expect(marks.length).toBeGreaterThan(0);
+        expect(marks.every((mark) => mark.textContent?.toLowerCase() === query.toLowerCase())).toBe(true);
+      }
     }
     search.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     await tick();
@@ -87,15 +92,16 @@ describe("Settings progressive disclosure and search", () => {
     dispose();
   });
 
-  it("opens Help & diagnostics, the Diagnostics action's target, with the report and the parser comparison (GH #343)", async () => {
+  it("opens Help & diagnostics with reporting and graph tools, without the parser runner (UI-CENSUS-18)", async () => {
     const root = document.createElement("div");
     document.body.append(root);
     const dispose = render(() => <Settings />, root);
     openSettings("diagnostics");
-    await tick();
-    expect(root.querySelector(".diagnostics-tab h2")?.textContent).toBe("Help & diagnostics");
+    await vi.waitFor(() => expect(root.querySelector(".diagnostics-tab h2")?.textContent).toBe("Help & diagnostics"));
     expect(root.textContent).toContain("Create diagnostic report");
-    expect(root.querySelector(".improve-run")).not.toBeNull();
+    expect(root.querySelector(".improve-run")).toBeNull();
+    expect(root.textContent).not.toContain("Help improve Tine's parser");
+    for (const label of ["Save report", "Clear recorded events", "Rescan graph", "Verify synchronized graph"]) expect(root.textContent).toContain(label);
     dispose();
   });
 

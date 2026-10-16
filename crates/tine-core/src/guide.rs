@@ -1148,11 +1148,13 @@ mod rename_guide_tests {
     }
 
     #[test]
-    fn parser_comparison_guide_says_intentional_differences_are_not_bugs() {
-        // Master c0c2ff11b: a known intentional lsdoc difference is suppressed,
-        // not offered as a reportable parser bug.
+    fn diagnostics_guide_keeps_reporting_and_graph_tools_without_parser_runner() {
         let recovery = include_str!("templates/troubleshooting-recovery.md");
-        assert!(recovery.contains("Known intentional parser differences are not offered as bugs"));
+        assert!(recovery.contains("**Create diagnostic report**"));
+        assert!(recovery.contains("**Rescan graph**"));
+        assert!(recovery.contains("**Create graph verification report**"));
+        assert!(!recovery.contains("Help improve Tine's parser"));
+        assert!(!recovery.contains("Run comparison"));
     }
 
     #[test]

@@ -19,6 +19,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Settings search highlights matching Latin and Chinese text in result labels (GH #706).
+- Chinese slash-menu rows show English keywords followed by Chinese glosses; English matching and inserted syntax stay unchanged (GH #107).
+- Journal carry buttons appear on title-row hover or keyboard focus, and stay visible on devices without hover (UI-CENSUS-7).
+- Removed the parser comparison runner from Help & diagnostics; diagnostic reports, rescan and graph verification remain available (UI-CENSUS-18).
 - Plain navigation now switches to an already-open page tab even when one route uses the page name and the other its file path, preserving the source tab (GH #711).
 - Query table column choices now come from the current results instead of offering unrelated graph properties; saved choices survive changes to the results (GH #680).
 - Shortcuts and shortcut recording recognize the physical Latin letter or digit on non-Latin keyboard layouts, including Cyrillic, while text input and Latin layouts keep their behavior (GH #709).
