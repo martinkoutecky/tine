@@ -150,10 +150,45 @@ try {
   await browser.waitUntil(() => fs.readFileSync(path.join(graph, "pages", "Empty.md"), "utf8").includes(`Parent on ${names[0]}`), { timeout: 10_000 });
   report("real bullet drag reaches the empty page through the audited cross-page save");
 
+  for (const side of ["top", "right"]) {
+    journey = `GH #499 ${side} pane split`;
+    const drag = await browser.execute((side) => {
+      const panes = [...document.querySelectorAll(".pane-leaf")];
+      const source = panes[0].querySelector(".tab.active");
+      source.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
+      const target = panes.at(-1);
+      const a = source.getBoundingClientRect(), b = target.getBoundingClientRect();
+      const strip = target.querySelector(".tab-bar").getBoundingClientRect();
+      const startX = Math.round(a.left + a.width / 2), startY = Math.round(a.top + a.height / 2);
+      return { sourceTitle: source.querySelector(".tab-title").textContent, paneIds: panes.map((pane) => pane.dataset.paneId), targetId: target.dataset.paneId, count: panes.length,
+        sourceHit: source.contains(document.elementFromPoint(startX, startY)), x: startX, y: startY,
+        tx: Math.round(side === "right" ? b.right - Math.min(60, b.width * 0.15) : b.left + b.width / 2),
+        ty: Math.round(side === "top" ? strip.bottom + Math.min(50, b.height * 0.15) : b.top + b.height / 2) };
+    }, side);
+    check(drag.sourceHit, "the drag starts inside the visible active tab");
+    await browser.performActions([{ type: "pointer", id: "tab-drag", parameters: { pointerType: "mouse" }, actions: [
+      { type: "pointerMove", duration: 0, origin: "viewport", x: drag.x, y: drag.y }, { type: "pointerDown", button: 0 },
+      { type: "pointerMove", duration: 300, origin: "viewport", x: drag.tx, y: drag.ty },
+    ] }]);
+    await browser.$(`[data-pane-id="${drag.targetId}"] .pane-tab-split-preview-${side}`).waitForExist({ timeout: 5000 });
+    try { await browser.saveScreenshot(path.join(out, `pane-${side}-preview.png`)); } catch {}
+    await browser.performActions([{ type: "pointer", id: "tab-drag", parameters: { pointerType: "mouse" }, actions: [{ type: "pointerUp", button: 0 }] }]);
+    await browser.releaseActions();
+    await browser.waitUntil(() => browser.execute((drag, side) => {
+      const moved = [...document.querySelectorAll(".pane-leaf")].find((pane) => !drag.paneIds.includes(pane.dataset.paneId));
+      const target = document.querySelector(`[data-pane-id="${drag.targetId}"]`);
+      if (!moved || !target || moved.querySelector(".tab-title")?.textContent !== drag.sourceTitle || document.querySelectorAll(".pane-leaf").length !== drag.count + 1) return false;
+      const a = moved.getBoundingClientRect(), b = target.getBoundingClientRect();
+      return side === "top" ? a.bottom <= b.top + 1 : a.left >= b.right - 1;
+    }, drag, side), { timeout: 5000 });
+    report("the content-edge preview becomes the new pane containing the dragged tab");
+  }
+
   console.log(`Artifacts: ${out}`);
 } catch (error) {
   try { console.log("Observed UI:", await browser?.execute(() => ({ url: location.href, titles: [...document.querySelectorAll("h1.page-title")].map((el) => el.textContent), body: document.body.innerText.slice(0, 1800) }))); } catch {}
-  fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ commit: "449f773c461c1202d71b149854c3ecc25f041766 + lane diff", journey, expected: "semantic journey above completes", observed: String(error), classification: "ambiguous" }, null, 2));
+  try { await browser?.saveScreenshot(path.join(out, "failure.png")); } catch {}
+  fs.writeFileSync(path.join(out, "failure.json"), JSON.stringify({ commit: "54b0f476e43ebf6497d34dec4440e5b3657d4302 + sw-panes diff", journey, expected: "semantic journey above completes", observed: String(error), classification: "ambiguous" }, null, 2));
   throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
