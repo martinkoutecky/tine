@@ -1,4 +1,4 @@
-// Real-app regressions for GH #154 and GH #166. Copy block ref assigns a fresh
+// Real-app regressions for GH #154, GH #166 and GH #708. Copy block ref assigns a fresh
 // target's durable identity, a pasted reference updates its badge/panel before
 // reload and survives reload, and loaded/unloaded source text follows landed
 // transactions.
@@ -66,7 +66,7 @@ function activeSavedRoute() {
         const session = JSON.parse(fs.readFileSync(`${dir}/${file}`, "utf8"));
         const tab = session.tabs?.[session.activeIndex ?? 0];
         const route = tab?.history?.at(-1);
-        if (route?.kind === "page") return route.name;
+        if (route?.kind === "page") return route.block ? `${route.name}#${route.block}` : route.name;
       }
     }
   } catch { /* not written yet, or mid-rename */ }
@@ -296,7 +296,36 @@ try {
   await browser.waitUntil(async () => (await browser.$(".page-blocks .block-ref").getText()).trim() === "Updated source target", {
     timeout: 10_000, timeoutMsg: "inline block reference kept stale source text",
   });
-  console.log("PASS: fresh Copy block ref identity, badge/panel, reload, and loaded/unloaded reference lifecycles");
+  // GH #708: with "Click a block reference to zoom in" on, a plain click on a
+  // reference to a block on another page (not loaded after the reload) zooms
+  // into that block.
+  mark("ref-click zoom: enable setting");
+  const setZoom = await browser.executeAsync((done) => {
+    globalThis.__TAURI_INTERNALS__.invoke("set_app_bool", { key: "ref_click_zoom", value: true }).then(() => done("ok"), (error) => done(`<${error}>`));
+  });
+  if (setZoom !== "ok") throw new Error(`set_app_bool ref_click_zoom failed: ${setZoom}`);
+  await browser.refresh();
+  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Tester", {
+    timeout: 20_000, timeoutMsg: "Tester did not reopen after enabling ref-click zoom",
+  });
+  mark("ref-click zoom: click a reference to another page");
+  let zoomRef;
+  await browser.waitUntil(async () => {
+    for (const ref of await browser.$$(".page-blocks .block-ref")) {
+      if ((await ref.getText()).trim() === "Updated source target") { zoomRef = ref; return true; }
+    }
+    return false;
+  }, { timeout: 10_000, timeoutMsg: "reference to Source Target did not render" });
+  await zoomRef.click();
+  // A zoomed route shows the block (with breadcrumbs) instead of the page title.
+  await browser.waitUntil(async () => !(await browser.$("h1.page-title=Tester").isExisting())
+    && (await browser.execute(() => document.querySelector(".page-blocks")?.textContent ?? "")).includes("Updated source target"), {
+    timeout: 10_000, timeoutMsg: "clicking the block reference did not zoom into it (GH #708)",
+  });
+  await browser.waitUntil(() => activeSavedRoute() === `Source Target#${targetUuid}`, {
+    timeout: 10_000, timeoutMsg: () => `clicking the block reference did not zoom into the block; saved route ${activeSavedRoute()}`,
+  });
+  console.log("PASS: fresh Copy block ref identity, badge/panel, reload, and loaded/unloaded reference lifecycles, ref-click zoom across pages");
 } catch (error) {
   // Failure capsule: step, screenshot and the block-ref surface state.
   console.error(`FAIL at step: ${step}`);
