@@ -678,11 +678,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1c988a897ea030e32f0668c90b0192800e0c561b3d941fc366f9ad5a1bf26ba"
 dependencies = [
  "clipboard-win",
+ "image",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-ui-kit",
  "windows 0.59.0",
+ "wl-clipboard-rs",
  "x11rb",
 ]
 
@@ -5044,6 +5046,7 @@ dependencies = [
  "clap",
  "clap_mangen",
  "clipboard-rs",
+ "clipboard-win",
  "dirs 6.0.0",
  "ed25519-dalek",
  "gdkwayland-sys",

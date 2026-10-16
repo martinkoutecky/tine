@@ -1,4 +1,125 @@
 const MAX_CLIPBOARD_FILES: usize = 32;
+use crate::state::{slot_for_context, GraphContext};
+
+/// Resolve through the same Store containment gate used by asset openers.
+/// Only a graph-relative asset name crosses IPC; never trust an image src path.
+#[tauri::command]
+pub(crate) async fn copy_asset_file_to_clipboard(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let path = {
+            let slot = slot_for_context(&state)?;
+            tine_graph_features::assets::path_for_os_handoff(&slot.store, &name)
+                .map_err(crate::commands::feature_asset_access_error)?
+        };
+        return tauri::async_runtime::spawn_blocking(move || copy_asset_file(&path))
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (name, state);
+        Err("file clipboard is desktop-only".into())
+    }
+}
+
+#[cfg(desktop)]
+fn copy_asset_file(path: &std::path::Path) -> Result<(), String> {
+    use clipboard_rs::common::RustImage;
+    use clipboard_rs::ClipboardContent;
+    #[cfg(not(target_os = "windows"))]
+    use clipboard_rs::{Clipboard, ClipboardContext};
+    // X11 serves selections from this context. Keep it alive after the command
+    // returns, and serialize writes across graph windows.
+    let mut contents = Vec::new();
+    // The original file is always offered, including unsupported image formats
+    // and files above the bitmap budget. Failure to decode only omits pixels.
+    if std::fs::metadata(path).map_err(|e| e.to_string())?.len() <= 64 * 1024 * 1024 {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .and_then(|f| f.take(64 * 1024 * 1024 + 1).read_to_end(&mut bytes))
+            .map_err(|e| e.to_string())?;
+        if bytes.len() <= 64 * 1024 * 1024 {
+            if cfg!(not(target_os = "windows")) && bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                // Linux/macOS accept encoded PNG directly. Preserve it rather
+                // than decoding and re-encoding the compatibility flavour.
+                let format = if cfg!(target_os = "macos") {
+                    "public.png"
+                } else {
+                    "image/png"
+                };
+                contents.push(ClipboardContent::Other(format.into(), bytes));
+            } else if let Ok(image) = decode_clipboard_image(&bytes) {
+                contents.push(ClipboardContent::Image(
+                    clipboard_rs::RustImageData::from_dynamic_image(image),
+                ));
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // clipboard-rs's Files encoder does not percent-escape URI paths.
+        // Supply these two flavours ourselves for spaces, #, Unicode and %.
+        let uri = tauri::Url::from_file_path(path).map_err(|_| "invalid asset file URL")?;
+        contents.push(ClipboardContent::Other(
+            "text/uri-list".into(),
+            format!("{uri}\r\n").into_bytes(),
+        ));
+        contents.push(ClipboardContent::Other(
+            "x-special/gnome-copied-files".into(),
+            format!("copy\n{uri}").into_bytes(),
+        ));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // clipboard-rs::set(Image, Files) nests clipboard open guards: the
+        // inner image guard closes the clipboard before Files is written.
+        // Use one native guard and NoClear writes for all flavours instead.
+        let mut bitmap = None;
+        let mut png = None;
+        if let Some(ClipboardContent::Image(image)) = contents.pop() {
+            bitmap = image.to_bitmap().ok();
+            png = image.to_png().ok();
+        }
+        let _clipboard = clipboard_win::Clipboard::new_attempts(10).map_err(|e| e.to_string())?;
+        clipboard_win::empty().map_err(|e| e.to_string())?;
+        if let Some(bitmap) = bitmap {
+            let _ = clipboard_win::raw::set_bitmap_with(
+                bitmap.get_bytes(),
+                clipboard_win::options::NoClear,
+            );
+        }
+        if let (Some(png), Some(format)) = (png, clipboard_win::register_format("PNG")) {
+            let _ = clipboard_win::raw::set_without_clear(format.get(), png.get_bytes());
+        }
+        return clipboard_win::raw::set_file_list_with(
+            &[path.to_string_lossy()],
+            clipboard_win::options::NoClear,
+        )
+        .map_err(|e| e.to_string());
+    }
+    #[cfg(target_os = "macos")]
+    contents.push(ClipboardContent::Files(vec![path
+        .to_string_lossy()
+        .into_owned()]));
+    #[cfg(not(target_os = "windows"))]
+    {
+        static CONTEXT: std::sync::Mutex<Option<ClipboardContext>> = std::sync::Mutex::new(None);
+        let mut context = CONTEXT.lock().map_err(|e| e.to_string())?;
+        if context.is_none() {
+            *context = Some(ClipboardContext::new().map_err(|e| e.to_string())?);
+        }
+        context
+            .as_ref()
+            .unwrap()
+            .set(contents)
+            .map_err(|e| e.to_string())
+    }
+}
 
 #[tauri::command]
 pub(crate) async fn read_android_clipboard_image(
@@ -45,8 +166,98 @@ fn read_clipboard_files() -> Result<ClipboardFileList, String> {
     use clipboard_rs::{Clipboard, ClipboardContext};
 
     let context = ClipboardContext::new().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    if let Ok(bytes) = context.get_buffer("text/uri-list") {
+        return Ok(clipboard_file_list(file_uri_paths(&bytes)));
+    }
     let paths = context.get_files().map_err(|e| e.to_string())?;
     Ok(clipboard_file_list(paths))
+}
+
+#[cfg(target_os = "linux")]
+fn file_uri_paths(bytes: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(|line| tauri::Url::parse(line).ok()?.to_file_path().ok())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
+}
+
+#[cfg(all(test, desktop))]
+mod asset_copy_tests {
+    use super::*;
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires the native desktop clipboard"]
+    fn native_file_copy_keeps_file_and_bitmap_together() {
+        use clipboard_rs::{Clipboard, ClipboardContext};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("image #%.png");
+        image::RgbaImage::new(2, 3).save(&path).unwrap();
+        copy_asset_file(&path).unwrap();
+        let clipboard = ClipboardContext::new().unwrap();
+        assert_eq!(clipboard.get_files().unwrap(), vec![path.to_string_lossy()]);
+        assert!(clipboard.get_image().is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn file_urls_decode_escaped_filenames_and_refuse_remote_schemes() {
+        assert_eq!(
+            file_uri_paths(b"# comment\r\nfile:///tmp/a%20%23%25.png\r\nhttps://example.com/a\n"),
+            vec!["/tmp/a #%.png"]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires X11 and xclip; run under xvfb-run"]
+    fn native_file_copy_offers_original_uri_and_bounded_bitmap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("image #%.png");
+        image::RgbaImage::new(2, 3).save(&path).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        copy_asset_file(&path).unwrap();
+        let read = |flavour: &str| {
+            let output = std::process::Command::new("xclip")
+                .args(["-o", "-selection", "clipboard", "-t", flavour])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output.stdout
+        };
+        assert_eq!(
+            file_uri_paths(&read("text/uri-list")),
+            vec![path.to_string_lossy()]
+        );
+        assert!(read("x-special/gnome-copied-files").starts_with(b"copy\nfile://"));
+        assert_eq!(
+            image::load_from_memory(&read("image/png")).unwrap().width(),
+            2
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(65 * 1024 * 1024)
+            .unwrap();
+        copy_asset_file(&path).unwrap();
+        assert_eq!(
+            file_uri_paths(&read("text/uri-list")),
+            vec![path.to_string_lossy()]
+        );
+        assert!(!String::from_utf8_lossy(&read("TARGETS")).contains("image/png"));
+        assert_eq!(
+            read_clipboard_files().unwrap().files[0].size,
+            65 * 1024 * 1024
+        );
+    }
 }
 
 fn clipboard_file_list(paths: Vec<String>) -> ClipboardFileList {

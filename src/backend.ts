@@ -737,6 +737,13 @@ class TauriBackend implements Backend {
     }
     await this.writeText(text);
   }
+  async copyAssetFileToClipboard(name: string): Promise<boolean> {
+    const generation = this.bindingGeneration;
+    const platform = await this.appPlatform();
+    if (platform === "android" || platform === "ios") return false;
+    await this.assetCall<void>("copy_asset_file_to_clipboard", { name }, generation);
+    return true;
+  }
   async copyImageToClipboard(bytes: Uint8Array): Promise<void> {
     if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) throw new Error("image exceeds 64 MiB clipboard limit");
     // Binary InvokeBody avoids base64, JSON and a large UI-thread string build.

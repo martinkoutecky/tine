@@ -490,6 +490,7 @@ export interface Backend {
    *  clipboard plugin, not WebKitGTK's native "Copy Image" (which doesn't
    *  actually populate the clipboard, so paste yielded nothing). */
   copyImageToClipboard(bytes: Uint8Array): Promise<void>;
+  copyAssetFileToClipboard(name: string): Promise<boolean>;
   readHighlights(pdf: string): Promise<Highlight[]>;
   /** Read PDF highlights and view state without creating, rewriting or moving
    * graph files. Prefer the OG-key sidecar; only when absent, consult legacy

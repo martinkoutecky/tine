@@ -121,7 +121,9 @@ pub(crate) fn sync_conflict_error(error: std::io::Error) -> String {
     }
 }
 
-fn feature_asset_access_error(error: tine_graph_features::assets::AssetAccessError) -> String {
+pub(crate) fn feature_asset_access_error(
+    error: tine_graph_features::assets::AssetAccessError,
+) -> String {
     match error {
         tine_graph_features::assets::AssetAccessError::BadName => "bad asset name".into(),
         tine_graph_features::assets::AssetAccessError::StreamSymlink => {

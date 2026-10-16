@@ -3,8 +3,40 @@ import { readFileSync } from "node:fs";
 import { copyImageFromSrc } from "./copyImage";
 import { backend } from "./backend";
 import { toasts, setToasts } from "./toasts";
+import { seedAssetBlob, clearAssetBlobCache } from "./assetCache";
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); setToasts([]); });
+
+it("copies a graph asset as a file without fetching image bytes", async () => {
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:graph-photo", revokeObjectURL: vi.fn() });
+  const src = seedAssetBlob("original.jpg", new Uint8Array([1, 2, 3]));
+  const fileCopy = vi.spyOn(backend(), "copyAssetFileToClipboard").mockResolvedValue(true);
+  const fetch = vi.fn().mockRejectedValue(new Error("must not fetch local assets"));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    await copyImageFromSrc(src);
+    expect(fileCopy).toHaveBeenCalledWith("original.jpg");
+    expect(fetch).not.toHaveBeenCalled();
+  } finally { clearAssetBlobCache(); }
+});
+
+it("offers an unloaded large asset without reading its bytes", async () => {
+  const fileCopy = vi.spyOn(backend(), "copyAssetFileToClipboard").mockResolvedValue(true);
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  await copyImageFromSrc("", "large.tiff");
+  expect(fileCopy).toHaveBeenCalledWith("large.tiff");
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("keeps the image-byte fallback on mobile", async () => {
+  vi.spyOn(backend(), "copyAssetFileToClipboard").mockResolvedValue(false);
+  const bytes = new Uint8Array([1]);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: async () => ({ type: "image/png", size: 1, arrayBuffer: async () => bytes.buffer }) }));
+  const write = vi.spyOn(backend(), "copyImageToClipboard").mockResolvedValue();
+  await copyImageFromSrc("blob:mobile", "photo.png");
+  expect(write).toHaveBeenCalledWith(bytes);
+});
 
 it.each(["image/png", "image/jpeg"])("copies original %s bytes without a canvas round trip", async (type) => {
   const bytes = new Uint8Array([1, 2, 3]);

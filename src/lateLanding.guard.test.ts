@@ -122,7 +122,7 @@ const DURABLE_BACKEND_METHODS = new Set([
   "setStartOfWeek", "editAssetExternal", "editCustomCss", "trashAsset", "emptyAssetTrash", "trashJournalFile",
   "applyJournalFilenameMigrations",
   "mergePages", "renameFileToPage", "resolveSyncConflict", "resolveVcsMarkerConflict", "resolveDuplicateJournalDay", "trashSyncConflict", "saveAsset",
-  "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard",
+  "importAsset", "importNativeCapture", "writeText", "writeRich", "copyImageToClipboard", "copyAssetFileToClipboard",
   "writeHighlights", "savePdfAreaImage", "rollbackPdfAreaImage",
   "setBackupKeep", "setCaptureEnterFiles", "setWatchMode", "restoreBackup",
   "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck", "setUiLocale",

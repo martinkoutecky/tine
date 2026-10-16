@@ -1500,6 +1500,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         // ignore
       }
     },
+    async copyAssetFileToClipboard(): Promise<boolean> { return false; },
     async copyImageToClipboard(): Promise<void> {
       // no OS clipboard image write in the browser mock
     },

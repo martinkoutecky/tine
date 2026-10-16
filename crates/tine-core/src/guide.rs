@@ -525,6 +525,9 @@ mod journal_guide_tests {
         assert!(files.contains("moved into the restore's recovery folder"));
         // og-J2 (master d017d1afc): assets refresh in place after an outside change.
         assert!(files.contains("Files in `assets/` are watched too"));
+        assert!(files.contains("offers the original asset file"));
+        assert!(files.contains("import their original bytes unchanged"));
+        assert!(files.contains("pixel-only clipboard image is saved as PNG"));
         assert!(files.contains("An open PDF, audio, or video is not swapped while you use it"));
     }
 }

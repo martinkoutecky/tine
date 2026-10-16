@@ -42,3 +42,18 @@ it.each([false, true])("renders progress until the clipboard write settles (fail
   }
   expect(host.textContent).not.toContain("Copying image…");
 });
+
+it("renders progress while the native asset file copy is pending", async () => {
+  let finish!: (copied: boolean) => void;
+  const copy = vi.spyOn(backend(), "copyAssetFileToClipboard").mockImplementation(() =>
+    new Promise<boolean>((resolve) => { finish = resolve; }));
+  const host = document.createElement("div");
+  document.body.append(host);
+  dispose = render(() => <Toasts />, host);
+  const pending = copyImageFromSrc("", "large.tiff");
+  expect(host.textContent).toContain("Copying image…");
+  await vi.waitFor(() => expect(copy).toHaveBeenCalledWith("large.tiff"));
+  finish(true);
+  await pending;
+  expect(host.textContent).not.toContain("Copying image…");
+});

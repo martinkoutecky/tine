@@ -855,8 +855,8 @@ function AssetImage(props: {
   const onCopyAsset = (e: MouseEvent) => {
     e.stopPropagation();
     const s = src();
-    if (!s) return;
-    copyImageFromSrc(s)
+    if (!s && !rel()) return;
+    copyImageFromSrc(s, rel() || undefined)
       .then(() => pushToast(msg("render-image-copied-to-clipboard"), "success"))
       .catch(() => pushToast(msg("render-couldn-t-copy-the-image"), "error"));
   };

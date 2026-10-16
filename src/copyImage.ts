@@ -1,15 +1,19 @@
-// Copy an image (by src — a blob:/data:/http URL) to the OS clipboard.
-// Preserve PNG/JPEG bytes; native clipboard conversion runs on the worker pool.
-// Other browser image formats keep the canvas fallback. Shared by both buttons.
+// Graph assets copy as native files on desktop. Other sources and mobile keep
+// the bounded image-byte route, with canvas fallback for other browser formats.
+// Shared by inline and lightbox copy buttons.
 
-import { writeClipboardImage } from "./clipboard";
+import { writeClipboardAssetFile, writeClipboardImage } from "./clipboard";
+import { assetNameForBlobUrl } from "./assetCache";
 import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
 import { dismissToast, pushToast } from "./toasts";
 import { msg } from "./i18n";
 
-export async function copyImageFromSrc(src: string): Promise<void> {
+export async function copyImageFromSrc(src: string, assetName = assetNameForBlobUrl(src)): Promise<void> {
   const progress = pushToast(msg("image-copy-progress"), "info", { sticky: true });
   try {
+    if (assetName !== undefined) {
+      if (await writeClipboardAssetFile(assetName)) return;
+    }
     const response = await fetch(src);
     if (!response.ok) throw new Error("image fetch failed");
     const source = await response.blob();

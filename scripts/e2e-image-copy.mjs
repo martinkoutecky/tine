@@ -12,7 +12,7 @@ import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const root = process.cwd();
-const fixtures = path.join(root, "artifacts/gh700");
+const fixtures = process.env.TINE_IMAGE_COPY_FIXTURES || path.join(root, "artifacts/gh700");
 const out = path.join(fixtures, `native-${Date.now()}`);
 const graph = path.join(out, "graph");
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(graph, dir), { recursive: true });
@@ -24,7 +24,7 @@ const journal = `${now.getFullYear()}_${String(now.getMonth()+1).padStart(2,"0")
 fs.writeFileSync(path.join(graph, "journals", `${journal}.md`), "- [[Image Copy]]\n");
 const env = { ...process.env, TINE_GRAPH: graph, WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
 for (const key of ["DATA", "CONFIG", "CACHE"]) { env[`XDG_${key}_HOME`] = path.join(out, `xdg-${key}`); fs.mkdirSync(env[`XDG_${key}_HOME`], { recursive: true }); }
-const xclip = process.env.TINE_XCLIP || path.join(fixtures,"xclip-root/usr/bin/xclip");
+const xclip = process.env.TINE_XCLIP || "xclip";
 env.PATH = `${path.dirname(xclip)}:${env.PATH}`;
 const log = fs.openSync(path.join(out, "native.log"), "w");
 const driver = spawn(path.join(process.env.CARGO_HOME, "bin/tauri-driver"), ["--port","4570","--native-port","4571","--native-driver","/usr/bin/WebKitWebDriver"], { env, stdio:["ignore",log,log], detached:true });
@@ -106,6 +106,11 @@ try {
   await browser.waitUntil(()=>browser.execute(()=>[...document.querySelectorAll(".toast")].some(t=>t.textContent.includes("Image copied"))),{timeout:30000});
   assert.ok(await browser.execute(() => { globalThis.__imageCopyObserver.disconnect(); return globalThis.__imageCopyProgress; }), "copy progress was visible");
   const { targets, png } = readCopiedImage();
+  assert.ok(targets.includes("text/uri-list"), targets);
+  assert.ok(targets.includes("x-special/gnome-copied-files"), targets);
+  const uris = execFileSync(xclip,["-o","-selection","clipboard","-t","text/uri-list"],{encoding:"utf8"});
+  assert.equal(uris.trim(), new URL(`file://${path.join(graph,"assets",index === 0 ? "photo.jpg" : "screenshot.png")}`).href);
+  assert.deepEqual(fs.readFileSync(path.join(graph,"assets",index === 0 ? "photo.jpg" : "screenshot.png")), fs.readFileSync(path.join(fixtures,index === 0 ? "photo.jpg" : "screenshot.png")));
   timings.push({index,old,native,newClickToClipboardMs:performance.now()-start,targets,pngBytes:png.length});
   // Wait for the prior success toast to leave before the next copy.
   await browser.waitUntil(()=>browser.execute(()=>![...document.querySelectorAll(".toast")].some(t=>t.textContent.includes("Image copied"))),{timeout:8000});
@@ -115,16 +120,18 @@ try {
  seedClipboard();
  await browser.$(".lightbox-copy").click();
  await browser.waitUntil(()=>browser.execute(()=>[...document.querySelectorAll(".toast")].some(t=>t.textContent.includes("Image copied"))),{timeout:30000});
- readCopiedImage();
+ const lightboxCopy = readCopiedImage();
+ assert.ok(lightboxCopy.targets.includes("text/uri-list"), lightboxCopy.targets);
+ assert.equal(execFileSync(xclip,["-o","-selection","clipboard","-t","text/uri-list"],{encoding:"utf8"}).trim(), new URL(`file://${path.join(graph,"assets","photo.jpg")}`).href);
  fs.writeFileSync(path.join(out,"native-stages.json"),JSON.stringify(timings,null,2));
  await browser.saveScreenshot(path.join(out,"copy-success.png"));
- console.log("PASS inline JPEG/PNG and lightbox copy advertise image/png on the Linux clipboard",JSON.stringify(timings));
+ console.log("PASS inline JPEG/PNG and lightbox copy advertise the original asset file and image/png on the Linux clipboard",JSON.stringify(timings));
 } catch (error) {
  await browser?.saveScreenshot(path.join(out,"failure.png")).catch(()=>{});
  fs.writeFileSync(path.join(out,"failure.json"), JSON.stringify({
   commit: execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),
   journey: "inline JPEG/PNG and lightbox image copy",
-  expected: "progress followed by image/png on the OS clipboard",
+  expected: "progress followed by original asset text/uri-list plus image/png on the OS clipboard",
   observed: String(error), screenshot: "failure.png", log: "native.log",
   classification: "ambiguous",
  },null,2));

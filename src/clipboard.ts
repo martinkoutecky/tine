@@ -170,6 +170,12 @@ export function writeClipboardImage(bytes: Uint8Array): Promise<void> {
   return backend().copyImageToClipboard(bytes);
 }
 
+/** File copy owns the public clipboard just like ordinary image copy. */
+export function writeClipboardAssetFile(name: string): Promise<boolean> {
+  clearClipboardPayload();
+  return backend().copyAssetFileToClipboard(name);
+}
+
 /** Put an ordinary outline on the clipboard without recording a block payload. */
 export function copyRich(text: string, html: string): Promise<void> {
   return writeClipboardRich(text, html);

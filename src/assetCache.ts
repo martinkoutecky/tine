@@ -3,6 +3,7 @@ import { backend } from "./backend";
 import { dbg } from "./debug";
 import { errorFamily } from "./errorFamily";
 import { graphOwner } from "./owned";
+import { clearOnBindingInvalidated } from "./binding";
 import { reportUiFailure } from "./uiFailure";
 import { mime_from_path } from "./render/wasm/lsdoc_wasm";
 
@@ -27,6 +28,13 @@ const cache = new Map<string, CacheEntry>();
 // (but do not count toward the idle cache cap), so a repeated reference shares
 // the same live Blob instead of rereading/duplicating it.
 const liveEntries = new Map<string, CacheEntry>();
+const assetNamesByUrl = new Map<string, string>();
+clearOnBindingInvalidated(() => assetNamesByUrl.clear());
+
+/** Only URLs minted for this graph qualify for native file copy. */
+export function assetNameForBlobUrl(url: string): string | undefined {
+  return assetNamesByUrl.get(url);
+}
 const MAX_CACHE_ENTRIES = 128;
 const MAX_CACHE_BYTES = 128 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
@@ -68,7 +76,10 @@ function touch(key: string, entry: CacheEntry) {
 function ignoreEvictedAssetCleanupFailure(_error: unknown): void {}
 
 function revokeEvictedUrl(promise: Promise<string>): void {
-  void promise.then((url) => { if (url) URL.revokeObjectURL(url); }).catch(ignoreEvictedAssetCleanupFailure);
+  void promise.then((url) => {
+    assetNamesByUrl.delete(url);
+    if (url) URL.revokeObjectURL(url);
+  }).catch(ignoreEvictedAssetCleanupFailure);
 }
 
 function evictEntry(key: string, entry: CacheEntry, reusable = true) {
@@ -123,6 +134,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
       const bytes = await read();
       if (!bytes.length) return "";
       const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mime_from_path(typePath) }));
+      if (kind === "graph" && owner()) assetNamesByUrl.set(url, key);
       if (cache.get(key) === entry) {
         entry.bytes = bytes.byteLength;
         cacheBytes += entry.bytes;
@@ -189,11 +201,12 @@ export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
     }
   }
   const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mime_from_path(rel) }));
+  assetNamesByUrl.set(url, rel);
   if (bytes.byteLength > MAX_CACHE_BYTES) {
     // The caller already owns these bytes (paste/capture), so this is not a read
     // amplification path. Avoid graph-lifetime retention; revoke after the
     // mounted image has had ample time to consume the URL.
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    setTimeout(() => { assetNamesByUrl.delete(url); URL.revokeObjectURL(url); }, 60_000);
     return url;
   }
   const entry: CacheEntry = {
@@ -211,6 +224,7 @@ export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
 /** Revoke every cached blob URL and empty the cache. Call on graph switch so the
  *  next graph's images aren't served stale blobs from the previous one. */
 export function clearAssetBlobCache(): void {
+  assetNamesByUrl.clear();
   for (const [key, entry] of [...cache.entries()]) evictEntry(key, entry, false);
   for (const entry of liveEntries.values()) entry.evicted = true;
   liveEntries.clear();
