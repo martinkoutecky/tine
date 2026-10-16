@@ -30,7 +30,8 @@ icon:: 🔗
   - A read-only page — a bundled Guide page — offers no property editing at all, rather than a form whose writes would be dropped.
 - ## Block references and embeds
   - Fold a page embed with the host bullet's arrow or the ordinary **Collapse/Expand** keyboard commands. Only its page-name line remains; expanding restores its content. The choice is saved on the host block, never the embedded page. If the host has children, the same fold hides those too. This works in the main pane and right sidebar.
-  - Hover a page link or block reference for a read-only preview. An alias shows its source page's title and page properties. Click the title to open that page in a new tab, a block bullet to open that block in a new tab, or **Open source** to open the preview's source. Editing requires opening the source.
+  - Hover a page link or block reference for a read-only preview. An alias shows its source page's title and page properties. Click the title to open that page in a new tab, a block bullet to open that block in a new tab, or **Open source** to open the preview's source. These actions switch to the new tab. The preview stays open while its **… → Page actions** menu is open. Editing requires opening the source.
+  - A context menu's **Open in new tab** keeps your current tab active and confirms **Opened in a new tab**. This also applies to mobile long-press menus.
   - **Settings → Appearance → Fine-tuning → Block embed breadcrumbs** optionally shows the source page and parent trail above a block embed. It starts off and is saved on this device.
   - A block embed has a subtle shaded background in both light and dark themes, so you can distinguish the embedded occurrence from an ordinary block.
   - Type `((` while editing: the popup searches blocks, and choosing one inserts a durable `((reference))`. Tine first writes a stable `id::` on the source block, so the reference survives renames, reloads, and restarts.

@@ -28,6 +28,7 @@ it("shows Chinese query and recovery controls while authored names and reports s
   try {
     await setActiveLocale("zh-CN");
     expect(t("query-query-sheet-parts-task-marker")).toBe("任务标记");
+    expect(t("links-opened-in-new-tab")).toBe("已在新标签页中打开");
     expect(t("context-menu-ui-copy-block-embed")).toBe("复制块嵌入");
     expect(t("query-preview-count", { kind: "page", count: 2 })).toBe("2 个页面");
     expect(render(notice)).toContain(`你编辑“${page}”时`);

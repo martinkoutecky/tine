@@ -1,4 +1,10 @@
+// @vitest-environment jsdom
 import { renderEnglish } from "./i18n";
+import { readFileSync } from "node:fs";
+import { mainPaneRouter, route } from "./router";
+import { setNavReuseTabs } from "./navSettings";
+import { refreshPageIndex, resetPageIndex } from "./pageIndex";
+import { pageIdentityKey } from "./pageIdentity";
 // S1 (ADR 0073): shared items reach a journal only through the quick-capture
 // writer, leave the inbox only after the write reached disk, are never lost,
 // and are not appended twice across a crash between the write and the
@@ -102,9 +108,16 @@ beforeEach(async () => {
     return `${name}`;
   });
   await bindHost();
+  mainPaneRouter.resetTabsToJournals();
+  vi.spyOn(api, "pageInventory").mockResolvedValue({ rev: "1", entries: [{
+    key: pageIdentityKey(day()), name: day(), is_journal: true, day: 20261016,
+    target: { kind: "existing", id: `journals/${day()}.md`, others: [] },
+  }] });
+  await refreshPageIndex();
+  mainPaneRouter.openPage("Other");
 });
 
-afterEach(() => { resetStore(); setGraphMeta(null); setToasts([]); delete backend().tineLinks; vi.restoreAllMocks(); });
+afterEach(() => { resetStore(); resetPageIndex(); setGraphMeta(null); setToasts([]); delete backend().tineLinks; vi.restoreAllMocks(); });
 
 function share(id: string, text: string, extra: Partial<ShareInboxItem> = {}) {
   inbox.set(id, { id, source: "android", created: Date.UTC(2026, 9, 10, 8, 30), text, resources: [], ...extra });
@@ -112,6 +125,72 @@ function share(id: string, text: string, extra: Partial<ShareInboxItem> = {}) {
 
 const shared = (text: string, raws = journal()) => raws.filter((raw) => raw.endsWith(`[[quick capture]]: ${text}`));
 const errorToasts = () => toasts().filter((toast) => toast.kind === "error");
+
+it("after an Android share, opens its journal and reveals the last captured block in the batch", async () => {
+  share("a", "first capture");
+  share("b", "last capture");
+  await ingestShares();
+  expect(route()).toMatchObject({ kind: "page", name: day(), pageKind: "journal" });
+  const id = pageByName(day())!.roots.at(-1)!;
+  expect(node(id).raw).toContain("last capture");
+  const scroller = document.createElement("div");
+  const block = document.createElement("div");
+  block.className = "ls-block";
+  block.dataset.blockId = id;
+  block.scrollIntoView = vi.fn();
+  scroller.append(block);
+  document.body.append(scroller);
+  mainPaneRouter.setScrollerElement(scroller);
+  try {
+    await vi.waitFor(() => expect(block.scrollIntoView).toHaveBeenCalled());
+    expect(block.classList.contains("block-flash")).toBe(true);
+  } finally { mainPaneRouter.setScrollerElement(null); scroller.remove(); }
+});
+
+it.each([true, false])("share navigation respects tab reuse = %s", async (reuse) => {
+  setNavReuseTabs(reuse);
+  mainPaneRouter.openPage(day(), "journal");
+  const journalTab = mainPaneRouter.activeId();
+  mainPaneRouter.openPageInNewTab("Other", "page", undefined, true);
+  const sourceTab = mainPaneRouter.activeId();
+  share("a", "navigate normally");
+  await ingestShares();
+  expect(route()).toMatchObject({ kind: "page", name: day(), pageKind: "journal" });
+  expect(mainPaneRouter.activeId()).toBe(reuse ? journalTab : sourceTab);
+  setNavReuseTabs(true);
+});
+
+it("kept items and their later retry do not interrupt the current page", async () => {
+  share("a", "retry later");
+  saveFails = true;
+  await ingestShares();
+  expect(route()).toMatchObject({ kind: "page", name: "Other" });
+  saveFails = false;
+  await ingestShares();
+  expect(shared("retry later")).toHaveLength(1);
+  expect(route()).toMatchObject({ kind: "page", name: "Other" });
+});
+
+it("iOS shares saved without bringing Tine forward preserve the current page", async () => {
+  share("a", "background capture", { source: "ios" });
+  await ingestShares();
+  expect(journal().join()).toContain("background capture");
+  expect(route()).toMatchObject({ kind: "page", name: "Other" });
+});
+
+it("does not navigate if the graph changes during the final acknowledgement", async () => {
+  share("a", "old graph");
+  backend().tineLinks!.inbox!.commit = async (id) => { inbox.delete(id); resetStore(); bindGraph("/B"); };
+  await ingestShares();
+  expect(route()).toMatchObject({ kind: "page", name: "Other" });
+});
+
+it("the mobile Guide explains the share landing and preserves in-app capture context", () => {
+  const guide = readFileSync("crates/tine-core/src/templates/platforms-and-mobile.md", "utf8");
+  for (const outcome of ["reveals the shared block", "last item in the batch", "Retries leave your current page open", "In-app quick capture keeps the page you are editing open"]) {
+    expect(guide).toContain(outcome);
+  }
+});
 
 it("appends a shared item at the bottom of today's journal, then removes it", async () => {
   writeFile(day(), ["earlier note"]);
@@ -302,6 +381,7 @@ it("review: a committed share awaiting deletion must not replay into a switched 
   expect(journal()).toHaveLength(0);
   expect(inbox.size).toBe(0);
   expect(toasts().filter((toast) => toast.kind === "error")).toHaveLength(0);
+  expect(route()).toMatchObject({ kind: "page", name: "Other" });
   await restart("/g");
   expect(shared("belongs in A")).toHaveLength(1);
 });
@@ -318,6 +398,7 @@ it("review: an unwritten share bound to A waits silently in B and is appended on
   expect(journal()).toHaveLength(0);
   expect(inbox.has("a")).toBe(true);
   expect(toasts()).toHaveLength(0);
+  expect(route()).toMatchObject({ kind: "page", name: "Other" });
   await restart("/g");
   await ingestShares();
   expect(shared("belongs in A")).toHaveLength(1);
