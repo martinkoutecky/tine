@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Shortcuts and shortcut recording recognize the physical Latin letter or digit on non-Latin keyboard layouts, including Cyrillic, while text input and Latin layouts keep their behavior (GH #709).
 - With "Click a block reference to zoom in" turned on, clicking a reference to a block on another page now zooms into that block; before, nothing happened (GH #708).
 - Removing the last query condition restores the empty-state prompt (GH #551); Search tab selection toggles off, keeps actions above results and preserves page and block labels (GH #387).
 - Tab split drop zones grow with each pane on all four sides; dropping just below its tab strip now splits above it, matching the preview (GH #499).

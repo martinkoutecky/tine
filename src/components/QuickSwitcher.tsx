@@ -1,3 +1,4 @@
+import { shortcutKey } from "../shortcutKey";
 import { Rich } from "../i18n/Rich";
 import { msg, t } from "../i18n";
 import { nextResultIndex } from "../resultNavigation";
@@ -475,10 +476,10 @@ export function QuickSwitcher(): JSX.Element {
 
   const onKeyDown = (e: KeyboardEvent) => {
     const ctrl = e.ctrlKey;
-    if (e.key === "ArrowDown" || (ctrl && e.key.toLowerCase() === "n")) {
+    if (e.key === "ArrowDown" || (ctrl && shortcutKey(e) === "n")) {
       e.preventDefault();
       move(1);
-    } else if (e.key === "ArrowUp" || (ctrl && e.key.toLowerCase() === "p")) {
+    } else if (e.key === "ArrowUp" || (ctrl && shortcutKey(e) === "p")) {
       e.preventDefault();
       move(-1);
     } else if (e.key === "Enter") {

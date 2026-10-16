@@ -1,3 +1,4 @@
+import { shortcutKey } from "../shortcutKey";
 import { createMembershipResource } from "../resultMembership";
 import {
   For,
@@ -972,8 +973,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     const fromInput = target === sourceInput;
     const key = target.dataset.queryResult;
     if (!fromInput && !key) return;
-    const direction = event.key === "ArrowDown" || (event.ctrlKey && event.key.toLowerCase() === "n") ? 1
-      : event.key === "ArrowUp" || (event.ctrlKey && event.key.toLowerCase() === "p") ? -1 : 0;
+    const direction = event.key === "ArrowDown" || (event.ctrlKey && shortcutKey(event) === "n") ? 1
+      : event.key === "ArrowUp" || (event.ctrlKey && shortcutKey(event) === "p") ? -1 : 0;
     if (direction) {
       const rows = [...workspace.querySelectorAll<HTMLButtonElement>("button[data-query-result]")];
       const index = nextResultIndex(fromInput ? -1 : rows.indexOf(target as HTMLButtonElement), direction, rows.length);

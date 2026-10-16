@@ -1,3 +1,4 @@
+import { shortcutKey } from "./shortcutKey";
 import { msg } from "./i18n";
 // Interface zoom (UI scale) — like a browser's Ctrl +/-/0. Scales the WHOLE
 // webview uniformly (fonts, spacing, images, the PDF pane, everything) via the
@@ -153,7 +154,7 @@ export function installInterfaceZoomKeys(): () => void {
     } else if (e.key === "-" || e.key === "_") {
       e.preventDefault();
       zoomOut();
-    } else if (e.key === "0") {
+    } else if (shortcutKey(e) === "0") {
       e.preventDefault();
       zoomReset();
     }

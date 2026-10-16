@@ -1,3 +1,4 @@
+import { shortcutKey } from "../shortcutKey";
 import { t } from "../i18n";
 import { For, Show, createEffect, createMemo, createSignal, type JSX } from "solid-js";
 
@@ -117,10 +118,10 @@ export function Listbox(props: {
     setActiveKey(rows[next].key);
   };
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "ArrowDown" || (event.ctrlKey && event.key === "n")) {
+    if (event.key === "ArrowDown" || (event.ctrlKey && shortcutKey(event) === "n")) {
       event.preventDefault();
       move(1);
-    } else if (event.key === "ArrowUp" || (event.ctrlKey && event.key === "p")) {
+    } else if (event.key === "ArrowUp" || (event.ctrlKey && shortcutKey(event) === "p")) {
       event.preventDefault();
       move(-1);
     } else if (event.key === "Enter") {

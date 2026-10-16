@@ -129,6 +129,9 @@ fn guide_explains_page_title_identity_and_files_outside_page_directory() {
         .contains("keeps the file at its existing path"));
     assert!(tips.markdown.contains("archive/"));
     assert!(tips.markdown.contains(":hidden [\"archive/private\"]"));
+    assert!(tips.markdown.contains("non-Latin keyboard layout"));
+    assert!(tips.markdown.contains("AZERTY and Dvorak"));
+    assert!(tips.markdown.contains("Text you type keeps the selected language"));
 }
 
 #[test]

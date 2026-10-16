@@ -409,6 +409,8 @@ describe("keyboard binding strings", () => {
       const macBindings = await import("./keybindings");
       expect(macBindings.eventToBindingString(keyEvent({ key: "k", code: "KeyK", ctrlKey: true }))).toBe("ctrl+k");
       expect(macBindings.eventToBindingString(keyEvent({ key: "k", code: "KeyK", metaKey: true }))).toBe("mod+k");
+      expect(macBindings.eventToBindingString(keyEvent({ key: "л", code: "KeyK", ctrlKey: true }))).toBe("ctrl+k");
+      expect(macBindings.eventToBindingString(keyEvent({ key: "л", code: "KeyK", metaKey: true }))).toBe("mod+k");
     } finally {
       vi.unstubAllGlobals();
       vi.resetModules();

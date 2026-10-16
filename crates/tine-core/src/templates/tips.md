@@ -2,6 +2,7 @@ icon:: ⌨️
 
 - # Tips & shortcuts
 	- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings.)
+	- With a non-Latin keyboard layout, shortcuts and recording use the physical key's Latin letter or digit: **Ctrl+K** still works when that key types **л**. Latin layouts such as AZERTY and Dvorak keep their letter-based shortcuts. Text you type keeps the selected language.
 - ## Find anything — Ctrl+K
 	- **Ctrl+K** opens the quick switcher: jump to a page, search the text of any block, or run a command — all from one box. **Ctrl+Shift+P** opens the command palette (commands only).
 	- **Search page names** searches only page names and aliases; **Search block content** searches only block text. Both commands start unbound: assign keys in **Settings → Shortcuts**, or run them from the command palette.

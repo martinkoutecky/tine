@@ -1,3 +1,4 @@
+import { shortcutKey } from "../shortcutKey";
 import { msg, t as translate } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
 import { stickyParents } from "../stickyParents";
@@ -2587,7 +2588,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // ClipboardEvent does not expose modifier keys, so remember the preceding
     // keydown briefly and consume it in onPaste. Do not preventDefault: the
     // platform still has to perform the native clipboard read and dispatch paste.
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "v") {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && shortcutKey(e) === "v") {
       clearPasteRaw();
       pasteRaw = true;
       const token = ++pasteRawToken;
@@ -2677,7 +2678,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       (e.ctrlKey || e.metaKey) &&
       !e.shiftKey &&
       !e.altKey &&
-      e.key.toLowerCase() === "c" &&
+      shortcutKey(e) === "c" &&
       start === end
     ) {
       e.preventDefault();
@@ -3318,7 +3319,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         onCompositionEnd={onCompositionEnd}
         onKeyDown={onKeyDown}
         onKeyUp={(e) => {
-          if (e.key.toLowerCase() === "v") clearPasteRaw();
+          if (shortcutKey(e) === "v") clearPasteRaw();
           if (e.key.startsWith("Arrow")) updateSel();
         }}
         onFocus={() => {
