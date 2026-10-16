@@ -33,6 +33,8 @@ function buildStamp(): string {
 export function AboutTab(): JSX.Element {
   const [version, setVersion] = createSignal("");
   const [status, setStatus] = createSignal<Msg | null>(null);
+  // The version the last check offered, for the Releases link.
+  const [offered, setOffered] = createSignal<string | undefined>();
   const [copyStatus, setCopyStatus] = createSignal(msg("about-copy-version"));
   const versionLabel = () => t("about-version-label", { product: APP_PRODUCT_NAME, version: version(), build: version() ? "release" : "development" });
   const copyVersion = async () => {
@@ -77,12 +79,16 @@ export function AboutTab(): JSX.Element {
   const check = async () => {
     setChecking(true);
     setStatus(null);
+    setOffered(undefined);
     const result = await readOwned(owner, checkForUpdateNow());
     if (result.kind === "stale") return;
     const r = result.value;
     setChecking(false);
     if (r.kind === "current") setStatus(msg("about-update-current", { version: r.version }));
-    else if (r.kind === "available") setStatus(msg("about-update-available", { product: APP_PRODUCT_NAME, version: r.version, mode: r.manual ? "manual" : "automatic" }));
+    else if (r.kind === "available") {
+      setOffered(r.version);
+      setStatus(msg("about-update-available", { product: APP_PRODUCT_NAME, version: r.version, mode: r.manual ? "manual" : "automatic" }));
+    }
     else setStatus(msg("about-update-unavailable"));
   };
 
@@ -129,7 +135,7 @@ export function AboutTab(): JSX.Element {
       </Show>
       <Show when={status()}>
         <div class="settings-hint about-status">
-          {render(status()!)}{" "}<button class="about-linkbtn" onClick={() => { const shown = status(); openReleasesPage(shown?.kind === "available" ? shown.version : undefined); }}>{t("about-releases")}</button>
+          {render(status()!)}{" "}<button class="about-linkbtn" onClick={() => openReleasesPage(offered())}>{t("about-releases")}</button>
         </div>
       </Show><div class="settings-hint about-build">{t("about-built", { buildStamp: buildStamp() })}</div>
 

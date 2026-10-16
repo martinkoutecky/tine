@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { AboutTab } from "./AboutTab";
 import { setToasts, toasts } from "../toasts";
 
-const { packagedMock, getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExternalMock, checkNowMock, getAppBoolMock, setAppBoolMock } = vi.hoisted(() => ({
+const { packagedMock, getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExternalMock, checkNowMock, getAppBoolMock, setAppBoolMock, openReleasesMock } = vi.hoisted(() => ({
   packagedMock: vi.fn(async () => false),
   getAppBoolMock: vi.fn(async () => true),
   setAppBoolMock: vi.fn(async () => {}),
@@ -13,6 +13,7 @@ const { packagedMock, getVersionMock, copyVersionMock, isTauriMock, platformKind
   isTauriMock: vi.fn(() => false),
   platformKindMock: vi.fn(async (): Promise<"desktop" | "android" | "ios"> => "desktop"),
   openExternalMock: vi.fn(async () => {}),
+  openReleasesMock: vi.fn((_version?: string) => {}),
 }));
 
 vi.mock("../backend", () => ({
@@ -23,7 +24,7 @@ vi.mock("../platform", () => ({ platformKind: platformKindMock }));
 vi.mock("../update", () => ({
   isMsixPackaged: packagedMock,
   checkForUpdateNow: checkNowMock,
-  openReleasesPage: () => {},
+  openReleasesPage: openReleasesMock,
 }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: getVersionMock }));
 vi.mock("../clipboard", () => ({ writeClipboardTextStrict: copyVersionMock }));
@@ -164,6 +165,9 @@ describe("AboutTab", () => {
       await flush();
       expect(host.textContent).toContain(`${IDENTITY.productName} 0.6.0 is available — choose Install update in the notification.`);
       expect(host.textContent).not.toContain("downloading");
+      // The Releases link opens the release of the version it just offered.
+      [...host.querySelectorAll("button")].find((b) => b.textContent === "Releases")?.click();
+      expect(openReleasesMock).toHaveBeenCalledExactlyOnceWith("0.6.0");
     } finally {
       dispose();
       host.remove();
