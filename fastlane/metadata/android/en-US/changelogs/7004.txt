@@ -1,0 +1,1 @@
+Maintenance release with no Android changes; this version fixes an issue that affected only iPhone and iPad.

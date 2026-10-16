@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "version": "0.7.4",
+  "baseTag": "v0.7.3",
+  "focusedAudit": {
+    "required": false,
+    "reason": "0.7.4 carries one iOS-only fix (a TypeScript platform branch in src/zoom.ts) with fail-before/pass-after proof on master and og; full suites and hosted CI run on the candidate."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "iOS: launching Tine no longer shows a red \"Could not apply interface zoom.\" error; the interface zoom setting now applies on iOS (UI-IOS-ZOOM-TOAST-ON-LAUNCH).",
+      "userVisible": true,
+      "regressions": [
+        "UI-IOS-ZOOM-TOAST-ON-LAUNCH"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog row UI-IOS-ZOOM-TOAST-ON-LAUNCH; src/zoomIos.test.ts fails on 0.7.3 and passes on the candidate.",
+        "refs": [
+          "tests/ui-regressions/catalog.json",
+          "src/zoomIos.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix; the Guide already describes interface zoom and needs no change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "Stable patch release; the website describes Tine generally and needs no change for this item.",
+        "refs": []
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "No editorial release gate (Martin 2026-10-13); release notes live in CHANGELOG.md and the GitHub release.",
+        "refs": []
+      }
+    }
+  ]
+}
