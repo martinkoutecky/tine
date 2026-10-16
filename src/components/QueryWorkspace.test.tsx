@@ -24,6 +24,7 @@ import { resetStore } from "../document";
 import { contextMenu, closeAllRightSidebarItems, rightSidebar } from "../ui";
 import { resetPaneLayoutToSingle, paneRouter, layoutPaneIds } from "../panes";
 import { resetQueryTextOpenForTests } from "../navSettings";
+import { setActiveLocale } from "../i18n";
 
 beforeAll(initParser);
 
@@ -393,6 +394,19 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  it("GH #107: presentation controls and save validation follow Chinese and switch back live", async () => {
+    const route: QueryRoute = { kind: "query", id: "locale", sourceKind: "search", source: "", presentation: "search" };
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={workspaceDeps()} />, root);
+    try {
+      await setActiveLocale("zh-CN");
+      expect([...root.querySelectorAll(".query-presentations button")].map(el => el.textContent?.trim())).toEqual(["搜索", "列表", "表格", "看板"]);
+      root.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await waitFor(() => expect(root.textContent).toContain("保存前请输入页面标题。"));
+      await setActiveLocale("en");
+      expect([...root.querySelectorAll(".query-presentations button")].map(el => el.textContent?.trim())).toEqual(["Search", "List", "Table", "Board"]);
+    } finally { dispose(); await setActiveLocale("en"); }
+  });
   it("GH #697: Enter opens the highlighted physical page when two results share a title", async () => {
     const route: QueryRoute = { kind: "query", id: "keyboard-twins", sourceKind: "search", source: "alpha", presentation: "search" };
     const deps = workspaceDeps();

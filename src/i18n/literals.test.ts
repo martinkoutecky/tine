@@ -58,6 +58,17 @@ describe("the localization ratchet", () => {
     `);
     expect(sites.map(site => site.text).sort()).toEqual(["Choose a side", "Last scan: {}", "No blocks", "No matching rows", "Reading blocks", "Review versions"]);
   });
+  it("GH #107: traces query validation returns and alert setters without treating query syntax as prose", () => {
+    const sites = sitesOf(`
+      export function friendlySearchToDsl() { return { dsl: "(task TODO)", error: "Include a search term." }; }
+    `, "src/editor/searchQuery.ts");
+    expect(sites.map(site => site.text)).toEqual(["Include a search term."]);
+    const alerts = sitesOf(`
+      export function QueryBuilder() { setError("Edit options with Display."); setSaveNotice(\`Saved \${name}.\`); }
+    `, "src/components/QueryBuilder.tsx");
+    expect(alerts.map(site => site.text).sort()).toEqual(["Edit options with Display.", "Saved {}."]);
+  });
+
   it("finds no literal UI text outside the baseline, no stale baseline entry, and no module-level t()", () => {
     const { sites, violations } = scan() as { sites: Site[]; violations: string[] };
     expect(violations).toEqual([]);

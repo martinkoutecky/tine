@@ -1,4 +1,4 @@
-import { msg, render } from "../i18n";
+import { msg, render, t } from "../i18n";
 // Friendly search metadata, membership and evidence come from tine-search via wasm.
 // Initialize the app parser before calling this synchronous door. Parsing costs
 // O(query bytes + bounded compilation); membership O(text × terms); evidence
@@ -78,7 +78,7 @@ function quoteDsl(value: string): string {
 export function friendlySearchToDsl(query: string): { dsl: string; error: string | null } {
   const matcher = parseSearchQuery(query);
   if (matcher.kind === "invalid") return { dsl: "", error: matcher.error };
-  if (matcher.kind === "empty") return { dsl: "", error: "Add at least one positive search term." };
+  if (matcher.kind === "empty") return { dsl: "", error: t("query-search-positive-term") };
   if (matcher.kind === "regex") {
     return { dsl: `(content-regex ${quoteDsl(matcher.pattern)})`, error: null };
   }

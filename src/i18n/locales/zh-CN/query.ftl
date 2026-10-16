@@ -83,6 +83,33 @@ query-display-add-property = + 属性
 
 query-display-whole-result = 全部结果
 
+query-search-positive-term = 请至少添加一个要包含的搜索词。
+query-unsupported-clause = 暂不支持此查询子句：{ $clause }
+query-fields-regex-warning = 正则表达式暂不能与其他便捷字段组合使用。
+query-options-map-warning = 请使用标题和显示控件编辑选项映射（title、collapsed），而不是在此处编辑。
+query-save-superseded = 保存期间此工作区已更改，因此未写入任何内容。请重新保存。
+query-save-enter-title = 保存前请输入页面标题。
+query-save-enter-query = 保存前请输入搜索或查询。
+query-save-graph-changed = 保存此工作区前图谱已切换。
+query-save-validation-superseded = 搜索验证已被新的请求取代。请重新保存。
+query-save-included-term = 保存前请输入至少包含一个搜索词的搜索。
+query-save-validation-detail = 无法验证此搜索：{ $detail }
+query-save-validation-failed = 无法验证此搜索。
+query-save-title-exists = 名为“{ $name }”的页面已存在。请使用其他标题。
+query-save-title-alias = “{ $name }”是已有页面的别名。请使用其他标题。
+query-save-local-state-changed = “{ $name }”的本地页面状态已更改，无法保存。请重试。
+query-save-conflict = 保存此工作区前“{ $name }”已被创建或更改。该页面未被覆盖。
+query-save-failed-detail = 无法保存“{ $name }”：{ $detail }
+query-save-failed = 无法保存“{ $name }”。
+query-fields-quotation-warning = 这些字段中不支持引号。
+query-fields-include-warning = 请至少添加一个要包含的词或完整短语。
+query-dsl-empty-warning = 查询 DSL 不能为空。
+query-save-earlier-search = 已根据先前的搜索保存“{ $name }”，此工作区保持原样。
+query-workspace-view-search = 搜索
+query-workspace-view-list = 列表
+query-workspace-view-table = 表格
+query-workspace-view-board = 看板
+
 query-display-view-search = 搜索
 
 query-display-view-list = 列表

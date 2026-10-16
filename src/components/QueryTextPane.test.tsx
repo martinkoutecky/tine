@@ -12,6 +12,7 @@ import {
 } from "./QueryBuilder";
 import { contentFilter, taskFilter } from "../editor/queryBuilder";
 import type { Filter, ParsedQuery, Query, RegistrySnapshot } from "../editor/queryIr";
+import { setActiveLocale } from "../i18n";
 
 // **The live query-text pane** (SPEC §7.5, §4.3.1–§4.3.2, I-20, I-4/I-9).
 //
@@ -306,6 +307,19 @@ describe("I-20: only an answer about what is on screen right now", () => {
 });
 
 describe("invalid text is recoverable, not destructive", () => {
+  it("GH #107: explains the options-map refusal in Chinese without changing authored query text", async () => {
+    const builder = mountBuilder(session(taskFilter(["TODO"])));
+    try {
+      await setActiveLocale("zh-CN");
+      builder.open();
+      await settle();
+      const source = '@block and task is TODO {:title "Inbox"}';
+      type(source);
+      expect(errorText()).toContain("请使用标题和显示控件编辑选项映射");
+      expect(textarea().value).toBe(source);
+      expect(saveButton().disabled).toBe(true);
+    } finally { builder.dispose(); await setActiveLocale("en"); }
+  });
   it("keeps the rows on screen greyed while the text is invalid, and clears on repair", async () => {
     const parser = deferredParser();
     const builder = mountBuilder(session(taskFilter(["TODO"])));

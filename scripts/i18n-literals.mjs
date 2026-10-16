@@ -394,6 +394,11 @@ export function scanSource(rel, text) {
     return null;
   };
   const roots = [];
+  // Query validation reaches visible alerts through result objects and signal
+  // setters, including helpers exported from .ts files (GH #107). Keep syntax
+  // fields such as source/dsl and backend diagnostics outside this text sink.
+  const queryUi = /^src\/components\/(?:Query\w*|querySheetParts)\.tsx$/.test(rel)
+    || rel === "src/editor/searchQuery.ts";
   const visit = (node) => {
     if (ts.isJsxText(node)) {
       site("jsx-text", node.text, node);
@@ -408,13 +413,15 @@ export function scanSource(rel, text) {
       const value = literalOf(node.expression);
       if (value !== null) site("jsx-text", value, node);
       roots.push(node.expression);
-    } else if (ts.isPropertyAssignment(node) && UI_PROPERTIES.has(node.name.getText(source).replace(/["']/g, ""))) {
+    } else if (ts.isPropertyAssignment(node) && (UI_PROPERTIES.has(node.name.getText(source).replace(/["']/g, ""))
+      || queryUi && ["error", "message"].includes(node.name.getText(source).replace(/["']/g, "")))) {
       const value = literalOf(node.initializer);
       if (value !== null) site(`prop:${node.name.getText(source).replace(/["']/g, "")}`, value, node);
       roots.push(node.initializer);
     } else if (ts.isCallExpression(node)) {
       const name = calleeName(node);
       const first = node.arguments[0];
+      if (queryUi && ["setError", "setSaveError", "setSaveNotice", "setPreviewError"].includes(name) && first) roots.push(first);
       if (name && TOAST_CALLS.has(name) && first && !isCatalogCall(first)) {
         // A dynamic argument (`String(error)`) is a site too: its text is its source.
         site("toast", literalOf(first) ?? `{${first.getText(source)}}`, node);

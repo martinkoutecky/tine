@@ -61,7 +61,7 @@ import { readLatestOr, readOr } from "../resourceRead";
 import { documentOf } from "../windowRealm";
 import type { QueryTextDialect } from "../editor/queryIr";
 import { QueryOgHint } from "./QueryResultParts";
-import { t, msg } from "../i18n";
+import { t, msg, render } from "../i18n";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -135,7 +135,7 @@ async function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceK
   }
   if (input.sourceKind === "search") return { query: `{{${QUERY_MACRO_NAMES[0]} ${dsl}}}`, properties };
   const saved = await readOwned(bindingOwner(), deps.serializeDsl(dsl));
-  if (saved.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  if (saved.kind === "stale") throw new Error(render(SUPERSEDED_MESSAGE));
   // A converted DSL workspace becomes one ordinary query block. Its effective
   // display must also be singular so the saved block keeps its sort/sample.
   if (input.blockDisplay && queryWorkspaceDsl(dsl).dialect === "macro_tql") {
@@ -153,16 +153,16 @@ export async function serializeWorkspaceDsl(source: string): Promise<{ query: st
   const owner = graphOwner();
   const input = queryWorkspaceDsl(source);
   const parsed = await readOwned(owner, api.parseQuery(input.argument, input.dialect));
-  if (parsed.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  if (parsed.kind === "stale") throw new Error(render(SUPERSEDED_MESSAGE));
   const { query, view } = parsed.value;
   const expressible = query.source.kind === "advanced" ? null : await readOwned(owner, api.queryOgExpressible(query, view));
-  if (expressible?.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  if (expressible?.kind === "stale") throw new Error(render(SUPERSEDED_MESSAGE));
   if (query.source.kind === "advanced" || expressible?.value) {
     // The argument is in the dialect it was typed in: a Tine macro stays one.
     return { query: input.dialect === "macro_tql" ? input.macro : `{{${QUERY_MACRO_NAMES[0]} ${input.argument}}}`, properties: [] };
   }
   const printed = await readOwned(owner, api.printQuery(query, view, "tql_macro"));
-  if (printed.kind === "stale") throw new Error(SUPERSEDED_MESSAGE);
+  if (printed.kind === "stale") throw new Error(render(SUPERSEDED_MESSAGE));
   // TQL keeps conditions in text and view directives on the owning block.
   const properties: Array<[string, string]> = [];
   if (view.sort?.length) properties.push(["tine.sort", view.sort.map(([field, direction]) => `${field} ${direction}`).join("; ")]);
@@ -175,8 +175,7 @@ export async function serializeWorkspaceDsl(source: string): Promise<{ query: st
 export type IsCurrentInput = () => boolean;
 
 /** A LOCAL refusal: nothing was written, nothing was undone; saving again is the remedy. */
-const SUPERSEDED_MESSAGE =
-  "This workspace changed while it was being saved, so nothing was written. Try saving again.";
+const SUPERSEDED_MESSAGE = msg("query-save-superseded");
 
 /**
  * Materialize a virtual workspace as exactly one ordinary query block.
@@ -193,36 +192,36 @@ export async function materializeQueryWorkspace(
   isCurrent: IsCurrentInput = () => true
 ): Promise<MaterializeQueryResult> {
   input = { ...input };
-  const superseded = (): MaterializeQueryResult => ({ ok: false, kind: "superseded", message: SUPERSEDED_MESSAGE });
+  const superseded = (): MaterializeQueryResult => ({ ok: false, kind: "superseded", message: render(SUPERSEDED_MESSAGE) });
   if (!isCurrent()) return superseded();
   const binding = captureBinding();
   const owner = bindingOwner();
   const name = input.title.trim();
   if (!name) {
-    return { ok: false, kind: "invalid-name", message: "Enter a page title before saving." };
+    return { ok: false, kind: "invalid-name", message: t("query-save-enter-title") };
   }
   if (!input.source.trim()) {
-    return { ok: false, kind: "empty-query", message: "Enter a search or query before saving." };
+    return { ok: false, kind: "empty-query", message: t("query-save-enter-query") };
   }
   if (input.sourceKind === "search") {
     try {
       const search = await readOwned(owner, deps.runGraphSearch(input.source.trim(), 0, 0, `query-workspace:${input.routeId}:materialize`, true));
-      if (search.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+      if (search.kind === "stale") return { ok: false, kind: "error", message: t("query-save-graph-changed") };
       const execution = search.value;
       if (!isCurrent()) return superseded();
-      if (execution.cancelled) return { ok: false, kind: "invalid-query", message: "Search validation was superseded. Try saving again." };
+      if (execution.cancelled) return { ok: false, kind: "invalid-query", message: t("query-save-validation-superseded") };
       if (execution.diagnostics.length) return { ok: false, kind: "invalid-query", message: execution.diagnostics.map((item) => item.message).join(" · ") };
-      if (!execution.explanation.branches.length) return { ok: false, kind: "empty-query", message: "Enter a search with at least one included term before saving." };
+      if (!execution.explanation.branches.length) return { ok: false, kind: "empty-query", message: t("query-save-included-term") };
     } catch (error) {
       if (!isCurrent()) return superseded();
       const detail = error instanceof Error ? error.message : String(error);
-      return { ok: false, kind: "invalid-query", message: detail ? `Could not validate this search: ${detail}` : "Could not validate this search." };
+      return { ok: false, kind: "invalid-query", message: detail ? t("query-save-validation-detail", { detail }) : t("query-save-validation-failed") };
     }
   }
 
   try {
     const resolution = await readOwned(owner, deps.resolvePage(name, "page"));
-    if (resolution.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    if (resolution.kind === "stale") return { ok: false, kind: "error", message: t("query-save-graph-changed") };
     const resolved = resolution.value;
     // An answer about a title the workspace has moved on from no longer
     // licenses a write; serialization below rechecks the same captured input.
@@ -231,7 +230,7 @@ export async function materializeQueryWorkspace(
       return {
         ok: false,
         kind: "exists",
-        message: `A page named “${name}” already exists. Choose another title.`,
+        message: t("query-save-title-exists", { name }),
       };
     }
     // An alias names another page: refuse, write nothing, keep the query here.
@@ -239,7 +238,7 @@ export async function materializeQueryWorkspace(
       return {
         ok: false,
         kind: "exists",
-        message: `“${name}” is an alias of an existing page. Choose another title.`,
+        message: t("query-save-title-alias", { name }),
       };
     }
 
@@ -247,14 +246,14 @@ export async function materializeQueryWorkspace(
     // format); the save path writes by that extension, so the block must be
     // spelled for it.
     const serialized = await readOwned(owner, savedQuery(input, deps));
-    if (serialized.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    if (serialized.kind === "stale") return { ok: false, kind: "error", message: t("query-save-graph-changed") };
     if (!isCurrent()) return superseded();
     const { query, properties } = serialized.value;
     const page = queryWorkspacePage(name, query, properties, /\.org$/i.test(resolved.id) ? "org" : "md");
     const saved = await writeOwned(owner, deps.createPage(page, binding.backendGeneration));
-    if (saved.kind === "stale") return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    if (saved.kind === "stale") return { ok: false, kind: "error", message: t("query-save-graph-changed") };
     const rev = saved.value;
-    if (!owner()) return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+    if (!owner()) return { ok: false, kind: "error", message: t("query-save-graph-changed") };
     bumpPageInventoryRev();
     return { ok: true, name, page, rev };
   } catch (error) {
@@ -262,26 +261,26 @@ export async function materializeQueryWorkspace(
     if (!isCurrent()) return superseded();
     if (!owner()) {
       pushToast(msg("query-query-workspace-could-not-save", { value1: name, value2: detail }), "error");
-      return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+      return { ok: false, kind: "error", message: t("query-save-graph-changed") };
     }
     if (error instanceof CreatePageRefusal) {
       if (error.reason === "graph-changed" || error.reason === "stale-binding")
-        return { ok: false, kind: "error", message: "The graph changed before this workspace could be saved." };
+        return { ok: false, kind: "error", message: t("query-save-graph-changed") };
       if (error.reason === "alias")
-        return { ok: false, kind: "exists", message: `“${name}” is an alias of an existing page. Choose another title.` };
-      return { ok: false, kind: "error", message: `Could not save “${name}” because its local page state changed. Try again.` };
+        return { ok: false, kind: "exists", message: t("query-save-title-alias", { name }) };
+      return { ok: false, kind: "error", message: t("query-save-local-state-changed", { name }) };
     }
     if (errorFamily(error) === "conflict") {
       return {
         ok: false,
         kind: "conflict",
-        message: `“${name}” was created or changed before this workspace could be saved. It has not been overwritten.`,
+        message: t("query-save-conflict", { name }),
       };
     }
     return {
       ok: false,
       kind: "error",
-      message: detail ? `Could not save “${name}”: ${detail}` : `Could not save “${name}”.`,
+      message: detail ? t("query-save-failed-detail", { name, detail }) : t("query-save-failed", { name }),
     };
   }
 }
@@ -330,7 +329,7 @@ function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult): Q
     .filter((item) => !item.disabled)
     .map((item) => ({ code: item.kind, message: item.message }));
   for (const clause of result.report.ignored ?? []) diagnostics.push({
-    code: "unsupported_clause", message: `This query clause is not supported yet: ${clause}`,
+    code: "unsupported_clause", message: t("query-unsupported-clause", { clause }),
   });
   return {
     hits,
@@ -439,7 +438,7 @@ function buildFriendlyFilterSource(fields: FriendlyFields): { source: string; er
   const hasOther = [fields.all, fields.any, fields.exact, fields.exclude].some((value) => value.trim());
   if (regex) {
     if (hasOther) {
-      return { source: "", error: "A regular expression cannot be combined with the other friendly fields yet." };
+      return { source: "", error: t("query-fields-regex-warning") };
     }
     const source = `/${regex}/`;
     const parsed = parseSearchQuery(source);
@@ -447,7 +446,7 @@ function buildFriendlyFilterSource(fields: FriendlyFields): { source: string; er
   }
 
   if ([fields.all, fields.any, fields.exact, fields.exclude].some((value) => value.includes('"'))) {
-    return { source: "", error: "Quotation marks are not supported inside these fields." };
+    return { source: "", error: t("query-fields-quotation-warning") };
   }
   const common = [
     ...filterWords(fields.all),
@@ -456,7 +455,7 @@ function buildFriendlyFilterSource(fields: FriendlyFields): { source: string; er
   ];
   const alternatives = filterWords(fields.any);
   if (!common.some((term) => !term.startsWith("-")) && !alternatives.length) {
-    return { source: "", error: "Add at least one word or exact phrase to include." };
+    return { source: "", error: t("query-fields-include-warning") };
   }
   const branches = alternatives.length
     ? alternatives.map((term) => [...common, term].join(" "))
@@ -584,7 +583,7 @@ function AdvancedModal(props: {
     if (draftKind() === "dsl") {
       if (printing() || error()) return;
       if (!dsl().trim()) {
-        setError("The query DSL cannot be empty.");
+        setError(t("query-dsl-empty-warning"));
         return;
       }
       props.onApply(dsl().trim(), "dsl");
@@ -1056,7 +1055,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       if (!sameInput(captured)) {
         // The write had already begun when the input changed: the page is real
         // and is not undone, but it is no longer what this workspace shows.
-        setSaveNotice(`“${result.name}” was saved from the earlier search, so this workspace was left as it is.`);
+        setSaveNotice(t("query-save-earlier-search", { name: result.name }));
         return;
       }
       props.router.replaceActiveRoute({ kind: "page", name: result.name, pageKind: "page" });
@@ -1134,7 +1133,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
                   aria-pressed={presentation() === view}
                   onClick={() => updatePresentation(view)}
                 >
-                  {view[0].toUpperCase() + view.slice(1)}
+                  {t(`query-workspace-view-${view}`)}
                 </button>
               )}
             </For>

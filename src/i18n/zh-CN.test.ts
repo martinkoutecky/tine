@@ -2,6 +2,18 @@ import { expect, it } from "vitest";
 // @ts-expect-error: shared ESM catalog checker has no declaration file.
 import { checkCatalog } from "../../scripts/lib/i18n-catalog.mjs";
 import { msg, render, renderEnglish, setActiveLocale, t } from "./index";
+import { friendlySearchToDsl } from "../editor/searchQuery";
+import { initParser } from "../render/parse";
+
+it("GH #107: empty friendly-search validation uses the current locale", async () => {
+  await initParser();
+  try {
+    await setActiveLocale("zh-CN");
+    expect(friendlySearchToDsl("").error).toBe("请至少添加一个要包含的搜索词。");
+    await setActiveLocale("en");
+    expect(friendlySearchToDsl("").error).toBe("Add at least one positive search term.");
+  } finally { await setActiveLocale("en"); }
+});
 
 it("ships a complete, reviewed Simplified Chinese interface catalog", () => {
   const { errors, report } = checkCatalog();

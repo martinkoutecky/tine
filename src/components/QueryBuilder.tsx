@@ -245,7 +245,7 @@ function QueryTextPane(props: {
     // The pane is not an options editor (§4.3.1).
     if (next.trim().endsWith("}")) {
       setPending(false);
-      setError("The options map (title, collapsed) is edited with the title and Display controls, not here.");
+      setError(t("query-options-map-warning"));
       props.onStale(true);
       return;
     }
