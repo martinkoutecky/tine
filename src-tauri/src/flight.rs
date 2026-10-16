@@ -543,6 +543,16 @@ fn journal_feed_event_fields(
     Some(fields)
 }
 
+/// GH #181: a link's quick closed-graph check ruled out `ruled_out` graphs and
+/// no graph resolved the target, so they were fully opened; `rescued` of them
+/// held it (each one a prefilter false negative). Counts only, never paths.
+pub(crate) fn link_probe_rescue(ruled_out: u64, rescued: u64) {
+    let mut fields = Map::new();
+    fields.insert("ruledOut".into(), json!(ruled_out));
+    fields.insert("rescued".into(), json!(rescued));
+    record_fixed_event("link.probe.rescue", fields);
+}
+
 /// Capture the typed native failure before the bridge turns it into free text.
 /// Error messages can contain graph paths and must never enter this report.
 pub(crate) fn journal_feed_io_failure(kind: std::io::ErrorKind) {
