@@ -208,6 +208,10 @@ export function Rendered(props: {
             e.preventDefault();
             toggleBlockCheckbox(props.id);
           }}
+          // A direct listener also makes the checked box a Chromium touch
+          // adjustment candidate, rather than redirecting a near-edge tap to
+          // an adjacent bullet/task. The toggle still belongs to mousedown.
+          on:click={(e) => { e.stopPropagation(); e.preventDefault(); }}
         />{" "}
       </Show>
       <Show when={facets().marker}>

@@ -4270,6 +4270,28 @@ html[data-system-insets="native-viewport"] {
   cursor: pointer;
   position: relative;
 }
+@media (pointer: coarse) {
+  /* Pseudo-element hits target the owning checkbox, preserving its toggle and
+     forbid-edit handlers without changing the visible box or inline layout.
+     One line high keeps adjacent checklist/task rows' hit areas separate. */
+  .block-checkbox::before,
+  .block-task-checkbox::before {
+    content: "";
+    position: absolute;
+    left: -10px;
+    right: -10px;
+    top: 50%;
+    height: 1lh;
+    transform: translateY(-50%);
+  }
+  /* Leading task boxes sit between the outline bullet and marker chip. Enlarge
+     these vertically: horizontal overflow lets Chromium's touch adjustment
+     redirect near-edge taps to the bullet, especially when the box is checked. */
+  .block-task-checkbox::before {
+    left: 0;
+    right: 0;
+  }
+}
 .block-task-checkbox:has(+ .marker-todo) { --task-checkbox-color: var(--marker-todo); }
 .block-task-checkbox:has(+ .marker-doing) { --task-checkbox-color: var(--marker-doing); }
 .block-task-checkbox:has(+ .marker-now) { --task-checkbox-color: var(--marker-now); }

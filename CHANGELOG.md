@@ -24,6 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Inline checklist and task checkboxes have larger touch targets on phones without changing their appearance or indentation (GH #691).
 - Preview source clicks switch to the opened tab, preview actions keep the preview open, and **Open in new tab** confirms its background tab on desktop and mobile (GH #363, GH #705).
 - Page icon saving and recovery, diagnostics, workspace and query actions use themed buttons instead of native browser bevels (UI-SW-BUTTONS).
 - Settings search highlights matching Latin and Chinese text in result labels (GH #706).

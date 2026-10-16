@@ -289,7 +289,8 @@ without reading note content.
 
 ## Community
 
-Questions, ideas, screenshots, and bug reports are welcome on the subreddit:
+Ask questions in [GitHub Discussions → Questions](https://github.com/martinkoutecky/tine/discussions/categories/questions).
+Ideas, screenshots, and bug reports are also welcome on the subreddit:
 **[r/TineOutline](https://www.reddit.com/r/TineOutline/)** — the best place to follow what's
 shipping and help shape what's next. For concrete bugs or feature requests you can also
 [open an issue](https://github.com/martinkoutecky/tine/issues).
