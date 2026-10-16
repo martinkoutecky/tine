@@ -9,7 +9,7 @@ import { revealOutlineBlock } from "./outlineViewport";
 
 import { createSignal, type Accessor } from "solid-js";
 import { pushRecent } from "./ui";
-import { navigationName } from "./pageIndex";
+import { navigationName, resolvedTarget } from "./pageIndex";
 import { blockRef, resolveBlockRef, settleBlockRef, expandAncestors, extendFeedForScroll, type HistoryRouteContext, node as docNode, loadedPage } from "./document";
 import { backend } from "./backend";
 import { captureBinding, stillBound } from "./binding";
@@ -258,6 +258,23 @@ export function sameRoute(a: Route, b: Route): boolean {
   return (
     a.name === bb.name && a.pageKind === bb.pageKind && a.block === bb.block && a.path === bb.path
   );
+}
+
+/** Reuse compares destinations, while history/session equality stays exact.
+ * Name routes and file routes can reach the same canonical file (GH #711).
+ * Ask the shared inventory; never equate a same-name stray with its owner. */
+function sameNavigationRoute(a: Route, b: Route): boolean {
+  if (sameRoute(a, b)) return true;
+  if (a.kind !== "page" || b.kind !== "page" || a.pageKind !== b.pageKind
+    || a.block !== b.block || a.blockPos !== b.blockPos) return false;
+  const physicalPath = (r: typeof a): string | undefined => {
+    if (r.path) return r.path;
+    const target = resolvedTarget(r.name, r.pageKind);
+    return target?.kind === "existing" ? target.id
+      : target?.kind === "alias" ? target.owners[0] : undefined;
+  };
+  const path = physicalPath(a);
+  return path !== undefined && path === physicalPath(b);
 }
 
 const CLOSED_CAP = 10;
@@ -540,7 +557,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     rememberScroll(); // capture where we are before leaving this entry
     const active = activeTab();
     if (opts.sticky && navReuseTabs()) {
-      const existing = tabs().find((t) => sameRoute(tabRoute(t), r));
+      const existing = tabs().find((t) => sameNavigationRoute(tabRoute(t), r));
       if (existing) {
         if (existing.id !== active.id) {
           setActiveTab(existing.id);

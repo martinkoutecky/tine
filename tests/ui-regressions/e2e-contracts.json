@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-tab-reuse.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"With tab reuse enabled, links, Ctrl+K Enter, Recent and Favorites activate the already-open destination tab and preserve the source tab and its content.","blocking":true}],
+      "acceptableVariations":["Tab placement, styling and navigation latency may vary while the destination activates and the source content remains available."],
+      "nonRequirements":["Exact pixels, tab IDs, native certification outside Linux WebKitGTK or reusing tabs across independent panes."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sw-settings-search.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Settings search displays matching results alone, restores controls when cleared and reveals an Advanced control when its result is chosen in English and Chinese at desktop and narrow widths.","blocking":true}],
       "acceptableVariations":["Matching counts, typography, layout and result order may vary while unrelated controls stay hidden during search."],

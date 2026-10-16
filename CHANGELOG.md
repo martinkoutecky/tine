@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Plain navigation now switches to an already-open page tab even when one route uses the page name and the other its file path, preserving the source tab (GH #711).
 - Query table column choices now come from the current results instead of offering unrelated graph properties; saved choices survive changes to the results (GH #680).
 - Shortcuts and shortcut recording recognize the physical Latin letter or digit on non-Latin keyboard layouts, including Cyrillic, while text input and Latin layouts keep their behavior (GH #709).
 - Settings search shows only matching results instead of appending unrelated tab controls, and finds more settings and tools (GH #706).
