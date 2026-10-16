@@ -32,7 +32,10 @@ fn is_held(source: Source) -> bool {
 
 /// The rows a forced rebuild installs at `path`: their revisions.
 fn rows(store: &Store, path: &Path) -> Vec<String> {
-    assert!(store.graph.rebuild_cache_cancellable(|| false));
+    // A forced rebuild discards a pass that saw a file change during its parse
+    // ("a false positive just rebuilds"); freshly written fixtures can trip
+    // that under load, so retry a bounded number of times.
+    assert!((0..5).any(|_| store.graph.rebuild_cache_cancellable(|| false)));
     store.graph.with_pages(|pages| {
         pages
             .iter()
