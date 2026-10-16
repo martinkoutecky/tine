@@ -731,6 +731,29 @@ describe("B5: the save path chooses the name and answers NotApplicable", () => {
       expect(document.activeElement).toBe(root.querySelector('[aria-label="Query actions"]'));
     } finally { dispose(); }
   });
+  it("switching the view from the View panel keeps the authored query text", async () => {
+    load("{{query (todo TODO)}}");
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    // The reading as the Rust bridge serializes it: empty lists are present, not absent.
+    vi.spyOn(backend(), "parseQuery").mockResolvedValue({
+      query: { anchor: "block", filter: { kind: "true" }, diagnostics: [],
+        source: { kind: "og", original: "(todo TODO)", og_options: "" } },
+      view: { sort: [], columns: [], aggregates: [] },
+    } as unknown as ParsedQuery);
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    const print = vi.spyOn(backend(), "printQuery").mockImplementation(async (_q, _v, _d, preserveForm) =>
+      preserveForm ? "(todo TODO)" : "(task TODO)");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const panel = await openCalmQuery(root, "View");
+      [...panel.querySelectorAll<HTMLButtonElement>('[aria-label="Query view"] button')]
+        .find(button => button.textContent?.trim() === "board")!.click();
+      await vi.waitFor(() => expect(blockProperty("query", "tine.view")).toBe("board"));
+      await settle();
+      expect(doc.byId.query.raw).toContain("{{query (todo TODO)}}");
+      expect(print.mock.calls.every(call => call[3] === true)).toBe(true);
+    } finally { dispose(); }
+  });
   it("reports a frozen rewrite refusal without changing the block or showing a crossing notice", async () => {
     load("{{query (task TODO)}}");
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));

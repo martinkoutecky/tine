@@ -94,23 +94,28 @@ try {
     }
   };
 
-  // The query rests as a sentence; wait for it to answer so the page has settled.
+  // Wait for the resting query to answer so the page has settled.
   await browser.waitUntil(() => browser.execute(() => /alpha task/.test(document.querySelector(".page-blocks .query-block")?.textContent ?? "")),
     { timeout: 20_000, interval: 150, timeoutMsg: "the query never answered" });
 
-  // 1. The gear opens the sheet next to the sentence (not at the viewport's top-left), and no block editor opens.
-  await press(".page-blocks .query-block .qs-gear");
+  // 1. The query menu's Edit action opens its inline sheet, and no block editor opens.
+  await press(".page-blocks .query-block .qc-actions > summary");
+  await press("//*[@class='qc-menu']//button[normalize-space()='Edit']");
   await browser.$(".qs-sheet").waitForExist({ timeout: 10_000 });
   await expectState("after opening the sheet", { sheet: true, editing: false, chooser: false });
   const place = await browser.execute(() => {
     const sheet = document.querySelector(".qs-sheet").getBoundingClientRect();
-    const sentence = document.querySelector(".page-blocks .query-block .qs-sentence").getBoundingClientRect();
-    return { sheet: [sheet.left, sheet.top, sheet.right, sheet.bottom], sentence: [sentence.left, sentence.top, sentence.right, sentence.bottom] };
+    const query = document.querySelector(".page-blocks .query-block");
+    const header = query.querySelector(".query-header").getBoundingClientRect();
+    const bounds = query.getBoundingClientRect();
+    return { owned: query.contains(document.querySelector(".qc-panel .qs-sheet")),
+      sheet: [sheet.left, sheet.top, sheet.right, sheet.bottom],
+      headerBottom: header.bottom, query: [bounds.left, bounds.top, bounds.right, bounds.bottom] };
   });
-  const [sl, st, , sb] = place.sheet;
-  const [ql, qt, , qb] = place.sentence;
-  if (!(Math.abs(sl - ql) < 80 && (st >= qb - 8 || sb <= qt + 8))) {
-    throw new Error(`the sheet is not next to its sentence: ${JSON.stringify(place)}`);
+  const [sl, st, sr, sb] = place.sheet;
+  const [ql, , qr, qb] = place.query;
+  if (!(place.owned && sl >= ql && sr <= qr && st >= place.headerBottom && sb <= qb)) {
+    throw new Error(`the sheet is not inline below its query header: ${JSON.stringify(place)}`);
   }
 
   // 2. A real press on "+ Add condition" opens the field chooser; the block behind does not take the press.

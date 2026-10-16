@@ -7,14 +7,14 @@
 #   flatpak/node-sources.json   <- flatpak-node-generator npm   (from package-lock.json)
 # See flatpak/README.md for regeneration and verification commands.
 #
-# Runtime: org.gnome.Platform//48 — a Tauri Linux app needs webkit2gtk-4.1, which
-# ships in the GNOME runtime (not the bare freedesktop runtime). GNOME 48 is the
-# current stable branch and is built on the freedesktop 24.08 base, so the SDK
-# extensions are pinned to //24.08.
+# Runtime: org.gnome.Platform//49 — a Tauri Linux app needs webkit2gtk-4.1, which
+# ships in the GNOME runtime (not the bare freedesktop runtime). GNOME 49 is built
+# on the freedesktop 25.08 base, so the SDK extensions resolve to //25.08. Tauri
+# 2.12 needs rustc 1.90, newer than the 24.08 rust-stable extension (1.89).
 
 id: page.tine.Tine
 runtime: org.gnome.Platform
-runtime-version: "48"
+runtime-version: "49"
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
