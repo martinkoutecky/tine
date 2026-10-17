@@ -3243,7 +3243,7 @@ impl WholeGraph {
         }
     }
 
-    /// The pages holding the block with this uuid or persisted `id::`, at
+    /// The pages holding the block with this persisted `id::`, at
     /// most two: one means the id names one page's block, two means it is
     /// duplicated across pages. Walks every page: O(B).
     pub fn block_pages(&self, uuid: &str) -> Vec<String> {

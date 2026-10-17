@@ -84,9 +84,14 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             let max_nodes = max_nodes.unwrap_or(PREVIEW_NODES).clamp(1, PREVIEW_NODES);
             match graph.preview_block(&uuid, max_nodes) {
                 Ok(Some(preview)) => {
-                    let mut block = to_value(&preview)?;
                     let page = resolve_page(&graph, &preview.group.page)?;
-                    absolute_handles(slot, &page, &uuid, &mut block["group"]["blocks"]);
+                    // One host read gives the content, positions and
+                    // fingerprints together (review 6); the store preview is
+                    // the fallback, positions only, when the page is busy.
+                    let block = match host_preview(slot, &page, &uuid, max_nodes)? {
+                        Some(block) => block,
+                        None => to_value(&preview)?,
+                    };
                     Ok(ok("block", json!({ "block": block })))
                 }
                 Ok(None) => Err(not_found(format!("no block has id:: {uuid}"))),
@@ -401,36 +406,94 @@ pub(super) fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<Journa
 }
 
 /// Page `id` as the page host sees it: a held page's buffer, else its file.
-/// Give a block preview the handles a page read prints: page-absolute
-/// positions and fingerprints (design §2), the root's position taken from the
-/// host's read of its page. The fingerprint, not the position, decides a
-/// write, so a preview that lags the host can only make a handle `stale`.
-/// When the page cannot be read now (busy) the preview keeps positions only.
-fn absolute_handles(slot: &GraphSlot, page: &PageId, uuid: &str, blocks: &mut Value) {
+/// The byte bound of a preview, as the store's (`PREVIEW_MAX_BYTES`).
+const PREVIEW_BYTES: usize = (32 << 20) - 4 * 1024;
+
+/// `block show` from the host's read of the block's page: the subtree as the
+/// host holds it, bounded like the store's preview (`max_nodes`, then the
+/// byte bound, in outline order), with the handles a page read prints:
+/// page-absolute positions and fingerprints of that same text (design §2), so
+/// a handle it prints resolves to the block it shows or is `stale`. `None`
+/// when the host cannot read the page now or no longer holds the id there.
+fn host_preview(
+    slot: &GraphSlot,
+    page: &PageId,
+    uuid: &str,
+    max_nodes: usize,
+) -> Result<Option<Value>, ErrorBody> {
     let Ok(Ok(read)) = crate::page_commands::with_host(slot, |host| host.read(page)) else {
-        return;
+        return Ok(None);
     };
     let Some(parsed) = read
         .bytes
         .and_then(|bytes| slot.store.page_of(&read.page, &bytes).ok())
     else {
-        return;
+        return Ok(None);
     };
     let handle = super::write::Handle::Uuid(uuid.to_ascii_lowercase());
     let Ok(path) = super::write::resolve_on(&parsed.doc, page, &handle, uuid, false) else {
-        return;
+        return Ok(None);
     };
+    let Some(root) = super::write::block_at(&parsed.doc.blocks, &path) else {
+        return Ok(None);
+    };
+    let total = node_count(root);
+    let mut nodes = max_nodes;
+    let mut bytes = PREVIEW_BYTES;
+    let blocks: Vec<_> = bounded(root, &mut nodes, &mut bytes).into_iter().collect();
+    let emitted = max_nodes - nodes;
+    let preview = tine_core::model::BlockPreview {
+        group: tine_core::model::RefGroup {
+            page: parsed.doc.name.clone(),
+            kind: parsed.doc.kind,
+            blocks,
+            evidence: Vec::new(),
+        },
+        truncated: total - emitted,
+    };
+    let mut value = to_value(&preview)?;
     let org = parsed.doc.format == tine_core::model::Format::Org;
     let at = super::write::position(&path);
-    let Some(root) = blocks.get_mut(0).and_then(Value::as_object_mut) else {
-        return;
-    };
-    let raw = root.get("raw").and_then(Value::as_str).unwrap_or("");
-    let fp = super::write::fingerprint(raw, org);
-    root.insert("handle".into(), json!(format!("{at}~{fp}")));
-    if let Some(children) = root.get_mut("children") {
-        super::write::annotate_handles(children, org, &format!("{at}."));
+    if let Some(root) = value["group"]["blocks"]
+        .get_mut(0)
+        .and_then(Value::as_object_mut)
+    {
+        let fp =
+            super::write::fingerprint(root.get("raw").and_then(Value::as_str).unwrap_or(""), org);
+        root.insert("handle".into(), json!(format!("{at}~{fp}")));
+        if let Some(children) = root.get_mut("children") {
+            super::write::annotate_handles(children, org, &format!("{at}."));
+        }
     }
+    Ok(Some(value))
+}
+
+fn node_count(block: &tine_core::model::BlockDto) -> usize {
+    1 + block.children.iter().map(node_count).sum::<usize>()
+}
+
+/// `block` and its descendants in outline order until a bound is reached.
+fn bounded(
+    block: &tine_core::model::BlockDto,
+    nodes: &mut usize,
+    bytes: &mut usize,
+) -> Option<tine_core::model::BlockDto> {
+    if *nodes == 0 || block.raw.len() > *bytes {
+        return None;
+    }
+    *nodes -= 1;
+    *bytes -= block.raw.len();
+    let mut kept = tine_core::model::BlockDto {
+        children: Vec::new(),
+        ..block.clone()
+    };
+    for child in &block.children {
+        match bounded(child, nodes, bytes) {
+            Some(child) => kept.children.push(child),
+            None => break,
+        }
+    }
+    Some(kept)
 }
 
 fn page(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {

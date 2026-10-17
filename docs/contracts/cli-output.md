@@ -299,9 +299,10 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
   resolves only when exactly one block on the page has it, else `stale`. The `--json` page carries the
   same string as each block's `handle`. Continuation lines align under the first line's text.
   A block preview (`block show`) prints the same handles: page-absolute positions (a block at `3.1`
-  prints `3.1~FP`, its children `3.1.1~FP`), the root's position taken from the page as the host
-  holds it. When the page cannot be read at that moment the preview prints positions relative to
-  the block instead. Result groups (`refs`, `query`) print positions only.
+  prints `3.1~FP`, its children `3.1.1~FP`). The preview's text, positions and fingerprints all come
+  from one read of the page as the host holds it, so a handle it prints names the block it shows or
+  is `stale`. When the page cannot be read at that moment the preview comes from the graph's index
+  and prints positions relative to the block, with no handles. Result groups (`refs`, `query`) print positions only.
 - **Attribution sits beside the address** (spec A3: "each block line starts with its address and
   its `author::` when there is one"): `ADDRESS [author:: NAME] first line`. The `author::` property
   line is not repeated among the block's other lines. The JSON `raw` is unchanged and still holds

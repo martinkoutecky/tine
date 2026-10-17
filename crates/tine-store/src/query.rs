@@ -2225,7 +2225,7 @@ pub(crate) fn preview_block_with_budget(
     })
 }
 
-/// The pages holding a block whose uuid or persisted `id::` is `uuid`, in page
+/// The pages holding a block whose persisted `id::` is `uuid`, in page
 /// order, compared case-insensitively, stopping at the second: a writer needs to know the id names exactly
 /// one block's page. The block-id index is only a hint, so this walks every
 /// page (O(B), one in-memory pass; no cache).
@@ -2235,10 +2235,10 @@ pub(crate) fn block_pages(graph: &ReadSnapshot, uuid: &str) -> Vec<String> {
         for (entry, doc) in pages.iter() {
             let mut here = false;
             walk(&doc.roots, &mut |block| {
-                here |= block.uuid.eq_ignore_ascii_case(uuid)
-                    || block
-                        .property("id")
-                        .is_some_and(|id| id.trim().eq_ignore_ascii_case(uuid));
+                // The persisted `id::` only: a runtime uuid is not a handle.
+                here |= block
+                    .property("id")
+                    .is_some_and(|id| id.trim().eq_ignore_ascii_case(uuid));
             });
             if here {
                 found.push(entry.name.clone());

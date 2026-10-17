@@ -724,7 +724,7 @@ mod unix {
     fn frame_too_large() -> ErrorBody {
         ErrorBody::new(
             "frame-too-large",
-            format!("a request line is limited to {REQUEST_CAP} bytes"),
+            format!("a request line is limited to {REQUEST_CAP} bytes for the hello and {TEXT_REQUEST_CAP} after it"),
             false,
         )
     }

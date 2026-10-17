@@ -1448,3 +1448,33 @@ fn block_show_prints_page_absolute_handles_a_write_accepts() {
     let text = std::fs::read_to_string(graph.root.join("pages/deep.md")).unwrap();
     assert!(text.contains("\t\t- leaf, edited\n"), "{text}");
 }
+
+/// Review 6: `block show` takes the text it shows and fingerprints from the
+/// same host read. With the store behind the file (`U` reads "old" there,
+/// while on disk `U` says "new" and another block says "old"), its handle
+/// must name `U`, never the other block.
+#[test]
+fn block_show_fingerprints_the_text_the_host_holds() {
+    let graph = Graph::new();
+    let u = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d";
+    let path = graph.root.join("pages/lag.md");
+    std::fs::write(&path, format!("- old\n  id:: {u}\n")).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    // The file changes; the store's whole-graph view is not refreshed.
+    std::fs::write(&path, format!("- new\n  id:: {u}\n- old\n")).unwrap();
+    let shown = verb(&slot, "block.show", json!({ "uuid": u })).unwrap();
+    let root = &shown["block"]["group"]["blocks"][0];
+    assert!(root["raw"].as_str().unwrap().starts_with("new"), "{root}");
+    let handle = root["handle"].as_str().unwrap().to_string();
+    verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("lag/{handle}"), "text": "U, edited" }),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        format!("- U, edited\n  id:: {u}\n- old\n")
+    );
+}

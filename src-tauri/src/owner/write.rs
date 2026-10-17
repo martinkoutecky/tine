@@ -81,7 +81,7 @@ fn is_org(doc: &PageDto) -> bool {
     doc.format == Format::Org
 }
 
-fn block_at<'a>(blocks: &'a [BlockDto], path: &[usize]) -> Option<&'a BlockDto> {
+pub(crate) fn block_at<'a>(blocks: &'a [BlockDto], path: &[usize]) -> Option<&'a BlockDto> {
     let (first, rest) = path.split_first()?;
     let block = blocks.get(*first)?;
     if rest.is_empty() {
