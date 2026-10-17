@@ -154,6 +154,9 @@ describe("the All Pages view", () => {
 
     // Sorting, filtering and toggling journals are local: still one inventory read, no other call.
     column(host, "Page").click();
+    // The journal-date column exists only while journals are listed, so toggle first.
+    host.querySelector<HTMLInputElement>(".all-pages-journals input")!.click();
+    await settle();
     column(host, "Journal date").click();
     const filter = host.querySelector<HTMLInputElement>(".all-pages-filter")!;
     filter.value = "Page 0042";
@@ -217,6 +220,43 @@ describe("the All Pages view", () => {
     column(host, "Journal date").click();
     await settle();
     expect(rowNames(host).slice(0, 2)).toEqual(["Journal 20260101", "Journal 20260301"]);
+    dispose();
+  });
+
+  // The grid has one track per cell (allPages.css); a cell without a track wraps into an
+  // implicit second grid row and lands on the next row's first letter. jsdom has no layout, so
+  // this pins the cell COUNT per header/row (the layout itself is scripts/shot-all-pages.mjs).
+  it("renders the journal-date column only while journals are listed, with the same cells in the header and every row", async () => {
+    const { host, dispose } = await mountAllPages([existing("beta"), existing("Alpha"), journalEntry(20260101)]);
+    const cells = (el: Element) => el.children.length;
+    const heads = () => [...host.querySelectorAll(".all-pages-head")];
+    const rows = () => [...host.querySelectorAll(".all-pages-row")];
+    const table = () => host.querySelector(".all-pages-table")!;
+
+    // Journals off: page, updated, backlinks. No journal-date header, no day cell, no dash.
+    expect(heads().map(cells)).toEqual([3]);
+    expect(rows().map(cells)).toEqual([3, 3]);
+    expect(host.querySelector(".all-pages-day-col")).toBeNull();
+    expect(host.querySelector(".all-pages-day")).toBeNull();
+    expect(table().classList.contains("all-pages-table--day")).toBe(false);
+
+    host.querySelector<HTMLInputElement>(".all-pages-journals input")!.click();
+    await settle();
+    expect(heads().map(cells)).toEqual([4]);
+    expect(rows().map(cells)).toEqual([4, 4, 4]);
+    expect(host.querySelectorAll(".all-pages-row .all-pages-day").length).toBe(3);
+    expect(table().classList.contains("all-pages-table--day")).toBe(true);
+
+    // Hiding journals again drops the column, and a sort by the vanished column does not linger.
+    column(host, "Journal date").click();
+    await settle();
+    expect(column(host, "Journal date").getAttribute("aria-sort")).toBe("descending");
+    host.querySelector<HTMLInputElement>(".all-pages-journals input")!.click();
+    await settle();
+    expect(host.querySelector(".all-pages-day-col")).toBeNull();
+    expect(heads().map(cells)).toEqual([3]);
+    expect(rows().map(cells)).toEqual([3, 3]);
+    expect(column(host, "Updated").getAttribute("aria-sort")).toBe("descending");
     dispose();
   });
 
