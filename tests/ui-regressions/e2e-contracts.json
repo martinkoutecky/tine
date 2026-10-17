@@ -393,7 +393,7 @@
         { "class": "stateful-ux", "userOutcome": "Opening the app on a graph shows no journal-feed failure when nothing failed: a feed read the window makes before its graph is bound is not reported as an error.", "blocking": true, "authority": "og 12e P2 (false startup toast; master shows none)" }
       ],
       "acceptableVariations": ["Locale rendering and feed layout may vary while configured dates remain discoverable."],
-      "nonRequirements": ["Exact locale punctuation or date-label spacing.", "Panel wording, list layout, or snapshot directory naming beyond the pre-journal-rename tag."],
+      "nonRequirements": ["Exact locale punctuation or date-label spacing.", "Panel wording, list layout, or snapshot naming beyond the pre-journal-rename tag; the snapshot is read as a zip (ADR 0074)."],
       "stability": "stable"
     },
     "scripts/e2e-journal-future-feed.mjs": {
