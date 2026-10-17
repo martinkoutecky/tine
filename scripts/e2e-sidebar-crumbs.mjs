@@ -55,10 +55,11 @@ try {
   await browser.$(".app-container").waitForExist({ timeout: 30000 });
   await openPageByName(browser, "Crumb Demo");
   stage = "shift-click the leaf bullet";
+  // Match the leaf's own text spans: the embed page gives it a reference-count badge.
   await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll("[data-block-id] > .block-main .block-content-wrapper")]
-    .some(el => el.textContent.trim() === "Leaf target")), { timeout: 10000, timeoutMsg: "Leaf block did not render" });
+    .some(el => [...el.querySelectorAll(".block-content > [data-so]")].map(s => s.textContent).join("").trim() === "Leaf target")), { timeout: 10000, timeoutMsg: "Leaf block did not render" });
   const leafId = await browser.execute(() => [...document.querySelectorAll("[data-block-id] > .block-main .block-content-wrapper")]
-    .find(el => el.textContent.trim() === "Leaf target").closest("[data-block-id]").getAttribute("data-block-id"));
+    .find(el => [...el.querySelectorAll(".block-content > [data-so]")].map(s => s.textContent).join("").trim() === "Leaf target").closest("[data-block-id]").getAttribute("data-block-id"));
   const bullet = await browser.$(`.main-content [data-block-id="${leafId}"] > .block-main .bullet-container`);
   await browser.performActions([{ type: "key", id: "kb", actions: [{ type: "keyDown", value: "\uE008" }] }]);
   await bullet.click();

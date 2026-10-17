@@ -83,7 +83,8 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
                 (OG `breadcrumb`, as Linked References shows them); the backend
                 row carries no trail, so it is read from the loaded source. */}
             <div class="embed-source-breadcrumb">
-              <PageRef name={embedded()!.page} />
+              {/* OG breadcrumb names the page via page-cp: no link brackets. */}
+              <PageRef name={embedded()!.page} alias={embedded()!.page} />
               <Show when={sourceTrail()?.more || (!sourceTrail() && (embedded()!.blocks[0]?.breadcrumb?.length ?? 0) > 3)}><span class="ref-crumb-sep">›</span><span class="ref-crumb">…</span></Show>
               <Show when={sourceTrail()} fallback={
                 <For each={(embedded()!.blocks[0]?.breadcrumb ?? []).slice(-3)}>{(label) => <><span class="ref-crumb-sep">›</span><span class="ref-crumb"><InlineText text={label} /></span></>}</For>

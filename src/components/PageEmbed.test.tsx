@@ -69,6 +69,7 @@ describe("page embed header (GH #439)", () => {
       expect(trail.querySelector("strong")?.textContent).toBe("bold");
       expect(trail.textContent).toContain("Source");
       expect(trail.textContent).not.toContain("THE EMBEDDED BLOCK");
+      expect(trail.querySelector(".page-ref")?.textContent).toBe("Source");
     } finally { setKnob(knob, undefined); dispose(); }
   });
   it("names the embedded page with a link to it", async () => {
