@@ -65,6 +65,10 @@ describe("autoPairInsertOnInput — double-open composes with [[ / (( / {{", () 
 });
 
 describe("wrapSelectionEdit", () => {
+  it("wraps full-width selection openers with ASCII brackets and parentheses", () => {
+    expect(wrapSelectionEdit("hello", 1, 4, "（")).toEqual({ text: "h(ell)o", start: 2, end: 5 });
+    expect(wrapSelectionEdit("hello", 1, 4, "【")).toEqual({ text: "h[ell]o", start: 2, end: 5 });
+  });
   it("wraps a non-empty selection, keeping it around the inner text", () => {
     expect(wrapSelectionEdit("hello", 1, 4, "(")).toEqual({ text: "h(ell)o", start: 2, end: 5 });
     expect(wrapSelectionEdit("x", 0, 1, '"')).toEqual({ text: '"x"', start: 1, end: 2 });

@@ -2036,6 +2036,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     acTimer = setTimeout(() => void updateAutocomplete(), 90);
   };
   const applyFullWidthRefReplace = () => {
+    if (ref.selectionStart !== ref.selectionEnd) return false;
     const paired = fullWidthRefReplace(ref.value, ref.selectionStart);
     if (!paired) return false;
     ref.value = paired.value;
@@ -2097,7 +2098,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           handled = true;
         }
       }
-      if (ch === "【") {
+      if (ch === "【" || ch === "（" || ch === "〈") {
         handled = applyFullWidthRefReplace();
       }
       // GH #413: the third backtick of a whole-block fence trigger is an EXPLICIT

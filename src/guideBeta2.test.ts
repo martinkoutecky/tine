@@ -3,6 +3,13 @@ import { expect, it } from "vitest";
 
 const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
 
+it("the Guide teaches Chinese IME reference and command input with ASCII storage", () => {
+  const references = guide("pages-links-references-search");
+  for (const detail of ["`【【`", "`（（`", "`(())`", "composition finishes", "`《〈`", "selected text", "ASCII"]) {
+    expect(references).toContain(detail);
+  }
+});
+
 it("the Guide keeps census controls and workspace creation discoverable", () => {
   expect(guide("where-things-are")).toContain("**Themes** is the first section");
   expect(guide("where-things-are")).toContain("Namespaces appears only when");

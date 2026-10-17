@@ -65,6 +65,25 @@ describe("autoPairEdit (OG-style [[ ]] auto-pairing)", () => {
 });
 
 describe("fullWidthRefReplace (Chinese IME full-width page refs)", () => {
+  it("normalizes block references and preserves surrounding text", () => {
+    expect(fullWidthRefReplace("（（", 2)).toEqual({ value: "(())", caret: 2 });
+    expect(fullWidthRefReplace("see （（ suffix", 6)).toEqual({ value: "see (()) suffix", caret: 6 });
+    expect(fullWidthRefReplace("（", 1)).toBeNull();
+    expect(fullWidthRefReplace("((", 2)).toBeNull();
+  });
+
+  it("normalizes the full-width angle command opener", () => {
+    expect(fullWidthRefReplace("《〈", 2)).toEqual({ value: "<", caret: 1 });
+    expect(fullWidthRefReplace("《", 1)).toBeNull();
+    expect(fullWidthRefReplace("〈〈", 2)).toBeNull();
+  });
+
+  it("leaves full-width openers literal inside an existing matching reference", () => {
+    expect(fullWidthRefReplace("((a（（b))", 5)).toBeNull();
+    expect(fullWidthRefReplace("[[a【【b]]", 5)).toBeNull();
+    expect(fullWidthRefReplace("((old)) （（", 10)).toEqual({ value: "((old)) (())", caret: 10 });
+  });
+
   it("normalizes full-width double brackets to an auto-paired page ref", () => {
     expect(fullWidthRefReplace("【【", 2)).toEqual({ value: "[[]]", caret: 2 });
     expect(fullWidthRefReplace("see 【【", 6)).toEqual({ value: "see [[]]", caret: 6 });

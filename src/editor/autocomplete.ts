@@ -372,11 +372,28 @@ export function autoPairEdit(
   return null;
 }
 
-/** Normalize Chinese IME full-width page-ref openers to the existing ASCII
- *  auto-paired ref form. `value`/`caret` are the post-input textarea state. */
+/** Normalize Chinese IME reference and command openers to their ASCII forms.
+ *  `value`/`caret` are the finalized post-input textarea state. The caller then
+ *  uses ordinary trigger detection, just as for ASCII input. */
 export function fullWidthRefReplace(value: string, caret: number): { value: string; caret: number } | null {
-  if (caret >= 2 && value.slice(caret - 2, caret) === "【【") {
-    return { value: value.slice(0, caret - 2) + "[[]]" + value.slice(caret), caret };
+  if (caret < 2) return null;
+  const opener = value.slice(caret - 2, caret);
+  const replacement = opener === "【【" ? "[[]]" : opener === "（（" ? "(())" : opener === "《〈" ? "<" : null;
+  if (replacement) {
+    // OG default-case-for-keyup-handler skips conversion when already wrapped
+    // by the matching ASCII ref. Compare the neighboring delimiters, like
+    // frontend/util/text.cljs wrapped-by?, without interpreting authored text.
+    if (opener !== "《〈") {
+      const open = replacement.slice(0, 2), close = replacement.slice(2);
+      const before = value.slice(0, caret), after = value.slice(caret);
+      const nextClose = after.indexOf(close), nextOpen = after.indexOf(open);
+      if (before.lastIndexOf(open) > before.lastIndexOf(close) &&
+          nextClose !== -1 && (nextOpen === -1 || nextClose < nextOpen)) return null;
+    }
+    return {
+      value: value.slice(0, caret - 2) + replacement + value.slice(caret),
+      caret: opener === "《〈" ? caret - 1 : caret,
+    };
   }
   return null;
 }
