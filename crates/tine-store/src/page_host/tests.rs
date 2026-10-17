@@ -856,8 +856,10 @@ fn retained_reservation_blocks_save_and_reconciles_undo_or_publication() {
 
 /// The production files that name the page host surface: the census
 /// writers (STEP3 §7), the binding's host slot, restore and retirement, the
-/// page commands, and the graph-window binding that starts the host and
-/// answers `load_graph` (step 3b P1, P2b).
+/// page commands, the graph-window binding that starts the host and
+/// answers `load_graph` (step 3b P1, P2b), and the CLI owner's write path,
+/// which submits one planned page operation through the same host as the
+/// app's commands (CLI slice 2, SLICE2-DESIGN §1).
 const CENSUS_CALL_SITES: &[&str] = &[
     "crates/tine-graph-features/src/retained.rs",
     "crates/tine-graph-features/src/pages.rs",
@@ -871,6 +873,7 @@ const CENSUS_CALL_SITES: &[&str] = &[
     "src-tauri/src/host_retirement.rs",
     "src-tauri/src/page_commands.rs",
     "src-tauri/src/graph.rs",
+    "src-tauri/src/owner/write.rs",
 ];
 
 /// Production `PageHost::start(` lines the census below saw.

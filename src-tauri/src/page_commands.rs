@@ -302,7 +302,7 @@ pub(crate) fn owner_flush_answer(
 ) -> Result<(), String> {
     let slot = crate::state::slot_for_context(&state)?;
     if let Some(window) = slot.window.get() {
-        window.answer(id, saved, binding_generation);
+        window.answer_flush(id, saved, binding_generation);
     }
     Ok(())
 }

@@ -448,7 +448,7 @@ pub(super) fn write_page_with_create(
             .page_of(&read.page, &bytes)
             .map_err(|error| store_refused(error, page))?;
         if let Some(link) = window.take() {
-            match link.flush(&current.doc.name) {
+            match link.flush_page(&current.doc.name) {
                 super::window::Flushed::Saved => {}
                 super::window::Flushed::Unsaved => {
                     return Err(refused(
@@ -668,7 +668,7 @@ fn kernel_refused(page: &PageId, message: String) -> ErrorBody {
 /// `block.edit`: the text replaces the block's editor text, as typing it
 /// would (hidden properties kept, children kept), then the marker
 /// transition the window's `setRaw` runs.
-pub(crate) fn edit(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
+pub(crate) fn edit_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
     let EditArgs {
         handle: text,
         text: new_text,
@@ -713,7 +713,7 @@ pub(crate) fn edit(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
 
 /// `block.prop`: set or remove one property through `block_regions::edit`,
 /// the window's `setBlockProperty`.
-pub(crate) fn prop(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
+pub(crate) fn prop_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
     let PropArgs {
         handle: text,
         key,
@@ -825,7 +825,7 @@ struct DeleteArgs {
 
 /// `delete <handle>`: the block and its subtree, with the number of
 /// references the deletion leaves broken (the app's notice rule).
-pub(crate) fn delete(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
+pub(crate) fn delete_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
     use tine_core::outline_kernel::{apply, Verb};
     let DeleteArgs { handle: text, rev } = super::verbs::parse(args)?;
     let handle = parse_handle(&text)?;

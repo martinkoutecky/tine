@@ -35,7 +35,7 @@ struct Args {
     rev: Option<String>,
 }
 
-pub(super) fn add(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
+pub(super) fn add_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
     let args: Args = super::verbs::parse(args)?;
     if [
         &args.under,

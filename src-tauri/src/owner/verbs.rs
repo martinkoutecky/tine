@@ -69,13 +69,13 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
         "page.show" => {
             let PageArgs { name } = parse(args)?;
             let graph = whole_graph(slot)?;
-            page(slot, resolve_page(&graph, &name)?, "page")
+            page_answer(slot, resolve_page(&graph, &name)?, "page")
         }
         "journal" => {
             let JournalArgs { date } = parse(args)?;
             let day = journal_day(slot, date.as_deref())?;
             let id = slot.store.journal_id(Day(day.ordinal_key()));
-            page(slot, id, "journal")
+            page_answer(slot, id, "journal")
         }
         "block.show" => {
             let BlockArgs { uuid, max_nodes } = parse(args)?;
@@ -213,11 +213,11 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                 json!({ "namespace": namespace, "pages": pages }),
             ))
         }
-        "block.edit" => super::write::edit(slot, args),
-        "block.prop" => super::write::prop(slot, args),
+        "block.edit" => super::write::edit_block(slot, args),
+        "block.prop" => super::write::prop_block(slot, args),
         "block.move" => super::write::move_block(slot, args),
-        "block.delete" => super::write::delete(slot, args),
-        "block.add" => super::add::add(slot, args),
+        "block.delete" => super::write::delete_block(slot, args),
+        "block.add" => super::add::add_block(slot, args),
         other => Err(ErrorBody::new(
             "unknown-verb",
             format!("this owner does not know `{other}`; it may be an older Tine"),
@@ -506,7 +506,7 @@ fn bounded(
     Some(kept)
 }
 
-fn page(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {
+fn page_answer(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {
     // The host lock is held for the read only (A-K3: nothing under it takes it again).
     let read = crate::page_commands::with_host(slot, |host| host.read(&id))
         .map_err(|_| busy())?

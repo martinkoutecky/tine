@@ -58,7 +58,7 @@ impl WindowLink {
 
     /// Ask the window to save the text typed on page `name`, and wait for
     /// its answer. Called on the owner's request thread, never the main one.
-    pub(crate) fn flush(&self, name: &str) -> Flushed {
+    pub(crate) fn flush_page(&self, name: &str) -> Flushed {
         let id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
         let (answer, answered) = mpsc::sync_channel(1);
         self.waiting.lock().unwrap().insert(id, answer);
@@ -81,7 +81,7 @@ impl WindowLink {
 
     /// The window's answer to request `id` (`owner_flush_answer`), made under
     /// `binding_generation`; an answer from another binding is ignored.
-    pub(crate) fn answer(&self, id: u64, saved: bool, binding_generation: u64) {
+    pub(crate) fn answer_flush(&self, id: u64, saved: bool, binding_generation: u64) {
         if binding_generation != self.binding_generation {
             return;
         }
