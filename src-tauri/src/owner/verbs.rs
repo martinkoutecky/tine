@@ -34,16 +34,19 @@ pub(crate) enum Diag {
     QueryFailed,
     /// The Store failed on a page read in a way no code names.
     StoreFailed,
+    /// A write's plan failed on an I/O error, or planned no bytes.
+    WriteFailed,
 }
 
 impl Diag {
     #[cfg(test)]
-    pub(crate) const ALL: [Diag; 5] = [
+    pub(crate) const ALL: [Diag; 6] = [
         Diag::GraphLoad,
         Diag::Encode,
         Diag::ReadFailed,
         Diag::QueryFailed,
         Diag::StoreFailed,
+        Diag::WriteFailed,
     ];
 
     /// The id in the error message, the owner's log and the contract.
@@ -54,6 +57,7 @@ impl Diag {
             Self::ReadFailed => "cli-read-failed",
             Self::QueryFailed => "cli-query-failed",
             Self::StoreFailed => "cli-store-failed",
+            Self::WriteFailed => "cli-write-failed",
         }
     }
 }
@@ -199,6 +203,8 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                 json!({ "namespace": namespace, "pages": pages }),
             ))
         }
+        "block.edit" => super::write::edit(slot, args),
+        "block.prop" => super::write::prop(slot, args),
         other => Err(ErrorBody::new(
             "unknown-verb",
             format!("this owner does not know `{other}`; it may be an older Tine"),
@@ -254,7 +260,7 @@ struct PagesArgs {
     namespace: Option<String>,
 }
 
-fn parse<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, ErrorBody> {
+pub(super) fn parse<T: serde::de::DeserializeOwned>(args: &Value) -> Result<T, ErrorBody> {
     super::wire::read_object(args.clone()).map_err(|e| ErrorBody::new("bad-args", e, false))
 }
 
@@ -309,14 +315,14 @@ fn read_failed(diag: Diag, message: String) -> ErrorBody {
     }
 }
 
-fn whole_graph(slot: &GraphSlot) -> Result<WholeGraph, ErrorBody> {
+pub(super) fn whole_graph(slot: &GraphSlot) -> Result<WholeGraph, ErrorBody> {
     slot.store
         .whole_graph()
         .map_err(|e| internal(Diag::GraphLoad, format!("graph load failed: {e:?}")))
 }
 
 /// A persisted `id::` value (A2): runtime block ids change every open.
-fn check_uuid(uuid: &str) -> Result<(), ErrorBody> {
+pub(super) fn check_uuid(uuid: &str) -> Result<(), ErrorBody> {
     let groups: Vec<&str> = uuid.split('-').collect();
     let shaped = groups.iter().map(|g| g.len()).eq([8, 4, 4, 4, 12])
         && groups
@@ -335,7 +341,7 @@ fn check_uuid(uuid: &str) -> Result<(), ErrorBody> {
 
 /// The page a name names, as the app resolves it: a file claimant, else a
 /// sole alias owner, else a journal title.
-fn resolve_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
+pub(super) fn resolve_page(graph: &WholeGraph, name: &str) -> Result<PageId, ErrorBody> {
     match graph.resolve(name, false) {
         Resolved::Existing { id, .. } => return Ok(id),
         Resolved::Alias { mut owners } if owners.len() == 1 => return Ok(owners.remove(0)),
@@ -405,6 +411,16 @@ fn page(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {
     let revision = read
         .revision
         .map(|(incarnation, version)| json!({ "incarnation": incarnation, "version": version }));
+    let mut blocks = to_value(&parsed.doc.blocks)?;
+    super::write::annotate_handles(
+        &mut blocks,
+        parsed.doc.format == tine_core::model::Format::Org,
+        "",
+    );
+    let mut doc = to_value(&parsed.doc)?;
+    if let Some(fields) = doc.as_object_mut() {
+        fields.insert("blocks".into(), blocks);
+    }
     Ok(ok(
         kind,
         json!({
@@ -413,7 +429,7 @@ fn page(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {
             "revision": revision,
             "read_only": parsed.read_only,
             "text": String::from_utf8_lossy(&bytes),
-            "page": parsed.doc,
+            "page": doc,
         }),
     ))
 }

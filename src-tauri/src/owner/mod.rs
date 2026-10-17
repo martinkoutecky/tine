@@ -25,6 +25,7 @@ pub(crate) mod serve;
 pub(crate) mod terminal;
 pub(crate) mod verbs;
 pub(crate) mod wire;
+pub(crate) mod write;
 
 #[cfg(test)]
 mod output_tests;

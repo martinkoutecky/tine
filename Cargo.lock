@@ -5043,6 +5043,7 @@ version = "0.8.0-beta.3"
 dependencies = [
  "base64 0.22.1",
  "cap-std",
+ "chrono",
  "clap",
  "clap_mangen",
  "clipboard-rs",

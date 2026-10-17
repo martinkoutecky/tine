@@ -243,6 +243,18 @@ pub fn join_with(
     visible_regions.reattach_org_properties(visible, hidden)
 }
 
+/// Set a block's text as typing `text` into its editor would (Spec §2.4
+/// "set-text"): `text` replaces the editor text of `raw` and the hidden
+/// property lines ([`HidePolicy::Builtin`]) are kept. The caller's marker
+/// transition (`logbook`) follows, as the window's `setRaw`. The command
+/// line's `edit` calls this; it is the editor's own projection, so the two
+/// cannot disagree on which lines the text owns. A quarantined Org block
+/// with hidden lines refuses.
+pub fn set_text(raw: &str, is_org: bool, text: &str) -> Result<String, String> {
+    let current = split(raw, is_org, &HidePolicy::Builtin);
+    join(text, &current.hidden, is_org)
+}
+
 fn floor_boundary(s: &str, mut at: usize) -> usize {
     while !s.is_char_boundary(at) {
         at -= 1;
@@ -295,6 +307,23 @@ mod tests {
     fn roundtrip(raw: &str, is_org: bool) {
         let t = split(raw, is_org, &HidePolicy::Builtin);
         assert_eq!(join(&t.visible, &t.hidden, is_org).unwrap(), raw, "{raw:?}");
+    }
+
+    #[test]
+    fn set_text_keeps_hidden_properties_and_takes_the_text() {
+        let md = "TODO old\nid:: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b\ncolor:: red";
+        assert_eq!(
+            set_text(md, false, "DONE new\ncolor:: blue").unwrap(),
+            "DONE new\ncolor:: blue\nid:: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b"
+        );
+        let org = "* old\n:PROPERTIES:\n:id: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b\n:END:";
+        let set = set_text(org, true, "new").unwrap();
+        assert!(set.starts_with("new"), "{set:?}");
+        assert!(
+            set.contains(":id: 6512bd43-d9ca-4c95-b0b4-1c2d3e4f5a6b"),
+            "{set:?}"
+        );
+        assert_eq!(set_text("plain", false, "other").unwrap(), "other");
     }
 
     #[test]

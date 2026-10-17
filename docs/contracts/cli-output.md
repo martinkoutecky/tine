@@ -322,3 +322,4 @@ The set is closed (`verbs.rs::Diag`) and this table is pinned to it.
 | `cli-read-failed` | a references, block preview or search read failed |
 | `cli-query-failed` | a parsed query failed to run |
 | `cli-store-failed` | the Store failed a page read in a way no code names |
+| `cli-write-failed` | a write's plan failed on an I/O error, or planned no bytes |

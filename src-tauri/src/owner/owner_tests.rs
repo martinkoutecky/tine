@@ -55,6 +55,7 @@ impl Graph {
         )
         .unwrap();
         std::fs::write(graph.join("pages/ns___child.md"), "- in a namespace\n").unwrap();
+        std::fs::write(graph.join("pages/dup.md"), "- same\n- same\n").unwrap();
         let app_data = dir.path().join("app");
         let owners = dir.path().join("owners");
         std::fs::create_dir_all(&app_data).unwrap();
@@ -505,6 +506,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("terminal", include_str!("terminal.rs")),
         ("verbs", include_str!("verbs.rs")),
         ("wire", include_str!("wire.rs")),
+        ("write", include_str!("write.rs")),
     ] {
         assert!(
             !source.contains(concat!("tauri::", "command")),
@@ -521,7 +523,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 10, "scan every owner/*.rs file");
+    assert_eq!(files, 11, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];
@@ -844,4 +846,165 @@ fn a_connection_accepted_after_a_yields_sweep_is_closed() {
         _ => false,
     };
     assert!(!served, "a connection accepted after the sweep was served");
+}
+
+/// One verb against the slot, as the endpoint would answer it.
+fn verb(slot: &GraphSlot, name: &str, args: Value) -> Result<Value, ErrorBody> {
+    super::verbs::answer_verb(
+        slot,
+        &Request {
+            id: 1,
+            verb: name.into(),
+            args,
+        },
+    )
+}
+
+fn error_code(result: Result<Value, ErrorBody>) -> (String, Value) {
+    let body = result.expect_err("an error");
+    (body.code, body.detail.unwrap_or(Value::Null))
+}
+
+fn block_handle(page: &Value, index: usize) -> String {
+    page["page"]["blocks"][index]["handle"]
+        .as_str()
+        .expect("a handle")
+        .to_string()
+}
+
+#[test]
+fn edit_and_prop_write_through_the_host_and_keep_hidden_properties() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let one = block_handle(&read, 0);
+    let two = block_handle(&read, 1);
+    assert!(
+        one.starts_with("1~") && two.starts_with("2~"),
+        "{one} {two}"
+    );
+    assert!(read["page"]["blocks"][0]["children"][0]["handle"]
+        .as_str()
+        .unwrap()
+        .starts_with("1.1~"));
+
+    let written = verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("a/{one}"), "text": "ONE, edited" }),
+    )
+    .unwrap();
+    assert_eq!(written["kind"], "written");
+    let text = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    assert_eq!(
+        text,
+        format!("- ONE, edited\n  id:: {UUID}\n\t- under one\n- two\n"),
+        "the hidden id:: and the child stay; other blocks keep their bytes"
+    );
+    let new_one = written["blocks"][0].as_str().unwrap().to_string();
+    assert_ne!(
+        new_one, one,
+        "the reply hands back the edited block's new handle"
+    );
+
+    // The old handle no longer names a block: stale, not a guess.
+    let (stale, _) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("a/{one}"), "text": "again" }),
+    ));
+    assert_eq!(stale, "stale");
+
+    // By id:: and by the returned handle.
+    verb(
+        &slot,
+        "block.prop",
+        json!({ "handle": UUID, "key": "status", "value": "done" }),
+    )
+    .unwrap();
+    verb(
+        &slot,
+        "block.prop",
+        json!({ "handle": format!("a/{two}"), "key": "owner", "value": "agent" }),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    assert!(text.contains("status:: done"), "{text}");
+    assert!(text.contains("- two\n  owner:: agent"), "{text}");
+    verb(
+        &slot,
+        "block.prop",
+        json!({ "handle": UUID, "key": "status" }),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    assert!(!text.contains("status::"), "{text}");
+    assert!(text.contains(&format!("id:: {UUID}")), "{text}");
+}
+
+#[test]
+fn a_write_refuses_what_would_not_read_back_and_a_moved_rev() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let two = block_handle(&read, 1);
+    let before = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("a/{two}"), "text": "two\n- a new block?" }),
+    ));
+    assert_eq!(
+        (code.as_str(), detail["reason"].as_str()),
+        ("refused", Some("does-not-round-trip"))
+    );
+    assert_eq!(detail["admitted"], false);
+
+    let (code, _) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": "a/2", "text": "x", "rev": "0000000000000000" }),
+    ));
+    assert_eq!(code, "stale");
+    let (code, _) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": "a/2", "text": "x" }),
+    ));
+    assert_eq!(code, "bad-args", "a bare position needs --rev");
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap(),
+        before
+    );
+
+    let rev = read["rev"].as_str().unwrap();
+    verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": "a/2", "text": "TWO", "rev": rev }),
+    )
+    .unwrap();
+    assert!(std::fs::read_to_string(graph.root.join("pages/a.md"))
+        .unwrap()
+        .ends_with("- TWO\n"));
+}
+
+#[test]
+fn identical_blocks_are_stale_with_candidates_never_position_first() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({ "name": "dup" })).unwrap();
+    let first = block_handle(&read, 0);
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("dup/{first}"), "text": "changed" }),
+    ));
+    assert_eq!(code, "stale");
+    assert_eq!(detail["candidates"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/dup.md")).unwrap(),
+        "- same\n- same\n"
+    );
 }
