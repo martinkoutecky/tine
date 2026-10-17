@@ -32,3 +32,20 @@ it("pins a zoom/sidebar root whose children are forced visible despite its saved
     expect(root.querySelector('[data-sticky-block="folded"]')).not.toBeNull();
   } finally { dispose(); }
 });
+
+it("GH #643: a pinned parent shows its rendered first line and a bullet in the row's bullet column", () => {
+  loadSingle({ name: "Marked", title: "Marked", kind: "page", pre_block: null,
+    blocks: [{ id: "p", raw: "Rim **Taclepef** [[Some page]]\nsecond line", collapsed: false,
+      children: [{ id: "c", raw: "child", collapsed: false, children: [] }] }] });
+  const root = document.createElement("div"); root.className = "main-content"; document.body.append(root);
+  const dispose = render(() => <Block id="p" />, root);
+  try {
+    const button = root.querySelector('[data-sticky-block="p"] button')!;
+    expect(button.querySelector("strong")?.textContent).toBe("Taclepef");
+    expect(button.textContent).not.toContain("**");
+    expect(button.querySelector(".page-ref")?.textContent).toContain("Some page");
+    expect(button.textContent).not.toContain("second line");
+    expect(button.querySelector(".sticky-ancestor-toggle")).not.toBeNull();
+    expect(button.querySelector(".sticky-ancestor-bullet > .sticky-ancestor-dot")).not.toBeNull();
+  } finally { dispose(); }
+});

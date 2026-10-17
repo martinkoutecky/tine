@@ -3431,8 +3431,16 @@ html[data-system-insets="native-viewport"] {
 }
 
 .sticky-ancestor { position: sticky; height: 30px; margin-bottom: -30px; pointer-events: none; }
-.sticky-ancestor button { pointer-events: auto; display: block; width: 100%; height: 30px; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border: 0; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); font: inherit; cursor: pointer; }
+.sticky-ancestor button { pointer-events: auto; display: flex; align-items: center; width: 100%; height: 30px; padding: 0; text-align: left; overflow: hidden; white-space: nowrap; border: 0; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); font: inherit; cursor: pointer; }
 .sticky-ancestor button[hidden] { display: none; }
+/* Same widths as .collapse-toggle and .bullet-container, so the pinned bullet
+   lines up with the row's own bullet (GH #643). */
+.sticky-ancestor-toggle { flex: 0 0 18px; }
+.sticky-ancestor-bullet { flex: 0 0 16px; height: 16px; margin-right: 6px; display: flex; align-items: center; justify-content: center; }
+.sticky-ancestor-dot { width: var(--tine-bullet-size, var(--ls-block-bullet-size)); height: var(--tine-bullet-size, var(--ls-block-bullet-size)); border-radius: 50%; background: var(--tine-bullet-color, var(--bullet-color)); }
+/* The whole row is one jump target; inline links inside it stay inert. */
+.sticky-ancestor-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.sticky-ancestor-label * { white-space: nowrap; }
 [data-sticky-parent] > .block-main { scroll-margin-top: 30px; }
 @media print { .sticky-ancestor { display: none; } }
 

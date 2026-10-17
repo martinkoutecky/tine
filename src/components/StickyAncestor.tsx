@@ -6,6 +6,8 @@ import { createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { newIntersectionObserver } from "../windowRealm";
 import { revealOutlineBlock } from "../outlineViewport";
 import { visibleBody } from "../render/block";
+import { InlineText } from "../render/inline";
+import { formatForBlock } from "../document";
 
 export function StickyAncestor(props: { id: string; raw: string }): JSX.Element {
   let host!: HTMLDivElement;
@@ -41,6 +43,13 @@ export function StickyAncestor(props: { id: string; raw: string }): JSX.Element 
       const block = host.parentElement!;
       revealOutlineBlock(props.id, block);
       block.querySelector<HTMLElement>(":scope > .block-main")?.scrollIntoView({ block: "start" });
-    }}><span aria-hidden="true">• </span>{visibleBody(props.raw).join(" ")}</button>
+    }}>
+      {/* GH #643: the same toggle and bullet columns as the row, so the pinned
+          bullet sits over the real one, and the first line rendered as the zoom
+          breadcrumb renders it (marks, links and block refs, not raw syntax). */}
+      <span class="sticky-ancestor-toggle" aria-hidden="true" />
+      <span class="sticky-ancestor-bullet" aria-hidden="true"><span class="sticky-ancestor-dot" /></span>
+      <span class="sticky-ancestor-label"><InlineText text={visibleBody(props.raw)[0] || "…"} format={formatForBlock(props.id)} /></span>
+    </button>
   </div>;
 }

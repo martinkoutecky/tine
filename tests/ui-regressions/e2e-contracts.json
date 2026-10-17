@@ -178,7 +178,8 @@
     "scripts/e2e-editor-context.mjs": {
       "contracts": [
         {"class":"stateful-ux","userOutcome":"Editing an embedded mixed-code region leaves surrounding prose visible, and Select embedding block leaves that source editor and selects its macro host.","blocking":true},
-        {"class":"stateful-ux","userOutcome":"Scrolling a nested outline exposes pinned offscreen ancestors, clicking one returns to it, and the device setting turns pinning off and on.","blocking":true}
+        {"class":"stateful-ux","userOutcome":"Scrolling a nested outline exposes pinned offscreen ancestors, clicking one returns to it, and the device setting turns pinning off and on.","blocking":true},
+        {"class":"stateful-ux","userOutcome":"Pinned ancestors show rendered text (bold, links) rather than raw markup, and each pinned bullet sits over its block's own bullet (GH #643).","blocking":true}
       ],
       "acceptableVariations":["Fonts, theme, observer delivery and geometry may vary while code stays in its region, surrounding content remains visible and ancestors remain reachable."],
       "nonRequirements":["Exact pixels, certification beyond Linux WebKitGTK, or changing source Move Up/Down semantics."],
