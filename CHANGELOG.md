@@ -22,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - All pages: the header no longer shows a lone "JOURNAL DATE" line under PAGE, and a "—" no longer strikes through the first letter of the next row (the journal-date cell had no grid column). The journal-date column now appears only while "Show journals" is on, and its checkbox is drawn from the theme instead of a white native box on dark surfaces (UI-ALL-PAGES-GRID-001).
 - Settings search no longer lists unrelated settings for a one-character query such as "发" (a single character now matches only a setting's name, keywords and aliases, not its description), puts settings whose name matches before those matching only their description, and scrolls to a result whose control appears a moment after the tab opens, such as Developer tools (GH #706).
 - Org graphs: a page you create from Search (Ctrl+K), with **Customize** for Today's sections, or by opening a page or journal that has no file yet is now edited as Org from the start. Before, until Tine next read the file, a property added to it (a block id from **Copy block ref**, a page property, a collapsed or heading flag) was written Markdown-style (`id:: …`) into the `.org` file, where Logseq and Tine show it as text instead of reading it as a property (ORG-CREATED-FORMAT).
+- Query exports leave out pages marked `public:: false` and the exports page, as every other export already did; the review lists the pages left out and notes when the export includes the page the query is written on. The published export no longer carries the query itself unless **Include the query text** is ticked (REG-QUERY-EXPORT-PRIVATE-PAGES).
 - Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.
 - Unlinked References show every mention that fits the excerpt as a highlight again, and the numbered circles come back only for mentions past the excerpt, as before 0.8.0-beta.1 (GH #200; GH #556's one-highlight-at-a-time change is reverted, its bullet that opens the source block stays).
 
@@ -33,8 +34,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- Query exports leave out pages marked `public:: false` and the exports page, as every other export already did; the review lists the pages left out and notes when the export includes the page the query is written on. The published export no longer carries the query itself unless **Include the query text** is ticked (REG-QUERY-EXPORT-PRIVATE-PAGES).
-- Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.
 - Typing and deleting in a zoomed block no longer scans every block on its page, including journal and sidebar views (GH #248).
 - Sticky parent bullets show the parent's rendered text (bold, links, block references) instead of raw markup, and each pinned bullet lines up with its block's own bullet instead of sitting one level to the left. They no longer cover Settings, menus or toolbars (GH #643).
 - A block opened in the right sidebar is titled with its page and its parent blocks (the nearest three, after "⋯"), as in Logseq; clicking a parent shows that block in the card instead (GH #640).
