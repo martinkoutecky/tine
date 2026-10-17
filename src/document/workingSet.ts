@@ -4,7 +4,7 @@ import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHo
 import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, FeedPage, pageByName } from "./model";
 import { batch } from "solid-js";
 import { produce } from "solid-js/store";
-import { purgePageNodes, toFeedPage, emptyPage, foldMarkedPageHeader } from "./convert";
+import { purgePageNodes, toFeedPage, emptyPage, foldMarkedPageHeader, formatOfFile } from "./convert";
 import { invalidateAllMatrixDimensions, clearMatrixDimensionCache } from "../sheet/matrix";
 import { invalidateUndoForPage, clearUndoHistory } from "./history";
 import { captureBinding, bindingCurrent, invalidateBinding } from "../binding";
@@ -116,7 +116,11 @@ function upsertPage(dto: PageDto & { id?: string }) {
  * file when the page had none. Only `host/wiring.ts` calls this. */
 export function installPageContent(name: string, dto: PageDto | null, path?: string | null): void {
   const page = pageByName(name);
-  const text = dto ?? emptyPage(name, page?.kind ?? "page");
+  // "No file" is held in the format of the file it will be written to, as a
+  // created page is (ORG-CREATED-FORMAT): on an Org graph the host resolves a
+  // new page to `.org`, so its first edits must be spelled as Org.
+  const file = page?.id ?? path ?? null;
+  const text = dto ?? emptyPage(name, page?.kind ?? "page", file ? formatOfFile(file) : page?.format);
   upsertPage({ ...text, name, kind: page?.kind ?? text.kind, title: page?.title ?? text.title,
     id: page?.id ?? path ?? undefined, rev: dto ? dto.rev : null });
 }
