@@ -15,13 +15,38 @@ pub(crate) struct KnownGraph {
     pub(crate) name: String,
 }
 
+/// UI reply only: device settings continue serializing KnownGraph unchanged.
+#[derive(serde::Serialize)]
+pub(crate) struct DisplayKnownGraph {
+    pub(crate) path: String,
+    name: String,
+    display_path: String,
+}
+
+impl From<KnownGraph> for DisplayKnownGraph {
+    fn from(graph: KnownGraph) -> Self {
+        Self {
+            display_path: tine_core::graph_paths::normalize_graph_path(&graph.path),
+            path: graph.path,
+            name: graph.name,
+        }
+    }
+}
+
 // --- local app settings (outside the graph): currently just the backup keep
 // count. A tiny JSON file in the OS app-data dir. ---
 pub(crate) fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path()
         .app_data_dir()
         .ok()
-        .map(|d| d.join("tine-settings.json"))
+        .map(|d| d.join(SETTINGS_FILE))
+}
+
+const SETTINGS_FILE: &str = "tine-settings.json";
+
+/// The settings file under `app_data`, for a process without a Tauri handle.
+pub(crate) fn settings_path_in(app_data: &std::path::Path) -> PathBuf {
+    app_data.join(SETTINGS_FILE)
 }
 
 fn app_bool_at(path: &std::path::Path, key: &str, default: bool) -> bool {
@@ -124,6 +149,18 @@ pub(crate) fn update_settings(
     update_settings_at(&p, mutate)
 }
 
+/// The device-settings JSON at `path`, if it can be read and parsed.
+pub(crate) fn read_settings_value_at(path: &std::path::Path) -> Option<serde_json::Value> {
+    read_app_text(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+}
+
+/// The device-settings JSON, if it can be read and parsed.
+pub(crate) fn read_settings_value(app: &tauri::AppHandle) -> Option<serde_json::Value> {
+    settings_path(app).and_then(|path| read_settings_value_at(&path))
+}
+
 fn graph_display_name(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
@@ -176,9 +213,18 @@ pub(crate) fn approved_external_assets(
     app: &tauri::AppHandle,
     graph_root: &std::path::Path,
 ) -> Option<PathBuf> {
+    approved_external_assets_in(&app.path().app_data_dir().ok()?, graph_root)
+}
+
+/// `approved_external_assets` for a process without a Tauri handle
+/// (`tine serve`), from the same settings file under `app_data`.
+pub(crate) fn approved_external_assets_in(
+    app_data: &std::path::Path,
+    graph_root: &std::path::Path,
+) -> Option<PathBuf> {
     let key = graph_root.display().to_string();
-    settings_path(app)
-        .and_then(|p| read_app_text(&p).ok())
+    read_app_text(&settings_path_in(app_data))
+        .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|json| {
             external_assets_approvals(&json)
@@ -214,11 +260,16 @@ pub(crate) fn remember_graph(app: &tauri::AppHandle, path: &str) -> Result<(), S
 }
 
 #[tauri::command]
-pub(crate) fn list_known_graphs(app: tauri::AppHandle) -> Vec<KnownGraph> {
+pub(crate) fn list_known_graphs(app: tauri::AppHandle) -> Vec<DisplayKnownGraph> {
     settings_path(&app)
         .and_then(|p| read_app_text(&p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .map(|json| parse_known_graphs(&json))
+        .map(|json| {
+            parse_known_graphs(&json)
+                .into_iter()
+                .map(DisplayKnownGraph::from)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -226,6 +277,7 @@ pub(crate) fn list_known_graphs(app: tauri::AppHandle) -> Vec<KnownGraph> {
 pub(crate) async fn forget_known_graph(path: String, app: tauri::AppHandle) -> Result<(), String> {
     crate::state::off_ui(move || {
         update_settings(&app, |json| forget_graph_json(json, &path))?;
+        crate::spotlight::forget(&app, &path);
         // Best-effort, after the removal itself; never fails it (ADR 0070).
         crate::graph::forget_launch_checkpoint(
             crate::graph::checkpoint_app_data(&app).as_deref(),
@@ -511,15 +563,23 @@ fn legacy_session_path(app: &tauri::AppHandle) -> Option<PathBuf> {
         .map(|d| d.join("tine-session.json"))
 }
 
-pub(crate) fn session_id(root: &std::path::Path) -> String {
-    // Stable FNV-1a over the canonical path. The readable basename is cosmetic;
-    // the hash prevents two same-named graphs in different folders colliding.
+/// The graph's fixed-width key: a stable FNV-1a over the canonical root.
+/// It names the graph's session and drafts (inside `session_id`) and its
+/// command-line owner lock and endpoint (CLI PROTOCOL §1).
+pub(crate) fn graph_hash(root: &std::path::Path) -> u64 {
     let text = root.to_string_lossy();
     let mut hash = 0xcbf29ce484222325u64;
     for byte in text.as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
+    hash
+}
+
+pub(crate) fn session_id(root: &std::path::Path) -> String {
+    // The readable basename is cosmetic; the hash prevents two same-named
+    // graphs in different folders colliding.
+    let hash = graph_hash(root);
     let name = root
         .file_name()
         .and_then(|value| value.to_str())
@@ -528,6 +588,14 @@ pub(crate) fn session_id(root: &std::path::Path) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect::<String>();
     format!("{name}-{hash:016x}.json")
+}
+
+/// The graph id the page host keys its crash drafts by: `session_id`
+/// without its `.json` suffix. The app's host and `tine serve` must use the
+/// same one, or they would not recover each other's drafts (CLI PROTOCOL §3.5).
+pub(crate) fn host_graph_id(root: &std::path::Path) -> String {
+    let id = session_id(root);
+    id.strip_suffix(".json").unwrap_or(&id).to_owned()
 }
 
 fn session_path(app: &tauri::AppHandle, root: &std::path::Path) -> Option<PathBuf> {
@@ -1018,6 +1086,22 @@ mod tests {
         forget_graph_json(&mut json, "/graphs/alpha");
         assert_eq!(parse_known_graphs(&json).len(), 1);
         assert_eq!(json["last_graph_path"], "/graphs/alpha");
+    }
+
+    #[test]
+    fn stored_verbatim_graph_identity_is_preserved_in_display_replies() {
+        let root = r"\\?\C:\notes";
+        let mut json = serde_json::json!({});
+        remember_graph_json(&mut json, root);
+        let graph = parse_known_graphs(&json).remove(0);
+        let reply = DisplayKnownGraph::from(graph);
+        assert_eq!(reply.path, root);
+        assert_eq!(reply.display_path, r"C:\notes");
+        assert_eq!(json["last_graph_path"], root);
+        assert_eq!(json["known_graphs"][0]["path"], root);
+        assert!(json["known_graphs"][0].get("display_path").is_none());
+        forget_graph_json(&mut json, root);
+        assert!(parse_known_graphs(&json).is_empty());
     }
 
     #[test]

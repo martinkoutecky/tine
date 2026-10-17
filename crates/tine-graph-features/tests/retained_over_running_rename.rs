@@ -61,9 +61,15 @@ fn fixture(phase: Phase, times: usize) -> Fixture {
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     fail(phase, std::io::ErrorKind::Other, times);
     let (sender, mail) = mpsc::channel::<serde_json::Value>();
-    let host = PageHost::start(&store, &dir.path().join("app"), "graph", move |m| {
-        let _ = sender.send(serde_json::to_value(m).unwrap());
-    })
+    let host = PageHost::start(
+        &store,
+        &dir.path().join("app"),
+        "graph",
+        |_, _| {},
+        move |m| {
+            let _ = sender.send(serde_json::to_value(m).unwrap());
+        },
+    )
     .unwrap();
     Fixture {
         _dir: dir,
@@ -105,19 +111,20 @@ fn take_disk_for_two(f: &Fixture) {
         .as_str()
         .unwrap()
         .to_owned();
-    let version = loop {
+    loop {
         let m = f.mail.recv_timeout(Duration::from_secs(20)).unwrap();
         if m["key"] == key.as_str() && m["answer"]["id"] == id {
-            break m["page"]["version"].as_u64().unwrap();
+            break;
         }
-    };
-    f.host.discard(session, id + 1, &key, version).unwrap();
+    }
+    f.host.discard(session, id + 1, &key).unwrap();
 }
 
 const BUSY: &str = "Another rename of these pages is still finishing; try again in a moment.";
 
 #[test]
 fn a_merge_over_a_running_renames_destination_waits_until_the_order_ends() {
+    let _integration_guard = crate::integration_lock();
     let f = conflicted_rename();
     let (root, store, host) = (&f.root, &*f.store, &f.host);
     std::thread::scope(|scope| {
@@ -163,6 +170,7 @@ fn a_merge_over_a_running_renames_destination_waits_until_the_order_ends() {
 /// ends the same merge runs.
 #[test]
 fn a_merge_over_a_conflicted_running_rename_is_told_busy_after_the_bound() {
+    let _integration_guard = crate::integration_lock();
     let f = conflicted_rename();
     let (root, store, host) = (&f.root, &*f.store, &f.host);
     std::thread::scope(|scope| {
@@ -181,9 +189,12 @@ fn a_merge_over_a_conflicted_running_rename_is_told_busy_after_the_bound() {
             // the scope joins it.
             take_disk_for_two(&f);
         }
+        // A host operation's Busy names no rename: other holders refuse it
+        // too (REVIEW P2 round 2, finding 3).
+        let busy = "Tine is still finishing another change to these pages, so the merge did not start. Try again in a moment.";
         assert_eq!(
             outcome,
-            Ok(Err((std::io::ErrorKind::WouldBlock, BUSY.to_string()))),
+            Ok(Err((std::io::ErrorKind::WouldBlock, busy.to_string()))),
             "M6: the writer is refused Busy within its bound, not left waiting"
         );
         assert!(started.elapsed() >= tine_store::host_faults::OPERATION_WAIT);

@@ -1,4 +1,6 @@
-import { createEffect, createSignal, createUniqueId, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
+import { shortcutKey } from "../shortcutKey";
+import { msg } from "../i18n";
+import { createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
 import { sanitizeOutlineItems, type PdfOutlineItem } from "./pdfOutline";
 import { PdfViewerView } from "./pdfViewerView";
@@ -264,7 +266,7 @@ export function PdfViewer(props: {
 
   const copyCreatedHighlightRef = async (id: string) => {
     await writeClipboardText(`((${id}))`);
-    pushToast("Copied highlight ref", "success");
+    pushToast(msg("pdf-copied-highlight-ref"), "success");
   };
   // An OG/externally-created sidecar can outlive or predate its annotation
   // block. Reuse the paired guarded writer before exposing the id: it upserts
@@ -847,7 +849,7 @@ export function PdfViewer(props: {
     } catch (error) {
       if (!loadOwner()) return;
       highlightState.load([]);
-      pushToast(`Couldn't load PDF annotations. (${String(error)})`, "error");
+      pushToast(msg("pdf-couldn-t-load-pdf-annotations", { detail: String(error) }), "error");
     }
     let bytes: Uint8Array;
     try {
@@ -949,9 +951,13 @@ export function PdfViewer(props: {
   }));
   // A new intent within the same asset must navigate without remounting the
   // PDF. Asset switches are handled by KeyedPdfViewer's filename key.
+  // Route updates also report scrolling/zooming. Memo equality keeps those
+  // updates from replaying an unchanged intent; a fresh serial still navigates
+  // even when its destination is identical to the previous one.
+  const navigationKey = createMemo(() => props.navigationKey?.() ?? "none");
   createEffect(
     on(
-      () => props.navigationKey?.() ?? "none",
+      navigationKey,
       () => {
         const target = untrack(() => props.navigation?.());
         if (viewStateReady && target?.filename === props.filename) {
@@ -1034,7 +1040,7 @@ export function PdfViewer(props: {
   // preventDefault stops the webview's own page zoom.
   const onKeyZoom = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-    if (e.key === "f" || e.key === "F") {
+    if (shortcutKey(e) === "f") {
       e.preventDefault();
       openFind();
       return;
@@ -1048,7 +1054,7 @@ export function PdfViewer(props: {
     } else if (e.key === "-" || e.key === "_") {
       e.preventDefault();
       zoomBy(1 / 1.1);
-    } else if (e.key === "0") {
+    } else if (shortcutKey(e) === "0") {
       e.preventDefault();
       setScale(fitWidthScale());
     }
@@ -1182,7 +1188,7 @@ export function PdfViewer(props: {
       renderedPixelRatio[page] ?? 1, renderPage);
     if (!highlightGraphOwner()) return false;
     if (!bytes) {
-      pushToast("Couldn't capture that region — try again.", "error");
+      pushToast(msg("pdf-couldn-t-capture-that-region-try-again"), "error");
       return false;
     }
     const id = crypto.randomUUID();
@@ -1193,7 +1199,7 @@ export function PdfViewer(props: {
         backend().savePdfAreaImage(props.filename, page, id, stamp, bytes, binding.backendGeneration)));
       if (image.kind === "stale") return false;
     } catch (e) {
-      pushToast(`Couldn't save the area image — try again. (${String(e)})`, "error");
+      pushToast(msg("pdf-couldn-t-save-the-area-image-try-again", { detail: String(e) }), "error");
       return false;
     }
     const h: Highlight = {

@@ -430,9 +430,16 @@ fn switch_checks_job_representation_worker_and_reservation_after_confirmation() 
     for _ in 0..4 {
         h.advance_draft();
     }
+    // RENAME-COST L2: an edit's refresh retires the operation vehicle; its
+    // copy of a's record is a representation phase.
+    edit(&mut h, "c.md", "edited");
+    assert_eq!(h.begin_draft("c.md"), Disposition::Pending);
+    for _ in 0..4 {
+        h.advance_draft();
+    }
     assert!(h.worker.is_some());
     assert!(h.worker.as_ref().unwrap().application.is_none());
-    assert_eq!(h.switch_ready(0), Disposition::Applied);
+    assert_eq!(h.switch_ready(h.last_admitted), Disposition::Applied);
     assert_eq!(h.switch_finish(), Disposition::Waiting);
 
     let mut h = host();
@@ -714,8 +721,8 @@ fn guard_conflict_never_rewinds_an_unrelated_newer_version() {
     let version = h.version;
     h.fs.external("a.md", text("external"), true);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
-    assert_eq!(h.advance_save(0), Disposition::Pending);
-    assert_eq!(h.advance_save(0), Disposition::Applied);
+    assert_eq!(h.advance_save(), Disposition::Pending);
+    assert_eq!(h.advance_save(), Disposition::Applied);
     assert!(h.pages["a.md"].conflict);
     assert_eq!(h.version, version);
     assert_eq!(h.load("c.md"), Disposition::Applied);
@@ -744,7 +751,7 @@ fn save_phase_errors_keep_the_observed_completion_classification() {
             if h.job.is_none() {
                 break;
             }
-            h.advance_save(0);
+            h.advance_save();
         }
         assert!(h.job.is_none());
         assert!(h.events.iter().any(
@@ -764,12 +771,12 @@ fn trash_collision_retries_with_a_fresh_name_without_removal() {
     assert_eq!(h.delete("a.md"), Disposition::Pending);
     drain(&mut h);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
-    assert_eq!(h.advance_save(0), Disposition::Pending); // check
-    assert_eq!(h.advance_save(0), Disposition::Pending); // marker
+    assert_eq!(h.advance_save(), Disposition::Pending); // check
+    assert_eq!(h.advance_save(), Disposition::Pending); // marker
     let (marker, payload) = h.job.as_ref().unwrap().marker.clone().unwrap();
     assert_eq!(custody_entries(&h), 1);
     h.fs.inject(Phase::TrashMove, [Fault::Collision]);
-    assert_eq!(h.advance_save(0), Disposition::Pending);
+    assert_eq!(h.advance_save(), Disposition::Pending);
     assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::Marker);
     assert!(
         h.custody.is_empty(),
@@ -783,7 +790,7 @@ fn trash_collision_retries_with_a_fresh_name_without_removal() {
         if h.job.is_none() {
             break;
         }
-        h.advance_save(0);
+        h.advance_save();
     }
     assert!(h.pages["a.md"].clean());
     assert!(custody_entries(&h) == 0);
@@ -815,7 +822,7 @@ fn a_persistent_trash_collision_fails_the_save_on_the_third() {
             if h.job.is_none() {
                 break;
             }
-            h.advance_save(0);
+            h.advance_save();
         }
         assert!(
             h.job.is_none(),
@@ -840,7 +847,7 @@ fn a_persistent_trash_collision_fails_the_save_on_the_third() {
         if h.job.is_none() {
             break;
         }
-        h.advance_save(0);
+        h.advance_save();
     }
     assert!(!h.fs.files.contains_key("graph/a.md"));
     assert_eq!(custody_entries(&h), 0);
@@ -1000,5 +1007,47 @@ fn an_unchanged_dirty_or_busy_referrer_is_left_out_of_a_rename() {
             "{state}"
         );
         assert!(h.worker.is_none(), "{state}");
+    }
+}
+
+/// RO3 (a) review F2: a power cut may lose a deleted page's data only when
+/// another program wrote it unflushed (R-UNFLUSHED). Tine's own saved bytes
+/// survive every cut once custody completed. Fails if `cuts()` lists stable
+/// trash names regardless of `volatile` (exempting Tine's bytes from the
+/// refinement), or stops listing them (overclaiming against production).
+#[test]
+fn ro3a_power_cut_loses_only_unflushed_external_trash_data() {
+    let payload = "trash/a.md/p-1";
+    for external in [false, true] {
+        let mut fs = ModelFs::default();
+        if external {
+            fs.external("a.md", text("A"), false);
+        } else {
+            fs.page_temp("a.md", &text("A")).unwrap();
+            fs.page_rename("a.md").unwrap();
+            assert_eq!(fs.page_sync("a.md").unwrap(), Witness::Durable);
+        }
+        assert!(fs.trash_move("a.md", "p-1").result.is_ok());
+        assert_eq!(fs.trash_sync("a.md", "p-1").unwrap(), Witness::Durable);
+        assert_eq!(fs.volatile.contains(payload), external);
+        let cuts = fs.cuts(&BTreeSet::new());
+        let losing = cuts.iter().filter(|cut| cut.lose.contains(payload)).count();
+        if external {
+            assert!(losing > 0, "unflushed external data may be lost");
+        } else {
+            assert!(
+                cuts.iter().all(|cut| cut.lose.is_empty()),
+                "Tine's own synced bytes are never in a cut's lose set"
+            );
+        }
+        for cut in &cuts {
+            let mut after = fs.clone();
+            after.power_cut(&BTreeSet::new(), false, cut);
+            assert_eq!(
+                after.files.get(payload).cloned(),
+                (!cut.lose.contains(payload)).then(|| text("A").unwrap()),
+                "external={external}"
+            );
+        }
     }
 }

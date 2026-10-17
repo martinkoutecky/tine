@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as tauriCore from "@tauri-apps/api/core";
 import { setToasts, toasts } from "./toasts";
 import { backend } from "./backend";
+import * as deepLinkNavigation from "./deepLinkNavigation";
 import { installMobileExternalLinkHandler } from "./App";
 import { App } from "./App";
 import { render } from "solid-js/web";
@@ -37,6 +38,19 @@ function click(el: Element): MouseEvent {
 // The window's page-mail listener is registered on its first bind; App renders
 // bind too, so bind through the helper first to let later tests deliver mail.
 beforeAll(async () => { await bindTestHost(); });
+
+it("Journals navigation uses the same glyph in the sidebar and topbar (GH #673)", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const dispose = render(() => <App />, host);
+  try {
+    const top = host.querySelector('button[title="Journals"] svg');
+    const side = [...host.querySelectorAll(".left-sidebar .nav-item")].find(el => el.textContent === "Journals")?.querySelector("svg");
+    expect(top).not.toBeNull();
+    expect(side).toBeDefined();
+    expect(side!.innerHTML).toBe(top!.innerHTML);
+  } finally { dispose(); }
+});
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -427,6 +441,23 @@ describe("identifier migration notice", () => {
 });
 
 describe("first load completion", () => {
+  it("loads the remembered graph on a link launch before installing the link listener", async () => {
+    setFirstLoadDone(false);
+    vi.spyOn(backend(), "startupGraphPath").mockResolvedValue("/tmp/link-last-graph");
+    const load = vi.spyOn(backend(), "loadGraph").mockRejectedValue(new Error("probe reached graph load"));
+    const install = vi.spyOn(deepLinkNavigation, "installTineLinks").mockResolvedValue(() => {});
+    const host = document.createElement("div");
+    document.body.append(host);
+    const dispose = render(() => <App />, host);
+    try {
+      await vi.waitFor(() => expect(firstLoadDone()).toBe(true));
+      expect(load).toHaveBeenCalledWith("/tmp/link-last-graph");
+      await vi.waitFor(() => expect(install).toHaveBeenCalled());
+      expect(load.mock.invocationCallOrder[0]).toBeLessThan(install.mock.invocationCallOrder[0]);
+    } finally {
+      dispose();
+    }
+  });
   it("I-20: marks the first load done after the startup graph load retires its own binding", async () => {
     // Opening a graph bumps the graph epoch, so an owner captured BEFORE the
     // load is always stale afterwards. Welcome's `mandatory` gate reads this

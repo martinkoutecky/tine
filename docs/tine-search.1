@@ -1,0 +1,31 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-search 1  "search " 
+.SH NAME
+tine\-search \- Search page names and block text, as the app\*(Aqs search does
+.SH SYNOPSIS
+\fBtine search\fR [\fB\-\-pages\fR] [\fB\-\-blocks\fR] [\fB\-\-debug\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fITEXT\fR> 
+.SH DESCRIPTION
+Search page names and block text, as the app\*(Aqs search does
+.SH OPTIONS
+.TP
+\fB\-\-pages\fR \fI<PAGES>\fR [default: 20]
+At most this many page hits
+.TP
+\fB\-\-blocks\fR \fI<BLOCKS>\fR [default: 50]
+At most this many block hits
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+.TP
+\fB\-\-json\fR
+Print the typed result (schema tine.cli/1) as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fITEXT\fR>
+

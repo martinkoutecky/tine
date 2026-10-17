@@ -243,6 +243,7 @@ impl EvalCache {
 /// evaluation's one `today` (relative date literals stay unresolved in the IR).
 pub(crate) struct EvalCtx<'a> {
     hierarchy: OnceCell<hierarchy::Hierarchy<'a>>,
+    journal_format: OnceCell<tine_core::date::JournalFormat>,
     /// The page's journal-day ordinal (`yyyymmdd`), or `None` for named pages.
     pub(crate) journal: Option<i64>,
     pub(crate) is_journal: bool,
@@ -288,6 +289,7 @@ impl<'a> EvalCtx<'a> {
     ) -> Self {
         EvalCtx {
             hierarchy: OnceCell::new(),
+            journal_format: OnceCell::new(),
             journal,
             is_journal: kind == PageKind::Journal,
             page_name: name,
@@ -425,12 +427,8 @@ fn eval_block_leaf(
                     .map(String::as_str)
                     .chain(block.marker())
                     .chain(block.priority())
-                    .flat_map(|name| {
-                        name.match_indices('/')
-                            .map(move |(at, _)| &name[..at])
-                            .chain(std::iter::once(name))
-                    });
-                quantify(*quant, names, |name| eval_name_element(pred, name))
+                    .flat_map(refs::namespace_refs);
+                quantify(*quant, names, |name| eval_direct_ref(pred, name, ctx))
             }
             Rel::Tags => quantify(*quant, block.projection().tags().iter(), |tag| {
                 eval_name_element(pred, tag)
@@ -544,7 +542,59 @@ fn quantify<T>(
     }
 }
 
-/// The predicate over a ref or tag element, whose only attribute is `name`.
+/// Direct page references also expose OG's derived journal metadata.
+fn eval_direct_ref(pred: &Filter, name: &str, ctx: &EvalCtx) -> bool {
+    match pred {
+        Filter::And { items } => items.iter().all(|item| eval_direct_ref(item, name, ctx)),
+        Filter::Or { items } => items.iter().any(|item| eval_direct_ref(item, name, ctx)),
+        Filter::Not { inner } => !eval_direct_ref(inner, name, ctx),
+        Filter::Leaf {
+            leaf:
+                Leaf::Attr {
+                    attr: Attr::Journal | Attr::Day,
+                    op,
+                    value,
+                },
+        } => {
+            // OG graph-parser/block.cljs::page-name->map gives referenced
+            // journals a day even before a journal file exists. Read the
+            // existing direct-ref projection; never scan the graph per block.
+            // Put the configured TITLE first in JournalFormat's parse list,
+            // followed by OG's safe defaults. A custom filename format must
+            // not turn an ordinary page reference into a journal reference.
+            let format = ctx.journal_format.get_or_init(|| {
+                tine_core::date::JournalFormat::new(
+                    ctx.config.journal_page_title_format.as_deref(),
+                    None,
+                )
+            });
+            let day = format.parse(name).map(|date| date.ordinal_key());
+            if matches!(
+                pred,
+                Filter::Leaf {
+                    leaf: Leaf::Attr {
+                        attr: Attr::Journal,
+                        ..
+                    }
+                }
+            ) {
+                match value {
+                    Value::Bool { value } => match op {
+                        CmpOp::Eq => day.is_some() == *value,
+                        CmpOp::NotEq => day.is_some() != *value,
+                        _ => false,
+                    },
+                    _ => false,
+                }
+            } else {
+                eval_day(*op, value, day, ctx.today)
+            }
+        }
+        _ => eval_name_element(pred, name),
+    }
+}
+
+/// Path-ref and tag elements expose only their name.
 fn eval_name_element(pred: &Filter, name: &str) -> bool {
     match pred {
         Filter::True => true,

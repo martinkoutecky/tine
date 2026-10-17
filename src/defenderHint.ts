@@ -1,3 +1,4 @@
+import { msg, type Msg } from "./i18n";
 /** The one-time "Windows Defender is slowing this graph down" hint (GH #623).
  *
  *  Question answered: after a graph opens, should Tine tell the user that
@@ -16,8 +17,8 @@ import { pushToast } from "./toasts";
 
 /** The hint wording (Martin reviews this text; the Guide page quotes it). */
 export const DEFENDER_HINT_TEXT =
-  "Opening this graph took a while, and Windows Defender is scanning each file as Tine reads it. Excluding this graph's folder from real-time scanning usually makes later opens much faster. This changes a Windows security setting, so it asks for administrator approval and only if you choose it.";
-export const DEFENDER_HINT_ACTION = "Add an exclusion for this graph folder";
+  msg("defender-hint-offer");
+export const DEFENDER_HINT_ACTION = msg("defender-hint-action");
 
 export type ExclusionOutcome =
   | { outcome: "added" }
@@ -25,14 +26,14 @@ export type ExclusionOutcome =
   | { outcome: "failed"; code: number | null; message: string };
 
 /** Words for the result of the click. Pure, so tests pin them. */
-export function exclusionResultMessage(result: ExclusionOutcome): { text: string; kind: "success" | "info" | "error" } {
+export function exclusionResultMessage(result: ExclusionOutcome): { text: Msg; kind: "success" | "info" | "error" } {
   switch (result.outcome) {
     case "added":
-      return { text: "Windows Defender now skips this graph's folder. Reopen the graph to feel the difference.", kind: "success" };
+      return { text: msg("defender-hint-result", { outcome: "added", detail: "" }), kind: "success" };
     case "declined":
-      return { text: "No change was made: the administrator prompt was not approved. The offer returns the next time this graph opens slowly.", kind: "info" };
+      return { text: msg("defender-hint-result", { outcome: "declined", detail: "" }), kind: "info" };
     case "failed":
-      return { text: `Windows Defender did not accept the exclusion. ${result.message}`, kind: "error" };
+      return { text: msg("defender-hint-result", { outcome: "failed", detail: result.message }), kind: "error" };
   }
 }
 
@@ -50,7 +51,7 @@ export async function maybeShowDefenderHint(): Promise<void> {
   }
   if (!show || !owner()) return;
   let acting = false;
-  pushToast(DEFENDER_HINT_TEXT, "info", {
+  pushToast(msg(DEFENDER_HINT_TEXT.id), "info", {
     sticky: true,
     action: {
       label: DEFENDER_HINT_ACTION,
@@ -67,7 +68,7 @@ export async function maybeShowDefenderHint(): Promise<void> {
             const { text, kind } = exclusionResultMessage(answer.value);
             pushToast(text, kind);
           },
-          (error: unknown) => pushToast(`Could not run the exclusion: ${String(error)}`, "error"),
+          (error: unknown) => pushToast(msg("defender-hint-could-not-run-the-exclusion", { error: String(error) }), "error"),
         );
       },
     },
@@ -78,7 +79,7 @@ export async function maybeShowDefenderHint(): Promise<void> {
       if (acting || !owner()) return;
       void writeOwned(owner, backend().dismissDefenderHint()).then(
         () => undefined,
-        (error: unknown) => pushToast(`Could not remember that you closed the hint: ${String(error)}`, "error"),
+        (error: unknown) => pushToast(msg("defender-hint-could-not-remember-that-you-closed-the-hint", { error: String(error) }), "error"),
       );
     },
   });

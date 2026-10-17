@@ -26,7 +26,7 @@ fn poll(p: &mut Timed) -> Disposition {
         .and_then(|j| p.host.fs.epochs.get(&j.page))
         .copied()
         .unwrap_or(0);
-    p.poll(epoch)
+    p.poll_at(epoch)
 }
 fn pump(p: &mut Timed) {
     for _ in 0..96 {
@@ -103,18 +103,7 @@ fn review_r1_failed_move_cannot_clear_unrecovered_source_refresh_error() {
 fn review_r1_discard_clears_obsolete_terminal_refresh_error() {
     let mut p = timed();
     failed_refresh(&mut p);
-    p.with_host(|h| {
-        assert_eq!(
-            send(
-                h,
-                "a.md",
-                RequestKind::Discard {
-                    version: h.pages["a.md"].version,
-                }
-            ),
-            Disposition::Applied
-        )
-    });
+    p.with_host(|h| assert_eq!(send(h, "a.md", RequestKind::Discard), Disposition::Applied));
     time(&p, 100_000);
     pump(&mut p);
     assert!(p.host.pages["a.md"].clean());
@@ -280,13 +269,56 @@ fn applied_delete(p: &mut Timed) {
         poll(p);
     }
     assert!(p.host.pages["a.md"].buf.is_none());
+    // RENAME-COST L1: no explosion follows the installation.
+    assert!(p.host.worker.is_none());
+}
+
+/// A crash leaves an applied deletion's operation vehicle; launch explodes
+/// it, a representation worker over a.md. Polled to its first copy.
+fn launch_exploding(p: &mut Timed) {
+    applied_delete(p);
+    p.with_host(|h| {
+        h.stop();
+        h.fs.crash();
+        assert_eq!(h.launch(), Disposition::Pending);
+    });
     assert!(p.host.worker.as_ref().unwrap().retry_copy);
+}
+
+/// RENAME-COST L2: an applied group operation (a.md → c.md, b.md a
+/// referrer) whose page b.md is edited: the refresh retires the operation
+/// vehicle after durable copies of a's and c's records. Polled to the first
+/// copy, a representation phase of the refresh's effect on b.md.
+fn absorbing(p: &mut Timed) {
+    p.with_host(|h| {
+        assert_eq!(
+            h.rename_with(
+                "a.md",
+                "c.md",
+                &BTreeSet::from(["b.md".into()]),
+                |bytes, _, _| Ok(bytes.clone())
+            ),
+            Disposition::Pending
+        )
+    });
+    for _ in 0..4 {
+        poll(p);
+    }
+    assert!(p.host.worker.is_none(), "L1: no explosion");
+    p.with_host(|h| edit(h, "b.md", "edited b"));
+    for _ in 0..16 {
+        if p.host.worker.as_ref().is_some_and(|w| w.retry_copy) {
+            return;
+        }
+        poll(p);
+    }
+    panic!("the refresh never reached its copies");
 }
 
 #[test]
 fn review_f1_explosion_error_survives_logical_match_until_physical_completion() {
     let mut p = timed();
-    applied_delete(&mut p);
+    absorbing(&mut p);
     p.host.fs.inject(Phase::DraftSync, [Fault::Before; 3]);
     for _ in 0..5 {
         poll(&mut p);
@@ -298,39 +330,38 @@ fn review_f1_explosion_error_survives_logical_match_until_physical_completion() 
         .iter()
         .any(|e| matches!(e, Event::DraftError { .. })));
     assert!(
-        p.notice("a.md").draft_error,
+        p.notice("b.md").draft_error,
         "pending physical failure remains visible"
     );
     p.with_host(|_| ());
-    assert!(p.notice("a.md").draft_error);
+    assert!(p.notice("b.md").draft_error);
     time(&p, 100_000);
     pump(&mut p);
     assert!(p.host.worker.is_none());
-    assert!(!p.notice("a.md").draft_error);
+    assert!(!p.notice("b.md").draft_error);
 }
 
 #[test]
 fn review_f1_replaced_explosion_vehicles_accumulate_failures() {
     let mut p = timed();
-    applied_delete(&mut p);
+    absorbing(&mut p);
     p.host.fs.inject(Phase::DraftTemp, [Fault::Before; 30]);
     for n in 1..=30 {
         time(&p, n * 30_000);
         poll(&mut p);
     }
     assert!(p.host.worker.is_some());
-    assert!(p.host.allocator_busy());
     assert!(p
         .host
         .events
         .iter()
         .any(|e| matches!(e, Event::DraftError { .. })));
-    assert!(p.notice("a.md").draft_error);
+    assert!(p.notice("b.md").draft_error);
     p.host.fs.faults.clear();
     time(&p, 1_000_000);
     pump(&mut p);
     assert!(p.host.worker.is_none());
-    assert!(!p.notice("a.md").draft_error);
+    assert!(!p.notice("b.md").draft_error);
 }
 
 #[test]
@@ -411,12 +442,15 @@ fn review_f3_every_retained_effect_uses_backoff_and_missing_sync_only() {
             Phase::DraftSync
         };
         match effect {
-            "representation" => applied_delete(&mut p),
+            "representation" => launch_exploding(&mut p),
             "op-retirement" => {
+                // RENAME-COST L1: retired whole once its page publishes.
                 applied_delete(&mut p);
                 for _ in 0..32 {
-                    let w = p.host.worker.as_ref().unwrap();
-                    if w.task.name.starts_with("op-") && w.task.stage == Stage::UnlinkSync {
+                    let w = p.host.worker.as_ref();
+                    if w.is_some_and(|w| {
+                        w.task.name.starts_with("op-") && w.task.stage == Stage::UnlinkSync
+                    }) {
                         break;
                     }
                     poll(&mut p);
@@ -562,42 +596,79 @@ fn review_f5_retirement_preserves_subscriptions_and_queued_open_custody() {
     assert!(!p.host.pages.contains_key("a.md"));
 }
 
+/// A window Move of `a.md` into `b.md` with these texts, at their versions,
+/// its operation draft written (the clock does not move).
+fn window_move(p: &mut Timed, source: &str, receiver: &str) {
+    p.with_host(|h| {
+        let (source_version, receiver_version) = (h.pages["a.md"].version, h.pages["b.md"].version);
+        assert_eq!(
+            send(
+                h,
+                "a.md",
+                RequestKind::Move {
+                    receiver: "b.md".into(),
+                    source_text: text(source),
+                    receiver_text: text(receiver),
+                    source_version,
+                    receiver_version,
+                }
+            ),
+            Disposition::Pending
+        );
+    });
+    explode(p);
+}
+
+/// The host's edit debounce governs a window Move (PERF-FIXES D1): its
+/// pages publish 400 ms after their last change, here a second Move at
+/// 300 ms, with the same bytes or new ones: a new version restarts it.
 #[test]
-fn quiet_edit_and_debounce_publish_at_400_ms_after_last_change() {
-    for second in [false, true] {
+fn a_window_moves_pages_publish_400_ms_after_their_last_change() {
+    for second in [None, Some("source"), Some("again")] {
         let mut p = timed();
-        begin_edit(&mut p);
-        if second {
+        p.with_host(|h| {
+            open(h, "a.md");
+            open(h, "b.md");
+        });
+        window_move(&mut p, "source", "receiver");
+        if let Some(again) = second {
             time(&p, 300);
-            p.with_host(|h| edit(h, "a.md", "last"));
+            pump(&mut p);
+            assert!(
+                !p.host.pages["a.md"].clean(),
+                "nothing saved before the debounce"
+            );
+            window_move(&mut p, again, "receiver");
         }
-        let due = if second { 700 } else { 400 };
+        let due = if second.is_some() { 700 } else { 400 };
         time(&p, due - 1);
         pump(&mut p);
-        assert!(p.host.job.is_none());
-        assert!(!p.host.pages["a.md"].clean());
+        assert!(!p.host.pages["a.md"].clean() && !p.host.pages["b.md"].clean());
         time(&p, due);
         pump(&mut p);
-        assert!(p.host.pages["a.md"].clean());
+        assert!(p.host.pages["a.md"].clean() && p.host.pages["b.md"].clean());
         assert_eq!(
             p.host.fs.files["graph/a.md"].as_ref(),
-            if second { &b"last"[..] } else { &b"first"[..] }
+            second.unwrap_or("source").as_bytes()
         );
     }
 }
 
+/// A window Submit saves at once (PERF-FIXES D1): the window already waited
+/// for the end of the typing burst, so the host adds no second wait. A
+/// second Submit after the first one's save saves at once too.
 #[test]
-fn accepted_same_bytes_with_a_new_version_restart_the_debounce() {
+fn a_window_submit_saves_at_once_without_the_host_debounce() {
     let mut p = timed();
     begin_edit(&mut p);
-    time(&p, 300);
-    p.with_host(|h| edit(h, "a.md", "first"));
-    time(&p, 699);
-    pump(&mut p);
-    assert!(!p.host.pages["a.md"].clean());
-    time(&p, 700);
     pump(&mut p);
     assert!(p.host.pages["a.md"].clean());
+    assert_eq!(p.host.fs.files["graph/a.md"].as_ref(), &b"first"[..]);
+    time(&p, 300);
+    p.with_host(|h| edit(h, "a.md", "last"));
+    pump(&mut p);
+    assert!(p.host.pages["a.md"].clean());
+    assert_eq!(p.host.fs.files["graph/a.md"].as_ref(), &b"last"[..]);
 }
 
 #[test]
@@ -634,6 +705,7 @@ fn overdue_save_starts_before_queued_requests_can_starve_it() {
 #[test]
 fn a_publication_followed_by_new_input_in_one_boundary_resets_unsaved_age() {
     let mut p = timed();
+    p.host.test.submits_wait = true;
     begin_edit(&mut p);
     time(&p, 2000);
     p.with_host(|h| {
@@ -672,6 +744,7 @@ fn continuous_edits_publish_at_the_one_second_cap() {
 fn failed_and_uncertain_saves_retry_on_every_backoff_and_surface_persistent_error() {
     for phase in [Phase::PageTemp, Phase::PageSync] {
         let mut p = timed();
+        p.host.test.submits_wait = true;
         begin_edit(&mut p);
         let mut due = 400;
         for (index, delay) in [100, 300, 1000, 3000, 10000, 30000, 30000]
@@ -940,7 +1013,7 @@ fn pending_move_keeps_custody_and_answers_after_disk_recovery() {
 }
 
 #[test]
-fn applied_group_operation_retries_explosion_and_retires_every_vehicle() {
+fn applied_group_operation_retires_its_vehicle_whole_after_publication() {
     let mut p = timed();
     p.with_host(|h| {
         assert_eq!(
@@ -957,29 +1030,26 @@ fn applied_group_operation_retries_explosion_and_retires_every_vehicle() {
         poll(&mut p);
     }
     assert_eq!(p.host.pages["c.md"].buf, text("A"));
-    assert!(p.host.worker.is_some());
-    p.host.fs.inject(Phase::DraftTemp, [Fault::Before]);
-    pump(&mut p);
-    assert!(p.host.worker.is_some());
-    time(&p, p.draft_retry_at().unwrap());
-    // Observed when the explosion ends: the operation's pages save at once
-    // after it (caller urgency), retiring these copies.
-    explode(&mut p);
+    // RENAME-COST L1: no explosion; the operation's pages save at once
+    // (caller urgency) while the vehicle alone holds their records.
+    assert!(p.host.worker.is_none());
     assert!(!p.host.allocator_busy());
-    let scan = drafts::scan(p.host.fs.draft_files(true));
-    assert_eq!(scan.logical.len(), 3);
-    assert!(scan.files.keys().all(|name| name.starts_with("p-")));
-    assert_eq!(scan.files.len(), 3);
+    let files = p.host.fs.draft_files(true);
+    assert!(files.len() == 1 && files[0].0.starts_with("op-"));
     pump(&mut p);
     assert!(
         p.host.fs.draft_files(true).is_empty(),
-        "every vehicle retires"
+        "the vehicle retires whole"
     );
+    let calls = |phase| p.host.fs.calls.iter().filter(|&&c| c == phase).count();
+    assert_eq!(calls(Phase::DraftTemp), 1, "one draft file: the vehicle");
+    assert_eq!(calls(Phase::DraftUnlink), 1, "retired by one unlink");
 }
 
 #[test]
 fn queued_requests_dequeue_apply_answer_and_then_save_on_the_clock() {
     let mut p = timed();
+    p.host.test.submits_wait = true;
     p.with_host(|h| {
         assert_eq!(
             h.admit(Request {
@@ -1039,11 +1109,11 @@ fn moved_with_unfinished_custody(h: &mut Host<ModelFs>) -> String {
     drain(h);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
     for _ in 0..3 {
-        h.advance_save(0); // guard, marker, move
+        h.advance_save(); // guard, marker, move
     }
     assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::TrashSync);
     h.fs.inject(Phase::TrashSync, [Fault::Before]);
-    h.advance_save(0);
+    h.advance_save();
     assert!(h.job.is_none());
     let debt = &h.custody["a.md"];
     debt.markers.values().next().unwrap().clone()
@@ -1069,8 +1139,8 @@ fn r2_unknown_custody_is_not_relisted_under_a_running_deletion() {
     assert_eq!(h.delete("a.md"), Disposition::Pending);
     drain(&mut h);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
-    h.advance_save(0); // guard
-    h.advance_save(0); // marker
+    h.advance_save(); // guard
+    h.advance_save(); // marker
     assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::Rename);
     h.recover_custody();
     let custody = |k: &&String| k.starts_with("draft/trash-custody/");
@@ -1099,8 +1169,7 @@ fn r2_escaped_custody_has_a_sticky_progress_notice() {
     assert_eq!(p.notice("a.md").custody_error, sticky, "after a later save");
     p.with_host(|h| {
         edit(h, "a.md", "E");
-        let version = h.pages["a.md"].version;
-        send(h, "a.md", RequestKind::Discard { version });
+        send(h, "a.md", RequestKind::Discard);
     });
     run_for(&mut p, 10_000);
     assert_eq!(p.notice("a.md").custody_error, sticky, "after Discard");
@@ -1130,7 +1199,7 @@ fn r2_third_failed_retirement_is_sticky_until_retired() {
     h.fs.inject(Phase::CustodyRetire, [Fault::Before; 3]);
     assert_eq!(h.start_save("a.md"), Disposition::Pending);
     while h.job.is_some() {
-        h.advance_save(0);
+        h.advance_save();
     }
     assert!(h.custody.is_empty());
     let payload = h.retire.values().next().unwrap().payload.clone();
@@ -1166,8 +1235,13 @@ fn r2_unknown_custody_is_retried_on_the_backoff_until_listed() {
     h.stop();
     h.fs.crash();
     h.fs.inject(Phase::CustodyList, [Fault::Before; 3]);
-    assert_eq!(h.launch(), Disposition::Applied);
+    // Pending: launch explodes the deletion's surviving operation vehicle.
+    assert!(matches!(
+        h.launch(),
+        Disposition::Applied | Disposition::Pending
+    ));
     let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    explode(&mut p);
     assert!(p.custody_unknown().unwrap().contains("trash-custody"));
     assert!(p.host.custody.is_empty());
     let mut lists = vec![];
@@ -1445,6 +1519,7 @@ fn v1_a_restore_never_closes_over_a_recoverable_draft() {
 #[test]
 fn save_now_skips_the_debounce_but_not_a_failed_saves_backoff() {
     let mut p = timed();
+    p.host.test.submits_wait = true;
     p.with_host(|h| open(h, "a.md"));
     p.save_now(&["a.md".into()]);
     p.with_host(|h| edit(h, "a.md", "first"));
@@ -1608,32 +1683,17 @@ fn a_caller_operations_pages_skip_the_debounce_but_not_a_failed_saves_backoff() 
     );
 }
 
-/// A window Move is an ordinary edit, and so is a submit: both keep the
-/// debounce at a frozen clock (only an operation's caller is hurried).
+/// A window Move is an ordinary edit and keeps the debounce at a frozen
+/// clock; a window Submit does not (PERF-FIXES D1: the window waited).
 #[test]
-fn a_window_move_and_a_submit_keep_the_debounce() {
+fn a_window_move_keeps_the_debounce_and_a_submit_does_not() {
     let mut p = timed();
     time(&p, 1_000);
     p.with_host(|h| {
         open(h, "a.md");
         open(h, "b.md");
-        let (source_version, receiver_version) = (h.pages["a.md"].version, h.pages["b.md"].version);
-        assert_eq!(
-            send(
-                h,
-                "a.md",
-                RequestKind::Move {
-                    receiver: "b.md".into(),
-                    source_text: text("source"),
-                    receiver_text: text("receiver"),
-                    source_version,
-                    receiver_version,
-                }
-            ),
-            Disposition::Pending
-        );
     });
-    explode(&mut p);
+    window_move(&mut p, "source", "receiver");
     assert!(!p.host.pages["a.md"].clean() && !p.host.pages["b.md"].clean());
     for _ in 0..5 {
         poll(&mut p);
@@ -1651,10 +1711,205 @@ fn a_window_move_and_a_submit_keep_the_debounce() {
         open(h, "a.md");
         edit(h, "a.md", "typed");
     });
-    for _ in 0..5 {
-        poll(&mut p);
-        assert!(p.host.job.is_none(), "a submit waits for the debounce");
-    }
-    time(&p, 1_400);
     assert_eq!(poll(&mut p), Disposition::Pending);
+    assert!(p.host.job.is_some(), "a window Submit saves at once");
+}
+
+#[test]
+fn rename_cost_removal_copy_failure_keeps_the_sibling_through_progress() {
+    let mut h = super::lazy_operation_group();
+    saved(&mut h, "c.md");
+    h.fs.external("b.md", text("foreign b"), true);
+    assert_eq!(h.observe("b.md"), Disposition::Applied);
+    assert_eq!(
+        send(&mut h, "a.md", RequestKind::Discard),
+        Disposition::Applied
+    );
+    h.receive("a.md");
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    assert_eq!(poll(&mut p), Disposition::Pending);
+    assert!(matches!(
+        p.host.worker.as_ref().unwrap().application,
+        Some(Application::Removal)
+    ));
+    p.host.fs.inject(Phase::DraftTemp, [Fault::Before]);
+    for n in 1..=30 {
+        time(&p, n * 30_000);
+        poll(&mut p);
+        if p.host.worker.is_none() {
+            break;
+        }
+    }
+    assert!(p.host.worker.is_none());
+    p.with_host(|h| restart(h, true, false));
+    assert_eq!(
+        p.host.pages.get("b.md").map(|p| p.buf.clone()),
+        Some(text("valuable operation b")),
+        "RENAME-COST L2: a removal's failed sibling copy retries before the operation file goes"
+    );
+}
+
+/// REVIEW-rename-cost F1: a page of a rename whose save keeps failing must
+/// not keep its published siblings' records in the operation file through a
+/// stop. The stop drafts the failing page (its exact record) and explodes the
+/// operation file, as before RENAME-COST (`a_switch_drafts_a_page_only_after_its_save_fails`),
+/// so a close, switch or exit completes instead of waiting forever.
+#[test]
+fn rename_cost_a_failing_operation_page_does_not_block_a_stop() {
+    let mut h = super::lazy_operation_group();
+    saved(&mut h, "c.md");
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    p.host.fs.inject(Phase::PageTemp, [Fault::Before; 200]);
+    pump(&mut p);
+    assert!(p.host.pages["b.md"].risk && !p.host.pages["b.md"].conflict);
+    assert!(
+        p.host.op_waits("c.md"),
+        "precondition: c's record waits for b"
+    );
+    begin_stop(&mut p, false);
+    for n in 1..=20 {
+        time(&p, n * 60_000);
+        pump(&mut p);
+    }
+    assert_eq!(state(&p), StopState::Ready);
+    let logical = drafts::scan(p.host.fs.draft_files(true)).logical;
+    assert!(
+        !logical.contains_key("c.md"),
+        "the published page's record is gone"
+    );
+    let (b, record) = (&p.host.pages["b.md"], &logical["b.md"]);
+    assert_eq!(
+        (&record.bytes, &record.base, record.version),
+        (&b.buf, &b.base, b.version),
+        "the failing page keeps its exact draft"
+    );
+}
+
+/// REVIEW-rename-cost R3-1: a stop runs its save-first saves before it
+/// explodes an operation vehicle (§6 step 3). With every owed referrer
+/// saving, the operation file retires whole: no draft copy is written.
+#[test]
+fn rename_cost_a_stop_saves_owed_referrers_before_any_draft() {
+    let refs: Vec<String> = (0..20).map(|i| format!("r{i:02}.md")).collect();
+    let mut fs = ModelFs::default();
+    fs.external("a.md", text("A"), true);
+    for r in &refs {
+        fs.external(r, text("original"), true);
+    }
+    let keys = ["a.md", "c.md"]
+        .into_iter()
+        .map(String::from)
+        .chain(refs.iter().cloned());
+    let locks = keys.map(|k| (k, Arc::new(Mutex::new(())))).collect();
+    let mut h = Host::new(fs, locks);
+    for r in &refs {
+        open(&mut h, r);
+    }
+    let set: BTreeSet<PageKey> = refs.iter().cloned().collect();
+    let renamed = h.rename_with("a.md", "c.md", &set, |bytes, key, _| {
+        Ok(if key.starts_with('r') {
+            text("operation")
+        } else {
+            bytes.clone()
+        })
+    });
+    assert_eq!(renamed, Disposition::Pending);
+    drain(&mut h);
+    saved(&mut h, "c.md");
+    assert_eq!(
+        h.fs.draft_files(true).len(),
+        1,
+        "precondition: one operation file"
+    );
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    begin_stop(&mut p, false);
+    p.host.fs.calls.clear();
+    for n in 1..=200 {
+        if state(&p) != StopState::Waiting {
+            break;
+        }
+        time(&p, n * 30_000);
+        poll(&mut p);
+    }
+    assert_eq!(state(&p), StopState::Ready);
+    let copies = p
+        .host
+        .fs
+        .calls
+        .iter()
+        .filter(|c| **c == Phase::DraftTemp)
+        .count();
+    assert_eq!(
+        copies, 0,
+        "R3-1: the stop wrote draft copies its saves made unnecessary"
+    );
+    assert!(p.host.fs.draft_files(true).is_empty());
+}
+
+/// R3-1, availability: draft writes failing (a disk error in app data)
+/// while page saves succeed must not abort a stop over a rename whose saves
+/// retire the operation file.
+#[test]
+fn rename_cost_failing_draft_writes_do_not_abort_a_saving_stop() {
+    let mut h = super::lazy_operation_group();
+    saved(&mut h, "c.md");
+    let mut p = Progress::new(h, ManualClock(Cell::new(0)));
+    p.host.fs.inject(Phase::DraftTemp, [Fault::Before; 10_000]);
+    begin_stop(&mut p, false);
+    for n in 1..=200 {
+        if state(&p) != StopState::Waiting {
+            break;
+        }
+        time(&p, n * 60_000);
+        poll(&mut p);
+    }
+    assert_eq!(state(&p), StopState::Ready);
+}
+
+/// P5 (I-12): draft refresh suppression (`begin_draft_retiring`), the switch
+/// barrier (`can_switch`) and Progress ask one question through
+/// `Record::holds`: bytes, base and version all equal. Each field differing
+/// alone, absent bytes and an UNKNOWN base included, makes it false.
+#[test]
+fn a_draft_holds_its_page_only_when_bytes_base_and_version_all_match() {
+    let bytes = |s: &str| -> Text { Some(Arc::from(s.as_bytes())) };
+    let page = |buf: Text, base: Base, version: u64| Page {
+        buf,
+        base,
+        version,
+        typed: true,
+        risk: true,
+        conflict: false,
+        obs: None,
+    };
+    let record = |b: Text, base: Base, version: u64| Record {
+        page: "a.md".into(),
+        wseq: 1,
+        version,
+        base,
+        bytes: b,
+    };
+    let known = || Base::Known(bytes("old"));
+    for (buf, base) in [
+        (bytes("new"), known()),
+        (None, known()),
+        (bytes("new"), Base::Unknown),
+        (None, Base::Unknown),
+    ] {
+        let p = page(buf.clone(), base.clone(), 7);
+        assert!(record(buf.clone(), base.clone(), 7).holds(&p));
+        let other = if buf.is_some() { None } else { bytes("new") };
+        assert!(!record(other, base.clone(), 7).holds(&p), "bytes");
+        let other_base = if base == Base::Unknown {
+            known()
+        } else {
+            Base::Unknown
+        };
+        assert!(!record(buf.clone(), other_base, 7).holds(&p), "base");
+        assert!(
+            !record(buf.clone(), Base::Known(bytes("x")), 7).holds(&p),
+            "base bytes"
+        );
+        assert!(!record(buf, base, 8).holds(&p), "version");
+    }
 }

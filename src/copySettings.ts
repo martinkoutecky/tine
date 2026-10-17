@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Device-local copy/paste behavior preferences (persisted in tine-settings.json via
 // the generic app_bool backend for atomic, WebView-independent state). Read once at
 // startup by initCopySettings(); the signals drive both the copy logic
@@ -65,18 +66,18 @@ export async function initCopySettings(): Promise<void> {
     const value = await backend().getAppBool(KEY_SUBTREE, DEFAULT_INCLUDE_SUBTREE);
     if (preferenceReadCurrent(includeSubtree, subtreeRevision)) { setIncludeSubtreeSig(value); seedPreference(includeSubtree); }
   } catch {
-    pushToast("Could not load copy subtree preference.", "error");
+    pushToast(msg("settings-could-not-load-copy-subtree-preference"), "error");
   }
   try {
     const value = await backend().getAppBool(KEY_COLLAPSED, DEFAULT_STRIP_COLLAPSED);
     if (preferenceReadCurrent(stripCollapsed, collapsedRevision)) { setStripCollapsedSig(value); seedPreference(stripCollapsed); }
   } catch {
-    pushToast("Could not load collapsed copy preference.", "error");
+    pushToast(msg("settings-could-not-load-collapsed-copy-preference"), "error");
   }
   try {
     const value = await backend().getAppBool(KEY_REF_ZOOM, DEFAULT_REF_ZOOM);
     if (preferenceReadCurrent(refZoom, zoomRevision)) { setRefZoomSig(value); seedPreference(refZoom); }
   } catch {
-    pushToast("Could not load block reference preference.", "error");
+    pushToast(msg("settings-could-not-load-block-reference-preference"), "error");
   }
 }

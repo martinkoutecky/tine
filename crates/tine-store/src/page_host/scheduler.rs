@@ -12,12 +12,10 @@ impl Driver {
 
     fn tick_draft(&mut self) {
         let worker = self.host.worker.as_ref().unwrap();
-        let application = worker.application.is_some()
-            && !matches!(worker.application, Some(Application::Representation))
-            && matches!(worker.task.stage, Stage::Present | Stage::Absent)
-            && (worker.task.bytes.is_some() || worker.remaining.is_empty());
+        let application = !matches!(worker.application, Some(Application::Representation))
+            && super::applies_next(worker);
         let present = worker.task.stage == Stage::Present;
-        let removal = matches!(worker.application, Some(Application::Removal(_)));
+        let removal = matches!(worker.application, Some(Application::Removal));
         let inc = self.host.incarnation;
         self.host.advance_draft();
         let stutter = |d: &mut Self, context: &str| {
@@ -54,12 +52,19 @@ impl Driver {
                 .files
                 .contains_key(&format!("draft/{}", worker.task.name));
             let removal = match &worker.application {
-                Some(Application::Removal(p)) => !drafts::scan(survivor.draft_files(false))
-                    .logical
-                    .contains_key(p),
+                Some(Application::Removal) => {
+                    let logical = drafts::scan(survivor.draft_files(false)).logical;
+                    !worker.pages.iter().any(|p| logical.contains_key(p))
+                }
                 _ => false,
             };
-            let new_state = worker.task.bytes.is_some() && present;
+            // A removal's copies are not its effect: it takes effect only
+            // when its page's record is gone (RENAME-COST L2).
+            let removing = matches!(
+                worker.application,
+                Some(Application::Removal | Application::Retire)
+            );
+            let new_state = !removing && worker.task.bytes.is_some() && present;
             if new_state || removal {
                 // The abstraction linearizes a surviving pending effect just
                 // before the fault. No real phase is advanced or I/O retried.
@@ -170,7 +175,7 @@ impl Driver {
                 "switchReq" => assert_eq!(self.host.switch_request(), Disposition::Waiting),
                 "switchFin" => assert_eq!(self.host.switch_finish(), Disposition::Waiting),
                 "check" | "rename" | "dirSync" | "saveFail" => {
-                    assert_eq!(self.host.advance_save(0), Disposition::Waiting)
+                    assert_eq!(self.host.advance_save(), Disposition::Waiting)
                 }
                 _ => {}
             }
@@ -228,7 +233,7 @@ impl Driver {
                 .as_ref()
                 .is_some_and(|j| j.phase == SavePhase::Temp)
         {
-            self.host.advance_save(0);
+            self.host.advance_save();
             self.compare("temp synced barrier");
             return true;
         }
@@ -239,7 +244,7 @@ impl Driver {
                 .as_ref()
                 .is_some_and(|j| j.phase == SavePhase::TrashSync)
         {
-            self.host.advance_save(0);
+            self.host.advance_save();
             self.compare("trash directory sync barrier");
             return true;
         }
@@ -338,7 +343,7 @@ fn markers(d: &mut Driver) -> usize {
 }
 
 /// REVIEW-A2 B2 / A3 B2 / F9: a crash after the move and before custody (b);
-/// launch redoes (a)+(b) before the marker retires, and a recreation of the
+/// launch redoes custody before the marker retires, and a recreation of the
 /// page never renames before that custody completes.
 #[test]
 fn restart_redoes_custody_before_marker_retires_and_before_recreation() {
@@ -352,6 +357,8 @@ fn restart_redoes_custody_before_marker_retires_and_before_recreation() {
         d.host.fs.calls.clear();
         run(&mut d, &[("launch", json!([]))]);
         let launch = d.host.fs.calls.clone();
+        // Launch explodes the deletion's surviving operation vehicle.
+        d.settle();
         assert_eq!(
             launch[..2],
             [Phase::CustodyList, Phase::TrashSync],
@@ -399,7 +406,10 @@ fn failing_custody_fails_saves_until_the_three_failure_escape() {
     delete_through_move(&mut d);
     d.fault(false, false);
     d.host.fs.inject(Phase::TrashSync, [Fault::Before]);
-    run(&mut d, &[("launch", json!([])), ("observe", json!([0]))]);
+    run(&mut d, &[("launch", json!([]))]);
+    // Launch explodes the deletion's surviving operation vehicle.
+    d.settle();
+    run(&mut d, &[("observe", json!([0]))]);
     d.settle();
     open(&mut d, 0);
     edit(&mut d, 0, 2);
@@ -407,7 +417,7 @@ fn failing_custody_fails_saves_until_the_three_failure_escape() {
         d.host.fs.inject(Phase::TrashSync, [Fault::Before]);
         assert_eq!(d.host.start_save(&key(0)), Disposition::Pending);
         d.finish("flush", &[json!(0)]);
-        d.host.advance_save(0);
+        d.host.advance_save();
         if attempt < 3 {
             d.finish("saveFail", &[]);
             assert!(d.host.job.is_none());
@@ -454,11 +464,11 @@ fn collision_retires_its_unused_marker_at_every_cut() {
         }
         let drafts = d.host.fs.draft_files(true);
         run(&mut d, &[("flushDel", json!([0])), ("check", json!([]))]);
-        d.host.advance_save(0);
+        d.host.advance_save();
         d.compare("marker is a stutter");
         assert_eq!(markers(&mut d), 1);
         d.host.fs.inject(Phase::TrashMove, [Fault::Collision]);
-        d.host.advance_save(0);
+        d.host.advance_save();
         d.compare("collision leaves graph and abstract job unchanged");
         assert_eq!(d.host.job.as_ref().unwrap().phase, SavePhase::Marker);
         assert_eq!(markers(&mut d), 0, "unused marker retired");
@@ -501,7 +511,7 @@ fn discard_has_no_trash_barrier_and_launch_completes_custody() {
         ],
     );
     d.host.fs.inject(Phase::TrashSync, [Fault::Before]);
-    d.host.advance_save(0);
+    d.host.advance_save();
     d.finish("dirSync", &[json!(false)]);
     run(
         &mut d,
@@ -800,7 +810,20 @@ fn one_post_unlink_sync_failure_completes_cleanup_retirement_removal_and_op_reti
                 );
             }
             _ => {
+                // RENAME-COST L2: a refresh that supersedes the operation
+                // vehicle's record retires the vehicle.
                 assert!(d.step("opDelete", &[json!(0)]));
+                d.settle();
+                run(&mut d, &[("wRecv", json!([0]))]);
+                edit(&mut d, 0, 2);
+                assert!(d.step("draftSync", &[json!(0)]));
+                for _ in 0..80 {
+                    let w = d.host.worker.as_ref().unwrap();
+                    if w.task.name.starts_with("op-") {
+                        break;
+                    }
+                    d.tick_draft();
+                }
             }
         }
         for _ in 0..80 {
@@ -1102,12 +1125,13 @@ fn loaded_delete_new_open_during_install_gets_a_modelled_push() {
 
 /// The system calls inside each custody HostIo call of a deletion on a fresh
 /// trash chain: marker temp, rename, directory sync; three mkdirs, three
-/// parent syncs, the move; payload data, `pages/` and three ancestor syncs;
+/// parent syncs, the move; payload stat (no sync), `pages/` and three ancestor
+/// syncs;
 /// marker unlink and its directory sync (REVIEW-2b-r2 R1).
 const CUSTODY_CALLS: [(Phase, usize); 4] = [
     (Phase::CustodyWrite, 3),
     (Phase::TrashMove, 7),
-    (Phase::TrashSync, 5),
+    (Phase::TrashSync, 4),
     (Phase::CustodyRetire, 2),
 ];
 
@@ -1119,7 +1143,7 @@ fn cut_deletion(d: &mut Driver, phase: Phase, k: usize) {
     match phase {
         Phase::CustodyWrite | Phase::TrashMove => {
             if phase == Phase::TrashMove {
-                d.host.advance_save(0);
+                d.host.advance_save();
                 d.compare("marker is a stutter");
             }
             d.cut = Some(k);
@@ -1130,7 +1154,7 @@ fn cut_deletion(d: &mut Driver, phase: Phase, k: usize) {
             // The process stops inside this call; nobody sees its outcome.
             d.host.fs.inject(phase, [Fault::Cut(k)]);
             let events = d.host.events.len();
-            d.host.advance_save(0);
+            d.host.advance_save();
             d.host.events.truncate(events);
         }
         _ => {
@@ -1202,4 +1226,31 @@ fn r1_every_constituent_cut_of_a_deletion_refines_the_oracle() {
             }
         }
     }
+}
+
+/// RENAME-COST review (2026-10-11): a crash while a removal copies its
+/// operation siblings leaves the removal unapplied; the harness drops its
+/// pending effect, and the next draft effect checks against the model.
+#[test]
+fn a_crash_during_a_removal_copy_leaves_the_removal_unapplied() {
+    let mut d = Driver::stepped("base");
+    run(&mut d, &[("opRename", json!([0, 2, [1], [[1, 3]]]))]);
+    d.settle();
+    assert!(d.attempt("flush", &[json!(2)]));
+    while d.host.job.as_ref().unwrap().phase == SavePhase::Temp {
+        assert!(d.attempt("check", &[]));
+    }
+    assert!(d.attempt("check", &[]));
+    assert!(d.attempt("rename", &[]));
+    assert!(d.attempt("dirSync", &[json!(true)]));
+    run(&mut d, &[("draftSync", json!([2]))]);
+    for _ in 0..3 {
+        d.tick_draft();
+    }
+    assert_eq!(d.host.worker.as_ref().unwrap().task.stage, Stage::Present);
+    d.fault(true, false);
+    run(&mut d, &[("launch", json!([]))]);
+    d.settle();
+    run(&mut d, &[("draftSync", json!([0]))]);
+    d.settle();
 }

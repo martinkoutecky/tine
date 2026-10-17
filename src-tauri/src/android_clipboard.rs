@@ -9,7 +9,7 @@
 //! image through that URI. This module is only the hand-off; the file is written
 //! on the Kotlin side so no persisted-format writer site is added here.
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{
     plugin::{Builder, PluginApi, PluginHandle, TauriPlugin},
     AppHandle, Manager, Runtime,
@@ -24,6 +24,24 @@ struct CopyImage<'a> {
 }
 
 pub(crate) struct AndroidClipboard<R: Runtime>(PluginHandle<R>);
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadImage {
+    bytes_b64: Option<String>,
+}
+
+pub(crate) fn read_png<R: Runtime>(app: &AppHandle<R>) -> Result<Option<Vec<u8>>, String> {
+    let image = app
+        .state::<AndroidClipboard<R>>()
+        .0
+        .run_mobile_plugin::<ReadImage>("readImage", ())
+        .map_err(|e| e.to_string())?;
+    image
+        .bytes_b64
+        .map(|bytes| crate::commands::decode_asset_b64(&bytes))
+        .transpose()
+}
 
 /// Put the base64 PNG on the system clipboard through the Kotlin plugin. Blocks
 /// on the plugin: call from the blocking pool.

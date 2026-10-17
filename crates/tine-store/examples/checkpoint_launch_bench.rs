@@ -27,6 +27,7 @@ fn ms(since: Instant) -> f64 {
 /// block text, 100 + 100 hits), as the app issues it.
 fn ctrl_k(view: &WholeGraph) -> usize {
     let request = SearchRequest {
+        transliteration: false,
         text: SEARCH.to_owned(),
         within: None,
         page_limit: 100,

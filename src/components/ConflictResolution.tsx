@@ -1,3 +1,4 @@
+import { msg, t, type Msg } from "../i18n";
 // Concord in-page resolver (og family 8c): resolve a conflict AT the page.
 //
 // The derived queue (`conflictQueue`) says which pages need judgement; this
@@ -60,10 +61,10 @@ function segLabel(text: string, fallback: string): string {
 export function sideLabels(conflict: ConflictObject): { mine: string; theirs: string; theirsTitle?: string; base?: string } {
   const of = (role: "mine" | "theirs" | "base") => conflict.sides.find((s) => s.role === role)?.label ?? "";
   const markers = conflict.source === "vcs-markers";
-  const theirs = humanizeSideLabel(of("theirs") || (markers ? "Merged-in side" : "Conflict copy"));
-  if (conflict.source === "live-save") return { mine: of("mine") || "Your unsaved edits", theirs: of("theirs") || "The file on disk now" };
+  const theirs = humanizeSideLabel(of("theirs") || (markers ? t("conflicts-prose-merged-side") : t("conflicts-prose-conflict-copy")));
+  if (conflict.source === "live-save") return { mine: of("mine") || t("live-conflicts-your-unsaved-edits"), theirs: of("theirs") || t("live-conflicts-the-file-on-disk-now") };
   return {
-    mine: of("mine") || (markers ? "Local side" : "This device"),
+    mine: of("mine") || (markers ? t("conflicts-prose-local-side") : t("mock-conflicts-this-device")),
     theirs: theirs.text,
     theirsTitle: theirs.title,
     base: of("base") || undefined,
@@ -238,14 +239,14 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     const live = c.live;
     const reviewed = read()?.draft, reviewedGeneration = read()?.generation ?? null;
     const owner = bindingOwner(() => mounted);
-    const refresh = (message: string) => {
+    const refresh = (message: Msg) => {
       alignment = undefined;
       void refetch();
       pushToast(message, "info");
     };
     // The page's own pending edits are saved first, then the comparison is
     // re-read against them: a resolution never lands over unseen edits.
-    const saveThenReview = async (message: string) => {
+    const saveThenReview = async (message: Msg) => {
       const saved = await writeOwned(owner, flushPage(pageName));
       if (saved.kind === "current" && owner()) refresh(message);
     };
@@ -255,7 +256,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         if (!live || !reviewed || reviewedGeneration === null) return;
         const ed = editingId();
         if (ed && node(ed)?.page === pageName) {
-          pushToast("Finish the current edit, then apply this resolution.", "info");
+          pushToast(msg("conflict-resolution-finish-the-current-edit-then-apply-this-resolution"), "info");
           return;
         }
         // The merge is computed natively from the reviewed draft and submitted
@@ -263,21 +264,21 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         const outcome = await writeOwned(owner, applyLiveResolution(pageName, reviewedGeneration, reviewed, pagePath,
           current.conflict_rev, current.merge_base_rev, decisions(), preChoice()));
         if (outcome.kind === "stale" || !owner()) return;
-        if (outcome.value === "installed") pushToast(`Resolved the conflict in “${pageName}”`, "success");
+        if (outcome.value === "installed") pushToast(msg("conflict-resolution-resolved-the-conflict-in", { page_name: String(pageName) }), "success");
         else if (outcome.value === "saving")
-          pushToast(`Applied the resolution to “${pageName}”, but it is not saved yet. Tine keeps trying to save it.`, "info");
-        else refresh("Your draft or the file changed. Review the updated comparison, then apply it again.");
+          pushToast(msg("conflict-resolution-applied-the-resolution-to-but-it-is-not", { page_name: String(pageName) }), "info");
+        else refresh(msg("conflict-resolution-draft-changed"));
         return;
       }
       // The open editor must not autosave its pre-merge text over the result.
       // Pending edits are saved first; the guarded write below then refuses
       // (`conflict`) if they changed the file the user reviewed.
       if (isConflicted(pageName)) {
-        pushToast("Resolve this page’s save conflict first, then apply this resolution.", "info");
+        pushToast(msg("conflict-resolution-resolve-this-page-s-save-conflict-first-then"), "info");
         return;
       }
       if (isDirty(pageName) || isSaving(pageName)) {
-        await saveThenReview("Your latest edit was saved. Review the updated comparison, then apply it again.");
+        await saveThenReview(msg("conflict-resolution-latest-saved"));
         return;
       }
       // A duplicate day reaches the same guarded two-file fold through its own
@@ -298,18 +299,17 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
       // file; one edited meanwhile keeps the edit and is marked conflicted.
       await applyGraphChange({ path: pagePath, name: pageName, kind, created: false, removed: false }, true);
       if (!owner()) return;
-      pushToast(source === "vcs-markers" ? `Resolved the merge in “${pageName}”`
-        : source === "duplicate-journal" ? `Folded the other file into “${pageName}”` : `Merged into “${pageName}”`, "success");
+      pushToast(msg("conflict-resolution-applied", { source, page: pageName }), "success");
       void refreshSyncConflicts();
       // A day with three files still has one to reconcile after this fold.
       if (source === "duplicate-journal") void refreshJournalConflicts();
     } catch (e) {
       if (owner() && errorFamily(e) === "conflict") {
-        pushToast("The file changed on disk — re-reading it, please redo your choices.", "error");
+        pushToast(msg("conflict-resolution-the-file-changed-on-disk-re-reading-it"), "error");
         alignment = undefined;
         void refetch();
       } else {
-        pushToast(`Couldn’t resolve it: ${errorDetail(e)}`, "error");
+        pushToast(msg("conflict-resolution-couldn-t-resolve-it", { error: String(errorDetail(e)) }), "error");
       }
     } finally {
       if (owner()) setBusy(false);
@@ -320,7 +320,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   onCleanup(() => {
     mounted = false;
     if (conflictQueue().some((q) => q.id === cleanupConflictId)) {
-      pushToast(`“${cleanupPageName}” still has unresolved conflicts`, "info");
+      pushToast(msg("conflict-resolution-still-has-unresolved-conflicts", { page: String(cleanupPageName) }), "info");
     }
   });
 
@@ -330,7 +330,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
     ? journalConflicts().find((day) => day.title === conflict().page_name)?.files ?? []
     : [];
   if (conflict().source === "duplicate-journal") void refreshJournalConflicts();
-  const reconcileFile = async (op: () => Promise<Owned<void>>, ok: string) => {
+  const reconcileFile = async (op: () => Promise<Owned<void>>, ok: Msg) => {
     const owner = bindingOwner(() => mounted);
     try {
       const result = await op();
@@ -339,24 +339,23 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
       void refreshJournalConflicts();
       void refreshSyncConflicts();
     } catch (e) {
-      pushToast(`Couldn’t do that: ${errorDetail(e)}`, "error");
+      pushToast(msg("conflict-resolution-couldn-t-do-that", { error: String(errorDetail(e)) }), "error");
     }
   };
   const trashDayFile = async (name: string) => {
     const owner = bindingOwner(() => mounted);
     const confirmed = await readOwned(owner, backend().confirm(
-      `Move the journal file “${name}” to the trash?\n\n` +
-        `It's a duplicate of another file for the same day. It moves to logseq/.tine-trash (recoverable).`
+      t("conflict-resolution-trash-confirmation", { name })
     ));
     if (confirmed.kind === "stale" || !owner() || !confirmed.value) return;
-    await reconcileFile(() => writeOwned(bindingOwner(() => mounted), backend().trashJournalFile(name, "delete-page")), `Moved ${name} to trash`);
+    await reconcileFile(() => writeOwned(bindingOwner(() => mounted), backend().trashJournalFile(name, "delete-page")), msg("conflict-resolution-file-trashed", { name }));
   };
 
   const markers = () => conflict().source === "vcs-markers";
-  const conflictTitle = () => markers() ? "Unresolved merge from your version-control tool"
-    : conflict().source === "live-save" ? "Your edits and a newer version on disk"
-    : conflict().source === "duplicate-journal" ? "This day has more than one file"
-    : "Two versions of this page arrived";
+  const conflictTitle = () => markers() ? t("conflicts-prose-unresolved-merge-from-your-version-control-tool")
+    : conflict().source === "live-save" ? t("conflicts-prose-your-edits-and-a-newer-version-on-disk")
+    : conflict().source === "duplicate-journal" ? t("conflicts-prose-this-day-has-more-than-one-file")
+    : t("conflicts-prose-two-versions-of-this-page-arrived");
   return (
     <>
     <div class="page-conflict-slot" ref={inlineSlot}>
@@ -365,38 +364,31 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         <span class="page-conflict-title">{conflictTitle()}</span>
         <span class="page-conflict-nav">
           <Show when={pending().length}>
-            <span class="page-conflict-count">{pending().length} conflict{pending().length === 1 ? "" : "s"}</span>
-            <button class="settings-btn" title="Previous conflict" onClick={() => step(-1)}>↑</button>
-            <button class="settings-btn" title="Next conflict" onClick={() => step(1)}>↓</button>
+            <span class="page-conflict-count">{t("conflict-resolution-count", { count: pending().length })}</span>
+            <button class="settings-btn" title={t("conflict-resolution-previous-conflict")} onClick={() => step(-1)}>↑</button>
+            <button class="settings-btn" title={t("conflict-resolution-next-conflict")} onClick={() => step(1)}>↓</button>
           </Show>
         </span>
       </div>
       <Show when={markers()}>
-        <div class="settings-hint page-conflict-refusal">
-          This file still contains merge markers, so Tine refuses to save it: rewriting it would
-          re-indent the markers and silently lose one side. Choose below and apply to make it an
-          ordinary page again.
-        </div>
+        <div class="settings-hint page-conflict-refusal">{t("conflict-resolution-this-file-still-contains-merge-markers-so-tine")}</div>
       </Show>
       <div class="page-conflict-legend">
         <span class="page-conflict-side mine">{labels().mine}</span>
         <span class="page-conflict-side theirs" title={labels().theirsTitle}>{labels().theirs}</span>
         <Show when={labels().base}>
-          {(base) => <span class="page-conflict-side base">{base()} (used for the suggestions)</span>}
+          {(base) => <span class="page-conflict-side base">{t("conflict-resolution-base-suggestions", { base: base() })}</span>}
         </Show>
       </div>
       <Show when={conflict().source === "duplicate-journal"}>
-        <div class="settings-hint page-conflict-files">
-          Choosing below folds the other file into this day and moves it to the recoverable trash.
-          Or act on a file directly:
-        </div>
+        <div class="settings-hint page-conflict-files">{t("conflict-resolution-choosing-below-folds-the-other-file-into-this")}</div>
         <For each={dayFiles()}>
           {(file) => (
             <ConflictFileRow
               file={file}
               parentLayerId="page-conflict"
               onOpen={() => openFile(file.path, conflict().page_name, "journal")}
-              onRename={(name) => void reconcileFile(() => writeOwned(bindingOwner(() => mounted), backend().renameFileToPage(file.path, name, "rename-page")), `Renamed ${file.name} → ${name}`)}
+              onRename={(name) => void reconcileFile(() => writeOwned(bindingOwner(() => mounted), backend().renameFileToPage(file.path, name, "rename-page")), msg("conflict-resolution-file-renamed", { old: file.name, name }))}
               onTrash={() => void trashDayFile(file.name)}
             />
           )}
@@ -406,13 +398,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
         when={diffValue()}
         fallback={
           <div class="page-conflict-empty">
-            {readResource.loading
-              ? "Reading both versions…"
-              : conflict().source === "duplicate-journal" && !read()?.error
-                ? "These two files can’t be folded together: one is Markdown and the other Org. Use the file actions above."
-              : read()?.error
-                ? `Couldn’t read this conflict. (${read()!.error})`
-                : "Couldn’t read this conflict."}
+            {readResource.loading ? t("conflict-resolution-reading-both-versions") : conflict().source === "duplicate-journal" && !read()?.error ? t("conflict-resolution-these-two-files-can-t-be-folded-together") : read()?.error ? t("conflict-resolution-couldn-t-read-this-conflict", { error: String(read()!.error) }) : t("conflict-resolution-conflict-unavailable")}
           </div>
         }
       >
@@ -420,12 +406,10 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           <Show
             when={!d().blocks_identical || d().pre_differs}
             fallback={
-              <div class="page-conflict-empty">
-                The two versions are identical — nothing to decide.
-                <Show when={conflict().source === "sync-copy"}> The copy is safe to discard from the Conflicts overview.</Show>
-                <Show when={conflict().source === "duplicate-journal"}> The other file is safe to trash above.</Show>
+              <div class="page-conflict-empty">{t("conflict-resolution-the-two-versions-are-identical-nothing-to-decide")}<Show when={conflict().source === "sync-copy"}>{t("conflict-resolution-the-copy-is-safe-to-discard-from-the")}</Show>
+                <Show when={conflict().source === "duplicate-journal"}>{t("conflict-resolution-the-other-file-is-safe-to-trash-above")}</Show>
                 <Show when={conflict().source === "live-save"}>
-                  {" “Use disk version” above loses nothing."}
+                  {t("conflict-resolution-use-disk-version-above-loses-nothing")}
                 </Show>
               </div>
             }
@@ -434,31 +418,23 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
               <span class="settings-hint">
                 <Show
                   when={suggestedCount()}
-                  fallback={<>Nothing was pre-selected — no common version is known, so both sides are kept.</>}
+                  fallback={<>{t("conflict-resolution-nothing-was-pre-selected-no-common-version-is")}</>}
                 >
-                  {suggestedCount()} of {pending().length} pre-selected from the last version both sides
-                  agreed on — review and confirm.
-                </Show>
+                  {t("conflict-resolution-suggested-summary", { suggested: String(suggestedCount()), total: String(pending().length) })}</Show>
               </span>
               <span class="sync-merge-toolbar-actions">
                 <button
                   class="settings-btn"
                   onClick={applyAllSuggested}
-                  title="Re-applies Tine's own suggestions. A merge tool's proposed text keeps your current choice."
-                >
-                  Apply all suggested
+                  title={t("conflict-resolution-re-applies-tine-s-own-suggestions-a-merge")}
+                >{t("conflict-resolution-apply-all-suggested")}</button>
+                <button class="settings-btn" onClick={() => setAll("both")}>{t("conflict-resolution-keep-both-everywhere")}</button>
+                <button class="settings-btn" onClick={() => setAll("mine")} title={labels().mine}>{t("conflict-resolution-keep-side", { side: segLabel(labels().mine, t("conflicts-prose-mine")) })}
                 </button>
-                <button class="settings-btn" onClick={() => setAll("both")}>Keep both everywhere</button>
-                <button class="settings-btn" onClick={() => setAll("mine")} title={labels().mine}>
-                  Keep {segLabel(labels().mine, "mine")}
-                </button>
-                <button class="settings-btn" onClick={() => setAll("theirs")} title={labels().theirsTitle ?? labels().theirs}>
-                  Keep {segLabel(labels().theirs, "theirs")}
+                <button class="settings-btn" onClick={() => setAll("theirs")} title={labels().theirsTitle ?? labels().theirs}>{t("conflict-resolution-keep-side", { side: segLabel(labels().theirs, t("conflicts-prose-theirs")) })}
                 </button>
                 <label class="sync-merge-showunchanged">
-                  <input type="checkbox" checked={showUnchanged()} onChange={(e) => setShowUnchanged(e.currentTarget.checked)} />
-                  show unchanged
-                </label>
+                  <input type="checkbox" checked={showUnchanged()} onChange={(e) => setShowUnchanged(e.currentTarget.checked)} />{t("conflict-resolution-show-unchanged")}</label>
               </span>
             </div>
             <div class="sync-merge-collabels">
@@ -474,39 +450,32 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
                     decisions={decisions()}
                     setDecision={setDecision}
                     fallback="both"
-                    labels={{ mine: segLabel(labels().mine, "Mine"), theirs: segLabel(labels().theirs, "Theirs") }}
+                    labels={{ mine: segLabel(labels().mine, t("conflicts-prose-mine-short")), theirs: segLabel(labels().theirs, t("conflicts-prose-theirs-short")) }}
                   />
                 )}
               </For>
             </div>
             <Show when={d().pre_differs}>
               <div class="sync-merge-preblock">
-                <div class="settings-hint">
-                  The page’s own properties differ. Keep{" "}
+                <div class="settings-hint">{t("conflict-resolution-the-page-s-own-properties-differ-keep")}{" "}
                   <select
                     class="page-conflict-preblock-choice"
                     value={preChoice()}
                     onChange={(e) => setPreChoice(e.currentTarget.value as "mine" | "theirs" | "union")}
                   >
-                    <option value="union">both (merge)</option>
-                    <option value="mine">{segLabel(labels().mine, "mine")}</option>
-                    <option value="theirs">{segLabel(labels().theirs, "theirs")}</option>
+                    <option value="union">{t("conflict-resolution-both-merge")}</option>
+                    <option value="mine">{segLabel(labels().mine, t("conflicts-prose-mine"))}</option>
+                    <option value="theirs">{segLabel(labels().theirs, t("conflicts-prose-theirs"))}</option>
                   </select>
                 </div>
               </div>
             </Show>
             <div class="page-conflict-foot">
               <span class="settings-hint">
-                {markers()
-                  ? "Applying writes the merged page without any markers; the file as it was moves to the recoverable trash."
-                  : conflict().source === "live-save"
-                    ? "Applying writes the merged page only if the file is still the version shown; a newer change refreshes this comparison."
-                  : conflict().source === "duplicate-journal"
-                    ? "The other file moves to the recoverable trash once this is applied, leaving the day one file."
-                    : "The copy moves to the recoverable trash once this is applied."}
+                {markers() ? t("conflict-resolution-applying-writes-the-merged-page-without-any-markers") : conflict().source === "live-save" ? t("conflict-resolution-applying-writes-the-merged-page-only-if-the") : conflict().source === "duplicate-journal" ? t("conflict-resolution-the-other-file-moves-to-the-recoverable-trash") : t("conflict-resolution-the-copy-moves-to-the-recoverable-trash-once")}
               </span>
               <button class="settings-btn settings-btn-primary" disabled={busy() || readResource.loading} onClick={() => void apply()}>
-                {busy() ? "Applying…" : "Apply resolution"}
+                {busy() ? t("conflict-resolution-applying") : t("conflict-resolution-apply-resolution")}
               </button>
             </div>
           </Show>
@@ -531,7 +500,7 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
           <span class="page-conflict-dockbar-icon" aria-hidden="true">⚠</span>
           <span class="page-conflict-dockbar-title">{conflictTitle()}</span>
           <Show when={pending().length}>
-            <span class="page-conflict-dockbar-count">{pending().length} to review</span>
+            <span class="page-conflict-dockbar-count">{t("conflict-resolution-review-count", { count: String(pending().length) })}</span>
           </Show>
           <span class="page-conflict-dockbar-chevron" aria-hidden="true">{expanded() ? "▴" : "▾"}</span>
         </button>

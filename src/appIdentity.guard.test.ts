@@ -20,7 +20,8 @@ function files(dir: string, keep: RegExp): string[] {
   });
 }
 
-const DERIVED = ["src-tauri/app-identity.json", "src-tauri/tauri.conf.json", "src-tauri/gen/android/app/build.gradle.kts"];
+const SHORTCUTS = "src-tauri/gen/android/app/src/main/res/xml/shortcuts.xml";
+const DERIVED = ["src-tauri/app-identity.json", "src-tauri/tauri.conf.json", "src-tauri/gen/android/app/build.gradle.kts", SHORTCUTS];
 // The released identity's packaging: Flatpak names its files and ids by it; other
 // identities are derived from those files at build time
 // (scripts/derive-flatpak-identity.mjs, .github/workflows/flatpak.yml). Its
@@ -48,7 +49,7 @@ describe("app identity switch", () => {
     const conf = JSON.parse(fs.readFileSync(path.join(ROOT, "src-tauri/tauri.conf.json"), "utf8"));
     const endpoints = conf.plugins?.updater?.endpoints;
     expect(endpoints).toEqual([SHIP === "experiment"
-      ? "https://github.com/martinkoutecky/tine/releases/download/beta/latest.json"
+      ? "https://tine.page/updates/beta/latest.json"
       : "https://github.com/martinkoutecky/tine/releases/latest/download/latest.json"]);
     expect(/-beta\.\d+$/.test(conf.version)).toBe(SHIP === "experiment");
   });
@@ -77,6 +78,10 @@ describe("app identity switch", () => {
         expect(conf.productName).toBe(identity.productName);
         expect(conf.app.windows.find((w: { label: string }) => w.label === "main").title).toBe(identity.productName);
         expect(derived["src-tauri/gen/android/app/build.gradle.kts"]).toContain(`applicationId = "${identity.androidApplicationId}"`);
+        // Launcher shortcuts target the installed package, or they open nothing.
+        const targets = [...derived[SHORTCUTS].matchAll(/android:targetPackage="([^"]*)"/g)].map((match) => match[1]);
+        expect(targets.length).toBeGreaterThan(0);
+        expect(new Set(targets)).toEqual(new Set([identity.androidApplicationId]));
         expect(JSON.parse(derived["src-tauri/app-identity.json"]).ship).toBe(ship);
         for (const key of ["identifier", "androidApplicationId", "deployName"] as const) {
           expect(seen.has(`${key}=${identity[key]}`), `${ship} shares ${key}`).toBe(false);

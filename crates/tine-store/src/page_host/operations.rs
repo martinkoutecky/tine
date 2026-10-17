@@ -1,6 +1,8 @@
 //! Constrained page operations; rewrites reuse tine-core's pure boundary.
 use super::*;
+#[cfg(test)]
 use tine_core::config::FileNameFormat;
+#[cfg(test)]
 use tine_core::model::Format;
 
 impl<F: HostIo> Host<F> {
@@ -17,8 +19,9 @@ impl<F: HostIo> Host<F> {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn delete(&mut self, key: &str) -> Disposition {
-        self.delete_with_load(key, true, None)
+        self.delete_with(key, None)
     }
 
     /// `delete`, bound to the bytes the caller's identity check read
@@ -26,15 +29,20 @@ impl<F: HostIo> Host<F> {
     /// gap separates the check from the deletion. In-scope scenario: an
     /// external editor or sync service changed the file after the check.
     pub(super) fn delete_checked(&mut self, key: &str, checked: &[u8]) -> Disposition {
-        self.delete_with_load(key, true, Some(checked))
+        self.delete_with(key, Some(checked))
     }
 
+    /// The s2 model's `opDelete`: a page the host does not hold is refused,
+    /// not loaded.
     #[cfg(test)]
     pub(super) fn delete_loaded(&mut self, key: &str) -> Disposition {
-        self.delete_with_load(key, false, None)
+        self.test.loaded_deletes = true;
+        let result = self.delete_with(key, None);
+        self.test.loaded_deletes = false;
+        result
     }
 
-    fn delete_with_load(&mut self, key: &str, load: bool, checked: Option<&[u8]>) -> Disposition {
+    fn delete_with(&mut self, key: &str, checked: Option<&[u8]>) -> Disposition {
         if !self.alive || !self.keys.contains(key) {
             return Disposition::Disabled;
         }
@@ -52,7 +60,8 @@ impl<F: HostIo> Host<F> {
             return Disposition::Waiting;
         }
         self.with_locks(&keys, |host| {
-            if !load && !host.pages.contains_key(key) {
+            #[cfg(test)]
+            if host.test.loaded_deletes && !host.pages.contains_key(key) {
                 return Disposition::Refused;
             }
             let Ok(mut page) = host.operation_page(key) else {
@@ -64,7 +73,6 @@ impl<F: HostIo> Host<F> {
             if checked.is_some_and(|checked| page.buf.as_deref() != Some(checked)) {
                 return Disposition::Refused;
             }
-            let reads = BTreeMap::from([(key.into(), page.base.clone())]);
             page.buf = None;
             page.typed = true;
             page.risk = true;
@@ -77,54 +85,9 @@ impl<F: HostIo> Host<F> {
                 vec![record],
                 reply,
                 version,
-                reads,
                 None,
             );
             Disposition::Pending
-        })
-    }
-
-    fn rewrite(
-        bytes: &Text,
-        key: &str,
-        from: &str,
-        to: &str,
-        format: FileNameFormat,
-    ) -> Result<Text, ()> {
-        let Some(bytes) = bytes else { return Ok(None) };
-        let text = std::str::from_utf8(bytes).map_err(|_| ())?;
-        Ok(Some(Arc::from(
-            tine_core::refs::rename_rewrite(
-                text,
-                key.ends_with(".org"),
-                &[(from.into(), to.into())],
-                format,
-            )
-            .into_bytes(),
-        )))
-    }
-
-    /// Referrer discovery's index portion belongs to the caller; held buffers
-    /// are checked here so an unindexed held reference is never missed.
-    pub(super) fn rename(
-        &mut self,
-        source: &str,
-        target: &str,
-        referrers: &BTreeSet<PageKey>,
-        from: &str,
-        to: &str,
-        format: FileNameFormat,
-    ) -> Disposition {
-        self.rename_with(source, target, referrers, |bytes, key, moving| {
-            if !moving {
-                return Self::rewrite(bytes, key, from, to, format);
-            }
-            let Some(raw) = bytes else { return Ok(None) };
-            let text = std::str::from_utf8(raw).map_err(|_| ())?;
-            let syntax = Format::from_path(std::path::Path::new(source));
-            Ok(tine_core::model::rebind_page_title(text, syntax, from, to)
-                .map(|text| Some(Arc::from(text.into_bytes())))
-                .unwrap_or_else(|| bytes.clone()))
         })
     }
 
@@ -192,7 +155,6 @@ impl<F: HostIo> Host<F> {
                 return Disposition::Waiting;
             }
             let mut pages = BTreeMap::new();
-            let mut reads = BTreeMap::new();
             for key in &keys {
                 let Ok(page) = host.operation_page(key) else {
                     return Disposition::Refused;
@@ -200,7 +162,6 @@ impl<F: HostIo> Host<F> {
                 if !page.clean() {
                     return Disposition::Refused;
                 }
-                reads.insert(key.clone(), page.base.clone());
                 pages.insert(key.clone(), page);
             }
             if full && pages[target].buf.is_some() {
@@ -238,8 +199,138 @@ impl<F: HostIo> Host<F> {
             let versions = pages.iter().map(|(k, p)| (k.clone(), p.version)).collect();
             let gates = full.then(|| Gates::new(target, source, versions));
             let reply = Reply::Caller(host.order.allocate(host.incarnation));
-            host.install_operation(pages, records, reply, last_version, reads, gates);
+            host.install_operation(pages, records, reply, last_version, gates);
             Disposition::Pending
+        })
+    }
+}
+
+impl<F: HostIo> Host<F> {
+    /// The s3.3 model's `opApply` (host-only-writer P2, DESIGN §3.1): one
+    /// operation writing a feature's planned bytes to `effects`' pages,
+    /// each `(new, expected)`: `new` None deletes the page; `expected` is
+    /// the bytes the feature planned from (None: no file), checked against
+    /// the host's current bytes under the path locks. `moved` `(dst, src)`
+    /// orders the writes as a rename's (dst, then the others, then src's
+    /// deletion). Drafted, versioned and published like a rename; the host
+    /// never computes the bytes. Refused when a page is dirty or its bytes
+    /// moved since the plan (in-scope scenario: the window edited it, or an
+    /// external editor or sync service changed the file); the caller
+    /// replans.
+    pub(super) fn apply(
+        &mut self,
+        effects: &BTreeMap<PageKey, (Text, Text)>,
+        moved: Option<(&str, &str)>,
+    ) -> Disposition {
+        let keys: BTreeSet<PageKey> = effects.keys().cloned().collect();
+        let shape = moved.is_none_or(|(dst, src)| {
+            dst != src
+                && effects
+                    .get(src)
+                    .is_some_and(|(new, old)| new.is_none() && old.is_some())
+                && effects.get(dst).is_some_and(|(new, _)| new.is_some())
+        });
+        if !self.alive || keys.is_empty() || !self.keys.includes(&keys) || !shape {
+            return Disposition::Refused;
+        }
+        if self.worker.is_some() || self.allocator_busy() {
+            return Disposition::Waiting;
+        }
+        // A known dirty page already disproves the operation guard; refuse
+        // before loading any other path.
+        if keys
+            .iter()
+            .any(|key| self.pages.get(key).is_some_and(|p| !p.clean()))
+        {
+            return Disposition::Refused;
+        }
+        // D4 with no chaining: a running order's or reservation's pages wait
+        // for its end.
+        if keys.iter().any(|key| self.retained.contains(key)) || self.order.touches(&keys) {
+            return Disposition::Waiting;
+        }
+        if self.lacks_locks(&keys) {
+            return Disposition::Waiting;
+        }
+        self.with_locks(&keys, |host| {
+            if keys.iter().any(|key| host.busy(key)) {
+                return Disposition::Waiting;
+            }
+            let mut pages = BTreeMap::new();
+            for (key, (new, expected)) in effects {
+                let Ok(mut page) = host.operation_page(key) else {
+                    return Disposition::Refused;
+                };
+                if !page.clean() || page.buf != *expected {
+                    return Disposition::Refused;
+                }
+                page.buf = new.clone();
+                pages.insert(key.clone(), page);
+            }
+            // Dense versions in key order, as a rename's (A-R5).
+            let mut last_version = host.version;
+            let mut records = vec![];
+            for (key, page) in &mut pages {
+                last_version = last_version.checked_add(1).expect("host version exhausted");
+                page.version = last_version;
+                page.typed = true;
+                page.risk = true;
+                records.push(host.record(key, page));
+            }
+            let versions = pages.iter().map(|(k, p)| (k.clone(), p.version)).collect();
+            let gates = moved.map(|(dst, src)| Gates::new(dst, src, versions));
+            let reply = Reply::Caller(host.order.allocate(host.incarnation));
+            host.install_operation(pages, records, reply, last_version, gates);
+            Disposition::Pending
+        })
+    }
+}
+
+/// The model scheduler's rename policy: rewrite references, rebind the
+/// moved page's title. Production supplies its own (`PageHost::rename`).
+#[cfg(test)]
+impl<F: HostIo> Host<F> {
+    fn rewrite(
+        bytes: &Text,
+        key: &str,
+        from: &str,
+        to: &str,
+        format: FileNameFormat,
+    ) -> Result<Text, ()> {
+        let Some(bytes) = bytes else { return Ok(None) };
+        let text = std::str::from_utf8(bytes).map_err(|_| ())?;
+        Ok(Some(Arc::from(
+            tine_core::refs::rename_rewrite(
+                text,
+                key.ends_with(".org"),
+                &[(from.into(), to.into())],
+                format,
+            )
+            .into_bytes(),
+        )))
+    }
+
+    /// Referrer discovery's index portion belongs to the caller; held buffers
+    /// are checked here so an unindexed held reference is never missed.
+    pub(super) fn rename(
+        &mut self,
+        source: &str,
+        target: &str,
+        referrers: &BTreeSet<PageKey>,
+        from: &str,
+        to: &str,
+        format: FileNameFormat,
+    ) -> Disposition {
+        self.rename_with(source, target, referrers, |bytes, key, moving| {
+            if !moving {
+                return Self::rewrite(bytes, key, from, to, format);
+            }
+            let Some(raw) = bytes else { return Ok(None) };
+            let text = std::str::from_utf8(raw).map_err(|_| ())?;
+            let syntax = Format::from_path(std::path::Path::new(source));
+            Ok(tine_core::model::rebind_page_title(text, syntax, from, to)
+                .map(|text| Some(Arc::from(text.into_bytes())))
+                .unwrap_or_else(|| bytes.clone()))
         })
     }
 }

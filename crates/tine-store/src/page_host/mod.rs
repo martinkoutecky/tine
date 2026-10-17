@@ -1,10 +1,16 @@
-//! Unwired page owner. Runtime code is independent of the page_state oracle.
-#![allow(dead_code)]
+//! The page host (storage s3), started per graph binding by
+//! `src-tauri/src/graph.rs` `start_host`: it owns open pages and writes their
+//! saves, renames and deletions. Retained feature transactions
+//! (`tine-graph-features` `pages.rs` and the other reserving writers) still
+//! write page files themselves under a `Reservation` (`binding_retained.rs`)
+//! until the host-only-writer campaign moves them onto the host. Runtime code
+//! is independent of the page_state oracle.
 
 mod binding;
 pub use binding::{
-    DiskToken, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal, Reloaded,
-    RenameRefusal, Reservation, ReserveRefusal, StopMode, StopState, Stopped,
+    ApplyRefusal, DiskToken, Effect, Expected, HostOp, HostRead, HostReadError, Input, Opened,
+    PageHost, PageMail, PageOperation, PageRefusal, Reloaded, RenameRefusal, Reservation,
+    ReserveRefusal, StopMode, StopState, Stopped,
 };
 pub use io::DraftStatus;
 #[cfg(test)]
@@ -20,6 +26,8 @@ mod driver_tests;
 pub mod faults;
 mod io;
 mod logical;
+#[cfg(test)]
+mod model_entries;
 #[cfg(test)]
 mod model_fs;
 #[cfg(test)]
@@ -40,6 +48,7 @@ mod writer_census_tests;
 
 use drafts::{Record, Stage, Vehicle};
 use io::{ErrorKind, HostIo, IoFailure, Witness};
+use logical::LiveOp;
 use order::{Gates, OperationReply, Reply, ReplyId};
 use save::SaveJob;
 use serde::{Deserialize, Serialize};
@@ -100,6 +109,7 @@ impl Keys {
         self.0.insert(key)
     }
 
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.0.len()
     }
@@ -118,7 +128,7 @@ impl Keys {
 }
 
 /// A4 trash custody one page owes: its markers on disk (name → payload
-/// basename) whose phases (a) and (b) have not completed in this incarnation.
+/// basename) whose custody (`HostIo::trash_sync`) has not completed in this incarnation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Debt {
     markers: BTreeMap<String, String>,
@@ -200,9 +210,7 @@ enum RequestKind {
         version: u64,
         resolve: Option<Text>,
     },
-    Discard {
-        version: u64,
-    },
+    Discard,
     Move {
         receiver: PageKey,
         source_text: Text,
@@ -258,6 +266,7 @@ enum Outcome {
 /// Events originate here, never from an oracle's expected successor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Event {
+    #[cfg(test)]
     Loaded {
         page: PageKey,
         version: u64,
@@ -266,14 +275,18 @@ enum Event {
         page: PageKey,
         answer: Answer,
     },
+    #[cfg(test)]
     Draft(Record),
+    #[cfg(test)]
     DraftRemoved(PageKey),
     Published {
         page: PageKey,
         bytes: Text,
         version: u64,
+        #[cfg(test)]
         epoch: u64,
     },
+    #[cfg(test)]
     Renamed {
         page: PageKey,
         bytes: Text,
@@ -285,14 +298,17 @@ enum Event {
         /// A failed step's I/O diagnosis, for the notice (Q-P2b-3).
         cause: Option<IoFailure>,
     },
+    #[cfg(test)]
     Removed {
         page: PageKey,
         bytes: Text,
     },
+    #[cfg(test)]
     DeleteDurable {
         page: PageKey,
         bytes: Text,
     },
+    #[cfg(test)]
     OperationRead {
         page: PageKey,
         base: Base,
@@ -309,8 +325,10 @@ enum Event {
         refresh: Option<PageKey>,
         recovered: bool,
     },
+    #[cfg(test)]
     Unreadable(String),
     /// A4 escape: a save goes ahead past this trash file's unfinished custody.
+    #[cfg(test)]
     CustodyError {
         page: PageKey,
         payload: String,
@@ -363,16 +381,21 @@ pub(crate) enum Refusal {
 #[cfg_attr(test, derive(Clone))]
 enum Application {
     Refresh(Record),
-    Removal(PageKey),
+    /// The worker's one page's drafts leave.
+    Removal,
     Operation {
         pages: BTreeMap<PageKey, Page>,
         records: Vec<Record>,
         reply: Reply,
         last_version: u64,
+        #[cfg(test)]
         reads: BTreeMap<PageKey, Base>,
         gates: Option<Gates>,
     },
     Representation,
+    /// RENAME-COST L1: an operation vehicle retired whole, removing each of
+    /// the worker's pages' drafts.
+    Retire,
 }
 
 #[cfg_attr(test, derive(Clone))]
@@ -455,9 +478,13 @@ struct Host<F: HostIo> {
     /// `drafts` by `index_vehicle`, never rebuilt per call (D-10).
     vehicles_of: BTreeMap<PageKey, BTreeSet<String>>,
     durable: BTreeMap<PageKey, Record>,
+    /// RENAME-COST L1: every operation vehicle in `drafts`, kept in step with
+    /// `drafts` and `pages` by `index_vehicle` and `set_page`.
+    live_ops: BTreeMap<String, LiveOp>,
     /// M4: keys whose page or live logical draft changed since `Progress`
-    /// last reconciled, `true` for a page an operation's caller applied (its
-    /// saves skip the edit debounce). Drained by `Progress::reconcile` only.
+    /// last reconciled, `true` for a page an operation's caller applied or a
+    /// window Submit changed (its saves skip the edit debounce). Drained by
+    /// `Progress::reconcile` only.
     changed: BTreeMap<PageKey, bool>,
     /// REVIEW-3b-P1 R2: pages named by draft vehicles on disk whose census
     /// launch could not make durable (M2). Cleanup debt, never recovery
@@ -493,10 +520,9 @@ struct Host<F: HostIo> {
     admission_open: bool,
     switch_confirmation: Option<u64>,
     alive: bool,
-    /// Test pause (Q-P2b-4's deterministic schedules): no admitted request
-    /// applies and the draft worker does not advance while set.
+    /// Test schedules (`logical::TestKnobs`); none exists in production.
     #[cfg(test)]
-    paused: bool,
+    test: logical::TestKnobs,
 }
 
 impl<F: HostIo> Host<F> {
@@ -514,6 +540,7 @@ impl<F: HostIo> Host<F> {
             drafts,
             vehicles_of: BTreeMap::new(),
             durable: BTreeMap::new(),
+            live_ops: BTreeMap::new(),
             changed: BTreeMap::new(),
             vehicle_debt: BTreeSet::new(),
             pages: BTreeMap::new(),
@@ -540,7 +567,7 @@ impl<F: HostIo> Host<F> {
             switch_confirmation: None,
             alive: true,
             #[cfg(test)]
-            paused: false,
+            test: Default::default(),
         };
         host.index_drafts();
         host
@@ -617,6 +644,7 @@ impl<F: HostIo> Host<F> {
         } else {
             self.pages.remove(key);
         }
+        self.reindex_owed(key);
         let current = self.pages.get(key).cloned();
         if let Some(obs) = current.as_ref().and_then(|p| p.obs.clone()) {
             if previous.as_ref().and_then(|p| p.obs.as_ref()) != Some(&obs) {
@@ -659,7 +687,7 @@ impl<F: HostIo> Host<F> {
         }
     }
 
-    /// Custody phases (a) and (b) for every marker the page owes; each
+    /// Trash custody (`HostIo::trash_sync`) for every marker the page owes; each
     /// completed marker is retired. True when nothing is owed.
     fn settle(&mut self, key: &str) -> bool {
         let markers = self.custody.get(key).map(|d| d.markers.clone());
@@ -748,6 +776,7 @@ impl<F: HostIo> Host<F> {
                 debt.markers.insert(name, marker.payload);
             } else {
                 let name = format!("trash-custody/{name}");
+                #[cfg(test)]
                 self.events.push(Event::Unreadable(name.clone()));
                 let _ = self.fs.quarantine(&name);
             }
@@ -844,14 +873,6 @@ impl<F: HostIo> Host<F> {
         Disposition::Applied
     }
 
-    fn abstract_queue(&self) -> Vec<Request> {
-        self.applying
-            .iter()
-            .chain(self.queue.iter())
-            .cloned()
-            .collect()
-    }
-
     fn answer(&mut self, request: &Request, key: &str, took: bool) {
         if request.generation != self.generation {
             return;
@@ -927,17 +948,6 @@ impl<F: HostIo> Host<F> {
         }
     }
 
-    fn load(&mut self, key: &str) -> Disposition {
-        if !self.alive || !self.keys.contains(key) || self.pages.contains_key(key) {
-            return Disposition::Disabled;
-        }
-        let keys = BTreeSet::from([key.into()]);
-        if self.busy(key) || self.allocator_busy() || self.lacks_locks(&keys) {
-            return Disposition::Waiting;
-        }
-        self.with_locks(&keys, |host| host.load_locked(key))
-    }
-
     fn load_locked(&mut self, key: &str) -> Disposition {
         if self.pages.contains_key(key) {
             return Disposition::Disabled;
@@ -947,6 +957,7 @@ impl<F: HostIo> Host<F> {
         };
         self.version = self.next_version();
         self.set_page(key, Some(Self::initial_page(bytes, self.version)));
+        #[cfg(test)]
         self.events.push(Event::Loaded {
             page: key.into(),
             version: self.version,
@@ -977,7 +988,7 @@ impl<F: HostIo> Host<F> {
             return Disposition::Disabled;
         };
         #[cfg(test)]
-        if self.paused {
+        if self.test.paused {
             return Disposition::Waiting;
         }
         if self.busy(&request.page) || self.allocator_busy() {
@@ -985,7 +996,7 @@ impl<F: HostIo> Host<F> {
         }
         let mut keys = BTreeSet::from([request.page.clone()]);
         // A Discard of a running rename's destination reverts its source too.
-        if let (RequestKind::Discard { .. }, Some(src)) =
+        if let (RequestKind::Discard, Some(src)) =
             (&request.kind, self.order.partner(&request.page))
         {
             if self.busy(src) {
@@ -1045,10 +1056,10 @@ impl<F: HostIo> Host<F> {
                     self.order.supersede(key);
                 }
                 self.version = next;
-                self.set_page(key, Some(page));
+                self.set_submitted(key, page);
                 self.answer(request, key, true);
             }
-            RequestKind::Discard { .. } => self.discard(request),
+            RequestKind::Discard => self.discard(request),
             RequestKind::Move {
                 receiver,
                 source_text,
@@ -1078,7 +1089,6 @@ impl<F: HostIo> Host<F> {
                     vec![record],
                     Reply::Window(request.clone()),
                     vs,
-                    BTreeMap::new(),
                     None,
                 );
                 return Disposition::Pending;
@@ -1206,37 +1216,6 @@ impl<F: HostIo> Host<F> {
         Disposition::Applied
     }
 
-    fn release(&mut self, keys: &BTreeSet<PageKey>) -> Disposition {
-        if !keys.is_subset(&self.retained) {
-            return Disposition::Refused;
-        }
-        if self.allocator_busy() || self.lacks_locks(keys) {
-            return Disposition::Waiting;
-        }
-        // Reconcile even an undone transaction; failed reads retain custody.
-        let result = self.with_locks(keys, |host| {
-            let mut observed = BTreeMap::new();
-            for key in keys {
-                let Ok(bytes) = host.fs.read_page(key) else {
-                    return Disposition::Waiting;
-                };
-                observed.insert(key.clone(), bytes);
-            }
-            for (key, bytes) in observed {
-                if host.pages.contains_key(&key) {
-                    host.adopt_read(&key, bytes);
-                }
-            }
-            Disposition::Applied
-        });
-        if result == Disposition::Applied {
-            for key in keys {
-                self.retained.remove(key);
-            }
-        }
-        result
-    }
-
     fn switch_ready(&mut self, consumed_last_id: u64) -> Disposition {
         if !self.alive {
             return Disposition::Disabled;
@@ -1249,26 +1228,6 @@ impl<F: HostIo> Host<F> {
         }
         self.admission_open = false;
         self.switch_confirmation = Some(consumed_last_id);
-        Disposition::Applied
-    }
-
-    fn switch_request(&mut self) -> Disposition {
-        if self.worker.is_some() || !self.retained.is_empty() {
-            return Disposition::Waiting;
-        }
-        let keys = self.pages.keys().cloned().collect();
-        if self.lacks_locks(&keys) {
-            return Disposition::Waiting;
-        }
-        self.with_locks(&keys, |host| {
-            for key in &keys {
-                let mut page = host.pages[key].clone();
-                if !page.clean() {
-                    page.risk = true;
-                }
-                host.set_page(key, Some(page));
-            }
-        });
         Disposition::Applied
     }
 
@@ -1290,9 +1249,7 @@ impl<F: HostIo> Host<F> {
             let page = self.pages.get(key);
             page.is_none_or(|p| p.clean() || p.risk)
                 && match page.filter(|p| p.risk) {
-                    Some(p) => drafts.get(key).is_some_and(|r| {
-                        r.bytes == p.buf && r.base == p.base && r.version == p.version
-                    }),
+                    Some(p) => drafts.get(key).is_some_and(|r| r.holds(p)),
                     None => !drafts.contains_key(key),
                 }
         })
@@ -1316,6 +1273,7 @@ impl<F: HostIo> Host<F> {
         // Liveness changes: Progress rebuilds its sets from what it knew (M4).
         self.alive = false;
         self.pages.clear();
+        self.release_owed();
         self.custody.clear();
         self.retire.clear();
         self.custody_errors.clear();
@@ -1346,6 +1304,7 @@ impl<F: HostIo> Host<F> {
             return Disposition::Waiting;
         }
         for name in &scan.unreadable {
+            #[cfg(test)]
             self.events.push(Event::Unreadable(name.clone()));
             // One that fails stays in place and is never touched (§4): the
             // graph opens anyway, and `draft_status` names it.

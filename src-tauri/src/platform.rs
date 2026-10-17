@@ -1,6 +1,148 @@
-use crate::commands::decode_asset_b64;
-
 const MAX_CLIPBOARD_FILES: usize = 32;
+use crate::state::{slot_for_context, GraphContext};
+
+/// Resolve through the same Store containment gate used by asset openers.
+/// Only a graph-relative asset name crosses IPC; never trust an image src path.
+#[tauri::command]
+pub(crate) async fn copy_asset_file_to_clipboard(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let path = {
+            let slot = slot_for_context(&state)?;
+            tine_graph_features::assets::path_for_os_handoff(&slot.store, &name)
+                .map_err(crate::commands::feature_asset_access_error)?
+        };
+        return tauri::async_runtime::spawn_blocking(move || copy_asset_file(&path))
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (name, state);
+        Err("file clipboard is desktop-only".into())
+    }
+}
+
+#[cfg(desktop)]
+fn copy_asset_file(path: &std::path::Path) -> Result<(), String> {
+    use clipboard_rs::common::RustImage;
+    use clipboard_rs::ClipboardContent;
+    #[cfg(not(target_os = "windows"))]
+    use clipboard_rs::{Clipboard, ClipboardContext};
+    // X11 serves selections from this context. Keep it alive after the command
+    // returns, and serialize writes across graph windows.
+    let mut contents = Vec::new();
+    // The original file is always offered, including unsupported image formats
+    // and files above the bitmap budget. Failure to decode only omits pixels.
+    if std::fs::metadata(path).map_err(|e| e.to_string())?.len() <= 64 * 1024 * 1024 {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .and_then(|f| f.take(64 * 1024 * 1024 + 1).read_to_end(&mut bytes))
+            .map_err(|e| e.to_string())?;
+        if bytes.len() <= 64 * 1024 * 1024 {
+            if cfg!(not(target_os = "windows")) && bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                // Linux/macOS accept encoded PNG directly. Preserve it rather
+                // than re-encoding, but validate IHDR and the decoded/RGBA
+                // budget first, just like the decoding route below.
+                if validate_clipboard_png(&bytes).is_ok() {
+                    let format = if cfg!(target_os = "macos") {
+                        "public.png"
+                    } else {
+                        "image/png"
+                    };
+                    contents.push(ClipboardContent::Other(format.into(), bytes));
+                }
+            } else if let Ok(image) = decode_clipboard_image(&bytes) {
+                contents.push(ClipboardContent::Image(
+                    clipboard_rs::RustImageData::from_dynamic_image(image),
+                ));
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // clipboard-rs's Files encoder does not percent-escape URI paths.
+        // Supply these two flavours ourselves for spaces, #, Unicode and %.
+        let uri = tauri::Url::from_file_path(path).map_err(|_| "invalid asset file URL")?;
+        contents.push(ClipboardContent::Other(
+            "text/uri-list".into(),
+            format!("{uri}\r\n").into_bytes(),
+        ));
+        contents.push(ClipboardContent::Other(
+            "x-special/gnome-copied-files".into(),
+            format!("copy\n{uri}").into_bytes(),
+        ));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // clipboard-rs::set(Image, Files) nests clipboard open guards: the
+        // inner image guard closes the clipboard before Files is written.
+        // Use one native guard and NoClear writes for all flavours instead.
+        let mut bitmap = None;
+        let mut png = None;
+        if let Some(ClipboardContent::Image(image)) = contents.pop() {
+            bitmap = image.to_bitmap().ok();
+            png = image.to_png().ok();
+        }
+        let _clipboard = clipboard_win::Clipboard::new_attempts(10).map_err(|e| e.to_string())?;
+        clipboard_win::empty().map_err(|e| e.to_string())?;
+        if let Some(bitmap) = bitmap {
+            let _ = clipboard_win::raw::set_bitmap_with(
+                bitmap.get_bytes(),
+                clipboard_win::options::NoClear,
+            );
+        }
+        if let (Some(png), Some(format)) = (png, clipboard_win::register_format("PNG")) {
+            let _ = clipboard_win::raw::set_without_clear(format.get(), png.get_bytes());
+        }
+        return clipboard_win::raw::set_file_list_with(
+            &[path.to_string_lossy()],
+            clipboard_win::options::NoClear,
+        )
+        .map_err(|e| e.to_string());
+    }
+    #[cfg(target_os = "macos")]
+    contents.push(ClipboardContent::Files(vec![path
+        .to_string_lossy()
+        .into_owned()]));
+    #[cfg(not(target_os = "windows"))]
+    {
+        static CONTEXT: std::sync::Mutex<Option<ClipboardContext>> = std::sync::Mutex::new(None);
+        let mut context = CONTEXT.lock().map_err(|e| e.to_string())?;
+        if context.is_none() {
+            *context = Some(ClipboardContext::new().map_err(|e| e.to_string())?);
+        }
+        context
+            .as_ref()
+            .unwrap()
+            .set(contents)
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn read_android_clipboard_image(
+    app: tauri::AppHandle,
+) -> Result<tauri::ipc::Response, String> {
+    #[cfg(target_os = "android")]
+    {
+        return tauri::async_runtime::spawn_blocking(move || {
+            crate::android_clipboard::read_png(&app)
+                .map(|bytes| tauri::ipc::Response::new(bytes.unwrap_or_default()))
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Ok(tauri::ipc::Response::new(Vec::<u8>::new()))
+    }
+}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,8 +169,152 @@ fn read_clipboard_files() -> Result<ClipboardFileList, String> {
     use clipboard_rs::{Clipboard, ClipboardContext};
 
     let context = ClipboardContext::new().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    if let Ok(bytes) = context.get_buffer("text/uri-list") {
+        return Ok(clipboard_file_list(file_uri_paths(&bytes)));
+    }
     let paths = context.get_files().map_err(|e| e.to_string())?;
     Ok(clipboard_file_list(paths))
+}
+
+#[cfg(target_os = "linux")]
+fn file_uri_paths(bytes: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(|line| tauri::Url::parse(line).ok()?.to_file_path().ok())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
+}
+
+#[cfg(desktop)]
+#[cfg(test)]
+mod asset_copy_tests {
+    use super::*;
+
+    fn oversized_png(original: &[u8]) -> Vec<u8> {
+        // Rewrite IHDR and its CRC without allocating the described pixels.
+        let mut bytes = original.to_vec();
+        bytes[16..20].copy_from_slice(&16384_u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&16384_u32.to_be_bytes());
+        let mut crc = !0_u32;
+        for byte in &bytes[12..29] {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ (0xedb88320_u32 & 0_u32.wrapping_sub(crc & 1));
+            }
+        }
+        bytes[29..33].copy_from_slice(&(!crc).to_be_bytes());
+        bytes
+    }
+
+    #[test]
+    fn png_header_and_rgba_budget_are_checked_without_decoding_pixels() {
+        let image = image::GrayImage::new(2, 3);
+        let mut png = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let original = png.into_inner();
+        assert!(validate_clipboard_png(&original).is_ok());
+        let oversized = oversized_png(&original);
+        assert!(validate_clipboard_png(&oversized)
+            .unwrap_err()
+            .contains("limit"));
+        assert!(decode_clipboard_image(&oversized)
+            .unwrap_err()
+            .contains("limit"));
+        assert!(validate_clipboard_png(b"\x89PNG\r\n\x1a\n").is_err());
+        let mut bad_crc = original;
+        bad_crc[16] ^= 1;
+        assert!(validate_clipboard_png(&bad_crc).is_err());
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[test]
+    #[ignore = "requires the native desktop clipboard"]
+    fn native_file_copy_keeps_file_and_bitmap_together() {
+        use clipboard_rs::{Clipboard, ClipboardContext};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("image #%.png");
+        image::RgbaImage::new(2, 3).save(&path).unwrap();
+        copy_asset_file(&path).unwrap();
+        let clipboard = ClipboardContext::new().unwrap();
+        assert_eq!(clipboard.get_files().unwrap(), vec![path.to_string_lossy()]);
+        assert!(clipboard.get_image().is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn file_urls_decode_escaped_filenames_and_refuse_remote_schemes() {
+        assert_eq!(
+            file_uri_paths(b"# comment\r\nfile:///tmp/a%20%23%25.png\r\nhttps://example.com/a\n"),
+            vec!["/tmp/a #%.png"]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires X11 and xclip; run under xvfb-run"]
+    fn native_file_copy_offers_original_uri_and_bounded_bitmap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("image #%.png");
+        image::RgbaImage::new(2, 3).save(&path).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        copy_asset_file(&path).unwrap();
+        let read = |flavour: &str| {
+            let output = std::process::Command::new("xclip")
+                .args(["-o", "-selection", "clipboard", "-t", flavour])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            output.stdout
+        };
+        assert_eq!(
+            file_uri_paths(&read("text/uri-list")),
+            vec![path.to_string_lossy()]
+        );
+        assert!(read("x-special/gnome-copied-files").starts_with(b"copy\nfile://"));
+        assert_eq!(
+            image::load_from_memory(&read("image/png")).unwrap().width(),
+            2
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert_eq!(read("image/png"), original);
+        // A tiny encoded PNG can describe an RGBA buffer above the budget.
+        // Rewrite IHDR dimensions and CRC without allocating those pixels.
+        let oversized = oversized_png(&original);
+        assert!(decode_clipboard_image(&oversized)
+            .unwrap_err()
+            .contains("limit"));
+        for refused in [oversized, b"\x89PNG\r\n\x1a\n".to_vec()] {
+            std::fs::write(&path, &refused).unwrap();
+            copy_asset_file(&path).unwrap();
+            assert_eq!(
+                file_uri_paths(&read("text/uri-list")),
+                vec![path.to_string_lossy()]
+            );
+            assert!(!String::from_utf8_lossy(&read("TARGETS")).contains("image/png"));
+            assert_eq!(std::fs::read(&path).unwrap(), refused);
+        }
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(65 * 1024 * 1024)
+            .unwrap();
+        copy_asset_file(&path).unwrap();
+        assert_eq!(
+            file_uri_paths(&read("text/uri-list")),
+            vec![path.to_string_lossy()]
+        );
+        assert!(!String::from_utf8_lossy(&read("TARGETS")).contains("image/png"));
+        assert_eq!(
+            read_clipboard_files().unwrap().files[0].size,
+            65 * 1024 * 1024
+        );
+    }
 }
 
 fn clipboard_file_list(paths: Vec<String>) -> ClipboardFileList {
@@ -257,32 +543,238 @@ fn linux_copy_image(bytes: &[u8]) -> Result<(), String> {
 #[tauri::command]
 pub(crate) async fn copy_image_to_clipboard(
     app: tauri::AppHandle,
-    bytes_b64: String,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<(), String> {
+    let bytes = clipboard_request_bytes(request.body())?;
     tauri::async_runtime::spawn_blocking(move || {
-        // Bounds the payload (and rejects bad base64) before any platform route.
-        let bytes = decode_asset_b64(&bytes_b64)?;
         // The clipboard plugin's mobile `write_image` is "Unsupported on this
         // platform", so Android publishes the image through its own plugin
         // (GH #654).
         #[cfg(target_os = "android")]
         {
-            let _ = bytes;
+            use base64::Engine;
+            let png = clipboard_png(&bytes)?;
+            let bytes_b64 = base64::engine::general_purpose::STANDARD.encode(png);
             return crate::android_clipboard::copy_png(&app, &bytes_b64);
         }
         #[cfg(not(target_os = "android"))]
         {
             use tauri_plugin_clipboard_manager::ClipboardExt;
             #[cfg(target_os = "linux")]
-            if linux_copy_image(&bytes).is_ok() {
+            if bytes.starts_with(b"\x89PNG\r\n\x1a\n") && linux_copy_image(&bytes).is_ok() {
                 return Ok(());
             }
-            let img = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
+            let image = decode_clipboard_image(&bytes)?;
+            #[cfg(target_os = "linux")]
+            if !bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+                && linux_copy_image(&encode_clipboard_png(&image)?).is_ok()
+            {
+                return Ok(());
+            }
+            // Reuse decoded pixels if the Linux tools failed too.
+            let rgba = image.into_rgba8();
+            let (width, height) = rgba.dimensions();
+            let img = tauri::image::Image::new_owned(rgba.into_raw(), width, height);
             app.clipboard().write_image(&img).map_err(|e| e.to_string())
         }
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Tauri 2.12.3 never supplies Raw on Android; desktop's postMessage fallback
+/// also serializes Uint8Array as a JSON array. Bound every form before making
+/// an owned byte buffer. Tauri has already materialized the request itself.
+fn clipboard_request_bytes(body: &tauri::ipc::InvokeBody) -> Result<Vec<u8>, String> {
+    const MAX_BYTES: usize = 64 * 1024 * 1024;
+    let check_len = |len: usize| {
+        if len == 0 || len > MAX_BYTES {
+            Err("image is empty or exceeds 64 MiB clipboard limit".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    match body {
+        tauri::ipc::InvokeBody::Raw(bytes) => {
+            check_len(bytes.len())?;
+            Ok(bytes.clone())
+        }
+        tauri::ipc::InvokeBody::Json(value) => {
+            if let Some(b64) = value.get("bytesB64").and_then(serde_json::Value::as_str) {
+                // Shared asset gate checks encoded and decoded lengths before
+                // base64 allocation, including the padding boundary.
+                let bytes = crate::commands::decode_asset_b64(b64)?;
+                check_len(bytes.len())?;
+                Ok(bytes)
+            } else if let Some(values) = value.as_array() {
+                check_len(values.len())?;
+                // Reject malformed values before allocating the output too.
+                if !values.iter().all(|v| v.as_u64().is_some_and(|n| n <= 255)) {
+                    return Err("expected image byte array".into());
+                }
+                Ok(values.iter().map(|v| v.as_u64().unwrap() as u8).collect())
+            } else {
+                Err("expected raw image bytes or base64 image payload".into())
+            }
+        }
+    }
+}
+
+fn decode_clipboard_image(bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    use image::ImageDecoder;
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    check_clipboard_image_budget(&decoder)?;
+    let orientation = decoder.orientation().map_err(|e| e.to_string())?;
+    let mut image = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
+    image.apply_orientation(orientation);
+    Ok(image)
+}
+
+fn check_clipboard_image_budget(decoder: &impl image::ImageDecoder) -> Result<(), String> {
+    // Unlike ImageReader::decode, into_decoder doesn't reserve the output
+    // buffer. Bound both the decoded buffer and the eventual RGBA conversion
+    // before allocating either (a small JPEG can describe enormous dimensions).
+    let (width, height) = decoder.dimensions();
+    image::Limits::default()
+        .reserve(
+            decoder
+                .total_bytes()
+                .max((u64::from(width) * u64::from(height)).saturating_mul(4)),
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(desktop)]
+fn validate_clipboard_png(bytes: &[u8]) -> Result<(), String> {
+    // The PNG decoder validates IHDR (including CRC, colour/depth and nonzero
+    // dimensions) without allocating the pixel buffer or re-encoding bytes.
+    let decoder =
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png)
+            .into_decoder()
+            .map_err(|e| e.to_string())?;
+    check_clipboard_image_budget(&decoder)
+}
+
+#[cfg(any(target_os = "android", all(test, target_os = "linux")))]
+fn clipboard_png(bytes: &[u8]) -> Result<std::borrow::Cow<'_, [u8]>, String> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Ok(std::borrow::Cow::Borrowed(bytes));
+    }
+    Ok(std::borrow::Cow::Owned(encode_clipboard_png(
+        &decode_clipboard_image(bytes)?,
+    )?))
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn encode_clipboard_png(image: &image::DynamicImage) -> Result<Vec<u8>, String> {
+    let mut png = std::io::Cursor::new(Vec::new());
+    image
+        .write_to(&mut png, image::ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    Ok(png.into_inner())
+}
+
+#[cfg(test)]
+mod image_copy_tests {
+    use super::*;
+
+    #[test]
+    fn clipboard_accepts_android_json_and_desktop_transport_fallback() {
+        use tauri::ipc::InvokeBody::{Json, Raw};
+        let bytes = vec![137, 80, 78, 71];
+        // Actual ipc-protocol.js postMessage payloads (Android string and
+        // desktop Uint8Array serialized by process-ipc-message-fn.js).
+        let android = serde_json::from_str(r#"{"bytesB64":"iVBORw=="}"#).unwrap();
+        let fallback = serde_json::from_str("[137,80,78,71]").unwrap();
+        for body in [Raw(bytes.clone()), Json(android), Json(fallback)] {
+            assert_eq!(clipboard_request_bytes(&body).unwrap(), bytes);
+        }
+        for value in [
+            "null",
+            "{}",
+            "[]",
+            "[256]",
+            "[-1]",
+            "[1.5]",
+            "[null]",
+            r#"{"bytesB64":""}"#,
+            r#"{"bytesB64":"invalid"}"#,
+        ] {
+            assert!(clipboard_request_bytes(&Json(serde_json::from_str(value).unwrap())).is_err());
+        }
+        assert!(clipboard_request_bytes(&Raw(Vec::new())).is_err());
+        assert!(clipboard_request_bytes(&Raw(vec![0; 64 * 1024 * 1024 + 1])).is_err());
+        // Maximum encoded length, but padding implies one byte over the bound.
+        let b64 = "A".repeat((64_usize * 1024 * 1024).div_ceil(3) * 4);
+        assert!(
+            clipboard_request_bytes(&Json(serde_json::json!({"bytesB64": b64})))
+                .unwrap_err()
+                .contains("64 MiB")
+        );
+    }
+
+    #[test]
+    fn clipboard_decode_preserves_pixels_and_rejects_invalid_images() {
+        let image = image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 78]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        assert_eq!(
+            decode_clipboard_image(png.get_ref()).unwrap().into_rgba8(),
+            image
+        );
+        assert!(decode_clipboard_image(b"invalid").is_err());
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        assert!(matches!(
+            clipboard_png(png.get_ref()).unwrap(),
+            std::borrow::Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn clipboard_jpeg_preserves_browser_orientation() {
+        let image = image::RgbImage::from_fn(16, 24, |x, y| {
+            image::Rgb([(x * 13) as u8, (y * 9) as u8, ((x + y) * 5) as u8])
+        });
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut jpeg, image::ImageFormat::Jpeg).unwrap();
+        let jpeg = jpeg.into_inner();
+        // JPEG APP1: Exif TIFF, one orientation entry (6 = 90 degrees CW).
+        let exif = b"Exif\0\0II\x2a\0\x08\0\0\0\x01\0\x12\x01\x03\0\x01\0\0\0\x06\0\0\0\0\0\0\0";
+        let mut oriented = vec![0xff, 0xd8, 0xff, 0xe1];
+        oriented.extend_from_slice(&((exif.len() + 2) as u16).to_be_bytes());
+        oriented.extend_from_slice(exif);
+        oriented.extend_from_slice(&jpeg[2..]);
+        let decoded = decode_clipboard_image(&oriented).unwrap().into_rgba8();
+        let original = decode_clipboard_image(&jpeg).unwrap().into_rgba8();
+        assert_eq!(decoded, image::imageops::rotate90(&original));
+        assert_ne!(decoded, image::imageops::rotate270(&original));
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let png = clipboard_png(&oriented).unwrap();
+            assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+            assert_eq!(decode_clipboard_image(&png).unwrap().into_rgba8(), decoded);
+        }
+    }
+
+    #[test]
+    fn clipboard_rejects_huge_decoded_jpeg_before_pixel_allocation() {
+        let image = image::RgbImage::from_pixel(2, 3, image::Rgb([12, 34, 56]));
+        let mut jpeg = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut jpeg, image::ImageFormat::Jpeg).unwrap();
+        let mut jpeg = jpeg.into_inner();
+        let sof = jpeg.windows(2).position(|w| w == [0xff, 0xc0]).unwrap();
+        // The baseline JPEG SOF describes a 16384-square RGB image (768 MiB),
+        // despite the tiny encoded payload. RGBA would require 1 GiB.
+        jpeg[sof + 5..sof + 7].copy_from_slice(&16384_u16.to_be_bytes());
+        jpeg[sof + 7..sof + 9].copy_from_slice(&16384_u16.to_be_bytes());
+        assert!(decode_clipboard_image(&jpeg)
+            .unwrap_err()
+            .to_lowercase()
+            .contains("limit"));
+    }
 }
 
 /// What the backend knows about the rendering path, so the UI can warn — loudly
@@ -305,6 +797,33 @@ pub(crate) struct GpuEnv {
     software_forced: bool,
     appimage: bool,
     flatpak: bool,
+    packaged: Option<bool>,
+}
+
+/// Package identity is a runtime property, shared by Store and sideloaded MSIX.
+/// None preserves a failed probe so only the installer can fail closed.
+#[cfg(target_os = "windows")]
+fn packaged() -> Option<bool> {
+    use windows_sys::Win32::Foundation::{APPMODEL_ERROR_NO_PACKAGE, ERROR_INSUFFICIENT_BUFFER};
+    use windows_sys::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+    let mut length = 0;
+    // SAFETY: length is writable; a null buffer requests only the required size.
+    let result = unsafe { GetCurrentPackageFullName(&mut length, std::ptr::null_mut()) };
+    match result as u32 {
+        ERROR_INSUFFICIENT_BUFFER => Some(true),
+        APPMODEL_ERROR_NO_PACKAGE => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "android"
+))]
+fn packaged() -> Option<bool> {
+    Some(false)
 }
 
 /// Whether the process runs inside a Flatpak sandbox: Flatpak sets `FLATPAK_ID`
@@ -323,6 +842,7 @@ pub(crate) fn gpu_env() -> GpuEnv {
             || set("WEBKIT_DISABLE_COMPOSITING_MODE")
             || std::env::var("TINE_GPU").as_deref() == Ok("0"),
         appimage: set("APPIMAGE"),
+        packaged: packaged(),
         flatpak: in_flatpak(
             set("FLATPAK_ID"),
             std::path::Path::new("/.flatpak-info").exists(),
@@ -349,6 +869,55 @@ pub(crate) fn file_url_to_path(url: &str) -> Option<std::path::PathBuf> {
     (path.as_os_str().len() > 0).then_some(path)
 }
 
+/// The OS path of `relative` (a `/`-separated graph-relative path that a file
+/// link resolved to as OG does, GH #457, src/render/relativeFileLink.ts) inside
+/// the graph at `root`. Refusal scenario (in scope: malformed or imported
+/// Markdown, a synced note): a link in a note is untrusted content, so a path
+/// that leaves the graph folder, lexically (`..` above the root, an absolute or
+/// drive component) or through a symlink, is refused rather than handed to the
+/// OS opener. That is an intentional difference from OG, which opens absolute
+/// paths and lets its path join climb out of the graph. A missing target
+/// is reported instead of opening an unrelated window. Read-only; Cost
+/// O(path components) plus two canonicalizations.
+pub(crate) fn graph_relative_target(
+    root: &std::path::Path,
+    relative: &str,
+) -> Result<std::path::PathBuf, String> {
+    const OUTSIDE: &str = "that link points outside the graph folder";
+    if relative.starts_with(['/', '\\']) {
+        return Err(OUTSIDE.into());
+    }
+    let mut clean = std::path::PathBuf::new();
+    for part in relative.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if !clean.pop() {
+                    return Err(OUTSIDE.into());
+                }
+            }
+            part => {
+                let component = std::path::Path::new(part);
+                if part.contains(':') || component.has_root() {
+                    return Err(OUTSIDE.into());
+                }
+                clean.push(component);
+            }
+        }
+    }
+    let graph = root
+        .canonicalize()
+        .map_err(|error| format!("the graph folder could not be read: {error}"))?;
+    let target = root
+        .join(&clean)
+        .canonicalize()
+        .map_err(|_| format!("{} could not be found", clean.display()))?;
+    if !target.starts_with(&graph) {
+        return Err(OUTSIDE.into());
+    }
+    Ok(target)
+}
+
 /// Where a clicked link is headed, decided before anything is spawned so the
 /// routing decision is testable on its own — the spawn that follows is not.
 #[derive(Debug, PartialEq, Eq)]
@@ -357,6 +926,27 @@ pub(crate) enum ExternalOpen {
     LocalPath(std::path::PathBuf),
     /// http(s) or mailto: the URL opener handles it.
     Url,
+    /// Another app's scheme (`zotero:`, `obsidian:`, `shortcuts:` …) that the
+    /// user confirmed for this click (GH #503): the URL opener hands it to the
+    /// OS, which picks the registered app.
+    CustomScheme,
+}
+
+/// Schemes no outbound link ever opens, confirmed or not: they run code or
+/// carry inline content in whatever receives them (I-22). `file:` and `tine:`
+/// have their own routes and are not custom schemes either.
+const NEVER_OPENED_SCHEMES: &[&str] = &["javascript", "vbscript", "data", "blob", "about"];
+
+/// The RFC 3986 scheme of `url`, lowercased, or `None` when it has none. A
+/// single letter is a Windows drive (`C:\notes`), not a scheme.
+pub(crate) fn url_scheme(url: &str) -> Option<String> {
+    let (scheme, _) = url.split_once(':')?;
+    let mut chars = scheme.chars();
+    let first = chars.next()?;
+    (scheme.len() > 1
+        && first.is_ascii_alphabetic()
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')))
+    .then(|| scheme.to_ascii_lowercase())
 }
 
 /// OG parity for `file:` (og-1.0.0 `electron/window.cljs` `open-default-app!`):
@@ -366,8 +956,20 @@ pub(crate) enum ExternalOpen {
 /// user's own content, and a link that silently does nothing (GH #444, where
 /// this gate rejected `file:` outright and the frontend then discarded the
 /// rejection) is worse for the honest case than the parity behaviour is for the
-/// hostile one. Every other scheme stays refused, which is stricter than OG.
-pub(crate) fn external_open_plan(url: &str) -> Result<ExternalOpen, String> {
+/// hostile one.
+///
+/// Any other scheme (GH #503: `zotero://`, `obsidian://`, `shortcuts://` …) OG
+/// also hands to the OS silently. Tine opens it only when `confirmed_scheme`
+/// names that exact scheme, which the frontend supplies after the user
+/// confirmed a prompt naming the scheme and the full target. Refusal scenario
+/// (in scope: malformed or imported Markdown, a synced note from another
+/// device): a link in a note is untrusted content, and an unconfirmed click
+/// must not launch an arbitrary registered handler. `javascript:`/`data:`-like
+/// schemes are refused even when confirmed (I-22).
+pub(crate) fn external_open_plan(
+    url: &str,
+    confirmed_scheme: Option<&str>,
+) -> Result<ExternalOpen, String> {
     if url.starts_with("file:") {
         let path = file_url_to_path(url)
             .ok_or_else(|| "that file link does not name a local file".to_string())?;
@@ -376,22 +978,37 @@ pub(crate) fn external_open_plan(url: &str) -> Result<ExternalOpen, String> {
     if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
         return Ok(ExternalOpen::Url);
     }
-    Err("unsupported url scheme".into())
+    let Some(scheme) = url_scheme(url) else {
+        return Err("unsupported url scheme".into());
+    };
+    if NEVER_OPENED_SCHEMES.contains(&scheme.as_str()) || scheme == "tine" {
+        return Err(format!("{scheme}: links are never opened"));
+    }
+    if confirmed_scheme.map(str::to_ascii_lowercase).as_deref() != Some(scheme.as_str()) {
+        return Err(format!("opening a {scheme}: link needs your confirmation"));
+    }
+    Ok(ExternalOpen::CustomScheme)
 }
 
-/// Open a web/mail URL, or a local `file:` link, in the user's default external
-/// application. The URL is passed as a single argument (no shell), so it can't
+/// Open a web/mail URL, a local `file:` link, or a user-confirmed custom-scheme
+/// link (GH #503) in the user's default external application. The URL is passed as a single argument (no shell), so it can't
 /// inject commands.
 /// Starting the opener (PATH search, exec) runs on the blocking pool, off the
 /// UI thread (GH #623, I-21).
 #[tauri::command]
-pub(crate) async fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
+pub(crate) async fn open_external(
+    app: tauri::AppHandle,
+    url: String,
+    confirmed_scheme: Option<String>,
+) -> Result<(), String> {
     if url.starts_with("tine:") {
         crate::deep_links::receive_url(&app, url);
         return Ok(());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        if let ExternalOpen::LocalPath(path) = external_open_plan(&url)? {
+        if let ExternalOpen::LocalPath(path) =
+            external_open_plan(&url, confirmed_scheme.as_deref())?
+        {
             // Every OS opener accepts a path that is not there — `explorer.exe` even
             // opens an unrelated window for one — so without this check a stale link
             // reproduces the reported "clicking does nothing" from the other side.
@@ -904,7 +1521,7 @@ mod tests {
 
 #[cfg(test)]
 mod file_url_tests {
-    use super::{external_open_plan, file_url_to_path, ExternalOpen};
+    use super::{external_open_plan, file_url_to_path, url_scheme, ExternalOpen};
 
     /// The three shapes GH #444 reported, plus the ordinary POSIX one. On
     /// Windows all four resolve to a real local path; elsewhere the drive-letter
@@ -939,7 +1556,7 @@ mod file_url_tests {
     #[test]
     fn a_file_link_is_routed_to_the_os_default_application() {
         for url in ["file://D:\\test.txt", "file:///D:\\test.txt"] {
-            match external_open_plan(url) {
+            match external_open_plan(url, None) {
                 Ok(ExternalOpen::LocalPath(path)) => {
                     assert!(path.to_string_lossy().ends_with("test.txt"), "{url}");
                 }
@@ -948,7 +1565,7 @@ mod file_url_tests {
         }
         // A directory is the same route; OG hands it to the file manager too.
         assert!(matches!(
-            external_open_plan("file:///home/user/notes/"),
+            external_open_plan("file:///home/user/notes/", None),
             Ok(ExternalOpen::LocalPath(_))
         ));
     }
@@ -956,25 +1573,76 @@ mod file_url_tests {
     #[test]
     fn web_and_mail_links_keep_their_own_route_and_everything_else_stays_refused() {
         assert_eq!(
-            external_open_plan("https://example.com/a"),
+            external_open_plan("https://example.com/a", None),
             Ok(ExternalOpen::Url)
         );
         assert_eq!(
-            external_open_plan("http://example.com/a"),
+            external_open_plan("http://example.com/a", None),
             Ok(ExternalOpen::Url)
         );
         assert_eq!(
-            external_open_plan("mailto:a@example.com"),
+            external_open_plan("mailto:a@example.com", None),
             Ok(ExternalOpen::Url)
         );
-        // Stricter than OG, which hands every unknown scheme to the OS.
+        // Stricter than OG, which hands every unknown scheme to the OS: without
+        // the user's confirmation nothing else opens.
         for url in [
             "javascript:alert(1)",
             "smb://host/share",
             "data:text/html,x",
+            "zotero://select/items/ABC",
         ] {
-            assert!(external_open_plan(url).is_err(), "{url} must stay refused");
+            assert!(
+                external_open_plan(url, None).is_err(),
+                "{url} must stay refused"
+            );
         }
+    }
+
+    /// GH #503: another app's link opens once the user confirmed its scheme;
+    /// the confirmation is for that scheme only, and code-carrying schemes are
+    /// never opened, confirmed or not (I-22).
+    #[test]
+    fn a_confirmed_custom_scheme_opens_and_nothing_else_does() {
+        for (url, scheme) in [
+            ("shortcuts://run-shortcut?name=abc", "shortcuts"),
+            ("zotero://select/items/ABC", "zotero"),
+            ("obsidian://open?vault=v&file=f", "obsidian"),
+            ("Zotero://select/items/ABC", "ZOTERO"),
+            ("tel:+420123456", "tel"),
+        ] {
+            assert_eq!(
+                external_open_plan(url, Some(scheme)),
+                Ok(ExternalOpen::CustomScheme),
+                "{url}"
+            );
+        }
+        // A confirmation of one scheme does not open another.
+        assert!(external_open_plan("zotero://x", Some("obsidian")).is_err());
+        for url in [
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            "vbscript:x",
+            "data:text/html,x",
+            "blob:https://x/y",
+            "about:blank",
+            "tine://today",
+        ] {
+            let scheme = url_scheme(url).expect("a scheme");
+            assert!(
+                external_open_plan(url, Some(&scheme)).is_err(),
+                "{url} must never open"
+            );
+        }
+        // A Windows drive path or a bare word is not a scheme.
+        assert_eq!(url_scheme("C:\\notes\\a.txt"), None);
+        assert_eq!(url_scheme("notes/a.txt"), None);
+        assert_eq!(url_scheme("-x:y"), None);
+        // http(s), mailto and file keep their routes whatever is confirmed.
+        assert_eq!(
+            external_open_plan("https://example.com", Some("zotero")),
+            Ok(ExternalOpen::Url)
+        );
     }
 
     #[test]
@@ -993,13 +1661,28 @@ mod clipboard_tool_tests {
     // the production-source scan (og-enforcement) as test code.
     #![cfg(target_os = "linux")]
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
     use std::time::{Duration, Instant};
 
+    /// A child process writes the script, so this test process never holds a
+    /// write descriptor that a parallel test's fork could inherit; executing a
+    /// file another process still has open for writing fails with ETXTBSY.
     fn script(dir: &std::path::Path, name: &str, body: &str) -> (String, Vec<String>) {
         let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let written = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+                "sh",
+            ])
+            .arg(format!("#!/bin/sh\n{body}\n"))
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(
+            written.success(),
+            "could not write test script {}",
+            path.display()
+        );
         (path.to_string_lossy().into_owned(), Vec::new())
     }
     fn pid_of(dir: &std::path::Path, file: &str) -> u32 {
@@ -1117,5 +1800,101 @@ mod clipboard_tool_tests {
         }
         assert!(!lingers(pid), "opener {pid} stayed a zombie");
         assert!(spawn_reaped(&mut std::process::Command::new("/nonexistent/tine-opener")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod reveal_platform_arms {
+    /// The body of `fn name` in `source`, from its signature to the next
+    /// top-level item. Test-only source slicing; O(source bytes).
+    fn body<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("fn {name} not found"));
+        let rest = &source[start..];
+        let end = rest.find("\n}\n").map_or(rest.len(), |end| end + 3);
+        &rest[..end]
+    }
+
+    /// I-16 (GH #447): "show the graph folder" names all five shipped targets.
+    /// tauri-build defines `desktop` as "target_os is neither ios nor android"
+    /// (tauri-build 2.6 `cfg_alias("desktop", !mobile)`), so Linux, Windows and
+    /// macOS each need their own reveal arm, and iOS/Android must reach the
+    /// `not(desktop)` refusal that the frontend's `canRevealInFileManager`
+    /// hides. Dropping any arm, or the refusal, fails here.
+    #[test]
+    fn reveal_names_linux_windows_macos_and_refuses_ios_android() {
+        let platform = include_str!("platform.rs");
+        let reveal = body(platform, "reveal_page_source");
+        for os in ["linux", "windows", "macos"] {
+            assert_eq!(
+                reveal
+                    .matches(&format!("#[cfg(target_os = \"{os}\")]"))
+                    .count(),
+                1,
+                "I-16: reveal_page_source needs exactly one {os} arm; exemplar platform.rs"
+            );
+        }
+        let settings = include_str!("settings.rs");
+        let command = body(settings, "reveal_known_graph");
+        assert!(command.contains("#[cfg(desktop)]"));
+        assert!(
+            command.contains("#[cfg(not(desktop))]"),
+            "I-16: iOS/Android must get reveal_known_graph's explicit refusal"
+        );
+    }
+}
+
+#[cfg(test)]
+mod graph_relative_target_tests {
+    use super::graph_relative_target;
+
+    /// GH #457: a resolved file link opens the file inside the graph, and a
+    /// path that leaves the graph folder, lexically or through a symlink, is
+    /// refused (a note's link is untrusted content).
+    #[test]
+    fn opens_inside_the_graph_and_refuses_what_leaves_it() {
+        let base = std::env::temp_dir().join(format!("tine-457-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let graph = base.join("graph");
+        std::fs::create_dir_all(graph.join("files")).unwrap();
+        std::fs::create_dir_all(base.join("outside")).unwrap();
+        std::fs::write(graph.join("files/a b.txt"), "x").unwrap();
+        std::fs::write(base.join("outside/secret.txt"), "x").unwrap();
+
+        let opened = graph_relative_target(&graph, "files/a b.txt").expect("inside");
+        assert_eq!(opened, graph.join("files/a b.txt").canonicalize().unwrap());
+        assert_eq!(
+            graph_relative_target(&graph, "pages/../files/a b.txt").unwrap(),
+            opened
+        );
+        assert_eq!(
+            graph_relative_target(&graph, "").unwrap(),
+            graph.canonicalize().unwrap()
+        );
+        for escaping in [
+            "../outside/secret.txt",
+            "files/../../outside/secret.txt",
+            "/etc/passwd",
+            "C:/Windows/win.ini",
+        ] {
+            assert!(
+                graph_relative_target(&graph, escaping)
+                    .unwrap_err()
+                    .contains("outside the graph folder"),
+                "{escaping} must be refused"
+            );
+        }
+        assert!(graph_relative_target(&graph, "files/missing.txt")
+            .unwrap_err()
+            .contains("could not be found"));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(base.join("outside"), graph.join("link")).unwrap();
+            assert!(graph_relative_target(&graph, "link/secret.txt")
+                .unwrap_err()
+                .contains("outside the graph folder"));
+        }
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

@@ -29,7 +29,7 @@ icon:: 🧭
   - [[Reference/Journals, tasks, and scheduling]] — map journal setup, task markers and priorities, scheduling dates, the agenda, time tracking, and repeating tasks.
   - [[Reference/Pages, links, references, and search]] — the exact rules for pages, links, tags, aliases, block references, reference panels, and every search surface.
   - [[Reference/Tine query model]] — every way a query's answer can differ from Logseq's, and why.
-  - [[Reference/Command line]] — open a graph, start Quick Capture, check a graph, or publish a static or live export from a terminal.
+  - [[Reference/Command line]] — read and search a graph from a terminal, understand the app/serve owner handover, open Quick Capture, check a graph, or publish an export.
   - [[Reference/Platforms and mobile]] — learn what changes on a narrow window versus on the Android app, and what ships on each platform today.
 - ## Feature showcase
   - [[Feature showcase]] — inspect one live example of each supported Logseq rendering feature.

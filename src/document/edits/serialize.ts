@@ -1,5 +1,5 @@
 import { doc, formatForBlock, pageByName } from "../model";
-import { splitProps } from "../../editor/properties";
+import { hideKeys, splitProps } from "../../editor/properties";
 import { type ClipboardPayloadData, type ClipboardSourcePage, type ClipboardBlock, CLIPBOARD_PAYLOAD_MAX_BLOCKS, CLIPBOARD_PAYLOAD_MAX_RAW_BYTES } from "../../clipboard";
 import { pageInstanceGeneration } from "../instance";
 import { stampCutSource } from "../host/wiring";
@@ -28,7 +28,7 @@ export function blockSubtreeMarkdown(
   const raw = strip
     ? splitProps(
         n.raw,
-        (k) => (stripId && k === "id") || (stripCollapsed && k === "collapsed"),
+        hideKeys([...(stripId ? ["id"] : []), ...(stripCollapsed ? ["collapsed"] : [])]),
         format,
       ).visible
     : n.raw;

@@ -1,12 +1,14 @@
+import { t as translate } from "../i18n";
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { FloatingPortal } from "./FloatingPortal";
+import { hoverIntent } from "./hoverIntent";
 import { resolveRouteBlock, routeTitle, type PaneRouter, type Route, type Tab } from "../router";
 import { formatForBlock, node as docNode } from "../document";
-import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
+import { splitProps, BUILTIN_HIDE, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
 import { parseBlock, parserReady } from "../render/parse";
 import { inlineText } from "../render/facets";
-import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes, layoutRoot, windowOfPane } from "../panes";
+import { moveTabToPane, moveTabToSeamSplit, moveTabToSplitPane, layoutHasMultiplePanes, layoutRoot, windowOfPane } from "../panes";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { MAIN_WINDOW_ID, isHTMLElementNode, newResizeObserver, useOwnerWindow } from "../windowRealm";
 
@@ -22,14 +24,13 @@ function closeOffered(router: PaneRouter, t: Tab): boolean {
 
 const MAX_TITLE = 32;
 const DRAG_THRESHOLD_PX = 4;
-const EDGE_ZONE_PX = 24;
 
 // A short, plain-text summary of a zoomed-into block, for the tab label. Drops
 // the hidden id::/collapsed:: lines, takes the first non-empty line, and reads it
 // as the PARSER does (I-12): links show their label, page refs their name, emphasis
 // and code spans their text, and a heading its title - no regex over the markup.
 export function blockSummary(raw: string, format: PropFormat, truncate = true): string {
-  const { visible } = splitProps(raw, isBuiltinHidden, format);
+  const { visible } = splitProps(raw, BUILTIN_HIDE, format);
   const line =
     visible
       .split("\n")
@@ -50,29 +51,28 @@ function tabBlockId(r: Route): string | undefined {
 }
 
 // Tab label: a zoomed-into block shows its (shortened) content; everything else
-// shows the page name (falling back to it when the block isn't loaded or empty).
-function tabTitle(r: Route): string {
+// shows the page name. A zoomed tab whose block is not loaded (a background tab
+// after a session restore, or an evicted page) must still differ from the plain tab
+// of the same page, so it reads "Page › …" until the block is known (GH #528).
+function zoomedLabel(r: Route, truncate: boolean): string {
   if (r.kind === "page" && r.block) {
     const id = tabBlockId(r);
     const n = id ? docNode(id) : undefined;
     if (n) {
-      const s = blockSummary(n.raw, formatForBlock(id!));
+      const s = blockSummary(n.raw, formatForBlock(id!), truncate);
       if (s) return s;
     }
+    return `${routeTitle(r)} › …`;
   }
   return routeTitle(r);
 }
 
-function tabFullTitle(r: Route): string {
-  if (r.kind === "page" && r.block) {
-    const id = tabBlockId(r);
-    const n = id ? docNode(id) : undefined;
-    if (n) {
-      const summary = blockSummary(n.raw, formatForBlock(id), false);
-      if (summary) return summary;
-    }
-  }
-  return routeTitle(r);
+export function tabTitle(r: Route): string {
+  return zoomedLabel(r, true);
+}
+
+export function tabFullTitle(r: Route): string {
+  return zoomedLabel(r, false);
 }
 
 type SplitSide = "left" | "right" | "top" | "bottom";
@@ -81,8 +81,7 @@ export type TabDropTarget =
   | { kind: "tab"; paneId: string; tabId: string; index: number; before: boolean }
   | { kind: "pane"; paneId: string }
   | { kind: "split"; paneId: string; side: SplitSide }
-  | { kind: "seam"; path: number[]; previewPaneId: string | null; side: SplitSide }
-  | { kind: "root-edge"; side: SplitSide; previewPaneId: string | null };
+  | { kind: "seam"; path: number[]; previewPaneId: string | null; side: SplitSide };
 
 const [activeTabDrag, setActiveTabDrag] = createSignal<{ paneId: string; tabId: string } | null>(null);
 const [currentTabDropTarget, setCurrentTabDropTarget] = createSignal<TabDropTarget | null>(null);
@@ -132,36 +131,24 @@ function seamPreview(
   };
 }
 
-function edgeSideAt(x: number, y: number, rect: DOMRect): SplitSide | null {
+function edgeSideAt(x: number, y: number, rect: DOMRect, contentTop = rect.top): SplitSide | null {
+  const zone = (extent: number) => Math.max(24, Math.min(extent * 0.2, 96));
+  const horizontalZone = zone(rect.width);
+  const verticalZone = zone(rect.height);
   const hits = [
-    { side: "left" as const, dist: x - rect.left },
-    { side: "right" as const, dist: rect.right - x },
-    { side: "top" as const, dist: y - rect.top },
-    { side: "bottom" as const, dist: rect.bottom - y },
-  ].filter((h) => h.dist >= 0 && h.dist <= EDGE_ZONE_PX);
+    { side: "left" as const, dist: x - rect.left, zone: horizontalZone },
+    { side: "right" as const, dist: rect.right - x, zone: horizontalZone },
+    { side: "top" as const, dist: y - contentTop, zone: verticalZone },
+    { side: "bottom" as const, dist: rect.bottom - y, zone: verticalZone },
+  ].filter((h) => h.dist >= 0 && h.dist <= h.zone);
   hits.sort((a, b) => a.dist - b.dist);
   return hits[0]?.side ?? null;
-}
-
-function isRootEdge(pane: HTMLElement, side: SplitSide): boolean {
-  const row = pane.ownerDocument.querySelector(".content-row") as HTMLElement | null;
-  if (!row) return false;
-  const paneRect = pane.getBoundingClientRect();
-  const rowRect = row.getBoundingClientRect();
-  const close = (a: number, b: number) => Math.abs(a - b) <= 2;
-  switch (side) {
-    case "left": return close(paneRect.left, rowRect.left);
-    case "right": return close(paneRect.right, rowRect.right);
-    case "top": return close(paneRect.top, rowRect.top);
-    case "bottom": return close(paneRect.bottom, rowRect.bottom);
-  }
 }
 
 export function tabSplitPreviewSideForPane(paneId: string): SplitSide | null {
   const target = currentTabDropTarget();
   if (target?.kind === "split" && target.paneId === paneId) return target.side;
   if (target?.kind === "seam" && target.previewPaneId === paneId) return target.side;
-  if (target?.kind === "root-edge" && target.previewPaneId === paneId) return target.side;
   return null;
 }
 
@@ -208,15 +195,30 @@ export function tabDropTargetAt(
     return { kind: "seam", path, previewPaneId: preview.paneId, side: preview.side };
   }
 
-  if (el.closest(".tab-bar")) return null;
+  // GH #527: anywhere else in a tab bar (the empty space after the last tab, the
+  // overflow button) drops the tab LAST in that bar's pane. The visual cue is the
+  // "after" mark on the last tab.
+  const bar = el.closest(".tab-bar") as HTMLElement | null;
+  if (bar) {
+    const paneId = stripPaneId(bar);
+    const tabs = Array.from(bar.querySelectorAll<HTMLElement>(".tab[data-tab-id]"));
+    const last = tabs[tabs.length - 1]?.dataset.tabId;
+    if (!paneId || !last) return null;
+    return { kind: "tab", paneId, tabId: last, index: tabs.length, before: false };
+  }
   const pane = el.closest("[data-pane-id]") as HTMLElement | null;
   const paneId = pane?.dataset.paneId;
   if (!pane || !paneId || paneId === "pdf") return null;
-  const side = edgeSideAt(x, y, pane.getBoundingClientRect());
+  const rect = pane.getBoundingClientRect();
+  // The strip keeps its reorder/append meaning. Start the top split band
+  // directly below it, so every pane has a reachable top edge (GH #499).
+  const strip = pane.querySelector<HTMLElement>(":scope > .tab-bar");
+  const contentTop = Math.max(rect.top, strip?.getBoundingClientRect().bottom ?? rect.top);
+  const side = edgeSideAt(x, y, rect, contentTop);
   if (side) {
-    return isRootEdge(pane, side)
-      ? { kind: "root-edge", side, previewPaneId: paneId }
-      : { kind: "split", paneId, side };
+    // The preview occupies this pane, including at an outer layout edge.
+    // GH #499: use that same region for the drop rather than splitting root.
+    return { kind: "split", paneId, side };
   }
   return { kind: "pane", paneId };
 }
@@ -231,8 +233,6 @@ function applyTabDrop(sourcePaneId: string, tabId: string, target: TabDropTarget
       return !!moveTabToSplitPane(sourcePaneId, tabId, target.paneId, target.side);
     case "seam":
       return !!moveTabToSeamSplit(sourcePaneId, tabId, target.path);
-    case "root-edge":
-      return !!moveTabToRootEdge(sourcePaneId, tabId, target.side);
   }
 }
 
@@ -257,6 +257,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
   const stripDragLayerId = `tab-strip-drag-${createUniqueId()}`;
   const [overflowing, setOverflowing] = createSignal(false);
   const [overviewOpen, setOverviewOpen] = createSignal(false);
+  let hoverOverview = false;
+  const overviewHover = hoverIntent(() => { if (hoverOverview && !overviewDragId()) dismissOverview(false); });
   const [overviewPosition, setOverviewPosition] = createSignal({ left: 8, top: 48, width: 360 });
   const [overviewDragId, setOverviewDragId] = createSignal<string | null>(null);
   const [overviewDrop, setOverviewDrop] = createSignal<{ tabId: string; before: boolean } | null>(null);
@@ -285,6 +287,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth;
   };
   const dismissOverview = (restoreFocus = true) => {
+    overviewHover.enter();
+    hoverOverview = false;
     cancelOverviewReorder?.();
     setOverviewOpen(false);
     if (restoreFocus) queueMicrotask(() => overviewTrigger?.focus());
@@ -447,7 +451,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     queueMicrotask(() => {
       positionOverview();
       const activeIndex = Math.max(0, router.tabs().findIndex((tab) => tab.id === router.activeId()));
-      focusOverviewRow(activeIndex);
+      if (!hoverOverview) focusOverviewRow(activeIndex);
     });
     ownerWindow.addEventListener("resize", positionOverview);
     ownerWindow.addEventListener("scroll", positionOverview, true);
@@ -628,9 +632,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
               }
             }}
             title={
-              t.pinned
-                ? "Pinned (sticky) — links open in a new tab. Double-click to unpin"
-                : "Double-click to pin (sticky)"
+              t.pinned ? translate("tab-bar-pinned-sticky-links-open-in-a-new-tab") : translate("tab-bar-double-click-to-pin-sticky")
             }
           >
             <Show when={t.pinned}>
@@ -652,8 +654,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
               <button
                 class="tab-close"
                 type="button"
-                title="Close tab"
-                aria-label="Close tab"
+                title={translate("tab-bar-close-tab")}
+                aria-label={translate("tab-bar-close-tab")}
                 data-tab-drag-exempt
                 onClick={(e) => {
                   e.stopPropagation();
@@ -672,13 +674,26 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
           ref={overviewTrigger}
           class="tab-overview-trigger"
           type="button"
-          title="Show all tabs"
-          aria-label="Show all tabs"
+          title={translate("tab-bar-show-all-tabs")}
+          aria-label={translate("tab-bar-show-all-tabs")}
           aria-haspopup="listbox"
           aria-expanded={overviewOpen()}
           aria-controls={overviewId}
           data-tab-overview-trigger
-          onClick={() => overviewOpen() ? dismissOverview() : setOverviewOpen(true)}
+          onMouseEnter={() => {
+            overviewHover.enter();
+            if (!overviewOpen()) { hoverOverview = true; setOverviewOpen(true); }
+          }}
+          onMouseLeave={overviewHover.leave}
+          onClick={() => {
+            overviewHover.enter();
+            if (hoverOverview) {
+              hoverOverview = false;
+              focusOverviewTab(router.activeId());
+            }
+            else if (overviewOpen()) dismissOverview();
+            else setOverviewOpen(true);
+          }}
         >⌄</button>
         <Show when={overviewOpen()}>
           <FloatingPortal>
@@ -686,13 +701,15 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
             id={overviewId}
             class="tab-overview"
             role="listbox"
-            aria-label="Open tabs"
+            aria-label={translate("tab-bar-open-tabs")}
             style={{
               left: `${overviewPosition().left}px`,
               top: `${overviewPosition().top}px`,
               width: `${overviewPosition().width}px`,
             }}
             onKeyDown={onOverviewKeyDown}
+            onMouseEnter={overviewHover.enter}
+            onMouseLeave={overviewHover.leave}
           >
             <For each={router.tabs()}>
               {(tab, index) => (
@@ -721,8 +738,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
                     class="tab-overview-drag-handle"
                     type="button"
                     tabIndex={-1}
-                    aria-label={`Reorder ${tabFullTitle(router.tabRoute(tab))}`}
-                    title="Drag to reorder; Alt+Up/Down moves the focused tab"
+                    aria-label={translate("tab-bar-reorder", { title: String(tabFullTitle(router.tabRoute(tab))) })}
+                    title={translate("tab-bar-drag-to-reorder-alt-up-down-moves-the")}
                     onPointerDown={(event) => beginOverviewDrag(tab.id, event)}
                     onClick={(event) => {
                       event.preventDefault();
@@ -730,13 +747,13 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
                     }}
                   >⠿</button>
                   <span class="tab-overview-active" aria-hidden="true">{tab.id === router.activeId() ? "✓" : ""}</span>
-                  <Show when={tab.pinned}><span class="tab-overview-pin" title="Pinned"><EmojiText text="📌" /></span></Show>
+                  <Show when={tab.pinned}><span class="tab-overview-pin" title={translate("tab-bar-pinned")}><EmojiText text="📌" /></span></Show>
                   <span class="tab-overview-title"><EmojiText text={tabFullTitle(router.tabRoute(tab))} /></span>
                   <Show when={closeOffered(router, tab)}>
                     <button
                       class="tab-overview-close"
                       type="button"
-                      aria-label={`Close ${tabFullTitle(router.tabRoute(tab))}`}
+                      aria-label={translate("tab-bar-close", { title: String(tabFullTitle(router.tabRoute(tab))) })}
                       onClick={(event) => {
                         event.stopPropagation();
                         void closeOverviewTab(tab.id, index());

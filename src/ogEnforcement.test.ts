@@ -19,7 +19,14 @@ describe("og campaign enforcement", () => {
     expect(isProduction("crates/tine-store/src/page_host/tests.rs")).toBe(false);
     expect(isProduction("crates/tine-store/src/page_host/driver_tests.rs")).toBe(false);
     expect(isProduction("crates/tine-store/src/page_host/driver.rs")).toBe(true);
+    expect(isProduction("src-tauri/src/owner/output_tests/mod.rs")).toBe(false);
+    expect(isProduction("src/i18n/messages.gen.ts")).toBe(false);
+    expect(isProduction("src/i18n/messages.ts")).toBe(true);
+    expect(isProduction("src-tauri/src/owner/serve.rs")).toBe(true);
     expect(isProduction("crates/tine-store/src/contests.rs")).toBe(true);
+    expect(isProduction("crates/tine-store/src/page_state/mod.rs")).toBe(false);
+    // That exemption holds only while the transcription stays test-gated.
+    expect(readFileSync(path.join(root, "crates/tine-store/src/lib.rs"), "utf8")).toMatch(/#\[cfg\(test\)\]\nmod page_state;/);
   });
 
   it("ratchets production file size against the post-batch-5 baseline", () => {
@@ -28,7 +35,7 @@ describe("og campaign enforcement", () => {
   }, 30_000);
 
   it("pins persisted format count and low-level writer sites", () => {
-    expect(PINNED_FORMAT_COUNT).toBe(30);
+    expect(PINNED_FORMAT_COUNT).toBe(31);
     expect(PERSISTED_FORMATS).toEqual([
       "page-markdown", "page-org", "graph-config-edn", "graph-custom-css",
       "graph-assets", "asset-sidecar-edn", "asset-trash", "graph-trash",
@@ -42,6 +49,7 @@ describe("og campaign enforcement", () => {
       "backup-graph-text-copy",
       "launch-checkpoint",
       "graph-link-identity",
+      "share-inbox",
       "backup-zip-snapshot",
     ]);
     expect(() => checkFormatCount()).not.toThrow();

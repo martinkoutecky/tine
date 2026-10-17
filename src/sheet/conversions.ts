@@ -1,10 +1,11 @@
-import { splitProps, isBuiltinHidden } from "../editor/properties";
+import { msg, type Msg } from "../i18n";
+import { splitProps, BUILTIN_HIDE } from "../editor/properties";
 import type { OutlineNode } from "../editor/outline";
 import type { Inline, TableBlock } from "../render/ast";
 import { visibleBody } from "../render/block";
 import { inlineText, parseBody } from "../render/facets";
 import { rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset } from "../render/spans";
-import { blockIsGridView, blockPageReadOnly, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineAfter, replaceChildOrders, setBlockProperty, setRaw, withUndoUnit, node as docNode } from "../document";
+import { blockIsGridView, blockPageReadOnly, deleteBlock, formatForBlock, insertEmptyChildBlock, insertOutlineAfter, setBlockProperty, setRaw, withUndoUnit, node as docNode } from "../document";
 import { pushToast } from "../toasts";
 import { sheetConfigFromRaw } from "./config";
 
@@ -60,7 +61,7 @@ export function convertPipeTableToGrid(id: string): boolean {
   const node = docNode(id);
   if (!candidate || !node) return false;
   if (node.children.length > 0) {
-    pushToast("Can't convert to grid: children would collide with grid rows.", "error");
+    pushToast(msg("sheet-can-t-convert-to-grid-children-would-collide-with-grid-rows"), "error");
     return false;
   }
 
@@ -153,51 +154,51 @@ interface GridTableData {
   page: string;
 }
 
-function gridTableData(id: string): { ok: true; data: GridTableData } | { ok: false; reason: string } {
+function gridTableData(id: string): { ok: true; data: GridTableData } | { ok: false; reason: Msg } {
   const node = docNode(id);
   if (!node || !blockIsGridView(id) || formatForBlock(id) !== "md") {
-    return { ok: false, reason: "Convert to pipe table is only available for markdown grids." };
+    return { ok: false, reason: msg("sheet-grid-requires-markdown") };
   }
-  if (blockPageReadOnly(id)) return { ok: false, reason: "Can't convert a read-only grid to a pipe table." };
+  if (blockPageReadOnly(id)) return { ok: false, reason: msg("sheet-grid-read-only") };
   // setBlockProperty can't remove a property that IS line 0 (no title line) —
   // stripping the sheet config would silently fail and leave a half-converted grid.
   if (/^tine\./i.test(node.raw)) {
-    return { ok: false, reason: "Can't convert: the grid block needs a title line above its tine.* properties." };
+    return { ok: false, reason: msg("sheet-grid-title-required") };
   }
 
   // Admit by the row count before copying or visiting any row (I-22): the work
   // below is then bounded by the 200x30 cap, whatever the grid's size.
-  const tooLarge = { ok: false as const, reason: "Can't convert grids larger than 30 columns by 200 rows to a pipe table." };
+  const tooLarge = { ok: false as const, reason: msg("sheet-grid-too-large") };
   if (node.children.length > MAX_PIPE_TABLE_ROWS) return tooLarge;
   const rows = [...node.children];
   let colCount = 0;
   for (const rowId of rows) colCount = Math.max(colCount, docNode(rowId)?.children.length ?? 0);
   if (colCount > MAX_PIPE_TABLE_COLS) return tooLarge;
   if (rows.length === 0 || colCount === 0) {
-    return { ok: false, reason: "Can't convert an empty grid to a pipe table." };
+    return { ok: false, reason: msg("sheet-grid-empty") };
   }
 
   const matrix: string[][] = [];
   for (const rowId of rows) {
     const row = docNode(rowId);
-    if (!row || row.page !== node.page) return { ok: false, reason: "Can't convert this grid because a row is missing." };
-    const rowSplit = splitProps(row.raw, isBuiltinHidden);
-    if (rowSplit.hidden) return { ok: false, reason: "Can't convert: row hidden properties would be lost." };
-    if (rowSplit.visible !== "") return { ok: false, reason: "Can't convert: row blocks must be empty." };
+    if (!row || row.page !== node.page) return { ok: false, reason: msg("sheet-grid-row-missing") };
+    const rowSplit = splitProps(row.raw, BUILTIN_HIDE);
+    if (rowSplit.hidden) return { ok: false, reason: msg("sheet-grid-row-properties") };
+    if (rowSplit.visible !== "") return { ok: false, reason: msg("sheet-grid-row-content") };
     if (row.children.length === 0) {
-      return { ok: false, reason: "Can't convert: empty rows cannot be represented as pipe tables." };
+      return { ok: false, reason: msg("sheet-grid-row-empty") };
     }
 
     const out: string[] = [];
     for (const cellId of row.children) {
       const cell = docNode(cellId);
-      if (!cell || cell.page !== node.page) return { ok: false, reason: "Can't convert this grid because a cell is missing." };
-      const cellSplit = splitProps(cell.raw, isBuiltinHidden);
-      if (cellSplit.hidden) return { ok: false, reason: "Can't convert: cell hidden properties would be lost." };
-      if (cell.children.length > 0) return { ok: false, reason: "Can't convert: cells with children cannot be represented in a pipe table." };
-      if (cell.raw.includes("\n")) return { ok: false, reason: "Can't convert: cells must be single-line." };
+      if (!cell || cell.page !== node.page) return { ok: false, reason: msg("sheet-grid-cell-missing") };
+      const cellSplit = splitProps(cell.raw, BUILTIN_HIDE);
+      if (cellSplit.hidden) return { ok: false, reason: msg("sheet-grid-cell-properties") };
+      if (cell.children.length > 0) return { ok: false, reason: msg("sheet-grid-cell-children") };
+      if (cell.raw.includes("\n")) return { ok: false, reason: msg("sheet-grid-cell-multiline") };
       if (cell.raw.includes("|") && !escapedPipeCellsRoundTrip()) {
-        return { ok: false, reason: "Can't convert: this parser does not round-trip \\| inside table cells." };
+        return { ok: false, reason: msg("sheet-grid-cell-pipe") };
       }
       out.push(cell.raw);
     }
@@ -218,21 +219,23 @@ function gridTableData(id: string): { ok: true; data: GridTableData } | { ok: fa
 export function convertGridToPipeTable(id: string): boolean {
   const checked = gridTableData(id);
   if (!checked.ok) {
-    pushToast(checked.reason, "error");
+    pushToast(msg(checked.reason.id), "error");
     return false;
   }
   const { matrix, header, page, rows } = checked.data;
   const table = pipeTable(matrix, header);
   if (table === null) {
-    pushToast("Can't convert: this parser does not round-trip \\| inside table cells.", "error");
+    pushToast(msg("sheet-can-t-convert-this-parser-does-not-round-trip-inside-table-cells"), "error");
     return false;
   }
 
   return withUndoUnit("sheet:grid-to-pipe-table", [page], () => {
     stripTineSheetProps(id);
     appendTableToHead(id, table);
-    if (!replaceChildOrders({ [id]: [] })) throw new Error("failed to detach grid rows");
+    // Delete the rows where they stand: a verb sees only blocks reachable from
+    // the page's roots (outline kernel read set), never a detached subtree.
     for (const rowId of rows) deleteBlock(rowId);
+    if (docNode(id)?.children.length) throw new Error("failed to delete grid rows");
     return true;
   });
 }

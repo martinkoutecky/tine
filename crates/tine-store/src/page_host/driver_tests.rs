@@ -4,7 +4,7 @@ use super::model_fs::{Fault, ModelFs};
 use super::tests::{draft, edit, host, open, risk, saved, text};
 use super::*;
 use crate::page_host::binding::{Delivery, Indexing, Publication};
-use crate::page_host::driver::{Driver, Owner, Sink};
+use crate::page_host::driver::{Deadline, Driver, Owner, Sink, State, Wait};
 use crate::page_host::progress::{Clock, Progress};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,7 +20,6 @@ impl Clock for SharedClock {
 }
 
 enum Delivered {
-    Events(Vec<Event>),
     Mail(PageKey, Mail),
 }
 
@@ -31,15 +30,13 @@ impl Sink for Channel {
         &mut self,
         delivery: Delivery,
         _: &dyn Fn(&str) -> Owner,
-    ) -> Vec<(Publication, Indexing)> {
-        if !delivery.events.is_empty() {
-            let _ = self.0.send(Delivered::Events(delivery.events));
-        }
+        _: bool,
+    ) -> Result<Vec<(Publication, Indexing)>, Delivery> {
         for (page, mail, _) in delivery.mail {
             let _ = self.0.send(Delivered::Mail(page, mail));
         }
         let indexed = delivery.publications.into_iter();
-        indexed.map(|p| (p, Indexing::Indexed)).collect()
+        Ok(indexed.map(|p| (p, Indexing::Indexed)).collect())
     }
 }
 
@@ -56,7 +53,7 @@ fn spawn(host: Host<ModelFs>) -> (Test, SharedClock, mpsc::Receiver<Delivered>) 
 }
 
 fn admit(d: &Test, page: &str, kind: RequestKind) -> u64 {
-    d.shared.with_state(|s| {
+    d.shared.with_state_for_tests(|s| {
         let host = &mut s.progress.host;
         let id = host.last_admitted + 1;
         let request = Request {
@@ -85,7 +82,7 @@ fn answered(receive: &mpsc::Receiver<Delivered>, id: u64) -> (PageKey, Mail) {
 }
 
 fn polls(d: &Test) -> u64 {
-    d.shared.state.lock().unwrap().polls
+    d.shared.state_for_tests().polls
 }
 
 /// Wait until the driver has gone to sleep (no poll for 50 ms).
@@ -113,16 +110,7 @@ fn plan_lock_revalidate_never_holds_state_while_waiting_for_a_path_lock() {
     let first = admit(&d, "a.md", RequestKind::Open);
     // The driver dequeues, plans the Open and blocks on a.md's path lock.
     let blocked = Instant::now() + Duration::from_secs(5);
-    while d
-        .shared
-        .state
-        .lock()
-        .unwrap()
-        .progress
-        .host
-        .applying
-        .is_none()
-    {
+    while d.shared.state_for_tests().progress.host.applying.is_none() {
         assert!(
             Instant::now() < blocked,
             "the driver never planned the Open"
@@ -135,15 +123,7 @@ fn plan_lock_revalidate_never_holds_state_while_waiting_for_a_path_lock() {
     let started = Instant::now();
     let second = admit(&d, "b.md", RequestKind::Open);
     assert!(started.elapsed() < Duration::from_secs(1));
-    assert!(d
-        .shared
-        .state
-        .lock()
-        .unwrap()
-        .progress
-        .host
-        .pages
-        .is_empty());
+    assert!(d.shared.state_for_tests().progress.host.pages.is_empty());
     drop(transaction);
     assert_eq!(answered(&receive, first).0, "a.md");
     assert_eq!(answered(&receive, second).0, "b.md");
@@ -160,16 +140,14 @@ fn revalidation_drops_a_planned_step_that_a_reservation_made_illegal() {
     let transaction = lock_a.lock().unwrap();
     let before = polls(&d);
     // The driver plans the owed observation and waits for a.md's lock.
-    d.shared.with_state(|s| {
+    d.shared.with_state_for_tests(|s| {
         s.progress.host.fs.external("a.md", text("theirs"), true);
         s.observe.insert("a.md".into(), Default::default());
     });
     let blocked = Instant::now() + Duration::from_secs(5);
     while d
         .shared
-        .state
-        .lock()
-        .unwrap()
+        .state_for_tests()
         .progress
         .host
         .lock_request
@@ -181,14 +159,14 @@ fn revalidation_drops_a_planned_step_that_a_reservation_made_illegal() {
     }
     std::thread::sleep(Duration::from_millis(50));
     // Meanwhile a retained writer reserves the key (state mutex only).
-    d.shared.with_state(|s| {
+    d.shared.with_state_for_tests(|s| {
         let keys = BTreeSet::from(["a.md".to_string()]);
         assert_eq!(s.progress.host.reserve(&keys), Disposition::Applied);
     });
     drop(transaction);
     std::thread::sleep(Duration::from_millis(100));
     // Revalidated under the lock, the observation is no longer legal.
-    let state = d.shared.state.lock().unwrap();
+    let state = d.shared.state_for_tests();
     assert_eq!(state.progress.host.pages["a.md"].buf, text("A"));
     assert!(state.observe.contains_key("a.md"));
     drop(state);
@@ -199,10 +177,11 @@ fn revalidation_drops_a_planned_step_that_a_reservation_made_illegal() {
         polls(&d) - before <= 1,
         "a blocked observation spun the driver"
     );
-    d.shared.with_state(|s| s.progress.host.retained.clear());
+    d.shared
+        .with_state_for_tests(|s| s.progress.host.retained.clear());
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let state = d.shared.state.lock().unwrap();
+        let state = d.shared.state_for_tests();
         if state.observe.is_empty() {
             assert_eq!(state.progress.host.pages["a.md"].buf, text("theirs"));
             break;
@@ -232,16 +211,14 @@ fn a_spelling_move_while_the_driver_waits_replans_on_the_new_lock() {
     let old = lock_a.lock().unwrap();
     let new = lock_b.lock().unwrap();
     let before = polls(&d);
-    d.shared.with_state(|s| {
+    d.shared.with_state_for_tests(|s| {
         s.progress.host.fs.external("a.md", text("theirs"), true);
         s.observe.insert("a.md".into(), Default::default());
     });
     let blocked = Instant::now() + Duration::from_secs(5);
     while d
         .shared
-        .state
-        .lock()
-        .unwrap()
+        .state_for_tests()
         .progress
         .host
         .lock_request
@@ -254,7 +231,7 @@ fn a_spelling_move_while_the_driver_waits_replans_on_the_new_lock() {
     std::thread::sleep(Duration::from_millis(50));
     // Under its reservation the writer moves the entry and respells the key,
     // then releases the reservation and the old spelling's lock.
-    d.shared.with_state(|s| {
+    d.shared.with_state_for_tests(|s| {
         let keys = BTreeSet::from(["a.md".to_string()]);
         assert_eq!(s.progress.host.reserve(&keys), Disposition::Applied);
         s.progress.host.respell("a.md", "A.md", lock_b.clone());
@@ -262,7 +239,7 @@ fn a_spelling_move_while_the_driver_waits_replans_on_the_new_lock() {
     });
     drop(old);
     std::thread::sleep(Duration::from_millis(150));
-    let state = d.shared.state.lock().unwrap();
+    let state = d.shared.state_for_tests();
     assert_eq!(
         state.progress.host.pages["a.md"].buf,
         text("A"),
@@ -273,7 +250,7 @@ fn a_spelling_move_while_the_driver_waits_replans_on_the_new_lock() {
     drop(new);
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let state = d.shared.state.lock().unwrap();
+        let state = d.shared.state_for_tests();
         if state.observe.is_empty() {
             assert_eq!(state.progress.host.pages["a.md"].buf, text("theirs"));
             break;
@@ -301,7 +278,7 @@ fn every_admission_wakes_a_sleeping_driver() {
         } else {
             // Close has no answer: wait until it is applied.
             let deadline = Instant::now() + Duration::from_secs(5);
-            while d.shared.state.lock().unwrap().progress.host.last_applied < id {
+            while d.shared.state_for_tests().progress.host.last_applied < id {
                 assert!(Instant::now() < deadline, "lost wakeup at round {round}");
                 std::thread::yield_now();
             }
@@ -327,9 +304,9 @@ fn a_blocked_dirty_page_contributes_no_deadline_and_the_driver_sleeps() {
         let (mut d, clock, _receive) = spawn(h);
         // Long past every save deadline.
         clock.0.store(60_000, Ordering::SeqCst);
-        d.shared.with_state(|_| {});
+        d.shared.with_state_for_tests(|_| {});
         std::thread::sleep(Duration::from_millis(100));
-        let state = d.shared.state.lock().unwrap();
+        let state = d.shared.state_for_tests();
         // A draft for the conflicted page is the only timed work left.
         let next = state.progress.next_deadline();
         let worker = state.progress.host.worker.is_some();
@@ -355,12 +332,12 @@ fn a_release_wakes_the_driver_and_the_blocked_save_runs() {
     let (mut d, clock, _receive) = spawn(h);
     clock.0.store(60_000, Ordering::SeqCst);
     std::thread::sleep(Duration::from_millis(50));
-    d.shared.with_state(|s| {
+    d.shared.with_state_for_tests(|s| {
         s.progress.host.retained.clear();
     });
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let state = d.shared.state.lock().unwrap();
+        let state = d.shared.state_for_tests();
         if state.progress.host.pages["a.md"].clean() {
             assert_eq!(state.progress.host.fs.files["graph/a.md"].as_ref(), b"mine");
             break;
@@ -395,7 +372,7 @@ fn due_saves_are_served_round_robin_from_the_last_started_page() {
         p.clock.0.set(now);
         for _ in 0..8 {
             let job = p.host.job.as_ref().map(|j| j.page.clone());
-            if p.poll(0) == Disposition::Disabled {
+            if p.poll() == Disposition::Disabled {
                 break;
             }
             if let (None, Some(job)) = (job, p.host.job.as_ref()) {
@@ -473,12 +450,13 @@ fn the_draft_index_follows_the_durable_census_without_rescans() {
 #[test]
 fn a_retained_writer_and_a_saving_driver_never_deadlock() {
     let mut h = host();
+    h.test.submits_wait = true;
     open(&mut h, "a.md");
     let lock_a = h.locks["a.md"].clone();
     let (mut d, clock, _receive) = spawn(h);
     for round in 0..10u64 {
         // The window edits, resolving the previous round's conflict.
-        let id = d.shared.with_state(|s| {
+        let id = d.shared.with_state_for_tests(|s| {
             let host = &mut s.progress.host;
             let page = &host.pages["a.md"];
             let request = Request {
@@ -496,7 +474,7 @@ fn a_retained_writer_and_a_saving_driver_never_deadlock() {
             id
         });
         let applied = Instant::now() + Duration::from_secs(5);
-        while d.shared.state.lock().unwrap().progress.host.last_applied < id {
+        while d.shared.state_for_tests().progress.host.last_applied < id {
             assert!(Instant::now() < applied, "the edit was never applied");
             std::thread::yield_now();
         }
@@ -504,42 +482,46 @@ fn a_retained_writer_and_a_saving_driver_never_deadlock() {
         // makes due starts and stops at its first phase, holding the page busy.
         let other = lock_a.lock().unwrap();
         let started = Instant::now() + Duration::from_secs(5);
-        while d.shared.state.lock().unwrap().progress.host.job.is_none() {
+        while d.shared.state_for_tests().progress.host.job.is_none() {
             assert!(Instant::now() < started, "the save never started");
             clock.0.fetch_add(2_000, Ordering::SeqCst);
-            d.shared.with_state(|_| {});
+            d.shared.with_state_for_tests(|_| {});
             std::thread::sleep(Duration::from_millis(1));
         }
-        // A retained writer (§7) reserves under the state mutex only and,
-        // finding the page busy, waits on the host condition holding nothing.
+        // A retained writer (§7) reserves by a request on the driver and,
+        // finding the page busy, waits for its answer holding nothing; each
+        // driver step asks again, so a lost wakeup is a missed deadline.
         let waiting = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let writer = {
             let (shared, waiting, lock_a) = (d.shared.clone(), waiting.clone(), lock_a.clone());
             std::thread::spawn(move || {
                 let keys = BTreeSet::from(["a.md".to_string()]);
-                let reserving = Instant::now();
-                let mut state = shared.state.lock().unwrap();
-                while state.progress.host.reserve(&keys) == Disposition::Waiting {
-                    waiting.store(true, Ordering::SeqCst);
-                    // The driver's step notification ends this wait.
-                    state = shared.wait(state, Duration::from_secs(10));
-                    assert!(reserving.elapsed() < Duration::from_secs(5), "lost wakeup");
-                }
+                let reserve = move |state: &mut State<ModelFs, SharedClock>| {
+                    let host = &mut state.progress.host;
+                    if host.reserve(&keys) == Disposition::Waiting {
+                        waiting.store(true, Ordering::SeqCst);
+                        return Wait::Until(None);
+                    }
+                    Wait::Ready(host.fs.files["graph/a.md"].clone())
+                };
+                let deadline = Deadline::At(Instant::now() + Duration::from_secs(5));
+                let disk = shared.wait(deadline, reserve).expect("lost wakeup");
                 // Reserved only once the blocked save had completed.
-                let disk = state.progress.host.fs.files["graph/a.md"].clone();
                 assert_eq!(&*disk, format!("mine {round}").as_bytes());
-                drop(state);
                 // Its transaction: writer → paths, then the release.
                 let transaction = lock_a.lock().unwrap();
-                shared.with_state(|s| {
-                    let bytes = text(&format!("tx {round}"));
+                let bytes = text(&format!("tx {round}"));
+                let write = move |s: &mut State<ModelFs, SharedClock>| {
                     s.progress.host.fs.external("a.md", bytes, true)
-                });
+                };
+                shared.call(write).unwrap();
                 drop(transaction);
-                shared.with_state(|s| {
-                    s.progress.host.retained.remove("a.md");
-                    s.observe.insert("a.md".into(), Default::default());
-                });
+                shared
+                    .call(|s| {
+                        s.progress.host.retained.remove("a.md");
+                        s.observe.insert("a.md".into(), Default::default());
+                    })
+                    .unwrap();
             })
         };
         while !waiting.load(Ordering::SeqCst) {
@@ -549,13 +531,11 @@ fn a_retained_writer_and_a_saving_driver_never_deadlock() {
             );
             std::thread::yield_now();
         }
-        // The writer holds the state mutex from its check until it waits.
-        drop(d.shared.state.lock().unwrap());
         drop(other);
         writer.join().expect("writer");
         // The driver observes the transaction before the next round.
         let observed = Instant::now() + Duration::from_secs(5);
-        while !d.shared.state.lock().unwrap().observe.is_empty() {
+        while !d.shared.state_for_tests().observe.is_empty() {
             assert!(Instant::now() < observed, "the release was never observed");
             std::thread::yield_now();
         }
@@ -565,8 +545,8 @@ fn a_retained_writer_and_a_saving_driver_never_deadlock() {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         clock.0.fetch_add(2_000, Ordering::SeqCst);
-        d.shared.with_state(|_| {});
-        let state = d.shared.state.lock().unwrap();
+        d.shared.with_state_for_tests(|_| {});
+        let state = d.shared.state_for_tests();
         let host = &state.progress.host;
         let page = &host.pages["a.md"];
         let idle = host.queue.is_empty() && host.applying.is_none();
@@ -580,4 +560,43 @@ fn a_retained_writer_and_a_saving_driver_never_deadlock() {
         std::thread::sleep(Duration::from_millis(5));
     }
     d.join();
+}
+
+/// A wait whose caller's deadline falls while the driver is asking it
+/// (the admission's own last ask, made at that deadline). `last` runs as
+/// the ask that spans the deadline; earlier asks re-ask just before it.
+fn ask_across_the_deadline<R: Send + 'static>(
+    last: impl FnOnce() -> Wait<R> + Send + 'static,
+) -> Result<R, super::driver::Unanswered> {
+    let (mut d, ..) = spawn(host());
+    let deadline = Instant::now() + Duration::from_millis(200);
+    let mut last = Some(last);
+    let answer = d.shared.locked_wait(Deadline::At(deadline), move |_| {
+        if Instant::now() + Duration::from_millis(100) < deadline {
+            return Wait::Until(Some(deadline - Duration::from_millis(50)));
+        }
+        // Mid-ask at the caller's deadline.
+        std::thread::sleep(deadline + Duration::from_millis(100) - Instant::now());
+        match last.take() {
+            Some(last) => last(),
+            None => Wait::Until(None),
+        }
+    });
+    d.join();
+    answer
+}
+
+/// M6 (CI 38436208770): an ask that spans the caller's deadline and does
+/// not admit drops the request, so it never takes effect: the caller hears
+/// Withdrawn (Busy), not Late (Uncertain, "keeps trying to finish it").
+#[test]
+fn an_unadmitted_ask_across_the_deadline_is_withdrawn_not_late() {
+    let answer = ask_across_the_deadline(|| Wait::<()>::Until(None));
+    assert_eq!(answer, Err(super::driver::Unanswered::Withdrawn));
+}
+
+/// The same ask answering takes effect, so the caller gets that answer.
+#[test]
+fn an_answer_given_across_the_deadline_reaches_the_caller() {
+    assert_eq!(ask_across_the_deadline(|| Wait::Ready(7)), Ok(7));
 }

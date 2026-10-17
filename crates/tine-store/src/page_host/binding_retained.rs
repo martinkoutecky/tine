@@ -1,6 +1,7 @@
 //! Retained writers' reservations, the single-page rename, and the
 //! switch/restore stop (STEP3 §6–§7): the binding commands that fence
 //! pages away from the host or run a page operation for a writer.
+use super::driver::{Deadline, Shared, State, Unanswered, Wait};
 use super::*;
 use crate::model::entry_identity::Identity;
 use crate::transaction::validation::{
@@ -53,8 +54,11 @@ pub enum ReserveRefusal {
 
 /// The planner's rewrite of a referrer, when it was computed from exactly
 /// these bytes under this file-name format (GH #623).
-pub type PreparedRewrite<'a> =
-    dyn Fn(&PageId, &[u8], tine_core::config::FileNameFormat) -> Option<Vec<u8>> + 'a;
+pub type PreparedRewrite =
+    dyn Fn(&PageId, &[u8], tine_core::config::FileNameFormat) -> Option<Vec<u8>> + Send + Sync;
+
+type HostShared = Shared<ProductionIo, SystemClock>;
+pub(super) type HostState = State<ProductionIo, SystemClock>;
 
 /// The longest a host operation's caller waits for admission, then for its
 /// answer and every page's publication (Finding B, R1).
@@ -71,30 +75,30 @@ pub(super) enum Settled {
     Uncertain,
 }
 
-/// A caller's reply slot. Only the caller removes it, here, on every exit
-/// (an unwind included), so a late answer creates nothing (R2).
+/// A caller's reply slot. Only its holder removes it, here, on every exit
+/// (an unwind included), so a late answer creates nothing (R2). Made on
+/// the driver with the operation's admission: a slot whose caller already
+/// left is dropped there, and removed the same way.
 pub(super) struct ReplySlot {
-    shared: Arc<crate::page_host::driver::Shared<ProductionIo, SystemClock>>,
+    shared: std::sync::Weak<HostShared>,
     id: ReplyId,
 }
 
 impl ReplySlot {
-    pub(super) fn new(
-        shared: &Arc<crate::page_host::driver::Shared<ProductionIo, SystemClock>>,
-        id: ReplyId,
-    ) -> Self {
-        Self {
-            shared: Arc::clone(shared),
-            id,
-        }
+    pub(super) fn new(shared: std::sync::Weak<HostShared>, id: ReplyId) -> Self {
+        Self { shared, id }
     }
 }
 
 impl Drop for ReplySlot {
     fn drop(&mut self) {
-        // A poisoned state has no slot left to answer.
-        self.shared
-            .try_with_state(|state| state.progress.host.order.remove(self.id));
+        // A notice: a driver that ended has no slot left to answer.
+        let id = self.id;
+        if let Some(shared) = self.shared.upgrade() {
+            shared.notify(move |state| {
+                let _ = state.progress.host.order.remove(id);
+            });
+        }
     }
 }
 
@@ -108,7 +112,7 @@ impl Drop for ReplySlot {
 #[must_use = "dropping a reservation releases its pages"]
 pub struct Reservation {
     keys: BTreeSet<PageKey>,
-    shared: Arc<crate::page_host::driver::Shared<ProductionIo, SystemClock>>,
+    shared: Arc<HostShared>,
     /// Whether the writer may have written: false while `reserve` still
     /// checks the set, when a withdrawal hands nothing over.
     handover: bool,
@@ -144,20 +148,48 @@ impl Drop for Reservation {
         if let Some(hook) = BEFORE_RELEASE.with(|hook| hook.borrow_mut().take()) {
             hook();
         }
-        // A poisoned state is a host that already panicked under its lock;
-        // every later step of it panics, and a panic here, during an
-        // unwind, would abort the app. The lock result is checked once
-        // (E90): a poison between a separate check and the lock would panic.
-        self.shared.try_with_state(|state| {
+        // A notice, so it never waits or panics, an unwind included (E90):
+        // a driver that ended drops it with every page it held.
+        let handover = self.handover;
+        self.shared.notify(move |state| {
             for key in keys {
                 state.progress.host.retained.remove(&key);
-                if self.handover {
+                if handover {
                     state.book.handover.insert(key.clone());
                     state.observe.entry(key).or_default();
                 }
             }
         });
     }
+}
+
+/// One step of a retained writer's reservation, decided on the driver
+/// ([`PageHost::bounded`]).
+enum Step<R> {
+    Done(R),
+    /// Waiting on a busy page; `renaming`: on a rename still finishing.
+    Wait {
+        renaming: bool,
+    },
+    /// The host cannot serve the writer.
+    Failed,
+}
+
+/// The pages among `keys` with unsaved input (Q3), including an admitted
+/// operation's pages before its draft applies (a retiring draft is not
+/// input: its page is saved), each with its current spelling.
+pub(in crate::page_host) fn unsaved<F: HostIo>(
+    host: &Host<F>,
+    keys: &BTreeSet<PageKey>,
+) -> BTreeMap<PageKey, PageId> {
+    keys.iter()
+        .filter(|key| match host.logical(key) {
+            Logical::Settled(page) => !page.clean(),
+            Logical::Admitted { .. } => true,
+            Logical::Absent => false,
+        })
+        .map(|key| (key.clone(), PageId::from(host.fs.spelling(key))))
+        .collect()
 }
 
 /// What the rename policy recorded for one attempt (pages by spelling).
@@ -184,83 +216,102 @@ impl PageHost {
     /// returning the pages whose save cannot complete. A returned page is
     /// named by its current spelling, never by its opaque key. The reservation
     /// exists from the fence on, so an unwind out of the rediscovery or the
-    /// check withdraws it (A-R1). Every fence shares one deadline,
-    /// `OPERATION_WAIT` from entry: past it a rename still finishing over
-    /// the set refuses `Busy`, with nothing reserved (M6).
+    /// check withdraws it (A-R1). Every step, the fence, the check and the
+    /// flush, goes through [`Self::bounded`] with one deadline,
+    /// `OPERATION_WAIT` from entry (M6, REVIEW-3b-P2b-2 N1).
     pub fn reserve(
         &self,
         mut discover: impl FnMut() -> Vec<PageId>,
         input: Input,
     ) -> Result<Reservation, ReserveRefusal> {
         let deadline = std::time::Instant::now() + OPERATION_WAIT;
-        let mut keys = self.register_all(discover());
+        let mut keys = self.register_all(discover()).ok_or(ReserveRefusal::Busy)?;
         loop {
-            self.fence(&keys, deadline)?;
+            let fence = keys.clone();
+            self.bounded(deadline, move |state| {
+                match state.progress.host.reserve(&fence) {
+                    Disposition::Applied => Step::Done(()),
+                    Disposition::Waiting => Step::Wait {
+                        renaming: state.progress.host.renaming(&fence),
+                    },
+                    // `Refused`, unreachable: every key was registered first.
+                    // Were it not, nothing would be reserved, so it refuses as a
+                    // host that stopped answering does.
+                    _ => Step::Failed,
+                }
+            })?;
             let mut reservation = Reservation {
                 keys: keys.clone(),
                 shared: Arc::clone(&self.driver.shared),
                 handover: false,
             };
-            let found = self.register_all(discover());
+            let found = self.register_all(discover()).ok_or(ReserveRefusal::Busy)?;
             if !found.is_subset(reservation.keys()) {
                 drop(reservation);
                 keys.extend(found);
                 continue;
             }
-            let unsaved = self.unsaved(reservation.keys());
+            let held = reservation.keys().clone();
+            let unsaved = self.bounded(deadline, move |state| {
+                Step::Done(unsaved(&state.progress.host, &held))
+            })?;
             if unsaved.is_empty() {
                 reservation.handover = true;
                 return Ok(reservation);
             }
             drop(reservation);
             if input == Input::Refuse {
-                return Err(ReserveRefusal::Unsaved(self.spellings(&unsaved)));
+                return Err(ReserveRefusal::Unsaved(unsaved.into_values().collect()));
             }
-            self.flush(&unsaved)
-                .map_err(|stuck| ReserveRefusal::Unsaved(self.spellings(&stuck)))?;
+            self.flush(&unsaved.into_keys().collect(), &keys, deadline)?;
         }
     }
 
-    fn register_all(&self, pages: Vec<PageId>) -> BTreeSet<PageKey> {
+    /// `pages`' keys, each registered; None when the host state is
+    /// poisoned.
+    pub(super) fn register_all(&self, pages: Vec<PageId>) -> Option<BTreeSet<PageKey>> {
         pages
             .iter()
             .map(|page| {
-                let (key, spelling, ..) = self.identify(page);
-                self.register(&key, &spelling);
-                key
+                let (key, spelling, ..) = self.try_identify(page)?;
+                self.try_register(&key, &spelling)?;
+                Some(key)
             })
             .collect()
     }
 
-    /// Reserve `keys` under the state mutex only, waiting on the host
-    /// condition while any is busy (§7 step 3). Past `deadline`, a rename
-    /// still finishing over them refuses `Busy` (M6): in-scope scenario, a
-    /// disk error keeps failing its drafts or writes, or a sync service or
-    /// external editor conflicted one of its pages. Any other busy page is
-    /// waited for. A host that stopped answering is `Busy` too.
-    fn fence(
+    /// Every wait and check of a retained writer's reservation (M6,
+    /// REVIEW-3b-P2b-2 N1): the driver runs `step` until it is done, again
+    /// after each of its steps. With each step: a host that cannot answer
+    /// refuses `Busy` (the driver ended, or the host is down; in-scope
+    /// scenario: a host that failed on a disk error), and past `deadline` a
+    /// step waiting on a rename still finishing refuses `Busy` (in-scope
+    /// scenario: a disk error keeps failing its drafts or writes, or a sync
+    /// service or external editor conflicted one of its pages). A step
+    /// waiting on any other busy page keeps waiting.
+    fn bounded<R: Send + 'static>(
         &self,
-        keys: &BTreeSet<PageKey>,
         deadline: std::time::Instant,
-    ) -> Result<(), ReserveRefusal> {
-        let shared = &self.driver.shared;
-        let mut state = shared.state.lock().unwrap();
-        while state.progress.host.reserve(keys) == Disposition::Waiting {
-            let left = deadline.saturating_duration_since(std::time::Instant::now());
-            if left.is_zero() && state.progress.host.renaming(keys) {
-                return Err(ReserveRefusal::Busy);
+        mut step: impl FnMut(&mut HostState) -> Step<R> + Send + 'static,
+    ) -> Result<R, ReserveRefusal> {
+        let wait = move |state: &mut HostState| {
+            if !state.progress.host.alive {
+                return Wait::Ready(Err(ReserveRefusal::Busy));
             }
-            let second = std::time::Duration::from_secs(1);
-            let pause = if left.is_zero() {
-                second
-            } else {
-                left.min(second)
-            };
-            state = shared
-                .wait_checked(state, pause)
-                .ok_or(ReserveRefusal::Busy)?;
-        }
-        Ok(())
+            match step(state) {
+                Step::Done(done) => Wait::Ready(Ok(done)),
+                Step::Failed => Wait::Ready(Err(ReserveRefusal::Busy)),
+                Step::Wait { renaming } => {
+                    let now = std::time::Instant::now();
+                    if now >= deadline && renaming {
+                        return Wait::Ready(Err(ReserveRefusal::Busy));
+                    }
+                    Wait::Until((now < deadline).then_some(deadline))
+                }
+            }
+        };
+        let answer = self.driver.shared.wait(Deadline::Never, wait);
+        answer.unwrap_or(Err(ReserveRefusal::Busy))
     }
 
     /// `page_rename` (§7, F10): rename `source`'s page to the absent
@@ -283,7 +334,9 @@ impl PageHost {
     /// returns the planner's rewrite of a referrer when it was computed from
     /// exactly the given bytes under the given file-name format; the host
     /// reuses it instead of rewriting under the driver's state lock
-    /// (GH #623), and rewrites otherwise.
+    /// (GH #623), and rewrites otherwise. Admission runs on the driver; a
+    /// caller past `OPERATION_WAIT` before it is `Busy`, during it
+    /// `Uncertain`.
     pub fn rename(
         &self,
         source: &PageId,
@@ -291,138 +344,156 @@ impl PageHost {
         referrers: &[PageId],
         map: &RenameMap,
         view: &crate::WholeGraph,
-        prepared: &PreparedRewrite<'_>,
+        prepared: Arc<PreparedRewrite>,
     ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
-        let (src, src_spelling, ..) = self.identify(source);
-        let (dst, dst_spelling, ..) = self.identify(target);
+        crate::bench_events::mark("rename_enter", referrers.len() as u64);
+        // A host that ended renames nothing.
+        let ended = || RenameRefusal::Refused;
+        let (src, src_spelling, ..) = self.try_identify(source).ok_or_else(ended)?;
+        let (dst, dst_spelling, ..) = self.try_identify(target).ok_or_else(ended)?;
         if src == dst {
             return Err(RenameRefusal::Alias);
         }
-        self.register(&src, &src_spelling);
-        self.register(&dst, &dst_spelling);
-        let mut refs = self.register_all(referrers.to_vec());
+        self.try_register(&src, &src_spelling).ok_or_else(ended)?;
+        self.try_register(&dst, &dst_spelling).ok_or_else(ended)?;
+        let mut refs = self.register_all(referrers.to_vec()).ok_or_else(ended)?;
+        crate::bench_events::mark("rename_registered", refs.len() as u64);
         refs.remove(&src);
         refs.remove(&dst);
         let root = self.store.graph.root.clone();
         let format = view.config.file_name_format;
         let destination = root.join(dst_spelling.as_str());
         let deadline = std::time::Instant::now() + OPERATION_WAIT;
-        let (seen, slot) = loop {
-            let outcome = self.driver.shared.locked_step(|state| {
-                // Admission in the planner's context (B2); a stale view
-                // replans. In-scope scenario: a sync service or external
-                // editor changed a page or `config.edn` since the plan.
-                let config = self.store.config().config;
-                if self.store.changes.rev() != view.rev()
-                    || !Arc::ptr_eq(&config, &view.config.config)
-                {
-                    return None;
-                }
-                let (disposition, seen, pages, reply) = state.progress.with_host(|host| {
-                    // The keys the policy is called on: the operation's
-                    // pages and every held buffer (A-R5: not every key
-                    // ever registered).
-                    let spellings: BTreeMap<PageKey, String> = refs
-                        .iter()
-                        .chain([&src, &dst])
-                        .chain(host.pages.keys())
-                        .map(|key| (key.clone(), host.fs.spelling(key)))
-                        .collect();
-                    let record = Mutex::new(Rewrites::default());
-                    let policy = |bytes: &Text, key: &str, moving: bool| {
-                        let Some(old) = bytes else { return Ok(None) };
-                        let spelling = &spellings[key];
-                        let path = root.join(spelling);
-                        let rewritten = if moving {
-                            rewrite_move(old, &destination, map, format)
-                        } else if let Some(new) =
-                            prepared(&PageId::from(spelling.as_str()), old, format)
-                        {
-                            reuse_rewrite(old, new, &path)
-                        } else {
-                            rewrite_refs(old, &path, map, format)
-                        };
-                        let mut record = record.lock().unwrap();
-                        let Ok(new) = rewritten else {
-                            record.unwritable = Some(spelling.clone());
-                            return Err(());
-                        };
-                        if new.as_slice() == &old[..] {
-                            return Ok(bytes.clone());
-                        }
-                        let syntax = tine_core::model::Format::from_path(&path);
-                        let marked = std::str::from_utf8(old).is_ok_and(|text| {
-                            !tine_core::concord_queue::vcs_conflict_markers(text, syntax).is_empty()
-                        });
-                        if marked {
-                            record.skipped.insert(spelling.clone());
-                            return Ok(bytes.clone());
-                        }
-                        if !moving {
-                            record.changed.insert(spelling.clone());
-                        }
-                        Ok(Some(Arc::from(new)))
-                    };
-                    let disposition = host.rename_with(&src, &dst, &refs, policy);
-                    let reply = if disposition == Disposition::Pending {
-                        host.register_reply()
+        let (store, map, rev) = (self.store.clone(), map.clone(), view.rev());
+        let planned = view.config.config.clone();
+        let shared = Arc::downgrade(&self.driver.shared);
+        let admit = move |state: &mut HostState| {
+            // Admission in the planner's context (B2); a stale view
+            // replans. In-scope scenario: a sync service or external
+            // editor changed a page or `config.edn` since the plan.
+            let config = store.config().config;
+            if store.changes.rev() != rev || !Arc::ptr_eq(&config, &planned) {
+                return Wait::Ready(Err(Err(RenameRefusal::Refused)));
+            }
+            let (disposition, seen, pages, reply) = state.progress.with_host(|host| {
+                // The keys the policy is called on: the operation's
+                // pages and every held buffer (A-R5: not every key
+                // ever registered).
+                let spellings: BTreeMap<PageKey, String> = refs
+                    .iter()
+                    .chain([&src, &dst])
+                    .chain(host.pages.keys())
+                    .map(|key| (key.clone(), host.fs.spelling(key)))
+                    .collect();
+                let record = Mutex::new(Rewrites::default());
+                let policy = |bytes: &Text, key: &str, moving: bool| {
+                    let Some(old) = bytes else { return Ok(None) };
+                    let spelling = &spellings[key];
+                    let path = root.join(spelling);
+                    let rewritten = if moving {
+                        rewrite_move(old, &destination, &map, format)
+                    } else if let Some(new) =
+                        prepared(&PageId::from(spelling.as_str()), old, format)
+                    {
+                        reuse_rewrite(old, new, &path)
                     } else {
-                        None
+                        rewrite_refs(old, &path, &map, format)
                     };
-                    // The final value (R3/R4): the operation's pages, or for
-                    // a refusal the pages it would have written; empty when
-                    // a references-only rerun has nothing left to write.
-                    let pages = match &host.worker {
-                        Some(worker) if disposition == Disposition::Pending => worker.pages.clone(),
-                        _ => {
-                            let mut pages = host
-                                .rename_refs(&src, &dst, &refs, &policy)
-                                .unwrap_or_default();
-                            if !pages.is_empty()
-                                || host.pages.get(&src).is_none_or(|p| p.buf.is_some())
-                            {
-                                pages.extend([src.clone(), dst.clone()]);
-                            }
-                            pages
-                        }
+                    let mut record = record.lock().unwrap();
+                    let Ok(new) = rewritten else {
+                        record.unwritable = Some(spelling.clone());
+                        return Err(());
                     };
-                    (disposition, record.into_inner().unwrap(), pages, reply)
-                });
-                let slot = reply.map(|id| ReplySlot::new(&self.driver.shared, id));
-                // OG-RULES Rule 8 (A-K1): the operation's writes are renames.
-                if disposition == Disposition::Pending {
-                    state.book.took(pages.clone(), EditKind::RenamePage);
-                }
-                Some((disposition, seen, pages, slot))
-            });
-            let Some((disposition, seen, pages, slot)) = outcome.flatten() else {
-                return Err(RenameRefusal::Refused);
-            };
-            match (disposition, slot) {
-                (Disposition::Pending, Some(slot)) => break (seen, slot),
-                (Disposition::Waiting | Disposition::Pending, _) => {
-                    if std::time::Instant::now() >= deadline {
-                        return Err(RenameRefusal::Busy);
+                    if new.as_slice() == &old[..] {
+                        return Ok(bytes.clone());
                     }
-                    let shared = &self.driver.shared;
-                    let state = shared.state.lock().unwrap();
-                    drop(shared.wait(state, std::time::Duration::from_millis(100)));
-                }
-                _ => {
-                    if let Some(page) = seen.unwritable {
-                        return Err(RenameRefusal::Unwritable(PageId::from(page)));
-                    }
-                    if pages.is_empty() {
-                        return Ok((Vec::new(), Vec::new()));
-                    }
-                    return Err(match self.unsaved(&pages).into_iter().next() {
-                        Some(page) => RenameRefusal::Unsaved(self.spelling(&page)),
-                        None => RenameRefusal::Refused,
+                    let syntax = tine_core::model::Format::from_path(&path);
+                    let marked = std::str::from_utf8(old).is_ok_and(|text| {
+                        !tine_core::concord_queue::vcs_conflict_markers(text, syntax).is_empty()
                     });
+                    if marked {
+                        record.skipped.insert(spelling.clone());
+                        return Ok(bytes.clone());
+                    }
+                    if !moving {
+                        record.changed.insert(spelling.clone());
+                    }
+                    Ok(Some(Arc::from(new)))
+                };
+                let disposition = host.rename_with(&src, &dst, &refs, policy);
+                let reply = if disposition == Disposition::Pending {
+                    host.register_reply()
+                } else {
+                    None
+                };
+                // The final value (R3/R4): the operation's pages, or for
+                // a refusal the pages it would have written; empty when
+                // a references-only rerun has nothing left to write.
+                let pages = match &host.worker {
+                    Some(worker) if disposition == Disposition::Pending => worker.pages.clone(),
+                    _ => {
+                        let mut pages = host
+                            .rename_refs(&src, &dst, &refs, &policy)
+                            .unwrap_or_default();
+                        if !pages.is_empty() || host.pages.get(&src).is_none_or(|p| p.buf.is_some())
+                        {
+                            pages.extend([src.clone(), dst.clone()]);
+                        }
+                        pages
+                    }
+                };
+                (disposition, record.into_inner().unwrap(), pages, reply)
+            });
+            if state.progress.host.lock_request.is_some() {
+                // A plan: it runs again under its path locks.
+                return Wait::Until(None);
+            }
+            let slot = reply.map(|id| ReplySlot::new(shared.clone(), id));
+            match (disposition, slot) {
+                (Disposition::Pending, Some(slot)) => {
+                    // OG-RULES Rule 8 (A-K1): the operation's writes are renames.
+                    state.book.took(pages, EditKind::RenamePage);
+                    Wait::Ready(Ok((seen, slot)))
                 }
+                (Disposition::Waiting | Disposition::Pending, _) => {
+                    let now = std::time::Instant::now();
+                    if now >= deadline {
+                        return Wait::Ready(Err(Err(RenameRefusal::Busy)));
+                    }
+                    let pause = now + std::time::Duration::from_millis(100);
+                    Wait::Until(Some(pause.min(deadline)))
+                }
+                _ => Wait::Ready(Err(if let Some(page) = seen.unwritable {
+                    Err(RenameRefusal::Unwritable(PageId::from(page)))
+                } else if pages.is_empty() {
+                    Ok((Vec::new(), Vec::new()))
+                } else {
+                    Err(
+                        match unsaved(&state.progress.host, &pages).into_values().next() {
+                            Some(page) => RenameRefusal::Unsaved(page),
+                            None => RenameRefusal::Refused,
+                        },
+                    )
+                })),
             }
         };
-        match self.settle(&slot, None, deadline) {
+        let (seen, slot) = match self
+            .driver
+            .shared
+            .locked_wait(Deadline::At(deadline), admit)
+        {
+            Ok(Ok(admitted)) => admitted,
+            Ok(Err(done)) => return done,
+            // Not admitted: other work held its pages, or a path lock.
+            Err(Unanswered::Withdrawn) => return Err(RenameRefusal::Busy),
+            // Admission was under way: it may complete.
+            Err(Unanswered::Late) => return Err(RenameRefusal::Uncertain),
+            Err(Unanswered::Ended) => return Err(RenameRefusal::Refused),
+        };
+        crate::bench_events::mark("rename_admitted", seen.changed.len() as u64);
+        let settled = self.settle(&slot, None, deadline);
+        crate::bench_events::mark("rename_settled", 0);
+        match settled {
             Settled::Applied => {
                 let pages = |set: BTreeSet<String>| set.into_iter().map(PageId::from).collect();
                 Ok((pages(seen.changed), pages(seen.skipped)))
@@ -439,37 +510,49 @@ impl PageHost {
     /// Never success without both; Uncertain at `deadline`, once the driver
     /// ended or the state is poisoned, once the host stopped or relaunched,
     /// or once window `session` is not current (F1: a result never vouches
-    /// for another session's pages).
+    /// for another session's pages). The deadline bounds a stall, not the
+    /// operation: the answer and each newly published page move it to
+    /// `OPERATION_WAIT` from then, so a long operation that keeps publishing
+    /// (a rename with a thousand referrers on Windows) is waited for. The
+    /// caller waits on the same moving deadline, so a driver stalled in a
+    /// disk call answers `Uncertain` too.
     pub(super) fn settle(
         &self,
         slot: &ReplySlot,
         session: Option<u64>,
         deadline: std::time::Instant,
     ) -> Settled {
-        let shared = &self.driver.shared;
-        let Ok(mut state) = shared.state.lock() else {
-            return Settled::Uncertain;
-        };
-        loop {
+        let deadline = Arc::new(Mutex::new(deadline));
+        let moving = deadline.clone();
+        let id = slot.id;
+        // (answered, pages witnessed) at the last ask.
+        let mut progress = (false, 0);
+        let step = move |state: &mut HostState| {
             let host = &state.progress.host;
-            let Some(reply) = host.order.slot(slot.id) else {
-                return Settled::Uncertain;
+            let Some(reply) = host.order.slot(id) else {
+                return Wait::Ready(Settled::Uncertain);
             };
             if session.is_some_and(|session| session != state.book.session) {
-                return Settled::Uncertain;
+                return Wait::Ready(Settled::Uncertain);
             }
             match &reply.reply {
-                Some(OperationReply::DraftFailed) => return Settled::DraftFailed,
+                Some(OperationReply::DraftFailed) => return Wait::Ready(Settled::DraftFailed),
                 Some(OperationReply::Applied(pages)) => {
                     if let Some(page) = &reply.superseded {
-                        return Settled::Superseded(page.clone());
+                        return Wait::Ready(Settled::Superseded(page.clone()));
+                    }
+                    let now = (true, reply.witnessed.len());
+                    if now != progress {
+                        progress = now;
+                        let mut at = moving.lock().unwrap();
+                        *at = (*at).max(std::time::Instant::now() + OPERATION_WAIT);
                     }
                     // `witnessed` holds answered pages only (`Order::published`).
                     if reply.witnessed.len() == pages.len() {
-                        return Settled::Applied;
+                        return Wait::Ready(Settled::Applied);
                     }
-                    // Per wake, the host's few stuck pages, not every answered
-                    // one: an operation's wakes grow with its pages (R5).
+                    // Per ask, the host's few stuck pages, not every answered
+                    // one: an operation's asks grow with its pages (R5).
                     let mut stuck = state.progress.stuck().inspect(|_| {
                         #[cfg(feature = "test-faults")]
                         crate::cost_counters::host_publication_probes(1);
@@ -478,7 +561,7 @@ impl PageHost {
                         pages.contains_key(*key) && !reply.witnessed.contains(*key)
                     };
                     if let Some(page) = stuck.find(open) {
-                        return Settled::Unwritten(page.clone());
+                        return Wait::Ready(Settled::Unwritten(page.clone()));
                     }
                     #[cfg(feature = "test-faults")]
                     crate::cost_counters::host_publication_probes(1);
@@ -486,15 +569,14 @@ impl PageHost {
                 None => {}
             }
             let now = std::time::Instant::now();
-            if !host.alive || host.incarnation != slot.id.incarnation || now >= deadline {
-                return Settled::Uncertain;
+            let at = *moving.lock().unwrap();
+            if !host.alive || host.incarnation != id.incarnation || now >= at {
+                return Wait::Ready(Settled::Uncertain);
             }
-            let pause = (deadline - now).min(std::time::Duration::from_millis(100));
-            match shared.wait_checked(state, pause) {
-                Some(next) => state = next,
-                None => return Settled::Uncertain,
-            }
-        }
+            Wait::Until(Some(at))
+        };
+        let settled = self.driver.shared.wait(Deadline::Moving(deadline), step);
+        settled.unwrap_or(Settled::Uncertain)
     }
 
     /// The alias spelling move (§2, Q4): under its reservation the caller
@@ -504,20 +586,23 @@ impl PageHost {
     pub fn respell(&self, page: &PageId, to: &PageId) {
         let graph = &self.store.graph;
         let lock = graph.page_lock(&graph.root.join(to.as_str()));
-        // Holds change under the writer (lock order writer → state).
-        let _writer = self.store.writer.lock().unwrap();
-        // The held index names the key, so it follows the host's spelling
-        // table; its installed rows move with it (A-H2).
-        let moved = self.driver.shared.with_state(|state| {
+        let (store, page, to) = (self.store.clone(), page.clone(), to.clone());
+        // Holds change under the writer, which the driver takes first (lock
+        // order writer → state). The held index names the key, so it
+        // follows the host's spelling table; its installed rows move with
+        // it (A-H2).
+        let respell = move |state: &mut HostState| {
             let host = &mut state.progress.host;
-            let key = host.key_spelled(page.as_str())?;
+            let Some(key) = host.key_spelled(page.as_str()) else {
+                return;
+            };
             host.respell(&key, to.as_str(), lock);
-            Some(key)
-        });
-        if let Some(key) = moved {
+            let graph = &store.graph;
             graph.respelled(&key, &graph.root.join(page.as_str()));
-            self.store.publish_retired();
-        }
+            store.publish_retired();
+        };
+        // A host that ended holds nothing to respell.
+        let _ = self.driver.shared.call_writer(&self.store.writer, respell);
     }
 
     /// The key naming `page`'s directory entry (§2), by the one identity
@@ -526,18 +611,17 @@ impl PageHost {
     /// same file, not listed apart); else a key for the new entry
     /// ([`super::Host::key_for`]: never a live key spelling another entry).
     /// Also whether the host holds that page, and whether the path is proved
-    /// to name that key's entry.
-    pub(super) fn identify(&self, page: &PageId) -> (PageKey, PageId, bool, bool) {
+    /// to name that key's entry. None when the driver ended.
+    pub(super) fn try_identify(&self, page: &PageId) -> Option<(PageKey, PageId, bool, bool)> {
         let graph = &self.store.graph;
+        let ended = std::cell::Cell::new(false);
         let registered = |fold: &str| {
-            self.driver
-                .shared
-                .state
-                .lock()
-                .unwrap()
-                .progress
-                .host
-                .candidates(fold)
+            let fold = fold.to_owned();
+            let read = move |state: &HostState| state.progress.host.candidates(&fold);
+            self.driver.shared.read(read).unwrap_or_else(|_| {
+                ended.set(true);
+                Vec::new()
+            })
         };
         let identity = graph.identify(&graph.root.join(page.as_str()), &registered);
         // The path names the key's entry: its own leaf, Q4's same-file alias,
@@ -558,76 +642,98 @@ impl PageHost {
             .store
             .disk_spelling(page)
             .unwrap_or_else(|| page.clone());
-        let state = self.driver.shared.state.lock().unwrap();
-        let host = &state.progress.host;
-        let (key, spelling) = match named {
-            Some(key) => (key.clone(), PageId::from(host.fs.spelling(&key))),
-            None => (host.key_for(disk.as_str()), disk),
+        if ended.get() {
+            return None;
+        }
+        let read = move |state: &HostState| {
+            let host = &state.progress.host;
+            let (key, spelling) = match named {
+                Some(key) => (key.clone(), PageId::from(host.fs.spelling(&key))),
+                None => (host.key_for(disk.as_str()), disk),
+            };
+            let held = host.pages.contains_key(&key);
+            (key, spelling, held, proved)
         };
-        let held = host.pages.contains_key(&key);
-        (key, spelling, held, proved)
+        self.driver.shared.read(read).ok()
+    }
+
+    /// Register `key` at `spelling` with its page lock; None when the
+    /// driver ended.
+    pub(super) fn try_register(&self, key: &str, spelling: &PageId) -> Option<()> {
+        let graph = &self.store.graph;
+        let lock = graph.page_lock(&graph.root.join(spelling.as_str()));
+        let (key, spelling) = (key.to_owned(), spelling.clone());
+        let register = move |state: &mut HostState| {
+            state
+                .progress
+                .with_host(|host| host.register(key, spelling.as_str(), lock))
+        };
+        self.driver.shared.call(register).ok()
     }
 
     /// `keys`' current spellings, the pages a refusal names (REVIEW-3a5):
     /// a key is opaque, and need not be its page's spelling.
     fn spellings(&self, keys: &BTreeSet<PageKey>) -> BTreeSet<PageId> {
-        let state = self.driver.shared.state.lock().unwrap();
-        let fs = &state.progress.host.fs;
-        keys.iter()
-            .map(|key| PageId::from(fs.spelling(key)))
-            .collect()
+        let keys = keys.clone();
+        let read = move |state: &HostState| {
+            let fs = &state.progress.host.fs;
+            keys.iter()
+                .map(|key| PageId::from(fs.spelling(key)))
+                .collect()
+        };
+        self.driver
+            .shared
+            .read(read)
+            .expect("page host driver ended")
     }
 
     /// A key's current spelling, as the page it names.
-    fn spelling(&self, key: &str) -> PageId {
-        let state = self.driver.shared.state.lock().unwrap();
-        PageId::from(state.progress.host.fs.spelling(key))
+    pub(super) fn spelling(&self, key: &str) -> PageId {
+        let key = key.to_owned();
+        let read = move |state: &HostState| PageId::from(state.progress.host.fs.spelling(&key));
+        self.driver
+            .shared
+            .read(read)
+            .expect("page host driver ended")
     }
 
-    /// The pages among `keys` with unsaved input (Q3), including an
-    /// admitted operation's pages before its draft applies (a retiring
-    /// draft is not input: its page is saved).
-    fn unsaved(&self, keys: &BTreeSet<PageKey>) -> BTreeSet<PageKey> {
-        let state = self.driver.shared.state.lock().unwrap();
-        let host = &state.progress.host;
-        keys.iter()
-            .filter(|key| match host.logical(key) {
-                Logical::Settled(page) => !page.clean(),
-                Logical::Admitted { .. } => true,
-                Logical::Absent => false,
-            })
-            .cloned()
-            .collect()
-    }
-
-    /// Wait, holding nothing, until no page in `pages` has unsaved input;
-    /// a page in conflict or with a persistent save error is returned.
-    fn flush(&self, pages: &BTreeSet<PageKey>) -> Result<(), BTreeSet<PageKey>> {
-        let shared = &self.driver.shared;
-        loop {
-            let stuck: BTreeSet<_> = {
-                let state = shared.state.lock().unwrap();
-                let progress = &state.progress;
-                pages
-                    .iter()
-                    .filter(|key| {
-                        progress.host.logical(key).conflict() || progress.notice(key).save_error
-                    })
-                    .cloned()
-                    .collect()
-            };
+    /// Wait, holding nothing, until no page in `pages` has unsaved input,
+    /// within the writer's `deadline` (N1); a page in conflict or with a
+    /// persistent save error refuses the writer, by its spelling. The rename
+    /// dependency is classified over the writer's whole set, `reserving`, not
+    /// only the pages it waits to see saved (REVIEW-3b-P2b-3): a rename
+    /// holding a clean page of the set bounds the wait too.
+    pub(super) fn flush(
+        &self,
+        pages: &BTreeSet<PageKey>,
+        reserving: &BTreeSet<PageKey>,
+        deadline: std::time::Instant,
+    ) -> Result<(), ReserveRefusal> {
+        #[cfg(test)]
+        crate::store::pause_at_hook(&self.driver.shared.flush_pause);
+        let (pages, reserving) = (pages.clone(), reserving.clone());
+        self.bounded(deadline, move |state| {
+            let progress = &state.progress;
+            let host = &progress.host;
+            let stuck: BTreeSet<PageId> = pages
+                .iter()
+                .filter(|key| host.logical(key).conflict() || progress.notice(key).save_error)
+                .map(|key| PageId::from(host.fs.spelling(key)))
+                .collect();
             if !stuck.is_empty() {
-                return Err(stuck);
+                return Step::Done(Err(ReserveRefusal::Unsaved(stuck)));
             }
-            if self.unsaved(pages).is_empty() {
-                return Ok(());
+            if unsaved(host, &pages).is_empty() {
+                return Step::Done(Ok(()));
             }
-            let state = shared.state.lock().unwrap();
-            drop(shared.wait(state, std::time::Duration::from_millis(100)));
-        }
+            Step::Wait {
+                renaming: host.renaming(&reserving),
+            }
+        })?
     }
 
     /// Stop the host (see `Drop`).
+    #[cfg(test)]
     pub(crate) fn stop(self) {}
 
     /// Begin a switch or restore stop (§6 step 3, §7 step 3) once the
@@ -637,7 +743,7 @@ impl PageHost {
     /// in a switch (the model's switchReq, needed by no page a save-first
     /// order leaves dirty). False: the window has more to drain.
     pub(crate) fn stop_begin(&self, consumed_last_id: u64, mode: StopMode) -> bool {
-        self.driver.shared.with_state(|state| {
+        let begin = self.driver.shared.call(move |state| {
             let closed = state
                 .progress
                 .with_host(|host| host.switch_ready(consumed_last_id));
@@ -649,13 +755,17 @@ impl PageHost {
                 });
             }
             closed
-        })
+        });
+        begin.expect("page host driver ended")
     }
 
     /// The stop's barrier (§6 step 4) and its abort condition (step 5).
     pub(crate) fn stop_state(&self) -> StopState {
-        let state = self.driver.shared.state.lock().unwrap();
-        stop_state(&state.progress, &state.book)
+        let read = |state: &HostState| stop_state(&state.progress, &state.book);
+        self.driver
+            .shared
+            .read(read)
+            .expect("page host driver ended")
     }
 
     /// Stop a host no window owns any more (plan v3 §3, `HostRetirement`;
@@ -671,14 +781,16 @@ impl PageHost {
     /// R2), each call first re-probes draft I/O, the Retry no window is
     /// left to press, so a repaired filesystem lets the stop complete.
     pub fn orphan_stop(&self) -> StopState {
-        let debt = self
+        let debt = |state: &HostState| !state.progress.host.vehicle_debt.is_empty();
+        if self
             .driver
             .shared
-            .with_state(|state| !state.progress.host.vehicle_debt.is_empty());
-        if debt {
+            .read(debt)
+            .expect("page host driver ended")
+        {
             let _ = self.drafts_retry();
         }
-        self.driver.shared.with_state(|state| {
+        let stopped = self.driver.shared.call(|state| {
             if state.progress.host.switch_confirmation.is_none() {
                 if !state.book.orphaned {
                     state.book.orphaned = true;
@@ -697,7 +809,8 @@ impl PageHost {
                 }
             }
             stop_state(&state.progress, &state.book)
-        })
+        });
+        stopped.expect("page host driver ended")
     }
 
     /// Point page mail at the window that now owns the binding (plan v3 §3,
@@ -709,9 +822,9 @@ impl PageHost {
 
     /// Abort the stop: admission reopens and the pages keep their state.
     pub fn stop_abort(&self) {
-        self.driver
-            .shared
-            .with_state(|state| state.progress.with_host(|host| host.switch_abort()));
+        let abort = |state: &mut HostState| state.progress.with_host(|host| host.switch_abort());
+        // A host that ended has no stop left to abort.
+        let _ = self.driver.shared.call(abort);
     }
 
     /// Stop the host if its stop may complete now, then join the driver (§7 step
@@ -720,10 +833,11 @@ impl PageHost {
     /// watcher indexes every page again. The binding holds no host until
     /// `Stopped::relaunch`. Otherwise the host is handed back.
     pub fn stop_finish(self) -> Result<Stopped, Self> {
-        let stopped = self.driver.shared.with_state(|state| {
+        let stopped = self.driver.shared.call(|state| {
             stop_state(&state.progress, &state.book) == StopState::Ready
                 && state.progress.with_host(|host| host.switch_finish()) == Disposition::Applied
         });
+        let stopped = stopped.expect("page host driver ended");
         if stopped {
             let launch = self.launch.clone();
             drop(self);
@@ -752,9 +866,13 @@ impl PageHost {
         loop {
             match host.stop_state() {
                 StopState::Waiting => {
-                    let shared = &host.driver.shared;
-                    let state = shared.state.lock().unwrap();
-                    drop(shared.wait(state, std::time::Duration::from_millis(100)));
+                    // Until the barrier moves: asked after each driver step.
+                    let moved =
+                        |state: &mut HostState| match stop_state(&state.progress, &state.book) {
+                            StopState::Waiting => Wait::Until(None),
+                            _ => Wait::Ready(()),
+                        };
+                    let _ = host.driver.shared.wait(Deadline::Never, moved);
                 }
                 StopState::Ready => match host.stop_finish() {
                     Ok(stopped) => return Ok(stopped),

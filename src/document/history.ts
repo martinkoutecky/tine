@@ -1,3 +1,4 @@
+import { msg } from "../i18n";
 import { FeedPage, Node, doc, pageByName, setDoc, hasLoadedIdentityCollision } from "./model";
 import { capturePages, markDirty as addDirty, persistTransfer, transferInProgress } from "./host/wiring";
 import { pageInstanceGeneration, pageInstanceGenerations } from "./instance";
@@ -223,7 +224,7 @@ function staleInstances(e: UndoEntry): string[] {
  *  as "undo did nothing", which is how this class of bug hides. */
 function discardStaleHistory(stale: readonly string[]): void {
   for (const name of stale) invalidateUndoForPage(name);
-  pushToast("Undo history for this page was discarded: the page was reloaded since those edits", "info");
+  pushToast(msg("history-undo-history-for-this-page-was-discarded-the"), "info");
 }
 
 // Hand-rolled clones — Node/FeedPage are flat (primitives + a string[]), so a
@@ -526,7 +527,7 @@ export function redo() {
     // remain valid without it, including in page-only mode where the tagged
     // entry may have been selected from the middle of the global stack.
     redoStack = [];
-    pushToast("Redo skipped: a block with the same id now exists", "error");
+    pushToast(msg("history-redo-skipped-a-block-with-the-same-id"), "error");
     return;
   }
   const restoreViewport = entry.kind === "raw" ? captureRawHistoryViewport(entry.id) : undefined;

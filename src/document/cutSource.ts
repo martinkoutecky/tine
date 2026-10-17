@@ -2,8 +2,8 @@ import type { ClipboardSourcePage } from "../clipboard";
 import type { PageKind } from "../types";
 
 /** Does a cut grant's source still name the page instance it was taken from
- *  (name, kind, file, instance generation)? Shared by the save engine and the
- *  page-host client (step 3b R7), which adds its key and session checks. */
+ *  (name, kind, file, instance generation)? The page-host client asks it
+ *  (step 3b R7) and adds its key and session checks. */
 export function cutSourceMatches(
   expected: ClipboardSourcePage,
   page: { name: string; kind: PageKind; id?: string | null } | undefined,

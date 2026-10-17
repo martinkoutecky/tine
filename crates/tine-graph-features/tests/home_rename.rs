@@ -50,6 +50,7 @@ const HOME: &str = ";; my settings\n{:file/name-format :triple-lowbar\n :default
 
 #[test]
 fn renaming_the_home_page_moves_default_home_with_it() {
+    let _integration_guard = crate::integration_lock();
     let dir = scratch("primary", HOME);
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     fs::write(dir.join("pages/Ref.md"), "- see [[Start]]\n").unwrap();
@@ -71,6 +72,7 @@ fn renaming_the_home_page_moves_default_home_with_it() {
 /// case-insensitively; namespace descendants follow their parent's rename.
 #[test]
 fn a_home_named_by_case_or_as_a_namespace_child_follows_the_rename() {
+    let _integration_guard = crate::integration_lock();
     let dir = scratch("case", &HOME.replace("\"Start\"", "\"start\""));
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     let store = open(&dir);
@@ -99,6 +101,7 @@ fn a_home_named_by_case_or_as_a_namespace_child_follows_the_rename() {
 
 #[test]
 fn renaming_another_page_leaves_config_untouched() {
+    let _integration_guard = crate::integration_lock();
     let dir = scratch("other", HOME);
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     fs::write(dir.join("pages/Starter.md"), "- other\n").unwrap();
@@ -114,6 +117,7 @@ fn renaming_another_page_leaves_config_untouched() {
 /// OG `merge-pages!` leaves `:default-home` alone.
 #[test]
 fn merging_the_home_page_into_another_keeps_default_home() {
+    let _integration_guard = crate::integration_lock();
     let dir = scratch("merge", HOME);
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
     fs::write(dir.join("pages/Other.md"), "- other body\n").unwrap();
@@ -138,6 +142,7 @@ fn merging_the_home_page_into_another_keeps_default_home() {
 /// not rewritten by the rename, and does not stop it.
 #[test]
 fn a_malformed_config_neither_blocks_the_rename_nor_is_rewritten() {
+    let _integration_guard = crate::integration_lock();
     let truncated = "{:default-home {:page \"Start\"";
     let dir = scratch("malformed", truncated);
     fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
@@ -153,6 +158,7 @@ fn a_malformed_config_neither_blocks_the_rename_nor_is_rewritten() {
 
 #[test]
 fn crash_home_rename_worker() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_HOME_CRASH_ROOT") else {
         return;
     };
@@ -183,6 +189,7 @@ fn crash_home_rename_worker() {
 /// between the old transaction's move and config steps left it.
 #[test]
 fn a_home_rename_killed_at_each_step_reopens_whole() {
+    let _integration_guard = crate::integration_lock();
     let new = HOME.replace("\"Start\"", "\"Begin\"");
     for point in ["dst", "referrer", "trash", "config"] {
         let dir = scratch("crash", HOME);
@@ -190,7 +197,11 @@ fn a_home_rename_killed_at_each_step_reopens_whole() {
         fs::write(dir.join("pages/Start.md"), "- home body\n").unwrap();
         fs::write(dir.join("pages/Ref.md"), "- see [[Start]]\n").unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "crash_home_rename_worker", "--nocapture"])
+            .args([
+                "--exact",
+                "home_rename::crash_home_rename_worker",
+                "--nocapture",
+            ])
             .env("TINE_HOME_CRASH_ROOT", &dir)
             .env("TINE_HOME_CRASH_POINT", point)
             .env("TINE_HOME_CRASH_APP_DATA", app_data.path())

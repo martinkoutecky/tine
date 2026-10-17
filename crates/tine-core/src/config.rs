@@ -92,6 +92,14 @@ pub struct Config {
     /// nothing (`frontend.handler.block/target-disable-swipe?`). Only a vector
     /// of strings directly inside a top-level `:mobile` map counts.
     pub mobile_gestures_disabled_in_block_with_tags: Vec<String>,
+    /// `:quick-capture-templates {:text "…"}` — OG's template for shared or
+    /// quick-captured text (`frontend.quick-capture/quick-capture`,
+    /// `frontend.mobile.intent/handle-payload`). `None` means the caller's OG
+    /// default; only a string directly inside the top-level map counts.
+    pub quick_capture_template_text: Option<String>,
+    /// `:quick-capture-templates {:media "…"}` — OG's template for one shared
+    /// image or file (`frontend.mobile.intent/embed-asset-file`).
+    pub quick_capture_template_media: Option<String>,
     /// `:tine/favorites-page "Name"` — the page holding the Favorites arrangement
     /// (labels, nesting, order). Logseq ignores the key; `:favorites` stays the
     /// flat membership list Logseq reads.
@@ -149,6 +157,11 @@ pub struct JournalQuery {
     pub body: String,
     /// Invalid entry diagnostic, isolated from adjacent queries.
     pub error: Option<String>,
+    /// The entry as an OG `#+BEGIN_QUERY` block (its EDN map re-printed, title
+    /// and options included), for seeding a today's-sections page. One-shot:
+    /// Tine never writes `:default-queries` back. None for an invalid entry.
+    #[serde(default)]
+    pub seed: Option<String>,
 }
 
 /// OG's default when `:ref/linked-references-collapsed-threshold` is absent;
@@ -221,6 +234,8 @@ impl Default for Config {
             favorites: Vec::new(),
             favorites_page: None,
             mobile_gestures_disabled_in_block_with_tags: Vec::new(),
+            quick_capture_template_text: None,
+            quick_capture_template_media: None,
             journal_file_name_format: None,
             journal_page_title_format: None,
             preferred_format: crate::model::Format::Md,
@@ -301,6 +316,8 @@ impl Config {
         cfg.favorites = parse_string_vector(edn, ":favorites");
         cfg.mobile_gestures_disabled_in_block_with_tags =
             nested_string_vector(edn, ":mobile", ":gestures/disabled-in-block-with-tags");
+        cfg.quick_capture_template_text = nested_string(edn, ":quick-capture-templates", ":text");
+        cfg.quick_capture_template_media = nested_string(edn, ":quick-capture-templates", ":media");
         cfg.favorites_page =
             string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
         cfg.journal_file_name_format =
@@ -649,6 +666,7 @@ fn parse_journal_settings(edn: &str) -> JournalSettings {
             title,
             body: String::new(),
             error: None,
+            seed: None,
         };
         match (entry, entry.get("query")) {
             (Edn::Map(pairs), Some(form @ (Edn::List(_) | Edn::Str(_) | Edn::Vec(_)))) => {
@@ -663,6 +681,7 @@ fn parse_journal_settings(edn: &str) -> JournalSettings {
                     let source = match form { Edn::Str(s) => s.clone(), _ => edn::to_string(form) };
                     format!("query {source} {}", edn::to_string(&Edn::Map(options)))
                 };
+                query.seed = Some(format!("#+BEGIN_QUERY\n{}\n#+END_QUERY", edn::to_string(entry)));
                 if entry.get("title").is_some_and(|v| !matches!(v, Edn::Nil) && journal_title(v).is_none()) {
                     cfg.diagnostics.push(format!(":default-queries :journals entry {} has no plain-text title.", index + 1));
                 }
@@ -1110,6 +1129,19 @@ mod tests {
             .body
             .contains(":inputs [:today]"));
         assert_eq!(Config::default().scheduled_future_days, None);
+        // GH #605 seed: each entry re-printed whole (hiccup title, options,
+        // advanced inputs) inside one OG BEGIN_QUERY container.
+        for (query, original) in cfg.default_journal_queries.iter().zip([
+            r#"{:title [:b "Tasks " [:span "today"]] :query (task TODO) :collapsed? true}"#,
+            r#"{:title "Advanced" :query [:find ?b :in $ ?day :where [?b :block/scheduled ?day]] :inputs [:today]}"#,
+        ]) {
+            let seed = query.seed.as_deref().unwrap();
+            let inner = seed
+                .strip_prefix("#+BEGIN_QUERY\n")
+                .and_then(|rest| rest.strip_suffix("\n#+END_QUERY"))
+                .unwrap();
+            assert_eq!(crate::edn::parse(inner), crate::edn::parse(original));
+        }
         let title = Config::parse(
             r#"{:default-queries {:journals [{:title ["span" {:onclick "ignored"} "Count " 2 (graph-code)] :query (task TODO)}]}}"#,
         );
@@ -1754,5 +1786,39 @@ mod mobile_gestures_tests {
         assert!(tags(r#"{:mobile {:gestures/disabled-in-block-with-tags "kanban"}}"#).is_empty());
         assert!(tags(r#"{:mobile "kanban"}"#).is_empty());
         assert!(tags(r#"{:mobile {:gestures/disabled-in-block-with-tags"#).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod quick_capture_template_tests {
+    use super::*;
+
+    /// OG `:quick-capture-templates {:text … :media …}` (frontend.quick-capture,
+    /// frontend.mobile.intent): absent keys are `None`, so the share shaper falls
+    /// back to OG's own defaults; a custom template is read verbatim.
+    #[test]
+    fn reads_custom_templates_and_leaves_absent_ones_to_the_og_default() {
+        let config = Config::parse("{}");
+        assert_eq!(config.quick_capture_template_text, None);
+        assert_eq!(config.quick_capture_template_media, None);
+        let config = Config::parse(
+            r#"{:quick-capture-templates {:text "{date} {text} {url}" :media "> {url}"}}"#,
+        );
+        assert_eq!(
+            config.quick_capture_template_text.as_deref(),
+            Some("{date} {text} {url}")
+        );
+        assert_eq!(
+            config.quick_capture_template_media.as_deref(),
+            Some("> {url}")
+        );
+    }
+
+    #[test]
+    fn a_nested_map_cannot_shadow_the_template() {
+        let config = Config::parse(r#"{:other {:quick-capture-templates {:text "no"}}}"#);
+        assert_eq!(config.quick_capture_template_text, None);
+        let config = Config::parse(r#"{:quick-capture-templates {:text :not-a-string}}"#);
+        assert_eq!(config.quick_capture_template_text, None);
     }
 }

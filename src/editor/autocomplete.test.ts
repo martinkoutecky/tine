@@ -65,6 +65,25 @@ describe("autoPairEdit (OG-style [[ ]] auto-pairing)", () => {
 });
 
 describe("fullWidthRefReplace (Chinese IME full-width page refs)", () => {
+  it("normalizes block references and preserves surrounding text", () => {
+    expect(fullWidthRefReplace("（（", 2)).toEqual({ value: "(())", caret: 2 });
+    expect(fullWidthRefReplace("see （（ suffix", 6)).toEqual({ value: "see (()) suffix", caret: 6 });
+    expect(fullWidthRefReplace("（", 1)).toBeNull();
+    expect(fullWidthRefReplace("((", 2)).toBeNull();
+  });
+
+  it("normalizes the full-width angle command opener", () => {
+    expect(fullWidthRefReplace("《〈", 2)).toEqual({ value: "<", caret: 1 });
+    expect(fullWidthRefReplace("《", 1)).toBeNull();
+    expect(fullWidthRefReplace("〈〈", 2)).toBeNull();
+  });
+
+  it("leaves full-width openers literal inside an existing matching reference", () => {
+    expect(fullWidthRefReplace("((a（（b))", 5)).toBeNull();
+    expect(fullWidthRefReplace("[[a【【b]]", 5)).toBeNull();
+    expect(fullWidthRefReplace("((old)) （（", 10)).toEqual({ value: "((old)) (())", caret: 10 });
+  });
+
   it("normalizes full-width double brackets to an auto-paired page ref", () => {
     expect(fullWidthRefReplace("【【", 2)).toEqual({ value: "[[]]", caret: 2 });
     expect(fullWidthRefReplace("see 【【", 6)).toEqual({ value: "see [[]]", caret: 6 });
@@ -81,6 +100,17 @@ describe("fullWidthRefReplace (Chinese IME full-width page refs)", () => {
 });
 
 describe("orderAcItems (autocomplete default action)", () => {
+  it("keeps native substring and fuzzy above expansions in every completion policy", () => {
+    for (const policy of ["adaptive", "existing", "typed"] as const) {
+      for (const [query, names] of [["beijing", ["x beijing", "北京"]], ["bj", ["bjmarker", "beijing", "北京", "北景"]]] as const) {
+        const rows = names.map((name) => ({ name, item: name, matchClass: name === "北京" || name === "北景" ? "transliteration" as const : "fuzzy" as const }));
+        const ordered = orderAcItems(rows, { name: query, item: "CREATE" }, { query, policy });
+        const native = ordered.filter((name) => name !== "CREATE" && !["北京", "北景"].includes(name));
+        for (const name of native) expect(ordered.indexOf(name)).toBeLessThan(ordered.indexOf("北京"));
+        expect(ordered.indexOf("CREATE")).toBeLessThan(ordered.indexOf("北京"));
+      }
+    }
+  });
   const matches = [
     { name: "Match One", item: "m1" },
     { name: "Match Two", item: "m2" },

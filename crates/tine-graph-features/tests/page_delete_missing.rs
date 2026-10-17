@@ -38,6 +38,7 @@ fn delete(
 
 #[test]
 fn delete_after_external_removal_accepts_the_displayed_path_without_writes() {
+    let _integration_guard = crate::integration_lock();
     for (name, path, kind) in [
         (
             "Example/Namespace",
@@ -76,6 +77,7 @@ fn delete_after_external_removal_accepts_the_displayed_path_without_writes() {
 
 #[test]
 fn absent_identity_does_not_trash_a_live_file_with_a_changed_title() {
+    let _integration_guard = crate::integration_lock();
     let bytes = "title:: Someone Else\n\n- external editor content\n";
     let (root, store) = fixture(&[("pages/Old.md", bytes)]);
     let error = delete(&store, "Old", PageKind::Page, Some("pages/Old.md")).unwrap_err();
@@ -88,6 +90,7 @@ fn absent_identity_does_not_trash_a_live_file_with_a_changed_title() {
 
 #[test]
 fn removed_file_does_not_authorize_deleting_a_replacement_claimant() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(&[("pages/Replacement.md", "title:: Old\n\n- replacement\n")]);
     assert!(delete(&store, "Old", PageKind::Page, Some("pages/Old.md")).is_err());
     assert_eq!(
@@ -98,6 +101,7 @@ fn removed_file_does_not_authorize_deleting_a_replacement_claimant() {
 
 #[test]
 fn absent_delete_still_refuses_invalid_paths_and_ambiguous_twins() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(&[("pages/Old.md", "- one\n"), ("pages/Old.org", "* two\n")]);
     assert!(delete(&store, "Absent", PageKind::Page, Some("../Outside.md")).is_err());
     assert!(delete(&store, "Old", PageKind::Page, Some("pages/Old.md")).is_err());
@@ -113,6 +117,7 @@ fn absent_delete_still_refuses_invalid_paths_and_ambiguous_twins() {
 
 #[test]
 fn a_delete_outside_the_graph_refuses_without_writes() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(&[("pages/Old.md", "- one\n")]);
     let app_data = tempfile::tempdir().unwrap();
     let name = format!(

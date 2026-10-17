@@ -136,7 +136,7 @@ impl Timing {
 
 impl Record {
     /// This draft is exactly the page's buffer at its version.
-    fn holds(&self, page: &Page) -> bool {
+    pub(super) fn holds(&self, page: &Page) -> bool {
         self.bytes == page.buf && self.base == page.base && self.version == page.version
     }
 }
@@ -282,9 +282,9 @@ pub(super) struct Progress<F: HostIo, C: Clock> {
     /// Every key a reconcile visited since Book last took them: ownership
     /// changes for the publication consumer (B1, B2).
     moved: BTreeSet<PageKey>,
-    /// The host incarnation and liveness the sets were built for; a change
-    /// rebuilds them.
-    seen: Option<(u64, bool)>,
+    /// The host incarnation and liveness, and whether a stop ran, that the
+    /// sets were built for; a change rebuilds them.
+    seen: Option<(u64, bool, bool)>,
     events_seen: usize,
     draft_retry: Option<u64>,
     draft_retries: u32,
@@ -397,12 +397,14 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
     }
 
     /// Graph-level sticky error while trash custody cannot be listed (V1).
+    #[cfg(test)]
     pub fn custody_unknown(&self) -> Option<&str> {
         self.host.custody_unknown.as_deref()
     }
 
     /// Wakeup required for a pending draft or custody retry; repeated early
     /// polls stutter.
+    #[cfg(test)]
     pub fn draft_retry_at(&self) -> Option<u64> {
         self.draft_retry.into_iter().chain(self.custody_retry).min()
     }
@@ -486,11 +488,17 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         self.host.sync_drafts();
         let now = self.clock.now_ms();
         let mut visit = std::mem::take(&mut self.host.changed);
-        let current = (self.host.incarnation, self.host.alive);
+        if self.host.switch_confirmation.is_none() {
+            self.stopping = None;
+        }
+        // A stop starting or ending moves every operation page's draft
+        // candidacy (`draft_membership`).
+        let stopping = self.stopping.is_some();
+        let current = (self.host.incarnation, self.host.alive, stopping);
         if self.seen != Some(current) {
             if self
                 .seen
-                .is_some_and(|(incarnation, _)| incarnation != current.0)
+                .is_some_and(|(incarnation, _, _)| incarnation != current.0)
             {
                 self.times.clear();
                 self.draft_retry = None;
@@ -509,9 +517,6 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 visit.entry(key).or_insert(false);
             }
             self.drafted.clear();
-        }
-        if self.host.switch_confirmation.is_none() {
-            self.stopping = None;
         }
         for (key, urgent) in &visit {
             work(Work::Reconcile, 1);
@@ -563,7 +568,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             let Some(t) = self.times.get_mut(key) else {
                 self.stuck.remove(key);
                 if self.host.alive {
-                    Self::draft_membership(&mut self.drafted, &self.host, key);
+                    Self::draft_membership(&mut self.drafted, &self.host, stopping, key);
                 }
                 continue;
             };
@@ -581,7 +586,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                 self.stuck.remove(key);
             }
             if self.host.alive {
-                Self::draft_membership(&mut self.drafted, &self.host, key);
+                Self::draft_membership(&mut self.drafted, &self.host, stopping, key);
             }
         }
         #[cfg(test)]
@@ -590,11 +595,22 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
 
     /// `key` is a draft candidate iff its desired draft (the page at risk,
     /// else none) differs from its live logical draft (B1: absent keys too).
-    fn draft_membership(drafted: &mut BTreeSet<PageKey>, host: &Host<F>, key: &str) {
+    /// RENAME-COST L1: a page with no desired draft keeps its record in its
+    /// operation vehicle while that still owes a publication, except during
+    /// a stop: the stop saves what it can and drafts the rest, so no owe is
+    /// paid in this incarnation, and the vehicle explodes as before the
+    /// change (REVIEW-rename-cost F1: a failing or gated page's owe otherwise
+    /// kept a published page's record, and the stop waited forever).
+    fn draft_membership(
+        drafted: &mut BTreeSet<PageKey>,
+        host: &Host<F>,
+        stopping: bool,
+        key: &str,
+    ) {
         let draft = host.draft_of(key);
         let differs = match host.pages.get(key).filter(|page| page.risk) {
             Some(page) => !draft.is_some_and(|r| r.holds(page)),
-            None => draft.is_some(),
+            None => draft.is_some() && (stopping || !host.op_waits(key)),
         };
         if differs {
             drafted.insert(key.into());
@@ -603,9 +619,18 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         }
     }
 
-    /// Advance one real phase. epoch is supplied by the watcher boundary,
-    /// exactly as for Host::advance_save; it is never inferred from a hash.
-    pub fn poll(&mut self, epoch: u64) -> Disposition {
+    /// `poll` with the model's ghost external-write epoch for a save it
+    /// advances (`Host::advance_save_at`).
+    #[cfg(test)]
+    pub(super) fn poll_at(&mut self, epoch: u64) -> Disposition {
+        self.host.test.epoch = epoch;
+        let result = self.poll();
+        self.host.test.epoch = 0;
+        result
+    }
+
+    /// Advance one real phase.
+    pub fn poll(&mut self) -> Disposition {
         self.reconcile();
         if !self.host.alive {
             return Disposition::Disabled;
@@ -650,7 +675,7 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
             return result;
         }
         if self.host.job.is_some() {
-            let result = self.host.advance_save(epoch);
+            let result = self.host.advance_save();
             self.reconcile();
             return result;
         }
@@ -672,7 +697,10 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
         }
         let now = self.clock.now_ms();
         // Draft candidates, held or with draft vehicles only (D-10), in key
-        // order.
+        // order. A stop explodes an operation vehicle only once no
+        // save-first is owed (§6 step 3: save before any draft); the saves
+        // usually retire it whole (REVIEW-rename-cost R3-1).
+        let deferring = self.stopping.is_some() && self.owes_save_first();
         let mut next = next_after(&self.drafted, None);
         while let Some(key) = next {
             work(Work::Candidates, 1);
@@ -682,8 +710,9 @@ impl<F: HostIo, C: Clock> Progress<F, C> {
                     .last_draft
                     .is_none_or(|last| now >= last.checked_add(500).expect("clock exhausted"))
             });
-            if due && !desired.is_some_and(|page| self.held_back(&key, page)) {
-                let result = self.host.begin_draft(&key);
+            let later = desired.is_none() && deferring && self.host.op_waits(&key);
+            if due && !later && !desired.is_some_and(|page| self.held_back(&key, page)) {
+                let result = self.host.begin_draft_retiring(&key);
                 if self.host.lock_request.is_some() {
                     return Disposition::Waiting;
                 }
@@ -881,11 +910,35 @@ impl Reference {
             "M4 reference: save candidates"
         );
         assert_eq!(p.clean, keys(&mut { clean }), "M4 reference: clean pages");
+        // RENAME-COST L1, rebuilt from the census and the pages: a page
+        // waits while an operation vehicle naming it owes a publication.
+        let mut live_ops = BTreeMap::new();
+        for (name, records) in host.drafts.iter().filter(|(n, _)| n.starts_with("op-")) {
+            let versions: BTreeMap<PageKey, u64> = records
+                .iter()
+                .map(|r| (r.page.clone(), r.version))
+                .collect();
+            let owed = versions
+                .iter()
+                .filter(|(key, version)| logical::owes(host.pages.get(*key), **version))
+                .map(|(key, _)| key.clone())
+                .collect();
+            live_ops.insert(name.clone(), LiveOp { versions, owed });
+        }
+        assert_eq!(
+            host.live_ops, live_ops,
+            "RENAME-COST reference: live operation vehicles"
+        );
+        let op_waits = |key: &PageKey| {
+            live_ops
+                .values()
+                .any(|op| op.versions.contains_key(key) && !op.owed.is_empty())
+        };
         let drafted: BTreeSet<_> = if host.alive {
             let candidates = self.pages.keys().chain(self.logical.keys());
             let differs = |key: &&PageKey| match self.pages.get(*key).filter(|page| page.risk) {
                 Some(page) => !self.logical.get(*key).is_some_and(|r| r.holds(page)),
-                None => self.logical.contains_key(*key),
+                None => self.logical.contains_key(*key) && (p.stopping.is_some() || !op_waits(key)),
             };
             candidates.filter(differs).cloned().collect()
         } else {

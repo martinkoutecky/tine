@@ -23,9 +23,10 @@ fail-before test, implementation, deployment, and release lifecycle.
 3. For a clear bug, prove it before the fix, implement the smallest safe change,
    and run the cheapest test layer that can actually observe it. Visual, caret,
    focus, filesystem, and WebKit behavior require browser/native evidence.
-4. Once the verified fix is pushed to `master`, comment that it is fixed on
-   master and expected in the next release (normally 1–2 days), and leave the
-   issue open with `fixed-on-master`. Keep its Tine Project status **In
+4. Once the verified fix is pushed to `og` (Beta, where all work lands first),
+   comment that it is fixed in Beta and expected in the next Beta (normally 1–2
+   days), and leave the issue open with `fixed-in-beta`. If the fix is also
+   cherry-picked to stable, say so. Keep its Tine Project status **In
    Progress**: this Project's Done transition automatically closes the linked
    issue, so Done is reserved for the release-time close.
 5. After the relevant platform artifact is published, comment “closing, should

@@ -14,6 +14,14 @@ fn main() {
     let release = &switch["identities"]["release"];
     let conf = read("tauri.conf.json");
     let android = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android");
+    if android {
+        // Google Play requires 16 KB page-size support for apps targeting
+        // Android 15+. NDK 26.3 (pinned for F-Droid reproducibility) links with
+        // 4 KB LOAD alignment by default. The flag lives here, not in RUSTFLAGS,
+        // so F-Droid's rebuild from source gets the same layout; release.yml
+        // verifies the alignment of the shipped library.
+        println!("cargo:rustc-link-arg=-Wl,-z,max-page-size=16384");
+    }
     let android_namespace = if android {
         println!("cargo:rerun-if-changed=gen/android/app/build.gradle.kts");
         let gradle =
@@ -113,13 +121,23 @@ fn main() {
     // before it reaches Android, the frontend's Back listener never registers,
     // and the native owner consumes every gesture with nowhere to send it —
     // invisible from Rust and from the emulator alike (master 61a663291 line).
+    // `native-integrations` (src/native_integrations.rs) is inlined the same
+    // way; its frontend listens for `inboxChanged` and asks `showKeyboard`
+    // after a route focuses an input (src/nativeTineLinks.ts).
     tauri_build::try_build(
-        tauri_build::Attributes::new().plugin(
-            "safe-back",
-            tauri_build::InlinedPlugin::new()
-                .commands(&["registerListener", "removeListener"])
-                .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
-        ),
+        tauri_build::Attributes::new()
+            .plugin(
+                "safe-back",
+                tauri_build::InlinedPlugin::new()
+                    .commands(&["registerListener", "removeListener"])
+                    .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
+            )
+            .plugin(
+                "native-integrations",
+                tauri_build::InlinedPlugin::new()
+                    .commands(&["registerListener", "removeListener", "showKeyboard"])
+                    .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
+            ),
     )
     .expect("failed to run tauri-build");
 }

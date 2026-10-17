@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
-use tauri::{Runtime, State, WebviewWindow};
+use tauri::{Manager, Runtime, State, WebviewWindow};
 use tine_store::Store;
 
 pub(crate) type WindowKey = String;
@@ -55,6 +55,15 @@ pub(crate) struct GraphSlot {
     /// takes the registry; a writer checks revocation from the gate's own
     /// state (`host_slot`).
     pub(crate) host: RwLock<PageHostSlot>,
+    /// The graph's owner lease (CLI PROTOCOL §3.1): the owner lock and the
+    /// command endpoint, taken with a fresh host and kept with it. Paused
+    /// at retirement, moved by `HostRetirement::adopt`, released by
+    /// retirement once the host has stopped. `None` when the platform or
+    /// filesystem gives no arbitration (the graph opens without endpoint).
+    pub(crate) owner: Mutex<Option<crate::owner::lease::Lease>>,
+    /// The window this binding belongs to, for the owner's command-line
+    /// writes (`owner::window`). Unset in tests and under `tine serve`.
+    pub(crate) window: std::sync::OnceLock<crate::owner::window::WindowLink>,
 }
 
 /// Where the binding's page host stands. `Off` before the open starts it,
@@ -105,6 +114,8 @@ impl GraphSlot {
             concord_ledger: Default::default(),
             rescan: Default::default(),
             host: Default::default(),
+            owner: Default::default(),
+            window: Default::default(),
         }
     }
 
@@ -548,8 +559,8 @@ impl<'r, 'de: 'r, R: Runtime> CommandArg<'de, R> for GraphContext<'r, R> {
         };
         let state: State<'r, AppState> = command
             .message
-            .state_ref()
-            .try_get()
+            .webview_ref()
+            .try_state()
             .ok_or_else(|| InvokeError::from("AppState is not managed"))?;
         let window = WebviewWindow::<R>::from_command(command)?;
         Ok(Self {

@@ -63,7 +63,11 @@ fn review_f8_production_rename_rebinds_title_with_durable_custody_and_recovery()
         let records = h.logical_drafts();
         assert_eq!(records["c.md"].bytes, h.pages["c.md"].buf);
         assert_eq!(records["b.md"].bytes, h.pages["b.md"].buf);
-        assert_eq!(h.start_save("c.md"), Disposition::Waiting);
+        // RENAME-COST L1: no explosion; the operation vehicle alone holds
+        // every page's record, and recovery reads it.
+        let files = h.fs.draft_files(true);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].0.starts_with("op-"));
         restart(&mut h, power, false);
         drain(&mut h);
         assert_eq!(h.pages["c.md"].buf, text("title:: C\n- body\n"));
@@ -135,7 +139,7 @@ pub(super) fn draft(host: &mut Host<ModelFs>, key: &str) {
 pub(super) fn risk(host: &mut Host<ModelFs>, key: &str) {
     assert_eq!(host.start_save(key), Disposition::Pending);
     host.fs.inject(Phase::PageTemp, [Fault::Before]);
-    host.advance_save(0);
+    host.advance_save();
     assert!(host.pages[key].risk);
 }
 
@@ -146,7 +150,7 @@ pub(super) fn saved(host: &mut Host<ModelFs>, key: &str) {
             break;
         }
         let epoch = host.fs.epochs.get(key).copied().unwrap_or(0);
-        host.advance_save(epoch);
+        host.advance_save_at(epoch);
     }
     assert!(host.pages[key].clean());
 }
@@ -454,7 +458,7 @@ fn oldest_first_removal_never_uncovers_older_record_and_abs_retains_newest() {
         }
         // User discard ends the current draft obligation when disk differs.
         h.fs.external("a.md", text("different"), true);
-        send(&mut h, "a.md", RequestKind::Discard { version: 0 });
+        send(&mut h, "a.md", RequestKind::Discard);
         assert!(!h.pages["a.md"].risk);
         h.begin_draft("a.md");
         for _ in 0..cut {
@@ -476,9 +480,9 @@ fn save_guard_mismatch_and_uncertain_never_report_clean() {
     open(&mut h, "a.md");
     edit(&mut h, "a.md", "mine");
     h.start_save("a.md");
-    h.advance_save(0);
+    h.advance_save();
     h.fs.external("a.md", text("external"), true);
-    h.advance_save(1);
+    h.advance_save_at(1);
     assert!(h.job.is_none());
     assert!(h.pages["a.md"].conflict && h.pages["a.md"].risk);
     let version = h.pages["a.md"].version;
@@ -492,11 +496,11 @@ fn save_guard_mismatch_and_uncertain_never_report_clean() {
         },
     );
     h.start_save("a.md");
-    h.advance_save(0);
-    h.advance_save(0);
-    h.advance_save(1);
+    h.advance_save();
+    h.advance_save();
+    h.advance_save_at(1);
     h.fs.inject(Phase::PageSync, [Fault::Before]);
-    h.advance_save(1);
+    h.advance_save_at(1);
     assert!(h.pages["a.md"].risk && h.pages["a.md"].typed);
     assert_eq!(h.pages["a.md"].base, Base::Known(text("external")));
     assert_eq!(h.fs.files["graph/a.md"].as_ref(), b"mine");
@@ -509,10 +513,10 @@ fn deletion_durably_copies_trash_before_source_removal_at_power_cut() {
     assert_eq!(h.delete("a.md"), Disposition::Pending);
     drain(&mut h);
     h.start_save("a.md");
-    h.advance_save(0); // guard
-    h.advance_save(0); // marker
-    h.advance_save(0); // move
-    h.advance_save(0); // custody (a)+(b)
+    h.advance_save(); // guard
+    h.advance_save(); // marker
+    h.advance_save(); // move
+    h.advance_save(); // custody
     assert_eq!(h.job.as_ref().unwrap().phase, SavePhase::DirectorySync);
     assert!(h.fs.stable.contains_key("graph/a.md"));
     assert!(h.fs.stable.keys().any(|k| k.starts_with("trash/a.md/")));
@@ -528,10 +532,10 @@ fn completed_trash_move_error_keeps_observed_removal_and_reports_uncertain() {
     h.delete("a.md");
     drain(&mut h);
     h.start_save("a.md");
-    h.advance_save(0); // guard
-    h.advance_save(0); // marker
+    h.advance_save(); // guard
+    h.advance_save(); // marker
     h.fs.inject(Phase::TrashMove, [Fault::After]);
-    h.advance_save(0);
+    h.advance_save();
     assert!(h.job.is_none());
     assert!(h.pages["a.md"].risk);
     assert!(!h.fs.files.contains_key("graph/a.md"));
@@ -549,10 +553,12 @@ fn completed_trash_move_error_keeps_observed_removal_and_reports_uncertain() {
 fn repeated_launch_explosion_retains_one_identical_copy_per_page() {
     let mut h = host();
     h.delete("a.md");
-    for _ in 0..4 {
-        h.advance_draft();
-    }
-    // Cut after the explosion copy is durable, before op retirement.
+    drain(&mut h);
+    // A crash leaves the operation vehicle; launch explodes it. Cut after
+    // the explosion copy is durable, before op retirement.
+    h.stop();
+    h.fs.crash();
+    assert_eq!(h.launch(), Disposition::Pending);
     for _ in 0..3 {
         h.advance_draft();
     }
@@ -563,33 +569,55 @@ fn repeated_launch_explosion_retains_one_identical_copy_per_page() {
     assert_eq!(h.fs.draft_files(true).len(), 1);
 }
 
+/// RENAME-COST L1/L2: an applied operation is not exploded, so its pages
+/// save at once; a refresh that supersedes one page's record retires the
+/// vehicle after durable copies of the others' (a failed copy is retried).
+/// A refresh that fails keeps the vehicle whole.
 #[test]
-fn operation_explodes_before_save_and_retries_failed_copy() {
-    let mut h = host();
-    h.fs.external("b.md", text("[[A]] unrelated"), true);
-    open(&mut h, "b.md");
-    assert_eq!(
-        h.rename(
-            "a.md",
-            "c.md",
-            &BTreeSet::new(),
-            "A",
-            "C",
-            tine_core::config::FileNameFormat::TripleLowbar
-        ),
-        Disposition::Pending
-    );
-    for _ in 0..5 {
-        h.advance_draft();
+fn operation_vehicle_retires_through_a_refresh_and_retries_failed_copy() {
+    for refresh_fails in [false, true] {
+        let mut h = host();
+        h.fs.external("b.md", text("[[A]] unrelated"), true);
+        open(&mut h, "b.md");
+        assert_eq!(
+            h.rename(
+                "a.md",
+                "c.md",
+                &BTreeSet::new(),
+                "A",
+                "C",
+                tine_core::config::FileNameFormat::TripleLowbar
+            ),
+            Disposition::Pending
+        );
+        drain(&mut h);
+        assert_eq!(h.pages["b.md"].buf, text("[[C]] unrelated"));
+        let files = h.fs.draft_files(true);
+        assert!(files.len() == 1 && files[0].0.starts_with("op-"));
+        edit(&mut h, "b.md", "[[C]] edited");
+        assert_eq!(h.begin_draft("b.md"), Disposition::Pending);
+        if refresh_fails {
+            h.fs.inject(Phase::DraftTemp, [Fault::Before]);
+            drain(&mut h);
+            let scan = drafts::scan(h.fs.draft_files(true));
+            assert_eq!(scan.files.len(), 1, "the vehicle stays whole");
+            assert!(scan.files.keys().all(|name| name.starts_with("op-")));
+            assert_eq!(scan.logical["b.md"].bytes, text("[[C]] unrelated"));
+            continue;
+        }
+        // The refresh is durable and applied; the first copy fails once.
+        for _ in 0..4 {
+            h.advance_draft();
+        }
+        h.fs.inject(Phase::DraftTemp, [Fault::Before]);
+        drain(&mut h);
+        let scan = drafts::scan(h.fs.draft_files(true));
+        assert_eq!(scan.logical.len(), 3);
+        assert_eq!(scan.files.len(), 3);
+        assert!(scan.files.keys().all(|name| name.starts_with("p-")));
+        assert_eq!(scan.logical["b.md"].bytes, text("[[C]] edited"));
+        saved(&mut h, "c.md");
     }
-    assert_eq!(h.pages["b.md"].buf, text("[[C]] unrelated"));
-    assert_eq!(h.start_save("c.md"), Disposition::Waiting);
-    h.fs.inject(Phase::DraftTemp, [Fault::Before]);
-    drain(&mut h);
-    let scan = drafts::scan(h.fs.draft_files(true));
-    assert_eq!(scan.logical.len(), 3);
-    assert!(scan.files.keys().all(|name| name.starts_with("p-")));
-    saved(&mut h, "c.md");
 }
 
 #[test]
@@ -828,8 +856,10 @@ fn retained_reservation_blocks_save_and_reconciles_undo_or_publication() {
 
 /// The production files that name the page host surface: the census
 /// writers (STEP3 §7), the binding's host slot, restore and retirement, the
-/// page commands, and the graph-window binding that starts the host and
-/// answers `load_graph` (step 3b P1, P2b).
+/// page commands, the graph-window binding that starts the host and
+/// answers `load_graph` (step 3b P1, P2b), and the CLI owner's write path,
+/// which submits one planned page operation through the same host as the
+/// app's commands (CLI slice 2, SLICE2-DESIGN §1).
 const CENSUS_CALL_SITES: &[&str] = &[
     "crates/tine-graph-features/src/retained.rs",
     "crates/tine-graph-features/src/pages.rs",
@@ -843,6 +873,7 @@ const CENSUS_CALL_SITES: &[&str] = &[
     "src-tauri/src/host_retirement.rs",
     "src-tauri/src/page_commands.rs",
     "src-tauri/src/graph.rs",
+    "src-tauri/src/owner/write.rs",
 ];
 
 /// Production `PageHost::start(` lines the census below saw.
@@ -865,7 +896,7 @@ fn barrier_queries_read_the_logical_state() {
         ),
         (
             "binding_retained.rs",
-            "identify",
+            "try_identify",
             "whether `open` still runs its create checks; not a barrier answer",
         ),
     ];
@@ -916,7 +947,9 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
             named && (!gated || (i > 0 && lines[i - 1] == "#[cfg(test)]"))
         })
     }
-    fn visit(root: &std::path::Path, dir: &std::path::Path) {
+    /// `in_test`: `dir` is a directory module declared under `#[cfg(test)]`
+    /// (`mod x;` gated, with `x/mod.rs`), so all of it is test code.
+    fn visit(root: &std::path::Path, dir: &std::path::Path, in_test: bool) {
         let paths: Vec<_> = std::fs::read_dir(dir)
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -928,7 +961,12 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
             .collect();
         for path in paths {
             if path.is_dir() {
-                visit(root, &path);
+                let module = format!("{}.rs", path.file_name().unwrap().to_string_lossy());
+                let gated = in_test
+                    || siblings
+                        .iter()
+                        .any(|parent| declares(parent, &module, true));
+                visit(root, &path, gated);
                 continue;
             }
             if path.extension().is_none_or(|ext| ext != "rs") {
@@ -954,7 +992,8 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
             let name = path.file_name().unwrap().to_string_lossy();
             // Test code: a file a sibling declares under `#[cfg(test)]`, and a
             // top-level `#[cfg(test)] mod … {` up to its closing `}`.
-            let mut test_code = siblings.iter().any(|parent| declares(parent, &name, true));
+            let mut test_code =
+                in_test || siblings.iter().any(|parent| declares(parent, &name, true));
             let test_file = test_code;
             let lines: Vec<&str> = source.lines().collect();
             for (i, line) in lines.iter().enumerate() {
@@ -973,15 +1012,26 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
                 // The retained-writer surface (approved by Martin 2026-10-10) is named only
                 // where a census writer reserves from a host or the binding
                 // keeps one (STEP3 §7). Exactly one production path starts a
-                // host: every graph-window binding (`load_graph_for_label`,
-                // step 3b P2b). A second would be a second driver on the
-                // graph's drafts.
+                // host, `graph.rs` `launch_host`: the graph-window binding
+                // (`load_graph_for_label`, step 3b P2b) and the command-line
+                // owner (`owner::serve`, one per graph by the owner lock) both
+                // call it. A second would be a second driver on the graph's drafts.
                 if !test_code && line.contains("PageHost::start(") {
                     assert_eq!(
                         relative, "src-tauri/src/graph.rs",
-                        "a page host starts outside the graph-window binding: {relative}: {line}"
+                        "a page host starts outside graph.rs launch_host: {relative}: {line}"
                     );
                     PRODUCTION_STARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    // Its kinds sink is the app's edit-kinds log (N1, OG-RULES
+                    // Rule 8, STEP3 §3.2; 318a6f40a dropped the log once).
+                    let call = lines[i..]
+                        .iter()
+                        .take_while(|line| !line.trim_start().starts_with(')'))
+                        .any(|line| line.contains("page_commands::log_edit_kinds"));
+                    assert!(
+                        call,
+                        "the page host start does not log edit kinds: {relative}: {line}"
+                    );
                 }
                 assert!(
                     test_code || !line.contains("start_for_tests"),
@@ -1043,22 +1093,25 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
             }
         }
     }
-    visit(&root, &root.join("crates"));
-    visit(&root, &root.join("src-tauri/src"));
+    visit(&root, &root.join("crates"), false);
+    visit(&root, &root.join("src-tauri/src"), false);
     assert_eq!(
         PRODUCTION_STARTS.load(std::sync::atomic::Ordering::Relaxed),
         1,
-        "every graph-window binding starts its page host in one place (graph.rs load_graph_for_label)"
+        "every production page host starts in one place (graph.rs launch_host)"
     );
     let runtime = [
         ("mod.rs", include_str!("mod.rs")),
         ("binding.rs", include_str!("binding.rs")),
+        ("binding_bridge.rs", include_str!("binding_bridge.rs")),
         ("binding_retained.rs", include_str!("binding_retained.rs")),
         (
             "binding_publication.rs",
             include_str!("binding_publication.rs"),
         ),
+        ("binding_apply.rs", include_str!("binding_apply.rs")),
         ("binding_launch.rs", include_str!("binding_launch.rs")),
+        ("binding_read.rs", include_str!("binding_read.rs")),
         ("draft_worker.rs", include_str!("draft_worker.rs")),
         ("drafts.rs", include_str!("drafts.rs")),
         ("driver.rs", include_str!("driver.rs")),
@@ -1189,7 +1242,7 @@ fn v3_a_save_mismatch_back_to_the_old_observation_publishes_it() {
             break;
         }
         let epoch = h.fs.epochs.get("a.md").copied().unwrap_or(0);
-        h.advance_save(epoch);
+        h.advance_save_at(epoch);
     }
     assert!(h.pages["a.md"].conflict);
     assert_eq!(
@@ -1198,4 +1251,259 @@ fn v3_a_save_mismatch_back_to_the_old_observation_publishes_it() {
         "no overwrite"
     );
     assert_eq!(observed_since(&h, from), vec![text("A")], "V3");
+}
+
+/// RENAME-COST review (2026-10-11): an operation's draft file holding a
+/// rename's three records, b.md's the operation's newest bytes.
+pub(super) fn lazy_operation_group() -> Host<ModelFs> {
+    let mut h = host();
+    h.fs.external("b.md", text("valuable original b"), true);
+    open(&mut h, "b.md");
+    assert_eq!(
+        h.rename_with(
+            "a.md",
+            "c.md",
+            &BTreeSet::from(["b.md".into()]),
+            |bytes, key, _| Ok(if key == "b.md" {
+                text("valuable operation b")
+            } else {
+                bytes.clone()
+            })
+        ),
+        Disposition::Pending
+    );
+    drain(&mut h);
+    assert_eq!(h.fs.draft_files(true).len(), 1);
+    h
+}
+
+#[test]
+fn rename_cost_removal_first_copy_failure_preserves_sibling_after_crash() {
+    for phase in [Phase::DraftTemp, Phase::DraftRename] {
+        for power in [false, true] {
+            let mut h = lazy_operation_group();
+            saved(&mut h, "c.md");
+            h.fs.external("b.md", text("foreign b"), true);
+            assert_eq!(h.observe("b.md"), Disposition::Applied);
+            assert!(h.pages["b.md"].conflict);
+            assert_eq!(
+                send(&mut h, "a.md", RequestKind::Discard),
+                Disposition::Applied
+            );
+            h.receive("a.md");
+            assert!(!h.op_waits("a.md"));
+            assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Pending);
+            let w = h.worker.as_ref().unwrap();
+            assert!(matches!(w.application, Some(Application::Removal)));
+            assert_eq!(
+                drafts::decode(w.task.bytes.as_ref().unwrap()).unwrap()[0].page,
+                "b.md"
+            );
+            h.fs.inject(phase, [Fault::Before]);
+            drain(&mut h);
+            restart(&mut h, power, false);
+            assert_eq!(h.pages.get("b.md").map(|p| p.buf.clone()), Some(text("valuable operation b")),
+                "{phase:?}, power={power}: an acknowledged operation's newest sibling bytes must recover");
+        }
+    }
+}
+
+#[test]
+fn rename_cost_removal_first_copy_requires_sibling_path_lock() {
+    let mut h = lazy_operation_group();
+    saved(&mut h, "c.md");
+    assert_eq!(
+        send(&mut h, "a.md", RequestKind::Discard),
+        Disposition::Applied
+    );
+    h.held = Some(BTreeSet::from(["a.md".into()]));
+    assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Pending);
+    h.held = Some(BTreeSet::new());
+    h.lock_request = None;
+    let calls = h.fs.calls.len();
+    assert_eq!(
+        h.advance_draft(),
+        Disposition::Waiting,
+        "the first sibling copy must request b.md's path lock before I/O"
+    );
+    assert_eq!(h.fs.calls.len(), calls);
+}
+
+#[test]
+fn rename_cost_retire_keeps_its_pages_busy_and_relaunch_preserves_owed() {
+    let mut h = lazy_operation_group();
+    assert!(h.op_waits("c.md"));
+    restart(&mut h, true, false);
+    assert_eq!(h.pages["b.md"].buf, text("valuable operation b"));
+    saved(&mut h, "c.md");
+    saved(&mut h, "b.md");
+    saved(&mut h, "a.md");
+    // Launch has exploded; use a fresh group to exercise actual L1.
+    let mut h = lazy_operation_group();
+    saved(&mut h, "c.md");
+    saved(&mut h, "b.md");
+    saved(&mut h, "a.md");
+    assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Pending);
+    assert!(matches!(
+        h.worker.as_ref().unwrap().application,
+        Some(Application::Retire)
+    ));
+    for key in ["a.md", "b.md", "c.md"] {
+        assert!(h.busy(key));
+        assert_eq!(h.observe(key), Disposition::Waiting);
+        assert_eq!(
+            h.reserve(&BTreeSet::from([key.into()])),
+            Disposition::Waiting
+        );
+    }
+    drain(&mut h);
+    assert!(h.fs.draft_files(true).is_empty());
+}
+
+/// RENAME-COST L1 crash cuts (REVIEW-rename-cost F2): a published operation
+/// retired whole, cut after every step, by crash and by power loss. A page
+/// recovers nothing but what it published, and no cut raises a conflict.
+#[test]
+fn rename_cost_retire_every_cut_recovers_only_published_bytes() {
+    for power in [false, true] {
+        let mut completed = false;
+        for k in 0..12 {
+            let mut h = lazy_operation_group();
+            for key in ["c.md", "b.md", "a.md"] {
+                saved(&mut h, key);
+            }
+            let published: BTreeMap<PageKey, Text> = ["a.md", "b.md", "c.md"]
+                .iter()
+                .map(|key| (key.to_string(), h.pages[*key].buf.clone()))
+                .collect();
+            assert_eq!(h.begin_draft_retiring("a.md"), Disposition::Pending);
+            assert!(matches!(
+                h.worker.as_ref().unwrap().application,
+                Some(Application::Retire)
+            ));
+            for _ in 0..k {
+                if h.worker.is_none() {
+                    break;
+                }
+                h.advance_draft();
+            }
+            completed |= h.worker.is_none();
+            restart(&mut h, power, false);
+            for (key, bytes) in &published {
+                if let Some(page) = h.pages.get(key) {
+                    assert_eq!(&page.buf, bytes, "cut {k} power {power}: {key}");
+                    assert!(!page.conflict, "cut {k} power {power}: {key} conflict");
+                }
+            }
+        }
+        assert!(completed, "the cuts reach the retirement's end");
+    }
+}
+
+/// RENAME-COST L2 crash cuts (REVIEW-rename-cost F2): op1 (a.md → c.md, b.md
+/// a referrer) published but its vehicle live; op2 renames c.md → d.md and
+/// absorbs op1 at its terminal. Cut after every step, by crash and by power
+/// loss: b.md recovers only its published bytes and nothing conflicts.
+#[test]
+fn rename_cost_an_op_absorbing_an_older_op_keeps_published_bytes_at_every_cut() {
+    for power in [false, true] {
+        let mut completed = false;
+        for k in 0..40 {
+            let mut h = lazy_group_with_d();
+            for key in ["c.md", "b.md", "a.md"] {
+                saved(&mut h, key);
+            }
+            let published_b = h.pages["b.md"].buf.clone();
+            let renamed = h.rename_with("c.md", "d.md", &BTreeSet::new(), |bytes, _, _| {
+                Ok(bytes.clone())
+            });
+            assert_eq!(renamed, Disposition::Pending, "op2 admitted");
+            for _ in 0..k {
+                if h.worker.is_none() {
+                    break;
+                }
+                h.advance_draft();
+            }
+            completed |= h.worker.is_none();
+            if h.worker.is_none() {
+                // `live_op`: outside a running worker a page has at most one
+                // operation vehicle (op2 absorbed op1 before it finished).
+                for (page, names) in &h.vehicles_of {
+                    let ops = names.iter().filter(|n| n.starts_with("op-")).count();
+                    assert!(ops <= 1, "{page} in {ops} operation vehicles");
+                }
+            }
+            restart(&mut h, power, false);
+            if let Some(b) = h.pages.get("b.md") {
+                assert_eq!(b.buf, published_b, "cut {k} power {power}: b.md");
+                assert!(!b.conflict, "cut {k} power {power}: b.md conflict");
+            }
+            let a_conflict = h.pages.get("a.md").is_some_and(|a| a.conflict);
+            assert!(!a_conflict, "cut {k} power {power}: a.md conflict");
+        }
+        assert!(completed, "the cuts reach op2's end");
+    }
+}
+
+fn lazy_group_with_d() -> Host<ModelFs> {
+    let mut fs = ModelFs::default();
+    fs.external("a.md", text("A"), true);
+    fs.external("b.md", text("valuable original b"), true);
+    let locks = ["a.md", "b.md", "c.md", "d.md"]
+        .into_iter()
+        .map(|key| (key.into(), Arc::new(Mutex::new(()))))
+        .collect();
+    let mut h = Host::new(fs, locks);
+    open(&mut h, "b.md");
+    let renamed = h.rename_with(
+        "a.md",
+        "c.md",
+        &BTreeSet::from(["b.md".into()]),
+        |bytes, key, _| {
+            Ok(if key == "b.md" {
+                text("valuable operation b")
+            } else {
+                bytes.clone()
+            })
+        },
+    );
+    assert_eq!(renamed, Disposition::Pending);
+    drain(&mut h);
+    assert_eq!(h.fs.draft_files(true).len(), 1);
+    h
+}
+
+/// Bench events (`crate::bench_events`): a save's `save_begin` comes before
+/// its `published`, under one key, and `published` carries the version
+/// and text the host recorded as Published.
+#[test]
+fn bench_events_a_save_begins_then_publishes_under_one_key() {
+    use crate::bench_events::{capture_on_this_thread, Writer};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("events.ndjson");
+    let writer = Arc::new(Writer::start(&path).unwrap());
+    capture_on_this_thread(Some(writer.clone()));
+    let mut h = host();
+    open(&mut h, "a.md");
+    edit(&mut h, "a.md", "A2");
+    saved(&mut h, "a.md");
+    capture_on_this_thread(None);
+    writer.sync();
+    let lines: Vec<serde_json::Value> = std::fs::read_to_string(&path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .filter(|line: &serde_json::Value| line["ev"] == "save_begin" || line["ev"] == "published")
+        .collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    let (begin, published) = (&lines[0], &lines[1]);
+    assert_eq!(begin["ev"], "save_begin");
+    assert_eq!(published["ev"], "published");
+    assert_eq!(begin["key"], published["key"]);
+    assert_eq!(begin["path"], "a.md");
+    assert_eq!(published["path"], "a.md");
+    assert_eq!(published["version"], h.pages["a.md"].version);
+    assert_eq!(published["text"], "A2");
+    assert_eq!(published["bytes_len"], 2);
+    assert!(begin["t"].as_f64().unwrap() <= published["t"].as_f64().unwrap());
 }

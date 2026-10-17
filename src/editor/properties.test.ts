@@ -2,18 +2,18 @@ import { describe, it, expect } from "vitest";
 import { caretInFence } from "./fences";
 import {
   multilineExitTrim,
-  isSheetCellHidden,
+  SHEET_CELL_HIDE,
   joinProps,
   readPropertyValue,
   splitProps,
   upsertPropertyLine,
-  isBuiltinHidden,
+  BUILTIN_HIDE,
   rawOffsetToVisibleOffset,
   isPageHeaderPropertiesOnly,
   splitPagePreamble,
   pagePartsWithProperty,
   pagePropertyEntries,
-  hideAll,
+  HIDE_ALL,
   isEditablePropertyKey,
 } from "./properties";
 
@@ -68,7 +68,7 @@ describe("sheet-cell property splitting", () => {
   it("hides built-in and tine properties while preserving them byte-exactly on join", () => {
     const raw = "Body line\ntine.view:: grid\nid:: abc-123";
 
-    const split = splitProps(raw, isSheetCellHidden);
+    const split = splitProps(raw, SHEET_CELL_HIDE);
 
     expect(split.visible).toBe("Body line");
     expect(split.hidden).toBe("tine.view:: grid\nid:: abc-123");
@@ -166,7 +166,7 @@ describe("caretInFence", () => {
     // The parser's literal ends at the shorter close (Martin 2026-10-01: fences
     // follow mldoc, not CommonMark), so the property after it is not code.
     expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(false);
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden);
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE);
     // mldoc 1.5.9 emits two Property_Drawer nodes after the shorter Src close.
     expect(visible).toBe("````text\nalpha\n```\n````");
     expect(hidden).toBe("id:: literal-code\nid:: real-id");
@@ -175,7 +175,7 @@ describe("caretInFence", () => {
   it("hides properties accepted after mldoc's shorter tilde close", () => {
     const raw = "~~~~text\n~~~\ncollapsed:: literal-code\n~~~~\ncollapsed:: true";
     expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(false);
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden);
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE);
     // mldoc 1.5.9 emits both collapsed properties outside Src.
     expect(visible).toBe("~~~~text\n~~~\n~~~~");
     expect(hidden).toBe("collapsed:: literal-code\ncollapsed:: true");
@@ -187,20 +187,20 @@ describe("caretInFence", () => {
 describe("org :PROPERTIES: drawer hiding (GH #37)", () => {
   it("hides an id-only drawer entirely (wrapper + line)", () => {
     const raw = "TODO Task\n:PROPERTIES:\n:id: abc-123\n:END:";
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE, "org");
     expect(visible).toBe("TODO Task");
     expect(hidden).toBe(":id: abc-123");
   });
 
   it("round-trips an id-only drawer back to canonical position", () => {
     const raw = "TODO Task\n:PROPERTIES:\n:id: abc-123\n:END:";
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE, "org");
     expect(joinProps(visible, hidden, "org")).toBe(raw);
   });
 
   it("keeps the drawer + user props visible, hiding only the built-in id line", () => {
     const raw = "Title\n:PROPERTIES:\n:owner: martin\n:id: u1\n:END:\nbody";
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE, "org");
     expect(visible).toBe("Title\n:PROPERTIES:\n:owner: martin\n:END:\nbody");
     expect(hidden).toBe(":id: u1");
     expect(joinProps(visible, hidden, "org")).toBe(
@@ -210,14 +210,14 @@ describe("org :PROPERTIES: drawer hiding (GH #37)", () => {
 
   it("groups a freshly reattached drawer after SCHEDULED/DEADLINE planning lines", () => {
     const raw = "TODO Task\nSCHEDULED: <2026-07-07 Tue>\n:PROPERTIES:\n:id: x\n:END:\nbody";
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE, "org");
     expect(visible).toBe("TODO Task\nSCHEDULED: <2026-07-07 Tue>\nbody");
     expect(joinProps(visible, hidden, "org")).toBe(raw);
   });
 
   it("leaves a block with no drawer untouched", () => {
     const raw = "just some text\nsecond line";
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE, "org");
     expect(visible).toBe(raw);
     expect(hidden).toBe("");
     expect(joinProps(visible, hidden, "org")).toBe(raw);
@@ -225,21 +225,21 @@ describe("org :PROPERTIES: drawer hiding (GH #37)", () => {
 
   it("keeps a body drawer and its id lookalike visible", () => {
     const raw = "Title\nBody\n:PROPERTIES:\n:id: body-id\n:END:";
-    const split = splitProps(raw, isBuiltinHidden, "org");
+    const split = splitProps(raw, BUILTIN_HIDE, "org");
     expect(split.visible, "Org drawer rule: splitProps must leave the body drawer exemplar visible").toBe(raw);
     expect(split.hidden).toBe("");
   });
 
   it("does NOT treat a stray md `key::` line in an org block as metadata", () => {
     const raw = "Title\ncollapsed:: true";
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE, "org");
     expect(visible).toBe(raw);
     expect(hidden).toBe("");
   });
 
   it("leaves a :LOGBOOK: drawer visible (not a property drawer)", () => {
     const raw = "DONE Ship\n:LOGBOOK:\nCLOCK: [2026-07-07 Tue 09:00]\n:END:";
-    const { visible } = splitProps(raw, isBuiltinHidden, "org");
+    const { visible } = splitProps(raw, BUILTIN_HIDE, "org");
     expect(visible).toBe(raw);
   });
 });
@@ -247,7 +247,7 @@ describe("org :PROPERTIES: drawer hiding (GH #37)", () => {
 describe("markdown property hiding is unchanged (regression)", () => {
   it("still hides md id:: and appends on reattach", () => {
     const raw = "Task\nid:: abc";
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden);
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE);
     expect(visible).toBe("Task");
     expect(hidden).toBe("id:: abc");
     expect(joinProps(visible, hidden)).toBe(raw);
@@ -255,7 +255,7 @@ describe("markdown property hiding is unchanged (regression)", () => {
 
   it("md default does not touch a `:PROPERTIES:` block (treated as content)", () => {
     const raw = "Task\n:PROPERTIES:\n:id: x\n:END:";
-    const { visible } = splitProps(raw, isBuiltinHidden); // format defaults to md
+    const { visible } = splitProps(raw, BUILTIN_HIDE); // format defaults to md
     expect(visible).toBe(raw);
   });
 });
@@ -264,15 +264,15 @@ describe("org caret mapping across a hidden drawer", () => {
   it("maps a raw offset in the body below a hidden drawer into visible space", () => {
     const raw = "Title\n:PROPERTIES:\n:id: x\n:END:\nbody";
     const rawOff = raw.indexOf("body");
-    const visOff = rawOffsetToVisibleOffset(raw, rawOff, isBuiltinHidden, "org");
-    const { visible } = splitProps(raw, isBuiltinHidden, "org");
+    const visOff = rawOffsetToVisibleOffset(raw, rawOff, BUILTIN_HIDE, "org");
+    const { visible } = splitProps(raw, BUILTIN_HIDE, "org");
     expect(visible.slice(visOff)).toBe("body");
   });
 
   it("maps an offset inside the hidden drawer to the drawer's edit point", () => {
     const raw = "Title\n:PROPERTIES:\n:id: x\n:END:\nbody";
     const insideDrawer = raw.indexOf(":id:") + 2;
-    const visOff = rawOffsetToVisibleOffset(raw, insideDrawer, isBuiltinHidden, "org");
+    const visOff = rawOffsetToVisibleOffset(raw, insideDrawer, BUILTIN_HIDE, "org");
     expect(visOff).toBe("Title".length);
   });
 });
@@ -282,7 +282,7 @@ describe("org caret mapping across a hidden drawer", () => {
 describe("non-ASCII property keys (GH #164)", () => {
   it("hides a non-ASCII-keyed property line like any other, reversibly", () => {
     const raw = "Body line\nklíč:: hodnota";
-    const { visible, hidden } = splitProps(raw, hideAll);
+    const { visible, hidden } = splitProps(raw, HIDE_ALL);
     expect(visible).toBe("Body line");
     expect(hidden).toBe("klíč:: hodnota");
     expect(joinProps(visible, hidden)).toBe(raw);

@@ -6,7 +6,8 @@
  * - `beginDrag(id, e)` arms a bullet drag from a mousedown. Past a 4 px
  *   threshold it ends editing, tracks a drop indicator (`dropInd`) under the
  *   pointer and, on mouseup, moves the active selection (or just the block) with
- *   one `moveBlocksRelative` call. The move is refused when the graph changed
+ *   one `moveBlocksRelative` call. Alt-drop of one block inserts a durable ref.
+ *   The move is refused when the graph changed
  *   during the drag (binding check) or when the target is inside a moved subtree.
  * - `beginEditGesture(...)` starts editing at the captured offset on mousedown
  *   (OG, GH #368); a drag inside the block selects editor text, and one that
@@ -14,16 +15,53 @@
  *   know the listeners. */
 import { createSignal } from "solid-js";
 import { captureBinding, bindingCurrent } from "../binding";
-import { clearSelection, extendSelectionTo, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
+import { blockExternalId, blockWritable, clearSelection, ensureBlockId, extendSelectionTo, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, moveBlocksRelative, selectBlock, selectedIds, node as docNode, type OutlineScope } from "../document";
+import { msg } from "../i18n";
+import { pushToast } from "../toasts";
 import { endEdit, startEditing } from "../editorController";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
 import { codeFences } from "../editor/fences";
 import { codeBodyProjection } from "../editor/codeFence";
 import { blockDropPosition, type BlockDropPosition } from "../editor/blockDrag";
 import { textareaCaretPoints } from "../editor/caretRows";
-import { isBuiltinHidden, splitProps } from "../editor/properties";
+import { BUILTIN_HIDE, splitProps } from "../editor/properties";
 import { clickBeyondRenderedEnd, codeCardOffsetFromRange, editorOffsetFromRenderedRange } from "../render/spans";
 import { documentOf, isElementTag } from "../windowRealm";
+
+// A single document listener routes native selection to its rendered owner.
+// Long journal feeds must not run one handler per block on every handle move.
+const renderedSelectionOwners = new WeakMap<Document, {
+  roots: Map<HTMLElement, () => void>;
+  listener: () => void;
+}>();
+
+export function registerRenderedSelection(root: HTMLElement, transfer: () => void): () => void {
+  const doc = root.ownerDocument;
+  let owners = renderedSelectionOwners.get(doc);
+  if (!owners) {
+    const roots = new Map<HTMLElement, () => void>();
+    const listener = () => {
+      const selection = doc.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return;
+      const node = selection.getRangeAt(0).startContainer;
+      const element = node.nodeType === 1 ? node as Element : node.parentElement;
+      const owner = element?.closest<HTMLElement>(".block-content");
+      if (owner) roots.get(owner)?.();
+    };
+    owners = { roots, listener };
+    renderedSelectionOwners.set(doc, owners);
+    doc.addEventListener("selectionchange", listener);
+  }
+  const registry = owners;
+  registry.roots.set(root, transfer);
+  return () => {
+    registry.roots.delete(root);
+    if (registry.roots.size === 0) {
+      doc.removeEventListener("selectionchange", registry.listener);
+      renderedSelectionOwners.delete(doc);
+    }
+  };
+}
 
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
@@ -77,7 +115,7 @@ export function beginDrag(id: string, e: MouseEvent) {
       setDropInd(null);
     }
   };
-  const onUp = () => {
+  const onUp = (ev: MouseEvent) => {
     doc.removeEventListener("mousemove", onMove);
     doc.removeEventListener("mouseup", onUp);
     setDragSelectionSuppressed(false);
@@ -85,7 +123,14 @@ export function beginDrag(id: string, e: MouseEvent) {
     if (bindingCurrent(binding) && dragMoved && ind && docNode(ind.id)) {
       // One transaction: normalizes nested captures, refuses a drop into a
       // moved subtree, and persists a cross-page move as one save group.
-      void moveBlocksRelative(capturedIds ?? [id], ind.id, ind.position);
+      const ids = capturedIds ?? [id];
+      // OG 0.10.9 handler/dnd.cljs move-blocks: Alt at drop time references a
+      // single block; a multiple-block selection still moves together.
+      if (ev.altKey && ids.length === 1) {
+        void referenceDrop(ids[0], ind.id, ind.position);
+      } else {
+        void moveBlocksRelative(ids, ind.id, ind.position);
+      }
     }
     setDragId(null);
     setDropInd(null);
@@ -93,6 +138,30 @@ export function beginDrag(id: string, e: MouseEvent) {
   };
   doc.addEventListener("mousemove", onMove);
   doc.addEventListener("mouseup", onUp);
+}
+
+/** Publish the source ID through the guarded save path before inserting a ref.
+ * A failed save or a changed graph/owner during that barrier inserts nothing. */
+async function referenceDrop(sourceId: string, targetId: string, position: BlockDropPosition) {
+  const binding = captureBinding();
+  const source = docNode(sourceId), target = docNode(targetId);
+  if (!source || !target || !blockWritable(sourceId) || !blockWritable(targetId)) return;
+  const sourcePage = source.page, targetPage = target.page;
+  try {
+    const uuid = await ensureBlockId(sourceId);
+    if (!bindingCurrent(binding) || docNode(sourceId) !== source || docNode(targetId) !== target
+      || source.page !== sourcePage || target.page !== targetPage) return;
+    if (!uuid || blockExternalId(sourceId) !== uuid) {
+      pushToast(msg("editor-block-could-not-save-the-block-reference-resolve-the-page-save-and-try-again"), "error");
+      return;
+    }
+    const outline = [{ raw: `((${uuid}))`, children: [] }];
+    if (position === "child") insertOutlineChildren(targetId, outline);
+    else if (position === "before") insertOutlineBefore(targetId, outline);
+    else insertOutlineAfter(targetId, outline);
+  } catch (error) {
+    if (bindingCurrent(binding)) pushToast(msg("editor-block-could-not-save-the-block-reference", { detail: String(error) }), "error");
+  }
 }
 
 // --- Click / drag gesture on rendered block content -------------------------
@@ -224,7 +293,7 @@ export function renderedClickOffset(contentRef: HTMLElement, raw: string, fmt: "
   const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
   // GH #489/#510: highlight.js has no inline spans. Find the clicked card's
   // parser-owned fence, then map its rendered body to visible-raw coordinates.
-  const visible = splitProps(raw, isBuiltinHidden, fmt).visible;
+  const visible = splitProps(raw, BUILTIN_HIDE, fmt).visible;
   const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
   if (range) {
     const cards = Array.from(contentRef.querySelectorAll("pre.code-block > code"));
@@ -238,7 +307,7 @@ export function renderedClickOffset(contentRef: HTMLElement, raw: string, fmt: "
   // whatever the block ends with. Asked before the span map, because a trailing
   // construct with an invisible closing delimiter (`*italic*`) maps that click
   // to a legitimate-looking interior offset just before the delimiter.
-  if (clickBeyondRenderedEnd(contentRef, e.clientX, e.clientY)) return splitProps(raw, isBuiltinHidden, fmt).visible.length;
+  if (clickBeyondRenderedEnd(contentRef, e.clientX, e.clientY)) return splitProps(raw, BUILTIN_HIDE, fmt).visible.length;
   if (!range) return null;
-  return editorOffsetFromRenderedRange(contentRef, range, raw, isBuiltinHidden, fmt);
+  return editorOffsetFromRenderedRange(contentRef, range, raw, BUILTIN_HIDE, fmt);
 }

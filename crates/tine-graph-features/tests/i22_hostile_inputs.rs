@@ -7,6 +7,7 @@ use tine_store::{FileRev, PageId, SaveBase, Store, StoreError};
 
 #[test]
 fn bounded_outline_round_trips_unchanged() {
+    let _integration_guard = crate::integration_lock();
     let temp = tempfile::Builder::new()
         .prefix("i22-roundtrip-")
         .tempdir()
@@ -44,6 +45,7 @@ fn bounded_outline_round_trips_unchanged() {
 
 #[test]
 fn anonymized_graph_depth_probe_when_requested() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_I22_ANON_GRAPH") else {
         return;
     };
@@ -79,6 +81,7 @@ fn anonymized_graph_depth_probe_when_requested() {
 
 #[test]
 fn renderer_flattens_tail_without_losing_text() {
+    let _integration_guard = crate::integration_lock();
     let temp = tempfile::Builder::new()
         .prefix("i22-flat-")
         .tempdir()
@@ -110,6 +113,7 @@ fn renderer_flattens_tail_without_losing_text() {
 
 #[test]
 fn hostile_inputs_survive_all_entry_points() {
+    let _integration_guard = crate::integration_lock();
     for case in [
         "oversize",
         "deep_blocks",
@@ -135,7 +139,11 @@ fn hostile_inputs_survive_all_entry_points() {
             .tempdir()
             .unwrap();
         let output = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "hostile_child", "--nocapture"])
+            .args([
+                "--exact",
+                "i22_hostile_inputs::hostile_child",
+                "--nocapture",
+            ])
             .env("TINE_I22_CASE", case)
             .env("TINE_I22_ROOT", dir.path())
             .output()
@@ -146,6 +154,7 @@ fn hostile_inputs_survive_all_entry_points() {
 
 #[test]
 fn hostile_child() {
+    let _integration_guard = crate::integration_lock();
     let Ok(case) = std::env::var("TINE_I22_CASE") else {
         return;
     };
@@ -365,6 +374,7 @@ fn hostile_child() {
 /// worker runs on. Every recursive consumer is bounded by that cap.
 #[test]
 fn benign_page_at_depth_cap_round_trips_on_a_command_stack() {
+    let _integration_guard = crate::integration_lock();
     std::thread::Builder::new()
         .stack_size(2 * 1024 * 1024)
         .spawn(benign_page_at_depth_cap)
@@ -399,6 +409,7 @@ fn at_cap_outline(leaf: &str) -> String {
 
 #[test]
 fn over_cap_page_is_visible_as_unreadable_with_named_reason() {
+    let _integration_guard = crate::integration_lock();
     let temp = tempfile::Builder::new()
         .prefix("tine-i22-too-deep-")
         .tempdir()
@@ -515,6 +526,7 @@ fn at_cap_org(leaf: &str) -> String {
 /// save byte-exactly on a command-worker stack.
 #[test]
 fn benign_org_page_at_depth_cap_round_trips_on_a_command_stack() {
+    let _integration_guard = crate::integration_lock();
     std::thread::Builder::new()
         .stack_size(2 * 1024 * 1024)
         .spawn(|| {

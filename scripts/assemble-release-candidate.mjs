@@ -71,7 +71,7 @@ export function assembleCandidate({ input, output, version, commit, repository, 
       if (!signature || entry.signature !== signature) throw new Error(`${lane}: signature mismatch for ${platform}`);
       platforms[platform] = {
         signature,
-        url: updaterAssetUrl(repository, entry.asset, channel),
+        url: updaterAssetUrl(repository, entry.asset, channel, version),
       };
     }
   }

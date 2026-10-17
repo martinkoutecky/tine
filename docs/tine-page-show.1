@@ -1,0 +1,25 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-page-show 1  "show " 
+.SH NAME
+tine\-page\-show \- Show a page\*(Aqs outline (the text a window shows, unsaved edits included)
+.SH SYNOPSIS
+\fBtine page show\fR [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-debug\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPAGE\fR> 
+.SH DESCRIPTION
+Show a page\*(Aqs outline (the text a window shows, unsaved edits included)
+.SH OPTIONS
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-\-json\fR
+Print the typed result (schema tine.cli/1) as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIPAGE\fR>
+

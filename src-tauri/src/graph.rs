@@ -55,13 +55,6 @@ pub(crate) fn usable_last_graph_path(path: Option<String>) -> Option<String> {
 
 #[tauri::command]
 pub(crate) fn startup_graph_path(app: tauri::AppHandle) -> Option<String> {
-    #[cfg(desktop)]
-    if matches!(
-        crate::cli::launch_request_env(),
-        crate::cli::LaunchRequest::Link(_)
-    ) {
-        return None;
-    }
     resolve_root("").or_else(|| usable_last_graph_path(crate::settings::last_graph_path(&app)))
 }
 
@@ -235,8 +228,7 @@ pub(crate) fn checkpoint_app_data(app: &tauri::AppHandle) -> Option<std::path::P
 /// The graph's launch checkpoint (ADR 0070): one file under `app_data`, never
 /// under the graph root, keyed like the session and drafts files.
 pub(crate) fn launch_checkpoint_path(app_data: &Path, root: &Path) -> std::path::PathBuf {
-    let id = crate::settings::session_id(root);
-    let stem = id.strip_suffix(".json").unwrap_or(&id);
+    let stem = crate::settings::host_graph_id(root);
     app_data
         .join("launch-checkpoints")
         .join(format!("{stem}.bin"))
@@ -255,7 +247,10 @@ pub(crate) fn forget_launch_checkpoint(app_data: Option<&Path>, root: &str) {
 #[derive(serde::Serialize)]
 pub(crate) struct GraphAccessInspection {
     graph_root: String,
+    display_graph_root: String,
+    wsl_rootfs: bool,
     external_assets_path: Option<String>,
+    display_external_assets_path: Option<String>,
     approved: bool,
 }
 
@@ -275,7 +270,16 @@ pub(crate) fn inspect_graph_access(
         || approved_external_assets(&app, &root)
             .is_some_and(|path| inspection.approves_external_assets(&path).unwrap_or(false));
     Ok(GraphAccessInspection {
+        wsl_rootfs: cfg!(target_os = "windows")
+            && tine_core::graph_paths::is_windows_wsl_rootfs(&root.to_string_lossy()),
         graph_root: root.display().to_string(),
+        display_graph_root: tine_core::graph_paths::normalize_graph_path(
+            &root.display().to_string(),
+        ),
+        display_external_assets_path: inspection
+            .external_assets
+            .as_ref()
+            .map(|path| tine_core::graph_paths::normalize_graph_path(&path.display().to_string())),
         external_assets_path: inspection
             .external_assets
             .map(|path| path.display().to_string()),
@@ -349,6 +353,9 @@ pub(crate) async fn load_graph(
                 .write()
                 .unwrap()
                 .release_binding(&label, binding_generation);
+            if released.is_some() {
+                crate::spotlight::released(&app, &label, Some(binding_generation));
+            }
             // Closed (and its ~200 ms Store teardown) outside the lock.
             drop(released);
         }
@@ -447,8 +454,9 @@ fn route_bound_root(
 /// The page host for a new graph-window binding (STEP3 §3, step 3b P2b): the
 /// only writer of the window's page edits, its crash drafts under
 /// `<app data>/drafts-v2/<graph id>`, keyed like the session file. It fails
-/// when another live host holds this graph's draft locks; the open then
-/// fails and the Store closes with the dropped slot.
+/// when the platform names no app data directory, so no crash draft could be
+/// written; the open then fails and the Store closes with the dropped slot.
+/// Draft I/O failures do not fail it (`PageHost::start`).
 fn start_host(
     app: &tauri::AppHandle,
     window_label: &str,
@@ -461,14 +469,79 @@ fn start_host(
         .path()
         .app_data_dir()
         .map_err(|error| format!("no app data directory for crash drafts: {error}"))?;
-    let id = crate::settings::session_id(root_key);
-    let graph_id = id.strip_suffix(".json").unwrap_or(&id);
-    tine_store::PageHost::start(
+    launch_host(
         store,
         &app_data,
-        graph_id,
+        root_key,
         crate::page_commands::page_mail_sink(app.clone(), window_label.to_string()),
     )
+}
+
+/// Start a graph's page host, the only writer of its page edits: crash drafts
+/// under `<app data>/drafts-v2/<graph id>`, the app's edit-kinds log as its
+/// kinds sink (OG-RULES Rule 8). Every production host starts here: the
+/// graph-window binding (`start_host`) and the command-line owner
+/// (`owner::serve`). The owner lock (CLI PROTOCOL §3) admits one of them per
+/// graph across processes, so a graph's drafts have one driver.
+pub(crate) fn launch_host(
+    store: &Arc<Store>,
+    app_data: &Path,
+    root_key: &Path,
+    mail: impl FnMut(tine_store::PageMail) + Send + 'static,
+) -> Result<tine_store::PageHost, String> {
+    let graph_id = crate::settings::host_graph_id(root_key);
+    tine_store::PageHost::start(
+        store,
+        app_data,
+        &graph_id,
+        crate::page_commands::log_edit_kinds,
+        mail,
+    )
+}
+
+/// How the binding came by its owner lease.
+enum Owner {
+    Adopted(crate::owner::lease::Lease),
+    Claimed(crate::owner::lease::Claimed),
+}
+
+/// How long an open waits for `tine serve` to hand the graph over.
+const OWNER_HANDOVER_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The owner lock for a fresh host (CLI PROTOCOL §3.5, §4): taken, or
+/// handed over by a `tine serve` that owns the graph. `None` opens the
+/// graph without a command endpoint (no arbitration on this platform or
+/// filesystem); an open never refuses over the lock, it only waits for a
+/// handover, and fails when that does not finish in time.
+fn claim_owner(
+    app: &tauri::AppHandle,
+    window_label: &str,
+    root_key: &Path,
+) -> Result<Option<crate::owner::lease::Claimed>, String> {
+    let Ok(app_data) = app.path().app_data_dir() else {
+        // `start_host` refuses this open with the reason.
+        return Ok(None);
+    };
+    let drafts = crate::owner::wire::Drafts {
+        app_data: app_data.display().to_string(),
+        graph_id: crate::settings::host_graph_id(root_key),
+    };
+    // The window hears each change of serve's progress (§4.5), not only the start.
+    let mut told: Option<String> = None;
+    crate::owner::lease::claim_for_app(root_key, drafts, OWNER_HANDOVER_WAIT, |progress| {
+        if told.as_deref() == Some(progress) {
+            return;
+        }
+        if told.is_none() {
+            crate::debug::diag("graph-open-waits-for-the-command-line-owner");
+        }
+        told = Some(progress.to_string());
+        let _ = app.emit_to(
+            window_label,
+            "graph-open-owner-waiting",
+            progress.to_string(),
+        );
+    })
 }
 
 /// How long an open waits for an overlapping graph that is still saving.
@@ -526,8 +599,8 @@ pub(crate) fn load_graph_for_label(
     // and host (plan v3 §3, S2): a fresh binding (lease, background work,
     // session on `page_window_reloaded`) and page mail to this window.
     let retirement = state.graphs.read().unwrap().retirement.clone();
-    let (slot, meta) = match retirement.adopt(&root_key) {
-        Some((store, host)) => {
+    let (slot, meta, lease) = match retirement.adopt(&root_key) {
+        Some((store, host, lease)) => {
             let mut slot = GraphSlot::new(store, root_key);
             if let PageHostSlot::Running(host) = &host {
                 host.retarget(crate::page_commands::page_mail_sink(
@@ -537,7 +610,7 @@ pub(crate) fn load_graph_for_label(
             }
             *slot.host.get_mut().unwrap() = host;
             let meta = graph_meta(&slot);
-            (slot, meta)
+            (slot, meta, lease.map(Owner::Adopted))
         }
         None => {
             let root = root_key.display().to_string();
@@ -552,13 +625,26 @@ pub(crate) fn load_graph_for_label(
                 ),
             }?;
             let mut slot = GraphSlot::new(store, root_key);
-            // On failure the dropped slot closes the Store.
+            // The owner lock before the host (CLI PROTOCOL §3.2); a
+            // command-line owner yields first (§4).
+            let claimed = claim_owner(app, window_label, &slot.root_key)?;
+            // On failure the dropped slot closes the Store, and the dropped
+            // claim releases the lock.
             let host = start_host(app, window_label, &slot.store, &slot.root_key)?;
             *slot.host.get_mut().unwrap() = PageHostSlot::Running(host);
-            (slot, meta)
+            (slot, meta, claimed.map(Owner::Claimed))
         }
     };
     let slot = Arc::new(slot);
+    let lease = match lease {
+        Some(Owner::Adopted(lease)) => {
+            lease.adopted_by(&slot);
+            Some(lease)
+        }
+        Some(Owner::Claimed(claimed)) => Some(claimed.serve_app(&slot)),
+        None => None,
+    };
+    *slot.owner.lock().unwrap() = lease;
     let warm_generation = begin_warm_cache(&slot);
     let displaced = {
         let mut registry = state.graphs.write().unwrap();
@@ -575,9 +661,17 @@ pub(crate) fn load_graph_for_label(
     };
     // The replaced graph's Store closes here, after the registry lock is
     // released, so other graph commands do not wait on its teardown.
+    // The previous binding's pages leave Spotlight; this graph's reindex
+    // follows its warm.
+    crate::spotlight::bound(app, window_label, &slot);
     drop(displaced);
     state.note_focused(window_label);
     crate::concord_ledger::attach(app.path().app_data_dir().ok(), &slot);
+    let _ = slot.window.set(crate::owner::window::WindowLink::new(
+        app.clone(),
+        window_label.to_string(),
+        slot.binding_generation,
+    ));
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
     backup_async(app.clone(), slot.clone());
     // The graph is bound above; a settings write that fails (disk full, EIO)
@@ -653,7 +747,9 @@ pub(crate) fn open_graph_window_blocking(
         .initialization_script(format!(
             "window.__GRAPH_PATH__ = {};",
             serde_json::to_string(&meta.root).unwrap_or_else(|_| "\"\"".to_string())
-        ));
+        ))
+        // Its boot card in the language current now, not at process start (tine#107).
+        .initialization_script(crate::i18n_shell::window_boot_text_script(app));
         #[cfg(target_os = "macos")]
         let builder = builder
             .decorations(true)
@@ -682,6 +778,7 @@ pub(crate) fn open_graph_window_blocking(
             }
             Err(error) => {
                 let _ = crate::state::release_window_graph(&state.graphs, &label);
+                crate::spotlight::released(app, &label, None);
                 return Err(format!("couldn't create graph window: {error}"));
             }
         }
@@ -743,9 +840,21 @@ impl LoadGraphResult {
 /// `dir`, reusing only an empty directory. Does NOT load the graph — the frontend
 /// calls `load_graph` with the returned path (matching the "open existing" flow).
 #[tauri::command]
-pub(crate) async fn create_graph(dir: String, name: String) -> Result<String, String> {
+pub(crate) async fn create_graph(dir: String, name: String) -> Result<CreatedGraph, String> {
     // Writes and fsyncs every demo page (R3): off the main thread.
-    crate::state::off_ui(move || create_graph_blocking(dir, name)).await
+    crate::state::off_ui(move || {
+        create_graph_blocking(dir, name).map(|root| CreatedGraph {
+            display_root: tine_core::graph_paths::normalize_graph_path(&root),
+            root,
+        })
+    })
+    .await
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct CreatedGraph {
+    root: String,
+    display_root: String,
 }
 
 #[tauri::command]
@@ -866,6 +975,10 @@ pub(crate) fn warm_cache_async(
                 });
                 if still_current && current.unwrap().finish_startup_warm(warm_generation) {
                     let _ = app.emit_to(&window_label, "warm-cache-done", ());
+                }
+                if still_current {
+                    // The graph is warm: (re)build its Spotlight index (iOS).
+                    crate::spotlight::reindex(&app, &window_label, &slot);
                 }
             },
         );

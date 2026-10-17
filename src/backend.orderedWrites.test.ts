@@ -59,3 +59,23 @@ it("does not hold a read behind a pending ordered write", async () => {
   void b.pageSubmit(1, 1, "pages/A.md", { name: "A" } as never, 1, null, ["edit-block"] as never);
   await expect(b.startupGraphPath()).resolves.toBeNull();
 });
+
+// PERF-FIXES D3: a carry-over opens its source pages back to back
+// (client.ts `open` does not await), and they reach the host as one
+// `page_open` call: one IPC and one writer section instead of one per page.
+// A name that resolves to an alias is answered without being sent.
+it("joins back-to-back page opens into one page_open call", async () => {
+  invoke.mockImplementation((cmd: string, args?: { pages?: Array<{ id: number; path: string }> }) => {
+    if (cmd === "resolve_page") return Promise.resolve({ kind: "alias", owners: ["pages/Owner.md"] });
+    if (cmd === "page_open") return Promise.resolve(args!.pages!.map(({ path }) => ({ key: path, baselineEntry: true })));
+    return Promise.resolve(null);
+  });
+  const b = await tauriBackend();
+  const opened = [1, 2, 3, 4, 5].map((id) => b.pageOpen(1, id, { name: `P${id}`, kind: "page", path: `pages/P${id}.md` }));
+  const alias = b.pageOpen(1, 6, { name: "Alias", kind: "page", path: null });
+  expect(await Promise.all(opened)).toEqual([1, 2, 3, 4, 5].map((id) => ({ key: `pages/P${id}.md`, baselineEntry: true })));
+  expect(await alias).toEqual({ reason: "alias", owners: ["pages/Owner.md"] });
+  const opens = invoke.mock.calls.filter(([cmd]) => cmd === "page_open");
+  expect(opens).toHaveLength(1);
+  expect((opens[0][1] as { pages: Array<{ id: number }> }).pages.map(({ id }) => id)).toEqual([1, 2, 3, 4, 5]);
+});

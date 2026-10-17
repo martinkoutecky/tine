@@ -1,11 +1,16 @@
+import { Rich } from "./i18n/Rich";
 import { installTineLinks } from "./deepLinkNavigation";
+import { installShareIngest } from "./shareIngest";
 import { DeepLinkGraphChoice } from "./components/DeepLinkGraphChoice";
 import { resizeSidebar, commitSidebarWidth } from "./sidebarSizing";
 import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
+import { JournalsIcon } from "./components/JournalsIcon";
+import { ShareIcon } from "./components/ShareIcon";
 import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
+import { AllPages } from "./components/AllPages";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
 const KeyedPdfViewer = lazy(() =>
@@ -35,11 +40,14 @@ import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
 import { applyCustomCssChange, applyGraphConfigChange, loadGraphPath, persistedGraphPath } from "./graph";
 import { installPageIndex } from "./pageIndex";
+import { t, msg } from "./i18n";
 import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
+import { flushCssEditor } from "./cssEditor";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
-import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
+import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, route, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
 import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
+import { openShareDialog } from "./shareState";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
@@ -48,7 +56,7 @@ import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount } from "./document";
+import { flushAll, subscribeOwnerFlush, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount, pageByName } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
@@ -101,6 +109,7 @@ import { installBackgroundFlush } from "./backgroundFlush";
 import { installSessionActivity } from "./sessionActivity";
 import { initSettingsLayout } from "./settingsLayout";
 import { initCodeDisplay } from "./codeDisplay";
+import { initStickyParents } from "./stickyParents";
 import { initContentWidths } from "./contentWidth";
 import { MAIN_WINDOW_ID, isElementNode, isHTMLElementNode, isNodeValue, mainWindow, newResizeObserver, registeredWindows, requestFrame, useWindowId, windowOf } from "./windowRealm";
 
@@ -119,16 +128,17 @@ export const safeClose = createSafeCloseCoordinator({
     endEdit("graph-switch");
   },
   flushPdfWork: drainPdfWork,
-  flushAll,
+  flushAll: async () => {
+    const cssSaved = await flushCssEditor();
+    const pagesSaved = await flushAll();
+    return cssSaved && pagesSaved;
+  },
   // GH #540: name the pages at risk; "No" opens the recovery panel.
   confirmDiscard: (reason) => {
-    const explanation = reason === "still-saving"
-      ? "Tine is still writing your changes and is taking longer than expected — a slow or network drive can do this."
-      : "Tine has changes that could not be saved (a conflict or a stuck save).";
-    const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n") || "Pending attachments or storage work; no page draft identified.";
+    const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n");
     return backend().confirm(
-      `${explanation}\n\n${inventory}\n\nChoose No to review, retry saving, or copy your drafts. Close this window anyway and lose them?`,
-      "Unsaved changes",
+      t("app-choose-no-to-review-retry-saving", { reason, inventory: inventory || "empty" }),
+      t("app-unsaved-changes"),
     );
   },
   onDiscardDeclined: openUnsavedRecovery,
@@ -138,13 +148,13 @@ export const safeClose = createSafeCloseCoordinator({
   flushSession,
   setTransition: setGraphTransitioning,
   notifyPdfFailure: () => {
-    pushToast("Couldn't save pending PDF changes. The graph remains open.", "error");
+    pushToast(msg("app-couldn-t-save-pending-pdf-changes-the-graph"), "error");
   },
   notifyStillSaving: () => {
-    pushToast("Still saving your changes — closing in a moment.", "info");
+    pushToast(msg("app-still-saving-your-changes-closing-in"), "info");
   },
   notifyConfirmationFailure: () => {
-    pushToast("Couldn't confirm closing the window. Your unsaved changes are still open.", "error");
+    pushToast(msg("app-couldn-t-confirm-closing-the-window-your-unsaved"), "error");
   },
 });
 
@@ -156,7 +166,7 @@ setUpdateExitGuard(safeClose);
 const androidRootClose = createAndroidRootCloseCoordinator(safeClose, {
   finishActivity: exitAndroidActivity,
   finishActivityFailed: () => pushToast(
-    "Tine couldn't close the Android activity. Tap Back to retry closing.",
+    msg("app-tine-couldn-t-close-the-android-activity-tap"),
     "error",
   ),
 });
@@ -298,6 +308,9 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
       <Match when={props.router.route().kind === "conflicts"}>
         <ConflictOverview router={props.router} />
       </Match>
+      <Match when={props.router.route().kind === "all-pages"}>
+        <AllPages router={props.router} />
+      </Match>
     </Switch>
   );
 }
@@ -371,8 +384,7 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
       }>
         {(invalid) => <div class="pane-route-error" role="alert">
           <h2>{invalid().title}</h2>
-          <p>{invalid().message}</p>
-          <button type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>Close tab</button>
+          <p>{invalid().message}</p><button class="settings-btn" type="button" onClick={() => { void props.router.closeTab(props.router.activeId()); }}>{t("app-close-tab")}</button>
         </div>}
       </Show>
     }>
@@ -461,37 +473,19 @@ export function PaneSelectHint(): JSX.Element {
   const here = paneSelectIsHere();
   return (
     <Show when={here() && paneSel()}>
-      <div class="pane-select-hint">
-        <span class="pane-select-hint-title">Pane select</span>
+      <div class="pane-select-hint"><span class="pane-select-hint-title">{t("app-pane-select")}</span>
         <Show
           when={kind() !== "pane"}
           fallback={
             <span class="pane-select-hint-body">
-              <span>
-                <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move (onto seams &amp; edges) · <kbd>Enter</kbd> enter
-                pane · <kbd>Del</kbd> close pane
-              </span>
-              <span>
-                <kbd>Ctrl+K</kbd> open a page in this pane · <kbd>Esc</kbd> exit
-              </span>
+              <span><Rich message={msg("app-move-onto-seams-edges")} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} /></span>
+              <span><Rich message={msg("app-ctrl-k-open-a-page-in-this-pane")} slots={{ "kbd": (children) => <kbd>{children}</kbd> }} /></span>
             </span>
           }
         >
           <span class="pane-select-hint-body">
-            <span>
-              <kbd>Enter</kbd>{" "}
-              <Show when={kind() === "edge"} fallback={<Show when={kind() === "pane-edge"} fallback={<span>split here (mirrors the pane)</span>}><span>split <span class="pane-select-hint-em">this pane</span></span></Show>}>
-                <span>split the <span class="pane-select-hint-em">whole window</span></span>
-              </Show>{" "}
-              · <span class="pane-select-hint-em">type a page name</span> (or <kbd>Ctrl+K</kbd>) to open it in the new
-              split
-            </span>
-            <span>
-              <Show when={kind() === "pane-edge"}>
-                <span>press outward again to widen the split · </span>
-              </Show>
-              <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Esc</kbd> exit
-            </span>
+            <span><Rich message={msg("app-pane-split-instruction", { kind: kind() ?? "seam" })} slots={{ "kbd": (children) => <kbd>{children}</kbd>, "span": (children) => <span>{children}</span>, "em-hint": (children) => <span class="pane-select-hint-em">{children}</span> }} /></span>
+            <span><Rich message={msg("app-pane-split-navigation", { kind: kind() ?? "seam" })} slots={{ "span": (children) => <span>{children}</span>, "kbd": (children) => <kbd>{children}</kbd> }} /></span>
           </span>
         </Show>
       </div>
@@ -623,14 +617,11 @@ export async function installQuickCaptureReceiver(live: WriteOwner = ownedWhen((
       } catch {
         ok = false;
       }
-      if (saveOwner()) pushToast(
-        ok
-          ? title
-            ? `Captured to “${title}”`
-            : "Captured to today's journal"
-          : "Capture couldn't be saved — its text is kept in the capture window",
-        ok ? "info" : "error"
-      );
+      if (saveOwner()) {
+        if (!ok) pushToast(msg("app-capture-couldn-t-be-saved-its-text"), "error");
+        else if (title) pushToast(msg("app-captured-to", { title }), "info");
+        else pushToast(msg("app-captured-to-today-s-journal"), "info");
+      }
       return ok;
     };
     const promise = save();
@@ -650,7 +641,10 @@ export function App(): JSX.Element {
   // share it; the capture mini-window owns only an unsaved scratch page.
   onMount(() => onCleanup(installBackgroundFlush({
     endEdit: () => endEdit("graph-switch"),
-    flushAll,
+    flushAll: async () => {
+      const [pagesSaved, cssSaved] = await Promise.all([flushAll(), flushCssEditor()]);
+      return pagesSaved && cssSaved;
+    },
     closeInFlight: safeClose.inFlight,
   })));
   // GH #426: on mobile an OS reap of a hidden app is not an unclean exit.
@@ -659,9 +653,15 @@ export function App(): JSX.Element {
     setActive: (active) => void recordSessionActive(active),
   })));
   let openCalendarJump = () => {};
+  // The page the focused pane shows, when it is one the user can share (not the bundled Guide).
+  const sharePage = (): string | null => {
+    const current = route();
+    return current.kind === "page" && !pageByName(current.name)?.guide ? current.name : null;
+  };
   const topbarActions = {
     calendar: () => openCalendarJump(),
     journals: () => openJournals(),
+    share: () => { const page = sharePage(); if (page) openShareDialog({ page }); },
     theme: () => toggleTheme(),
     rightSidebar: (trigger?: HTMLElement | null) => toggleRightSidebar(trigger),
     back: () => goBack(),
@@ -745,7 +745,8 @@ export function App(): JSX.Element {
   onMount(async () => {
     let alive = true;
     let disposeLinks = () => {};
-    onCleanup(() => { alive = false; disposeLinks(); });
+    let disposeShares = () => {};
+    onCleanup(() => { alive = false; disposeLinks(); disposeShares(); });
     const owner = graphOwner(() => alive);
     const injected = (window as any).__GRAPH_PATH__ ?? "";
     let startup = "";
@@ -759,7 +760,7 @@ export function App(): JSX.Element {
     const graphPath = injected || startup || persistedGraphPath();
     dbg(`loading graph: ${graphPath || "(default/configured)"}`);
     try {
-      if (!(window as any).__TINE_LINK_LAUNCH__ || injected) await loadGraphPath(graphPath);
+      await loadGraphPath(graphPath);
       dbg("graph load call returned");
     } catch (e) {
       // No graph configured (fresh install), or it failed to open. Fall through to
@@ -779,6 +780,9 @@ export function App(): JSX.Element {
       if (!isPublishedExport() && alive) {
         disposeLinks = await installTineLinks(() => alive);
         if (!alive) disposeLinks();
+        // Shared items (ADR 0073) land after the graph is bound.
+        disposeShares = await installShareIngest(() => alive);
+        if (!alive) disposeShares();
       }
     }
   });
@@ -814,7 +818,7 @@ export function App(): JSX.Element {
       const result = await readOwned(ownedWhen(() => alive), invoke<boolean>("take_identifier_migration_notice"));
       if (result.kind === "stale" || !result.value) return;
       pushToast(
-        "Tine was renamed under the hood, so we moved your settings and backups across. A few app-level preferences (e.g. keyboard shortcuts) might need setting again — sorry about that!",
+        msg("app-tine-was-renamed-under-the-hood-so"),
         "info",
         { sticky: true },
       );
@@ -833,7 +837,7 @@ export function App(): JSX.Element {
       const result = await readOwned(ownedWhen(() => alive), backend().takeDataHomeFallbackNotice());
       if (result.kind === "stale" || !result.value) return;
       pushToast(
-        `Tine could not write its usual application-data folder, so this session is keeping settings and backups in ${result.value} instead. Fixing the permissions on that folder restores the normal location.`,
+        msg("app-tine-could-not-write-its-usual-application-data", { fallbackDirectory: result.value }),
         "warn",
         { sticky: true },
       );
@@ -858,7 +862,7 @@ export function App(): JSX.Element {
   onMount(() => void initRefCompletionSettings());
   onMount(() => void initNavSettings());
   onMount(() => void initSettingsLayout());
-  onMount(() => { void initContentWidths(); void initCodeDisplay(); });
+  onMount(() => { void initContentWidths(); void initCodeDisplay(); void initStickyParents(); });
   // Load the local-file images opt-in (Settings → Editing). Default off.
   onMount(() => void initLocalFileSettings());
   // A conflict copy appearing/vanishing on disk (watcher) refreshes the list.
@@ -902,6 +906,7 @@ export function App(): JSX.Element {
   onMount(() => {
     onCleanup(subscribeWatcherFreshness());
     onCleanup(subscribeAssetChanges());
+    onCleanup(subscribeOwnerFlush());
     installReloadOnFocus();
     void initConflictPolicy();
   });
@@ -985,7 +990,7 @@ export function App(): JSX.Element {
     let alive = true, unlisten = () => {};
     onCleanup(() => { alive = false; unlisten(); });
     void installQuickCaptureReceiver(ownedWhen(() => alive)).then((dispose) => { if (alive) unlisten = dispose; else dispose(); })
-      .catch(() => { if (alive) pushToast("Quick Capture could not connect to this graph window.", "error"); });
+      .catch(() => { if (alive) pushToast(msg("app-quick-capture-could-not-connect-to-this"), "error"); });
   });
 
   // Tell the quick-capture mini-window our theme. It can't read the main
@@ -1097,6 +1102,57 @@ export function App(): JSX.Element {
     onCleanup(installInterfaceZoomWheel());
   });
 
+  // One shared group: mobile places it below the document, desktop in the title bar.
+  const NavigationActions = () => (
+    <div class="navigation-actions topbar-left">
+      <button
+        class="icon-btn"
+        title={t("navigation-sidebar-title")}
+        onClick={(event) => toggleSidebar(event.currentTarget)}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
+          <line x1="9" y1="4" x2="9" y2="20" stroke="currentColor" stroke-width="1.7" />
+        </svg>
+      </button>
+      <button
+        class="icon-btn"
+        title={t("navigation-search-title")}
+        aria-label={t("navigation-search")}
+        data-search-trigger
+        data-pane-focus-neutral
+        onClick={() => openSwitcher()}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
+          <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
+        </svg>
+      </button>
+      <button
+        class="icon-btn topbar-navigation-action"
+        title={t("command-go-backward")}
+        data-pane-focus-neutral
+        disabled={!canGoBack()}
+        onClick={topbarActions.back}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+      <button
+        class="icon-btn topbar-navigation-action"
+        title={t("command-go-forward")}
+        data-pane-focus-neutral
+        disabled={!canGoForward()}
+        onClick={topbarActions.forward}
+      >
+        <svg viewBox="0 0 24 24" class="nav-icon">
+          <path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+    </div>
+  );
+
   // Frameless window: the toolbar doubles as the title bar (decorations are off),
   // so track maximized state to drive our custom max/restore glyph + resize grips.
   // Also apply the persisted native-frame preference (Linux/Windows; macOS uses its
@@ -1129,20 +1185,15 @@ export function App(): JSX.Element {
       }}
     >
       <Show when={parserFailed()}>
-        <DrawerBackground class="parser-error-banner" blockedBy="any" role="alert">
-          The block renderer failed to load — text is shown unformatted. Please reload Tine;
-          if this persists, report it.
-        </DrawerBackground>
+        <DrawerBackground class="parser-error-banner" blockedBy="any" role="alert">{t("app-the-block-renderer-failed-to-load")}</DrawerBackground>
       </Show>
       <Show when={graphTransitioning()}>
-        <DrawerBackground class="graph-transition-shield" blockedBy="any" role="status" ariaLive="polite">
-          Finishing graph operation…
-        </DrawerBackground>
+        <DrawerBackground class="graph-transition-shield" blockedBy="any" role="status" ariaLive="polite">{t("app-finishing-graph-operation")}</DrawerBackground>
       </Show>
       <Show when={sidebarOpen()}>
         <MobileDrawerPanel
           side="left"
-          label="Navigation sidebar"
+          label={t("app-prose-navigation-sidebar")}
           class="left-sidebar"
           style={{
             flex: `0 0 ${sidebarWidth()}px`,
@@ -1154,8 +1205,7 @@ export function App(): JSX.Element {
             <div class="sidebar-header workspace-sidebar-header" data-workspace-switcher-sidebar>
               <Show when={!isPublishedExport()}><FailureBoundary region="The workspace switcher"><WorkspaceSwitcher /></FailureBoundary></Show>
             </div>
-            <Show when={mobileDrawerMode()}>
-              <button class="mobile-drawer-close" type="button" aria-label="Close navigation sidebar" onClick={() => dismissDrawerAndRestore("explicit")}>Close</button>
+            <Show when={mobileDrawerMode()}><button class="mobile-drawer-close" type="button" aria-label={t("app-close-navigation-sidebar")} onClick={() => dismissDrawerAndRestore("explicit")}>{t("app-close")}</button>
             </Show>
             <FailureBoundary region="The sidebar">
               <Sidebar onActiveNavigationComplete={completeActiveLeftNavigation} />
@@ -1190,53 +1240,7 @@ export function App(): JSX.Element {
             user drag the window by its empty areas (buttons/tabs, being children
             without the attribute, still click normally; double-click maximizes). */}
         <header class="topbar" data-tauri-drag-region>
-          <div class="topbar-left">
-            <button
-              class="icon-btn"
-              title="Toggle sidebar (t l)"
-              onClick={(event) => toggleSidebar(event.currentTarget)}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-                <line x1="9" y1="4" x2="9" y2="20" stroke="currentColor" stroke-width="1.7" />
-              </svg>
-            </button>
-            <button
-              class="icon-btn"
-              title="Search (Ctrl+K)"
-              aria-label="Search"
-              data-search-trigger
-              data-pane-focus-neutral
-              onClick={() => openSwitcher()}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
-                <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
-              </svg>
-            </button>
-            <button
-              class="icon-btn topbar-navigation-action"
-              title="Go back"
-              data-pane-focus-neutral
-              disabled={!canGoBack()}
-              onClick={topbarActions.back}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-            <button
-              class="icon-btn topbar-navigation-action"
-              title="Go forward"
-              data-pane-focus-neutral
-              disabled={!canGoForward()}
-              onClick={topbarActions.forward}
-            >
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
-          </div>
+          <Show when={!isMobilePlatform}><FailureBoundary region="Navigation"><NavigationActions /></FailureBoundary></Show>
           {/* A collapsed sidebar has no mounted sidebar header. Keep a compact
               one-tap workspace path in the toolbar without putting its full
               non-shrinking label back in this no-wrap row. */}
@@ -1255,15 +1259,16 @@ export function App(): JSX.Element {
           </Show>
           <div class="topbar-right">
             <FailureBoundary region="The calendar"><CalendarJump triggerClass="topbar-optional-action" onOpenReady={(open) => { openCalendarJump = open; }} /></FailureBoundary>
-            <button class="icon-btn topbar-optional-action" title="Journals" data-pane-focus-neutral onClick={topbarActions.journals}>
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <path d="M4 5h11a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-                <line x1="8" y1="9" x2="14" y2="9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-                <line x1="8" y1="12.5" x2="14" y2="12.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-                <path d="M17 5h3v14a2 2 0 0 1-2 2 1 1 0 0 1-1-1V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-              </svg>
+            <button class="icon-btn topbar-optional-action" title={t("app-journals")} data-pane-focus-neutral onClick={topbarActions.journals}>
+              <JournalsIcon />
             </button>
-            <button class="icon-btn topbar-optional-action" title="Toggle theme (t t)" onClick={topbarActions.theme}>
+            <Show when={!isPublishedExport()}>
+              <button class="icon-btn topbar-optional-action topbar-share" title={sharePage() ? t("share-topbar-title") : t("share-dialog-no-page")}
+                aria-label={t("share-topbar-title")} data-pane-focus-neutral disabled={!sharePage()} onClick={topbarActions.share}>
+                <ShareIcon />
+              </button>
+            </Show>
+            <button class="icon-btn topbar-optional-action" title={t("app-toggle-theme-t-t")} onClick={topbarActions.theme}>
               <Show
                 when={theme() === "light"}
                 fallback={
@@ -1289,7 +1294,7 @@ export function App(): JSX.Element {
             <button
               class="icon-btn topbar-sidebar-action"
               classList={{ active: rightSidebarOpen() }}
-              title="Toggle right sidebar (t r)"
+              title={t("app-toggle-right-sidebar-t-r")}
               onClick={(event) => topbarActions.rightSidebar(event.currentTarget)}
             >
               <svg viewBox="0 0 24 24" class="nav-icon">
@@ -1300,6 +1305,8 @@ export function App(): JSX.Element {
             <FailureBoundary region="The toolbar menu"><TopbarOverflowMenu
               onCalendar={topbarActions.calendar}
               onJournals={topbarActions.journals}
+              onShare={isPublishedExport() ? undefined : topbarActions.share}
+              canShare={() => !!sharePage()}
               onToggleTheme={topbarActions.theme}
               onToggleRightSidebar={topbarActions.rightSidebar}
               onBack={topbarActions.back}
@@ -1310,7 +1317,7 @@ export function App(): JSX.Element {
             {/* Settings sits apart at the far right (separated by a divider) so
                 it reads as app-level config, not another content control. */}
             <Show when={!isPublishedExport()}><span class="topbar-sep" />
-            <button class="icon-btn" title="Settings (t s)" onClick={() => openSettings()}>
+            <button class="icon-btn" title={t("app-settings-t-s")} onClick={() => openSettings()}>
               <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
                 <path
                   fill="currentColor"
@@ -1329,8 +1336,7 @@ export function App(): JSX.Element {
           </div>
         </header>
         <FailureBoundary region="The conflict notice"><ConflictBar /></FailureBoundary>
-        <Show when={refreshingFromDisk()}>
-          <div class="focus-refresh-status" role="status" aria-live="polite">Refreshing changes from disk…</div>
+        <Show when={refreshingFromDisk()}><div class="focus-refresh-status" role="status" aria-live="polite">{t("app-refreshing-changes-from-disk")}</div>
         </Show>
         <FailureBoundary region="Find in page"><InPageFind /></FailureBoundary>
         </DrawerBackground>
@@ -1345,11 +1351,16 @@ export function App(): JSX.Element {
           </DrawerBackground>
           <FailureBoundary region="The reference sidebar"><RightSidebar /></FailureBoundary>
         </div>
+        <Show when={isMobilePlatform}>
+          <DrawerBackground class="mobile-navigation-toolbar" blockedBy="any">
+            <FailureBoundary region="Navigation"><NavigationActions /></FailureBoundary>
+          </DrawerBackground>
+        </Show>
       </DrawerBackground>
       <MobileDrawerController />
       <DrawerBackground class="drawer-floating-background" blockedBy="any">
         <Show when={focusMode()}>
-          <button class="focus-exit" title="Exit focus (Esc)" onClick={() => void exitFocusMode()}>
+          <button class="focus-exit" title={t("app-exit-focus-esc")} onClick={() => void exitFocusMode()}>
             <svg viewBox="0 0 24 24" class="nav-icon">
               <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
             </svg>

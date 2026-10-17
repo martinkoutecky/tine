@@ -33,7 +33,7 @@ const ALLOWED_SWALLOWS: Record<string, string> = {};
 const NAMED_BEST_EFFORT_HELPERS: Record<string, string[]> = {
   "src/assetCache.ts": ["ignoreEvictedAssetCleanupFailure", "revokeEvictedUrl"],
   "src/components/pdfViewerPrimitives.ts": ["ignorePdfDestroyFailure", "discardPdfDocument"],
-  "src/document/host/wiring.ts": ["ignoreSaveHintFailure"],
+  "src/document/host/wiring.ts": ["ignoreSaveHintFailure", "ignoreLostFlushAnswer"],
   "src/plugins/startup.ts": ["observePluginInitializationFailure"],
 };
 

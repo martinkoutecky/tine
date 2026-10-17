@@ -13,6 +13,8 @@ import { Block } from "./Block";
 import { isConflicted } from "../document/host/wiring";
 import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
 import { openAsLoaded } from "./hostConflict.test.support";
+import { setPinyinMatchingEnabled } from "../launcherRanking";
+import { setActiveLocale } from "../i18n";
 
 beforeAll(() => initParser());
 
@@ -56,6 +58,118 @@ function accept(textarea: HTMLTextAreaElement, key: "Enter" | "Tab" = "Enter") {
 }
 
 describe("reference authoring", () => {
+  it("keeps native rows ahead of Pinyin at the rendered completion boundary and refreshes when disabled", async () => {
+    const lookup = vi.spyOn(backend(), "quickSwitch").mockImplementation(async (_query, limit, _editor, enabled) => limit === 0 ? [] : [
+      { ...entry("x beijing"), match_class: "substring" },
+      ...(enabled ? [{ ...entry("北京"), match_class: "transliteration" as const }] : []),
+    ]);
+    setPinyinMatchingEnabled(true);
+    loadSingle(page(""));
+    startEditing("reference-authoring", 0);
+    const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{id => <Block id={id} />}</For>);
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "[[beijing", 9);
+      const labels = () => [...document.querySelectorAll(".autocomplete .ac-label")].map(row => row.textContent);
+      await vi.waitFor(() => expect(labels()).toContain("北京"));
+      expect(labels().indexOf("x beijing")).toBeLessThan(labels().indexOf("北京"));
+      const editor = lookup.mock.calls.find(call => call[0] === "beijing")![2]!;
+      expect(editor.session).toBeTypeOf("string");
+      setPinyinMatchingEnabled(false);
+      await vi.waitFor(() => expect(labels()).not.toContain("北京"));
+      expect(labels()).toContain("x beijing");
+      expect(lookup).toHaveBeenCalledWith("", 0, editor, false);
+    } finally { setPinyinMatchingEnabled(false); dispose(); }
+  });
+
+  it("releases baseline keys again when an obsolete native request replies after completion closes", async () => {
+    let finish: ((pages: PageEntry[]) => void) | undefined;
+    const lookup = vi.spyOn(backend(), "quickSwitch").mockImplementation(async (_query, limit) => {
+      if (limit === 0) return [];
+      return new Promise<PageEntry[]>(resolve => { finish = resolve; });
+    });
+    setPinyinMatchingEnabled(true);
+    loadSingle(page(""));
+    startEditing("reference-authoring", 0);
+    const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{id => <Block id={id} />}</For>);
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "[[bj", 4);
+      await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+      const editor = lookup.mock.calls.find(call => call[0] === "bj")![2]!;
+      inputAt(textarea, "plain", 5);
+      expect(lookup).toHaveBeenCalledWith("", 0, editor, false);
+      finish!([entry("北京")]);
+      await vi.waitFor(() => expect(lookup.mock.calls.filter(call => call[1] === 0)).toHaveLength(2));
+      expect(document.querySelector(".autocomplete")).toBeNull();
+    } finally { setPinyinMatchingEnabled(false); dispose(); }
+  });
+  it.each(["page", "tag"] as const)("keeps Create active when autosave echoes the new %s reference", async (kind) => {
+    const quickSwitch = vi.spyOn(backend(), "quickSwitch").mockImplementation(async (_query, _limit, editor) => {
+      // The native store probe covers this projection. At the UI boundary,
+      // emulate the autosaved self-reference when no baseline is supplied.
+      return editor?.originalRaw === "" ? [entry("Fuzzy Existing")] : [
+        { ...entry("Fz"), path: "" }, entry("Fuzzy Existing"),
+      ];
+    });
+    loadSingle(page(""));
+    startEditing("reference-authoring", 0);
+    const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, kind === "page" ? "[[Fz]]" : "#Fz", kind === "page" ? 4 : 3);
+      const expected = kind === "page" ? 'Create "Fz"' : "Create #Fz";
+      await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe(expected));
+      expect(quickSwitch).toHaveBeenLastCalledWith("Fz", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "" }, false);
+      accept(textarea);
+      expect(textarea.value.trim()).toBe(kind === "page" ? "[[Fz]]" : "#Fz");
+    } finally { dispose(); }
+  });
+
+  it.each(["page", "tag"] as const)("displays and inserts authored aliases beside their matching owner in %s completion (GH #675, GH #676)", async (kind) => {
+    vi.spyOn(backend(), "quickSwitch").mockResolvedValue([
+      entry("Tine"),
+      { ...entry("Tine"), name: "TineOutline" },
+      { ...entry("Tine"), name: "Tine Outliner" },
+    ]);
+    vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [
+      { key: "tine", name: "Tine", is_journal: false, day: null, target: { kind: "existing", id: "pages/Tine.md", others: [] } },
+      ...["TineOutline", "Tine Outliner"].map((name) => ({ key: name.toLowerCase(), name, is_journal: false, day: null, target: { kind: "alias" as const, owners: ["pages/Tine.md"] } })),
+    ] });
+    await refreshPageIndex();
+    const input = kind === "page" ? "[[tin" : "#tin";
+    loadSingle(page(input));
+    startEditing("reference-authoring", input.length);
+    const { root, dispose } = mount(() => <For each={pageByName("Reference authoring")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, input, input.length);
+      const labels = () => [...document.body.querySelectorAll(".autocomplete .ac-label")].map((row) => row.textContent);
+      const prefix = kind === "tag" ? "#" : "";
+      await vi.waitFor(() => expect(labels()).toContain(`${prefix}TineOutline`));
+      expect(labels().filter((label) => !label?.startsWith("Create"))).toEqual([`${prefix}Tine`, `${prefix}TineOutline`, `${prefix}Tine Outliner`]);
+      const row = [...document.body.querySelectorAll(".autocomplete .ac-label")].find((row) => row.textContent === `${prefix}TineOutline`)!.parentElement!;
+      expect(row.querySelector(".ac-sub")?.textContent).toBe("alias of Tine");
+      try {
+        await setActiveLocale("zh-CN");
+        expect(row.querySelector(".ac-sub")?.textContent).toBe("Tine 的别名");
+        expect(labels()).toContain(`${prefix}TineOutline`);
+        await setActiveLocale("en");
+        expect(row.querySelector(".ac-sub")?.textContent).toBe("alias of Tine");
+      } finally { await setActiveLocale("en"); }
+      if (kind === "tag") {
+        const index = labels().indexOf(`${prefix}TineOutline`);
+        for (let i = 0; i < index; i++) textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", bubbles: true, cancelable: true }));
+        accept(textarea);
+      } else {
+        row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      }
+      await vi.waitFor(() => expect(textarea.value.trim()).toBe(kind === "page" ? "[[TineOutline]]" : "#TineOutline"));
+    } finally {
+      dispose();
+    }
+  });
+
   it("renders PDF annotation navigation with the authored highlight id", () => {
     const authoredId = "7b6704f8-a337-4336-a711-2ba6bc14fbf2";
     loadSingle({
@@ -117,7 +231,7 @@ describe("reference authoring", () => {
       const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
       inputAt(textarea, "[[P]]", 3);
       await vi.waitFor(() => expect(document.body.querySelector(".autocomplete .ac-label")?.textContent).toBe("Parity Target"));
-      expect(quickSwitch).toHaveBeenLastCalledWith("P", 100);
+      expect(quickSwitch).toHaveBeenLastCalledWith("P", 100, { pageName: "Reference authoring", blockId: "reference-authoring", originalRaw: "[[P]]" }, false);
 
       // Type the rest and accept immediately, before the 90 ms backend debounce.
       // The visible row is still legitimate, but replacement must use the live

@@ -25,6 +25,10 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    // A restored Activity gets its launch intent back from the system, without
+    // the share occurrence id NativeIntegrationsPlugin stamped on it: put the
+    // saved id back, so the redelivery is recognised as the same occurrence.
+    savedInstanceState?.getString(SHARE_OCCURRENCE_EXTRA)?.let { intent?.putExtra(SHARE_OCCURRENCE_EXTRA, it) }
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     // Android WebView 124 on API 35 reports CSS env(safe-area-inset-*) as zero
@@ -88,6 +92,16 @@ class MainActivity : TauriActivity() {
     onBackPressedDispatcher.addCallback(this, safeBackCallback)
   }
 
+  override fun onSaveInstanceState(outState: Bundle) {
+    super.onSaveInstanceState(outState)
+    val occurrence = try {
+      intent?.getStringExtra(SHARE_OCCURRENCE_EXTRA)
+    } catch (_: Exception) {
+      null // another app's malformed extras: the plugin refused that share
+    }
+    occurrence?.let { outState.putString(SHARE_OCCURRENCE_EXTRA, it) }
+  }
+
   override fun onResume() {
     super.onResume()
     SystemBarAppearance.restore(this)
@@ -110,7 +124,7 @@ class MainActivity : TauriActivity() {
     ).show()
   }
 
-  private companion object {
-    const val BACK_NOTICE_THROTTLE_MS = 2_000L
+  companion object {
+    private const val BACK_NOTICE_THROTTLE_MS = 2_000L
   }
 }

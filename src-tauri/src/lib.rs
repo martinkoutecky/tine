@@ -18,6 +18,7 @@ mod commands;
 #[path = "commands/concord.rs"]
 mod concord;
 mod concord_ledger;
+mod css_files;
 mod data_home;
 mod debug;
 mod deep_links;
@@ -36,6 +37,7 @@ mod graph_verification;
 mod host_retirement;
 #[cfg(test)]
 mod host_slot_guard_tests;
+mod i18n_shell;
 #[cfg(target_os = "ios")]
 mod ios_folder_picker;
 #[cfg(target_os = "linux")]
@@ -44,7 +46,11 @@ mod linux_window_identity;
 mod load_wait_guard_tests;
 mod media_protocol;
 mod migrate_identifier;
+#[cfg(any(target_os = "android", target_os = "ios"))]
+mod native_integrations;
 mod native_mouse_history;
+mod owner;
+mod page_backlinks;
 mod page_commands;
 mod pdf_crop_rollback;
 mod platform;
@@ -53,9 +59,13 @@ mod plugins;
 mod query_export;
 #[path = "commands/query_ir.rs"]
 mod query_ir;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod quit_signal;
 mod search_workspace;
 mod settings;
+mod share_inbox;
 mod spellcheck;
+mod spotlight;
 #[cfg(test)]
 mod startup_window_order_tests;
 mod state;
@@ -63,6 +73,7 @@ mod tray;
 mod watcher;
 mod workspace_windows;
 mod youtube_identity;
+use css_files::{read_css_file, save_css_file};
 
 use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
@@ -70,10 +81,10 @@ use commands::{
     capture_quick_switch, close_graph_window, copy_guide_into_graph, detect_media_editor,
     edit_asset_external, edit_custom_css, empty_asset_trash, export_query_subtrees,
     get_backlink_filter_context, get_backlinks, get_page, get_page_by_path, get_unlinked_refs,
-    graph_source_files, guide_pages, import_asset, import_native_capture, journal_content_days,
-    journal_feed_page, list_journal_conflicts, list_journal_filename_migrations,
-    list_orphan_assets, list_templates, load_workspaces, merge_pages, open_asset, open_page_file,
-    open_pdf, page_icons, page_inventory, page_print_html, preview_block, publish_html,
+    guide_pages, import_asset, import_native_capture, journal_content_days, journal_feed_page,
+    list_journal_conflicts, list_journal_filename_migrations, list_orphan_assets, list_templates,
+    load_workspaces, merge_pages, open_asset, open_graph_file, open_page_file, open_pdf,
+    page_icons, page_inventory, page_modified, page_print_html, preview_block, publish_html,
     query_facets, quick_switch, read_asset, read_custom_css, read_highlights, read_journal_file,
     read_local_image, read_text_file, rename_file_to_page, rename_page, resolve_block,
     resolve_blocks, resolve_page, run_graph_search, save_asset, save_pdf_area_image,
@@ -743,17 +754,19 @@ pub fn run() {
         crate::graph::app_platform()
     ));
 
-    #[cfg(desktop)]
-    let builder = builder.append_invoke_initialization_script(format!(
-        "globalThis.__TINE_LINK_LAUNCH__ = {};",
-        matches!(cli::launch_request_env(), cli::LaunchRequest::Link(_))
-    ));
-
     let builder = match e2e_touch_gestures_platform() {
         Some(kind) => builder.append_invoke_initialization_script(format!(
             "globalThis.__TINE_E2E_TOUCH_GESTURES__ = {kind:?};"
         )),
         None => builder,
+    };
+
+    // Bench-only (`tine_store::bench_events`): the window reports its
+    // carry-over unfreeze only while `TINE_BENCH_EVENTS` names an events file.
+    let builder = if tine_store::bench_events::enabled() {
+        builder.append_invoke_initialization_script("globalThis.__TINE_BENCH_EVENTS__ = true;")
+    } else {
+        builder
     };
 
     // The backend's zone offset at launch, so the frontend's first "today" is
@@ -762,6 +775,9 @@ pub fn run() {
     let builder = builder.append_invoke_initialization_script(format!(
         "globalThis.__TINE_LOCAL_CLOCK__ = {{ offset_minutes: {offset_minutes}, unix_ms: {unix_ms} }};"
     ));
+
+    // The boot card in the last resolved UI language (tine#107).
+    let builder = builder.append_invoke_initialization_script(i18n_shell::boot_text_script());
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let builder = builder.append_invoke_initialization_script(format!(
@@ -842,6 +858,11 @@ pub fn run() {
     let builder = builder.plugin(android_safe_back::init());
     #[cfg(target_os = "ios")]
     let builder = builder.plugin(ios_folder_picker::init());
+    // Share inbox, Spotlight and routes (native_integrations.rs, ADR 0073).
+    // Desktop has no share sheet producer: share_inbox.rs and spotlight.rs
+    // name all five targets in their own platform splits.
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    let builder = builder.plugin(native_integrations::init());
     // Mobile has no xdg-open/open/explorer, so `open_external` routes URL opens
     // through this plugin's platform Intent instead (GH #49). Windows uses it
     // for ShellExecute, because `explorer <url>` opens a File Explorer window
@@ -885,6 +906,7 @@ pub fn run() {
                     }
                 }
                 tauri::WindowEvent::Destroyed => {
+                    spotlight::released(app, label, None);
                     // Unbind the window's graph, which retires its running
                     // host (plan v3 §3), before any exit is decided (G6).
                     let unowned = state::release_window_graph(&state.graphs, label);
@@ -915,12 +937,16 @@ pub fn run() {
                 flight::persist_init(dir.join("diagnostics"));
             }
             diag("setup() begin");
+            // The persisted Spotlight index may hold a graph this launch never binds.
+            spotlight::launched(app.handle());
             #[cfg(target_os = "linux")]
             youtube_identity::install_extension(app);
             // The tray decides first whether main is created hidden
             // (start-minimized); a tray that cannot be created never hides it.
             #[cfg(desktop)]
             let start_hidden = tray::init(app);
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            quit_signal::install(app.handle());
             #[cfg(desktop)]
             if let Some(config) = &main_window {
                 workspace_windows::create_main(app, config, start_hidden);
@@ -988,6 +1014,9 @@ pub fn run() {
             deep_links::scan_known_graphs_for_link,
             deep_links::take_tine_links,
             deep_links::handoff_tine_link,
+            share_inbox::share_inbox_list,
+            share_inbox::share_inbox_prepare,
+            share_inbox::share_inbox_commit,
             open_graph_window,
             workspace_windows::workspace_window_prepare,
             workspace_windows::workspace_window_destroy,
@@ -1012,9 +1041,10 @@ pub fn run() {
             android_media::cancel_recording,
             android_system_bars::set_system_bar_appearance,
             page_inventory,
+            page_modified,
+            page_backlinks::page_backlink_counts,
             journal_feed_page,
             get_page,
-            graph_source_files,
             create_graph_verification,
             cancel_graph_verification,
             save_graph_verification_report,
@@ -1058,11 +1088,17 @@ pub fn run() {
             set_default_journal_template,
             set_start_of_week,
             read_custom_css,
+            read_css_file,
+            save_css_file,
+            commands::reveal_export,
             edit_custom_css,
             open_external,
             copy_image_to_clipboard,
+            platform::copy_asset_file_to_clipboard,
+            platform::read_android_clipboard_image,
             clipboard_files,
             open_asset,
+            open_graph_file,
             open_page_file,
             edit_asset_external,
             detect_media_editor,
@@ -1122,6 +1158,7 @@ pub fn run() {
             restore_backup,
             page_commands::page_window_reloaded,
             page_commands::page_open,
+            page_commands::owner_flush_answer,
             page_commands::page_submit,
             page_commands::page_move,
             page_commands::page_discard,
@@ -1131,6 +1168,7 @@ pub fn run() {
             page_commands::page_save_now,
             page_commands::page_owed,
             page_commands::page_drafts_retry,
+            page_commands::bench_event,
             load_session,
             drafts::legacy_drafts_file,
             save_session,
@@ -1154,6 +1192,7 @@ pub fn run() {
             set_app_bool,
             get_app_string,
             set_app_string,
+            i18n_shell::set_ui_locale,
             apply_spellcheck,
             list_spellcheck_dictionaries,
             debug_info,

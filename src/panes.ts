@@ -537,25 +537,6 @@ export function moveTabToSeamSplit(sourcePaneId: string, tabId: string, path: nu
   return newPaneId;
 }
 
-export function moveTabToRootEdge(
-  sourcePaneId: string,
-  tabId: string,
-  side: "left" | "right" | "top" | "bottom"
-): string | null {
-  const ids = layoutPaneIds(layoutRoot(windowOfPane(sourcePaneId)));
-  if (isSinglePaneShell() || !ids.includes(sourcePaneId)) return null;
-  const source = paneRouter(sourcePaneId);
-  if (!source.tabs().some((t) => t.id === tabId)) return null;
-  const moved = source.extractTabForAdoption(tabId);
-  if (!moved) return null;
-  const newPaneId = splitRootAtEdge(side, sourcePaneId, {
-    snapshot: snapshotFromAdoptedTab(moved.tab),
-  });
-  if (!newPaneId) return null;
-  finishMovedTab(sourcePaneId, newPaneId, moved);
-  return newPaneId;
-}
-
 export function setSplitRatio(path: number[], ratio: number, windowId = currentLayoutWindowId()) {
   const clamp = Math.min(0.85, Math.max(0.15, ratio));
   const update = (node: LayoutNode, depth: number): LayoutNode => {
@@ -612,8 +593,13 @@ export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId(
     // source context (matching the embryo-switcher flow) — openInNewTab here
     // would leave a stray duplicate tab beside the target.
     if (route.kind === "journals") router.openJournals();
-    else if (route.kind === "query" || route.kind === "pdf" || route.kind === "invalid" || route.kind === "conflicts") router.replaceActiveRoute(route);
-    else if (route.block) router.openPageAtBlock(route.name, route.pageKind, route.block, route.path);
+    else if (route.kind === "query" || route.kind === "pdf" || route.kind === "invalid" || route.kind === "conflicts" || route.kind === "all-pages") router.replaceActiveRoute(route);
+    else if (route.block) {
+      // A block route means zoom, whereas openPageAtBlock is a whole-page
+      // search-result scroll. Keep the same route semantics as an existing pane.
+      router.openPageTarget(route, { inPlace: true });
+      router.replaceActiveRoute(route);
+    }
     else if (route.path) router.openFile(route.path, route.name, route.pageKind);
     else router.openPage(route.name, route.pageKind);
   } else {

@@ -163,7 +163,7 @@ fn tauri_sources(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
         if path.is_dir() {
             tauri_sources(&path, out);
         } else if path.extension().is_some_and(|ext| ext == "rs")
-            && !path.to_string_lossy().contains("test")
+            && !path.file_name().unwrap().to_string_lossy().contains("test")
         {
             let source = std::fs::read_to_string(&path).unwrap();
             if source.contains("#[tauri::command]") {
@@ -387,6 +387,7 @@ const ORDERED_WRITES: &[&str] = &[
     "store_plugin_registry_cache",
     "diagnostic_session_active",
     "clear_diagnostics",
+    "set_ui_locale",
 ];
 
 fn all_commands() -> Vec<(String, String, bool, String)> {

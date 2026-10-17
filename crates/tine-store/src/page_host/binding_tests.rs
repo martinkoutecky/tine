@@ -194,11 +194,27 @@ struct Live {
     store: Arc<Store>,
     host: PageHost,
     mail: mpsc::Receiver<PageMail>,
+    /// Each published page's edit kinds, as the host's kinds sink took them.
+    kinds: Kinds,
     id: std::cell::Cell<u64>,
+}
+
+/// Published pages' edit kinds in delivery order (OG-RULES Rule 8).
+type Kinds = Arc<Mutex<Vec<(PageKey, Vec<EditKind>)>>>;
+
+/// A kinds sink that records into `kinds`.
+fn recording(kinds: &Kinds) -> impl FnMut(&str, &[EditKind]) + Send + 'static {
+    let kinds = kinds.clone();
+    move |page, taken| kinds.lock().unwrap().push((page.into(), taken.to_vec()))
 }
 
 impl Live {
     fn new(files: &[(&str, &str)]) -> Self {
+        Self::with(files, false)
+    }
+
+    /// `checkpoint`: the store keeps a launch checkpoint in the app dir.
+    fn with(files: &[(&str, &str)], checkpoint: bool) -> Self {
         let dir = match std::env::var_os("TINE_HOST_FS_ROOT") {
             Some(base) => tempfile::tempdir_in(base).unwrap(),
             None => tempfile::tempdir().unwrap(),
@@ -216,12 +232,17 @@ impl Live {
         // the host's holds, the watcher's events and the build's lookups
         // must all key pages by the store's resolved root (A-V4).
         let given = graph.join("pages").join("..");
-        let store = Arc::new(Store::open(&given, Default::default()).unwrap().0);
+        let options = crate::OpenOptions {
+            launch_checkpoint: checkpoint.then(|| app.join("checkpoint.bin")),
+            ..Default::default()
+        };
+        let store = Arc::new(Store::open(&given, options).unwrap().0);
         // A loaded index: what it holds afterwards was published to it.
         store.whole_graph_reconciled().unwrap();
         let root = store.graph.root.clone();
         let (sender, mail) = mpsc::channel();
-        let host = PageHost::start(&store, &app, "test-graph", move |mail| {
+        let kinds = Kinds::default();
+        let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), move |mail| {
             let _ = sender.send(mail);
         })
         .unwrap();
@@ -231,6 +252,7 @@ impl Live {
             store,
             host,
             mail,
+            kinds,
             id: std::cell::Cell::new(0),
         }
     }
@@ -324,11 +346,17 @@ impl Live {
     }
 
     /// Pause or resume request application and the draft worker (Q-P2b-4).
+    /// Window Submits keep the edit debounce (`TestKnobs::submits_wait`).
+    fn submits_wait(&self) {
+        (self.host.driver.shared)
+            .with_state_for_tests(|state| state.progress.host.test.submits_wait = true);
+    }
+
     fn pause(&self, paused: bool) {
         self.host
             .driver
             .shared
-            .with_state(|state| state.progress.host.paused = paused);
+            .with_state_for_tests(|state| state.progress.host.test.paused = paused);
     }
 
     fn disk(&self, key: &str) -> String {
@@ -377,6 +405,14 @@ impl Live {
         let deadline = Instant::now() + Duration::from_secs(20);
         while !self.host.pages_published(pages) {
             assert!(Instant::now() < deadline, "never published: {pages:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn until_recoverable(&self, pages: &[(String, u64)]) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !self.host.pages_recoverable(pages) {
+            assert!(Instant::now() < deadline, "never recoverable: {pages:?}");
             std::thread::sleep(Duration::from_millis(20));
         }
     }
@@ -438,7 +474,11 @@ fn open_submit_and_mail_round_trip_through_a_real_store() {
     assert_eq!(page.disk, Some(DiskToken::NoFile));
     live.submit(&key, "- made\n", page.version, None).unwrap();
     live.until_disk(&key, "- made\n");
-    assert!(live.host.pages_recoverable(&[(key, page.version + 1)]));
+    // The file is visible at rename, before directory sync and the host's
+    // Published transition. Wait for the recovery query itself as well.
+    let needs = [(key, page.version + 1)];
+    live.until_recoverable(&needs);
+    assert!(live.host.pages_recoverable(&needs));
     live.host.stop();
 }
 
@@ -532,7 +572,7 @@ fn q1_trace(
         live.host
             .driver
             .shared
-            .with_state(|s| s.observe.contains_key(&key))
+            .with_state_for_tests(|s| s.observe.contains_key(&key))
     };
     while !owed() {
         assert!(Instant::now() < deadline, "the watcher never forwarded A");
@@ -679,6 +719,7 @@ fn r13_a_held_page_is_indexed_by_the_consumer_alone_and_a_failed_publication_ret
 #[test]
 fn q6_a_dirty_page_closed_before_its_save_stays_held_until_retired() {
     let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/a.md");
     let id = live
         .submit(&key, "- one\n- two\n", page.version, None)
@@ -791,7 +832,7 @@ impl Live {
 
     /// Fail the next `n` calls of `phase` in the host's file adapter.
     fn faults(&self, phase: super::io::Phase, n: usize) {
-        self.host.driver.shared.with_state(|state| {
+        self.host.driver.shared.with_state_for_tests(|state| {
             let queue = state.progress.host.fs.faults.entry(phase).or_default();
             queue.extend(std::iter::repeat_n(std::io::ErrorKind::Other, n));
         });
@@ -885,7 +926,8 @@ fn a_restore_stop_saves_every_edit_and_a_fresh_host_reads_the_restored_tree() {
         fs::write(root.join(&a), "- restored\n").unwrap();
     }
     let (sender, mail) = mpsc::channel();
-    let host = PageHost::start(&store, &app, "test-graph", move |mail| {
+    let kinds = Kinds::default();
+    let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), move |mail| {
         let _ = sender.send(mail);
     })
     .unwrap();
@@ -895,6 +937,7 @@ fn a_restore_stop_saves_every_edit_and_a_fresh_host_reads_the_restored_tree() {
         store,
         host,
         mail,
+        kinds,
         id: std::cell::Cell::new(100),
     };
     let (_, page) = live.open("pages/a.md");
@@ -907,6 +950,7 @@ fn a_restore_stop_saves_every_edit_and_a_fresh_host_reads_the_restored_tree() {
 #[test]
 fn a_restore_stop_aborts_on_a_conflict_and_reopens_admission() {
     let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/a.md");
     let id = live.submit(&key, "- mine\n", page.version, None).unwrap();
     live.answer(&key, id);
@@ -928,6 +972,7 @@ fn a_restore_stop_aborts_on_a_conflict_and_reopens_admission() {
 #[test]
 fn a_switch_aborts_when_neither_the_save_nor_the_draft_can_be_written() {
     let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/a.md");
     let id = live.submit(&key, "- two\n", page.version, None).unwrap();
     live.answer(&key, id);
@@ -963,6 +1008,7 @@ impl Live {
 #[test]
 fn q3_input_applied_before_the_reservation_is_found_under_it() {
     let live = Live::new(&[("pages/r.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/r.md");
     let id = live.submit(&key, "- v2\n", page.version, None).unwrap();
     let v2 = live.answer(&key, id).answer.unwrap().version;
@@ -993,6 +1039,7 @@ fn q3_input_applied_before_the_reservation_is_found_under_it() {
 #[test]
 fn q3_a_page_discovered_under_the_reservation_is_checked_too() {
     let live = Live::new(&[("pages/a.md", "- a\n"), ("pages/r.md", "- r\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/r.md");
     let id = live.submit(&key, "- typed\n", page.version, None).unwrap();
     live.answer(&key, id);
@@ -1010,19 +1057,20 @@ fn q3_a_page_discovered_under_the_reservation_is_checked_too() {
         ReserveRefusal::Unsaved(BTreeSet::from([PageId::from(key.clone())]))
     );
     assert!(
-        live.host
-            .driver
-            .shared
-            .state
-            .lock()
-            .unwrap()
-            .progress
-            .host
-            .retained
-            .is_empty(),
+        retained(&live.host).is_empty(),
         "a refused reservation is withdrawn"
     );
     live.host.stop();
+}
+
+/// The retained keys, read through the driver's queue: after every
+/// reservation release sent before it.
+fn retained(host: &PageHost) -> BTreeSet<PageKey> {
+    let read = host
+        .driver
+        .shared
+        .read(|state| state.progress.host.retained.clone());
+    read.unwrap()
 }
 
 /// A-R1, REVIEW-3a2 R1 probe 2: discovery names A, then panics when it
@@ -1040,13 +1088,11 @@ fn a_rediscovery_panic_withdraws_the_reservation() {
         live.host.reserve(discover, Input::Flush)
     }));
     assert!(unwound.is_err());
-    let state = live.host.driver.shared.state.lock().unwrap();
+    let retained = retained(&live.host);
     assert!(
-        state.progress.host.retained.is_empty(),
-        "A-R1: a rediscovery panic leaked the reservation: {:?}",
-        state.progress.host.retained
+        retained.is_empty(),
+        "A-R1: a rediscovery panic leaked the reservation: {retained:?}"
     );
-    drop(state);
     live.host.stop();
 }
 
@@ -1065,7 +1111,7 @@ fn a_reservation_dropped_on_a_poisoned_host_does_not_panic() {
     retained::BEFORE_RELEASE.with(|hook| {
         *hook.borrow_mut() = Some(Box::new(move || {
             let poisoner = std::thread::spawn(move || {
-                let _state = shared.state.lock().unwrap();
+                let _state = shared.state_for_tests();
                 panic!("E90 test: poison the host state");
             });
             assert!(poisoner.join().is_err());
@@ -1078,16 +1124,18 @@ fn a_reservation_dropped_on_a_poisoned_host_does_not_panic() {
     assert!(
         dropped.is_ok(),
         "E90: dropping a reservation on a poisoned host panicked; exemplar binding_retained.rs \
-         Reservation::drop (try_with_state)"
+         Reservation::drop (a notice)"
     );
 }
 
-/// REVIEW-3a4 #2: a hold whose owner's first publication fails retires
-/// the page's disk-derived name: a view acquired after the open never
-/// names it from the file.
+/// REVIEW-3a4 #2 under (G) as amended 2026-10-11: a failed first
+/// publication of an unchanged file leaves its row, derived from the bytes
+/// the Open read read; a file changed behind the index is withheld
+/// (`an_opens_hold_of_a_changed_file_installs_no_row`).
 #[test]
-fn a_failed_first_publication_leaves_no_disk_name_current() {
-    let live = Live::new(&[("pages/a.md", "title:: Disk\n- a\n")]);
+fn a_failed_first_publication_of_an_unchanged_file_keeps_its_row() {
+    let body = "title:: Disk\n- a\n";
+    let live = Live::new(&[("pages/a.md", body)]);
     let named = || {
         matches!(
             live.store.whole_graph().unwrap().resolve("Disk", false),
@@ -1097,12 +1145,60 @@ fn a_failed_first_publication_leaves_no_disk_name_current() {
     assert!(named());
     live.index_faults(u32::MAX);
     let (key, _page) = live.open("pages/a.md");
-    assert_eq!(live.indexed(&key), None);
-    assert!(
-        !named(),
-        "REVIEW-3a4 #2: a view acquired after the hold names the page from its file"
-    );
+    let failed =
+        || (live.host.driver.shared).with_state_for_tests(|s| s.book.retry.contains_key(&key));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !failed() {
+        assert!(
+            Instant::now() < deadline,
+            "the Open read was never published"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(live.indexed(&key), Some(content_rev(body)));
+    assert!(named(), "the Open read's own bytes name the page");
     live.index_faults(0);
+    live.host.stop();
+}
+
+/// REVIEW-G F1: a file written after an open's hold kept its row and before
+/// the host's Open read: the Open read's publication replaces the kept row,
+/// so the old name does not outlive it.
+#[test]
+fn an_external_write_after_the_hold_is_published_by_the_open_read() {
+    let (old, new) = ("title:: Disk\n- a\n", "title:: Edited\n- e\n");
+    let live = Live::new(&[("pages/a.md", old)]);
+    let names = |name: &str| {
+        matches!(
+            live.store.whole_graph().unwrap().resolve(name, false),
+            crate::Resolved::Existing { .. }
+        )
+    };
+    live.pause(true);
+    let id = live.id();
+    let opened = live
+        .host
+        .open(live.host.session(), id, &PageId::from("pages/a.md"), "a")
+        .unwrap();
+    assert_eq!(
+        live.indexed(&opened.key),
+        Some(content_rev(old)),
+        "the hold kept the row"
+    );
+    fs::write(live.root.join("pages/a.md"), new).unwrap();
+    live.pause(false);
+    let page = live.answer(&opened.key, id).page.unwrap();
+    assert_eq!(
+        page.disk,
+        Some(token(new)),
+        "the Open read read the new bytes"
+    );
+    live.until_indexed(&opened.key, new);
+    assert!(names("Edited"));
+    assert!(
+        !names("Disk"),
+        "the kept row outlived the Open read's publication"
+    );
     live.host.stop();
 }
 
@@ -1129,7 +1225,7 @@ fn q6_a_failed_publication_never_overwrites_a_retained_transaction() {
     // source does): the retry waits for the release.
     let until = Instant::now() + Duration::from_millis(1500);
     while Instant::now() < until {
-        live.host.driver.shared.with_state(|_| {});
+        live.host.driver.shared.with_state_for_tests(|_| {});
         std::thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(
@@ -1172,7 +1268,7 @@ fn v2_a_failed_release_observation_keeps_the_handover_protection() {
     drop(reservation);
     let until = Instant::now() + Duration::from_millis(1500);
     while Instant::now() < until {
-        live.host.driver.shared.with_state(|_| {});
+        live.host.driver.shared.with_state_for_tests(|_| {});
         std::thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(
@@ -1180,7 +1276,7 @@ fn v2_a_failed_release_observation_keeps_the_handover_protection() {
         Some(content_rev("- t\n")),
         "V2: P's retry overwrote the retained transaction's index after a failed observation"
     );
-    live.host.driver.shared.with_state(|state| {
+    live.host.driver.shared.with_state_for_tests(|state| {
         state
             .progress
             .host
@@ -1231,6 +1327,134 @@ fn v3_an_external_return_to_the_pre_save_observation_updates_the_index() {
     live.host.stop();
 }
 
+/// N3 (REVIEW-3b-P2b-2, Codex's plant): a watcher blocked on the store
+/// writer with an external change pending is as quiet as an idle one, so
+/// quiet counters cannot be a measurement boundary. The acknowledged drain
+/// is not declared while the reconcile is blocked, and once declared the
+/// pending change is in the index.
+#[test]
+fn n3_a_watcher_blocked_on_the_writer_is_not_drained() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let key = "pages/a.md";
+    let drained = |seconds| live.host.quiesce_for_tests(Duration::from_secs(seconds));
+    assert!(drained(20), "the fresh host settles");
+    let writer = live.store.writer.lock().unwrap();
+    fs::write(live.root.join(key), "- external\n").unwrap();
+    assert!(
+        !drained(5),
+        "N3: drained while the watcher's reconcile waited on the writer"
+    );
+    assert_eq!(live.indexed(key), Some(content_rev("- a\n")), "plant held");
+    drop(writer);
+    assert!(drained(20), "the released watcher drains");
+    assert_eq!(
+        live.indexed(key),
+        Some(content_rev("- external\n")),
+        "N3: drained before the pending change was reconciled"
+    );
+    live.host.stop();
+}
+
+/// Sentinel files of drain requests now in the graph root.
+fn sentinels(live: &Live) -> usize {
+    fs::read_dir(&live.root)
+        .unwrap()
+        .filter(|entry| {
+            let name = entry.as_ref().unwrap().file_name();
+            name.to_string_lossy().starts_with(".tine-watch-drain-")
+        })
+        .count()
+}
+
+/// A drain of `live`'s watcher in its own thread, false after `seconds`.
+fn drain<'a>(
+    scope: &'a std::thread::Scope<'a, '_>,
+    live: &'a Live,
+    seconds: u64,
+) -> std::thread::ScopedJoinHandle<'a, bool> {
+    let watch = &live.store.watch;
+    scope.spawn(move || watch.drained_for_tests(Duration::from_secs(seconds)))
+}
+
+/// After a stale-acknowledgement plant: the gate opened and the writer
+/// released, the watcher drains and the external change is indexed.
+fn drains_after_the_plant(live: Live, key: &str) {
+    live.store.watch.gate_notifications(None);
+    assert!(live.host.quiesce_for_tests(Duration::from_secs(20)));
+    assert_eq!(live.indexed(key), Some(content_rev("- external\n")));
+    live.host.stop();
+}
+
+/// REVIEW-3b-P2b-3 N3 (Codex's first plant): an older drain's sentinel
+/// notification, delivered after a newer drain was requested, acknowledges
+/// only the older request. The external change written between the two
+/// requests is still held behind it, so the newer drain is not declared.
+#[test]
+fn n3_an_older_sentinel_does_not_acknowledge_a_newer_drain() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let key = "pages/a.md";
+    assert!(live.host.quiesce_for_tests(Duration::from_secs(20)));
+    live.store.watch.gate_notifications(Some(0));
+    let writer = live.store.writer.lock().unwrap();
+    std::thread::scope(|scope| {
+        let older = drain(scope, &live, 20);
+        until_sentinels(&live, 1);
+        fs::write(live.root.join(key), "- external\n").unwrap();
+        let newer = drain(scope, &live, 3);
+        until_sentinels(&live, 2);
+        // The older sentinel's notification only; the rest stay held.
+        live.store.watch.gate_notifications(Some(1));
+        assert!(
+            !newer.join().unwrap(),
+            "N3: an older sentinel acknowledged a newer drain"
+        );
+        assert!(older.join().unwrap(), "the older drain is acknowledged");
+    });
+    assert_eq!(live.indexed(key), Some(content_rev("- a\n")), "plant held");
+    drop(writer);
+    drains_after_the_plant(live, key);
+}
+
+/// REVIEW-3b-P2b-3 N3 (Codex's second plant): one sentinel write raises
+/// more than one notification (and its removal another). Those that arrive
+/// after a later drain was requested acknowledge their own, completed
+/// request, never the later one.
+#[test]
+fn n3_a_late_notification_of_a_completed_drain_acknowledges_only_it() {
+    let live = Live::new(&[("pages/a.md", "- a\n")]);
+    let key = "pages/a.md";
+    assert!(live.host.quiesce_for_tests(Duration::from_secs(20)));
+    live.store.watch.gate_notifications(Some(1));
+    assert!(
+        live.store.watch.drained_for_tests(Duration::from_secs(20)),
+        "the earlier drain is acknowledged by its sentinel's first notification"
+    );
+    let writer = live.store.writer.lock().unwrap();
+    fs::write(live.root.join(key), "- external\n").unwrap();
+    std::thread::scope(|scope| {
+        let later = drain(scope, &live, 3);
+        until_sentinels(&live, 1);
+        // One more notification: the earlier sentinel's next, held before
+        // the page's.
+        live.store.watch.gate_notifications(Some(1));
+        assert!(
+            !later.join().unwrap(),
+            "N3: a late notification of an earlier drain acknowledged a later one"
+        );
+    });
+    assert_eq!(live.indexed(key), Some(content_rev("- a\n")), "plant held");
+    drop(writer);
+    drains_after_the_plant(live, key);
+}
+
+fn until_sentinels(live: &Live, count: usize) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while sentinels(live) < count {
+        assert!(Instant::now() < deadline, "never {count} drain requests");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// A3 (REVIEW-3a): page mail's DTO (`page_dto_for_bytes`, its only
 /// conversion) names the page from the buffer it carries, not from a fresh
 /// read of the file: disk says `title:: Disk` while a conflicted or
@@ -1273,9 +1497,12 @@ fn save_through(u: &mut Unit, page: &str, twin_at_rename: bool) -> Option<Bindin
     assert_eq!(u.progress.host.start_save(page), Disposition::Pending);
     while let Some(job) = &u.progress.host.job {
         if twin_at_rename && job.phase == SavePhase::Rename {
-            u.progress.host.fs.twins.insert(page.into(), "c.org".into());
+            u.progress
+                .host
+                .fs
+                .external("c.org", Some(Arc::from(&b"twin"[..])), true);
         }
-        u.progress.host.advance_save(0);
+        u.progress.host.advance_save();
         notice = mailed(&u.collect(), page).or(notice);
     }
     notice
@@ -1298,13 +1525,12 @@ fn a2_a_twin_is_a_binding_notice_until_a_later_save_publishes() {
             u.progress
                 .host
                 .fs
-                .twins
-                .insert("c.md".into(), "c.org".into());
+                .external("c.org", Some(Arc::from(&b"twin"[..])), true);
         }
         let notice = save_through(&mut u, "c.md", after_rename).unwrap();
         assert_eq!(notice.twin.as_deref(), Some("c.org"), "A2: {after_rename}");
         assert_eq!(u.progress.host.pages["c.md"].clean(), after_rename);
-        u.progress.host.fs.twins.clear();
+        u.progress.host.fs.external("c.org", None, true);
         if after_rename {
             u.progress.with_host(|h| edit(h, "c.md", "again"));
             u.collect();
@@ -1332,7 +1558,7 @@ fn a2_a_failing_release_observation_is_a_notice_that_clears_on_recovery() {
     live.wait(&key, "the third failed read is reported", |mail| {
         mail.notice.observe_error
     });
-    live.host.driver.shared.with_state(|state| {
+    live.host.driver.shared.with_state_for_tests(|state| {
         state
             .progress
             .host
@@ -1362,7 +1588,7 @@ fn a4_a_held_path_lock_does_not_stall_another_pages_due_save() {
         .host
         .driver
         .shared
-        .with_state(|state| state.observe.contains_key(&a))
+        .with_state_for_tests(|state| state.observe.contains_key(&a))
     {
         assert!(Instant::now() < deadline, "the watcher never forwarded A");
         std::thread::sleep(Duration::from_millis(10));
@@ -1378,7 +1604,12 @@ fn a4_a_held_path_lock_does_not_stall_another_pages_due_save() {
         std::thread::sleep(Duration::from_millis(20));
     }
     // Yielding is no spin: the held lock is retried on a backoff timer.
-    let polls = || live.host.driver.shared.with_state(|state| state.polls);
+    let polls = || {
+        live.host
+            .driver
+            .shared
+            .with_state_for_tests(|state| state.polls)
+    };
     let before = polls();
     std::thread::sleep(Duration::from_secs(1));
     let spent = polls() - before;
@@ -1430,6 +1661,9 @@ mod stop_saved;
 
 #[path = "binding_rename_tests.rs"]
 mod rename;
+
+#[path = "binding_apply_tests.rs"]
+mod apply_tests;
 
 #[path = "binding_order_tests.rs"]
 mod order;
@@ -1553,7 +1787,7 @@ fn e101_every_host_instance_and_reload_draws_a_fresh_session() {
     let app = live.app();
     let Live { store, host, .. } = live;
     host.stop();
-    let host = PageHost::start(&store, &app, "test-graph", |_| {}).unwrap();
+    let host = PageHost::start(&store, &app, "test-graph", |_, _| {}, |_| {}).unwrap();
     assert!(
         ![first, reloaded.session].contains(&host.session()),
         "E101: a relaunched host draws a new session"
@@ -1608,7 +1842,7 @@ fn f1_publication_queries_never_answer_for_another_session() {
     let app = live.app();
     let Live { store, host, .. } = live;
     host.stop();
-    let host = PageHost::start(&store, &app, "test-graph", |_| {}).unwrap();
+    let host = PageHost::start(&store, &app, "test-graph", |_, _| {}, |_| {}).unwrap();
     assert_eq!(
         host.owed(now, None),
         None,
@@ -1619,6 +1853,55 @@ fn f1_publication_queries_never_answer_for_another_session() {
         PageOperation::Refused
     );
     host.stop();
+}
+
+/// P7: a Discard carries no version. One sent after the page's version moved
+/// past the window's view still takes the current disk, and one from an
+/// earlier window session is not admitted.
+#[test]
+fn a_discard_takes_the_current_disk_and_an_old_session_discard_is_not_admitted() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- typed\n", page.version, None).unwrap();
+    let typed = live.answer(&key, id).page.unwrap().version;
+    assert!(typed > page.version, "the submit moved the page's version");
+    let id = live.id();
+    live.host.discard(live.host.session(), id, &key).unwrap();
+    let mail = live.answer(&key, id);
+    assert_eq!(mail.answer.unwrap().outcome, AnswerOutcome::Applied);
+    let MailText::Page { dto } = &mail.page.unwrap().text else {
+        panic!("a discard that changed the buffer carries the disk's text");
+    };
+    assert_eq!(dto.blocks[0].raw, "one");
+    let held = (live.host.driver.shared).with_state_for_tests(|state| {
+        let page = &state.progress.host.pages[&key];
+        (page.buf.as_deref() == Some(&b"- one\n"[..]), page.clean())
+    });
+    assert_eq!(held, (true, true), "the host holds the disk, clean");
+    let old = live.host.session();
+    live.host.window_reloaded();
+    assert_eq!(
+        live.host.discard(old, live.id(), &key),
+        Err(PageRefusal::NotAdmitted)
+    );
+    assert_eq!(live.disk(&key), "- one\n");
+    live.host.stop();
+}
+
+/// N1 (OG-RULES Rule 8, STEP3 §3.2 `kinds`): a published page's edit kinds
+/// reach the sink `PageHost::start` was given, at its publication; the app
+/// logs them there (`src-tauri` `page_commands::log_edit_kinds`).
+#[test]
+fn a_published_pages_edit_kinds_reach_the_start_kinds_sink() {
+    let live = Live::new(&[("pages/a.md", "- one\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    live.until_indexed(&key, "- two\n");
+    let kinds = live.kinds.lock().unwrap().clone();
+    assert_eq!(kinds, vec![(key.clone(), vec![EditKind::SaveBlock])]);
+    live.host.stop();
 }
 
 /// E101 (P1): a page the host let go and loads again gets a version above
@@ -1689,6 +1972,7 @@ fn owed_lists_unpublished_held_pages_and_released_index_debt() {
 #[test]
 fn wait_published_is_true_on_publication_false_on_conflict_or_bound() {
     let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/a.md");
     let id = live.submit(&key, "- two\n", page.version, None).unwrap();
     let version = live.answer(&key, id).answer.unwrap().version;
@@ -1760,7 +2044,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     down.host
         .driver
         .shared
-        .with_state(|state| state.progress.host.stop());
+        .with_state_for_tests(|state| state.progress.host.stop());
     assert_eq!(
         down.host.wait_published(session, &needs, bound),
         PageOperation::Refused,
@@ -1773,7 +2057,7 @@ fn wait_published_refuses_once_the_driver_ended_or_the_host_is_down() {
     let session = poisoned.host.session();
     let shared = Arc::clone(&poisoned.host.driver.shared);
     let poisoner = std::thread::spawn(move || {
-        let _state = shared.state.lock().unwrap();
+        let _state = shared.state_for_tests();
         panic!("R3 test: poison the host state");
     });
     assert!(poisoner.join().is_err());
@@ -1919,6 +2203,7 @@ fn b_q1_a_restore_relaunches_into_unavailable_drafts_and_retry_restores_them() {
         store,
         host,
         mail,
+        kinds,
         id,
     } = live;
     let stopped = host.stop_finish().ok().unwrap();
@@ -1931,6 +2216,7 @@ fn b_q1_a_restore_relaunches_into_unavailable_drafts_and_retry_restores_them() {
         store,
         host,
         mail,
+        kinds,
         id,
     };
     assert!(live.host.draft_status().unavailable.is_some());
@@ -1954,6 +2240,7 @@ fn b_q1_a_restore_relaunches_into_unavailable_drafts_and_retry_restores_them() {
 fn s9_draft_status_names_recovered_and_unsaved_pages() {
     use crate::page_host::io::{Phase, UnsavedPage};
     let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- b\n")]);
+    live.submits_wait();
     live.open("pages/b.md");
     let (key, page) = live.open("pages/a.md");
     let id = live.submit(&key, "- two\n", page.version, None).unwrap();
@@ -1980,7 +2267,8 @@ fn s9_draft_status_names_recovered_and_unsaved_pages() {
     );
     crate::page_host::faults::fail(Phase::PageTemp, std::io::ErrorKind::Other, 100);
     let (sender, mail) = mpsc::channel();
-    let host = PageHost::start(&store, &app, "test-graph", move |mail| {
+    let kinds = Kinds::default();
+    let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), move |mail| {
         let _ = sender.send(mail);
     })
     .unwrap();
@@ -1990,6 +2278,7 @@ fn s9_draft_status_names_recovered_and_unsaved_pages() {
         store,
         host,
         mail,
+        kinds,
         id: std::cell::Cell::new(100),
     };
     let unsaved = |recovered, failing| {
@@ -2013,7 +2302,7 @@ fn s9_draft_status_names_recovered_and_unsaved_pages() {
     live.host
         .driver
         .shared
-        .with_state(|state| state.progress.host.fs.faults.clear());
+        .with_state_for_tests(|state| state.progress.host.fs.faults.clear());
     let deadline = Instant::now() + Duration::from_secs(40);
     while !live.host.draft_status().unsaved.is_empty() {
         assert!(Instant::now() < deadline, "the page never published");
@@ -2046,13 +2335,15 @@ fn i1c_a_removal_back_at_the_baseline_lifts_the_conflict_and_the_edit_saves() {
     live.host
         .driver
         .shared
-        .with_state(|state| state.progress.host.fs.faults.clear());
+        .with_state_for_tests(|state| state.progress.host.fs.faults.clear());
+    // Saved means on disk and reported saved: the bytes appear at the
+    // rename, a few milliseconds before the save's directory sync completes
+    // and the page turns clean.
     let deadline = Instant::now() + Duration::from_secs(40);
-    while live.disk(&key) != "- two\n" {
+    while live.disk(&key) != "- two\n" || !live.host.draft_status().unsaved.is_empty() {
         assert!(Instant::now() < deadline, "the held edit never saved");
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert!(live.host.draft_status().unsaved.is_empty());
     live.host.stop();
 }
 
@@ -2066,6 +2357,25 @@ fn review_p1_m2_a_key_with_vehicle_debt_is_not_evicted() {
     assert_eq!(book.evictable(&host, &[]), ["b.md"]);
     host.vehicle_debt.insert("b.md".into());
     assert!(book.evictable(&host, &[]).is_empty());
+}
+
+/// PERF-FIXES D4: an Open applying (waiting for its page's lock) keeps its
+/// key owned: admission owned it so that no collection evicts it before the
+/// host holds the page.
+#[test]
+fn an_applying_open_keeps_its_key_owned() {
+    let mut host = super::super::tests::host();
+    let mut book = Book::default();
+    book.own(["b.md".to_string()], &host);
+    host.applying = Some(Request {
+        id: 1,
+        generation: host.generation,
+        page: "b.md".into(),
+        kind: RequestKind::Open,
+    });
+    assert!(book.evictable(&host, &[]).is_empty());
+    host.applying = None;
+    assert_eq!(book.evictable(&host, &[]), ["b.md"]);
 }
 
 /// R2: a restore over a key with vehicle debt aborts naming it at once,
@@ -2153,7 +2463,7 @@ fn m4_b2_an_open_overtaken_by_a_reload_is_evicted_after_release() {
         "held again: not an orphan"
     );
     for _ in 0..8 {
-        u.progress.poll(0);
+        u.progress.poll();
         u.progress.host.held = None;
     }
     assert!(!u.progress.host.pages.contains_key("b.md"), "released");
@@ -2175,4 +2485,294 @@ fn m4_b2_a_blocked_orphan_is_evicted_when_its_obligation_ends() {
     assert!(evicted(&u.collect()).is_empty(), "still handed over");
     u.book.handover.clear();
     assert_eq!(evicted(&u.collect()), ["b.md"]);
+}
+
+/// PERF-FIXES D4: opening a page whose bytes the index already holds changes
+/// no derived state, so it leaves a written launch checkpoint clean. Before
+/// the fix each open published the page as a change and restarted the
+/// checkpoint's quiet window, so an editing session never wrote one and the
+/// next launch was cold (ab1: 0 of 7 typing/custody/drafts trials).
+#[test]
+fn opening_an_unchanged_page_leaves_the_launch_checkpoint_clean() {
+    let live = Live::with(
+        &[("pages/a.md", "- a\n"), ("pages/b.md", "- b [[a]]\n")],
+        true,
+    );
+    assert!(matches!(
+        live.store.write_checkpoint_now(),
+        Some(crate::CheckpointWrite::Written { .. })
+    ));
+    let dirty = || live.store.changes.checkpoint.get().unwrap().dirty();
+    assert!(!dirty());
+    let rev = live.store.whole_graph().unwrap().rev();
+    let (a, _) = live.open("pages/a.md");
+    let (b, _) = live.open("pages/b.md");
+    // Past the owner's Open read publications.
+    let read = || {
+        (live.host.driver.shared).with_state_for_tests(|s| {
+            s.book.index.contains_key(&a) && s.book.index.contains_key(&b)
+        })
+    };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !read() {
+        assert!(
+            Instant::now() < deadline,
+            "the Open reads were never published"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        live.store.whole_graph().unwrap().rev(),
+        rev,
+        "an open published"
+    );
+    assert!(
+        !dirty(),
+        "an open whose bytes the index holds must not mark the launch checkpoint dirty"
+    );
+}
+
+/// An ownership transition that moves no row leaves the derived cache the
+/// published generation's: an open of an unchanged page must not make every
+/// later launch-checkpoint capture "unpublished" (it retried every 5 s and
+/// never wrote while no other publication came).
+#[test]
+fn an_open_that_moves_no_row_leaves_the_checkpoint_capturable() {
+    let live = Live::with(
+        &[("pages/a.md", "- a\n"), ("pages/b.md", "- b [[a]]\n")],
+        true,
+    );
+    assert!(matches!(
+        live.store.write_checkpoint_now(),
+        Some(crate::CheckpointWrite::Written { .. })
+    ));
+    let rev = live.store.whole_graph().unwrap().rev();
+    let (a, _) = live.open("pages/a.md");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !(live.host.driver.shared).with_state_for_tests(|s| s.book.index.contains_key(&a)) {
+        assert!(
+            Instant::now() < deadline,
+            "the Open read was never published"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let outcome = live.store.write_checkpoint_now();
+    assert!(
+        matches!(outcome, Some(crate::CheckpointWrite::Written { .. })),
+        "a checkpoint after an unchanged open: {outcome:?}"
+    );
+    // A release that moves nothing (REVIEW-settle-cow F1) neither.
+    live.close(&a);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while live.held(&a) {
+        assert!(Instant::now() < deadline, "the closed page stayed held");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let outcome = live.store.write_checkpoint_now();
+    assert!(
+        matches!(outcome, Some(crate::CheckpointWrite::Written { .. })),
+        "a checkpoint after an unchanged release: {outcome:?}"
+    );
+    assert_eq!(
+        live.store.whole_graph().unwrap().rev(),
+        rev,
+        "an unchanged open and release publish nothing"
+    );
+}
+
+/// host-only-writer P1 (review: the driver never waits for the store
+/// writer while callers wait on it). While another thread's transaction
+/// holds the writer, a save's publication waits for it, and the driver
+/// keeps answering: a read is answered, and a command that needs the writer
+/// (an open) waits alone. Once the writer is free, both complete.
+#[test]
+fn the_driver_answers_while_another_thread_holds_the_store_writer() {
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- b\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let session = live.host.session();
+    let writer = live.store.writer.lock().unwrap();
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.until_disk(&key, "- two\n");
+    // The save's publication is due, and needs the writer.
+    std::thread::sleep(Duration::from_millis(100));
+    let (opened, open_done) = mpsc::channel();
+    let (owed, owed_done) = mpsc::channel();
+    std::thread::scope(|scope| {
+        let host = &live.host;
+        scope.spawn(move || {
+            let b = PageId::from("pages/b.md");
+            let _ = opened.send(host.open(session, 1_000, &b, "b").is_ok());
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        scope.spawn(move || {
+            let _ = owed.send(host.owed(session, None));
+        });
+        let answered = owed_done.recv_timeout(Duration::from_secs(5));
+        let open_waited = open_done.try_recv().is_err();
+        drop(writer);
+        let debt = answered.expect("a read is answered while the writer is held");
+        let debt = debt.expect("the current session");
+        assert!(
+            debt.iter().any(|(owed, _)| *owed == key),
+            "the publication waits for the writer: {debt:?}"
+        );
+        assert!(open_waited, "an open needs the writer");
+        let opened = open_done.recv_timeout(Duration::from_secs(5));
+        assert_eq!(
+            opened,
+            Ok(true),
+            "the open completes once the writer is free"
+        );
+    });
+    live.answer(&key, id);
+    live.until_indexed(&key, "- two\n");
+    live.host.stop();
+}
+
+/// P1 re-review 1: the host admits a window's request ids in increasing
+/// order, so an admission deferred on the store writer (an open) is never
+/// overtaken by a later one (a submit on another page), which would refuse
+/// it although its caller sent it first and never left. The submit is sent
+/// once the driver has deferred the open (observed, not slept for).
+#[test]
+fn an_admission_deferred_on_the_writer_is_not_overtaken() {
+    use std::sync::atomic::Ordering;
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- b\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let session = live.host.session();
+    let (open_id, submit_id) = (live.id(), live.id());
+    let dto = live.dto(&key, "- two\n");
+    let writer = live.store.writer.lock().unwrap();
+    std::thread::scope(|scope| {
+        let host = &live.host;
+        let b = PageId::from("pages/b.md");
+        let opened = scope.spawn(move || host.open(session, open_id, &b, "b").map(|_| ()));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while host.driver.shared.deferred.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline, "the open was never deferred");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let key = key.clone();
+        let submitted = scope.spawn(move || {
+            let kinds = [EditKind::SaveBlock];
+            host.submit(session, submit_id, &key, &dto, page.version, None, &kinds)
+        });
+        // The submit reaches the driver while the open still waits: queued
+        // behind it here, or answered by a driver that lets it pass. The
+        // writer is released only once one of those was observed, so a submit
+        // that is merely slow to arrive cannot pass for an ordered one.
+        let queued = Instant::now() + Duration::from_secs(20);
+        while host.driver.shared.deferred.load(Ordering::SeqCst) < 2 && !submitted.is_finished() {
+            assert!(
+                Instant::now() < queued,
+                "the submit never reached the driver"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        drop(writer);
+        assert_eq!(
+            opened.join().unwrap(),
+            Ok(()),
+            "the earlier open is admitted"
+        );
+        assert_eq!(submitted.join().unwrap(), Ok(()), "the later submit too");
+    });
+    live.answer(&key, submit_id);
+    live.until_indexed(&key, "- two\n");
+    live.host.stop();
+}
+
+/// P1 re-review 2: the kinds sink `PageHost::start` was given runs outside
+/// the store writer, as before the driver took it: a sink that takes the
+/// writer (`Store::page` on a loaded graph) must not deadlock the driver.
+/// The sink asks for the writer for 2 s, so a watcher reconcile holding it
+/// briefly is not mistaken for the driver.
+#[test]
+fn the_kinds_sink_runs_outside_the_store_writer() {
+    let dir = tempfile::tempdir().unwrap();
+    let graph = dir.path().join("graph");
+    fs::create_dir_all(graph.join("pages")).unwrap();
+    fs::write(graph.join("pages/a.md"), "- one\n").unwrap();
+    let app = dir.path().join("app");
+    fs::create_dir_all(&app).unwrap();
+    let store = Arc::new(Store::open(&graph, Default::default()).unwrap().0);
+    store.whole_graph_reconciled().unwrap();
+    let free = Arc::new(Mutex::new(Vec::new()));
+    let (sink_store, seen) = (Arc::downgrade(&store), free.clone());
+    let kinds = move |_: &str, _: &[EditKind]| {
+        let Some(store) = sink_store.upgrade() else {
+            return;
+        };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let taken = loop {
+            if store.writer.try_lock().is_ok() {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+        seen.lock().unwrap().push(taken);
+    };
+    let (sender, mail) = mpsc::channel();
+    let host = PageHost::start(&store, &app, "test-graph", kinds, move |mail| {
+        let _ = sender.send(mail);
+    })
+    .unwrap();
+    let live = Live {
+        root: store.graph.root.clone(),
+        _dir: dir,
+        store,
+        host,
+        mail,
+        kinds: Kinds::default(),
+        id: std::cell::Cell::new(0),
+    };
+    let (key, page) = live.open("pages/a.md");
+    let id = live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    live.until_indexed(&key, "- two\n");
+    assert_eq!(
+        *free.lock().unwrap(),
+        vec![true],
+        "the sink could take the writer"
+    );
+    live.host.stop();
+}
+
+/// CLI PROTOCOL §5: the host read returns a held page's buffer, unsaved
+/// input included, while its file still has the old bytes; a page the host
+/// does not hold reads from its file with no revision; no file reads absent.
+#[cfg(unix)]
+#[test]
+fn the_host_read_returns_the_held_buffer_not_the_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::new(&[("pages/a.md", "- one\n"), ("pages/b.md", "- bee\n")]);
+    let (key, page) = live.open("pages/a.md");
+    let pages = live.root.join("pages");
+    // The save cannot publish: the typed text stays unsaved in the buffer.
+    fs::set_permissions(&pages, fs::Permissions::from_mode(0o555)).unwrap();
+    live.submit(&key, "- two\n", page.version, None).unwrap();
+    live.wait(&key, "save error", |mail| mail.notice.save_error);
+    let read = live.host.read(&PageId::from("pages/a.md")).unwrap();
+    fs::set_permissions(&pages, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(fs::read_to_string(live.root.join(&key)).unwrap(), "- one\n");
+    assert_eq!(read.bytes.as_deref(), Some(&b"- two\n"[..]));
+    let (incarnation, version) = read.revision.expect("a held page has a revision");
+    assert!(
+        incarnation >= 1 && version > page.version,
+        "{:?}",
+        read.revision
+    );
+    let unheld = live.host.read(&PageId::from("pages/b.md")).unwrap();
+    assert_eq!(unheld.bytes.as_deref(), Some(&b"- bee\n"[..]));
+    assert_eq!(
+        unheld.revision, None,
+        "no version is invented for an unheld page"
+    );
+    let absent = live.host.read(&PageId::from("pages/none.md")).unwrap();
+    assert_eq!((absent.bytes, absent.revision), (None, None));
+    live.until_disk(&key, "- two\n");
+    live.host.stop();
 }

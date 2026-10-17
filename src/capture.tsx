@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import { initDebug } from "./debug";
 import { Toasts } from "./components/Toasts";
 // Quick-capture mini window. A separate Tauri webview (capture.html) that the
@@ -20,6 +21,8 @@ import { ensurePageLoaded, pageByName, blockSubtreeMarkdown, deleteBlock, setRaw
 import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
+import { initPinyinMatchingSetting, pinyinMatchingEnabled } from "./launcherRanking";
+import { startUiLanguage } from "./i18n/preference";
 import { reportUiFailure } from "./uiFailure";
 import { latestOwner, readOwned } from "./owned";
 import { installBackendClock } from "./journal";
@@ -470,7 +473,7 @@ function Capture() {
     cancel,
     enterFiles,
     bulletHint,
-    quickSwitch: (query, limit) => backend().captureQuickSwitch(query, limit),
+    quickSwitch: (query, limit) => backend().captureQuickSwitch(query, limit, pinyinMatchingEnabled()),
   };
 
   // Grow/shrink the window whenever the rendered content changes: new/removed
@@ -525,6 +528,7 @@ function Capture() {
         // window). Also refresh the pref/theme/shortcuts that may have changed
         // while we were hidden.
         const unShown = await listen("capture-shown", () => {
+          void initPinyinMatchingSetting();
           loadPref();
           void refreshPolicyThenResettleAndActivate();
           void requestTheme();
@@ -587,7 +591,7 @@ function Capture() {
             class="capture-title"
             type="text"
             value={title()}
-            placeholder="Page Title (optional, if empty → appended to Today)"
+            placeholder={t("capture-page-title-optional-if-empty-appended-to-today")}
             onInput={(e) => setTitle(e.currentTarget.value)}
             onKeyDown={(e) => {
               // The global capture dispatcher declines IME Escape, so the title
@@ -612,9 +616,7 @@ function Capture() {
           </div>
           <Show when={submitBinding() === "false"}>
             <div class="capture-actions">
-              <button type="button" onClick={submit} disabled={captureStatus() === "saving"}>
-                File capture
-              </button>
+              <button type="button" onClick={submit} disabled={captureStatus() === "saving"}>{t("capture-file-capture")}</button>
             </div>
           </Show>
           <Show when={captureMessage()}>
@@ -640,4 +642,6 @@ function Capture() {
 // flips (typically tens of ms, well before you finish typing the first block).
 void initParser().catch(() => console.error("lsdoc-wasm init failed"));
 installBackendClock(() => backend().localClock());
-render(() => <Capture />, document.getElementById("capture-root")!);
+// The UI language is the one wait: a local settings read (bounded) and, for a
+// non-English locale, its catalog chunk, so the first frame is not English (G3).
+void startUiLanguage().finally(() => render(() => <Capture />, document.getElementById("capture-root")!));

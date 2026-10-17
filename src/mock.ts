@@ -1,14 +1,14 @@
 // In-memory mock backend seeded with a fixture graph. Used only when running
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
-import { split_linkable_property } from "./render/wasm/lsdoc_wasm.js";
+import { linkable_property_names } from "./render/wasm/lsdoc_wasm.js";
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
 import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
 import { mockPageHost } from "./mockPageHost";
-import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { previewDtoSubtree } from "./previewProjection";
 import { hlsPageName } from "./pdf";
@@ -91,13 +91,7 @@ function mockReferencedPageNames(pages: PageDto[]): string[] {
       if (!/^(tags|alias|aliases)$/i.test(key)) continue;
       const quoted = value.trim();
       if (quoted.length >= 2 && quoted.startsWith('"') && quoted.endsWith('"')) continue;
-      for (const valuePart of split_linkable_property(value)) {
-        const bare = valuePart.trim().replace(/^#/, "");
-        const name = bare.startsWith("[[") && bare.endsWith("]]")
-          ? bare.slice(2, -2).trim()
-          : bare;
-        add(name);
-      }
+      for (const name of linkable_property_names(value, false)) add(name);
     }
   };
   const visit = (blocks: BlockDto[]) => blocks.forEach((block) => {
@@ -460,6 +454,30 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
       title: "Block embed regression",
       pre_block: null,
       blocks: [b("{{embed ((ui-block-embed-root))}}")],
+    },
+    {
+      // GH #439: a whole-page embed among ordinary siblings and children.
+      name: "Page embed regression",
+      kind: "page",
+      title: "Page embed regression",
+      pre_block: null,
+      blocks: [
+        b("Ordinary parent", [
+          b("{{embed [[Page embed source regression]]}}"),
+          b("Ordinary sibling"),
+        ]),
+        b("{{embed [[Page embed source regression]]}}"),
+      ],
+    },
+    {
+      name: "Page embed source regression",
+      kind: "page",
+      title: "Page embed source regression",
+      pre_block: null,
+      blocks: [
+        b("Source root one", [b("Source child", [b("Source grandchild")])]),
+        b("Source root two"),
+      ],
     },
   );
 }
@@ -865,21 +883,6 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async resolvePage(name: string, kind: "journal" | "page") {
       return mockResolve(name, kind);
     },
-    async graphSourceFiles(includeJournals: boolean) {
-      // Synthetic sources so the diff panel is exercisable against the mock
-      // backend (the real comparison still needs mldoc + lsdoc-wasm at runtime).
-      const files = [
-        { rel: "pages/welcome.md", text: "# Welcome\n- a **bold** note with [[Link]]\n", format: "md" as const },
-        { rel: "pages/tasks.md", text: "- TODO finish #project\n- DONE ship it\n", format: "md" as const },
-      ];
-      if (includeJournals) {
-        files.push({ rel: "journals/2026_07_04.md", text: "- met with [[Alice]] re: $$x^2$$\n", format: "md" as const });
-      }
-      return {
-        files: files.map((f) => ({ ...f, bytes: new TextEncoder().encode(f.text).length })),
-        skipped: [],
-      };
-    },
     graphBindingGeneration: () => 1,
     ...mockPageHost((path) => all.find((p) => mockPagePath(p) === path) ?? null, (name, kind) => mockResolve(name, kind)),
     async guidePages(): Promise<GuidePage[]> {
@@ -1111,6 +1114,12 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async readCustomCss(): Promise<string> {
       return (globalThis as unknown as { __tineMockCustomCss?: string }).__tineMockCustomCss ?? "";
     },
+    async pageModified(): Promise<PageModified> {
+      // Deterministic, distinct times: the first mock page is the newest.
+      const base = Date.UTC(2026, 5, 15, 12, 0, 0) / 1000;
+      return { rev: "0", modified: all.map((p, i) => [mockPagePath(p), base - i * 3600] as [string, number]) };
+    },
+    async pageBacklinkCounts(): Promise<[string, number][]> { return []; },
     async pageIcons(names: string[]): Promise<Record<string, string>> {
       const out: Record<string, string> = {};
       for (const name of names) {
@@ -1178,7 +1187,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       }
       return groups.filter((g) => g.blocks.length > 0);
     },
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, pageMatchScope: import("./editor/queryIr").FriendlyPageMatchScope = "names"): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, pageMatchScope: import("./editor/queryIr").FriendlyPageMatchScope = "names", _views?: { page: import("./editor/queryIr").ViewSettings; block: import("./editor/queryIr").ViewSettings }, _transliteration = false): Promise<QueryExecution> {
       // Browser-preview approximation only (ADR 0016). Production matching,
       // diagnostics, and UTF-16 evidence come from Rust's QueryPlan evaluator.
       const matcher = parseSearchQuery(source, removeAccents);
@@ -1284,14 +1293,14 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         },
       ];
     },
-    async quickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+    async quickSwitch(query: string, limit: number, _editor?: { pageName: string; blockId: string; originalRaw: string }, _transliteration = false): Promise<PageEntry[]> {
       const q = fold(query.trim());
       return all
         .filter((p) => fold(p.name).includes(q))
         .slice(0, limit)
         .map(mockPageEntry);
     },
-    async captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+    async captureQuickSwitch(query: string, limit: number, _transliteration = false): Promise<PageEntry[]> {
       return this.quickSwitch(query, limit);
     },
     async resolveBlock(uuid: string): Promise<RefGroup | null> {
@@ -1375,6 +1384,9 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async openPageFile(): Promise<void> {
       // no OS file manager in the browser mock
     },
+    async openGraphFile(): Promise<void> {
+      // no OS opener in the browser mock
+    },
     async editAssetExternal(): Promise<void> {
       // no external editor in the browser mock
     },
@@ -1432,7 +1444,10 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const c = (globalThis as { confirm?: (m?: string) => boolean }).confirm;
       return typeof c === "function" ? c(message) : true;
     },
-    async pickFolder(_title?: string): Promise<string | null> {
+    async revealExport(_path: string) {},
+    async readCssFile(_global: boolean) { return { text: "", revision: null }; },
+    async saveCssFile(_global: boolean, text: string, _revision: string | null) { return text; },
+    async pickFolder(_title?: string, _defaultPath?: string): Promise<string | null> {
       return null; // no native dialog in the browser mock
     },
     async pickGraphFolder() {
@@ -1470,6 +1485,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         // ignore
       }
     },
+    async copyAssetFileToClipboard(): Promise<boolean> { return false; },
     async copyImageToClipboard(): Promise<void> {
       // no OS clipboard image write in the browser mock
     },
@@ -1536,7 +1552,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       mockWorkspaces = data; return "durable";
     },
     async gpuEnv(): Promise<GpuEnv> {
-      return { software_forced: false, appimage: false, flatpak: false };
+      return { software_forced: false, appimage: false, flatpak: false, packaged: false };
     },
     async takeDataHomeFallbackNotice(): Promise<string | null> {
       return null;
@@ -1568,6 +1584,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setAppString(key: string, value: string): Promise<void> {
       mockAppStrings[key] = value;
     },
+    async setUiLocale(): Promise<void> { /* no native shell in the mock */ },
     async applySpellcheck(): Promise<void> { /* no native webview in the mock */ },
     // A representative set so the picker renders in the browser mock / harness.
     async listSpellcheckDictionaries(): Promise<string[]> { return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"]; },

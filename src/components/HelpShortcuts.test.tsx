@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { commandDefaults } from "../keybindings";
+import { renderEnglish } from "../i18n";
 import { HELP_ITEMS, buildShortcutPaneData, shortcutPaneCommandIds, type ShortcutSettingRow } from "./HelpShortcuts";
 
 function rows(): ShortcutSettingRow[] {
@@ -12,10 +13,8 @@ function rows(): ShortcutSettingRow[] {
 
 describe("shortcuts pane data", () => {
   it("puts the Guide action at the top of the help menu", () => {
-    expect(HELP_ITEMS[0]).toMatchObject({
-      label: "Guide",
-      detail: "Open the in-app how-to guide",
-    });
+    expect(renderEnglish(HELP_ITEMS[0].label)).toBe("Guide");
+    expect(renderEnglish(HELP_ITEMS[0].detail)).toBe("Open the in-app how-to guide");
     expect("run" in HELP_ITEMS[0]).toBe(true);
   });
 

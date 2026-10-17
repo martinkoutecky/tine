@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-#[path = "page_filename.rs"]
-mod page_filename;
+use tine_outline::page_filename;
 
 /// Encode a page title as a reversible Windows-safe file stem using the
 /// graph's configured Logseq format. Existing file paths are never recoded.
@@ -846,8 +845,11 @@ pub struct GraphMeta {
     pub scheduled_future_days: Option<i32>,
     /// Visible journal config parse diagnostics.
     pub journal_config_diagnostics: Vec<String>,
-    /// Canonical graph root for display and OS handoff.
+    /// Canonical graph root for identity, persistence and OS handoff.
     pub root: String,
+    /// Presentable spelling, never used for graph identity or filesystem access.
+    #[serde(default)]
+    pub display_root: String,
     /// "now" (LATER/NOW) or "todo" (TODO/DOING) — display form of the
     /// graph configuration's `Workflow`, not an independent edit setting.
     pub preferred_workflow: String,
@@ -877,6 +879,10 @@ pub struct GraphMeta {
     /// `:mobile {:gestures/disabled-in-block-with-tags [..]}` (OG): tags that
     /// switch the block swipe gestures off inside a block carrying them.
     pub mobile_gestures_disabled_in_block_with_tags: Vec<String>,
+    /// OG `:quick-capture-templates {:text …}`; `None` = the OG default.
+    pub quick_capture_template_text: Option<String>,
+    /// OG `:quick-capture-templates {:media …}`; `None` = the OG default.
+    pub quick_capture_template_media: Option<String>,
     /// Effective journal title format (`:journal/page-title-format`, default
     /// `MMM do, yyyy`) — so the frontend formats "today" to match the backend.
     pub journal_page_title_format: String,
@@ -974,6 +980,7 @@ impl GraphMeta {
         journal_format: &crate::date::JournalFormat,
     ) -> Self {
         Self {
+            display_root: crate::graph_paths::normalize_graph_path(&root),
             root,
             default_journal_queries: config.default_journal_queries.clone(),
             disable_scheduled_and_deadline_query: config.disable_scheduled_and_deadline_query,
@@ -994,6 +1001,8 @@ impl GraphMeta {
             mobile_gestures_disabled_in_block_with_tags: config
                 .mobile_gestures_disabled_in_block_with_tags
                 .clone(),
+            quick_capture_template_text: config.quick_capture_template_text.clone(),
+            quick_capture_template_media: config.quick_capture_template_media.clone(),
             journal_page_title_format: journal_format.title_format().to_string(),
             journal_file_name_format: journal_format.file_format().to_string(),
             preferred_format: config.preferred_format.ext().to_string(),

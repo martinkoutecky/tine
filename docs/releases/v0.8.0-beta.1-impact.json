@@ -1,0 +1,2290 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.0-beta.1",
+  "baseTag": "v0.7.0-beta.3",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Added",
+      "text": "Command line on Linux and macOS: read pages (including open unsaved edits), journals, blocks and linked references, search, run queries, list pages and check the graph's owner, with text or `--json` output. Read commands use the app when it has the graph open; otherwise they start `tine serve`, which hands over when the app opens it. These commands do not edit notes. On Windows the owner endpoint is unavailable: reads and `serve` report `unsupported` and exit 5; the app still opens graphs normally. The Guide's **Command line** page explains usage and scripting output.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No catalog row covers the command-line owner protocol (UI-CLI-LAUNCH-FORWARD-001 covers only `tine open`/`tine capture`); evidence is the Rust CLI, owner-lifecycle and output tests.",
+        "refs": [
+          "src-tauri/src/cli.rs",
+          "src-tauri/src/owner/owner_tests/lifecycle_tests.rs",
+          "src-tauri/src/owner/output_tests/mod.rs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The Command line page describes the read commands, owner handover and the Windows limitation.",
+        "refs": [
+          "crates/tine-core/src/templates/command-line.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Windows MSIX installs show that updates come from the Microsoft Store and disable Tine's self-updater (GH #307).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No catalog row; evidence is the MSIX packaging guard and updater tests.",
+        "refs": [
+          "src/msixPackaging.test.ts",
+          "src/update.test.ts",
+          "src/components/AboutTab.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "platforms-and-mobile.md documents this (added for this release in 8863ac451; pinned in crates/tine-core/src/guide.rs).",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Interface language: Settings → Appearance → **Language** offers English and Simplified Chinese (简体中文), or the system's language. It applies live in every window and the tray menu, the startup screen follows from the next launch, and the choice is remembered per device; notes are never translated. In this first step the command palette, keyboard-shortcut list and notifications' own controls are translated; the rest of the interface follows (GH #107).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No catalog row; evidence is the i18n preference, literal-baseline and command tests.",
+        "refs": [
+          "src/i18n/i18n.test.ts",
+          "src/i18n/literals.test.ts",
+          "src/i18n/preference.lifecycle.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Where things are describes Settings > Appearance > Language, the live per-device choice and the partial translation.",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Settings → Appearance has a **Fine-tuning** section for small visual details, so they do not each become a setting of their own: how embedded blocks look (shaded box, or accent line and dot only), the underline on links to the web or a file (solid, dotted, none) and how strongly links to pages that do not exist yet stand out. Each starts at Tine's default look and has a Reset; choices are saved on this device, `logseq/custom.css` still outranks them, and **Disable custom CSS** switches them off with it. Later visual preferences are added as rows of one table (GH #610, UI-GH610-STYLE-KNOBS).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH610-STYLE-KNOBS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-GH610-STYLE-KNOBS is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Customize Tine's look describes the Fine-tuning section, its precedence and Disable custom CSS.",
+        "refs": [
+          "crates/tine-core/src/templates/customize-look.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Colored text from Logseq notes shows its color: `[:span {:style \"color: red\"} \"x\"]` (and `background-color`, `text-decoration-color`) render as written. Only those three color properties are read from `style`; layout, positioning and anything that fetches stay stripped. `==x==` and `^^x^^` highlight as before. The static-HTML export still drops `style` (GH #243, UI-GH243-COLORED-HICCUP-SPANS).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH243-COLORED-HICCUP-SPANS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-GH243-COLORED-HICCUP-SPANS is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The Feature showcase shows colored Hiccup spans and names the three color properties that are read.",
+        "refs": [
+          "crates/tine-core/src/templates/showcase.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Common Logseq advanced queries translate automatically: tagged-page name lookups with string inputs, numeric and relative scheduled/deadline windows, direct page references, and scheduled-or-deadline alternatives. Strict date bounds and page results are preserved; unsupported queries refuse whole and translatable rows beneath a result transform get a TQL suggestion. Graph-supplied code never runs (GH #628).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-GH628-ADVQ"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-GH628-ADVQ is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The Query model page lists the advanced-query shapes that run and what refuses whole.",
+        "refs": [
+          "crates/tine-core/src/templates/query-model.md",
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Logseq journal configuration: `:default-queries {:journals [...]}` renders beneath today's blocks with independent query errors; `:feature/disable-scheduled-and-deadline-query?` hides the agenda and `:scheduled/future-days` controls its horizon. Config edits apply live (GH #223, GH #629).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH223",
+        "UI-OG-GH629"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH223, UI-OG-GH629 are covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Journals, tasks and scheduling documents :default-queries, the agenda switch and horizon.",
+        "refs": [
+          "crates/tine-core/src/templates/journals-tasks-scheduling.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Deleting referenced blocks shows how many references are now broken, with **Undo** to restore the blocks and their ids (GH #635).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH635"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH635 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page describes the broken-reference notice with Undo.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Merging blocks with Backspace/Delete shows how many references now point to the surviving block, or broke when both blocks had ids, with **Undo** (GH #652).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH652"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH652 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page describes the merge notice with Undo.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Tick a task's checkbox inside a `((block reference))`, a reference row or a hover preview to complete or reopen the referenced task on its own page, with the same undo and save as its own checkbox. A task changed elsewhere since the reference was drawn is left alone and the reference catches up (GH #518).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH518-REF-CHECKBOX"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH518-REF-CHECKBOX is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page says to tick the checkbox inside a reference to complete or reopen the source task.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Linked References: click a page's properties row (a page that links here from `tags::` or another page property) to fix its property names and values in place, with the same editor, undo and save as on that page; an Org page opens its properties panel (GH #486).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH486-REF-PROPS-EDIT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH486-REF-PROPS-EDIT is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page describes the properties row in Linked References and fixing a property there.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**Move block up/down** inside an embed, Linked References or a query result moves the source block as before; when the panel cannot show where it went, a short notice says which page it moved in, with **Show** to open it (GH #641).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH641-MOVE-NOTICE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH641-MOVE-NOTICE is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page describes the move notice with Show for embeds, Linked References and query results.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Linked and Unlinked References: click a breadcrumb ancestor to show its subtree inline while keeping your place; Shift+click opens it in the right sidebar. Inline context resets when the reference group closes (GH #526).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH526"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH526 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Find and revisit describes breadcrumb ancestor expansion and Shift+click.",
+        "refs": [
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Android: Tine appears in the share sheet. Shared text, links and images become a new block at the bottom of today's journal, the same place quick capture files to, with the same \"Captured to today's journal\" notice. If an item can't be added yet, for example because no graph is open or saving fails, Tine keeps it and retries the next time it opens. A retry never loses the item; it can add it twice only if Tine is closed or crashes right after the journal was saved, or when an old share is reopened from Android's recent apps after Tine was closed. A share Tine can't save whole (more than 32 images, a file over 64 MiB, a non-image file, a file from Tine itself) is refused with a message instead of being saved in part (GH #608, REG-GH608-SHARE-INBOX-EXACTLY-ONCE).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH608-SHARE-INBOX-EXACTLY-ONCE",
+        "REG-GH608-ANDROID-SHARE-TARGET"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-GH608-SHARE-INBOX-EXACTLY-ONCE, REG-GH608-ANDROID-SHARE-TARGET are covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Platforms and mobile describes the Android share sheet, retry and refusal behavior.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Android: long-press the launcher icon for **Today**, **Quick capture** and **Search**. A **Quick capture** Quick Settings tile (with the Tine mark) opens today's journal with an empty block ready for typing (REG-GH608-ANDROID-SHARE-TARGET). Search and quick capture open with the keyboard already up (UI-ANDROID-ROUTE-KEYBOARD).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH608-ANDROID-SHARE-TARGET",
+        "UI-ANDROID-ROUTE-KEYBOARD"
+      ],
+      "regressionEvidence": {
+        "status": "needs-revalidation",
+        "reason": "REG-GH608-ANDROID-SHARE-TARGET is covered, but UI-ANDROID-ROUTE-KEYBOARD is still `fixing`: the keyboard-up behavior is unverified on a device until Martin's retest.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Platforms and mobile describes the launcher shortcuts and the Quick capture tile.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "iOS: a **Tine** share extension saves text, web pages, links and up to five images (\"Saved to Tine\"), and they land at the bottom of today's journal the next time you open Tine. Pages of the open graph appear in Spotlight search; hidden pages never do. The Shortcuts app and Siri offer **Add to Tine journal**, **Search Tine** and **Open page**, and the Home Screen icon has **Today's journal**, **Quick capture** and **Search** quick actions (REG-IOS-NATIVE-INTEGRATIONS).",
+      "userVisible": true,
+      "regressions": [
+        "REG-IOS-NATIVE-INTEGRATIONS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-IOS-NATIVE-INTEGRATIONS is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Platforms and mobile describes the share extension, Spotlight, Shortcuts/Siri and the Home Screen actions.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Shared items are shaped like Logseq's mobile share on each platform, using Logseq's `:quick-capture-templates` from `config.edn`. On Android links become titled links, video links become `{{video}}` embeds and posts on X become `{{twitter}}` embeds; on iOS the shared text and link are kept as they are (REG-GH608-SHARE-SHAPE-OG).",
+      "userVisible": true,
+      "regressions": [
+        "REG-GH608-SHARE-SHAPE-OG"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-GH608-SHARE-SHAPE-OG is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Platforms and mobile has a Shaping a shared item section covering :quick-capture-templates.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "`tine://today`, `tine://capture`, `tine://search?q=…` and `tine://page/<name>` open those places in the current graph. They only navigate and never write (REG-NATIVE-APP-ROUTES).",
+      "userVisible": true,
+      "regressions": [
+        "REG-NATIVE-APP-ROUTES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-NATIVE-APP-ROUTES is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Platforms and mobile lists the four tine:// routes and that they only navigate.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Keyboard block commands, assignable in Settings > Keyboard shortcuts and listed in the command palette, with no default key (Logseq binds none): **Copy block refs of the selected blocks** (GH #576), **Paste as link** (GH #448), **Duplicate block below (with children)** (GH #379), **Insert child block** (GH #634), **Collapse children (one level)** and **Expand children (one level)** (GH #525), and **Search for the selected text** (GH #633).",
+      "userVisible": true,
+      "regressions": [
+        "UI-KEY-COPY-REFS-SELECTION",
+        "UI-KEY-PASTE-AS-LINK",
+        "UI-KEY-DUPLICATE-BLOCK",
+        "UI-KEY-INSERT-CHILD-BLOCK",
+        "UI-KEY-COLLAPSE-ONE-LEVEL",
+        "UI-KEY-SEARCH-SELECTION"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-KEY-COPY-REFS-SELECTION, UI-KEY-PASTE-AS-LINK, UI-KEY-DUPLICATE-BLOCK, UI-KEY-INSERT-CHILD-BLOCK, UI-KEY-COLLAPSE-ONE-LEVEL, UI-KEY-SEARCH-SELECTION are covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Tips and shortcuts describes each new unbound command.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "The Ctrl/Cmd+Shift+V \"paste as plain text\" key is now listed in the shortcut reference and the Guide (GH #513).",
+      "userVisible": true,
+      "regressions": [
+        "UI-KEY-PASTE-PLAIN-LISTED"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-KEY-PASTE-PLAIN-LISTED is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Tips and shortcuts lists Ctrl/Cmd+Shift+V as paste as plain text.",
+        "refs": [
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Right sidebar: each item has a ⋯ menu with **Close**, **Close others**, **Close all**, **Collapse**/**Expand**, **Collapse others**, **Collapse all**, **Expand all**, and **Open as page** for a page item, as in Logseq (GH #462).",
+      "userVisible": true,
+      "regressions": [
+        "UI-RIGHT-SIDEBAR-ITEM-MENU"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-RIGHT-SIDEBAR-ITEM-MENU is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "keep-context-visible.md documents this (added for this release in 8863ac451; pinned in crates/tine-core/src/guide.rs).",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Settings → **Graph** shows the open graph's folder, with **Show in folder** on desktop to open it in Finder, File Explorer or your file manager. The graph menu's right-click **Show in folder** does the same for any remembered graph (GH #447).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GRAPH-FOLDER-REVEAL-447"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-GRAPH-FOLDER-REVEAL-447 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Bring an existing graph describes Settings > Graph > Show in folder; Where things are describes the graph menu's Show in folder.",
+        "refs": [
+          "crates/tine-core/src/templates/bring-existing-graph.md",
+          "crates/tine-core/src/templates/where-things-are.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "A link to a file by its path in the graph, such as `[report](files/report.pdf)`, `[report](../files/report.pdf)` or Org `[[file:../files/a.txt][a]]`, opens that file on desktop, read from the graph folder as Logseq does. A link whose path points outside the graph folder, including an absolute path, is shown struck through and is never opened (GH #457).",
+      "userVisible": true,
+      "regressions": [
+        "UI-RELATIVE-FILE-LINK-457"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-RELATIVE-FILE-LINK-457 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page describes in-graph file paths and the struck-through outside-graph rule.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "Find in page can replace: the arrow at the left of the find bar opens **Replace with**, with **Replace** (the highlighted match) and **Replace all** (every match on the page you opened Find in, as one Undo step). It edits the text you see, as typing would, so link addresses and hidden properties are never changed (GH #208). Find in page is also in each page's **⋯** menu, so phones can open it (GH #338).",
+      "userVisible": true,
+      "regressions": [
+        "UI-INPAGE-FIND-REPLACE-208",
+        "UI-INPAGE-FIND-MOBILE-ENTRY-338"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-INPAGE-FIND-REPLACE-208, UI-INPAGE-FIND-MOBILE-ENTRY-338 are covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page describes Replace/Replace all and Find in page from the page's menu; Tips mentions the replace arrow.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/tips.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Added",
+      "text": "**All pages** view: the sidebar's All pages section now ends in **Open the full list…**, which opens every page of the graph in the main pane as a scrolling table (a graph of tens of thousands of pages stays quick: only the visible rows are drawn). It opens with the most recently changed pages first and shows each page file's **Updated** time (one read when the view opens; nothing is stored). Sort by name, by updated time, or journals by day; filter by name; tick **Show journals** to include daily pages. Rows open with the usual click, Shift-click, Ctrl/Cmd- or middle-click and Alt-click gestures. Created and backlink-count columns, multi-select and delete are not part of this view yet (GH #335).",
+      "userVisible": true,
+      "regressions": [
+        "UI-ALL-PAGES-FULL-VIEW"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-ALL-PAGES-FULL-VIEW is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Where things are describes Open the full list and the All pages table.",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "YouTube timestamps seek the matching video across panes and the right sidebar, or the last played video when no preceding embed identifies one; with no playback history they keep Logseq's preceding-player fallback.",
+      "userVisible": true,
+      "regressions": [
+        "UI-MEDIA-YT-TIMESTAMP-SEEK-001"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-MEDIA-YT-TIMESTAMP-SEEK-001 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No Guide page documents YouTube timestamp macros or their seek target, so there is no text to change; the behavior now follows Logseq more closely.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Links to the web or a file are underlined (as in Logseq) while links to pages are not, so the two kinds read differently at a glance. The line is the new `--tine-external-link-underline` token (GH #430, UI-GH430-EXTERNAL-LINK-UNDERLINE).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH430-EXTERNAL-LINK-UNDERLINE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-GH430-EXTERNAL-LINK-UNDERLINE is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page and Customize Tine's look describe the link underline and the --tine-external-link-underline token.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/customize-look.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Links to pages that do not exist yet are easier to read: a dimmed link tint instead of pale grey, still dotted, now at least 4.5:1 contrast on the built-in light and dark palettes. Restyle it with the new `--tine-missing-page-color` token (GH #432, UI-GH432-MISSING-PAGE-LINK-READABLE).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH432-MISSING-PAGE-LINK-READABLE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-GH432-MISSING-PAGE-LINK-READABLE is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page and Customize Tine's look describe the dimmed missing-page link and the --tine-missing-page-color token.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/customize-look.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Arrows and dashes (`->`, `<-`, `=>`, `--`, `---`) now show as you typed them, as in Logseq. **Typographic replacements** in Settings is off by default; a device that never chose keeps the typed characters, and one that had relied on the old default (nothing was stored) needs to pick **On (while reading)** again (GH #583, UI-GH583-ARROWS-RENDER-AS-TYPED).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH583-ARROWS-RENDER-AS-TYPED"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-GH583-ARROWS-RENDER-AS-TYPED is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "customize-look.md documents this (added for this release in 8863ac451; pinned in crates/tine-core/src/guide.rs).",
+        "refs": [
+          "crates/tine-core/src/templates/customize-look.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Saving moved into one background page host per graph: every edit is saved as you type, from any window, and keeps saving after the page closes. If a file changes on disk while you have unsaved text on that page, the page shows a comparison where you keep your edits or take the disk version, block by block. Unsaved text survives a crash: the next start puts it back on its page, saves it, and names each recovered page; it is never written over a file that changed meanwhile. Closing the last window while a page still cannot be saved reopens the graph and names those pages instead of quitting. Switching graphs waits until a running rename finishes.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No catalog row names the page host as such (REG-OG-DRAFTRISK-* cover its draft handling); evidence is the host client/planner tests, the save-wiring tests and the real-app host-saves journey.",
+        "refs": [
+          "src/document/host/client.test.ts",
+          "src/document/host/planner.test.ts",
+          "src/document/host/wiring.saveError.test.ts",
+          "scripts/e2e-host-saves.mjs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Files, external edits and backups and Troubleshooting describe crash-copy recovery, the comparison, last-window behavior and switching graphs.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md",
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "A conflict over a page whose file was deleted on disk offers **Use disk version** (accept the deletion) and **Keep mine** (recreate the file) directly in the conflict bar (GH #541).",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No catalog row cites GH #541; evidence is the ConflictBar component test.",
+        "refs": [
+          "src/components/ConflictBar.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Troubleshooting and recovery describes the deleted-on-disk banner with Use disk version and Keep mine.",
+        "refs": [
+          "crates/tine-core/src/templates/troubleshooting-recovery.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "**Create a new graph** asks for its name, suggesting `notes`, then `notes-2`, and so on when taken. The graph is always created in a named child folder; invalid names and nonempty existing folders show an inline refusal so you can choose another name (GH #621).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH621-NAME"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH621-NAME is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Bring an existing graph describes the Graph name prompt, the notes/notes-2 suggestion and refusals.",
+        "refs": [
+          "crates/tine-core/src/templates/bring-existing-graph.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Security: updated HTML sanitizers and desktop updater TLS dependencies, plus compatible dependency fixes from the review in discussion #564.",
+      "userVisible": false,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Dependency-only change with no catalog row; evidence is the updated lockfiles and the release gates.",
+        "refs": [
+          "Cargo.lock",
+          "package-lock.json"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Dependency updates; no workflow or behavior changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Queries: a bare `(task)` or `(priority)` in a `{{query}}` now adds no condition, as in Logseq, instead of meaning TODO/DOING/NOW/LATER or A/B/C; `(task)` alone, like an empty `{{query}}`, shows nothing. A note on such a query explains this and offers **Open tasks** (every unfinished marker, including WAITING, WAIT, STARTED and IN-PROGRESS), **Any task** or **A, B or C**, which rewrite the query with explicit markers. Queries with explicit markers are unchanged (GH #422).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH422-BARE-QUERY-HINT",
+        "REG-OG-GH422-OPEN-TASK"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH422-BARE-QUERY-HINT, REG-OG-GH422-OPEN-TASK are covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Queries and Query model describe bare (task)/(priority) adding no condition and the rewrite offers.",
+        "refs": [
+          "crates/tine-core/src/templates/queries.md",
+          "crates/tine-core/src/templates/query-model.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Tabs are wider by default: they stretch to fill the strip up to 260px and share it evenly down to 144px before the strip scrolls (GH #529).",
+      "userVisible": true,
+      "regressions": [
+        "UI-TAB-WIDTH-DEFAULT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-TAB-WIDTH-DEFAULT is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Keep context visible says tabs stretch to fill the strip and share it evenly.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "A zoomed tab whose block is not loaded yet (a background tab after a restart) reads \"Page › …\" instead of repeating the page's own tab name (GH #528).",
+      "userVisible": true,
+      "regressions": [
+        "UI-TAB-SAME-PAGE-LABELS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-TAB-SAME-PAGE-LABELS is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Keep context visible describes how a tab zoomed into a block is named.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "Dropping a dragged tab anywhere on a pane's tab bar, not just beside a tab, puts it last in that pane (GH #527).",
+      "userVisible": true,
+      "regressions": [
+        "UI-TAB-DROP-ANYWHERE-IN-BAR"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-TAB-DROP-ANYWHERE-IN-BAR is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Keep context visible says dropping a tab anywhere on a pane's tab bar puts it last.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Changed",
+      "text": "The right sidebar can be dragged up to 70% of the window (it was fixed at 800px), keeping at least 360px for the main pane; keyboard resizing follows the same limit (GH #521).",
+      "userVisible": true,
+      "regressions": [
+        "UI-RIGHT-SIDEBAR-MAX-WIDTH"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-RIGHT-SIDEBAR-MAX-WIDTH is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Keep context visible says the sidebar resizes up to 70% of the window.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Android: the native library is aligned for 16 KB memory pages, which Google Play requires and newer Android devices can use; release builds also produce the app bundle Google Play takes.",
+      "userVisible": true,
+      "regressions": [
+        "REG-ANDROID-PLAY-BUNDLE-16KB"
+      ],
+      "regressionEvidence": {
+        "status": "needs-revalidation",
+        "reason": "Proven by release.yml's alignment check and AAB staging on the next release build; no device check.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The Guide names Google Play as an update channel.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Org headline tags now appear in page-reference queries and Linked References (Kalem parity).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-KALEM-ORG-HEADLINE-REFS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-KALEM-ORG-HEADLINE-REFS is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Parity bug fix: Org headline tags now match Logseq in queries and references; no documented workflow changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Advanced `page-property` queries return the bound pages; queries for blocks on those pages keep returning blocks (Kalem parity).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-KALEM-K4"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-KALEM-K4 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Parity bug fix for advanced page-property queries; no documented workflow changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Backlinks and queries now include references through namespace children, matching Logseq.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No catalog row for the Kalem-K1 namespace-children change (REG-OG-KALEM-* rows cover other Kalem items); evidence is the Kalem parity test module.",
+        "refs": [
+          "crates/tine-store/src/kalem_parity_tests.rs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Parity bug fix: references through namespace children now match Logseq; no documented workflow changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Template insertion and new-journal templates preserve each block's saved collapsed state (GH #670).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH670"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "UI-OG-GH670 is still `fixing` in the catalog; component and journal tests fail before and pass after, native coverage is recorded only in the lane receipt. Row marked covered on og (4a6a9c8c4).",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: templates keep each block's saved collapsed state.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Following a PDF backlink navigates once and leaves scrolling free; following the same target again still navigates to it (GH #672).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH672-PDF-NAVIGATE-ONCE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "UI-OG-GH672-PDF-NAVIGATE-ONCE is still `fixing` in the catalog; component probes fail before and pass after. Row marked covered on og (4a6a9c8c4).",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: a PDF backlink navigates once.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Representable Windows graph paths display without verbatim prefixes; stored canonical paths retain existing graph identity (REG-WIN-GRAPH-PATH).",
+      "userVisible": true,
+      "regressions": [
+        "REG-WIN-GRAPH-PATH"
+      ],
+      "regressionEvidence": {
+        "status": "needs-revalidation",
+        "reason": "REG-WIN-GRAPH-PATH is still `fixing`; probes fail before and pass after, but Windows runtime behavior is unverified.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Windows display-only fix; the graph path is shown without the verbatim prefix.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Cold launches from a Tine link restore the last graph before handling the link (UI-WIN-LINK-COLD-START).",
+      "userVisible": true,
+      "regressions": [
+        "UI-WIN-LINK-COLD-START"
+      ],
+      "regressionEvidence": {
+        "status": "needs-revalidation",
+        "reason": "UI-WIN-LINK-COLD-START is still `fixing`; the component probe fails before and passes after, native link delivery is unverified.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: a cold launch from a Tine link restores the last graph first.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "New graphs refuse Windows access to WSL1 backing rootfs folders; existing graphs warn and remain openable, with advice to use `\\\\wsl.localhost\\<distro>\\…` (UI-WIN-WSL-ROOTFS).",
+      "userVisible": true,
+      "regressions": [
+        "UI-WIN-WSL-ROOTFS"
+      ],
+      "regressionEvidence": {
+        "status": "needs-revalidation",
+        "reason": "UI-WIN-WSL-ROOTFS is still `fixing`; predicate and UI probes pass, an actual Windows refusal is unverified.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Bring an existing graph describes the WSL rootfs refusal and the wsl.localhost route.",
+        "refs": [
+          "crates/tine-core/src/templates/bring-existing-graph.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Opening another graph replaces the previous graph's undismissed Guide announcement (UI-WIN-GUIDE-TOAST-ONCE).",
+      "userVisible": true,
+      "regressions": [
+        "UI-WIN-GUIDE-TOAST-ONCE"
+      ],
+      "regressionEvidence": {
+        "status": "needs-revalidation",
+        "reason": "UI-WIN-GUIDE-TOAST-ONCE is still `fixing`; the exact Surface first-open sequence is unverified.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: only the current graph's Guide announcement stays visible.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Links to other apps' URL schemes, such as `zotero://`, `obsidian://` or `shortcuts://` on iOS, open in that app after a prompt that shows the whole link, instead of failing with \"unsupported url scheme\". Web, mail and `file:` links open as before, and `javascript:`/`data:` links never open (GH #503).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CUSTOM-SCHEME-LINK-503"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-CUSTOM-SCHEME-LINK-503 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page describes other-app URL scheme links, the confirm prompt and the never-opened schemes.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A page's `icon::` now also shows in the left sidebar's Favorites (in place of the star), Recent and All pages lists and on the right sidebar's page items, as in Logseq; before it showed only on the page title and in links to the page (GH #346, UI-GH346-PAGE-ICON-SURFACES). Image icons are not part of this change.",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH346-PAGE-ICON-SURFACES"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-GH346-PAGE-ICON-SURFACES is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page lists the sidebar surfaces where a page icon shows.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linked References filter chips are listed alphabetically instead of by count (GH #433).",
+      "userVisible": true,
+      "regressions": [
+        "UI-REF-CHIPS-ALPHABETICAL-433"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-REF-CHIPS-ALPHABETICAL-433 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page says filter chips are listed alphabetically.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Page embeds show the embedded page's name above its blocks, and the blocks line up with the surrounding outline on desktop and phone (GH #439).",
+      "userVisible": true,
+      "regressions": [
+        "UI-PAGE-EMBED-HEADER-INDENT-439"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-PAGE-EMBED-HEADER-INDENT-439 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page describes the page embed header row and block indentation.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Unlinked References highlight one mention at a time. The numbered circles move the highlight within the block without leaving the page, the highlighted mention opens the page at that spot, and the bullet opens the block (GH #556).",
+      "userVisible": true,
+      "regressions": [
+        "UI-UNLINKED-REF-HIGHLIGHT-556"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-UNLINKED-REF-HIGHLIGHT-556 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The references page describes one highlighted mention at a time in Unlinked References.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A page that changed on disk while you were editing one of its blocks (a Syncthing delivery, another editor) now keeps the new text and your editor stays open on that block. Before, on Windows and Android an open code block, or a block whose SCHEDULED/DEADLINE line was not yet in its usual place, could write its old text back over the change and save it, and the editor closed (UI-CARRY-RELOAD-STALE-BLUR).",
+      "userVisible": true,
+      "regressions": [
+        "UI-CARRY-RELOAD-STALE-BLUR"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-CARRY-RELOAD-STALE-BLUR is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Files, external edits and backups describes pages updating while a block is being edited.",
+        "refs": [
+          "crates/tine-core/src/templates/files-external-edits-backups.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Graph settings: when `logseq/config.edn` disappears while a graph is open (iCloud offloading it, a sync tool replacing it), Tine keeps the settings it read, as Logseq does, instead of switching to the defaults. Before, namespace pages could show as `xxx___yyy` and new ones were written under Logseq's old file names. A graph whose `config.edn` is still in iCloud and not downloaded opens read-only rather than with guessed settings (REG-OG-CONFIG-VANISH-KEEPS-FORMAT).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-CONFIG-VANISH-KEEPS-FORMAT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-CONFIG-VANISH-KEEPS-FORMAT is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix restoring Logseq behavior when config.edn disappears; the Guide's live config.edn text is unchanged. The read-only open for an undownloaded iCloud config is an edge case with no Guide text today.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Journals: Logseq's default NOW query from `config.edn` runs, ordered by priority with unprioritised tasks last, instead of showing a \"query not run\" notice; its `:result-transform` is the one Tine recognises. Default journal queries with no results now show nothing, as in Logseq (REG-OG-DEFAULT-NOW-QUERY).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-DEFAULT-NOW-QUERY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-DEFAULT-NOW-QUERY is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: Logseq's default NOW query runs as in Logseq instead of showing a notice.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Block text stays visible immediately after applying a deadline or scheduled date; open editors resize after programmatic content changes (GH #668).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH668"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH668 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix; no workflow change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Query results keep an edited block in place until editing finishes, so replacing TODO with CANCELED can complete and save normally (GH #659).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH659-660"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH659-660 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: editing a query result completes normally.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linked and Unlinked References, block reference panels, embeds and routed query results refresh membership after settled edits through one shared lifecycle (GH #660).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH659-660"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH659-660 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: references and query results refresh through one lifecycle.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linked and Unlinked References, their page groups, and query headers use the same collapse triangle size and alignment (GH #658).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH658"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH658 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Visual consistency fix; no workflow change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Calendar keyboard focus uses a visible accent-colored outline in light and dark themes, including Soft (GH #596).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH596-FOCUS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH596-FOCUS is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Accessibility styling fix; no workflow change.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Page and tag completion closes when you click or move the caret out of the link you were typing. Before, the popup stayed open, Arrow keys went to it, and Enter rewrote the earlier link (UI-OG-AUTOCOMPLETE-CLOSE-OUTSIDE).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-AUTOCOMPLETE-CLOSE-OUTSIDE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-AUTOCOMPLETE-CLOSE-OUTSIDE is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: completion closes when the caret leaves the link.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Internal: asset reads require an explicit byte limit at the IPC and backend boundaries, preventing an omitted limit from buffering an entire file (L-1).",
+      "userVisible": false,
+      "regressions": [
+        "REG-OG-L1-ASSET-READ-LIMIT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-L1-ASSET-READ-LIMIT is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Internal boundary hardening; no user-facing workflow.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Children nested under a page-properties block stay reachable for deletion or moving into the outline; repaired pages save normally, and Tab no longer nests the first body block under a transient page header (GH #638).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH638"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH638 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: children under a page-properties block stay reachable.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "New graph messages describe whether the graph opened, was already open, or was created but could not be opened; the last case names the folder and offers Open graph to try again (GH #621).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH621-MESSAGE"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH621-MESSAGE is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Message wording fix; the creation workflow itself is documented under the Create a new graph item.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Android: choosing a cloud provider folder now explains that Tine needs a folder on the device's own storage and suggests syncing to a local folder, then opening it (GH #630).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH630"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH630 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Platforms and mobile already says cloud document providers cannot be opened directly and to sync to a local folder.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A block opened in the right sidebar now shows its source page name in the header (GH #640).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH640"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH640 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: the sidebar block header names its source page.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Outline editing (GH #632): Tab and Shift+Tab indent and outdent blocks starting with a Markdown list marker when the caret is on the first body line. List items on later lines keep their in-block indentation.",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH632"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH632 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: Tab/Shift+Tab on a first-line list marker.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Embeds (GH #642): Enter at the end of a collapsed embed creates a sibling after its host, including at the end of a page, without changing the embedded source. Undo removes the new sibling.",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH642"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-OG-GH642 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: Enter after a collapsed embed.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "iOS (discussion #421): the folder-choice message now names both places a graph can live, On My iPhone → TineOutline and iCloud Drive → TineOutline. It said \"inside On My iPhone\", which read as if another app's folder there (such as Logseq's) would work.",
+      "userVisible": true,
+      "regressions": [],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "No catalog row cites discussion #421; evidence is the graph-open message tests.",
+        "refs": [
+          "src/graph.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "Platforms and mobile already names On My iPhone > TineOutline and iCloud Drive > TineOutline as the places a graph can live.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Linkable page-property values, including Org aliases and graph-configured comma-separated properties, appear in page-reference queries and Linked References (Kalem parity).",
+      "userVisible": true,
+      "regressions": [
+        "REG-OG-KALEM-K2"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows REG-OG-KALEM-K2 is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Parity bug fix: linkable page-property values appear in page-reference queries and Linked References as in Logseq; no documented workflow changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Page and tag autocomplete preserve authored alias casing and offer matching aliases alongside their page (GH #675, GH #676).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH675-676-ALIAS-COMPLETION"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog rows UI-GH675-676-ALIAS-COMPLETION is covered.",
+        "refs": []
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Bug fix: alias casing and sibling aliases in completion.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

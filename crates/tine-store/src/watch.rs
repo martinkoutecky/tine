@@ -18,6 +18,8 @@ mod rebuild;
 mod reconcile;
 mod restore;
 mod runtime;
+#[cfg(feature = "test-faults")]
+mod test_drain;
 use runtime::run;
 pub(crate) use runtime::RACY_FOLLOW_UP;
 mod stamp;
@@ -209,7 +211,7 @@ fn collect_dir(
 }
 
 fn collect_with_errors(
-    dirs: &[PathBuf; 1],
+    root: &Path,
     config: &tine_core::Config,
 ) -> (
     HashMap<PathBuf, Stamp>,
@@ -219,25 +221,16 @@ fn collect_with_errors(
     let mut files = HashMap::new();
     let mut unreadable = HashMap::new();
     let mut times = CollectTimes::default();
-    for dir in dirs {
-        collect_dir(
-            &dirs[0],
-            dir,
-            config,
-            &mut files,
-            &mut unreadable,
-            &mut times,
-        );
-    }
+    collect_dir(root, root, config, &mut files, &mut unreadable, &mut times);
     (files, unreadable, times)
 }
 
-fn collect(dirs: &[PathBuf; 1], config: &tine_core::Config) -> HashMap<PathBuf, Stamp> {
-    collect_with_errors(dirs, config).0
+fn collect(root: &Path, config: &tine_core::Config) -> HashMap<PathBuf, Stamp> {
+    collect_with_errors(root, config).0
 }
 
-fn collect_with_revs(dirs: &[PathBuf; 1], config: &tine_core::Config) -> HashMap<PathBuf, Stamp> {
-    let mut files = collect(dirs, config);
+fn collect_with_revs(root: &Path, config: &tine_core::Config) -> HashMap<PathBuf, Stamp> {
+    let mut files = collect(root, config);
     for (path, value) in &mut files {
         value.rev = FileRev::from_file(path).ok();
     }
@@ -335,6 +328,9 @@ struct Pending {
     custom_css: bool,
     /// Asset-lane events (metadata-only external asset observation).
     assets: AssetPending,
+    /// Test drains' sentinels arrived: the latest request they name (N3).
+    #[cfg(feature = "test-faults")]
+    barrier: Option<u64>,
 }
 
 /// Whether `path` is the graph's `logseq/<name>` (`config.edn` or `custom.css`),
@@ -360,18 +356,18 @@ impl Pending {
     fn add_event(
         &mut self,
         event: notify::Result<notify::Event>,
-        dirs: &[PathBuf; 1],
+        root: &Path,
         config: &tine_core::Config,
         assets: &AssetScope,
     ) -> bool {
-        if matches!(&event, Ok(event) if event_is_tool_noise(event, &dirs[0])) {
+        if matches!(&event, Ok(event) if event_is_tool_noise(event, root)) {
             return false;
         }
         if self.assets.note(&event, assets) {
             self.first_event_at.get_or_insert_with(Instant::now);
             return true;
         }
-        self.add(event, dirs, config)
+        self.add(event, root, config)
     }
 
     /// Admit one notification; false when it can never change graph text
@@ -379,10 +375,10 @@ impl Pending {
     fn add(
         &mut self,
         event: notify::Result<notify::Event>,
-        dirs: &[PathBuf; 1],
+        root: &Path,
         config: &tine_core::Config,
     ) -> bool {
-        if matches!(&event, Ok(event) if event_is_tool_noise(event, &dirs[0])) {
+        if matches!(&event, Ok(event) if event_is_tool_noise(event, root)) {
             return false;
         }
         self.first_event_at.get_or_insert_with(Instant::now);
@@ -391,17 +387,14 @@ impl Pending {
             return true;
         };
         if event.need_rescan() {
-            self.full |= event.paths.is_empty()
-                || event
-                    .paths
-                    .iter()
-                    .any(|path| dirs.iter().any(|dir| path.starts_with(dir)));
+            self.full |=
+                event.paths.is_empty() || event.paths.iter().any(|path| path.starts_with(root));
             return true;
         }
         // config.edn is not graph text, so the page filters below would drop
         // it (master contract §2); it has its own flag and costs no scan.
-        let is_config = |path: &PathBuf| is_logseq_file_event_path(&dirs[0], path, "config.edn");
-        let is_css = |path: &PathBuf| is_logseq_file_event_path(&dirs[0], path, "custom.css");
+        let is_config = |path: &PathBuf| is_logseq_file_event_path(root, path, "config.edn");
+        let is_css = |path: &PathBuf| is_logseq_file_event_path(root, path, "custom.css");
         self.custom_css |= event.paths.iter().any(&is_css);
         if event.paths.iter().any(&is_config) {
             self.config = true;
@@ -418,14 +411,9 @@ impl Pending {
             self.paths.extend(
                 paths
                     .into_iter()
-                    .filter(|path| crate::model::graph_text_watch_relevant(&dirs[0], path, config)),
+                    .filter(|path| crate::model::graph_text_watch_relevant(root, path, config)),
             );
-        } else if event.paths.is_empty()
-            || event
-                .paths
-                .iter()
-                .any(|path| dirs.iter().any(|dir| path.starts_with(dir)))
-        {
+        } else if event.paths.is_empty() || event.paths.iter().any(|path| path.starts_with(root)) {
             self.full = true;
         }
         true
@@ -448,7 +436,6 @@ pub(crate) struct Core {
     changes: Arc<ChangeFeed>,
     journal_ids: Arc<Mutex<HashMap<Day, PageId>>>,
     config: Arc<RwLock<ConfigState>>,
-    dirs: RwLock<[PathBuf; 1]>,
     assets: AssetObserver,
     snapshot: Mutex<HashMap<PathBuf, Stamp>>,
     // Page files another index writer owns are `graph.held` (STEP3 §5, R13):
@@ -464,6 +451,10 @@ pub(crate) struct Core {
     /// about 2 s later (§5.4; `Core::launch_diff`).
     pub(crate) follow_up: Mutex<Option<Instant>>,
     config_stamp: Mutex<Option<Stamp>>,
+    /// Whether the effective config was read from a `logseq/config.edn` file.
+    /// While it was, a config.edn that disappears keeps that config (see
+    /// `read_config`).
+    config_from_file: AtomicBool,
     /// Last observed `logseq/custom.css` (`custom_css.rs`).
     custom_css_stamp: Mutex<Option<Stamp>>,
     #[cfg(test)]
@@ -491,6 +482,9 @@ pub(crate) struct Core {
     /// (a network or FUSE mount a sync service writes to).
     #[cfg(test)]
     pub(crate) deaf: AtomicBool,
+    /// The tests' acknowledged drain (`test_drain.rs`, REVIEW-3b-P2b-2 N3).
+    #[cfg(feature = "test-faults")]
+    barrier: Arc<test_drain::Barrier>,
 }
 
 impl Core {
@@ -509,13 +503,7 @@ impl Core {
     }
 
     fn tracks_in_snapshot(&self, path: &Path) -> bool {
-        crate::file_kind::is_graph_text_path(path)
-            && self
-                .dirs
-                .read()
-                .unwrap()
-                .iter()
-                .any(|dir| path.starts_with(dir))
+        crate::file_kind::is_graph_text_path(path) && path.starts_with(&self.graph.root)
     }
 
     /// Hashes every unchanged snapshot entry for the baseline (one stat plus
@@ -644,9 +632,25 @@ impl Core {
 
     fn read_config(&self, path: &Path) -> Result<(), LoadError> {
         let (config, problem) = match crate::model::read_parse_input(path) {
-            Ok(value) => (tine_core::config::Config::parse(&value), None),
+            Ok(value) => {
+                self.config_from_file.store(true, Ordering::SeqCst);
+                (tine_core::config::Config::parse(&value), None)
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                (tine_core::config::Config::default(), None)
+                // A config.edn that disappears while the graph is open keeps
+                // the config read from it, as Logseq does (its watcher ignores
+                // the unlink: watcher_handler.cljs `handle-changed!`). iCloud
+                // offloading it to a placeholder, or a sync tool replacing it,
+                // must not switch the graph to the defaults: the default
+                // :file/name-format is :legacy, so namespace pages would show
+                // and be written under another file name (reddit 2026-10-11).
+                if self.config_from_file.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                (
+                    tine_core::config::Config::default(),
+                    crate::model::missing_config_problem(path),
+                )
             }
             Err(error) => (tine_core::config::Config::default(), Some(error.into())),
         };
@@ -655,7 +659,6 @@ impl Core {
             .map_err(|error| LoadError::Failed {
                 reason: error.to_string(),
             })?;
-        *self.dirs.write().unwrap() = [self.graph.root.clone()];
         *self.config.write().unwrap() = ConfigState::of(&self.graph, Arc::new(config), problem);
         Ok(())
     }
@@ -779,7 +782,6 @@ impl WatchHandle {
         watch: WatchMode,
         baseline: Baseline,
     ) -> Self {
-        let dirs = [graph.root.clone()];
         // The asset baseline is captured before any OS watch exists.
         let asset_scope = AssetScope::new(&graph);
         // A store opened by `Store::open` takes its graph-text baseline from
@@ -787,10 +789,11 @@ impl WatchHandle {
         // file before reading it; nothing changes it before Ready because no
         // diff runs while loading.
         let snapshot = match baseline {
+            #[cfg(test)]
             Baseline::Walk => {
                 let baseline_began = Instant::now();
                 let (snapshot, _, baseline_walk) =
-                    collect_with_errors(&dirs, &graph.current_config());
+                    collect_with_errors(&graph.root, &graph.current_config());
                 graph.diag.baseline(baseline_walk, baseline_began.elapsed());
                 snapshot
             }
@@ -805,12 +808,12 @@ impl WatchHandle {
             changes,
             journal_ids,
             config,
-            dirs: RwLock::new(dirs),
             assets: AssetObserver::new(asset_scope),
             snapshot: Mutex::new(snapshot),
             forward: Mutex::new(None),
             racy: Mutex::new(HashSet::new()),
             follow_up: Mutex::new(None),
+            config_from_file: AtomicBool::new(config_stamp.is_some()),
             config_stamp: Mutex::new(config_stamp),
             custom_css_stamp: Mutex::new(stamp(&graph_root.join("logseq/custom.css"))),
             #[cfg(test)]
@@ -835,6 +838,8 @@ impl WatchHandle {
             event_full_diffs: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             deaf: AtomicBool::new(false),
+            #[cfg(feature = "test-faults")]
+            barrier: Default::default(),
         });
         let mode = Arc::new(Mutex::new(watch));
         let (wake, rx) = mpsc::channel();
@@ -965,6 +970,19 @@ impl WatchHandle {
         self.core.graph.hold(key);
     }
 
+    /// [`Self::hold`] for a page open: the index keeps the page's row when
+    /// its file is unchanged ([`crate::model::Graph::hold_current`]).
+    pub(crate) fn hold_current(&self, key: String) {
+        self.core.graph.hold_current(key);
+    }
+
+    /// [`Self::hold`] for a claim (an operation's or a recovered draft's
+    /// page): the index keeps the page's row when the bytes its owner observed
+    /// are the row's ([`crate::model::Graph::hold_observed`]).
+    pub(crate) fn hold_observed(&self, key: String, observed: Option<std::sync::Arc<[u8]>>) {
+        self.core.graph.hold_observed(key, observed);
+    }
+
     /// Hand `key`'s index back to the watcher, which reconciles its file
     /// against the owner's last publication at once. The caller holds the
     /// writer.
@@ -1035,6 +1053,13 @@ impl WatchHandle {
         }
     }
 
+    /// Join the background watcher while keeping explicit refresh available.
+    #[cfg(test)]
+    pub(crate) fn stop_background_for_test(&self) {
+        self.stop();
+        self.core.closed.store(false, Ordering::Release);
+    }
+
     pub(crate) fn stop(&self) {
         if !self.core.closed.swap(true, Ordering::AcqRel) {
             let _ = self.wake.send(());
@@ -1052,25 +1077,34 @@ static REFUSED_ROOTS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 /// (inotify's per-user watch limit, a network mount, a missing root).
 fn install_watch(
     core: &Arc<Core>,
-    dirs: &[PathBuf; 1],
     pending: &Arc<Mutex<Pending>>,
     wake: &Sender<()>,
 ) -> Result<notify::RecommendedWatcher, String> {
     #[cfg(test)]
     crate::store::pause_at_hook(&core.before_install_pause);
     #[cfg(test)]
-    if REFUSED_ROOTS.lock().unwrap().contains(&dirs[0]) {
+    if REFUSED_ROOTS.lock().unwrap().contains(&core.graph.root) {
         return Err("watch refused by test".into());
     }
     let pending = Arc::clone(pending);
     let wake = wake.clone();
-    let callback_dirs = dirs.clone();
     let callback_graph = Arc::clone(&core.graph);
     let callback_assets = core.assets.scope().clone();
+    #[cfg(test)]
+    let barrier = Arc::clone(&core.barrier);
     let mut created = notify::recommended_watcher(move |event| {
+        #[cfg(test)]
+        barrier.pass_gate(&event);
+        #[cfg(feature = "test-faults")]
+        if let Some(id) = test_drain::Barrier::sentinel(&event) {
+            let mut pending = pending.lock().unwrap();
+            pending.barrier = pending.barrier.max(Some(id));
+            let _ = wake.send(());
+            return;
+        }
         let admitted = pending.lock().unwrap().add_event(
             event,
-            &callback_dirs,
+            &callback_graph.root,
             &callback_graph.current_config(),
             &callback_assets,
         );
@@ -1079,11 +1113,9 @@ fn install_watch(
         }
     })
     .map_err(|error| error.to_string())?;
-    for dir in dirs {
-        created
-            .watch(dir, notify::RecursiveMode::Recursive)
-            .map_err(|error| error.to_string())?;
-    }
+    created
+        .watch(&core.graph.root, notify::RecursiveMode::Recursive)
+        .map_err(|error| error.to_string())?;
     Ok(created)
 }
 
@@ -1187,11 +1219,10 @@ mod tests {
         let graph = crate::model::Graph::open(&root);
         let scope = AssetScope::new(&graph);
         let config = tine_core::Config::default();
-        let dirs = [root.clone()];
 
         let mut pending = Pending::default();
         let inside = modify(vec![root.join("assets/sub/pic.png")]);
-        assert!(pending.add_event(Ok(inside), &dirs, &config, &scope));
+        assert!(pending.add_event(Ok(inside), &root, &config, &scope));
         assert!(
             !pending.full && pending.paths.is_empty(),
             "asset write escalated the page lane"
@@ -1202,7 +1233,7 @@ mod tests {
         // A page still takes the page lane, and touches no asset queue.
         let page = root.join("pages/A.md");
         fs::write(&page, "- a\n").unwrap();
-        assert!(pending.add_event(Ok(modify(vec![page.clone()])), &dirs, &config, &scope));
+        assert!(pending.add_event(Ok(modify(vec![page.clone()])), &root, &config, &scope));
         assert!(pending.paths.contains(&page));
         let (exact, full) = pending.assets.drain();
         assert!(exact.is_empty() && !full);
@@ -1216,13 +1247,13 @@ mod tests {
             paths: vec![root.join("assets"), root.join("assets-old")],
             attrs: Default::default(),
         };
-        assert!(pending.add_event(Ok(moved), &dirs, &config, &scope));
+        assert!(pending.add_event(Ok(moved), &root, &config, &scope));
         assert!(pending.full);
         assert!(pending.assets.drain().1);
 
         // Kernel overflow and notify errors force the asset scan too.
         let mut pending = Pending::default();
-        assert!(pending.add_event(Err(notify::Error::generic("boom")), &dirs, &config, &scope));
+        assert!(pending.add_event(Err(notify::Error::generic("boom")), &root, &config, &scope));
         assert!(pending.full && pending.assets.drain().1);
         fs::remove_dir_all(root).unwrap();
     }
@@ -1334,7 +1365,7 @@ mod tests {
             let mut pending = Pending::default();
             let admitted = pending.add(
                 Ok(modify(vec![dir.join("index"), dir.join("sub/Page.md")])),
-                &[root.clone()],
+                &root,
                 &config,
             );
             assert!(
@@ -1353,12 +1384,12 @@ mod tests {
             paths: vec![root.join(".git/A.md"), page.clone()],
             attrs: Default::default(),
         };
-        assert!(pending.add(Ok(rename), &[root.clone()], &config));
+        assert!(pending.add(Ok(rename), &root, &config));
         assert!(pending.full || pending.paths.contains(&page));
         let mut overflow = Pending::default();
         assert!(overflow.add(
             Ok(modify(Vec::new()).set_flag(notify::event::Flag::Rescan)),
-            &[root.clone()],
+            &root,
             &config
         ));
         assert!(overflow.full, "a kernel queue overflow is never noise");
@@ -1380,7 +1411,7 @@ mod tests {
             for index in 0..count {
                 let page = root.join(format!("pages/P{index}.md"));
                 fs::write(&page, "- checked out\n").unwrap();
-                assert!(pending.add(Ok(modify(vec![page])), &[root.clone()], &config));
+                assert!(pending.add(Ok(modify(vec![page])), &root, &config));
             }
             let (paths, full, first) = pending.drain();
             assert_eq!((paths.len(), full), (count, escalates));
@@ -1610,7 +1641,7 @@ mod tests {
         fs::write(root.join("pages/ns/Deep.md"), "- deep\n").unwrap();
         let config = tine_core::Config::default();
         STAMPS_BY_PATH.with(|count| count.set(0));
-        let files = collect(&[root.clone()], &config);
+        let files = collect(&root, &config);
         assert_eq!(files.len(), 41);
         assert_eq!(
             STAMPS_BY_PATH.with(|count| count.get()),
@@ -1638,7 +1669,7 @@ mod tests {
         fs::write(&hidden, "- hidden\n").unwrap();
         fs::write(&visible, "- visible\n").unwrap();
         let config = tine_core::Config::parse(r#"{:hidden ["archive/private"]}"#);
-        let files = collect(&[root.clone()], &config);
+        let files = collect(&root, &config);
         assert!(!files.contains_key(&hidden));
         assert!(files.contains_key(&visible));
         let event = notify::Event {
@@ -1649,7 +1680,7 @@ mod tests {
             attrs: Default::default(),
         };
         let mut pending = Pending::default();
-        pending.add(Ok(event), &[root.clone()], &config);
+        pending.add(Ok(event), &root, &config);
         assert!(!pending.paths.contains(&hidden));
         assert!(pending.paths.contains(&visible));
         fs::remove_dir_all(root).unwrap();
@@ -1685,7 +1716,7 @@ mod tests {
             };
             assert_eq!(incremental_paths(&event), Some(vec![text.clone()]));
             let mut pending = Pending::default();
-            pending.add(Ok(event), &[root.clone()], &tine_core::Config::default());
+            pending.add(Ok(event), &root, &tine_core::Config::default());
             assert_eq!(pending.paths, HashSet::from([text.clone()]));
             assert!(!pending.full);
         }
@@ -1783,7 +1814,7 @@ mod tests {
         for (platform, events) in [("linux", linux), ("windows", windows)] {
             let mut pending = Pending::default();
             for event in events {
-                pending.add(Ok(event), &[root.clone()], &tine_core::Config::default());
+                pending.add(Ok(event), &root, &tine_core::Config::default());
             }
             let (paths, full, _) = pending.drain();
             assert!(!full, "{platform}: an own save forced the full stat diff");

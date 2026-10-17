@@ -55,6 +55,10 @@ async function measuredEditor(textarea: HTMLTextAreaElement) {
   textarea.style.height = "24px";
 }
 describe("date picker draft commits (GH #30 / #485)", () => {
+  it.each(["Scheduled", "Deadline", "Date picker"] as const)("/%s omits redundant apply and cancel help (GH #667)", async label => {
+    await slash(label);
+    expect(document.querySelector(".date-picker")?.textContent).not.toContain("Done or click outside to apply. Escape cancels.");
+  });
   it.each(["Scheduled", "Deadline"].flatMap(label => ["done", "outside", "enter"].map(method => [label, method] as const)))("/%s selects a day then %s writes time and repeat", async (label, method) => {
     const { textarea } = await slash(label as "Scheduled" | "Deadline");
     await measuredEditor(textarea);

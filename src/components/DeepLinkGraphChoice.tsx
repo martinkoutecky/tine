@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { createSignal, createEffect, onCleanup, For, Show } from "solid-js";
 import { registerTransientLayer } from "../transientLayers";
 import type { LinkTarget } from "../deepLinkNavigation";
@@ -31,11 +32,11 @@ export function DeepLinkGraphChoice() {
         else if (!event.shiftKey && documentOf(event).activeElement === last) { event.preventDefault(); first?.focus(); }
       }
     }}>
-      <section ref={root} class="tine-link-choice" role="dialog" aria-modal="true" aria-label="Choose graph for Tine link">
-        <h2>Choose graph for Tine link</h2>
-        <p>This link matches more than one copy of a graph. Tine will remember your choice on this device.</p>
-        <div class="tine-link-roots"><For each={pending().candidates}>{(target) => <button type="button" onClick={() => pending().finish(target)}>{target.root}</button>}</For></div>
-        <button type="button" onClick={() => pending().finish(null)}>Cancel</button>
+      <section ref={root} class="tine-link-choice" role="dialog" aria-modal="true" aria-label={t("deep-link-graph-choice-choose-graph-for-tine-link")}>
+        <h2>{t("deep-link-graph-choice-choose-graph-for-tine-link")}</h2>
+        <p>{t("deep-link-graph-choice-this-link-matches-more-than-one-copy-of")}</p>
+        <div class="tine-link-roots"><For each={pending().candidates}>{(target) => <button type="button" onClick={() => pending().finish(target)}>{target.displayRoot || target.root}</button>}</For></div>
+        <button type="button" onClick={() => pending().finish(null)}>{t("deep-link-graph-choice-cancel")}</button>
       </section>
     </div>
   }</Show>;

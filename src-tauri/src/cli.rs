@@ -64,6 +64,237 @@ enum Command {
     },
     /// Print the Tine version and exit.
     Version,
+    /// Run a graph's owner for the command line. Read commands start it
+    /// when the app does not have the graph open; it exits after 30 idle
+    /// minutes or when the app opens the graph.
+    Serve {
+        #[arg(value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
+        graph: PathBuf,
+        /// Ask the graph's command-line owner to finish its work and exit.
+        #[arg(long)]
+        stop: bool,
+    },
+    /// Show which process owns the graph and what it is doing.
+    Status(ReadArgs),
+    /// Read pages.
+    Page {
+        #[command(subcommand)]
+        action: PageAction,
+    },
+    /// Read blocks.
+    Block {
+        #[command(subcommand)]
+        action: BlockAction,
+    },
+    /// Show a journal page: today, or the given date (YYYY-MM-DD).
+    Journal {
+        #[arg(value_name = "DATE")]
+        date: Option<String>,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// Show the linked references of a page, or of a block with --block.
+    Refs {
+        #[arg(value_name = "PAGE|UUID")]
+        target: String,
+        /// TARGET is a block's id:: UUID.
+        #[arg(long)]
+        block: bool,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// Search page names and block text, as the app's search does.
+    Search {
+        #[arg(value_name = "TEXT")]
+        text: String,
+        /// At most this many page hits.
+        #[arg(long, default_value_t = 20)]
+        pages: usize,
+        /// At most this many block hits.
+        #[arg(long, default_value_t = 50)]
+        blocks: usize,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// Run a query: an OG simple or advanced query, or TQL with --tql.
+    Query {
+        #[arg(value_name = "QUERY")]
+        text: String,
+        /// QUERY is TQL, as in {{tine-query …}}.
+        #[arg(long)]
+        tql: bool,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// List pages, or the pages at or under a namespace.
+    Pages {
+        #[arg(long, value_name = "NAMESPACE")]
+        namespace: Option<String>,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// Replace a block's text, as typing it into the block would: hidden
+    /// properties (id::, collapsed::) and children are kept.
+    Edit {
+        /// The block: its id:: UUID, or PAGE/POS~FP as a read prints it.
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        /// The new text; `-` reads it from standard input.
+        #[arg(value_name = "TEXT", allow_hyphen_values = true)]
+        text: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Insert a page fragment, attributing every new block to its author.
+    Add {
+        /// Markdown or Org page fragment; `-` reads standard input.
+        #[arg(value_name = "CONTENT", allow_hyphen_values = true)]
+        content: String,
+        #[command(flatten)]
+        place: AddPlace,
+        /// Author on created blocks (default: TINE_AUTHOR, else agent).
+        #[arg(long)]
+        author: Option<String>,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Delete a block with its children; prints how many references to it
+    /// the deletion leaves broken.
+    Delete {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Move a block, with its children, under, after or before another block
+    /// on the same page.
+    Move {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[command(flatten)]
+        place: MovePlace,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Set or remove one property of a block.
+    Prop {
+        #[command(subcommand)]
+        action: PropAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PropAction {
+    /// Set KEY to VALUE on the block.
+    Set {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[arg(value_name = "KEY")]
+        key: String,
+        #[arg(value_name = "VALUE", allow_hyphen_values = true)]
+        value: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Remove KEY from the block.
+    Remove {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[arg(value_name = "KEY")]
+        key: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+}
+
+/// Where `tine move` puts the block: exactly one of the three.
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+struct MovePlace {
+    /// As the last child of TARGET.
+    #[arg(long, value_name = "TARGET")]
+    under: Option<String>,
+    /// Right after TARGET, as its next sibling.
+    #[arg(long, value_name = "TARGET")]
+    after: Option<String>,
+    /// Right before TARGET, as its previous sibling.
+    #[arg(long, value_name = "TARGET")]
+    before: Option<String>,
+}
+
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+struct AddPlace {
+    /// Append as the last child of BLOCK.
+    #[arg(long, value_name = "BLOCK")]
+    under: Option<String>,
+    /// Insert as the next sibling of BLOCK.
+    #[arg(long, value_name = "BLOCK")]
+    after: Option<String>,
+    /// Insert as the previous sibling of BLOCK.
+    #[arg(long, value_name = "BLOCK")]
+    before: Option<String>,
+    /// Append to PAGE, creating it when absent.
+    #[arg(long, value_name = "PAGE")]
+    page: Option<String>,
+    /// Append to a journal, creating it when absent: `--journal` is today,
+    /// `--journal=DATE` another day.
+    #[arg(long, value_name = "DATE", num_args = 0..=1, require_equals = true, default_missing_value = "today")]
+    journal: Option<String>,
+}
+
+/// Which graph a write asks, its optional page guard, and how it prints.
+#[derive(Debug, Args)]
+struct WriteArgs {
+    #[command(flatten)]
+    read: ReadArgs,
+    /// Write only if the page is still at this rev (as `page show` prints it);
+    /// required for a bare PAGE/POS without a fingerprint.
+    #[arg(long, value_name = "REV")]
+    rev: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+enum PageAction {
+    /// Show a page's outline (the text a window shows, unsaved edits included).
+    Show {
+        #[arg(value_name = "PAGE")]
+        name: String,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BlockAction {
+    /// Show a block and its children by its id:: UUID.
+    Show {
+        #[arg(value_name = "UUID")]
+        uuid: String,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+}
+
+/// Which graph a read command asks, and how it prints.
+#[derive(Debug, Args)]
+struct ReadArgs {
+    /// The graph. Defaults to $TINE_GRAPH, else the graph folder around the
+    /// current directory.
+    #[arg(long, short = 'g', value_name = "GRAPH", value_hint = clap::ValueHint::DirPath)]
+    graph: Option<PathBuf>,
+    /// Print the typed result (schema tine.cli/1) as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+impl ReadArgs {
+    fn target(self) -> crate::owner::terminal::Target {
+        crate::owner::terminal::Target {
+            graph: self.graph,
+            json: self.json,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -260,6 +491,24 @@ pub(crate) fn dispatch() -> Option<i32> {
             return Some(0);
         }
         Some(Command::Doctor { graph }) => doctor(&graph),
+        Some(Command::Serve { graph, stop }) => {
+            return Some(crate::owner::terminal::serve(&graph, stop))
+        }
+        Some(
+            command @ (Command::Status(_)
+            | Command::Page { .. }
+            | Command::Block { .. }
+            | Command::Journal { .. }
+            | Command::Refs { .. }
+            | Command::Search { .. }
+            | Command::Query { .. }
+            | Command::Pages { .. }
+            | Command::Edit { .. }
+            | Command::Prop { .. }
+            | Command::Move { .. }
+            | Command::Delete { .. }
+            | Command::Add { .. }),
+        ) => return Some(read_command(command)),
         Some(Command::Export { format }) => export(format).map(|receipt| {
             terminal_stdout(format_args!(
                 "Published {} pages to {}",
@@ -274,6 +523,145 @@ pub(crate) fn dispatch() -> Option<i32> {
             terminal_stderr(format_args!("tine: {error}"));
             Some(1)
         }
+    }
+}
+
+/// A read command: one request to the graph's owner (CLI PROTOCOL §5).
+fn read_command(command: Command) -> i32 {
+    use crate::owner::terminal::{read_verb, write_verb};
+    use serde_json::json;
+    match command {
+        Command::Status(args) => read_verb(args.target(), "owner.status", json!(null)),
+        Command::Page {
+            action: PageAction::Show { name, read: args },
+        } => read_verb(args.target(), "page.show", json!({ "name": name })),
+        Command::Block {
+            action: BlockAction::Show { uuid, read: args },
+        } => read_verb(args.target(), "block.show", json!({ "uuid": uuid })),
+        Command::Journal { date, read: args } => {
+            read_verb(args.target(), "journal", json!({ "date": date }))
+        }
+        Command::Refs {
+            target,
+            block,
+            read: args,
+        } => read_verb(
+            args.target(),
+            "refs",
+            json!({ "target": target, "block": block }),
+        ),
+        Command::Search {
+            text,
+            pages,
+            blocks,
+            read: args,
+        } => read_verb(
+            args.target(),
+            "search",
+            json!({ "text": text, "pages": pages, "blocks": blocks }),
+        ),
+        Command::Query {
+            text,
+            tql,
+            read: args,
+        } => read_verb(args.target(), "query", json!({ "text": text, "tql": tql })),
+        Command::Pages {
+            namespace,
+            read: args,
+        } => read_verb(args.target(), "pages", json!({ "namespace": namespace })),
+        Command::Edit {
+            handle,
+            text,
+            write,
+        } => {
+            let text = if text == "-" {
+                let mut buffer = String::new();
+                if let Err(error) =
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+                {
+                    eprintln!("tine: could not read the text from standard input: {error}");
+                    return 2;
+                }
+                buffer.trim_end_matches(['\n', '\r']).to_string()
+            } else {
+                text
+            };
+            write_verb(
+                write.read.target(),
+                "block.edit",
+                json!({ "handle": handle, "text": text, "rev": write.rev }),
+            )
+        }
+        Command::Add {
+            content,
+            place,
+            author,
+            write,
+        } => {
+            let content = if content == "-" {
+                let mut text = String::new();
+                if let Err(error) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+                {
+                    eprintln!("tine: could not read content from standard input: {error}");
+                    return 2;
+                }
+                text
+            } else {
+                content
+            };
+            write_verb(
+                write.read.target(),
+                "block.add",
+                json!({
+                    "content": content, "under": place.under, "after": place.after,
+                    "before": place.before, "page": place.page, "journal": place.journal,
+                    "author": author.or_else(|| std::env::var("TINE_AUTHOR").ok()), "rev": write.rev,
+                }),
+            )
+        }
+        Command::Delete { handle, write } => write_verb(
+            write.read.target(),
+            "block.delete",
+            json!({ "handle": handle, "rev": write.rev }),
+        ),
+        Command::Move {
+            handle,
+            place,
+            write,
+        } => {
+            let (at, to) = match (place.under, place.after, place.before) {
+                (Some(to), _, _) => ("under", to),
+                (_, Some(to), _) => ("after", to),
+                (_, _, Some(to)) => ("before", to),
+                _ => return 2,
+            };
+            write_verb(
+                write.read.target(),
+                "block.move",
+                json!({ "handle": handle, "to": to, "at": at, "rev": write.rev }),
+            )
+        }
+        Command::Prop {
+            action:
+                PropAction::Set {
+                    handle,
+                    key,
+                    value,
+                    write,
+                },
+        } => write_verb(
+            write.read.target(),
+            "block.prop",
+            json!({ "handle": handle, "key": key, "value": value, "rev": write.rev }),
+        ),
+        Command::Prop {
+            action: PropAction::Remove { handle, key, write },
+        } => write_verb(
+            write.read.target(),
+            "block.prop",
+            json!({ "handle": handle, "key": key, "value": null, "rev": write.rev }),
+        ),
+        _ => 2,
     }
 }
 
@@ -317,7 +705,29 @@ fn prepare_console_if_needed(argv: &[OsString]) {
         let gui_flag = matches!(argument.as_ref(), "--debug" | "--capture");
         matches!(
             argument.as_ref(),
-            "help" | "version" | "export" | "doctor" | "-h" | "--help" | "-v" | "-V" | "--version"
+            "help"
+                | "version"
+                | "export"
+                | "doctor"
+                | "serve"
+                | "status"
+                | "page"
+                | "block"
+                | "journal"
+                | "refs"
+                | "search"
+                | "query"
+                | "pages"
+                | "add"
+                | "edit"
+                | "prop"
+                | "move"
+                | "delete"
+                | "-h"
+                | "--help"
+                | "-v"
+                | "-V"
+                | "--version"
         ) || (argument.starts_with('-') && !gui_flag)
     });
     if headless {
@@ -400,6 +810,50 @@ mod tests {
                 "{form:?}"
             );
         }
+    }
+
+    #[test]
+    fn add_accepts_each_target_and_stdin_and_rejects_multiple_targets() {
+        for form in [
+            vec!["tine", "add", "--under", "P/1~abcdef", "-"],
+            vec!["tine", "add", "--after", "P/1~abcdef", "- root"],
+            vec!["tine", "add", "--before", "P/1~abcdef", "text"],
+            vec!["tine", "add", "--page", "P", "--author", "Ada", "text"],
+            vec!["tine", "add", "--journal=2026-10-18", "text"],
+            vec!["tine", "add", "text", "--journal"],
+            vec!["tine", "add", "--journal", "text"],
+        ] {
+            assert!(
+                matches!(
+                    Cli::try_parse_from(&form).unwrap().command,
+                    Some(Command::Add { .. })
+                ),
+                "{form:?}"
+            );
+        }
+        assert!(Cli::try_parse_from([
+            "tine",
+            "add",
+            "--under",
+            "P/1~abcdef",
+            "--page",
+            "P",
+            "text"
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from(["tine", "add", "text"]).is_err());
+        let Some(Command::Add { content, place, .. }) =
+            Cli::try_parse_from(["tine", "add", "--journal", "text"])
+                .unwrap()
+                .command
+        else {
+            panic!("add");
+        };
+        assert_eq!(content, "text");
+        assert_eq!(place.journal.as_deref(), Some("today"));
+        assert!(Cli::try_parse_from(["tine", "add", "--journal"]).is_err());
+        // A date without `=` is content, never a silently re-read date.
+        assert!(Cli::try_parse_from(["tine", "add", "--journal", "2026-10-18", "text"]).is_err());
     }
 
     #[test]
@@ -545,6 +999,36 @@ mod tests {
             ),
             ("tine-doctor.1", include_str!("../../docs/tine-doctor.1")),
             ("tine-version.1", include_str!("../../docs/tine-version.1")),
+            ("tine-serve.1", include_str!("../../docs/tine-serve.1")),
+            ("tine-status.1", include_str!("../../docs/tine-status.1")),
+            ("tine-page.1", include_str!("../../docs/tine-page.1")),
+            (
+                "tine-page-show.1",
+                include_str!("../../docs/tine-page-show.1"),
+            ),
+            ("tine-pages.1", include_str!("../../docs/tine-pages.1")),
+            ("tine-journal.1", include_str!("../../docs/tine-journal.1")),
+            ("tine-block.1", include_str!("../../docs/tine-block.1")),
+            (
+                "tine-block-show.1",
+                include_str!("../../docs/tine-block-show.1"),
+            ),
+            ("tine-refs.1", include_str!("../../docs/tine-refs.1")),
+            ("tine-search.1", include_str!("../../docs/tine-search.1")),
+            ("tine-query.1", include_str!("../../docs/tine-query.1")),
+            ("tine-edit.1", include_str!("../../docs/tine-edit.1")),
+            ("tine-delete.1", include_str!("../../docs/tine-delete.1")),
+            ("tine-add.1", include_str!("../../docs/tine-add.1")),
+            ("tine-move.1", include_str!("../../docs/tine-move.1")),
+            ("tine-prop.1", include_str!("../../docs/tine-prop.1")),
+            (
+                "tine-prop-set.1",
+                include_str!("../../docs/tine-prop-set.1"),
+            ),
+            (
+                "tine-prop-remove.1",
+                include_str!("../../docs/tine-prop-remove.1"),
+            ),
         ];
         if std::env::var_os("TINE_UPDATE_MAN_PAGE").is_some() {
             clap_mangen::generate_to(

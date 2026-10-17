@@ -1,35 +1,26 @@
-import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
-import { implicitPropertyParts } from "./PagePropertyValue";
+import { linkable_property_names } from "../render/wasm/lsdoc_wasm.js";
+import { aliasNamesOf } from "../render/block";
+import { pageRefsInText } from "../render/pageRefs";
 
-// I-12: member boundaries come from the parser's `split_linkable_property`
-// (the native separator), so this component cannot grow a separator of its own.
-describe("implicit page-property members", () => {
-  beforeAll(async () => { await initParser(); });
-
-  it("keeps ASCII and fullwidth separators and the authored spacing", () => {
-    expect(implicitPropertyParts("a, b，c ,  d")).toEqual([
-      { leading: "", value: "a", trailing: "" }, ",",
-      { leading: " ", value: "b", trailing: "" }, "，",
-      { leading: "", value: "c", trailing: " " }, ",",
-      { leading: "  ", value: "d", trailing: "" },
-    ]);
+describe("parser-owned linkable property values", () => {
+  beforeAll(initParser);
+  it("splits only top-level plain tokens and keeps reference interiors", () => {
+    expect(linkable_property_names("a, b，[[c, d]] #[[multi word]]", false)).toEqual(["a", "b", "c, d", "multi word"]);
   });
-
-  it("keeps empty members in place", () => {
-    expect(implicitPropertyParts(",a,, ")).toEqual(["", ",", { leading: "", value: "a", trailing: "" }, ",", "", ",", " "]);
+  it("drops empty members and deduplicates references", () => {
+    expect(linkable_property_names(",a,, #a, [[b]]", false)).toEqual(["a", "b"]);
   });
-
-  it("reassembles to the stored text", () => {
-    for (const value of ["", "a", "a,b", "，a，，b，", " x , y "]) {
-      const text = implicitPropertyParts(value).map((p) => typeof p === "string" ? p : p.leading + p.value + p.trailing).join("");
-      expect(text, JSON.stringify(value)).toBe(value);
-    }
+  it("does not turn quoted values or code into implicit references", () => {
+    expect(linkable_property_names('"#a #b"', false)).toEqual([]);
+    expect(linkable_property_names("`hidden` [[shown]]", false)).toEqual(["shown"]);
   });
-
-  it("names no separator of its own (I-12; exemplar crates/tine-core/src/block_regions.rs is_linkable_property_separator)", () => {
-    const source = readFileSync("src/components/PagePropertyValue.tsx", "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
-    expect(source).not.toMatch(/[，,]\s*["'\]/]|\[,，\]|\[，,\]/);
+  it("alias labels use the same token boundaries as tags", () => {
+    expect(aliasNamesOf([["aliases", "[[First alias]] [[Second alias]]"]])).toEqual(["First alias", "Second alias"]);
+  });
+  it("reference candidates do not invent a combined name from mixed property text", () => {
+    const refs = pageRefsInText("tags:: plain text #a #[[multi word]]", "md");
+    expect(new Set(refs)).toEqual(new Set(["plain text", "a", "multi word"]));
   });
 });

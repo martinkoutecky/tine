@@ -254,7 +254,8 @@ impl Vehicle {
     }
 }
 
-/// Only single-page vehicles can retire independently; op files must explode.
+/// Only single-page vehicles can retire independently; an operation vehicle
+/// retires whole or its records move to sibling vehicles (RENAME-COST L1/L2).
 pub(super) fn older_vehicles(
     files: &BTreeMap<String, Vec<Record>>,
     page: &str,

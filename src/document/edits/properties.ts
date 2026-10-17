@@ -1,3 +1,4 @@
+import { msg, rawText } from "../../i18n";
 import type { PageDto } from "../../types";
 import { ordered_list_glyph } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
@@ -8,7 +9,7 @@ import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
-import { isPropertiesOnly, upsertPropertyLine, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, isBuiltinHidden, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
+import { isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
@@ -76,7 +77,7 @@ export function setBlockProperty(id: string, key: string, value: string | null) 
   let raw: string;
   try {
     raw = editBlock(node.raw,formatForBlock(id),{kind:"property",key,value});
-  } catch (e) { pushToast(String(e),"error"); return; }
+  } catch (e) { pushToast(rawText(String(e)),"error"); return; }
   if (raw === node.raw) return;
   pushUndo(`prop:${id}:${key}`, [node.page]);
   setDoc("byId",id,"raw",raw);
@@ -224,7 +225,7 @@ export function reportInvalidPageHeaderOnExit(id: string): void {
   if (!node?.originatedFromPageHeader) return;
   const raw = node.raw.replace(/\n+$/, "");
   if (node.children.length > 0 || (raw !== "" && !isPageHeaderPropertiesOnly(raw)))
-    pushToast("Page-header properties must contain only valid key:: value lines before they can be saved.", "error");
+    pushToast(msg("properties-page-header-properties-must-contain-only-valid-key"), "error");
 }
 
 /** A successful save folded the first root into the file's preamble. Keep the
@@ -267,6 +268,7 @@ export function toggleBlockProperty(id: string, key: string, value: string) {
 }
 
 const ORDER_KEY = "logseq.order-list-type";
+const ORDER_KEY_HIDE = hideKeys([ORDER_KEY], true);
 export function isOrdered(id: string | null | undefined): boolean {
   const node = id ? doc.byId[id] : undefined;
   return !!node && orderedFromProperties(facetsOf(node.raw, formatForBlock(id!)).properties);
@@ -290,7 +292,7 @@ export function orderListTypeFromRaw(raw: string, format: Format): string | null
  * OG writes both the in-memory property and serialized content at
  * `src/main/frontend/modules/outliner/core.cljs:420-433` (6e7afa8eb). */
 export function rawWithOrderListType(raw: string, value: string | null, format: Format): string {
-  const { visible } = splitProps(raw, (key) => propertyKeyNorm(key) === ORDER_KEY, format);
+  const { visible } = splitProps(raw, ORDER_KEY_HIDE, format);
   if (value === null) return visible;
   const property = format === "org" ? `:${ORDER_KEY}: ${value}` : `${ORDER_KEY}:: ${value}`;
   return joinProps(visible, property, format);
@@ -311,7 +313,7 @@ function setOwnNumberedList(id: string, enabled: boolean, visibleText?: string):
   const format = formatForBlock(id);
   const base = visibleText === undefined
     ? node.raw
-    : joinProps(visibleText, splitProps(node.raw, isBuiltinHidden, format).hidden, format);
+    : joinProps(visibleText, splitProps(node.raw, BUILTIN_HIDE, format).hidden, format);
   const next = rawWithOrderListType(base, enabled ? "number" : null, format);
   if (next === node.raw) return false;
   pushUndo(`own-numbered:${id}`, [node.page]);
@@ -376,7 +378,7 @@ export function toggleListItemAtIndex(id: string, lineIndex: number, column: num
   const lines = node.raw.split("\n");
   const ln = lines[lineIndex];
   const token = ln?.slice(column, column + 3);
-  if (ln === undefined || token === undefined || !/^\[[ xX]\]$/.test(token)) return;
+  if (ln === undefined || (token !== "[ ]" && token !== "[x]" && token !== "[X]")) return;
   const next = ln.slice(0, column) + (token === "[ ]" ? "[x]" : "[ ]") + ln.slice(column + 3);
   pushUndo(`listcheck:${id}`, [node.page]);
   lines[lineIndex] = next;
@@ -478,7 +480,7 @@ export function setSchedule(
   }
   let raw: string;
   try { raw = editBlock(node.raw, formatForBlock(id), {kind:"planning",which:whichKind,value}); }
-  catch (e) { pushToast(String(e), "error"); return; }
+  catch (e) { pushToast(rawText(String(e)), "error"); return; }
   if (raw === node.raw) return;
   pushUndo(`sched:${id}:${which}`, [node.page]);
   setDoc("byId", id, "raw", raw);
@@ -488,20 +490,25 @@ export function setSchedule(
 /** A block's raw with `collapsed:: true` added or removed so the persisted
  *  property matches the collapsed state. OG stores collapse in the file as a
  *  block property, so mirroring it here makes a collapse survive a relaunch and
- *  show up collapsed in OG / the mobile app. Fence-aware via splitProps. */
+ *  show up collapsed in OG / the mobile app. Uses parser-owned property edits. */
 export function rawWithCollapsed(raw: string, collapsed: boolean, format: Format): string {
   if (format === "org") return orgRawWithProperty(raw, "collapsed", collapsed ? "true" : null);
-  const { visible, hidden } = splitProps(raw, isBuiltinHidden, format);
-  const nextHidden = upsertPropertyLine(hidden, "collapsed", collapsed ? "true" : null) ?? "";
-  return joinProps(visible, nextHidden, format);
+  if (!collapsed && !raw.toLowerCase().includes("collapsed")) return raw;
+  const existing = blockRegions(raw, format).properties.some(p => p.primary && p.key.toLowerCase() === "collapsed");
+  // Change only the owned collapse row; splitting and regrouping all hidden
+  // rows moved unrelated id:: lines when collapsing a quote (GH #684).
+  if (existing) return editBlock(raw, format, { kind: "property", key: "collapsed", value: collapsed ? "true" : null });
+  return collapsed ? joinProps(raw, "collapsed:: true", format) : raw;
 }
 
 /** Set a block's collapsed state AND mirror it into its raw `collapsed::` so it
  *  persists — the on-disk markdown is the source of truth on the next load. */
-export function writeCollapsed(id: string, collapsed: boolean) {
+export function writeCollapsed(id: string, collapsed: boolean, explicit = false) {
   const n = doc.byId[id];
   if (!n || !blockWritable(id)) return;
-  const nextRaw = rawWithCollapsed(n.raw, collapsed, formatForBlock(id));
+  const nextRaw = explicit
+    ? editBlock(n.raw, formatForBlock(id), { kind: "property", key: "collapsed", value: String(collapsed) })
+    : rawWithCollapsed(n.raw, collapsed, formatForBlock(id));
   setDoc("byId", id, "collapsed", collapsed);
   if (nextRaw !== n.raw) setDoc("byId", id, "raw", nextRaw);
   bumpCollapseEpochs([id]);

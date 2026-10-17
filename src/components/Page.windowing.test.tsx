@@ -11,6 +11,8 @@ import { revealOutlineBlock } from "../outlineViewport";
 import { openInPageFind, setInPageFindQuery, inPageFindMatches, closeInPageFind } from "../inpageFind";
 import { installKeybindings } from "../keybindings";
 import { PageView } from "./Page";
+import * as blockIdentity from "../blockIdentity";
+import { setDoc } from "../document/model";
 
 class WindowObserver {
   static observers: WindowObserver[] = [];
@@ -59,6 +61,24 @@ async function mount(count = 2000, nested = false, branched = false, collapse?: 
   await vi.waitFor(() => expect(host.querySelector(".page-title")?.textContent).toContain("Window"));
   return { host, dispose };
 }
+
+it.each([400, 1500])("GH #248: typing in a zoomed block does not read identities of %i page siblings", async count => {
+  const { host, dispose } = await mount(count);
+  try {
+    mainPaneRouter.focusBlock("window-0");
+    await vi.waitFor(() => expect(host.querySelector(".zoomed-page")).not.toBeNull());
+    startEditing("window-0", 0);
+    await vi.waitFor(() => expect(host.querySelector("textarea.block-editor")).not.toBeNull());
+    const identityReads = vi.spyOn(blockIdentity, "existingBlockId");
+    // Exercise the shared raw-write boundary used by input and ID stamping.
+    for (const suffix of ["x", "xy", "x", ""]) {
+      identityReads.mockClear();
+      setDoc("byId", "window-0", "raw", `Row 0 unique content${suffix}`);
+      expect(host.querySelector(".zoomed-page textarea.block-editor")).not.toBeNull();
+      expect(identityReads.mock.calls.length).toBeLessThan(30);
+    }
+  } finally { dispose(); }
+});
 
 it("GH #623: the routed 2,000-block page mounts bounded shells, including its first usable row", async () => {
   const { host, dispose } = await mount();
@@ -119,6 +139,24 @@ it("revealing an already-visible row does not pin its window after scrolling awa
     revealOutlineBlock("window-0", host);
     WindowObserver.set(window, false);
     expect(host.querySelector('[data-block-id="window-0"]')).toBeNull();
+  } finally { dispose(); }
+});
+
+it("an offscreen window updates its spacer after a multiline edit and still reveals the edited text", async () => {
+  const { host, dispose } = await mount();
+  try {
+    revealOutlineBlock("window-1000", host);
+    const shell = host.querySelector('[data-block-id="window-1000"]')!.closest<HTMLElement>("[data-outline-window]")!;
+    WindowObserver.set(shell, true);
+    WindowObserver.set(shell, false);
+    const spacerHeight = () => parseFloat(shell.querySelector<HTMLElement>('[aria-hidden="true"]')!.style.height);
+    const before = spacerHeight();
+    const text = Array.from({ length: 30 }, (_, i) => `Updated line ${i}`).join("\n");
+    setDoc("byId", "window-1000", "raw", text);
+    expect(spacerHeight()).toBeGreaterThan(before);
+    expect(host.querySelector('[data-block-id="window-1000"]')).toBeNull();
+    expect(revealOutlineBlock("window-1000", host)).toBe(true);
+    expect(host.querySelector('[data-block-id="window-1000"]')?.textContent).toContain("Updated line 29");
   } finally { dispose(); }
 });
 

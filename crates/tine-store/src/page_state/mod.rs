@@ -1,9 +1,9 @@
 //! Executable, unwired transcription of storage-s3.qnt. See README.md.
 #![allow(dead_code)]
 
+use operations::{flush_del, load, op_apply, op_delete, op_rename};
 #[cfg(test)]
-use operations::op_clean;
-use operations::{flush_del, load, op_delete, op_rename};
+use operations::{op_clean, op_cur};
 use order::{
     discarded, discharge, gated, obl_discarded, obl_published, order_holds, partner,
     rename_resolves, revert_partner, started, unrename, Obligations,
@@ -16,7 +16,7 @@ mod order;
 const ABSENT: i64 = -1;
 const NONE: i64 = -2;
 const UNKNOWN: i64 = -3;
-const MODEL_SHA: &str = "1e6ec36c29ec8fd1b7a1ebdce099e82509c0ff59fa6c137cf6f0ef3d1e0d2bd4";
+const MODEL_SHA: &str = "7ebed8779c70012c6d02a2a82417d1461db3d059819187576931134c4ea7e95c";
 type Text = i64; // Opaque equality labels, never arithmetic operands.
 type Pairs = BTreeSet<(usize, Text)>;
 
@@ -87,7 +87,7 @@ record!(Gate {
     vers: Vec<i64>,
     open: BTreeSet<usize>
 });
-record!(Sys { alive: bool, disk: Vec<Text>, stable: Vec<Text>, drafts: Vec<Draft>, trash: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "trashStable"))] trash_stable: Vec<BTreeSet<Text>>, pages: Vec<Page>, job: Job, w: Vec<W>, mb: Vec<Mail>, up: Vec<Up>, gates: Vec<Gate> });
+record!(Sys { alive: bool, claimed: BTreeSet<usize>, disk: Vec<Text>, stable: Vec<Text>, drafts: Vec<Draft>, trash: Vec<BTreeSet<Text>>, #[cfg_attr(test, serde(rename = "trashStable"))] trash_stable: Vec<BTreeSet<Text>>, pages: Vec<Page>, job: Job, w: Vec<W>, mb: Vec<Mail>, up: Vec<Up>, gates: Vec<Gate> });
 record!(Promise {
     on: bool,
     bytes: Text,
@@ -212,6 +212,7 @@ fn init(config: Config) -> State {
         config,
         s: Sys {
             alive: true,
+            claimed: BTreeSet::new(),
             disk: disk.clone(),
             stable: disk,
             drafts: (0..count).map(|_| nodraft()).collect(),
@@ -1332,6 +1333,12 @@ enum Action {
         std::collections::BTreeMap<usize, Text>,
     ),
     OpDelete(usize),
+    OpApply(
+        std::collections::BTreeMap<usize, Text>,
+        std::collections::BTreeMap<usize, Text>,
+        i64,
+        i64,
+    ),
     Load(usize),
     FlushDel(usize),
     PowerK(BTreeSet<usize>),
@@ -1348,6 +1355,8 @@ enum Action {
     SwitchReq,
     SwitchFin,
     ExtWriteD(usize, Text, bool),
+    ExtClaim(usize, bool),
+    PlanCreate(usize),
     Crash,
     WindowCrash,
     Power(bool, bool),
@@ -1369,7 +1378,17 @@ fn step(x: &State, a: Action) -> Option<State> {
                     .all(|r| *r < n && rt.get(r).is_some_and(|t| real(*t)))
         }
         Action::PowerK(keep) => keep.iter().all(|p| *p < n),
-        Action::OpDelete(p)
+        Action::OpApply(eff, plan, dst, src) => {
+            let page = |p: i64| p == NONE || (0..n as i64).contains(&p);
+            eff.iter()
+                .all(|(p, t)| *p < n && (real(*t) || *t == ABSENT))
+                && plan.keys().all(|p| *p < n)
+                && page(*dst)
+                && page(*src)
+        }
+        Action::PlanCreate(p)
+        | Action::ExtClaim(p, _)
+        | Action::OpDelete(p)
         | Action::Load(p)
         | Action::FlushDel(p)
         | Action::WOpen(p)
@@ -1395,6 +1414,7 @@ fn step(x: &State, a: Action) -> Option<State> {
         Action::WOpTo(p, q, a, b) => w_op_to(x, p, q, a, b),
         Action::OpRename(p, q, refs, rt) => op_rename(x, p, q, &refs, &rt),
         Action::OpDelete(p) => op_delete(x, p),
+        Action::OpApply(eff, plan, dst, src) => op_apply(x, &eff, &plan, dst, src),
         Action::Load(p) => load(x, p),
         Action::FlushDel(p) => flush_del(x, p),
         Action::PowerK(keep) => power_k(x, &keep),
@@ -1411,6 +1431,21 @@ fn step(x: &State, a: Action) -> Option<State> {
         Action::SwitchReq => switch_req(x),
         Action::SwitchFin => switch_fin(x),
         Action::ExtWriteD(p, v, d) => ext_write_d(x, p, v, d),
+        Action::PlanCreate(p) => {
+            (x.s.disk[p] == ABSENT && !x.s.claimed.contains(&p)).then(|| x.clone())
+        }
+        Action::ExtClaim(p, present) => {
+            if x.s.claimed.contains(&p) == present {
+                return None;
+            }
+            let mut s = x.s.clone();
+            if present {
+                s.claimed.insert(p);
+            } else {
+                s.claimed.remove(&p);
+            }
+            commit(x, s, x.g.clone(), "extClaim")
+        }
         Action::Crash => crash(x),
         Action::WindowCrash => window_crash(x),
         Action::Power(a, b) => power(x, a, b),

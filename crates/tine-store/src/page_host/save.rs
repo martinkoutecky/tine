@@ -1,6 +1,7 @@
 //! The host's save pipeline (STEP2 §3): starting a page save and
 //! advancing its guarded phases.
 use super::*;
+use crate::bench_events::Ev;
 
 /// The one page save in progress and the phase it reached.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -10,6 +11,8 @@ pub(super) struct SaveJob {
     pub(super) bytes: Text,
     pub(super) base: Base,
     pub(super) version: u64,
+    /// The model's ghost external-write epoch at the rename (tests only).
+    #[cfg(test)]
     pub(super) epoch: u64,
     pub(super) removed: Text,
     /// A deletion's marker name and payload basename.
@@ -17,6 +20,8 @@ pub(super) struct SaveJob {
     pub(super) trash_durable: bool,
     /// Consecutive trash-move collisions on this job (K6).
     pub(super) collisions: u8,
+    /// The bench events' key of this save (0: events off).
+    pub(super) bench: u64,
 }
 
 /// Consecutive trash-move collisions one save job retries uncounted (K6).
@@ -40,6 +45,7 @@ impl<F: HostIo> Host<F> {
         if self.order.gated(key) {
             return Disposition::Waiting;
         }
+        let bench = crate::bench_events::save_begin(page.version, || self.fs.spelling(key));
         self.job = Some(SaveJob {
             page: key.into(),
             phase: if self.custody.contains_key(key) {
@@ -50,11 +56,13 @@ impl<F: HostIo> Host<F> {
             bytes: page.buf.clone(),
             base: page.base.clone(),
             version: page.version,
+            #[cfg(test)]
             epoch: 0,
             removed: None,
             marker: None,
             trash_durable: true,
             collisions: 0,
+            bench,
         });
         Disposition::Pending
     }
@@ -67,9 +75,8 @@ impl<F: HostIo> Host<F> {
         }
     }
 
-    /// `epoch` is the path's external-write epoch supplied by the event driver;
-    /// the 2b adapter will obtain it from the watch boundary, not a file hash.
-    pub(super) fn advance_save(&mut self, epoch: u64) -> Disposition {
+    /// Advance the save job one phase.
+    pub(super) fn advance_save(&mut self) -> Disposition {
         let Some(job) = &self.job else {
             return Disposition::Disabled;
         };
@@ -84,10 +91,20 @@ impl<F: HostIo> Host<F> {
         if self.lacks_locks(&keys) {
             return Disposition::Waiting;
         }
-        self.with_locks(&keys, |host| host.advance_save_locked(epoch))
+        self.with_locks(&keys, |host| host.advance_save_locked())
     }
 
-    pub(super) fn advance_save_locked(&mut self, epoch: u64) -> Disposition {
+    /// `advance_save` with the model's ghost external-write epoch, which a
+    /// rename records for the conformance promise (`Published.epoch`).
+    #[cfg(test)]
+    pub(super) fn advance_save_at(&mut self, epoch: u64) -> Disposition {
+        self.test.epoch = epoch;
+        let result = self.advance_save();
+        self.test.epoch = 0;
+        result
+    }
+
+    pub(super) fn advance_save_locked(&mut self) -> Disposition {
         let Some(mut job) = self.job.take() else {
             return Disposition::Disabled;
         };
@@ -111,8 +128,9 @@ impl<F: HostIo> Host<F> {
                     let debt = self.custody.get_mut(&key).unwrap();
                     debt.failures += 1;
                     if debt.failures >= 3 {
-                        for (marker, payload) in &debt.markers {
-                            self.custody_errors.insert(marker.clone());
+                        self.custody_errors.extend(debt.markers.keys().cloned());
+                        #[cfg(test)]
+                        for payload in debt.markers.values() {
                             self.events.push(Event::CustodyError {
                                 page: key.clone(),
                                 payload: payload.clone(),
@@ -182,6 +200,7 @@ impl<F: HostIo> Host<F> {
             },
             SavePhase::Rename if job.bytes.is_some() => match self.fs.page_rename(&key) {
                 Ok(()) => {
+                    #[cfg(test)]
                     self.events.push(Event::Renamed {
                         page: key.clone(),
                         bytes: job.bytes.clone(),
@@ -199,11 +218,15 @@ impl<F: HostIo> Host<F> {
                         });
                     }
                     job.phase = SavePhase::DirectorySync;
-                    job.epoch = epoch;
+                    #[cfg(test)]
+                    {
+                        job.epoch = self.test.epoch;
+                    }
                     None
                 }
                 Err(e) if e.completed => {
                     cause = Some(e);
+                    #[cfg(test)]
                     self.events.push(Event::Renamed {
                         page: key.clone(),
                         bytes: job.bytes.clone(),
@@ -249,6 +272,7 @@ impl<F: HostIo> Host<F> {
                 let (marker, payload) = job.marker.clone().expect("deletion marker");
                 let movement = self.fs.trash_move(&key, &payload);
                 job.removed = movement.removed;
+                #[cfg(test)]
                 if job.removed.is_some() {
                     self.events.push(Event::Removed {
                         page: key.clone(),
@@ -257,6 +281,7 @@ impl<F: HostIo> Host<F> {
                 }
                 match movement.result {
                     Ok(()) => {
+                        #[cfg(test)]
                         self.events.push(Event::Renamed {
                             page: key.clone(),
                             bytes: job.bytes.clone(),
@@ -268,7 +293,10 @@ impl<F: HostIo> Host<F> {
                         } else {
                             SavePhase::DirectorySync
                         };
-                        job.epoch = epoch;
+                        #[cfg(test)]
+                        {
+                            job.epoch = self.test.epoch;
+                        }
                         None
                     }
                     // The occupied target is never adopted: retire the unused
@@ -291,6 +319,7 @@ impl<F: HostIo> Host<F> {
                     }
                     Err(e) if e.completed => {
                         cause = Some(e);
+                        #[cfg(test)]
                         self.events.push(Event::Renamed {
                             page: key.clone(),
                             bytes: job.bytes.clone(),
@@ -321,6 +350,10 @@ impl<F: HostIo> Host<F> {
             SavePhase::DirectorySync => match self.fs.page_sync(&key) {
                 Ok(witness) => {
                     if witness == Witness::Durable && job.trash_durable && job.bytes.is_none() {
+                        crate::bench_events::emit(|| Ev::CustodyComplete {
+                            path: self.fs.spelling(&key),
+                        });
+                        #[cfg(test)]
                         self.events.push(Event::DeleteDurable {
                             page: key.clone(),
                             bytes: job.removed.clone(),
@@ -335,7 +368,7 @@ impl<F: HostIo> Host<F> {
             },
         };
         if result.is_some() && job.phase == SavePhase::DirectorySync {
-            // Rule 2.5: custody (a)+(b) completed before this phase.
+            // Rule 2.5: custody completed before this phase.
             if let Some((marker, payload)) = job.marker.clone() {
                 self.retire_marker(&key, &marker, payload);
             }
@@ -348,10 +381,17 @@ impl<F: HostIo> Host<F> {
                 page.typed = false;
                 page.risk = false;
                 self.order.published(&key, job.version);
+                crate::bench_events::emit(|| Ev::Published {
+                    key: job.bench,
+                    version: job.version,
+                    path: self.fs.spelling(&key),
+                    text: job.bytes.clone(),
+                });
                 self.events.push(Event::Published {
                     page: key.clone(),
                     bytes: job.bytes,
                     version: job.version,
+                    #[cfg(test)]
                     epoch: job.epoch,
                 });
             } else {

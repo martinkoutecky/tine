@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 // The block-diff row renderer (og family 8c).
 //
 // ONE renderer for the ONE resolution surface: the in-page resolver
@@ -17,8 +18,8 @@ import { appNow } from "../journal";
  *  without the user's confirmation. */
 export function mergedTitle(source: MergedProposal["source"]): string {
   return source === "artifact"
-    ? "Proposed by your merge tool's suggested resolution — still applied only when you confirm."
-    : "Both edits combined — offered because they touch different parts of the same body";
+    ? t("conflicts-prose-proposed-by-your-merge-tool-s-suggested-resolution-still-applied")
+    : t("conflicts-prose-both-edits-combined-offered-because-they-touch-different-parts-of");
 }
 
 /** The effective decision for a row, given the surface's own default. */
@@ -121,10 +122,9 @@ export function humanizeSideLabel(label: string, now: Date = appNow()): { text: 
   const m = syncthing ?? dropbox;
   if (!m) return { text: label };
   const [, y, mo, d] = m;
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const month = months[Number(mo) - 1] ?? mo;
-  const year = now.getFullYear() === Number(y) ? "" : ` ${y}`;
-  return { text: `Sync copy · ${month} ${Number(d)}${year}`, title: label };
+  const month = t("conflicts-prose-copy-month", { month: Number(mo) });
+  const year = now.getFullYear() === Number(y) ? "current" : y;
+  return { text: t("conflicts-prose-dated-copy", { month, day: Number(d), year }), title: label };
 }
 
 /** The line index a collapsed row previews: the first line that differs, so a
@@ -218,7 +218,7 @@ export function DiffRowView(props: {
     return (
       <>
         <Show when={k > 0}>
-          <span class="sync-merge-elided" title="Earlier lines are the same on both sides">…</span>
+          <span class="sync-merge-elided" title={t("diff-rows-earlier-lines-are-the-same-on-both-sides")}>…</span>
         </Show>
         {line === null ? <span class="sync-merge-absent">—</span> : line}
       </>
@@ -229,7 +229,7 @@ export function DiffRowView(props: {
     const out: { side: "mine" | "theirs" | "merged"; label: string; lines: string[] }[] = [];
     if (r.mine) out.push({ side: "mine", label: props.labels.mine, lines: r.mine.text.split("\n") });
     if (r.theirs) out.push({ side: "theirs", label: props.labels.theirs, lines: r.theirs.text.split("\n") });
-    if (r.merged) out.push({ side: "merged", label: "Merged", lines: r.merged.text.split("\n") });
+    if (r.merged) out.push({ side: "merged", label: t("diff-rows-merged"), lines: r.merged.text.split("\n") });
     return out;
   });
   const expandable = createMemo(() =>
@@ -260,31 +260,29 @@ export function DiffRowView(props: {
       </div>
       <div class="sync-merge-controls">
         <Show when={row().kind === "modified"}>
-          {seg("mine", props.labels.mine, "mine", "Mine")}
-          {seg("theirs", props.labels.theirs, "theirs", "Theirs")}
-          {seg("both", "Both", "theirs")}
-          <Show when={row().merged}>{seg("merged", "Merged", "merged")}</Show>
+          {seg("mine", props.labels.mine, "mine", t("conflicts-prose-mine-short"))}
+          {seg("theirs", props.labels.theirs, "theirs", t("conflicts-prose-theirs-short"))}
+          {seg("both", t("conflicts-prose-both"), "theirs")}
+          <Show when={row().merged}>{seg("merged", t("conflicts-prose-merged"), "merged")}</Show>
         </Show>
         <Show when={row().kind === "added"}>
-          {seg("mine", "Keep", "mine")}
-          {seg("theirs", "Drop", "theirs")}
+          {seg("mine", t("conflicts-prose-keep"), "mine")}
+          {seg("theirs", t("conflicts-prose-drop"), "theirs")}
         </Show>
         <Show when={row().kind === "removed"}>
-          {seg("mine", "Skip", "mine")}
-          {seg("theirs", "Pull in", "theirs")}
+          {seg("mine", t("conflicts-prose-skip"), "mine")}
+          {seg("theirs", t("conflicts-prose-pull-in"), "theirs")}
         </Show>
         <Show when={row().kind === "unchanged"}>
-          <span class="sync-merge-unchanged-tag">unchanged</span>
+          <span class="sync-merge-unchanged-tag">{t("diff-rows-unchanged")}</span>
         </Show>
         <Show when={row().suggestion && dec() === row().suggestion}>
-          <span class="sync-merge-suggested-tag" title="Pre-selected from the last version both sides agreed on">
-            suggested
-          </span>
+          <span class="sync-merge-suggested-tag" title={t("diff-rows-pre-selected-from-the-last-version-both-sides")}>{t("diff-rows-suggested")}</span>
         </Show>
         <Show when={expandable()}>
           <button
             class="sync-merge-expand"
-            title={expanded() ? "Hide the full bodies" : `Show all ${lineCount()} lines`}
+            title={expanded() ? t("diff-rows-hide-the-full-bodies") : t("diff-rows-show-all-lines", { line_count: String(lineCount()) })}
             aria-expanded={expanded()}
             onClick={() => setExpanded(!expanded())}
           >
@@ -301,7 +299,7 @@ export function DiffRowView(props: {
             data-source={merged().source}
             title={mergedTitle(merged().source)}
           >
-            <span class="sync-merge-mergedtag">{merged().source === "artifact" ? "Merged (tool)" : "Merged"}</span>
+            <span class="sync-merge-mergedtag">{merged().source === "artifact" ? t("diff-rows-merged-tool") : t("diff-rows-merged")}</span>
             {preview(merged().text)}
           </div>
         )}

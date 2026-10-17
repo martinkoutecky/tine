@@ -74,6 +74,7 @@ fn saved(source: &str, kind: EditKind, edit: impl FnOnce(&mut PageDto)) -> Strin
 
 #[test]
 fn eof_blank_lines_do_not_grow_on_repeated_saves() {
+    let _integration_guard = crate::integration_lock();
     // F1: n trailing newlines became 2n-1 on every whole-page save.
     for source in ["- a\n- b\n\n\n", "- a\n-\n\n", "- a\n- b\n- c\n\n\n"] {
         let page = Page::new(source);
@@ -93,6 +94,7 @@ fn eof_blank_lines_do_not_grow_on_repeated_saves() {
 
 #[test]
 fn eof_blank_lines_survive_whole_page_serialization() {
+    let _integration_guard = crate::integration_lock();
     // The fallback serializer must not double them either.
     use tine_core::doc;
     for source in ["- a\n- b\n\n\n", "- a\n-\n\n", "x:: y\n\n- a\n\n\n\n"] {
@@ -104,6 +106,7 @@ fn eof_blank_lines_survive_whole_page_serialization() {
 
 #[test]
 fn structural_saves_keep_untouched_block_bytes() {
+    let _integration_guard = crate::integration_lock();
     let insert = saved(SOURCE, EditKind::InsertBlocks, |doc| {
         doc.blocks.insert(1, block("new"));
     });
@@ -137,6 +140,7 @@ fn structural_saves_keep_untouched_block_bytes() {
 
 #[test]
 fn insert_after_unclosed_fence_survives_save_and_reopen() {
+    let _integration_guard = crate::integration_lock();
     let page = Page::new("- open\n  ```js\n  code\n");
     let written = page.save(EditKind::InsertBlocks, |doc| {
         doc.blocks.push(block("after"));
@@ -151,6 +155,7 @@ fn insert_after_unclosed_fence_survives_save_and_reopen() {
 
 #[test]
 fn indent_and_outdent_rebase_only_the_moved_subtree() {
+    let _integration_guard = crate::integration_lock();
     let indented = saved(SOURCE, EditKind::MoveBlocks, |doc| {
         let two = doc.blocks.remove(1);
         doc.blocks[0].children.push(two);
@@ -170,6 +175,7 @@ fn indent_and_outdent_rebase_only_the_moved_subtree() {
 
 #[test]
 fn page_property_and_multi_block_edits_keep_other_lines() {
+    let _integration_guard = crate::integration_lock();
     let props = saved(SOURCE, EditKind::SaveBlock, |doc| {
         doc.pre_block = Some("title:: Fix\ntags:: a, b".into());
     });
@@ -189,6 +195,7 @@ fn page_property_and_multi_block_edits_keep_other_lines() {
 
 #[test]
 fn crlf_pages_keep_untouched_bytes_and_line_endings() {
+    let _integration_guard = crate::integration_lock();
     let source = format!("{}\r\n", SOURCE.replace('\n', "\r\n"));
     let edited = saved(&source, EditKind::SaveBlock, |doc| {
         doc.blocks[2].raw = "three!".into();
@@ -203,6 +210,7 @@ fn crlf_pages_keep_untouched_bytes_and_line_endings() {
 
 #[test]
 fn first_root_on_a_properties_only_page_gets_one_separator() {
+    let _integration_guard = crate::integration_lock();
     for (source, expected) in [
         ("title:: solo\n\n", "title:: solo\n\n- first\n"),
         ("title:: solo\n", "title:: solo\n\n- first\n"),
@@ -237,6 +245,7 @@ fn tree(rows: &[(usize, &str)]) -> Vec<(usize, String)> {
 
 #[test]
 fn unbulleted_headings_keep_their_bytes_when_a_neighbour_is_edited() {
+    let _integration_guard = crate::integration_lock();
     // lsdoc (= mldoc) reads each unbulleted ATX heading as its own block; a
     // save that edits another block must not bullet them (master cc9ab56ee).
     let source = "- editable root\n## first section\n### second section\n- trailing root";
@@ -266,6 +275,7 @@ fn unbulleted_headings_keep_their_bytes_when_a_neighbour_is_edited() {
 
 #[test]
 fn a_leading_heading_stays_unbulleted_through_edits() {
+    let _integration_guard = crate::integration_lock();
     // OG writes a leading heading unbulleted with its children one level in
     // (og@6e7afa8 file/core.cljs `transform-content`, `markdown-top-heading?`).
     let source = "# Project\n\t- child one\n\t- child two\n- sibling";
@@ -291,6 +301,7 @@ fn a_leading_heading_stays_unbulleted_through_edits() {
 
 #[test]
 fn a_heading_edited_into_prose_is_written_as_a_bullet() {
+    let _integration_guard = crate::integration_lock();
     // Benign-extreme pair of the above: unbulleted prose would be page text,
     // so the block must be bulleted to stay a block.
     let page = Page::new("# Project\n\t- child\n- sibling");
@@ -306,6 +317,7 @@ fn a_heading_edited_into_prose_is_written_as_a_bullet() {
 
 #[test]
 fn moving_an_unbulleted_heading_keeps_the_tree() {
+    let _integration_guard = crate::integration_lock();
     let page = Page::new("- a\n## h\n- b");
     let written = page.save(EditKind::MoveBlocks, |doc| {
         let h = doc.blocks.remove(1);
@@ -317,6 +329,7 @@ fn moving_an_unbulleted_heading_keeps_the_tree() {
 
 #[test]
 fn every_dash_form_lsdoc_accepts_keeps_its_bytes() {
+    let _integration_guard = crate::integration_lock();
     let source = "-\tx\n- \n-\n-  y\n- z";
     let page = Page::new(source);
     let edited = page.save(EditKind::SaveBlock, |doc| {
@@ -327,6 +340,7 @@ fn every_dash_form_lsdoc_accepts_keeps_its_bytes() {
 
 #[test]
 fn an_edited_block_keeps_its_untouched_whitespace_only_lines() {
+    let _integration_guard = crate::integration_lock();
     // og T5: a whitespace-only continuation line parses to an empty raw line,
     // and an edit elsewhere in the block wrote it empty (bytes lost).
     let edited = saved(SOURCE, EditKind::SaveBlock, |doc| {

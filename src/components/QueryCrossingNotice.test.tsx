@@ -1,3 +1,4 @@
+import { openCalmQuery } from "../tests/calmQueryActions";
 // Ported from master src/components/QueryCrossingNotice.test.tsx.
 // **The user half of the persisted-form crossing (SPEC §4.3 "Notice", §7.5; T3).**
 //
@@ -114,24 +115,10 @@ function parsedAs(text: string): ParsedQuery {
 /** The text pane lives in the SHEET's footer now, and the sheet is portalled to
  *  <body> (`.query-block`'s own compositing layer would otherwise trap it), so
  *  the pane is reached by opening the sheet and querying the document. */
-async function openSheet(root: HTMLElement): Promise<HTMLElement> {
-  const gear = await vi.waitFor(() => {
-    const found = root.querySelector<HTMLButtonElement>(".qs-gear");
-    if (!found) throw new Error("the query sentence never appeared");
-    return found;
-  });
-  if (!document.querySelector(".qs-sheet")) gear.click();
-  return await vi.waitFor(() => {
-    const sheet = document.querySelector<HTMLElement>(".qs-sheet");
-    if (!sheet) throw new Error("the sheet never opened");
-    return sheet;
-  });
-}
-
 /** P4 retired the `<details>` disclosure: inside an open sheet the pane is
  *  visible and editable (§7.5). Opening the sheet is opening the pane. */
 async function openPane(root: HTMLElement): Promise<HTMLTextAreaElement> {
-  const sheet = await openSheet(root);
+  const sheet = await openCalmQuery(root, "Edit as text");
   return await vi.waitFor(() => {
     const input = sheet.querySelector<HTMLTextAreaElement>(".query-text-pane-input");
     if (!input) throw new Error("the pane has no input");
@@ -469,7 +456,7 @@ describe("C5: the notice is one instance that changes host with the sheet", () =
 
       // Shut the sheet: the notice is still there, still one, and now inline
       // under the block where the reader is.
-      root.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+      root.querySelector<HTMLButtonElement>(".qc-done")!.click();
       await settle();
       expect(document.querySelector(".qs-sheet")).toBeNull();
       const inline = await waitForNotice(root);
@@ -480,7 +467,7 @@ describe("C5: the notice is one instance that changes host with the sheet", () =
       expect(inline.querySelector(".query-crossing-notice-undo")).not.toBeNull();
 
       // ...and back again, without ever being two.
-      root.querySelector<HTMLButtonElement>(".qs-gear")!.click();
+      await openCalmQuery(root, "Edit as text");
       await settle();
       const reopened = await waitForNotice(root);
       expect(document.querySelectorAll(".query-crossing-notice")).toHaveLength(1);

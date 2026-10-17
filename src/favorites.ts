@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Favorites: membership, identity and the arrangement page (family 22).
 //
 // ONE state: the arrangement tree. `favorites()` is its flat pre-order
@@ -11,7 +12,7 @@
 // Tine writes it only over the version it last saw; a page that changed on disk
 // is adopted instead, and an edit to it (in Tine or outside) is a membership
 // statement, projected to config.edn without writing the page back.
-import { createEffect, createRoot, createSignal, on } from "solid-js";
+import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js";
 import { backend } from "./backend";
 import type { createPage, favoritesArrangementBlocks, favoritesArrangementPage, reloadHlsIfLoaded } from "./document";
 import { dataRev, graphMeta } from "./graphSession";
@@ -24,7 +25,7 @@ import type { BlockDto, Format, PageDto, PageKind } from "./types";
 import type { PageTarget } from "./routeTypes";
 import {
   DEFAULT_FAVORITES_PAGE, FAVORITES_PAGE_PROPERTY, type FavItem, type FavLayout, type FavNode,
-  carriesArrangement, favoriteNode, itemKind, labelNode, layoutFromBlocks, layoutMembers,
+  carriesArrangement, favoriteNode, blockFavoriteNode, itemKind, labelNode, layoutFromBlocks, layoutMembers,
   layoutToMarkdown, moveNode, nodeAt, reconcileLayout, uniqueGroupName, updateAt,
 } from "./favoritesLayout";
 
@@ -33,6 +34,37 @@ export type { FavItem } from "./favoritesLayout";
 const [layout, setLayout] = createSignal<FavLayout>([]);
 export const favoritesLayout = layout;
 export const favorites = (): FavItem[] => layoutMembers(layout());
+// One derived index per arrangement update. References read membership in O(1)
+// instead of walking the Favorites tree once for every displayed reference.
+const favoriteSummary = createRoot(() => createMemo(() => {
+  const blocks = new Set<string>();
+  let count = 0;
+  const visit = (nodes: FavLayout): void => nodes.forEach(node => {
+    if (node.target !== null || node.blockId) count++;
+    if (node.blockId) blocks.add(node.blockId);
+    visit(node.children);
+  });
+  visit(layout());
+  return { blocks, count };
+}));
+/** Membership is derived from the same arrangement tree as page favorites. */
+export function isFavoriteBlock(id: string): boolean {
+  return favoriteSummary().blocks.has(id);
+}
+export function favoriteCount(): number {
+  return favoriteSummary().count;
+}
+export function isFavoritesPage(name: string | undefined): boolean {
+  return !!name && !!arrangementPage && pageIdentityKey(name) === pageIdentityKey(arrangementPage);
+}
+/** Stamp and publish the source ID first, then save its ordinary Favorites row. */
+export async function favoriteBlock(id: string): Promise<void> {
+  const owner = bindingOwner();
+  const { ensureBlockId } = await import("./document");
+  if (!owner()) return;
+  const uuid = await ensureBlockId(id);
+  if (uuid && owner() && !isFavoriteBlock(uuid)) commit([...layout(), blockFavoriteNode(uuid)]);
+}
 
 /** The page named by `:tine/favorites-page`, once this graph has one. */
 let arrangementPage: string | null = null;
@@ -189,7 +221,7 @@ async function readArrangement(mode: ReadMode | null): Promise<void> {
   const seq = ++latestRead;
   const owner = bindingOwner(() => gen === generation && writes === ownWrites && seq === latestRead);
   const read = await readOwned(owner, backend().getPage(page, "page")).catch((error: unknown) => {
-    pushToast(`Could not read the Favorites page "${page}": ${String(error)}`, "error");
+    pushToast(msg("favorites-could-not-read-the-favorites-page", { page: String(page), error: String(error) }), "error");
     return null;
   });
   if (read?.kind !== "current" || !read.value) return;
@@ -243,7 +275,7 @@ async function writeArrangementPage(next: FavLayout, text: string): Promise<stri
       // a later seed (generation) or binding must not inherit the fold (I-20).
       const gen = generation;
       setTimeout(() => { if (gen === generation && owner()) void readArrangement("recover"); }, 0);
-      pushToast(`Recovered the Favorites page "${name}" from an interrupted save; repeat your last change.`, "info");
+      pushToast(msg("favorites-recovered-the-favorites-page-from-an-interrupted-save", { name: String(name) }), "info");
       throw new Error(`recovered the Favorites page "${name}"`);
     }
     if (disk && arrangementPage && layoutToMarkdown(diskLayout(disk)) !== pageBase) {
@@ -291,14 +323,15 @@ export function addFavoriteGroup(desired = "New group"): void {
  *  ("Work 2"); a blank name or a non-label path is a no-op. */
 export function renameFavoriteGroup(path: number[], name: string): void {
   const node = nodeAt(layout(), path);
-  if (!name.trim() || !node || node.target !== null) return;
+  if (!name.trim() || !node || node.target !== null || node.blockId) return;
   // Unique against every OTHER label, so an unchanged name keeps its spelling.
   const others = updateAt(layout(), path, (target) => target.children);
   commit(updateAt(layout(), path, (target) => [{ ...target, raw: uniqueGroupName(others, name.trim()) }]));
 }
 /** Delete a label WITHOUT unfavoriting anything: its children take its place. */
 export function deleteFavoriteGroup(path: number[]): void {
-  if (nodeAt(layout(), path)?.target !== null) return;
+  const node = nodeAt(layout(), path);
+  if (!node || node.target !== null || node.blockId) return;
   commit(updateAt(layout(), path, (target) => target.children));
 }
 /** Collapse persists only where an arrangement page exists: collapse alone

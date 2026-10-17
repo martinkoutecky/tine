@@ -1,14 +1,30 @@
+import { msg, render } from "../i18n";
 // Pure helpers for reading/editing `key:: value` property lines — a block's
 // continuation lines or a page's pre-block. No store/DOM, so unit-testable.
 
 import { displayMathOpenAfter, closesDisplayMath, fenceExitTrim } from "./fences";
 import type { Format } from "../render/ast";
-import { blockRegions, editBlock, parserReady } from "../render/parse";
+import { blockRegions, editorOffsetOfRaw, editorText, editorTextJoin, hidePolicyHides, parserReady, rawByteOfEditor, parseBlock } from "../render/parse";
 import { utf8ToUtf16Cursor } from "../render/utf16Cursor";
+import { rebulletedSourceByteToRawByte } from "../render/spans";
 import { reportUiFailure } from "../uiFailure";
 
 import { property_line_json, page_regions_json, page_header_json } from "../render/wasm/lsdoc_wasm.js";
 import type { RegionProperty } from "../render/parse";
+
+// Deferred catalog messages; property getters resolve in the consuming computation.
+const UI_MESSAGES = {
+  "editor-aliases": msg("editor-aliases"),
+  "editor-other-names-this-page-answers-to-in-links-comma-separated": msg("editor-other-names-this-page-answers-to-in-links-comma-separated"),
+  "editor-tags": msg("editor-tags"),
+  "editor-page-level-tags-comma-separated": msg("editor-page-level-tags-comma-separated"),
+  "editor-display-title": msg("editor-display-title"),
+  "editor-override-the-shown-title-the-file-name-stays-the-same": msg("editor-override-the-shown-title-the-file-name-stays-the-same"),
+  "editor-icon": msg("editor-icon"),
+  "editor-an-emoji-character-shown-with-the-title": msg("editor-an-emoji-character-shown-with-the-title"),
+  "editor-public": msg("editor-public"),
+  "editor-include-this-page-when-exporting-publishing-public-pages": msg("editor-include-this-page-when-exporting-publishing-public-pages"),
+};
 
 /** Native accepted line grammar; callers choose placement and authoring policy. */
 export function acceptedPropertyLine(line: string): { key: string; value: string } | null {
@@ -106,19 +122,32 @@ export function splitPagePreamble(raw: string | null | undefined): {
   };
 }
 
-// Built-in properties hidden from the editor by default (like OG): `id::`,
-// `collapsed::`, and `logseq.order-list-type::` (the numbered-list marker) are
-// kept in the file for persistence but never shown in the edit textarea.
-// Annotation (PDF highlight) blocks instead hide ALL properties and edit only
-// their text.
-const BUILTIN_HIDDEN = new Set(["id", "collapsed", "logseq.order-list-type"]);
-/** Hide just the built-in `id::`/`collapsed::` properties (normal blocks). */
-export const isBuiltinHidden = (key: string): boolean => BUILTIN_HIDDEN.has(key);
-/** Hide metadata that should not surface while editing through a sheet cell. */
-export const isSheetCellHidden = (key: string): boolean =>
-  isBuiltinHidden(key) || key.toLowerCase().startsWith("tine.");
-/** Hide every property (annotation blocks edit only their text). */
-export const hideAll = (_key: string): boolean => true;
+/** Which accepted primary properties an editor hides: the outline kernel's
+ *  `editor_text::HidePolicy` (twin 13). The kernel owns the key lists. */
+export type HidePolicy =
+  | { readonly kind: "builtin" | "sheet_cell" | "all" }
+  | { readonly kind: "keys"; readonly keys: readonly string[]; readonly norm?: boolean };
+/** A normal block editor: the built-in `id::`, `collapsed::` and
+ *  `logseq.order-list-type::`, kept in the file but never in the textarea (as OG). */
+export const BUILTIN_HIDE: HidePolicy = Object.freeze({ kind: "builtin" });
+/** A sheet cell: the built-ins plus every `tine.*` key. */
+export const SHEET_CELL_HIDE: HidePolicy = Object.freeze({ kind: "sheet_cell" });
+/** Every property (annotation blocks edit only their text). */
+export const HIDE_ALL: HidePolicy = Object.freeze({ kind: "all" });
+/** Only the block's `id::` (copies and pastes that must not duplicate it). */
+export const HIDE_ID: HidePolicy = Object.freeze({ kind: "keys", keys: ["id"] });
+/** Exactly `keys` (lower-cased); `norm` compares through `propertyKeyNorm`. */
+export const hideKeys = (keys: readonly string[], norm = false): HidePolicy => Object.freeze({ kind: "keys", keys, norm });
+const policyJson = new WeakMap<HidePolicy, string>();
+function policyText(policy: HidePolicy): string {
+  let json = policyJson.get(policy);
+  if (json === undefined) policyJson.set(policy, (json = JSON.stringify(policy)));
+  return json;
+}
+/** Whether `policy` hides property `key` (as the parser spelled it). */
+export function hides(policy: HidePolicy, key: string): boolean {
+  return hidePolicyHides(policyText(policy), key);
+}
 
 /** For a multi-line editor that normally keeps Enter inside it, return the text
  * with its trailing sentinel blank line removed when the caret is on the
@@ -154,128 +183,59 @@ export function multilineExitTrim(
  *  `key:: value` lines; org keeps them inside a `:PROPERTIES:`/`:END:` drawer. */
 export type PropFormat = "md" | "org";
 
-type LineClass = "v" | "h" | "d"; // visible | hidden-payload | dropped(org wrapper)
-
-/** Present only primary properties accepted by the block-region door. Lines
- * are transport coordinates here, never evidence that text is metadata. */
-function classifyLines(
-  lines: string[],
-  isHidden: (key: string) => boolean,
-  format: PropFormat
-): LineClass[] {
-  const cls: LineClass[] = new Array(lines.length).fill("v");
-  if (!parserReady()) return cls;
-  const raw = lines.join("\n");
-  const regions = blockRegions(raw, format);
-  if (regions.quarantined) return cls;
-  const starts = [0];
-  const encoder = new TextEncoder();
-  for (let i = 0; i < lines.length - 1; i++) starts.push(starts[i] + encoder.encode(lines[i]).length + 1);
-  const lineAt = (byte: number) => {
-    let lo = 0, hi = starts.length;
-    while (lo + 1 < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (starts[mid] <= byte) lo = mid;
-      else hi = mid;
-    }
-    return lo;
-  };
-  const own = regions.properties.filter((p) => p.primary);
-  for (const p of own) if (isHidden(p.key.toLowerCase())) cls[lineAt(p.line[0])] = "h";
-  if (format === "org") {
-    for (const [index, range] of regions.property_regions.entries()) {
-      const entries = own.filter((p) => p.region === index);
-      if (!entries.length || !entries.every((p) => isHidden(p.key.toLowerCase()))) continue;
-      cls[lineAt(range[0])] = "d";
-      cls[lineAt(Math.max(range[0], range[1] - 1))] = "d";
-    }
-  }
-  return cls;
-}
-
 /** Split a block's raw into the editor-visible text and the hidden property
- *  lines. Fence-aware: a `key:: value` line inside a ```/~~~ code fence stays
- *  visible content — it must NOT be pulled out as metadata and reattached
- *  outside the fence (which would corrupt the code on focus+blur). `isHidden`
- *  selects which property keys are hidden (e.g. {@link isBuiltinHidden} or
- *  {@link hideAll}). `format` (default `"md"`) enables org `:PROPERTIES:` drawer
- *  handling. Inverse of {@link joinProps}. */
+ *  lines (the kernel's `editor_text`). Which lines are metadata is the parser's
+ *  answer: a `key:: value` line inside a code fence stays visible content. Org
+ *  drops a `:PROPERTIES:` wrapper whose every entry is hidden. Before the parser
+ *  is ready nothing is hidden. Inverse of {@link joinProps}. */
 export function splitProps(
   raw: string,
-  isHidden: (key: string) => boolean,
+  hide: HidePolicy,
   format: PropFormat = "md"
 ): { visible: string; hidden: string } {
-  const { visible, hidden } = splitPropsInternal(raw, isHidden, format);
-  return { visible, hidden };
-}
-
-function splitPropsInternal(
-  raw: string,
-  isHidden: (key: string) => boolean,
-  format: PropFormat,
-  rawOffset?: number
-): { visible: string; hidden: string; visibleOffset?: number } {
-  const lines = raw.split("\n");
-  const cls = classifyLines(lines, isHidden, format);
-  const vis: string[] = [];
-  const hid: string[] = [];
-  const target = rawOffset == null ? null : Math.max(0, Math.min(rawOffset, raw.length));
-  let visibleLen = 0;
-  let visibleOffset: number | null = null;
-  let rawPos = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const l = lines[i];
-    const rawStart = rawPos;
-    const rawEnd = rawStart + l.length;
-    if (cls[i] === "v") {
-      const lineVisibleStart = visibleLen + (vis.length > 0 ? 1 : 0);
-      const lineVisibleEnd = lineVisibleStart + l.length;
-      if (target != null && visibleOffset == null && target >= rawStart && target <= rawEnd) {
-        visibleOffset = lineVisibleStart + (target - rawStart);
-      }
-      vis.push(l);
-      visibleLen = lineVisibleEnd;
-    } else {
-      // "h" (hidden payload) or "d" (dropped org wrapper): not shown. A caret
-      // inside it maps to where the removed text would have appeared.
-      if (target != null && visibleOffset == null && target >= rawStart && target <= rawEnd) {
-        visibleOffset = visibleLen;
-      }
-      if (cls[i] === "h") hid.push(l);
-    }
-    rawPos = rawEnd + 1;
-  }
-  return {
-    visible: vis.join("\n"),
-    hidden: hid.join("\n"),
-    visibleOffset: target == null ? undefined : (visibleOffset ?? visibleLen),
-  };
+  if (!parserReady()) return { visible: raw, hidden: "" };
+  return editorText(raw, format, policyText(hide));
 }
 
 /** Map a UTF-16 offset in raw block text into the textarea's visible buffer,
- *  using the same fence-aware hidden-property split as {@link splitProps}. When
- *  the raw offset falls inside a hidden property line, it maps to the edit point
- *  where that removed line would have appeared. */
+ *  using the same split as {@link splitProps}. When the raw offset falls inside
+ *  a hidden property line, it maps to the edit point where that removed line
+ *  would have appeared. */
 export function rawOffsetToVisibleOffset(
   raw: string,
   rawOffset: number,
-  isHidden: (key: string) => boolean,
+  hide: HidePolicy,
   format: PropFormat = "md"
 ): number {
-  return splitPropsInternal(raw, isHidden, format, rawOffset).visibleOffset ?? 0;
+  if (!parserReady()) return Math.max(0, Math.min(rawOffset, raw.length));
+  return editorOffsetOfRaw(raw, format, policyText(hide), rawOffset);
+}
+
+/** The raw UTF-8 byte offset of a textarea offset (the kernel verbs' unit). */
+export function visibleOffsetToRawByte(raw: string, visibleOffset: number, hide: HidePolicy, format: PropFormat = "md"): number {
+  return rawByteOfEditor(raw, format, policyText(hide), visibleOffset);
 }
 
 /** Reattach hidden property lines to the visible text — the inverse of
- *  {@link splitProps}. Markdown appends them below the body (that's where its
- *  `id::`/`collapsed::` live). Org folds them back into a `:PROPERTIES:` drawer
- *  at OG's canonical spot (into an existing drawer if the visible text still has
- *  one, else native placement after the title and accepted planning — matching
- *  {@link rawWithBlockId}). A metadata-only block (empty
- *  visible) is just its hidden lines — no spurious leading newline. */
+ *  {@link splitProps}. Markdown appends them below the body; Org folds them back
+ *  into a `:PROPERTIES:` drawer at OG's canonical spot. A metadata-only block
+ *  (empty visible) is just its hidden lines. */
 export function joinProps(visible: string, hidden: string, format: PropFormat = "md"): string {
-  if (!hidden) return visible;
-  if (format !== "org") return visible ? `${visible}\n${hidden}` : hidden;
-  return editBlock(visible, format, { kind: "reattach_properties", hidden });
+  // OG property/insert-property prepends metadata to a titleless quote. A
+  // trailing unquoted line is a lazy continuation of its quoted paragraph.
+  // A title above the quote keeps its properties between title and quote.
+  // Only an accepted trailing quote can consume appended metadata; inline
+  // greater-than signs and literal containers retain the normal policy.
+  if (format === "md" && hidden && visible.includes(">") && parserReady()) {
+    const last = parseBlock(visible, false).filter(b => b.kind !== "properties").at(-1);
+    if (last?.kind === "quote" && last.span) {
+      const at = utf8ToUtf16Cursor(visible)(rebulletedSourceByteToRawByte(visible, last.span[0]));
+      const lineStart = visible.lastIndexOf("\n", at - 1) + 1;
+      const payload = hidden.endsWith("\r") ? hidden.slice(0, -1) : hidden;
+      return `${visible.slice(0, lineStart)}${payload}\n${visible.slice(lineStart)}`;
+    }
+  }
+  return editorTextJoin(visible, hidden, format);
 }
 
 /** First value for `key` (case-insensitive) in a property block, or null. */
@@ -421,9 +381,9 @@ export interface PagePropSpec {
   kind: "text" | "bool" | "list";
 }
 export const PAGE_PROP_SPECS: PagePropSpec[] = [
-  { key: "alias", label: "Aliases", hint: "Other names this page answers to in [[links]] (comma-separated)", kind: "list" },
-  { key: "tags", label: "Tags", hint: "Page-level tags (comma-separated)", kind: "list" },
-  { key: "title", label: "Display title", hint: "Override the shown title (the file name stays the same)", kind: "text" },
-  { key: "icon", label: "Icon", hint: "An emoji/character shown with the title", kind: "text" },
-  { key: "public", label: "Public", hint: "Include this page when exporting/publishing public pages", kind: "bool" },
+  { key: "alias", get label() { return render(UI_MESSAGES["editor-aliases"]); }, get hint() { return render(UI_MESSAGES["editor-other-names-this-page-answers-to-in-links-comma-separated"]); }, kind: "list" },
+  { key: "tags", get label() { return render(UI_MESSAGES["editor-tags"]); }, get hint() { return render(UI_MESSAGES["editor-page-level-tags-comma-separated"]); }, kind: "list" },
+  { key: "title", get label() { return render(UI_MESSAGES["editor-display-title"]); }, get hint() { return render(UI_MESSAGES["editor-override-the-shown-title-the-file-name-stays-the-same"]); }, kind: "text" },
+  { key: "icon", get label() { return render(UI_MESSAGES["editor-icon"]); }, get hint() { return render(UI_MESSAGES["editor-an-emoji-character-shown-with-the-title"]); }, kind: "text" },
+  { key: "public", get label() { return render(UI_MESSAGES["editor-public"]); }, get hint() { return render(UI_MESSAGES["editor-include-this-page-when-exporting-publishing-public-pages"]); }, kind: "bool" },
 ];

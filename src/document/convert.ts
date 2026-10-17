@@ -8,8 +8,24 @@ import { rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
-export function emptyPage(name: string, kind: "journal" | "page"): PageDto {
-  return { name, kind, title: name, pre_block: null, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }] };
+export function emptyPage(name: string, kind: "journal" | "page", format?: Format): PageDto {
+  return { name, kind, title: name, pre_block: null, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }],
+    ...(format ? { format } : {}) };
+}
+
+/** The format of the graph text file `path` names, by extension, as the store
+ * reads and serializes it (`tine_core::model::Format::from_path`): `.org` is
+ * Org, anything else (`.md`, `.markdown`) Markdown. */
+export function formatOfFile(path: string): Format {
+  return /\.org$/i.test(path) ? "org" : "md";
+}
+
+/** `dto` held in the format of the file it is written to (ORG-CREATED-FORMAT):
+ * the store serializes by the target's extension, so a created page whose DTO
+ * named no format (or another) would have later edits spelled for the wrong
+ * syntax, e.g. a Markdown `id::` line in an `.org` file. */
+export function inFileFormat(dto: PageDto, path: string): PageDto {
+  return { ...dto, format: formatOfFile(path) };
 }
 
 export function withToday(js: PageDto[]): PageDto[] {
@@ -52,9 +68,15 @@ export function switcherPage(name: string): PageDto {
  *  line in an Org file is visible body text that is never read back (GH #25).
  *  `format` is the extension of the id the backend resolved for the new page. */
 export function queryWorkspacePage(name: string, query: string, properties: ReadonlyArray<readonly [string, string]>, format: Format): PageDto {
-  const raw = properties.reduce(
-    (text, [key, value]) => (format === "org" ? orgRawWithProperty(text, key, value) : `${text}\n${key}:: ${value}`), query);
+  const raw = queryBlockRaw(query, properties, format);
   return { name, kind: "page", title: name, pre_block: null, format, blocks: [{ id: "", raw, collapsed: false, children: [] }] };
+}
+
+/** A query block's raw text with its `key:: value` properties, written where the page's FORMAT keeps them
+ *  (the one spelling for a saved workspace and for a definition appended to the exports page). */
+export function queryBlockRaw(query: string, properties: ReadonlyArray<readonly [string, string]>, format: Format): string {
+  return properties.reduce(
+    (text, [key, value]) => (format === "org" ? orgRawWithProperty(text, key, value) : `${text}\n${key}:: ${value}`), query);
 }
 
 /** The Favorites arrangement page (family 22), written whole through
@@ -70,6 +92,20 @@ export function favoritesArrangementPage(name: string, marker: string, blocks: B
 /** Read side: the page's blocks with the collapsed property left in the flag only. */
 export function favoritesArrangementBlocks(blocks: readonly BlockDto[], format: Format): BlockDto[] {
   return blocks.map((b) => ({ ...b, raw: rawWithCollapsed(b.raw, false, format), children: favoritesArrangementBlocks(b.children, format) }));
+}
+
+/** Today's sections use an ordinary page, published through createPage. The
+ * caller supplies the marker in the graph's preferred format and seeded blocks. */
+export function journalSectionsPage(name: string, marker: string, blocks: BlockDto[]): PageDto {
+  return { name, kind: "page", title: name, pre_block: marker, blocks };
+}
+
+/** The exports page (docs/contracts/export-definitions.md): an ordinary page, published through createPage, whose
+ * pre-block is the marker in the graph's format and whose one block is the `overview` query listing every definition.
+ * `format` is carried on the DTO because the host keeps the created page as given: without it the page is loaded
+ * as Markdown and a definition appended before the next disk read would be spelled for the wrong format. */
+export function exportsPage(name: string, marker: string, overview: string, format: Format): PageDto {
+  return { name, kind: "page", title: name, pre_block: marker, format, blocks: [{ id: "", raw: overview, collapsed: false, children: [] }] };
 }
 
 export function appendAliasDraft(owner: PageDto, draft: PageDto): PageDto {

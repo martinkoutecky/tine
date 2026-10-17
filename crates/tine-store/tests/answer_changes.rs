@@ -62,6 +62,7 @@ fn counts(signal: &Value, expected: Value) {
 }
 #[test]
 fn save_signals_are_bounded_and_match_the_publication() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let sub = store.subscribe();
     let text = save(&store, "after");
@@ -98,6 +99,7 @@ fn save_signals_are_bounded_and_match_the_publication() {
 }
 #[test]
 fn create_delete_and_rename_publish_both_answers() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, store) = fixture();
     let new = PageId::from("pages/New.md");
     let mut dto = store.page(&PageId::from("pages/A.md")).unwrap().doc;
@@ -139,6 +141,7 @@ fn create_delete_and_rename_publish_both_answers() {
 }
 #[test]
 fn external_single_and_bulk_changes_publish_final_target_counts() {
+    let _integration_guard = crate::integration_lock();
     let (dir, store) = fixture();
     let sub = store.subscribe();
     fs::write(

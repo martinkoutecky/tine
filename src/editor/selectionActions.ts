@@ -1,4 +1,11 @@
+import { msg, render } from "../i18n";
 import { insertLink, toggleInlineFormat, toggleWrap, type Edit, type InlineFormat } from "./format";
+
+// Deferred catalog messages; property getters resolve in the consuming computation.
+const UI_MESSAGES = {
+  "editor-link": msg("editor-link"),
+  "editor-markdown-link": msg("editor-markdown-link"),
+};
 
 export type SelectionActionId =
   | "bold"
@@ -63,8 +70,8 @@ export const SELECTION_ACTIONS: readonly SelectionAction[] = [
   wrap("inline-code", "`", "Inline code", "`"),
   {
     id: "link",
-    label: "Link",
-    title: "Markdown link",
+    get label() { return render(UI_MESSAGES["editor-link"]); },
+    get title() { return render(UI_MESSAGES["editor-markdown-link"]); },
     tier: "secondary",
     apply: (text, start, end, format = "md") => insertLink(text, start, end, format),
   },

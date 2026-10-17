@@ -39,6 +39,8 @@ const DOM_CLASS = /^(HTML\w*Element|SVG\w*Element|Element|Node|Text|CharacterDat
 /** Process-wide or main-only uses: `<file> <key>` (or `<file> *` for a file that
  * never runs in a workspace window) → why the global realm is right. */
 const REALM_ALLOW: Record<string, string> = {
+  "src/systemBars.ts *":
+    "Android's native bars follow the main app background; its observer starts only on Android, where workspace windows do not exist.",
   "src/capture.tsx *":
     "The quick-capture window is its own webview with its own JS realm; it never hosts workspace windows.",
   "src/main.tsx *":
@@ -63,6 +65,8 @@ const REALM_ALLOW: Record<string, string> = {
     "Writes the main window's <head> stylesheet, the single source that src/workspaceWindows.ts mirrors into every workspace window.",
   "src/customCss.ts document.getElementById":
     "Writes the main window's <head> stylesheet, the single source that src/workspaceWindows.ts mirrors into every workspace window.",
+  "src/styleKnobs.ts document.getElementById":
+    "Writes the main window's <head> #tine-knobs stylesheet and <html> classes, the single source that src/workspaceWindows.ts mirrors into every workspace window.",
   "src/App.tsx mainWindow.document.addEventListener":
     "installMobileExternalLinkHandler returns inert on desktop; on iOS/Android main is the only window.",
   "src/App.tsx mainWindow.document.removeEventListener":

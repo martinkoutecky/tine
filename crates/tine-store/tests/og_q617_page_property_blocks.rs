@@ -92,7 +92,94 @@ fn set(names: &[&str]) -> BTreeSet<String> {
 }
 
 #[test]
+fn gh699_space_and_comma_property_tokens_agree_in_queries_and_backlinks() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("pages")).unwrap();
+    for (name, value) in [
+        ("Space", "#eng #exec #founder"),
+        ("Comma", "#eng,#exec,#founder"),
+        ("CommaSpace", "#eng, #exec, #founder"),
+        ("Refs", "[[eng]] [[exec]] [[founder]]"),
+    ] {
+        std::fs::write(
+            dir.path().join(format!("pages/{name}.md")),
+            format!("tags:: {value}\nrelated:: {value}\n\n- body\n  tags:: {value}\n"),
+        )
+        .unwrap();
+    }
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let graph = store.whole_graph().unwrap();
+    let expected = set(&["Space", "Comma", "CommaSpace", "Refs"]);
+    for tag in ["eng", "exec", "founder"] {
+        for query in [
+            format!("(property tags {tag})"),
+            format!("(property related {tag})"),
+            format!("[[{tag}]]"),
+        ] {
+            assert_eq!(pages(&graph, &query), expected, "{query}");
+        }
+        let (query, view) = parse_query_input(
+            &format!("(page-tags {tag})"),
+            QueryInput::MacroQuery,
+            tine_core::date::JournalDate::today(),
+            Registry::none(),
+        );
+        let IrAnswer::Result(result) = graph
+            .query_ir(IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &ExecutionContext::default(),
+            })
+            .unwrap()
+        else {
+            panic!("result");
+        };
+        let QueryRows::Page { pages: hits } = result.rows else {
+            panic!("page tags return pages");
+        };
+        assert_eq!(
+            hits.into_iter().map(|p| p.name).collect::<BTreeSet<_>>(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn gh699_mixed_properties_keep_explicit_refs_and_linkable_plain_values() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("pages")).unwrap();
+    for (name, text) in [
+        ("Mixed.md", "tags:: #a plain text #[[multi word]]\nrelated:: #a plain text #[[multi word]]\n\n- body\n  related:: #a plain text #[[multi word]]\n"),
+        ("MixedOrg.org", "#+TAGS: #a plain text #[[multi word]]\n#+RELATED: #a plain text #[[multi word]]\n\n* body\n:PROPERTIES:\n:related: #a plain text #[[multi word]]\n:END:\n"),
+    ] {
+        std::fs::write(dir.path().join("pages").join(name), text).unwrap();
+    }
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let graph = store.whole_graph().unwrap();
+    let expected = set(&["Mixed", "MixedOrg"]);
+    for query in [
+        "(property tags a)",
+        "(property related a)",
+        "(property tags [[multi word]])",
+        "(property related [[multi word]])",
+        "(property tags [[plain text]])",
+        "[[a]]",
+        "[[multi word]]",
+    ] {
+        assert_eq!(pages(&graph, query), expected, "{query}");
+    }
+    assert!(pages(&graph, "(property related [[plain text]])").is_empty());
+    for page in ["Mixed", "MixedOrg"] {
+        let hits = rows(&graph, &format!("(and (page {page}) (property related a))"));
+        assert_eq!(hits.len(), 2, "header and body property on {page}");
+    }
+}
+
+#[test]
 fn property_query_matches_header_page_properties_in_every_value_spelling() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     let expected = set(&[
         "PageLink",
@@ -128,6 +215,7 @@ fn property_query_matches_header_page_properties_in_every_value_spelling() {
 
 #[test]
 fn header_property_hit_is_the_read_only_page_property_row() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     let hits = rows(&graph, "(property type [[Person]])");
     let header = hits.iter().find(|(page, _)| page == "PageLink").unwrap();
@@ -146,6 +234,7 @@ fn header_property_hit_is_the_read_only_page_property_row() {
 
 #[test]
 fn every_block_anchored_predicate_sees_the_pre_block() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture();
     // Tags and arbitrary page properties.
     assert_eq!(pages(&graph, "(property tags research)"), set(&["Tagged"]));

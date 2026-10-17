@@ -34,7 +34,7 @@ may tag, publish, comment, and close issues.
    immutable baseline. Push the exact candidate and require the same-machine A/B
    performance job to pass; an expected budget breach is a stop/consult decision,
    not permission to weaken the budget. Also run `npm run bench:startup` against
-   the immutable v0.4.7 native binary, retain its timing JSON and early-frame
+   the immutable v0.7.2 native binary, retain its timing JSON and early-frame
    sequence, and inspect those frames for new blank, intermediate, or corrupt
    paints before shipping.
 9. Push the frozen exact candidate, manually dispatch `ci.yml` with
@@ -56,23 +56,12 @@ may tag, publish, comment, and close issues.
     the release before the candidate; ordinary post-release `master` must point
     at the newly published tag so cumulative patch-cycle drift stays visible.
 
-## Additional `0.x.0` minor-release gates
+## Audits
 
-1. Do the Reddit/blog pass locally; Reddit must never be fetched, validated, or
-   artifacted by GitHub Actions or release packaging. Run
-   `npm run blog:sync -- --version=X.Y.0`, review every `r/TineOutline` post by
-   Martin plus every comment/reply in threads already cited by an existing blog
-   entry, update `website/blog/reddit-sources.json` for new source posts, and edit
-   `website/blog/` with the substantive new material. The sync script writes an
-   ignored working snapshot under `test-results/reddit/`; it does not write the
-   editorial prose and its output is not committed. Prefer Reddit's public
-   REST/JSON feeds, never RSS/Atom. If Reddit rejects the local REST request,
-   inspect the live post and comment pages directly rather than moving the work
-   to a hosted runner. Run `npm run blog:check` locally when the editorial pass
-   is complete.
-2. Audits are not a checklist gate. The maintainer requests audits by kind
-   before a major release; record any that ran, and their findings, in the
-   release receipt.
+Audits are not a checklist gate. The maintainer requests audits by kind before
+a major release; record any that ran, and their findings, in the release
+receipt. There is no editorial (blog) release gate: blog posts are published on
+GitHub when the maintainer chooses.
 
 ## Fail-closed rules
 

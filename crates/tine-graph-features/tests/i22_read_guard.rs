@@ -62,6 +62,7 @@ fn violations(file: &str, source: &str) -> Vec<String> {
 
 #[test]
 fn parsed_and_rendered_inputs_use_the_shared_cap() {
+    let _integration_guard = crate::integration_lock();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let files = [
         "crates/tine-store/src/model.rs",
@@ -69,6 +70,7 @@ fn parsed_and_rendered_inputs_use_the_shared_cap() {
         "crates/tine-store/src/store.rs",
         "crates/tine-graph-features/src/print.rs",
         "crates/tine-graph-features/src/conflicts.rs",
+        "crates/tine-graph-features/src/conflicts/queue.rs",
         "crates/tine-graph-features/src/pdf.rs",
         "crates/tine-graph-features/src/pages.rs",
         "crates/tine-graph-features/src/config.rs",

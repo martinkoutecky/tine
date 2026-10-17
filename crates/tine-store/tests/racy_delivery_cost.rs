@@ -77,6 +77,7 @@ fn deliver(pages: usize, delivered: usize) -> (Counts, Counts) {
 
 #[test]
 fn a_deliverys_racy_rehash_is_linear_in_the_files_it_delivered() {
+    let _integration_guard = crate::integration_lock();
     let _case = CASE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let small = deliver(60, 5);
     let large = deliver(600, 5);

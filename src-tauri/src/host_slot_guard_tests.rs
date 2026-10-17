@@ -20,7 +20,16 @@ fn production_files(dir: &Path, out: &mut Vec<(String, String)>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         if path.is_dir() {
-            production_files(&path, out);
+            // A `*_tests/` directory is a test module's tree (as a
+            // `*_tests.rs` file is): its helpers are not call paths.
+            if !path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with("_tests")
+            {
+                production_files(&path, out);
+            }
             continue;
         }
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -420,5 +429,57 @@ fn a_planted_second_binding_fails_the_guard() {
     assert_eq!(
         binds(&files),
         ["graph.rs::load_graph_for_label", "graph.rs::sneaky"]
+    );
+}
+
+/// The page host's window admissions (`PageHost::open`, `submit`,
+/// `move_blocks`, `discard`, `close`) run only from the window's page
+/// commands (`page_commands.rs`), each on a blocking-pool thread of its own
+/// that holds no store writer. The driver keeps admissions in arrival order
+/// (`Shared::admission`): one issued by a thread holding the store writer
+/// could queue behind an open that waits for that writer, and never return
+/// (P1 re-review 2). Exemplar: `page_commands.rs` `page_submit`.
+#[test]
+fn window_admissions_run_only_from_the_page_commands() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    production_files(&root.join("src"), &mut files);
+    // Every production crate but tine-store, which defines the admissions.
+    for entry in std::fs::read_dir(root.join("../crates")).unwrap() {
+        let krate = entry.unwrap().path();
+        if krate.file_name().is_some_and(|name| name != "tine-store") && krate.join("src").is_dir()
+        {
+            production_files(&krate.join("src"), &mut files);
+        }
+    }
+    // `submit`, `move_blocks` and `discard` are matched on any receiver (a
+    // binding named otherwise, or a call split across lines); `open` and
+    // `close` are too common a name, so only on a `host`.
+    let admissions = [
+        "host.open(",
+        ".submit(",
+        ".move_blocks(",
+        ".discard(",
+        "host.close(",
+    ];
+    let mut sites = 0;
+    for (file, source) in &files {
+        for admission in admissions {
+            let count = source.matches(admission).count();
+            if file.ends_with("page_commands.rs") {
+                sites += count;
+            } else {
+                assert_eq!(
+                    count, 0,
+                    "{file} calls {admission}: a window admission runs only from \
+                     src-tauri/src/page_commands.rs, on a thread holding no store writer \
+                     (exemplar page_submit)"
+                );
+            }
+        }
+    }
+    assert!(
+        sites >= 5,
+        "the admission scan found {sites} page command sites"
     );
 }

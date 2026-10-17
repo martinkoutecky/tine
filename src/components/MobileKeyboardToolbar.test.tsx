@@ -349,6 +349,26 @@ describe("MobileKeyboardToolbar", () => {
     dispose();
   });
 
+  it("marks the editing dock on the root while it is up, so the bottom navigation row yields (GH #598)", async () => {
+    platform.mobile = true;
+    const { render } = await import("solid-js/web");
+    const bridge = await import("../editorCommandBridge");
+    const { MobileKeyboardToolbar } = await import("./MobileKeyboardToolbar");
+    const root = document.documentElement;
+    const { dispose } = mount(render, MobileKeyboardToolbar);
+    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(false);
+
+    const unregister = bridge.registerFocusedEditorCommandBridge({ blockId: "b1", dispatch: () => true, blur() {} });
+    await Promise.resolve();
+    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(true);
+
+    unregister();
+    await Promise.resolve();
+    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(false);
+    dispose();
+    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(false);
+  });
+
   it("does not render on desktop even with a focused editor bridge", async () => {
     platform.mobile = false;
     const { render } = await import("solid-js/web");

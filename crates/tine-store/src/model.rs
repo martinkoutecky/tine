@@ -56,8 +56,9 @@ use tine_core::reference_evidence::{BlockSignature, ReferenceFilter};
 
 /// Maximum source bytes admitted to a page/config/EDN parser or renderer.
 pub const PARSE_INPUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
-/// Maximum structural depth admitted before recursive projections or rendering.
-pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = 128;
+/// Maximum structural depth admitted before recursive projections or rendering:
+/// the outline kernel's cap, so admission and every edit agree (twin 4).
+pub(crate) const PARSE_INPUT_MAX_DEPTH: usize = tine_outline::outline::OUTLINE_MAX_DEPTH;
 
 pub(crate) enum SyncFileResult {
     Reconciled {
@@ -85,6 +86,21 @@ impl std::fmt::Display for ParseInputTooLarge {
 }
 impl std::error::Error for ParseInputTooLarge {}
 
+/// Why a graph with no `logseq/config.edn` must not take the defaults, if it
+/// must not. An iCloud placeholder (`logseq/.config.edn.icloud`) means the
+/// file exists but is not downloaded: its settings are unknown, so the graph
+/// opens read-only (`ConfigState::problem`) instead of writing under the
+/// default :legacy file names. A plainly absent config.edn is no problem
+/// (Logseq's defaults). Cost: one metadata call.
+pub(crate) fn missing_config_problem(config_path: &Path) -> Option<crate::IoError> {
+    let placeholder = config_path.with_file_name(".config.edn.icloud");
+    placeholder.symlink_metadata().is_ok().then(|| {
+        io::Error::other(
+            "config.edn is in iCloud but not downloaded yet; open the graph again once it is",
+        )
+        .into()
+    })
+}
 pub(crate) fn read_parse_input(path: &Path) -> io::Result<String> {
     let bytes = read_parse_bytes(path)?;
     validate_parse_bytes_for_path(&bytes, path)?;
@@ -367,7 +383,8 @@ pub(crate) struct Graph {
     pub(crate) fail_sync_read_once: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     pub(crate) fail_sync_parse_once: std::sync::atomic::AtomicBool,
-    /// The installed derived page state; written only by `derived.rs` ((G)).
+    /// The installed derived page state; written only by `derived.rs` and its
+    /// `derived_owners.rs` child ((G)).
     derived: derived::Derived,
     /// Pages a page host holds, and what their owner last published.
     pub(crate) held: derived::HeldPages,
@@ -438,13 +455,93 @@ pub(crate) struct ReadSnapshot {
     icon_index: std::sync::OnceLock<Arc<page_icons::IconIndex>>,
     memos: SnapshotMemos,
     query_index: crate::query::index::QueryIndexSlot,
+    pub(crate) transliteration_names: Arc<NameKeyMap>,
+    pub(crate) transliteration_owners: SharedMap<String, usize>,
+    // Only open editor completions own supplemental keys. Shared across
+    // publications, released explicitly on close (including stale IPC replies).
+    pub(crate) completion_name_keys: Arc<std::sync::Mutex<HashMap<String, Arc<NameKeyMap>>>>,
+    #[cfg(test)]
+    pub(crate) name_cache_work: usize,
     #[cfg(test)]
     block_full_builds: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     referenced_name_full_builds: std::sync::atomic::AtomicUsize,
 }
 
+pub(crate) type NameKeyMap = SharedMap<String, Arc<crate::transliteration::NameKeys>>;
+
 impl ReadSnapshot {
+    fn build_name_keys(&mut self, old: Option<&Self>, changed_paths: &[String]) -> Arc<NameKeyMap> {
+        if let Some(old) = old {
+            self.transliteration_owners = old.transliteration_owners.clone();
+            if Arc::ptr_eq(&old.pages, &self.pages) && Arc::ptr_eq(&old.list, &self.list) {
+                return Arc::clone(&old.transliteration_names);
+            }
+        }
+        let names = |page: &PageEntry, doc: &Document| -> std::collections::BTreeSet<String> {
+            std::iter::once(page.name.clone())
+                .chain(crate::query::document_alias_spellings(doc))
+                .chain(collect_document_referenced_names(doc))
+                .filter_map(|name| crate::transliteration::cache_identity(&name))
+                .collect()
+        };
+        let mut delta: std::collections::BTreeMap<String, isize> = Default::default();
+        if let Some(old) = old {
+            // Only publication paths are inspected. Counts are page ownership,
+            // so repeated aliases/references within one document count once.
+            for path in changed_paths {
+                let before = snapshot_page_by_rel(&old.pages, None, path)
+                    .map(|(page, doc)| names(page, doc))
+                    .unwrap_or_default();
+                let after = snapshot_page_by_rel(&self.pages, None, path)
+                    .map(|(page, doc)| names(page, doc))
+                    .unwrap_or_default();
+                #[cfg(test)]
+                {
+                    self.name_cache_work += before.len() + after.len();
+                }
+                for name in before.difference(&after) {
+                    *delta.entry(name.clone()).or_default() -= 1;
+                }
+                for name in after.difference(&before) {
+                    *delta.entry(name.clone()).or_default() += 1;
+                }
+            }
+        } else {
+            for (page, doc) in self.pages.iter() {
+                for name in names(page, doc) {
+                    #[cfg(test)]
+                    {
+                        self.name_cache_work += 1;
+                    }
+                    *delta.entry(name).or_default() += 1;
+                }
+            }
+        }
+        let mut keys = old
+            .map(|old| Arc::clone(&old.transliteration_names))
+            .unwrap_or_else(|| Arc::new(NameKeyMap::new()));
+        for (name, change) in delta {
+            if change == 0 {
+                continue;
+            }
+            let before = self.transliteration_owners.get(&name).copied().unwrap_or(0);
+            let count = before
+                .checked_add_signed(change)
+                .expect("name ownership delta");
+            if count == 0 {
+                self.transliteration_owners.remove(&name);
+                Arc::make_mut(&mut keys).remove(&name);
+            } else {
+                self.transliteration_owners.insert(name.clone(), count);
+                if before == 0 {
+                    let value = Arc::new(crate::transliteration::NameKeys::build(&name));
+                    Arc::make_mut(&mut keys).insert(name, value);
+                }
+            }
+        }
+        keys
+    }
     /// Owner paths of the aliases whose page key is `key`, in
     /// `page_aliases_with_owners` order. Built once per snapshot so a
     /// resolve costs O(1) instead of cloning and re-keying every alias.
@@ -495,8 +592,8 @@ impl ReadSnapshot {
         // names were first-use work there, so their OnceLocks remain cold.
         let initial = old.is_none().then(|| {
             std::thread::scope(|scope| {
-                let explicit =
-                    scope.spawn(|| SnapshotExplicitIndex::capture(None, &pages, &[], None));
+                let explicit = scope
+                    .spawn(|| SnapshotExplicitIndex::capture(None, &pages, &[], None, &config));
                 let signatures = scope.spawn(|| {
                     SnapshotReferenceCandidateIndex::capture(None, &pages, &[], cache_generation)
                 });
@@ -515,7 +612,7 @@ impl ReadSnapshot {
                         None,
                         &pages,
                         &[],
-                        crate::query::document_aliases,
+                        crate::query::document_alias_spellings,
                         None,
                     )
                 });
@@ -550,10 +647,16 @@ impl ReadSnapshot {
             index.clone()
         } else {
             SnapshotExplicitIndex::capture(
-                old.map(|old| (&old.explicit_index, &old.pages)),
+                old.filter(|old| {
+                    old.config.separated_by_commas == config.separated_by_commas
+                        && old.config.ignored_page_references_keywords
+                            == config.ignored_page_references_keywords
+                })
+                .map(|old| (&old.explicit_index, &old.pages)),
                 &pages,
                 changed_paths,
                 position_pair,
+                &config,
             )
         };
         let block_index = std::sync::OnceLock::new();
@@ -589,7 +692,7 @@ impl ReadSnapshot {
         } else {
             carry_projection(
                 old.and_then(|old| old.alias_index.get().map(|index| (index, &old.pages))),
-                crate::query::document_aliases,
+                crate::query::document_alias_spellings,
             )
         };
         let referenced_name_index = carry_projection(
@@ -609,7 +712,7 @@ impl ReadSnapshot {
             old.map(|old| (&old.query_index, Arc::ptr_eq(&old.pages, &pages))),
             changed_paths,
         );
-        let snapshot = Self {
+        let mut snapshot = Self {
             pages,
             config,
             list,
@@ -630,11 +733,19 @@ impl ReadSnapshot {
             icon_index: std::sync::OnceLock::new(),
             memos: SnapshotMemos::default(),
             query_index,
+            transliteration_names: Arc::new(NameKeyMap::new()),
+            transliteration_owners: SharedMap::new(),
+            completion_name_keys: old
+                .map(|old| Arc::clone(&old.completion_name_keys))
+                .unwrap_or_default(),
+            #[cfg(test)]
+            name_cache_work: 0,
             #[cfg(test)]
             block_full_builds: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
+        snapshot.transliteration_names = snapshot.build_name_keys(old, changed_paths);
         let icons = page_icons::IconIndex::capture(
             old.and_then(|old| {
                 old.icon_index
@@ -718,7 +829,8 @@ impl ReadSnapshot {
             return false;
         };
         let aliases_unchanged = edits.iter().all(|(_, previous, current)| {
-            crate::query::document_aliases(previous) == crate::query::document_aliases(current)
+            crate::query::document_alias_spellings(previous)
+                == crate::query::document_alias_spellings(current)
         });
         if !aliases_unchanged {
             return false;
@@ -949,6 +1061,7 @@ impl ReadSnapshot {
         page_match_scope: tine_core::query::ir::FriendlyPageMatchScope,
         page_view: Option<tine_core::query::ir::ViewSettings>,
         block_view: Option<tine_core::query::ir::ViewSettings>,
+        transliteration: bool,
     ) -> tine_core::query_plan::QueryExecution {
         match scope {
             Some(scope) => crate::query_plan::QueryPlan::friendly_for_page_with_policy(
@@ -965,6 +1078,7 @@ impl ReadSnapshot {
                 page_match_scope,
             ),
         }
+        .with_transliteration(transliteration)
         .with_display(page_view, block_view)
         .execute_with_explain(
             self,
@@ -1058,38 +1172,47 @@ impl ReadSnapshot {
     pub(crate) fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         self.aliases
             .get_or_init(|| {
-                let index = self.alias_index.get_or_init(|| {
-                    SnapshotPageDerivedIndex::capture(
-                        None,
-                        &self.pages,
-                        &[],
-                        crate::query::document_aliases,
-                        None,
-                    )
-                });
-                let mut owned = Vec::new();
-                for (entry, _) in self.pages.iter() {
-                    if let Some(projection) = index.get(&entry.path) {
-                        for alias in projection {
-                            owned.push((
-                                entry.path.clone(),
-                                alias.clone(),
-                                entry.name.clone(),
-                                entry.rel_path_str().to_owned(),
-                            ));
-                        }
-                    }
-                }
-                owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
                 Arc::new(
-                    owned
+                    self.page_alias_spellings_with_owners()
                         .into_iter()
-                        .map(|(_, alias, owner, path)| (alias, owner, path))
+                        .map(|(alias, owner, path)| {
+                            (tine_core::refs::page_key(&alias), owner, path)
+                        })
                         .collect(),
                 )
             })
             .as_ref()
             .clone()
+    }
+
+    pub(crate) fn page_alias_spellings_with_owners(&self) -> Vec<(String, String, String)> {
+        let index = self.alias_index.get_or_init(|| {
+            SnapshotPageDerivedIndex::capture(
+                None,
+                &self.pages,
+                &[],
+                crate::query::document_alias_spellings,
+                None,
+            )
+        });
+        let mut owned = Vec::new();
+        for (entry, _) in self.pages.iter() {
+            if let Some(projection) = index.get(&entry.path) {
+                for alias in projection {
+                    owned.push((
+                        entry.path.clone(),
+                        alias.clone(),
+                        entry.name.clone(),
+                        entry.rel_path_str().to_owned(),
+                    ));
+                }
+            }
+        }
+        owned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        owned
+            .into_iter()
+            .map(|(_, alias, owner, path)| (alias, owner, path))
+            .collect()
     }
     pub(crate) fn observed_page_mtimes(&self) -> Arc<SharedMap<String, std::time::SystemTime>> {
         Arc::clone(&self.observed_mtimes)
@@ -1111,6 +1234,13 @@ impl ReadSnapshot {
         let positions = Arc::clone(&self.reference_candidate_index.read().unwrap().positions);
         (self.query_index).get(&self.pages, &positions, &self.config, self.cache_generation)
     }
+    pub(crate) fn explicit_reference_names(&self) -> impl Iterator<Item = &str> {
+        self.explicit_index
+            .shards
+            .iter()
+            .flat_map(|shard| shard.iter().map(|(name, _)| name.as_str()))
+    }
+
     pub(crate) fn referenced_page_names(&self) -> Vec<String> {
         self.referenced_names
             .get_or_init(|| {
@@ -1139,9 +1269,50 @@ impl ReadSnapshot {
             })
             .clone()
     }
+
+    /// Completion sees the editing block's reference baseline, even when its
+    /// live text has already autosaved. Other owners keep their cached facts.
+    pub(crate) fn referenced_page_names_for_editor(
+        &self,
+        owner: &str,
+        id: &str,
+        original: &str,
+    ) -> Vec<String> {
+        let index = self.referenced_name_index.get_or_init(|| {
+            #[cfg(test)]
+            self.referenced_name_full_builds
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            SnapshotPageDerivedIndex::capture(
+                None,
+                &self.pages,
+                &[],
+                collect_document_referenced_names,
+                None,
+            )
+        });
+        let mut seen = HashMap::new();
+        for (entry, doc) in self.pages.iter() {
+            let names = if entry.name == owner {
+                collect_document_referenced_names_with_baseline(doc, Some((id, original)))
+            } else {
+                index.get(&entry.path).cloned().unwrap_or_default()
+            };
+            for name in names {
+                seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
+            }
+        }
+        seen.into_values().collect()
+    }
 }
 
 pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
+    collect_document_referenced_names_with_baseline(doc, None)
+}
+
+fn collect_document_referenced_names_with_baseline(
+    doc: &Document,
+    baseline: Option<(&str, &str)>,
+) -> Vec<String> {
     fn add(seen: &mut HashMap<String, String>, name: String) {
         if !name.is_empty() {
             seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
@@ -1156,13 +1327,21 @@ pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
             add(seen, name.to_owned());
         }
     }
-    fn visit(block: &DocBlock, seen: &mut HashMap<String, String>) {
-        for name in block.projection().refs_page() {
+    fn visit(block: &DocBlock, seen: &mut HashMap<String, String>, baseline: Option<(&str, &str)>) {
+        let replacement = baseline
+            .filter(|(id, _)| *id == block.uuid)
+            .map(|(_, raw)| {
+                let mut replacement = DocBlock::new(raw);
+                replacement.set_org(block.is_org());
+                replacement
+            });
+        let reference_block = replacement.as_ref().unwrap_or(block);
+        for name in reference_block.projection().refs_page() {
             add(seen, name.clone());
         }
-        property_refs(seen, block);
+        property_refs(seen, reference_block);
         for child in &block.children {
-            visit(child, seen);
+            visit(child, seen, baseline);
         }
     }
     let mut seen = HashMap::new();
@@ -1172,7 +1351,7 @@ pub(crate) fn collect_document_referenced_names(doc: &Document) -> Vec<String> {
         property_refs(&mut seen, &block);
     }
     for block in &doc.roots {
-        visit(block, &mut seen);
+        visit(block, &mut seen, baseline);
     }
     seen.into_values().collect()
 }
@@ -1540,6 +1719,7 @@ impl SnapshotExplicitIndex {
         pages: &Arc<Pages>,
         changed_paths: &[String],
         positions: Option<(&SharedMap<String, usize>, &SharedMap<String, usize>)>,
+        config: &Config,
     ) -> Self {
         if let Some((previous, previous_pages)) = old.filter(|(_, previous_pages)| {
             !changed_paths.is_empty() || Arc::ptr_eq(previous_pages, pages)
@@ -1554,10 +1734,14 @@ impl SnapshotExplicitIndex {
                 let after =
                     snapshot_page_by_rel(pages, positions.map(|(_, after)| after), rel_path);
                 let old_names = before
-                    .map(|(entry, doc)| crate::query::document_explicit_reference_names(entry, doc))
+                    .map(|(entry, doc)| {
+                        crate::query::document_explicit_reference_names(entry, doc, config)
+                    })
                     .unwrap_or_default();
                 let new_names = after
-                    .map(|(entry, doc)| crate::query::document_explicit_reference_names(entry, doc))
+                    .map(|(entry, doc)| {
+                        crate::query::document_explicit_reference_names(entry, doc, config)
+                    })
                     .unwrap_or_default();
                 if let Some(path) = after.or(before).map(|(entry, _)| entry.path.as_path()) {
                     index.update(path, &old_names, &new_names);
@@ -1567,7 +1751,7 @@ impl SnapshotExplicitIndex {
         } else {
             let mut index = Self::empty();
             for (entry, doc) in pages.iter() {
-                let names = crate::query::document_explicit_reference_names(entry, doc);
+                let names = crate::query::document_explicit_reference_names(entry, doc, config);
                 index.update(&entry.path, &[], &names);
             }
             index
@@ -1928,23 +2112,159 @@ fn path_stays_within_root(root: &Path, target: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// `Graph::ensure_write_target`'s answer for `root` (named `label`).
+fn checked_write_target(root: &Path, target: &Path, label: &str) -> io::Result<()> {
+    match write_target_contained(root, target) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("write target escapes {label}: {}", target.display()),
+        )),
+        Err(error) if error.kind() == io::ErrorKind::InvalidInput => Err(error),
+        Err(error) => Err(io::Error::new(
+            error.kind(),
+            format!(
+                "could not inspect write target {}: {error}",
+                target.display()
+            ),
+        )),
+    }
+}
+
+/// Pauses before re-probing a target that cannot be inspected (under 50 ms in
+/// all): Windows refuses to open a page for a moment while a save replaces it
+/// (REG-WIN-WRITE-TARGET-TRANSIENT).
+const TARGET_PROBE_PAUSES: [std::time::Duration; 3] = [
+    std::time::Duration::from_millis(2),
+    std::time::Duration::from_millis(8),
+    std::time::Duration::from_millis(32),
+];
+
+/// A write target's containment: `Ok(false)` when it resolves outside `root`,
+/// through an alias of a managed directory (`path_uses_managed_alias`), or
+/// through a link that does not resolve. One that cannot be inspected (after
+/// `canonical_existing_ancestor`'s re-probes) is answered as that I/O error:
+/// unverified, which the caller fails, rather than outside, which it refuses.
+fn write_target_contained(root: &Path, target: &Path) -> io::Result<bool> {
+    let canonical_root = canonical_existing_path(root).unwrap_or_else(|_| root.to_path_buf());
+    let (existing, resolved) = match reprobed_existing_ancestor(target) {
+        Ok(found) => found,
+        Err(Unresolved::Link(_)) => return Ok(false),
+        Err(Unresolved::Io(error)) => return Err(error),
+    };
+    let Ok(relative) = existing.strip_prefix(root) else {
+        return Ok(false);
+    };
+    Ok(resolved == canonical_root.join(relative))
+}
+
+/// Why the deepest existing ancestor did not resolve.
+enum Unresolved {
+    /// A link whose target does not resolve (dangling or looping): it is not
+    /// at its own canonical location, and re-probing cannot change that.
+    Link(io::Error),
+    /// The entry could not be inspected.
+    Io(io::Error),
+}
+
 /// Resolve the deepest existing ancestor without following a missing suffix.
+/// An entry that cannot be inspected is re-probed after each pause, then
+/// answered as that error. An existing entry that is not a link but cannot be
+/// opened (Windows, while a save replaces it) resolves through its parent: a
+/// link-free entry's canonical path is its parent's plus its name.
 pub(crate) fn canonical_existing_ancestor(target: &Path) -> io::Result<(&Path, PathBuf)> {
-    let mut existing = target;
+    reprobed_existing_ancestor(target).map_err(|unresolved| match unresolved {
+        Unresolved::Link(error) | Unresolved::Io(error) => error,
+    })
+}
+
+fn reprobed_existing_ancestor(target: &Path) -> Result<(&Path, PathBuf), Unresolved> {
+    let mut pauses = TARGET_PROBE_PAUSES.iter();
     loop {
-        match fs::symlink_metadata(existing) {
-            Ok(_) => return Ok((existing, canonical_existing_path(existing)?)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                existing = existing.parent().ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "target has no existing ancestor",
-                    )
-                })?;
+        match existing_ancestor_once(target) {
+            Err(Unresolved::Io(error)) if error.kind() != io::ErrorKind::InvalidInput => {
+                match pauses.next() {
+                    Some(pause) => std::thread::sleep(*pause),
+                    None => return Err(Unresolved::Io(error)),
+                }
             }
-            Err(error) => return Err(error),
+            answer => return answer,
         }
     }
+}
+
+fn existing_ancestor_once(target: &Path) -> Result<(&Path, PathBuf), Unresolved> {
+    let mut existing = target;
+    loop {
+        match probe_lstat(existing) {
+            Ok(metadata) => {
+                let resolved = match probe_canonical(existing) {
+                    Ok(resolved) => resolved,
+                    Err(error) if metadata.file_type().is_symlink() => {
+                        return Err(Unresolved::Link(error))
+                    }
+                    Err(error) => match (existing.parent(), existing.file_name()) {
+                        (Some(parent), Some(name)) => {
+                            probe_canonical(parent).map_err(Unresolved::Io)?.join(name)
+                        }
+                        _ => return Err(Unresolved::Io(error)),
+                    },
+                };
+                return Ok((existing, resolved));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                existing = existing.parent().ok_or_else(|| {
+                    Unresolved::Io(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "target has no existing ancestor",
+                    ))
+                })?;
+            }
+            Err(error) => return Err(Unresolved::Io(error)),
+        }
+    }
+}
+
+// Test faults for the write-target probes: `(path, step, failures)` makes the
+// next `failures` probes of `path` at `step` fail as Windows does while a
+// save replaces the file (`u32::MAX`: every probe).
+#[cfg(test)]
+thread_local! {
+    static PROBE_FAULTS: std::cell::RefCell<Vec<(PathBuf, ProbeStep, u32)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProbeStep {
+    Lstat,
+    Canonical,
+}
+
+#[cfg(test)]
+fn probe_fault(path: &Path, step: ProbeStep) -> io::Result<()> {
+    PROBE_FAULTS.with(|faults| {
+        for (at, kind, left) in faults.borrow_mut().iter_mut() {
+            if *at == path && *kind == step && *left > 0 {
+                if *left != u32::MAX {
+                    *left -= 1;
+                }
+                return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+            }
+        }
+        Ok(())
+    })
+}
+
+fn probe_lstat(path: &Path) -> io::Result<fs::Metadata> {
+    #[cfg(test)]
+    probe_fault(path, ProbeStep::Lstat)?;
+    fs::symlink_metadata(path)
+}
+
+fn probe_canonical(path: &Path) -> io::Result<PathBuf> {
+    #[cfg(test)]
+    probe_fault(path, ProbeStep::Canonical)?;
+    canonical_existing_path(path)
 }
 
 /// Managed graph directories must retain their own identity, not merely land
@@ -1955,7 +2275,7 @@ pub(crate) fn canonical_existing_ancestor(target: &Path) -> io::Result<(&Path, P
 fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
     let canonical_root = canonical_existing_path(root).unwrap_or_else(|_| root.to_path_buf());
     let mut existing = target;
-    while fs::symlink_metadata(existing).is_err() {
+    while probe_lstat(existing).is_err() {
         let Some(parent) = existing.parent() else {
             return true;
         };
@@ -1967,6 +2287,113 @@ fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
     canonical_existing_path(existing)
         .map(|actual| actual != canonical_root.join(relative))
         .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod write_target_probe_tests {
+    use super::*;
+
+    fn graph(tag: &str) -> (PathBuf, Graph) {
+        let dir = std::env::temp_dir().join(format!("tine-probe-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(dir.join("pages/Page.md"), "- before\n").unwrap();
+        let graph = Graph::open(&dir);
+        (dir, graph)
+    }
+
+    fn fault(path: PathBuf, step: ProbeStep, failures: u32) {
+        PROBE_FAULTS.with(|faults| faults.borrow_mut().push((path, step, failures)));
+    }
+
+    fn clear() {
+        PROBE_FAULTS.with(|faults| faults.borrow_mut().clear());
+    }
+
+    /// REG-WIN-WRITE-TARGET-TRANSIENT: Windows briefly refuses to open a page
+    /// a save is replacing. Its parent still proves where the write lands.
+    #[test]
+    fn a_page_that_cannot_be_opened_is_checked_through_its_folder() {
+        let (dir, graph) = graph("unopenable");
+        let page = graph.root.join("pages/Page.md");
+        fault(page.clone(), ProbeStep::Canonical, u32::MAX);
+        let checked = graph.ensure_write_target(&page);
+        clear();
+        assert!(
+            checked.is_ok(),
+            "an ordinary page is inside its graph: {checked:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// REG-WIN-WRITE-TARGET-TRANSIENT: a page that cannot even be inspected is
+    /// retried, and then reported as the I/O error it is, never as outside.
+    #[test]
+    fn a_page_that_cannot_be_inspected_is_retried_then_fails_without_escaping() {
+        let (dir, graph) = graph("uninspectable");
+        let page = graph.root.join("pages/Page.md");
+        fault(page.clone(), ProbeStep::Lstat, 2);
+        let brief = graph.ensure_write_target(&page);
+        clear();
+        assert!(brief.is_ok(), "a brief failure is retried: {brief:?}");
+
+        fault(page.clone(), ProbeStep::Lstat, u32::MAX);
+        let lasting = graph.ensure_write_target(&page);
+        clear();
+        let error = lasting.expect_err("a lasting failure fails the write");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{error}");
+        assert!(!error.to_string().contains("escapes"), "{error}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// REG-WIN-WRITE-TARGET-TRANSIENT, the submit's first check: a page's OS
+    /// path resolves through the same re-probes and folder fallback.
+    #[test]
+    fn an_unopenable_page_still_resolves_for_its_save() {
+        let (dir, graph) = graph("handoff");
+        let page = graph.root.join("pages/Page.md");
+        let expected = canonical_existing_path(&graph.root.join("pages"))
+            .unwrap()
+            .join("Page.md");
+        fault(page.clone(), ProbeStep::Canonical, u32::MAX);
+        let unopenable = canonical_existing_ancestor(&page).map(|(_, resolved)| resolved);
+        clear();
+        assert_eq!(unopenable.unwrap(), expected);
+        fault(page.clone(), ProbeStep::Lstat, 3);
+        let brief = canonical_existing_ancestor(&page).map(|(_, resolved)| resolved);
+        clear();
+        assert_eq!(
+            brief.unwrap(),
+            expected,
+            "three brief failures are re-probed"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The parent fallback is for ordinary entries only: a link that cannot be
+    /// resolved is still refused.
+    #[cfg(unix)]
+    #[test]
+    fn an_unresolvable_link_is_still_refused() {
+        let (dir, graph) = graph("unresolvable-link");
+        let outside = dir.with_extension("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("foreign.md"), "x").unwrap();
+        let link = graph.root.join("pages/escape.md");
+        std::os::unix::fs::symlink(outside.join("foreign.md"), &link).unwrap();
+        assert!(graph.ensure_write_target(&link).is_err());
+        fault(link.clone(), ProbeStep::Canonical, u32::MAX);
+        let checked = graph.ensure_write_target(&link);
+        clear();
+        let error = checked.expect_err("a link is never resolved through its folder");
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::InvalidInput,
+            "refused, not failed: {error}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
 }
 
 #[cfg(test)]
@@ -2140,17 +2567,10 @@ impl Graph {
         Ok(graph)
     }
 
+    /// `InvalidInput`: the target is outside the graph (a refusal). Any other
+    /// error: it could not be inspected (a failure the save retries).
     pub(crate) fn ensure_write_target(&self, target: &Path) -> io::Result<()> {
-        if path_stays_within_root(&self.root, target)
-            && !path_uses_managed_alias(&self.root, target)
-        {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("write target escapes graph root: {}", target.display()),
-            ))
-        }
+        checked_write_target(&self.root, target, "graph root")
     }
 
     /// Asset writes have their own capability boundary. Keeping this separate
@@ -2160,19 +2580,7 @@ impl Graph {
         if self.assets_root == self.root.join("assets") {
             return self.ensure_write_target(target);
         }
-        if path_stays_within_root(&self.assets_root, target)
-            && !path_uses_managed_alias(&self.assets_root, target)
-        {
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!(
-                    "write target escapes approved assets root: {}",
-                    target.display()
-                ),
-            ))
-        }
+        checked_write_target(&self.assets_root, target, "approved assets root")
     }
 
     /// Open a graph directory, reading `logseq/config.edn` if present.
@@ -2185,7 +2593,10 @@ impl Graph {
         let root = root.as_ref().to_path_buf();
         let (config, problem) = match read_parse_input(&root.join("logseq/config.edn")) {
             Ok(text) => (Config::parse(&text), None),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (Config::default(), None),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (
+                Config::default(),
+                missing_config_problem(&root.join("logseq/config.edn")),
+            ),
             Err(error) => (Config::default(), Some(error.into())),
         };
         let journal_format = JournalFormat::new(
@@ -3193,6 +3604,7 @@ impl SnapshotMemos {
                         target,
                         entry,
                         candidate,
+                        graph.config(),
                     ),
                     Some(("u", target)) => crate::query::page_affects_unlinked(
                         &real_pages,
@@ -3201,6 +3613,7 @@ impl SnapshotMemos {
                         target,
                         entry,
                         candidate,
+                        graph.config(),
                     ),
                     Some(("br", uuid)) => {
                         crate::query::page_affects_block_referrers(uuid, candidate)
@@ -3213,6 +3626,7 @@ impl SnapshotMemos {
                             target,
                             entry,
                             candidate,
+                            graph.config(),
                         )
                     }),
                     Some(("U", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|target| {
@@ -3223,6 +3637,7 @@ impl SnapshotMemos {
                             target,
                             entry,
                             candidate,
+                            graph.config(),
                         )
                     }),
                     Some(("R", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|uuid| {
@@ -4932,6 +5347,34 @@ mod tests {
     }
 
     #[test]
+    fn alias_completion_case_only_save_refreshes_live_and_reloaded_spelling() {
+        let dir = scratch("gh675-case-save");
+        fs::write(dir.join("pages/Owner.md"), "alias:: SSE\n- body\n").unwrap();
+        let store = model_store(&dir);
+        let before = published_snapshot(&store);
+        before.page_aliases_with_owners();
+        assert_eq!(crate::query::quick_switch(&before, "sse", 8)[0].name, "SSE");
+        save_model_page(&store, "Owner", |page| {
+            page.pre_block = Some("alias:: Sse".into())
+        });
+        let after = published_snapshot(&store);
+        assert_eq!(crate::query::quick_switch(&after, "SSE", 8)[0].name, "Sse");
+        assert_eq!(crate::query::quick_switch(&before, "sse", 8)[0].name, "SSE");
+        assert!(matches!(
+            store.whole_graph().unwrap().resolve("sSE", false),
+            crate::store::Resolved::Alias { .. }
+        ));
+        store.close();
+        let reopened = model_store(&dir);
+        assert_eq!(
+            crate::query::quick_switch(&published_snapshot(&reopened), "sse", 8)[0].name,
+            "Sse"
+        );
+        reopened.close();
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn quick_switch_includes_referenced_pages() {
         // A page referenced by `#tag` / `[[link]]` but with no file of its own
         // still "exists" (OG semantics) and must show up in quick-switch — that's
@@ -5036,6 +5479,7 @@ mod tests {
                         target,
                         entry,
                         doc,
+                        graph.config(),
                     ),
                     ReferenceKind::Plain => crate::query::page_affects_unlinked(
                         &real_pages,
@@ -5044,6 +5488,7 @@ mod tests {
                         target,
                         entry,
                         doc,
+                        graph.config(),
                     ),
                 })
                 .map(|(entry, _)| entry.rel_path.clone())
@@ -5134,6 +5579,59 @@ mod tests {
             ),
             crate::store::SaveOutcome::Saved(_)
         ));
+    }
+
+    #[test]
+    fn completion_reference_baseline_survives_live_save_and_reload() {
+        for (extension, before, after) in [
+            ("md", "- start\n", "[[Fz]]"),
+            ("org", "* start\n", "[[Fz]]"),
+        ] {
+            let dir = scratch(&format!("fz-baseline-{extension}"));
+            fs::write(dir.join(format!("pages/Notes.{extension}")), before).unwrap();
+            fs::write(dir.join("pages/Fuzzy Existing.md"), "- body\n").unwrap();
+            let store = model_store(&dir);
+            let before = published_snapshot(&store);
+            // Warm both indexes so save must refresh carried facts correctly.
+            before.referenced_page_names();
+            let id = before.with_pages(|pages| {
+                pages
+                    .iter()
+                    .find(|(p, _)| p.name == "Notes")
+                    .unwrap()
+                    .1
+                    .roots[0]
+                    .uuid
+                    .clone()
+            });
+            save_model_page(&store, "Notes", |page| page.blocks[0].raw = after.into());
+            let live = published_snapshot(&store);
+            assert_eq!(crate::query::quick_switch(&live, "Fz", 8)[0].name, "Fz");
+            assert_eq!(
+                crate::query::quick_switch_for_editor(&live, "Fz", 8, "Notes", &id, "start")[0]
+                    .name,
+                "Fuzzy Existing"
+            );
+            assert_eq!(
+                crate::query::quick_switch(&before, "Fz", 8)[0].name,
+                "Fuzzy Existing"
+            );
+            store.close();
+            let reopened = model_store(&dir);
+            let snapshot = published_snapshot(&reopened);
+            assert_eq!(
+                crate::query::quick_switch_for_editor(&snapshot, "Fz", 8, "Notes", &id, "start")[0]
+                    .name,
+                "Fuzzy Existing"
+            );
+            assert_eq!(
+                crate::query::quick_switch_for_editor(&snapshot, "Fz", 8, "Notes", &id, after)[0]
+                    .name,
+                "Fz"
+            );
+            reopened.close();
+            let _ = fs::remove_dir_all(dir);
+        }
     }
 
     fn advanced_result(snapshot: &ReadSnapshot, source: &str) -> tine_core::query::AdvancedResult {
@@ -10034,6 +10532,9 @@ mod tests {
         fs::write(&path, "- old\n").unwrap();
         let store = crate::Store::open(&dir, Default::default()).unwrap().0;
         let _view = store.whole_graph().unwrap();
+        // Drive reconciliation here; the watcher must not consume the write
+        // before refresh can exercise the injected parser panic.
+        store.watch.stop_background_for_test();
         fs::write(&path, "- changed outside\n").unwrap();
         store
             .graph

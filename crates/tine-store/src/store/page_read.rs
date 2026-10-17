@@ -17,7 +17,7 @@ impl Store {
 
     /// [`Self::page_target`]'s checks that read no page file: its disk
     /// spelling and path, refusing a symlinked page or one outside the areas.
-    pub(super) fn page_spot(&self, id: &PageId) -> Result<(PageId, PathBuf), StoreError> {
+    pub(crate) fn page_spot(&self, id: &PageId) -> Result<(PageId, PathBuf), StoreError> {
         if self.as_page(&id.file()).is_none() {
             return Err(StoreError::InvalidTarget(id.as_str().to_owned()));
         }
@@ -110,6 +110,16 @@ impl Store {
         let (id, path, _) = self.page_target(id)?;
         let doc = page_dto(|| self.graph.page_dto_for_bytes(&path, bytes))?;
         self.page_read(id, doc)
+    }
+
+    /// Stage a byte-exact copy of `old`, the bytes of marker-bearing page file
+    /// `file`, under `logseq/.tine-trash/conflicts/<stamp>__markers__<name>`
+    /// (no-replace, fsync'd), before a host operation resolves them (DESIGN
+    /// §3.4 pre): a crash leaves the old file plus its copy, or the resolved
+    /// file plus the copy, never a lost side. A refused operation leaves the
+    /// copy in trash. One write + fsync of `old`.
+    pub fn stage_marker_copy(&self, file: &FileId, old: &[u8]) -> Result<FileId, crate::Why> {
+        self.transaction(None).stage_marker_file(file, old)
     }
 
     /// Hold page `id` as a page host does, with no host running: its index

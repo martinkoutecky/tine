@@ -1,10 +1,11 @@
+import { t } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
 import { LineGutter } from "./LineGutter";
 import { TableWrap } from "../components/TableWrap";
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
-import { For, Show, createContext, createMemo, createResource, useContext, type JSX } from "solid-js";
+import { For, Index, Show, createContext, createMemo, createResource, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { renderInlines, renderRawHtml, renderSanitizedHtml, MathView, CopyButton } from "./inline";
 import { EmojiText } from "./emoji";
@@ -21,6 +22,9 @@ import { parseBody, renderedProperties, stripPlanningLines } from "./facets";
 import { createNearBlockMount } from "../createNearBlockMount";
 import { BeginQuery, inspectBeginQuery } from "../components/BeginQuery";
 import { readOr } from "../resourceRead";
+import { QueryMacro } from "../components/Macro";
+import { hasQueryMacroCandidate, queryMacroRenderExtents, queryMacroRenderRun } from "./queryMacroRender";
+import { PeekContext } from "./PeekPopup";
 
 function escapeHtml(code: string): string {
   return code.replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -54,7 +58,7 @@ function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs
     <pre class="code-block" classList={{ "code-wrapping": codeWrapping() }} {...(props.spanAttrs ?? {})}>
       <Show when={props.lang}><span class="code-language">{props.lang.toLowerCase()}</span></Show>
       <LineGutter lines={(props.code.endsWith("\n") ? props.code.slice(0, -1) : props.code).split("\n")} code />
-      <CopyButton text={props.code} title="Copy code" class="code-copy" />
+      <CopyButton text={props.code} title={t("render-copy-code")} class="code-copy" />
       <code class="hljs" innerHTML={html()} />
     </pre>
   );
@@ -75,7 +79,7 @@ export function CalcBlock(props: { src: string; spanAttrs?: SpanDomAttrs }): JSX
             <div class="calc-out" classList={{ "calc-error": !!ln.error }}>
               {ln.output ?? ""}
               <Show when={ln.output !== null && !ln.error}>
-                <CopyButton text={ln.output!} title="Copy result" class="calc-copy" />
+                <CopyButton text={ln.output!} title={t("render-copy-result")} class="calc-copy" />
               </Show>
             </div>
           </>
@@ -113,7 +117,7 @@ function AdmonitionIcon(props: { type: string }): JSX.Element {
     <span
       class={`admonition-icon admonition-icon-${props.type}`}
       role="img"
-      aria-label={`${props.type} icon`}
+      aria-label={t("render-icon", { name: String(props.type) })}
       title={`${props.type[0].toUpperCase()}${props.type.slice(1)}`}
     >
       <EmojiText text={ADMONITION_ICONS[props.type]} />
@@ -171,7 +175,7 @@ export function renderBlocks(
   );
   if (!isQuarantined(blocks)) return content;
   return (
-    <span class="parse-quarantine" title="This block couldn't be parsed and is shown as raw text">
+    <span class="parse-quarantine" title={t("render-this-block-couldn-t-be-parsed-and-is-shown-as-raw-text")}>
       {content}
     </span>
   );
@@ -454,6 +458,32 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
   // block has rendered (latched by id in `renderedBlocks`) it renders eagerly
   // forever — no second placeholder↔real transition, so zero scroll-height churn.
   const observe = createNearBlockMount(props);
+  const insidePeek = useContext(PeekContext);
+  // The general AST render rebuilds on raw text edits. Inline query blocks
+  // own resources/editor state, so keep their inline slots and pass fresh
+  // parser-owned spans as reactive props instead of rebuilding those hosts.
+  // Admission stays near-viewport and parser-confirmed; other AST shapes and
+  // previews retain their existing renderer.
+  const queryRuns = createMemo(() => {
+    if (!observe.near() || !parserReady() || insidePeek || props.macroExpansion || !props.raw.includes("{{")) return undefined;
+    const format = props.format ?? "md";
+    const parsed = parseBody(props.raw, format);
+    if (isQuarantined(parsed)) return undefined;
+    const blocks = bodyBlocks(parsed, props.raw);
+    if (!blocks.every(isInlineFlow)) return undefined;
+    const flows = blocks as Extract<AstBlock, { kind: "paragraph" | "bullet" | "heading" }>[];
+    const candidates = flows.map(flow => hasQueryMacroCandidate(flow.inline));
+    if (!candidates.some(Boolean)) return undefined;
+    const extents = queryMacroRenderExtents(props.raw);
+    const runs = blocks.map((block, index) => {
+      const flow = block as Extract<AstBlock, { kind: "paragraph" | "bullet" | "heading" }>;
+      return { entries: candidates[index] ? queryMacroRenderRun(flow.inline, props.raw, format, extents)
+        : flow.inline.map(inline => ({ inline, extent: undefined })), span: flow.span,
+        heading: flow.kind === "heading" ? flow.size && flow.size >= 1 && flow.size <= 6 ? flow.size : undefined
+          : index === 0 ? props.headingLevel : undefined };
+    });
+    return runs.some(run => run.entries.some(entry => entry.extent)) ? runs : undefined;
+  });
   return (
     <Show
       when={observe.near()}
@@ -468,7 +498,20 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
       }
     >
       <Show when={parserReady()} fallback={<span class="ast-fallback"><PlaceholderText raw={props.raw} /></span>}>
-        {renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false)}
+        <Show when={queryRuns()} fallback={renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false)}>
+          <Index each={queryRuns()}>{(run, blockIndex) => {
+            const content = <Index each={run().entries}>{entry => <Show when={!!entry().extent}
+              fallback={renderInlines([entry().inline], props.blockId, true, false, props.format, props.raw)}>
+              <QueryMacro body={`${entry().extent!.name} ${entry().extent!.argument}`} blockId={props.blockId}
+                sourceExtent={entry().extent} sourceRaw={props.raw.slice(entry().extent!.start, entry().extent!.end)} />
+            </Show>}</Index>;
+            return <><Show when={blockIndex > 0}><br /></Show>
+              <Show when={run().heading} fallback={content}>
+                <span class={`heading-text h${run().heading}`} {...(coarseSpanAttrs(run().span) ?? {})}>{content}</span>
+              </Show>
+            </>;
+          }}</Index>
+        </Show>
       </Show>
     </Show>
   );
@@ -530,7 +573,8 @@ function toggleAstCheckbox(blockId: string, sourceRaw: string, item: AstListItem
   if (start === undefined) return;
   const at = utf8ByteToUtf16Offset(sourceRaw, rebulletedSourceByteToRawByte(sourceRaw, start));
   const lineStart = sourceRaw.lastIndexOf("\n", at - 1) + 1;
-  const checkbox = /\[[ xX]\]\s*$/.exec(sourceRaw.slice(lineStart, at));
-  if (!checkbox) return;
-  toggleListItemAtIndex(blockId, sourceRaw.slice(0, lineStart).split("\n").length - 1, checkbox.index);
+  const prefix = sourceRaw.slice(lineStart, at).trimEnd();
+  const token = prefix.slice(-3);
+  if (token !== "[ ]" && token !== "[x]" && token !== "[X]") return;
+  toggleListItemAtIndex(blockId, sourceRaw.slice(0, lineStart).split("\n").length - 1, prefix.length - 3);
 }

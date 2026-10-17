@@ -106,7 +106,11 @@ describe("selection indent/outdent batches one command (master b3fc9c813)", () =
     load([blk("pred"), blk("a"), blk("b")]);
     selectBlock("a");
     extendSelectionTo("b");
-    setDoc("byId", "b", "parent", "pred"); // malformed: b claims a parent whose children do not list it
+    // Malformed: b listed under pred and as a root. The kernel reads the tree
+    // from the children lists (parents are derived), so a listing is what can
+    // be stale; it refuses the page.
+    setDoc("byId", "pred", "children", ["b"]);
+    setDoc("byId", "b", "parent", "pred");
     const before = state();
 
     expect(measure(indentSelection).publications).toBe(0);

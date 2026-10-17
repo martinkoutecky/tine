@@ -27,9 +27,7 @@ pub(crate) mod page_properties;
 mod sample_seed_tests;
 pub(crate) use page_properties::page_facets;
 use page_properties::{page_document_is_org, page_property_lines};
-pub(crate) use tine_core::page_properties::{
-    document_page_property_block, page_property_raw, property_projection,
-};
+pub(crate) use tine_core::page_properties::{document_page_property_block, page_property_raw};
 
 #[derive(Debug, Clone)]
 pub(crate) struct BoundedGroups {
@@ -373,6 +371,18 @@ fn is_properties_only(raw: &str) -> bool {
 /// lets cache invalidation compare sorted, deduplicated normalized alias sets
 /// instead of treating an unchanged `alias::` line as a change.
 pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
+    let mut aliases: Vec<_> = document_alias_spellings(doc)
+        .into_iter()
+        .map(|alias| refs::page_key(&alias))
+        .collect();
+    aliases.sort_unstable();
+    aliases.dedup();
+    aliases
+}
+
+/// Authored spellings for display/insertion. Identity consumers use
+/// `document_aliases` or `page_key`; case-only edits must refresh this projection.
+pub(crate) fn document_alias_spellings(doc: &Document) -> Vec<String> {
     let alias_text: Option<&str> = match &doc.pre_block {
         Some(pre) => Some(pre.as_str()),
         // No pre-block: a properties-only FIRST block is the page-properties
@@ -394,18 +404,16 @@ pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
             if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
                 continue;
             }
-            for alias in v.split(tine_core::refs::is_linkable_property_separator) {
-                let alias = strip_ref(alias.trim());
-                if !alias.is_empty() {
-                    aliases.push(refs::page_key(&alias));
-                }
-            }
+            aliases.extend(tine_core::property_refs::linkable_names(
+                &v,
+                page_document_is_org(doc),
+            ));
         }
     }
-    // Ordering and duplicate spelling do not alter alias resolution. Comparing
-    // the semantic set avoids graph-wide invalidation for harmless formatting.
+    // Collapse duplicate identities while retaining a deterministic spelling.
     aliases.sort_unstable();
-    aliases.dedup();
+    let mut seen = std::collections::HashSet::new();
+    aliases.retain(|alias| seen.insert(refs::page_key(alias)));
     aliases
 }
 
@@ -528,6 +536,26 @@ fn graph_equivalent_page_names(
     let Some(journal) = pages.iter().find(|entry| {
         entry.kind == PageKind::Journal && format.parse(&entry.name) == Some(target_day)
     }) else {
+        // A date with no real page is an editable virtual journal. Keep real
+        // ordinary pages and aliases intact; only fileless dates share spellings.
+        if real_page_names(graph)
+            .get(&refs::page_key(&resolved.0))
+            .is_none()
+        {
+            let title = format.title(target_day);
+            let spellings = journal_spelling_keys(&format, target_day, &title);
+            if spellings
+                .iter()
+                .any(|name| real_page_names(graph).get(name).is_some())
+            {
+                return resolved;
+            }
+            resolved.1.extend(spellings);
+            resolved.1.sort();
+            resolved.1.dedup();
+            resolved.0 = title.clone();
+            resolved.2 = title;
+        }
         return resolved;
     };
     resolved
@@ -552,7 +580,7 @@ pub(crate) fn journal_format(config: &tine_core::config::Config) -> JournalForma
 /// master ee7730b48): its own name, the graph's title/file forms, the default
 /// title/file forms and ISO `yyyy-MM-dd`, as page keys. The one definition both
 /// query-time resolution and scoped invalidation use (I-12).
-fn journal_spelling_keys(
+pub(crate) fn journal_spelling_keys(
     format: &JournalFormat,
     day: JournalDate,
     journal_name: &str,
@@ -582,12 +610,21 @@ fn widen_for_journal_day(names_norm: &mut Vec<String>, format: &JournalFormat, t
 }
 
 fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
+    page_property_block_with_config(entry, pre, &tine_core::query::atom::ParseConfig::default())
+}
+
+fn page_property_block_with_config(
+    entry: &PageEntry,
+    pre: &str,
+    config: &tine_core::query::atom::ParseConfig,
+) -> Option<DocBlock> {
     let is_org = Format::from_path(&entry.path) == Format::Org;
     let raw = page_property_raw(pre, is_org);
     if raw.is_empty() {
         return None;
     }
-    let mut block = property_projection(&raw, is_org);
+    let mut block =
+        tine_core::page_properties::property_projection_with_config(&raw, is_org, config);
     block.uuid = format!(
         "page-property:{:?}:{}",
         entry.kind,
@@ -611,7 +648,11 @@ fn page_property_referrer(entry: &PageEntry, pre: &str, uuid: &str) -> Option<Bl
 /// cached page. This is the projection used by the reconstructible candidate
 /// index; query-time occurrence verification still uses the full evidence
 /// engine below and remains authoritative.
-pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Document) -> Vec<String> {
+pub(crate) fn document_explicit_reference_names(
+    entry: &PageEntry,
+    doc: &Document,
+    config: &tine_core::config::Config,
+) -> Vec<String> {
     fn collect(blocks: &[DocBlock], names: &mut Vec<String>) {
         for block in blocks {
             names.extend(
@@ -620,25 +661,29 @@ pub(crate) fn document_explicit_reference_names(entry: &PageEntry, doc: &Documen
                     .reference_source()
                     .explicit
                     .iter()
-                    .map(|reference| refs::page_key(&reference.name)),
+                    .flat_map(|reference| refs::namespace_refs(&reference.name))
+                    .map(refs::page_key),
             );
             collect(&block.children, names);
         }
     }
 
     let mut names = Vec::new();
-    if let Some(block) = doc
-        .pre_block
-        .as_deref()
-        .and_then(|pre| page_property_block(entry, pre))
-    {
+    if let Some(block) = doc.pre_block.as_deref().and_then(|pre| {
+        page_property_block_with_config(
+            entry,
+            pre,
+            &tine_core::query::atom::ParseConfig::from_config(config),
+        )
+    }) {
         names.extend(
             block
                 .projection()
                 .reference_source()
                 .explicit
                 .iter()
-                .map(|reference| refs::page_key(&reference.name)),
+                .flat_map(|reference| refs::namespace_refs(&reference.name))
+                .map(refs::page_key),
         );
     }
     collect(&doc.roots, &mut names);
@@ -737,7 +782,13 @@ fn collect_reference_occurrences_bounded(
                 .pre_block
                 .as_deref()
                 .filter(|_| candidate_pages.admits(page, 0))
-                .and_then(|pre| page_property_block(entry, pre))
+                .and_then(|pre| {
+                    page_property_block_with_config(
+                        entry,
+                        pre,
+                        &tine_core::query::atom::ParseConfig::from_config(config),
+                    )
+                })
             {
                 if budget.closed() {
                     if block_has_reference(&block, &needles, kind, config) {
@@ -943,8 +994,8 @@ fn backlink_filter_entry(
             add_facet(marker);
         }
         // OG treats tags::/alias:: property values as page references too. The
-        // property boundary itself is parser-owned; only its comma-separated
-        // semantic values are unwrapped here.
+        // property boundary and explicit reference tokens are parser-owned;
+        // top-level plain text supplies the additional comma-separated names.
         for (key, value) in projection.properties() {
             if !(key.eq_ignore_ascii_case("tags")
                 || key.eq_ignore_ascii_case("alias")
@@ -956,8 +1007,7 @@ fn backlink_filter_entry(
             if quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"') {
                 continue;
             }
-            for value in value.split(tine_core::refs::is_linkable_property_separator) {
-                let name = strip_ref(value.trim());
+            for name in tine_core::property_refs::linkable_names(value, block.is_org()) {
                 add_facet(&name);
             }
         }
@@ -1018,7 +1068,11 @@ pub(crate) fn backlink_filter_context(
                 continue;
             };
             if let Some(pre) = document.pre_block.as_deref() {
-                if let Some(block) = page_property_block(page, pre) {
+                if let Some(block) = page_property_block_with_config(
+                    page,
+                    pre,
+                    &tine_core::query::atom::ParseConfig::from_config(graph.config()),
+                ) {
                     if ids.contains(&block.uuid) {
                         let entry = backlink_filter_entry(
                             &page.name,
@@ -1206,16 +1260,19 @@ pub(crate) fn page_affects_backlinks(
     target: &str,
     entry: &PageEntry,
     doc: &Document,
+    config: &tine_core::config::Config,
 ) -> bool {
     let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
     widen_for_journal_day(&mut names_norm, journal, target);
-    // Scoped invalidation has no Graph/config parameter. Default-enabled matching
-    // is conservative for disabled/excluded property pages (it may evict an
-    // unaffected cache entry, but cannot retain a stale one).
-    let config = tine_core::config::Config::default();
+    // Invalidation shares the live graph's property-reference policy with reads.
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_property_block(entry, pre).is_some_and(|block| {
+        page_property_block_with_config(
+            entry,
+            pre,
+            &tine_core::query::atom::ParseConfig::from_config(config),
+        )
+        .is_some_and(|block| {
             block_reference_evidence(
                 &block,
                 &canonical,
@@ -1249,13 +1306,18 @@ pub(crate) fn page_affects_unlinked(
     target: &str,
     entry: &PageEntry,
     doc: &Document,
+    config: &tine_core::config::Config,
 ) -> bool {
     let (canonical, mut names_norm, _) = equivalent_page_names(real_pages, aliases, target);
     widen_for_journal_day(&mut names_norm, journal, target);
-    let config = tine_core::config::Config::default();
     let needles = tine_core::reference_evidence::ReferenceNeedles::new(&names_norm);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_property_block(entry, pre).is_some_and(|block| {
+        page_property_block_with_config(
+            entry,
+            pre,
+            &tine_core::query::atom::ParseConfig::from_config(config),
+        )
+        .is_some_and(|block| {
             block_reference_evidence(&block, &canonical, &needles, ReferenceKind::Plain, &config)
                 .is_some()
         })
@@ -1431,7 +1493,7 @@ fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
     BlockDto {
         id: String::new(),
         raw,
-        collapsed: false,
+        collapsed: b.collapsed(),
         children: b.children.iter().map(|c| template_dto(c, false)).collect(),
         breadcrumb: Vec::new(),
         ..Default::default()
@@ -1444,6 +1506,29 @@ fn template_copy_drops_markdown_and_org_ids_regardless_of_case() {
     let block = DocBlock::new("body\nID:: md-id\n:PROPERTIES:\n:Id: org-id\n:END:\nkeep:: yes");
     let copied = template_dto(&block, false);
     assert_eq!(copied.raw, "body\n:PROPERTIES:\n:END:\nkeep:: yes");
+}
+
+#[cfg(test)]
+#[test]
+fn template_copy_preserves_collapsed_state() {
+    for (raw, expected) in [
+        ("section\ncollapsed:: true", true),
+        ("section\ncollapsed:: false", false),
+        ("section", false),
+        ("section\n:PROPERTIES:\n:collapsed: true\n:END:", true),
+        ("```\ncollapsed:: true\n```", false),
+    ] {
+        let mut block = DocBlock::new(raw);
+        block.set_org(raw.contains(":PROPERTIES:"));
+        block
+            .children
+            .push(DocBlock::new("nested\ncollapsed:: true"));
+        let copied = template_dto(&block, false);
+        assert_eq!(copied.collapsed, expected, "{raw}");
+        assert_eq!(copied.raw, raw);
+        assert!(copied.children[0].collapsed);
+        assert!(copied.id.is_empty());
+    }
 }
 
 /// Distinct property keys (each with its sorted distinct values) used across the
@@ -1718,6 +1803,7 @@ fn finish_quick_switch_top(
 
 /// Fuzzy page-name matcher for the quick switcher. Ranks prefix > substring >
 /// subsequence, then by name length.
+#[cfg(test)]
 pub(crate) fn quick_switch(graph: &ReadSnapshot, query: &str, limit: usize) -> Vec<PageEntry> {
     let plan = crate::query_plan::QueryPlan::legacy_page_search_with_policy(
         query,
@@ -1726,6 +1812,28 @@ pub(crate) fn quick_switch(graph: &ReadSnapshot, query: &str, limit: usize) -> V
     );
     let execution = plan.execute(graph, || false);
     crate::query_plan::page_hits_to_entries(execution.hits)
+}
+
+#[cfg(test)]
+pub(crate) fn quick_switch_for_editor(
+    graph: &ReadSnapshot,
+    query: &str,
+    limit: usize,
+    page_name: &str,
+    block_id: &str,
+    original_raw: &str,
+) -> Vec<PageEntry> {
+    let mut plan = crate::query_plan::QueryPlan::legacy_page_search_with_policy(
+        query,
+        limit,
+        graph.config().enable_search_remove_accents,
+    );
+    plan.editor_reference_baseline = Some((
+        page_name.to_owned(),
+        block_id.to_owned(),
+        original_raw.to_owned(),
+    ));
+    crate::query_plan::page_hits_to_entries(plan.execute(graph, || false).hits)
 }
 
 /// Resolve many `((uuid))` block references in a single graph pass — the real
@@ -2117,6 +2225,32 @@ pub(crate) fn preview_block_with_budget(
     })
 }
 
+/// The pages holding a block whose persisted `id::` is `uuid`, in page
+/// order, compared case-insensitively, stopping at the second: a writer needs to know the id names exactly
+/// one block's page. The block-id index is only a hint, so this walks every
+/// page (O(B), one in-memory pass; no cache).
+pub(crate) fn block_pages(graph: &ReadSnapshot, uuid: &str) -> Vec<String> {
+    graph.with_pages(|pages| {
+        let mut found = Vec::new();
+        for (entry, doc) in pages.iter() {
+            let mut here = false;
+            walk(&doc.roots, &mut |block| {
+                // The persisted `id::` only: a runtime uuid is not a handle.
+                here |= block
+                    .property("id")
+                    .is_some_and(|id| id.trim().eq_ignore_ascii_case(uuid));
+            });
+            if here {
+                found.push(entry.name.clone());
+                if found.len() == 2 {
+                    break;
+                }
+            }
+        }
+        found
+    })
+}
+
 /// Walk `doc` once, resolving any block whose uuid (or persisted `id::`) is a
 /// still-unresolved id in `want`. First block in walk order wins per id (matches
 /// `resolve_block`).
@@ -2158,17 +2292,6 @@ fn resolve_ids_in_page<'a>(
             }
         }
     });
-}
-
-/// A page-ref argument's bare name: `#tag`, `[[Page]]` and `Page` alike.
-fn strip_ref(s: &str) -> String {
-    let t = s.trim();
-    let t = t.strip_prefix('#').unwrap_or(t).trim();
-    let t = t
-        .strip_prefix("[[")
-        .and_then(|x| x.strip_suffix("]]"))
-        .unwrap_or(t);
-    t.trim().to_string()
 }
 
 #[cfg(test)]
@@ -2376,6 +2499,26 @@ mod tests {
     /// Whether `query` selects the one block `raw` on the journal of `day`.
     fn selects_on_journal(query: &str, day: i64, raw: &str) -> bool {
         !hits_on(query, "Journal", Some(day), &block(raw)).is_empty()
+    }
+
+    fn selects_tql_on(query: &str, journal: Option<i64>, raw: &str) -> bool {
+        use tine_core::query::{parse_query_text, resolve_for_execution, QueryDialect};
+        let graph = one_page("Test", journal, &block(raw));
+        let (query, view) = parse_query_text(query, QueryDialect::Tql, TODAY);
+        assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+        let resolved = resolve_for_execution(
+            &query,
+            &tine_core::query::ir::ExecutionContext::none(),
+            TODAY,
+        );
+        !exec::run_block_groups(&graph, &resolved, &view, usize::MAX, usize::MAX)
+            .0
+            .groups
+            .is_empty()
+    }
+
+    fn selects_tql(query: &str, raw: &str) -> bool {
+        selects_tql_on(query, None, raw)
     }
 
     #[test]
@@ -2655,49 +2798,53 @@ mod tests {
         assert!(selects_on_journal(q, 20260610, "TODO y"));
         assert!(selects_on_journal(q, 20260517, "TODO y"));
         assert!(!selects_on_journal(q, 20260101, "TODO z"));
-        // `between scheduled` ignores the page's journal date.
-        let qs = "(between scheduled -30d today)";
-        assert!(selects(qs, sched));
-        assert!(!selects_on_journal(qs, 20260610, "TODO y"));
-        assert!(selects("(between scheduled -7d +7d)", sched));
-        // `between deadline` only looks at DEADLINE lines.
-        let qd = "(between deadline -30d today)";
-        assert!(selects(qd, "TODO x\nDEADLINE: <2026-06-10 Wed>"));
-        assert!(!selects(qd, sched));
+        // OG date windows refuse; Tine windows ignore the page's journal date.
+        assert!(!selects("(between scheduled -30d today)", sched));
+        assert!(!selects(
+            "(between deadline -30d today)",
+            "TODO x\nDEADLINE: <2026-06-10 Wed>"
+        ));
+        let qs = "scheduled between '-30d' and today";
+        assert!(selects_tql(qs, sched));
+        assert!(!selects_tql_on(qs, Some(20260610), "TODO y"));
+        assert!(selects_tql("scheduled between '-7d' and '+7d'", sched));
+        let qd = "deadline between '-30d' and today";
+        assert!(selects_tql(qd, "TODO x\nDEADLINE: <2026-06-10 Wed>"));
+        assert!(!selects_tql(qd, sched));
     }
 
     #[test]
     fn agenda_query_keys_off_scheduled_deadline_not_journal_date() {
-        // The journal-agenda DSL the app inserts must match on the planning date
+        // The journal-agenda TQL the app inserts must match on the planning date
         // itself, NOT the journal day the block happens to live on.
-        let q = "(or (between scheduled -7d +7d) (between deadline -7d +7d))";
-        assert!(!selects_on_journal(
+        let q = "scheduled between '-7d' and '+7d' or deadline between '-7d' and '+7d'";
+        assert!(!selects_tql_on(
             q,
-            20260616,
+            Some(20260616),
             "TODO old thing\nDEADLINE: <2025-01-01 Wed>"
         ));
-        assert!(selects(q, "TODO pay\nDEADLINE: <2026-06-16 Tue>"));
-        assert!(selects_on_journal(
+        assert!(selects_tql(q, "TODO pay\nDEADLINE: <2026-06-16 Tue>"));
+        assert!(selects_tql_on(
             q,
-            20200101,
+            Some(20200101),
             "TODO meet\nSCHEDULED: <2026-06-18 Thu>"
         ));
-        assert!(!selects_on_journal(q, 20260616, "just a note"));
+        assert!(!selects_tql_on(q, Some(20260616), "just a note"));
     }
 
     #[test]
     fn planning_markers_are_found_anywhere_in_the_block() {
         // TODAY + 20d = 2026-07-06.
-        let q = "(between scheduled +20d +20d)";
-        assert!(selects(q, "TODO x\nSCHEDULED: <2026-07-06 Mon>"));
-        assert!(selects(q, "TODO SCHEDULED: <2026-07-06 Mon> do it"));
-        assert!(selects(
+        let q = "scheduled between '+20d' and '+20d'";
+        assert!(selects_tql(q, "TODO x\nSCHEDULED: <2026-07-06 Mon>"));
+        assert!(selects_tql(q, "TODO SCHEDULED: <2026-07-06 Mon> do it"));
+        assert!(selects_tql(
             q,
             "TODO y\n SCHEDULED: <2026-07-06 Mon> #email students"
         ));
-        assert!(!selects(q, "TODO z\nDEADLINE: <2026-07-06 Mon>"));
-        assert!(selects(
-            "(between deadline +20d +20d)",
+        assert!(!selects_tql(q, "TODO z\nDEADLINE: <2026-07-06 Mon>"));
+        assert!(selects_tql(
+            "deadline between '+20d' and '+20d'",
             "TODO z\nDEADLINE: <2026-07-06 Mon>"
         ));
     }
@@ -2706,19 +2853,19 @@ mod tests {
     fn a_planning_marker_in_a_fence_or_ending_a_longer_word_is_not_planning() {
         // OG-C5-Q L02 eval.rs:154: the inline fallback scanned raw bytes, so
         // documentation of the syntax scheduled the block.
-        let q = "(between scheduled +20d +20d)";
-        assert!(selects(q, "TODO real\nSCHEDULED: <2026-07-06 Mon>"));
-        assert!(!selects(
+        let q = "scheduled between '+20d' and '+20d'";
+        assert!(selects_tql(q, "TODO real\nSCHEDULED: <2026-07-06 Mon>"));
+        assert!(!selects_tql(
             q,
             "TODO doc\n```\nSCHEDULED: <2026-07-06 Mon>\n```"
         ));
-        assert!(!selects(q, "TODO doc UNSCHEDULED: <2026-07-06 Mon>"));
-        assert!(!selects(
-            "(between deadline +20d +20d)",
+        assert!(!selects_tql(q, "TODO doc UNSCHEDULED: <2026-07-06 Mon>"));
+        assert!(!selects_tql(
+            "deadline between '+20d' and '+20d'",
             "TODO doc\n#+BEGIN_SRC org\nDEADLINE: <2026-07-06 Mon>\n#+END_SRC"
         ));
         // The recorded inline-code deviation is unchanged.
-        assert!(selects(q, "TODO doc `SCHEDULED: <2026-07-06 Mon>`"));
+        assert!(selects_tql(q, "TODO doc `SCHEDULED: <2026-07-06 Mon>`"));
     }
 
     #[test]
@@ -3271,6 +3418,70 @@ mod tests {
         crate::model::ReadSnapshot::from_page_snapshot(pages)
     }
 
+    #[test]
+    fn completion_does_not_promote_its_own_new_reference_after_autosave() {
+        let graph = graph_from_page_snapshot(&[
+            ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
+            ("Fuzzy Existing", "pages/Fuzzy Existing.md", "- body\n"),
+        ]);
+        let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+        // A context-free lookup correctly includes the now-saved reference.
+        assert_eq!(quick_switch(&graph, "Fz", 8)[0].name, "Fz");
+        let results = quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "");
+        assert_eq!(
+            results.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["Fuzzy Existing"]
+        );
+        // Saved references present before this lifecycle still exist, as in OG.
+        assert_eq!(
+            quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "[[Fz]]")[0].name,
+            "Fz"
+        );
+        // Context is local to the request; the shared snapshot is unchanged.
+        assert_eq!(quick_switch(&graph, "Fz", 8)[0].name, "Fz");
+        let mut pre_alias_plan = crate::query_plan::QueryPlan::legacy_page_search("Fz", 8);
+        pre_alias_plan.separate_aliases = false;
+        assert_eq!(
+            crate::query_plan::page_hits_to_entries(pre_alias_plan.execute(&graph, || false).hits)
+                [0]
+            .name,
+            "Fz"
+        );
+    }
+
+    #[test]
+    fn completion_baseline_preserves_other_referrers_files_and_aliases() {
+        for source in ["- [[Fz]]\n- #Fz\n", "- [[Fz]]\n  - [[Fz]]\n"] {
+            let graph = graph_from_page_snapshot(&[("Notes", "pages/Notes.md", source)]);
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            assert_eq!(
+                quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "")[0].name,
+                "Fz"
+            );
+        }
+        for sibling in ["- [[Fz]]\n", "- parent\n  - #Fz\n", "tags:: Fz\n- body\n"] {
+            let graph = graph_from_page_snapshot(&[
+                ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
+                ("Other", "pages/Other.md", sibling),
+            ]);
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            assert_eq!(
+                quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "")[0].name,
+                "Fz"
+            );
+        }
+        for (name, raw) in [("Fz", "- body\n"), ("Owner", "alias:: Fz\n- body\n")] {
+            let graph = graph_from_page_snapshot(&[
+                ("Notes", "pages/Notes.md", "- [[Fz]]\n"),
+                (name, "pages/Owner.md", raw),
+            ]);
+            let id = graph.with_pages(|pages| pages[0].1.roots[0].uuid.clone());
+            let results = quick_switch_for_editor(&graph, "Fz", 8, "Notes", &id, "");
+            assert_eq!(results[0].name, "Fz");
+            assert_eq!(results[0].rel_path_str(), "pages/Owner.md");
+        }
+    }
+
     fn persisted_dto_id(block: BlockDto) -> String {
         block
             .properties
@@ -3414,6 +3625,7 @@ mod tests {
             tine_core::query::ir::FriendlyPageMatchScope::Names,
             None,
             None,
+            false,
         ));
         assert_eq!(scoped, ["foo safe"]);
     }
@@ -3683,6 +3895,49 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn namespace_queries_backlinks_and_refresh_share_membership() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+        let path = dir.path().join("pages/Source.md");
+        std::fs::write(
+            &path,
+            "- Parent [[A/B/C]]\n  - TODO child\n    - TODO grandchild\n- [[A/BB]]\n",
+        )
+        .unwrap();
+        let (store, _, _) = crate::Store::open(dir.path(), Default::default()).unwrap();
+        let graph = store.whole_graph().unwrap().test_read_snapshot();
+        for name in ["a", "a/b", "a/b/c"] {
+            let rows = run_query(&graph, &format!("(and [[{name}]] (task TODO))"));
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].blocks.len(), 1);
+            assert!(rows[0].blocks[0].raw.contains("TODO child"));
+            let links = backlinks_bounded(&graph, name, 100, usize::MAX);
+            assert_eq!(links.groups.len(), 1);
+            let expected = if name == "a" { 2 } else { 1 };
+            assert_eq!(links.groups[0].blocks.len(), expected);
+            assert_eq!(links.groups[0].evidence[0].occurrences.len(), 1);
+        }
+        assert!(run_query(&graph, "[[a/bb/c]]").is_empty());
+        assert!(backlinks_bounded(&graph, "a/bb/c", 100, usize::MAX)
+            .groups
+            .is_empty());
+        std::fs::write(&path, "- Parent [[Other]]\n  - TODO child\n").unwrap();
+        store.refresh(crate::Depth::Stamps).unwrap();
+        let next = store.whole_graph().unwrap().test_read_snapshot();
+        assert!(run_query(&next, "(and [[a/b]] (task TODO))").is_empty());
+        assert!(backlinks_bounded(&next, "a/b", 100, usize::MAX)
+            .groups
+            .is_empty());
+        assert_eq!(
+            run_query(&next, "(and [[other]] (task TODO))")[0]
+                .blocks
+                .len(),
+            1
+        );
+        store.close();
     }
 
     /// OG's graph parser materializes `:block/path-refs` from every ancestor's
@@ -4054,6 +4309,33 @@ mod tests {
         assert!(backlinks(&graph, "private-key").is_empty());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn task_marker_pages_link_tasks_instead_of_plain_status_mentions() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("tine-task-marker-backlinks-{}", std::process::id()));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            "- TODO call Alice\n- DONE call Bob\n- ordinary TODO word\n- `TODO code`\n",
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        let todo = backlinks(&graph, "TODO");
+        assert_eq!(todo.len(), 1);
+        assert_eq!(todo[0].blocks.len(), 1);
+        assert_eq!(todo[0].blocks[0].marker.as_deref(), Some("TODO"));
+        assert_eq!(
+            backlinks(&graph, "DONE")[0].blocks[0].marker.as_deref(),
+            Some("DONE")
+        );
+        assert!(!unlinked_refs(&graph, "TODO")
+            .iter()
+            .flat_map(|g| &g.blocks)
+            .any(|b| b.marker.as_deref() == Some("TODO")));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

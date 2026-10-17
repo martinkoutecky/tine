@@ -15,7 +15,9 @@ use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 mod discovery;
-use discovery::{page_inventory_wire, resolve_name, PageInventoryWire};
+use discovery::{
+    page_inventory_wire, page_modified_wire, resolve_name, PageInventoryWire, PageModifiedWire,
+};
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
     tine_graph_features::assets::error_for_user(&slot.store, error)
@@ -119,7 +121,9 @@ pub(crate) fn sync_conflict_error(error: std::io::Error) -> String {
     }
 }
 
-fn feature_asset_access_error(error: tine_graph_features::assets::AssetAccessError) -> String {
+pub(crate) fn feature_asset_access_error(
+    error: tine_graph_features::assets::AssetAccessError,
+) -> String {
     match error {
         tine_graph_features::assets::AssetAccessError::BadName => "bad asset name".into(),
         tine_graph_features::assets::AssetAccessError::StreamSymlink => {
@@ -237,7 +241,7 @@ fn refuse_bound_graph_path(
     Ok(resolved)
 }
 
-mod query_error_wire;
+pub(crate) mod query_error_wire;
 use query_error_wire::{query_error, reference_error};
 
 #[tauri::command]
@@ -257,7 +261,7 @@ pub(crate) async fn save_workspaces(
     crate::settings::save_workspaces(data, app, state).await
 }
 
-fn feature_search_error(error: tine_graph_features::search::SearchError) -> String {
+pub(crate) fn feature_search_error(error: tine_graph_features::search::SearchError) -> String {
     match error {
         tine_graph_features::search::SearchError::Load(error) => {
             format!("graph load failed: {error:?}")
@@ -329,40 +333,24 @@ pub(crate) async fn page_inventory(state: GraphContext<'_>) -> Result<PageInvent
     .map_err(|error| error.to_string())?
 }
 
-#[derive(Serialize)]
-pub(crate) struct JournalFeedPage {
-    pages: Vec<PageWire>,
-    next_before_day: Option<i64>,
-    done: bool,
-    as_of_day: i64,
-    /// Journals this page skipped as unreadable (`path: reason`); omitted when
-    /// none.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    unreadable: Vec<String>,
-}
-
-/// Feed-only pagination by ordinal day.
+/// Last-modified time of every page file, for the All pages view's Updated
+/// column: a one-shot read of times the store already holds (no stat, no
+/// persisted record). Graph-wide off-thread.
 #[tauri::command]
-pub(crate) async fn journal_feed_page(
-    limit: usize,
-    before_day: Option<i64>,
-    state: GraphContext<'_>,
-) -> Result<JournalFeedPage, String> {
+pub(crate) async fn page_modified(state: GraphContext<'_>) -> Result<PageModifiedWire, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let feed = tine_graph_features::journals::feed_page(&slot.store, limit, before_day)
-            .map_err(|error| error.to_string())?;
-        Ok(JournalFeedPage {
-            pages: feed.pages.into_iter().map(page_dto).collect(),
-            next_before_day: feed.next_before_day,
-            done: feed.done,
-            as_of_day: feed.as_of_day,
-            unreadable: feed.unreadable,
-        })
+        slot.store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))
+            .map(|view| page_modified_wire(&view))
     })
     .await
     .map_err(|error| error.to_string())?
 }
+
+mod journals_feed;
+pub(crate) use journals_feed::*;
 #[tauri::command]
 pub(crate) async fn get_page(
     name: String,
@@ -392,26 +380,6 @@ pub(crate) async fn resolve_page(
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))
             .map(|view| resolve_name(view, &name, kind == PageKind::Journal))
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-/// Raw text of every Markdown/Org file in the open graph (`pages/`, plus
-/// `journals/` when `include_journals`), for the "Help improve Tine" diff panel.
-/// Mirrors `lsdoc/tools/graph-check.mjs`'s file scan: skips files over 8 MB, tags
-/// format by extension, returns graph-root-relative paths sorted for stable
-/// output, and names every file it skipped. Read-only and local — the panel
-/// makes no network calls.
-#[tauri::command]
-pub(crate) async fn graph_source_files(
-    include_journals: bool,
-    state: GraphContext<'_>,
-) -> Result<tine_graph_features::sources::GraphSources, String> {
-    let slot = slot_for_context(&state)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::sources::graph_source_files(&slot.store, include_journals)
-            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -651,6 +619,28 @@ pub(crate) async fn publish_html(state: GraphContext<'_>) -> Result<(String, usi
     .map_err(|error| error.to_string())?
 }
 
+/// Reveal an exported site using the shared desktop file-manager helper.
+#[tauri::command]
+pub(crate) async fn reveal_export(path: String) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            let path = std::path::Path::new(&path);
+            if !path.is_absolute() || !path.is_dir() {
+                return Err("export folder is unavailable".into());
+            }
+            reveal_page_source(path)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = path;
+        Err("showing an export folder is available on desktop only".into())
+    }
+}
+
 /// Render one page to a self-contained HTML document (assets inlined, no sidebar)
 /// for the print-to-PDF export, with the dialog's options. `Err("no-page")` if the
 /// page doesn't exist.
@@ -711,6 +701,7 @@ pub(crate) async fn run_graph_search(
     page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
     page_view: Option<tine_core::query::ir::ViewSettings>,
     block_view: Option<tine_core::query::ir::ViewSettings>,
+    transliteration: Option<bool>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
     let slot = slot_for_context(&state)?;
@@ -720,7 +711,7 @@ pub(crate) async fn run_graph_search(
         path: scope.path,
     });
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::run_graph_search(
+        tine_graph_features::search::run_graph_search_with_transliteration(
             &slot.store,
             &slot.block_search_lanes,
             source,
@@ -732,6 +723,7 @@ pub(crate) async fn run_graph_search(
             page_match_scope,
             page_view,
             block_view,
+            transliteration.unwrap_or(false),
         )
         .map_err(feature_search_error)
     })
@@ -973,17 +965,56 @@ pub(crate) async fn search(
 pub(crate) async fn quick_switch(
     query: String,
     limit: usize,
+    editor_block_id: Option<String>,
+    editor_original_raw: Option<String>,
+    editor_page_name: Option<String>,
+    editor_session: Option<String>,
+    transliteration: Option<bool>,
     state: GraphContext<'_>,
-) -> Result<Vec<PageEntry>, String> {
+) -> Result<Vec<CompletionPageEntry>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         slot.store
             .whole_graph()
-            .map(|view| view.complete_page_names(&query, limit))
+            .map(
+                |view| match (editor_page_name, editor_block_id, editor_original_raw) {
+                    (Some(page), Some(id), Some(original)) => view.complete_page_names(
+                        &query,
+                        limit,
+                        Some((&page, &id, &original)),
+                        transliteration.unwrap_or(false),
+                        editor_session.as_deref(),
+                    ),
+                    _ => view.complete_page_names(
+                        &query,
+                        limit,
+                        None,
+                        transliteration.unwrap_or(false),
+                        None,
+                    ),
+                },
+            )
+            .map(completion_entries)
             .map_err(|e| format!("graph load failed: {e:?}"))
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// Request-local DTO: PageEntry's persisted inventory shape is unchanged.
+#[derive(serde::Serialize)]
+pub(crate) struct CompletionPageEntry {
+    #[serde(flatten)]
+    page: PageEntry,
+    match_class: tine_core::query_plan::ObjectiveMatchClass,
+}
+
+fn completion_entries(
+    hits: Vec<(PageEntry, tine_core::query_plan::ObjectiveMatchClass)>,
+) -> Vec<CompletionPageEntry> {
+    hits.into_iter()
+        .map(|(page, match_class)| CompletionPageEntry { page, match_class })
+        .collect()
 }
 
 #[cfg(test)]
@@ -999,7 +1030,11 @@ fn capture_quick_switch_for(
         .store
         .whole_graph()
         .map_err(|e| format!("graph load failed: {e:?}"))?;
-    Ok(view.complete_page_names(query, limit.min(8)))
+    Ok(view
+        .complete_page_names(query, limit.min(8), None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect())
 }
 
 /// The sole graph-backed capability exposed to Quick Capture. It is deliberately
@@ -1009,17 +1044,24 @@ fn capture_quick_switch_for(
 pub(crate) async fn capture_quick_switch(
     query: String,
     limit: usize,
+    transliteration: Option<bool>,
     binding_generation: Option<u64>,
     window: WebviewWindow,
     state: State<'_, AppState>,
-) -> Result<Vec<PageEntry>, String> {
+) -> Result<Vec<CompletionPageEntry>, String> {
     let slot = capture_quick_switch_slot(&state, window.label(), binding_generation)?;
     tauri::async_runtime::spawn_blocking(move || {
         let view = slot
             .store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))?;
-        Ok(view.complete_page_names(&query, limit.min(8)))
+        Ok(completion_entries(view.complete_page_names(
+            &query,
+            limit.min(8),
+            None,
+            transliteration.unwrap_or(false),
+            None,
+        )))
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1144,7 +1186,7 @@ mod capture_quick_switch_tests {
 /// Run a whole-graph read on the blocking pool. `Store::whole_graph` waits for
 /// the initial parse (seconds on a 10k-page graph); a synchronous Tauri command
 /// runs on the main thread and would freeze the webview for that whole wait.
-async fn off_ui_graph_read<T: Send + 'static>(
+pub(crate) async fn off_ui_graph_read<T: Send + 'static>(
     state: &GraphContext<'_>,
     read: impl FnOnce(WholeGraph) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
@@ -1505,6 +1547,30 @@ fn read_text_file_from_path(p: &std::path::Path, state: &AppState) -> Result<Str
     const MAX_BYTES: u64 = 10 * 1024 * 1024;
     let bytes = crate::device_io::read_regular_file_bounded(&resolved, MAX_BYTES)?;
     String::from_utf8(bytes).map_err(|e| e.to_string())
+}
+
+/// Open a graph-relative file or folder that a file link resolved to
+/// (GH #457) in the OS default app. `crate::platform::graph_relative_target`
+/// refuses a path that leaves the graph folder, including through a symlink,
+/// and a missing target. Read-only OS handoff on the blocking pool (I-21);
+/// iOS/Android refuse, as for `open_asset`.
+#[tauri::command]
+pub(crate) async fn open_graph_file(path: String, state: GraphContext<'_>) -> Result<(), String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = crate::platform::graph_relative_target(&slot.root_key, &path)?;
+        #[cfg(desktop)]
+        {
+            open_page_source(&target)
+        }
+        #[cfg(not(desktop))]
+        {
+            let _ = target;
+            Err("opening files from links is available on desktop only".to_string())
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Open an `assets/`-relative file, directory, or (empty name) the assets root (GH #367)

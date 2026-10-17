@@ -1,9 +1,17 @@
-# s3.2 executable storage model
+# s3.5 executable storage model
 
-This private, unwired module transcribes `storage-s3.qnt` s3.2, SHA-256
-`1e6ec36c29ec8fd1b7a1ebdce099e82509c0ff59fa6c137cf6f0ef3d1e0d2bd4`.
-The scenario source is `scenarios-s3.inc` s3.2, SHA-256
-`92a75904b2da9b43a7bb9c80a0f2fc41b462cef5a60ec41f4d613b67d58ff1c3`.
+This private, unwired module transcribes `storage-s35.qnt` s3.5, SHA-256
+`7ebed8779c70012c6d02a2a82417d1461db3d059819187576931134c4ea7e95c`.
+The scenario source is `scenarios-s35.inc` s3.5, SHA-256
+`9200a28404f60177fa3dadda6e3b932f8a866c6bb7a2110854fcd7e181abe6b5`.
+s3.4 adds durable external name claimants (`Sys.claimed`, `extClaim`), the
+absent-create admission guard and `name-slot-create-over-claim` tag (MNS).
+s3.5 restores a cancelling rename's source only when held (MRH).
+s3.3 adds `opApply` (host-only-writer P2): one host operation applying caller
+bytes to a page set, each page's expected bytes checked against the host's
+current bytes (`opCur`), with an optional move whose gates order the writes as
+a rename's do. Its mutants MEX/MAC/MAN/MAM drop the stale-base check, the clean
+check, the drafts and the move gates.
 s3.2 adds a rename's in-run write order (`order.rs`, STEP3-DESIGN "rename
 ordering = option 2"): a full rename installs gates over the pages it changes,
 a gated page's save does not start, a page's witness is its `dirSync(ok)` at the
@@ -20,8 +28,30 @@ and preserves the moving source label. Production rename also calls the existing
 deterministic title rebinder; those changed destination bytes are outside this
 equality certificate by design (SPEC-s3 §2 / STEP2-DESIGN §3). A separate host
 semantic test exercises title rebinding together with durable draft custody,
-publication and crash recovery. Scenario `.fail()` outcomes alone do not prove
-backend refusals: direct host API tests independently cover those guards.
+publication and crash recovery. Host conformance calls binding C3's test seam before the inner host can
+record absent creates. Physical `.org` twins witness claimants independently.
+Disabled `opApply` steps call admission and check the matching Changed,
+Unsaved or Busy refusal and unchanged state. Native single-action refusal
+probes run directly; other speculative forks and power remain ModelFs-only.
+Correspondence is refinement: a creating save stopped at Check by a physical
+twin takes the enabled `saveFail` successor, comparing state and ghost as usual
+and keeping the dirty text. Scenario publication suffixes are reported as the
+alternative branch; random traces continue, calling obsolete save-suffix steps
+and checking their Disabled stutter until another save starts. An oracle-enabled
+`opApply` refused with Changed may stutter only when a non-deletion effect planned
+over ABSENT finds a physical canonical file or claimant. State, readable/durable
+files and versions must stay unchanged. Unrelated failures/refusals still fail
+conformance; positive controls and fault probes exercise both restrictions.
+The production binding's Unsaved set must include every oracle-dirty input
+page, and each additional member must have oracle window input pending/sent
+or a queued up-channel message. Oracle-enabled queued-input refusals are checked
+stutters. After admission stutters, obsolete trace save/receive requests are
+actually invoked and must refuse without changing state, files or versions.
+Rename candidate refs use the existing R5/A-W1 effective-set refinement:
+dirty/busy held refs whose rewrite is unchanged are omitted from the model
+effect set. The original host operation must match that enabled model successor;
+changed dirty refs and dirty endpoints still refuse.
+ModelFs discovers save-time twins from physical files, just like admission.
 
 There is one s3 model; no separate s2 mode or s2-only fixture remains.
 On two paths without the new actions, its rules are s2.1. Every read goes through
@@ -48,19 +78,20 @@ Generators never write into the supplied model directory or proof lanes.
 Quint calls take `$TINE_AGENTS/og/.tlc.lock`; `TINE_AGENTS` defaults to the
 repository's sibling `tine-agents` directory.
 
-Regenerate the 159 scenarios, four profile oracles, 32 model-mutant oracles and
+Regenerate the 194 scenarios, four profile oracles, 38 model-mutant oracles and
 three-path random traces from the repository root:
 
 ```sh
-rtk proxy python3 -B scripts/s2/generate.py /path/to/og/merged --scenario-source /path/to/og/merged/scenarios-s3.inc --quint /path/to/og/model/tools/node_modules/.bin/quint
+rtk proxy python3 -B scripts/s2/generate.py /path/to/og/merged --scenario-source /path/to/og/merged/scenarios-s35.inc --quint /path/to/og/model/tools/node_modules/.bin/quint
 rtk proxy python3 -B scripts/s2/witnesses.py /path/to/og/merged --quint /path/to/og/model/tools/node_modules/.bin/quint
-rtk proxy bash -c 'source scripts/env.sh; export CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target S3_TRACE_FIXTURE=$PWD/scratch/s3/traces.json; rtk cargo test -p tine-store'
+rtk proxy bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target S3_TRACE_FIXTURE=$PWD/scratch/s3/traces.json; rtk cargo test -p tine-store'
 ```
 
 The generator checks both pinned source hashes, expands intermediate assertions,
-conditionals and refusal checks, and compares 5,724 scenario outcomes. It
+conditionals and refusal checks, and compares 8,148 scenario outcomes. It
 distinguishes pass, disabled action (QNT507/QNT513), failed assertion (QNT508)
-and test returned false (QNT511). All 32 sweep mutants fail their own scenario.
+and test returned false (QNT511). All 38 sweep mutants fail their own scenario.
+MRH fails the retired-source outcome assertion while the three invariants hold.
 MRN5 violates the restored-deletion completion assertion rather than the
 checked invariants (guarantee, orderHolds, renameResolves);
 MDE additionally executes the power-loss suffix to demonstrate A.
@@ -69,7 +100,7 @@ Random traces use 64 runs per profile, 40 steps, seeds 20261009 plus profile ind
 times 7919. Repeated original driver choices weight protocol progress; helper
 actions encode the three-path power set and rewrite map in integer arguments
 without changing any model rule. The complete corpus must cover every step
-primitive, including the new operations. Eight traces per profile are selected
+primitive, including `extClaim` and the new operations. Eight traces per profile are selected
 deterministically to retain rare actions and committed using lossless state
 deltas and interned paths/actions. Normal tests replay that sample; setting
 `S3_TRACE_FIXTURE` additionally replays all 256 generated traces. Every Sys/Ghost
@@ -101,13 +132,17 @@ tests and fixtures, avoiding unrelated integration-test linking):
 ```sh
 rtk proxy uv --cache-dir scratch/s3/uv-cache venv scratch/s3/python
 rtk proxy uv --cache-dir scratch/s3/uv-cache pip install --python scratch/s3/python/bin/python tree-sitter==0.26.0 tree-sitter-rust==0.24.2
-rtk proxy bash -c 'source scripts/env.sh; export CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; rtk proxy scratch/s3/python/bin/python -B scripts/s2/hand_mutations.py --run --output scratch/s3/hand-final --allow-equivalents scripts/s2/equivalents.json'
-rtk proxy bash -c 'source scripts/env.sh; export CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; rtk proxy python3 -B scripts/s2/cargo_mutations.py --output scratch/s3/cargo-final'
+rtk proxy bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; rtk proxy scratch/s3/python/bin/python -B scripts/s2/hand_mutations.py --run --output scratch/s3/hand-final --allow-equivalents scripts/s2/equivalents.json'
+rtk proxy bash -c 'source scripts/env.sh; export CARGO_BUILD_JOBS=4 CARGO_INCREMENTAL=0 LANG=C.UTF-8 CARGO_TARGET_DIR=$PWD/target; rtk proxy python3 -B scripts/s2/cargo_mutations.py --output scratch/s3/cargo-final'
 rtk proxy python3 -B scripts/s2/mutation_report.py
 ```
 
 The hand sweep drops each operand of every &&/|| chain, preserving nested groups
-and including all new guards/rules. Cargo-mutants is optional locally; the task
+and including all new guards/rules. Each hand output directory owns its Cargo
+target directory, so independent scratch crates cannot reuse another sweep's
+test executable. Healthy Quint traces also replay through the host-facing oracle
+wrapper, including its independent R1 and weak profile selection.
+Cargo-mutants is optional locally; the task
 receipt records its completed sweep. `--skip-witnesses` supports the baseline
 census before witness regeneration; final verification includes the witnesses.
 The exact-source equivalence ledger records each surviving mutation and its
@@ -119,3 +154,11 @@ The real-package crate gate remains mandatory.
 Update both pinned source hashes deliberately. Rust representation choices,
 literal model observations and mutation findings are recorded in the task's
 TRANSCRIPTION.md and RECEIPT.md. Unit cost: none (no persisted record).
+
+The lane receipt is `RECEIPT-s35-correspondence.md` at the worktree root.
+The task4 manager ruling permits queued-input Unsaved under the runtime predicate
+above. The receipt distinguishes completed checks from in-progress gates and
+records each refinement/refusal class and its fail-before evidence.
+The `planCreate` read-only scenario helper is a stutter when disk is absent and
+its name is unclaimed, disabled otherwise; it is outside the random step driver.
+All builds use `scripts/env.sh`; set `TINE_AGENTS` explicitly in linked worktrees.

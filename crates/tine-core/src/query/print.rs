@@ -111,7 +111,7 @@ pub fn query_print(
         }
         // The pane is not a document: no options, no view directives, no
         // macro-safety check.
-        return Ok(print_tql(query));
+        return Ok(print_tql(&tql_reading(query)));
     }
     let argument = if preserve_form || dialect == PrintDialect::AdvancedMacro {
         preserved_form(query, dialect)?
@@ -121,9 +121,10 @@ pub fn query_print(
                 let options = query.source.og_options();
                 with_options(print_og(query, view, !options.is_empty())?, options)
             }
-            PrintDialect::TqlMacro => {
-                with_options(print_tql_macro(query), query.source.og_options())
-            }
+            PrintDialect::TqlMacro => with_options(
+                print_tql_macro(&tql_reading(query)),
+                query.source.og_options(),
+            ),
             PrintDialect::Tql | PrintDialect::AdvancedMacro => unreachable!("handled above"),
         }
     };
@@ -132,6 +133,32 @@ pub fn query_print(
         macro_text::recognizable_macro(name, &argument)?;
     }
     Ok(argument)
+}
+
+/// **The OG query as Tine's dialect must spell it (D-18, GH #422).** An OG
+/// source's dropped bare `(task)` / `(priority)` ([`Filter::is_dropped_clause`])
+/// adds no condition, but TQL reads `task in ()` literally as an empty set. So
+/// a crossing to TQL leaves the dropped clauses out, by OG's own structural
+/// rule ([`Filter::without_og_dropped_clauses`]; `Off` subtrees stay, I-4); the
+/// remaining clauses mean exactly
+/// what they meant. A tree with nothing left is the builder's blank slate
+/// ([`Filter::True`]), as an empty OG query crossing already is. Any other
+/// source prints as it is.
+fn tql_reading(query: &Query) -> std::borrow::Cow<'_, Query> {
+    if !matches!(query.source, Source::Og { .. }) {
+        return std::borrow::Cow::Borrowed(query);
+    }
+    let filter = query
+        .filter
+        .without_og_dropped_clauses()
+        .unwrap_or(Filter::True);
+    if filter == query.filter {
+        return std::borrow::Cow::Borrowed(query);
+    }
+    std::borrow::Cow::Owned(Query {
+        filter,
+        ..query.clone()
+    })
 }
 
 /// The source-preserving argument: `source.original` plus the changed options
@@ -585,7 +612,7 @@ fn tql_value(value: &Value) -> String {
     }
 }
 
-fn sql_string(text: &str) -> String {
+pub(crate) fn sql_string(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
@@ -724,8 +751,9 @@ fn og_attr(attr: Attr, op: CmpOp, value: &Value, on_page: bool) -> Option<String
         }
         (Attr::Task, CmpOp::In) => Some(og_words("task", list_of(value)?)),
         (Attr::Priority, CmpOp::In) => Some(og_words("priority", list_of(value)?)),
-        (Attr::Scheduled, CmpOp::Between) => og_between("scheduled", value),
-        (Attr::Deadline, CmpOp::Between) => og_between("deadline", value),
+        // OG build-between-three-arg accepts timestamp properties only;
+        // scheduled/deadline return nil, so these windows must save as TQL.
+        (Attr::Scheduled | Attr::Deadline, CmpOp::Between) => None,
         (Attr::CreatedAt, CmpOp::Between) => og_timestamp_between("created-at", value),
         (Attr::LastModifiedAt, CmpOp::Between) => og_timestamp_between("last-modified-at", value),
         (Attr::Day, CmpOp::Between) if on_page => og_between("journal", value),

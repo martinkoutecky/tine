@@ -3,9 +3,21 @@
 
 use super::*;
 
-/// A built-in rule filters the returned entity; a rule on some other
-/// variable is an arbitrary join, even when its name is familiar.
-pub(super) fn rules_target_result(groups: &[String], find: &str) -> bool {
+/// A built-in rule filters the returned entity or its explicitly joined page.
+/// Other rule subjects are arbitrary joins, even with a familiar rule name.
+pub(super) fn rules_target_result(groups: &[String], find: &str, anchor: Anchor) -> bool {
+    let pages = groups
+        .iter()
+        .filter_map(|group| {
+            let args = edn_items(edn_body(group, '[', ']')?);
+            (args.len() == 3
+                && args[0] == find
+                && args[1] == ":block/page"
+                && args[2].starts_with('?')
+                && args[2] != find)
+                .then(|| args[2].to_string())
+        })
+        .collect::<std::collections::HashSet<_>>();
     let mut pending = groups.iter().map(String::as_str).collect::<Vec<_>>();
     while let Some(group) = pending.pop() {
         let Some(body) = edn_body(group, '(', ')') else {
@@ -15,15 +27,25 @@ pub(super) fn rules_target_result(groups: &[String], find: &str) -> bool {
         match args.first().copied() {
             Some("and" | "or" | "not") => pending.extend(args[1..].iter().copied()),
             Some("between") => {
-                if args.len() < 4 || !args[1..args.len() - 2].contains(&find) {
+                if anchor == Anchor::Page
+                    || args.len() < 4
+                    || !args[1..args.len() - 2].contains(&find)
+                {
+                    return false;
+                }
+            }
+            Some("page-property") => {
+                if !(anchor == Anchor::Page && args.get(1).copied() == Some(find))
+                    && !args.get(1).is_some_and(|var| pages.contains(*var))
+                {
                     return false;
                 }
             }
             Some(
-                "task" | "todo" | "priority" | "page-ref" | "property" | "page-property" | "page"
-                | "namespace" | "page-tags" | "tags" | "scheduled" | "deadline" | "journal",
+                "task" | "todo" | "priority" | "page-ref" | "property" | "page" | "namespace"
+                | "page-tags" | "tags" | "scheduled" | "deadline" | "journal",
             ) => {
-                if args.get(1).copied() != Some(find) {
+                if anchor == Anchor::Page || args.get(1).copied() != Some(find) {
                     return false;
                 }
             }
@@ -31,6 +53,25 @@ pub(super) fn rules_target_result(groups: &[String], find: &str) -> bool {
         }
     }
     true
+}
+
+/// OG's page-property rule binds :block/name, so its subject is a page.
+/// A negated rule alone does not bind the result entity. Keep unsupported
+/// joins outside this bounded translator rather than guessing from variable names.
+pub(super) fn page_property_result(groups: &[String], find: &str) -> bool {
+    let mut pending = groups.iter().map(String::as_str).collect::<Vec<_>>();
+    while let Some(group) = pending.pop() {
+        let Some(body) = edn_body(group, '(', ')') else {
+            continue;
+        };
+        let args = edn_items(body);
+        match args.first().copied() {
+            Some("and" | "or") => pending.extend(args[1..].iter().copied()),
+            Some("page-property") if args.get(1).copied() == Some(find) => return true,
+            _ => (),
+        }
+    }
+    false
 }
 
 /// Tagged page-name results (docs example 6, GH #628). Only identity and

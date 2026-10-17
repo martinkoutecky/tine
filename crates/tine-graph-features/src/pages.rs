@@ -199,6 +199,60 @@ fn claimants(target: Resolved) -> Vec<PageId> {
     }
 }
 
+/// Every page holding an export definition block whose page selector names
+/// one of `olds`, found by the definitions query
+/// (`tine_core::export_definition::definitions_query`) over the planning view
+/// and the selectors of the blocks it returns: O(P + B) in memory, memoized
+/// per generation, no file read, so a definition page the rename does not
+/// touch is not read. A view with more definition blocks than one bounded
+/// answer carries refuses the rename before anything is written, rather than
+/// leave a definition naming the old page (scenario: malformed or generated
+/// input; a later page with the old name would then be the one exported).
+fn export_definition_pages(
+    graph: &tine_store::WholeGraph,
+    olds: &[String],
+) -> io::Result<Vec<PageId>> {
+    use tine_core::query::ir::{ExecutionContext, QueryRows, ViewSettings};
+    use tine_store::{IrAnswer, IrRequest};
+    let parsed = tine_core::query::wire_parse::parse_query_pair(
+        &tine_core::export_definition::definitions_query(),
+        tine_core::query::wire_parse::QueryTextDialect::Og,
+        &[],
+        tine_core::query::registry::Registry::none(),
+    );
+    let answer = graph
+        .query_ir(IrRequest::Run {
+            query: &parsed.query,
+            view: &ViewSettings::default(),
+            context: &ExecutionContext::default(),
+        })
+        .map_err(|e| io::Error::other(e.to_string()))?;
+    let IrAnswer::Result(result) = answer else {
+        return Err(io::Error::other("query run returned another answer"));
+    };
+    if result.exceeded {
+        return Err(error(
+            io::ErrorKind::InvalidData,
+            "too many export definitions to rename their pages safely",
+        ));
+    }
+    let QueryRows::Block { groups } = result.rows else {
+        return Ok(Vec::new());
+    };
+    let olds: HashSet<String> = olds.iter().map(|old| refs::normalize(old)).collect();
+    Ok(groups
+        .iter()
+        .filter(|group| {
+            group.blocks.iter().any(|block| {
+                tine_core::export_definition::selected_names(&block.raw)
+                    .iter()
+                    .any(|name| olds.contains(&refs::normalize(name)))
+            })
+        })
+        .flat_map(|group| existing(graph.resolve(&group.page, group.kind == PageKind::Journal)))
+        .collect())
+}
+
 fn physical(target: &Resolved) -> Vec<PageId> {
     match target {
         Resolved::Existing { id, others } => {
@@ -674,9 +728,12 @@ fn plan_rename(
         .collect();
     // v0.6.5 model.rs 3681-3690 (warm index) and OG `:block/refs`: only
     // pages that explicitly reference a renamed name are rewritten, plus
-    // every moved page. A name mentioned only inside `{{query}}` stays.
+    // every moved page. A name mentioned only inside an ordinary query stays;
+    // the pages holding export definitions are read too, whose page
+    // selectors follow the rename (`tine_core::export_definition`).
     let olds: Vec<String> = map.0.iter().map(|(from, _)| from.clone()).collect();
     let mut candidates: Vec<PageId> = graph.explicit_referrers(&olds);
+    candidates.extend(export_definition_pages(&graph, &olds)?);
     candidates.extend(moves.keys().cloned());
     candidates.extend(moved_titles_to_rebind.iter().cloned());
     candidates.retain(|id| {
@@ -896,11 +953,15 @@ fn host_rename(
     // The planner's rewrite of a referrer, reused when the host reads the
     // same bytes under the page locks (GH #623: no second rewrite under the
     // driver's state lock), and only under the planner's file-name format.
-    let prepared = |page: &PageId, old: &[u8], format| {
-        let (content, _) = first.reads.get(page)?;
-        let new = first.rewritten.get(page)?;
-        (format == first.config.file_name_format && content.as_bytes() == old)
-            .then(|| new.clone().into_bytes())
+    // The host runs it on its driver, so it owns the plan's reads (unused
+    // after the rename).
+    let reads = std::mem::take(&mut first.reads);
+    let rewritten = std::mem::take(&mut first.rewritten);
+    let planned = first.config.file_name_format;
+    let prepared = move |page: &PageId, old: &[u8], format| {
+        let (content, _) = reads.get(page)?;
+        let new = rewritten.get(page)?;
+        (format == planned && content.as_bytes() == old).then(|| new.clone().into_bytes())
     };
     let renamed = host.rename(
         &source,
@@ -908,7 +969,7 @@ fn host_rename(
         &referrers,
         &first.map,
         &first.graph,
-        &prepared,
+        std::sync::Arc::new(prepared),
     );
     let (changed, mut skipped) = match renamed {
         Ok(done) => done,
@@ -1141,9 +1202,9 @@ pub enum RenameOutcome {
 
 /// Rescue a stray page or journal file into a uniquely named normal page.
 /// Its bytes are unchanged and inbound references are not rewritten, matching
-/// v0.6.5 model.rs 1779. A retained writer (STEP3 §7) of the source and the
-/// target: their unsaved input is saved first. Cost O(P + source bytes) per
-/// try; four tries maximum.
+/// v0.6.5 model.rs 1779. With a host, one host operation of the source and
+/// the target (DESIGN §3.1): their unsaved input is saved first. Cost O(P +
+/// source bytes) per try; four tries maximum.
 pub fn rename_file_to_page(
     store: &Store,
     host: Option<&PageHost>,
@@ -1162,42 +1223,84 @@ pub fn rename_file_to_page(
         ext
     );
     let to = store.file_id(Area::Pages, &rel).map_err(store_error)?;
-    let discover = || Ok(crate::retained::pages(store, [&src, &to]));
-    crate::retained::reserved(
-        host,
+    // A retained non-portable legacy filename (`pages/A:B.md`) is not a view
+    // claimant but OG loads it as that page: refuse like a live claimant
+    // (external-editor / multi-device graph; master 46a0e8c27).
+    let unclaimed = || {
+        if !existing(refreshed_view(store)?.resolve(name, false)).is_empty()
+            || retained_legacy_page_identity_exists(store, name)?
+        {
+            return Err(error(
+                io::ErrorKind::AlreadyExists,
+                "a page with that name already exists",
+            ));
+        }
+        Ok(())
+    };
+    let max = Some(tine_store::PARSE_INPUT_MAX_BYTES);
+    let transaction = |rev| {
+        let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
+        tx.move_file(&src, rev, &to, None);
+        tx
+    };
+    let Some(running) = host else {
+        // No host: the transaction under the retained-writer route, as before P3.
+        let discover = || Ok(crate::retained::pages(store, [&src, &to]));
+        return crate::retained::reserved(
+            host,
+            Input::Flush,
+            discover,
+            crate::retained::unsaved,
+            |_| {
+                crate::retry_on_conflict("page changed repeatedly during rescue", || {
+                    unclaimed()?;
+                    let (_, rev) = store.read(&src, max).map_err(store_error)?;
+                    Ok(crate::commit_retry(transaction(rev).commit())?.then_some(()))
+                })
+            },
+        );
+    };
+    let mut cleanup_rev = None;
+    let plan = || {
+        unclaimed()?;
+        let (_, rev) = store.read(&src, max).map_err(store_error)?;
+        if store.as_page(&src).is_none() {
+            // C2: destination through the host, source retained until Applied.
+            cleanup_rev = Some(rev.clone());
+        }
+        crate::retained::plan(transaction(rev)).map(Some)
+    };
+    let touched = crate::retained::pages(store, [&src, &to]);
+    crate::retained::operation(
+        running,
         Input::Flush,
-        discover,
+        &touched,
+        "renaming the file",
+        "page changed repeatedly during rescue",
         crate::retained::unsaved,
-        |_| {
-            crate::retry_on_conflict("page changed repeatedly during rescue", || {
-                // A retained non-portable legacy filename (`pages/A:B.md`) is not a view
-                // claimant but OG loads it as that page: refuse like a live claimant
-                // (external-editor / multi-device graph; master 46a0e8c27).
-                if !existing(refreshed_view(store)?.resolve(name, false)).is_empty()
-                    || retained_legacy_page_identity_exists(store, name)?
-                {
-                    return Err(error(
-                        io::ErrorKind::AlreadyExists,
-                        "a page with that name already exists",
-                    ));
-                }
-                let (_, rev) = store
-                    .read(&src, Some(tine_store::PARSE_INPUT_MAX_BYTES))
-                    .map_err(store_error)?;
-                let mut tx = store.transaction(Some(tine_store::EditKind::RenamePage));
-                tx.move_file(&src, rev, &to, None);
-                Ok(crate::commit_retry(tx.commit())?.then_some(()))
-            })
-        },
-    )
+        plan,
+    )?;
+    if let Some(rev) = cleanup_rev {
+        trash_rescue_source(store, &src, rev)?;
+    }
+    Ok(())
+}
+
+/// Post-Applied non-page cleanup. A crash keeps both copies; a changed
+/// source stays recoverable at its original name.
+fn trash_rescue_source(store: &Store, src: &FileId, rev: FileRev) -> io::Result<()> {
+    debug_assert!(store.as_page(src).is_none());
+    let mut tx = store.transaction(None);
+    tx.trash(src, rev, tine_store::TrashIf::Any);
+    crate::tx_error(tx.commit()).map(drop)
 }
 
 /// Merge one source into a survivor, as [`rename_or_merge_page`] merges pages
 /// but without renaming anything (aliases united, Org directives kept, through
 /// the same `merged_survivor`), then recoverably trash the source in the same
 /// commit. Org pairs must round-trip; formats must match. v0.6.5 never
-/// rewrites inbound refs in this operation. A retained writer (STEP3 §7) of
-/// both pages: their unsaved input is saved first. Cost O(source + survivor
+/// rewrites inbound refs in this operation. With a host, one host operation
+/// of both pages (DESIGN §3.1): their unsaved input is saved first. Cost O(source + survivor
 /// bytes and blocks) per try; four complete attempts maximum.
 pub fn merge_pages(
     store: &Store,
@@ -1219,35 +1322,55 @@ pub fn merge_pages(
     let dst_id = store
         .as_page(&dst)
         .ok_or_else(|| error(io::ErrorKind::InvalidInput, "invalid file path"))?;
-    let discover = || Ok(vec![src_id.clone(), dst_id.clone()]);
-    crate::retained::reserved(
-        host,
+    let transaction = |survivor: &Survivor| {
+        let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
+        tx.save_page(
+            &[
+                tine_store::EditKind::InsertBlocks,
+                tine_store::EditKind::DeletePage,
+            ],
+            &dst_id,
+            SaveBase::Existing(survivor.dst_rev.clone()),
+            &survivor.doc,
+        );
+        tx.trash(&src, survivor.src_rev.clone(), tine_store::TrashIf::Any);
+        tx
+    };
+    let Some(running) = host else {
+        // No host: the transaction under the retained-writer route, as before P2.
+        let discover = || Ok(vec![src_id.clone(), dst_id.clone()]);
+        return crate::retained::reserved(
+            host,
+            Input::Flush,
+            discover,
+            crate::retained::unsaved,
+            |_| {
+                crate::retry_on_conflict("pages changed repeatedly during merge", || {
+                    let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
+                    Ok(crate::commit_retry(transaction(&survivor).commit())?.then_some(()))
+                })
+            },
+        );
+    };
+    // One host operation (DESIGN §3.1): the survivor's write, then the
+    // source's deletion, a move's order (the survivor holds the source's
+    // blocks), from one draft, so a crash between them completes the
+    // deletion at relaunch rather than appending the blocks twice.
+    let plan = || {
+        let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
+        let mut op = crate::retained::plan(transaction(&survivor))?;
+        op.moved = Some((dst_id.clone(), src_id.clone()));
+        Ok(Some(op))
+    };
+    crate::retained::operation(
+        running,
         Input::Flush,
-        discover,
+        &[dst_id.clone(), src_id.clone()],
+        "the merge",
+        "pages changed repeatedly during merge",
         crate::retained::unsaved,
-        |_| {
-            crate::retry_on_conflict("pages changed repeatedly during merge", || {
-                let survivor = merged_survivor(store, &src_id, &dst_id, None)?;
-                let mut tx = store.transaction(Some(tine_store::EditKind::InsertBlocks));
-                tx.save_page(
-                    &[
-                        tine_store::EditKind::InsertBlocks,
-                        tine_store::EditKind::DeletePage,
-                    ],
-                    &dst_id,
-                    SaveBase::Existing(survivor.dst_rev),
-                    &survivor.doc,
-                );
-                tx.trash(&src, survivor.src_rev, tine_store::TrashIf::Any);
-                Ok(crate::commit_retry(tx.commit())?.then_some(()))
-            })
-        },
+        plan,
     )
-}
-
-fn lines<'a>(mut parts: impl Iterator<Item = &'a str>) -> String {
-    let first = parts.next().unwrap_or_default().to_owned();
-    parts.fold(first, |text, line| text + "\n" + line)
 }
 
 struct Survivor {
@@ -1303,7 +1426,7 @@ fn merged_survivor(
     if let Some(renames) = renames {
         rename_doc(&mut doc, renames, org, format);
     }
-    let (header, blocks) = payload(&doc, &source, renames, org, format);
+    let (header, blocks) = merge_payload::payload(&doc, &source, renames, org, format);
     if let Some(header) = header {
         doc.pre_block = Some(header);
     }
@@ -1350,156 +1473,7 @@ fn rename_doc(
     walk(&mut doc.blocks, renames, org, format);
 }
 
-/// Each line of a page preamble, with its lowercase key and value when the
-/// parser accepts it as a page-header property (Markdown `key:: value`, Org
-/// `#+KEY: value`) outside every literal container. A fenced or `#+BEGIN_…`
-/// example is literal text, never a header property (I-12: the parser owns
-/// regions; REG-OG-C5-L03-S2). One parse of `text`, O(text bytes).
-fn header_lines(text: &str, org: bool) -> Vec<(&str, Option<(String, String)>)> {
-    let regions = crate::conflicts::pre_regions(text, if org { Format::Org } else { Format::Md });
-    let mut at = 0;
-    text.split_inclusive('\n')
-        .map(|raw| {
-            let start = at;
-            at += raw.len();
-            let line = raw.strip_suffix('\n').unwrap_or(raw);
-            let line = line.strip_suffix('\r').unwrap_or(line);
-            let property = regions
-                .container_of(start, at)
-                .is_none()
-                .then(|| regions.property(start).cloned())
-                .flatten();
-            (line, property)
-        })
-        .collect()
-}
-
-#[cfg(test)]
-mod header_property_tests {
-    use super::header_lines;
-
-    fn property(text: &str, org: bool) -> Option<(String, String)> {
-        header_lines(text, org)
-            .into_iter()
-            .next()
-            .and_then(|(_, p)| p)
-    }
-
-    #[test]
-    fn merge_recognizes_unicode_page_headers_in_both_formats() {
-        assert_eq!(
-            property("klíč:: hodnota", false),
-            Some(("klíč".into(), "hodnota".into()))
-        );
-        assert_eq!(
-            property("#+klíč: hodnota", true),
-            Some(("klíč".into(), "hodnota".into()))
-        );
-        assert_eq!(
-            property("#+a.b/c: value", true),
-            Some(("a.b/c".into(), "value".into()))
-        );
-    }
-
-    #[test]
-    fn a_fenced_example_is_never_a_header_property() {
-        let lines = header_lines("```\nnote:: keep me\n```\nkey:: v\n", false);
-        assert_eq!(lines.len(), 4);
-        assert!(lines[..3].iter().all(|(_, p)| p.is_none()), "{lines:?}");
-        assert_eq!(lines[3].1, Some(("key".into(), "v".into())));
-    }
-}
-
-/// The survivor's new header (when it changes) and the blocks `source` adds,
-/// with `renames` applied to the source.
-fn payload(
-    survivor: &PageDto,
-    source: &PageDto,
-    renames: Option<&HashMap<String, String>>,
-    org: bool,
-    format: tine_core::config::FileNameFormat,
-) -> (Option<String>, Vec<tine_core::model::BlockDto>) {
-    let mut source = source.clone();
-    if let Some(renames) = renames {
-        rename_doc(&mut source, renames, org, format);
-    }
-    let mut new_header = None;
-    let mut blocks = Vec::new();
-    if let Some(pre) = source.pre_block.as_deref() {
-        let mut header: Vec<(String, Option<(String, String)>)> = survivor
-            .pre_block
-            .as_deref()
-            .map(|kept| {
-                header_lines(kept, org)
-                    .into_iter()
-                    .map(|(line, property)| (line.to_owned(), property))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut moved = Vec::new();
-        for (line, property) in header_lines(pre, org) {
-            let Some((key, value)) = property else {
-                moved.push(line);
-                continue;
-            };
-            let clash = header
-                .iter()
-                .position(|(_, kept)| kept.as_ref().is_some_and(|(k, _)| *k == key));
-            let equal = clash.is_some_and(|at| {
-                header[at]
-                    .1
-                    .as_ref()
-                    .is_some_and(|(_, v)| v.trim() == value.trim())
-            });
-            match clash {
-                Some(_) if equal => {}
-                None if key != "title" => header.push((line.to_owned(), Some((key, value)))),
-                Some(at) if key == "alias" => {
-                    let kept_value = header[at]
-                        .1
-                        .as_ref()
-                        .map(|(_, v)| v.clone())
-                        .unwrap_or_default();
-                    // Members split like the reference evidence and OG
-                    // `sep-by-comma`: `,` or `，` (C3Y Y4).
-                    let known: HashSet<String> = kept_value
-                        .split(refs::is_linkable_property_separator)
-                        .map(refs::normalize)
-                        .collect();
-                    let extra: Vec<&str> = value
-                        .split(refs::is_linkable_property_separator)
-                        .map(str::trim)
-                        .filter(|alias| {
-                            !alias.is_empty() && !known.contains(&refs::normalize(alias))
-                        })
-                        .collect();
-                    if !extra.is_empty() {
-                        let join = |start: &str| {
-                            extra
-                                .iter()
-                                .fold(start.trim_end().to_owned(), |line, alias| {
-                                    format!("{line}, {alias}")
-                                })
-                        };
-                        header[at] = (join(&header[at].0), Some((key, join(&kept_value))));
-                    }
-                }
-                _ => moved.push(line),
-            }
-        }
-        if !header.is_empty() {
-            new_header = Some(lines(header.iter().map(|(line, _)| line.as_str())));
-        }
-        if moved.iter().any(|line| !line.trim().is_empty()) {
-            blocks.push(tine_core::model::BlockDto {
-                raw: lines(moved.into_iter()),
-                ..Default::default()
-            });
-        }
-    }
-    blocks.extend(source.blocks);
-    (new_header, blocks)
-}
+mod merge_payload;
 
 #[cfg(test)]
 #[path = "pages_snapshot_tests.rs"]

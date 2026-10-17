@@ -1,4 +1,6 @@
+import { msg } from "../i18n";
 import { applyGraphAnswers } from "../graphAnswers";
+import { beginResultsChange } from "../queryResultsEpoch";
 import { backend, type GraphChange, type GraphAnswersChange } from "../backend";
 import { captureBinding, bindingCurrent } from "../binding";
 import { conflictPolicyAlwaysAsk, holdExternalChange, installHeldExternalChangeApplier } from "../conflictPolicy";
@@ -48,10 +50,14 @@ export async function applyGraphChange(c: GraphChange, bypassPolicy = false): Pr
   if (c.binding_generation !== undefined && c.binding_generation !== binding.backendGeneration) return;
   // The watcher has already updated the backend graph cache. Invalidate even
   // when this page is outside the bounded frontend working set.
-  applyGraphAnswers(c.answers);
-  bumpDataRev();
-  if (c.created || c.removed) bumpPageInventoryRev();
-  await applyObservedChange(c, captureExternalChangeUi?.(), bypassPolicy);
+  const finish = beginResultsChange();
+  try {
+    applyGraphAnswers(c.answers);
+    bumpDataRev();
+    if (c.created || c.removed) bumpPageInventoryRev();
+    await applyObservedChange(c, captureExternalChangeUi?.(), bypassPolicy);
+  }
+  finally { finish(); }
 }
 
 /** One checkout-sized watcher batch (`graph-changed-bulk`, over 32 pages;
@@ -65,6 +71,8 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
   applyGraphAnswers(bulk.answers);
   const changes = bulk.changes;
   if (!changes.length) return;
+  const finish = beginResultsChange();
+  try {
   bumpDataRev();
   for (const change of changes) applyGraphAnswers(change.answers);
   if (changes.some((c) => c.created || c.removed)) bumpPageInventoryRev();
@@ -81,7 +89,8 @@ export async function applyGraphChangesBulk(bulk: { changes: GraphChange[]; bind
   }
   if (!bindingCurrent(binding)) return;
   if (restart || (ui?.journalsOpen && changes.some((c) => c.kind === "journal"))) ui?.restartJournalFeed();
-  pushToast(`${changes.length} pages updated externally${conflicts ? ` · ${conflicts} conflict${conflicts === 1 ? "" : "s"} to review` : ""}`, "info");
+  pushToast(msg("document-external-updates", { pages: changes.length, conflicts }), "info");
+  } finally { finish(); }
 }
 
 async function applyObservedChange(c: GraphChange, ui: ExternalChangeUi | undefined, bypassPolicy: boolean): Promise<void> {

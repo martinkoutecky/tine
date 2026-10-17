@@ -50,6 +50,24 @@ describe("TopbarOverflowMenu", () => {
     }
   });
 
+  it("offers Share as the twin of the topbar button: shown only when wired, disabled with no page", () => {
+    const bare = mount();
+    bare.host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
+    expect(bare.host.querySelector('[data-topbar-overflow-action="share"]')).toBeNull();
+    dispose(); dispose = () => {}; document.body.innerHTML = "";
+
+    const none = mount({ onShare: vi.fn(), canShare: () => false });
+    none.host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
+    expect(none.host.querySelector<HTMLButtonElement>('[data-topbar-overflow-action="share"]')!.disabled).toBe(true);
+    dispose(); dispose = () => {}; document.body.innerHTML = "";
+
+    const { host, actions } = mount({ onShare: vi.fn(), canShare: () => true });
+    host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!.click();
+    host.querySelector<HTMLButtonElement>('[data-topbar-overflow-action="share"]')!.click();
+    expect(actions.onShare).toHaveBeenCalledTimes(1);
+    expect(host.querySelector(".topbar-overflow-menu")).toBeNull();
+  });
+
   it("is a transient-layer popover that dismisses and restores trigger focus", () => {
     const { host } = mount();
     const trigger = host.querySelector<HTMLButtonElement>("[data-topbar-overflow-trigger]")!;

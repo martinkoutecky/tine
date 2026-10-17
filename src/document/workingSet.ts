@@ -1,10 +1,10 @@
 import { type PageDto, type BlockDto, type PageKind } from "../types";
 import { activatePageInstance, pageInstanceGeneration, pageInstanceGenerations, retirePageInstance } from "./instance";
 import { baseRevFor, deletePageOnDisk, forgetSaveState, hostBlocksReload, hostHolds, isConflicted, rekeyPage, releaseHolds, resolveConflict, setBaseRev, unsettledPages, untombstone } from "./host/wiring";
-import { clearCollapseEpochs, doc, setDoc, FeedPage, pageByName } from "./model";
+import { clearCollapseEpochs, doc, hydrateWorkingSet, setDoc, FeedPage, pageByName } from "./model";
 import { batch } from "solid-js";
 import { produce } from "solid-js/store";
-import { purgePageNodes, toFeedPage, emptyPage, foldMarkedPageHeader } from "./convert";
+import { purgePageNodes, toFeedPage, emptyPage, foldMarkedPageHeader, formatOfFile } from "./convert";
 import { invalidateAllMatrixDimensions, clearMatrixDimensionCache } from "../sheet/matrix";
 import { invalidateUndoForPage, clearUndoHistory } from "./history";
 import { captureBinding, bindingCurrent, invalidateBinding } from "../binding";
@@ -23,9 +23,11 @@ import { isBlockMoving } from "./edits/moves";
 import { journalTitle, appNow } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToastUnique } from "../toasts";
+import { renderEnglish } from "../i18n";
 import { resetReferenceSectionState } from "../referenceSectionState";
 import { dbg } from "../debug";
 import { reportUiFailure } from "../uiFailure";
+import { msg, type UiText } from "../i18n";
 
 let publishIdentityNavigation: ((from: PageTarget, to: PageTarget) => void) | null = null;
 /** The UI installs the exact-path route, tab, Recent and sidebar rewrite. */
@@ -84,14 +86,15 @@ function upsertPage(dto: PageDto & { id?: string }) {
   // already in the store, so unsaved text answers "conflict" before a reload is
   // reached; an IME composition pins the page). Carry it across the reload:
   // close it on the old block and reopen it on the same block in the new copy,
-  // caret clamped. Without this the page stayed stale for as long as a block on
+  // caret clamped (the old editor instance's removal blur neither writes nor
+  // ends the carried edit: Editor `replacedUnderEditor`). Without this the page stayed stale for as long as a block on
   // it was open in the editor (Syncthing while Tine was in the background).
   const carried = existing ? editorOnPage(dto) : null;
   // Record the load baseline (the on-disk rev) so saves conflict against it.
   setBaseRev(dto.name, dto.rev ?? null);
   batch(() => {
     if (carried) endEdit("external-reload");
-    setDoc(
+    const write = () => setDoc(
       produce((s) => {
         purgePageNodes(s, dto.name);
         const fp = toFeedPage(dto, s.byId);
@@ -100,6 +103,7 @@ function upsertPage(dto: PageDto & { id?: string }) {
         else s.pages.push(fp);
       })
     );
+    if (replacing) write(); else hydrateWorkingSet(write);
     if (carried) reopenEditor(dto.name, carried);
   });
   activatePageInstance(dto.name);
@@ -112,7 +116,11 @@ function upsertPage(dto: PageDto & { id?: string }) {
  * file when the page had none. Only `host/wiring.ts` calls this. */
 export function installPageContent(name: string, dto: PageDto | null, path?: string | null): void {
   const page = pageByName(name);
-  const text = dto ?? emptyPage(name, page?.kind ?? "page");
+  // "No file" is held in the format of the file it will be written to, as a
+  // created page is (ORG-CREATED-FORMAT): on an Org graph the host resolves a
+  // new page to `.org`, so its first edits must be spelled as Org.
+  const file = page?.id ?? path ?? null;
+  const text = dto ?? emptyPage(name, page?.kind ?? "page", file ? formatOfFile(file) : page?.format);
   upsertPage({ ...text, name, kind: page?.kind ?? text.kind, title: page?.title ?? text.title,
     id: page?.id ?? path ?? undefined, rev: dto ? dto.rev : null });
 }
@@ -177,22 +185,21 @@ function pageContentMatches(dto: PageDto & { id?: string }, page: FeedPage): boo
   const folded = foldMarkedPageHeader(page);
   if (!folded || (dto.pre_block ?? null) !== (folded.preBlock ?? null)) return false;
   const roots = folded.rootIds;
+  // A file with no body (0 bytes, or page properties only) is shown as one empty
+  // bullet (`toLoadablePage`, `ensureEmptyBlock`), and saving that bullet writes
+  // no body: the same content. Otherwise the host's answer to the Open that a
+  // click on the bullet sends (or the echo of emptying a page) replaced the page
+  // under the new editor, which found no block and closed (GH #689).
+  if (dto.blocks.length === 0 && roots.length === 1) {
+    const only = doc.byId[roots[0]];
+    if (only && only.raw.trim() === "" && only.children.length === 0) return true; // same rule as pageToDto
+  }
   const eq = (b: BlockDto, id: string): boolean => {
     const n = doc.byId[id];
     if (!n || n.raw !== b.raw || n.children.length !== b.children.length) return false;
     return b.children.every((cb, i) => eq(cb, n.children[i]));
   };
   return dto.blocks.length === roots.length && dto.blocks.every((b, i) => eq(b, roots[i]));
-}
-
-/** Does file read `dto` hold exactly the content loaded page `name` holds now
- *  (same file, pre-block, every block's raw and tree shape; block ids, which
- *  are runtime identity, ignored)? The one answer to "equal bytes" for both the
- *  self-write echo above and an observation on a page with unsaved input
- *  (storage.qnt `table`, v == buf). O(page). */
-export function loadedContentEquals(name: string, dto: PageDto & { id?: string }): boolean {
-  const page = doc.pages.find((p) => p.name === name);
-  return !!page && pageContentMatches(dto, page);
 }
 
 /** Why a requested page file did not take its name slot (GH #254 family;
@@ -221,18 +228,21 @@ function slotRefusal(dto: PageDto & { id?: string }): PageLoadRefusal | null {
 
 /** Say why a page could not be loaded or written. Pure; O(1). */
 export function pageLoadRefusalMessage(refusal: PageLoadRefusal): string {
-  const holder = refusal.holder ?? "a new page that is not saved yet";
-  const requested = refusal.requested ?? "the page";
-  return `“${refusal.page}” is open from ${holder} with unsaved work, so ${requested} was not loaded. Finish or save that edit first.`;
+  return renderEnglish(msg("document-load-refused", pageLoadRefusalArgs(refusal)));
+}
+
+function pageLoadRefusalArgs(refusal: PageLoadRefusal, after = "") {
+  return { page: refusal.page, holder: refusal.holder ?? "", hasHolder: refusal.holder === null ? 0 : 1,
+    requested: refusal.requested ?? "", hasRequested: refusal.requested === null ? 0 : 1, after, hasAfter: after ? 1 : 0 };
 }
 
 /** Show `pageLoadRefusalMessage` as a sticky error (the user must act), once
  * while an identical one is visible. `after` is appended (what the refusal
  * stopped). Returns the message. O(visible toasts). */
 export function reportPageLoadRefusal(refusal: PageLoadRefusal, after?: string): string {
-  const message = after ? `${pageLoadRefusalMessage(refusal)} ${after}` : pageLoadRefusalMessage(refusal);
-  pushToastUnique(message, "error");
-  return message;
+  const message = msg("document-load-refused", pageLoadRefusalArgs(refusal, after));
+  pushToastUnique(msg("document-load-refused", pageLoadRefusalArgs(refusal, after)), "error");
+  return renderEnglish(message);
 }
 
 /** Load a page into the working set if it isn't already there (used by
@@ -325,7 +335,8 @@ export function forgetPage(name: string) {
 /** Delete a page through the page host: its own input is sent and published
  *  first, then the host deletes the file (STEP3 §12); the loaded page leaves
  *  the working set only once the file is gone. A refused or failed delete keeps
- *  the page and its input. Returns whether the file was deleted.
+ *  the page and its input. Returns whether the file was deleted; the optional
+ *  `reportFailure` receives the reason already known at the refusal boundary.
  *
  *  `retireRoutes`, when given, runs synchronously once the disk delete has
  *  succeeded and before the page leaves the working set, so no pane can render
@@ -338,23 +349,25 @@ export async function deletePage(
   kind: PageKind,
   expectedPath?: string,
   retireRoutes?: () => void,
+  reportFailure?: (reason: UiText) => void,
 ): Promise<boolean> {
-  if (graphRewriteFrozen()) return false;
+  const refused = (reason: UiText) => { reportFailure?.(reason); return false; };
+  if (graphRewriteFrozen()) return refused(msg("delete-reason-rewrite"));
   const binding = captureBinding();
   const loaded = pageByName(name);
-  if (expectedPath && loaded?.id !== expectedPath) return false;
-  if (loaded?.readOnly || loaded?.guide) return false;
+  if (expectedPath && loaded?.id !== expectedPath) return refused(msg("delete-reason-target"));
+  if (loaded?.readOnly || loaded?.guide) return refused(msg("delete-reason-read-only"));
   // Delete is a resolution of a conflict (master parity, Q-TS3): the unsaved
   // input is discarded first (page_discard), then the file is deleted; the
   // host's own refusal of a delete over unsaved input (D4) stands.
-  if (isConflicted(name) && !await resolveConflict(name, "disk")) return false;
+  if (isConflicted(name) && !await resolveConflict(name, "disk")) return refused(msg("delete-reason-conflict"));
   let deleted = false;
   try {
-    deleted = await deletePageOnDisk(name, kind, expectedPath ?? loaded?.id ?? undefined);
+    deleted = await deletePageOnDisk(name, kind, expectedPath ?? loaded?.id ?? undefined, reportFailure);
   } catch (error) {
-    // The caller shows the visible failure from `false`; the cause is logged so
-    // "Delete failed" is diagnosable (I-9).
+    // Keep the raw storage cause in both the debug log and the caller's toast.
     dbg(`page delete failed for ${name}: ${String(error)}`);
+    reportFailure?.(msg("delete-reason-storage", { reason: String(error) }));
   }
   if (!deleted || !bindingCurrent(binding)) return false;
   try {
@@ -461,7 +474,7 @@ function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
   const pin = pinnedPages();
   const evicted: string[] = [];
-  setDoc(
+  hydrateWorkingSet(() => setDoc(
     produce((s) => {
       // Oldest first (insertion order); stop once at the cap or only pinned left.
       for (let i = 0; i < s.pages.length && s.pages.length > WORKING_SET_CAP; ) {
@@ -475,7 +488,7 @@ function evictIfNeeded() {
         evicted.push(name);
       }
     })
-  );
+  ));
   for (const name of evicted) retirePageInstance(name);
   invalidateAllMatrixDimensions();
 }

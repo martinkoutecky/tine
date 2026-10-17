@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { App } from "./App";
 import { setLeftSidebarOpen } from "./ui";
+import { closeShareDialog, shareTarget } from "./shareState";
+import { mainPaneRouter, resetTabsToJournals } from "./router";
 
 let dispose = () => {};
 
@@ -32,5 +34,28 @@ describe("topbar workspace placement", () => {
     setLeftSidebarOpen(false);
     await vi.waitFor(() => expect(topbar.querySelector('[data-workspace-switcher-compact="true"]')).not.toBeNull());
     expect(host.querySelector("[data-workspace-switcher-sidebar] [data-workspace-switcher]")).toBeNull();
+  });
+
+  it("shares the page in view from the topbar, and is disabled when no page is open", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    resetTabsToJournals();
+    dispose = render(() => <App />, host);
+    try {
+      const button = await vi.waitFor(() => {
+        const found = host.querySelector<HTMLButtonElement>("header.topbar .topbar-share");
+        expect(found).not.toBeNull();
+        return found!;
+      });
+      expect(button.disabled, "the journals feed is not a page").toBe(true);
+
+      mainPaneRouter.openPage("Project", "page", { inPlace: true });
+      await vi.waitFor(() => expect(button.disabled).toBe(false));
+      button.click();
+      expect(shareTarget()).toEqual({ page: "Project" });
+    } finally {
+      closeShareDialog();
+      resetTabsToJournals();
+    }
   });
 });

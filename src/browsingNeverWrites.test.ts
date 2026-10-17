@@ -193,13 +193,15 @@ describe("only reference creation may stamp an id:: (guard, I-2, I-21)", () => {
     expect(
       users,
       "RULE (I-2/I-21): browsing never writes an id:: (OG writes it only when a reference is made: editor.cljs set-blocks-id! callers). "
-      + "Only copy-ref/embed (ContextMenu, blockLinkCopy) and `((` autocomplete (Block) may stamp. Navigation must open by runtime key / blockPos "
+      + "Only copy-ref/embed, `((` autocomplete, Alt-drop references and Favourite block (a Favorites-page reference creator) may stamp. Navigation must open by runtime key / blockPos "
       + "like src/blockRefActions.ts openDurableBlock; do not add a stamping call to a navigation path.",
     ).toEqual([
       "components/Block.tsx",
+      "components/blockGestures.ts",
       "components/blockLinkCopy.ts",
       "document/edits/identity.ts",
       "document/index.ts",
+      "favorites.ts",
     ]);
   });
 });

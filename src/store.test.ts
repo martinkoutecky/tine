@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
+import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, appendQueryBlock, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
 import { reloadPage, forgetPage } from "./document/workingSet";
 import { setBlockMoving, isBlockMoving } from "./document/edits/moves";
 import { loadSingle, reloadDisposition, installPageContent } from "./document/workingSet";
@@ -14,7 +14,7 @@ import { pageToDto } from "./document/convert";
 import { doc, setDoc } from "./document/model";
 import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
-import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
+import { splitProps, joinProps, BUILTIN_HIDE, HIDE_ALL } from "./editor/properties";
 import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";
 import { backend } from "./backend";
 import { isConflicted, installAliasDraftRouteHandler, unsavedDrafts } from "./document";
@@ -853,7 +853,7 @@ describe("clipboard copy strips id:: (OG parity)", () => {
 describe("property splitting is fence-aware", () => {
   it("keeps built-in id::/collapsed:: inside a code fence as visible content", () => {
     const raw = "```text\nid:: literal-in-code\ncollapsed:: true\n```\nid:: real-block-id";
-    const { visible, hidden } = splitProps(raw, isBuiltinHidden);
+    const { visible, hidden } = splitProps(raw, BUILTIN_HIDE);
     expect(hidden).toBe("id:: real-block-id"); // only the real trailing property is hidden
     expect(visible).toContain("id:: literal-in-code"); // fenced lines stay put
     expect(visible).toContain("collapsed:: true");
@@ -864,16 +864,16 @@ describe("property splitting is fence-aware", () => {
   it("joinProps on a metadata-only block adds no leading blank line", () => {
     // splitProps of "id:: x" → visible "", hidden "id:: x"; reassembly must not
     // prepend a newline (that would corrupt the block with a blank first line).
-    const { visible, hidden } = splitProps("id:: x", isBuiltinHidden);
+    const { visible, hidden } = splitProps("id:: x", BUILTIN_HIDE);
     expect(visible).toBe("");
     expect(hidden).toBe("id:: x");
     expect(joinProps(visible, hidden)).toBe("id:: x");
   });
 
-  it("hideAll (annotation blocks) is ALSO fence-aware — a key:: inside a fence stays", () => {
+  it("HIDE_ALL (annotation blocks) is ALSO fence-aware — a key:: inside a fence stays", () => {
     // The old annotation splitter wasn't fence-aware and would yank this out.
     const raw = "highlight text\n```\nkey:: not-a-prop\n```\nls-type:: annotation\nhl-page:: 3";
-    const { visible, hidden } = splitProps(raw, hideAll);
+    const { visible, hidden } = splitProps(raw, HIDE_ALL);
     expect(visible).toBe("highlight text\n```\nkey:: not-a-prop\n```");
     expect(hidden).toBe("ls-type:: annotation\nhl-page:: 3");
     expect(joinProps(visible, hidden)).toBe(raw);
@@ -1367,7 +1367,7 @@ describe("merge (Backspace at 0)", () => {
     const next = nextVisible(first);
 
     expect(mergeWithPrev(first)).toBe(false);
-    expect(splitProps(doc.byId[first].raw, isBuiltinHidden).visible.trim()).toBe("");
+    expect(splitProps(doc.byId[first].raw, BUILTIN_HIDE).visible.trim()).toBe("");
     expect(doc.byId[first].children).toHaveLength(0);
     expect(next).toBe(dto.blocks[1].id);
 
@@ -1868,6 +1868,61 @@ describe("save engine (persistence)", () => {
     expect(disk.writes).toHaveLength(2);
     expect(isConflicted("Test")).toBe(false);
     expect(baseRevFor("Test")).toBe(disk.files.get(disk.writes[1][0])!.rev);
+  });
+
+  describe("appendQueryBlock (the share dialog's definition on the exports page)", () => {
+    const exportsPage = (format: "md" | "org"): PageRead => ({
+      name: "Exports", kind: "page", title: "Exports", id: `pages/Exports.${format}`, rev: "r0", format,
+      pre_block: format === "org" ? "#+tine/exports: true\n#+public: false" : "tine/exports:: true\npublic:: false",
+      blocks: [blk("{{tine-query (or (property export) (property tine.share))}}")],
+    } as PageRead);
+
+    /** The page read that admits the named file answers from the in-memory disk. */
+    const readsFrom = (disk: Awaited<ReturnType<typeof bindMemoryDisk>>) =>
+      vi.spyOn(backend(), "getPage").mockImplementation(async (name: string) =>
+        [...disk.files.values()].find((dto) => dto.name === name) ?? null);
+
+    it("appends the definition as a root block with its property, once, and writes it to disk", async () => {
+      const disk = await bindMemoryDisk([exportsPage("md")]);
+      readsFrom(disk);
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      const roots = () => disk.files.get("pages/Exports.md")!.blocks.map((b) => b.raw);
+      expect(roots()).toEqual([
+        "{{tine-query (or (property export) (property tine.share))}}",
+        "{{tine-query @page and name = 'A'}}\nexport:: a-site",
+      ]);
+      // The identical definition is not appended twice.
+      const writes = disk.writes.length;
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      expect(roots()).toHaveLength(2);
+      expect(disk.writes).toHaveLength(writes);
+      // A different folder is a different definition.
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site-2"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      expect(roots()).toHaveLength(3);
+    });
+
+    it("spells the property for an Org page", async () => {
+      const disk = await bindMemoryDisk([exportsPage("org")]);
+      readsFrom(disk);
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      const raw = disk.files.get("pages/Exports.org")!.blocks[1].raw;
+      expect(raw).toContain("{{tine-query @page and name = 'A'}}");
+      expect(raw).toContain(":export: a-site");
+      expect(raw).not.toContain("export:: a-site");
+    });
+
+    it("refuses an empty query or page name without touching anything", async () => {
+      const disk = await bindMemoryDisk([exportsPage("md")]);
+      readsFrom(disk);
+      expect(await appendQueryBlock("Exports", "  ", [["export", "x"]])).toBe(false);
+      expect(await appendQueryBlock(" ", "{{tine-query @page}}", [])).toBe(false);
+      expect(await flushAll()).toBe(true);
+      expect(disk.writes).toEqual([]);
+    });
   });
 
   it("a late save does not advance the baseline of a same-name replacement", async () => {

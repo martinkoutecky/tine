@@ -1,8 +1,9 @@
 # Assemble immutable release candidates by manual dispatch. publish=false
 # writes workflow artifacts only. The updater endpoint in tauri.conf.json picks
-# the channel (scripts/release-policy.mjs): a Beta build publishes only to the
-# moving beta tag as a prerelease, never latest; a stable build publishes only
-# to v<version>, which must already point at the commit, marked latest.
+# the channel (scripts/release-policy.mjs). Every build publishes only to
+# v<version>, which must already point at the commit: a Beta as a prerelease,
+# never latest, then served on tine.page/updates/beta/ by pages.yml; a stable
+# build marked latest.
 #
 # Signing: the macOS lane fails closed unless it can sign with Tine's Developer
 # ID certificate, notarize with a short-lived App Store Connect API token, and
@@ -21,7 +22,7 @@ on:
         default: build
         required: true
       publish:
-        description: Publish after verification (Beta to the moving beta tag; stable to v<version>, marked latest)
+        description: Publish after verification to v<version> (Beta as a prerelease served on tine.page; stable marked latest)
         type: boolean
         default: false
         required: true
@@ -325,6 +326,25 @@ jobs:
           xcrun stapler validate "$app"
           spctl --assess --type execute --verbose=2 "$app"
 
+          # Verify the application users will actually install through the
+          # updater as well; a valid DMG alone cannot authorize that archive.
+          updater=$(find target -type f -path '*/bundle/macos/*.app.tar.gz' -print -quit)
+          [ -n "$updater" ] && [ -s "$updater.sig" ] || {
+            echo "::error::signed macOS updater archive is missing"
+            exit 1
+          }
+          updater_dir="$RUNNER_TEMP/tine-updater-verify"
+          mkdir -p "$updater_dir"
+          tar -xzf "$updater" -C "$updater_dir"
+          updater_app=$(find "$updater_dir" -maxdepth 2 -type d -name '*.app' -print -quit)
+          [ -n "$updater_app" ] || exit 1
+          codesign --verify --deep --strict --verbose=2 "$updater_app"
+          codesign -dv --verbose=4 "$updater_app" 2> "$RUNNER_TEMP/tine-updater-codesign.txt"
+          grep -Fq 'Authority=Developer ID Application:' "$RUNNER_TEMP/tine-updater-codesign.txt"
+          grep -Fq "TeamIdentifier=$APPLE_TEAM_ID" "$RUNNER_TEMP/tine-updater-codesign.txt"
+          xcrun stapler validate "$updater_app"
+          spctl --assess --type execute --verbose=2 "$updater_app"
+
       - name: Verify Linux AppImage update information
         if: startsWith(matrix.platform, 'ubuntu-')
         run: |
@@ -356,7 +376,9 @@ jobs:
             echo "::error::AppImage or update metadata is not staged beside the bundle"
             exit 1
           fi
-          if ! readelf --string-dump=.upd_info "$appimage" | grep -Fq 'gh-releases-zsync|'; then
+          # Stable reads GitHub's latest release (gh-releases-zsync); Beta reads
+          # zsync|https://tine.page/updates/beta/<arch>.AppImage.zsync
+          if ! readelf --string-dump=.upd_info "$appimage" | grep -Eq 'gh-releases-zsync\||zsync\|https://tine\.page/updates/beta/'; then
             echo "::error::AppImage is missing embedded update information"
             exit 1
           fi
@@ -721,7 +743,7 @@ jobs:
         # commit-time __BUILD_TIME__ (vite.config.ts).
         run: |
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=/build --remap-path-prefix=$HOME/.cargo=/cargo"
-          npx tauri android build --target aarch64 --apk
+          npx tauri android build --target aarch64 --apk --aab
 
       - name: Prepare canonical Android APK
         if: steps.sign.outputs.enabled == 'true'
@@ -746,6 +768,42 @@ jobs:
             exit 1
           fi
           readelf --dyn-syms --wide "$RUNNER_TEMP/libtine_lib.so" | grep -F 'syscall@' >/dev/null
+
+      # Google Play requires 16 KB page-size support (Android 15+ targets).
+      # src-tauri/build.rs passes -z max-page-size=16384; check the linked .so.
+      - name: Verify Android 16 KB page alignment
+        if: steps.sign.outputs.enabled == 'true'
+        run: |
+          unzip -p "$RELEASE_APK" lib/arm64-v8a/libtine_lib.so > "$RUNNER_TEMP/libtine_lib.so"
+          aligns=$(readelf -lW "$RUNNER_TEMP/libtine_lib.so" | awk '$1 == "LOAD" { print $NF }' | sort -u)
+          echo "LOAD alignments: $aligns"
+          for a in $aligns; do
+            if [ $((a)) -lt 16384 ]; then
+              echo "::error::libtine_lib.so has a LOAD segment aligned to $a (< 16 KB); Google Play rejects it."
+              exit 1
+            fi
+          done
+
+      # The Play Console takes an app bundle, not an APK. The bundle is a
+      # workflow artifact only; GitHub Releases keep shipping the APK.
+      - name: Upload Android app bundle (Google Play)
+        if: steps.sign.outputs.enabled == 'true'
+        run: |
+          aab=$(find src-tauri/gen/android/app/build/outputs/bundle -name '*-release.aab' | head -1)
+          if [ -z "$aab" ]; then echo "no signed AAB found"; exit 1; fi
+          mkdir -p "$RUNNER_TEMP/aab"
+          cp "$aab" "$RUNNER_TEMP/aab/tine-${{ github.sha }}.aab"
+          (cd "$RUNNER_TEMP/aab" && sha256sum *.aab > SHA256SUMS)
+
+      - name: Upload Android app bundle artifact
+        if: steps.sign.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-app-bundle
+          path: ${{ runner.temp }}/aab
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
 
       - name: Stage immutable Android artifact
         if: steps.sign.outputs.enabled == 'true'
@@ -799,6 +857,8 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+      # Dispatch pages.yml on master so tine.page serves a new Beta's manifest.
+      actions: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -811,3 +871,23 @@ jobs:
           RELEASE_MODE: ${{ inputs.mode }}
           RELEASE_PUBLISH: ${{ inputs.publish }}
         run: node scripts/publish-release-candidate.mjs "$(node --input-type=module -e 'import { releaseTag } from "./scripts/release-policy.mjs"; import fs from "node:fs"; process.stdout.write(releaseTag(JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"))))')" release-candidate
+      # Installed Betas read tine.page/updates/beta/latest.json. tine.page
+      # deploys from master (its github-pages environment allows only master),
+      # so dispatch that deploy and wait until it serves this version.
+      - name: Serve a published Beta on tine.page
+        timeout-minutes: 25
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p 'require("./src-tauri/tauri.conf.json").version')
+          case "$version" in *-beta.*) ;; *) echo "stable $version: nothing to serve"; exit 0;; esac
+          gh workflow run pages.yml --ref master
+          deadline=$((SECONDS + 1200)) attempt=0 served=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            attempt=$((attempt + 1))
+            served=$(curl -fsSL --connect-timeout 10 --max-time 30 "https://tine.page/updates/beta/latest.json?run=${{ github.run_id }}-$attempt" | jq -r .version 2>/dev/null || true)
+            if [ "$served" = "$version" ]; then echo "tine.page serves Beta $version"; exit 0; fi
+            sleep 15
+          done
+          echo "::error::tine.page does not serve Beta $version after 20 minutes (serves '${served}'); the release is published, so re-dispatch pages.yml on master and check its log"
+          exit 1

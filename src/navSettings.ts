@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Device-local view/navigation preferences (persisted in tine-settings.json via the
 // generic app_bool backend, so they survive a restart; localStorage does not in the
 // Tine app on WebKitGTK).
@@ -47,6 +48,6 @@ export async function initNavSettings(): Promise<void> {
     const value = await backend().getAppBool(KEY_REUSE_TABS, true);
     if (preferenceReadCurrent(reuseTabs, revision)) { setReuseTabsSig(value); seedPreference(reuseTabs); }
   } catch {
-    pushToast("Could not load tab reuse preference.", "error");
+    pushToast(msg("settings-could-not-load-tab-reuse-preference"), "error");
   }
 }

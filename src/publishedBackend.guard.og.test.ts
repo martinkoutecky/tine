@@ -8,7 +8,7 @@ import { PUBLISHED_ABSENT_METHODS, PUBLISHED_ANSWERED_METHODS,
 // quiet browser constant, absence, or refusal. The Proxy cannot make that
 // decision because an accidentally refused read leaves a blank published page.
 it("classifies every og Backend member and implements its browser reads", () => {
-  const file = ts.createSourceFile("backend.ts", readFileSync(new URL("./backend.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
+  const file = ts.createSourceFile("backendInterface.ts", readFileSync(new URL("./backendInterface.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
   const backend = file.statements.find((item): item is ts.InterfaceDeclaration =>
     ts.isInterfaceDeclaration(item) && item.name.text === "Backend");
   expect(backend).toBeDefined();

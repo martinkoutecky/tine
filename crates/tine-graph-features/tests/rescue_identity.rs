@@ -51,6 +51,7 @@ fn assert_rescue_refused(root: &PathBuf, incumbent: &str, stray: &str, name: &st
 #[test]
 #[cfg_attr(windows, ignore = "':' cannot appear in a Windows filename")]
 fn rescue_refuses_legacy_page_identity_collision() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("legacy");
     fs::write(
         root.join("pages/A:B.md"),
@@ -70,6 +71,7 @@ fn rescue_refuses_legacy_page_identity_collision() {
 #[test]
 #[cfg_attr(windows, ignore = "':' cannot appear in a Windows filename")]
 fn rescue_refuses_legacy_identity_in_other_text_extension() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("extension");
     fs::write(
         root.join("pages/B:C.markdown"),
@@ -92,6 +94,7 @@ fn rescue_refuses_legacy_identity_in_other_text_extension() {
 
 #[test]
 fn rescue_refuses_effective_markdown_title_collision() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("title");
     fs::write(
         root.join("pages/Other.md"),
@@ -111,6 +114,7 @@ fn rescue_refuses_effective_markdown_title_collision() {
 #[test]
 #[cfg_attr(windows, ignore = "':' cannot appear in a Windows filename")]
 fn a_legacy_filename_for_another_name_does_not_block_a_rescue() {
+    let _integration_guard = crate::integration_lock();
     let root = graph("unrelated");
     fs::write(root.join("pages/A:B.md"), "- legacy page\n").unwrap();
     fs::write(root.join("journals/Loose.md"), "- loose journal stray\n").unwrap();

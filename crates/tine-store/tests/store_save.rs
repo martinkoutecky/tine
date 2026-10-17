@@ -25,6 +25,7 @@ fn save_all(store: &Store, entries: &[Entry]) -> TxOutcome {
 
 #[test]
 fn g6b_one_block_edit_preserves_fixture_layout() {
+    let _integration_guard = crate::integration_lock();
     for (name, source) in [
         (
             "Cont1",
@@ -72,6 +73,7 @@ fn g6b_one_block_edit_preserves_fixture_layout() {
 
 #[test]
 fn g6b_explicit_eof_edit_is_not_lost() {
+    let _integration_guard = crate::integration_lock();
     let source = include_bytes!("../../../scripts/fixtures/g6b/graph/pages/TrailingBlanks.md");
     let fixture = Fixture::new();
     fixture.write("pages/TrailingBlanks.md", source);
@@ -103,6 +105,7 @@ fn g6b_explicit_eof_edit_is_not_lost() {
 
 #[test]
 fn a_page_save_transaction_keeps_order_and_reports_preflight_conflict_without_writes() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     fixture.write("pages/A.md", "- old A\n");
     fixture.write("pages/B.md", "- old B\n");
@@ -169,6 +172,7 @@ fn a_page_save_transaction_keeps_order_and_reports_preflight_conflict_without_wr
 
 #[test]
 fn a_page_save_transaction_mid_step_failure_restores_prior_files() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     for name in ["A", "B", "C"] {
         fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n"));
@@ -208,6 +212,7 @@ fn a_page_save_transaction_mid_step_failure_restores_prior_files() {
 
 #[test]
 fn a_page_save_transaction_repeated_file_has_own_family() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     fixture.write("pages/A.md", "- old\n");
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
@@ -230,6 +235,7 @@ fn a_page_save_transaction_repeated_file_has_own_family() {
 
 #[test]
 fn a_page_save_with_an_empty_kind_list_is_refused_before_writing() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -257,6 +263,7 @@ fn a_page_save_with_an_empty_kind_list_is_refused_before_writing() {
 
 #[test]
 fn a_page_save_transaction_rollback_failure_names_recovery_location() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let entries = vec![
@@ -286,6 +293,7 @@ fn a_page_save_transaction_rollback_failure_names_recovery_location() {
 
 #[test]
 fn a_page_save_transaction_names_files_missing_from_publication_after_disk_write() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     store.inject_fault(FaultPoint::PublicationReadIo);
@@ -311,6 +319,7 @@ fn a_page_save_transaction_names_files_missing_from_publication_after_disk_write
 
 #[test]
 fn single_save_reports_incomplete_rollback() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     store.inject_fault(FaultPoint::MidStepIoAt(0));
@@ -329,6 +338,7 @@ fn single_save_reports_incomplete_rollback() {
 
 #[test]
 fn page_save_transaction_crash_worker() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_PAGE_SAVE_TX_CRASH_ROOT") else {
         return;
     };
@@ -355,13 +365,14 @@ fn page_save_transaction_crash_worker() {
 
 #[test]
 fn a_page_save_transaction_crash_between_steps_keeps_earlier_disk_write() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     for name in ["A", "B", "C"] {
         fixture.write(&format!("pages/{name}.md"), format!("- old {name}\n"));
     }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .arg("--exact")
-        .arg("page_save_transaction_crash_worker")
+        .arg("store_save::page_save_transaction_crash_worker")
         .env("TINE_PAGE_SAVE_TX_CRASH_ROOT", &fixture.0)
         .output()
         .unwrap();
@@ -474,6 +485,7 @@ fn fresh(name: &str, kind: PageKind) -> PageDto {
 
 #[test]
 fn own_write_before_initial_load_is_in_first_snapshot() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     fs::write(fixture.0.join(".tine-test-pause-load"), b"").unwrap();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
@@ -674,6 +686,7 @@ fn assert_save_tree(actual: &BTreeMap<String, Vec<u8>>, case: Case) {
 
 #[test]
 fn legacy_and_store_saves_match_on_data_safety_matrix() {
+    let _integration_guard = crate::integration_lock();
     for case in [
         Case::New,
         Case::Appeared,
@@ -768,6 +781,7 @@ fn legacy_and_store_saves_match_on_data_safety_matrix() {
 
 #[test]
 fn keep_mine_rechecks_the_version_read_for_the_banner_action() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     fixture.write("pages/Note.md", "- original\n");
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
@@ -797,6 +811,7 @@ fn keep_mine_rechecks_the_version_read_for_the_banner_action() {
 /// `:file/name-format` and preferred format name, and saving there creates it.
 #[test]
 fn absent_resolve_names_the_file_by_name_format_and_preferred_format() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     fs::create_dir_all(fixture.0.join("logseq")).unwrap();
     fs::write(
@@ -829,6 +844,7 @@ fn absent_resolve_names_the_file_by_name_format_and_preferred_format() {
 /// carries `CreateNew`; the store must refuse it and leave the new file alone.
 #[test]
 fn create_new_onto_a_name_that_now_exists_conflicts_and_writes_nothing() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let id = match store.whole_graph().unwrap().resolve("New", false) {
@@ -856,6 +872,7 @@ fn create_new_onto_a_name_that_now_exists_conflicts_and_writes_nothing() {
 
 #[test]
 fn late_alternate_extension_twin_never_uses_its_revision_as_target_conflict() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     store.whole_graph().unwrap();
@@ -869,6 +886,7 @@ fn late_alternate_extension_twin_never_uses_its_revision_as_target_conflict() {
 
 #[test]
 fn hostile_page_content_is_a_refusal_not_an_io_failure() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let source = format!("- {}x{}\n", "[".repeat(513), "]".repeat(513));
     fixture.write("pages/Deep.md", &source);
@@ -911,6 +929,7 @@ fn hostile_page_content_is_a_refusal_not_an_io_failure() {
 
 #[test]
 fn own_journal_creation_updates_day_and_published_answers() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     store.whole_graph().unwrap();
@@ -938,7 +957,10 @@ fn own_journal_creation_updates_day_and_published_answers() {
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
     assert!(view
-        .complete_page_names("Sep 25", 10)
+        .complete_page_names("Sep 25", 10, None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect::<Vec<_>>()
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
 }
@@ -947,6 +969,7 @@ fn own_journal_creation_updates_day_and_published_answers() {
 /// #21 pin), never to the canonical file the day's name resolves to.
 #[test]
 fn a_loaded_stray_journal_saves_to_its_own_file() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     fs::create_dir_all(fixture.0.join("logseq")).unwrap();
     fs::write(
@@ -979,6 +1002,7 @@ fn a_loaded_stray_journal_saves_to_its_own_file() {
 /// A file whose roots all sit under one tab keeps that base offset on the
 /// edited line; splicing the serializer's column-0 line re-nested the child.
 fn g6b_base_indented_file_keeps_its_outline_and_bytes() {
+    let _integration_guard = crate::integration_lock();
     let source = "\t- root\n\t\t- child\n\t- sibling\n";
     let fixture = Fixture::new();
     fixture.write("pages/BaseTab.md", source.as_bytes());
@@ -1016,6 +1040,7 @@ fn g6b_base_indented_file_keeps_its_outline_and_bytes() {
 /// otherwise a power cut reverts the file and the text has no copy left.
 #[test]
 fn unchanged_save_makes_the_equal_bytes_durable() {
+    let _integration_guard = crate::integration_lock();
     let fixture = Fixture::new();
     let store = Store::open(&fixture.0, Default::default()).unwrap().0;
     let id = PageId::from("pages/Equal.md");

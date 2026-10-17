@@ -3,6 +3,7 @@ use tine_store::{Day, Resolved, Store};
 
 #[test]
 fn absent_journal_proposals_share_the_path_rule() {
+    let _integration_guard = crate::integration_lock();
     for (preferred, ext) in [("Markdown", "md"), ("Org", "org")] {
         for (format, stem) in [("yyyy_MM_dd", "2026_09_30"), ("dd-MM-yyyy", "30-09-2026")] {
             let dir = tempfile::tempdir().unwrap();

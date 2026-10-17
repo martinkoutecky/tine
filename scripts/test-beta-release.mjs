@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { assembleCandidate } from "./assemble-release-candidate.mjs";
 import { candidateProblems } from "./release-layout.mjs";
 import { releaseLayout } from "./release-layout.mjs";
-import { updaterAssetUrl, releaseVersion, packagingProblems, publicationPlan, releaseChannel, releaseTag, BETA_ENDPOINT, STABLE_ENDPOINT } from "./release-policy.mjs";
+import { appImageUpdateInformation, updaterAssetUrl, releaseVersion, packagingProblems, publicationPlan, releaseChannel, releaseTag, BETA_ENDPOINT, LEGACY_BETA_ENDPOINT, STABLE_ENDPOINT } from "./release-policy.mjs";
 
 const conf = { version: "0.7.0-beta.1", bundle: { targets: ["nsis", "dmg", "appimage"], android: { versionCode: 7001 } }, plugins: { updater: { endpoints: [BETA_ENDPOINT] } } };
 assert.equal(releaseVersion("0.6.987").androidCode, 6987);
@@ -23,8 +23,9 @@ assert.deepEqual(packagingProblems(conf, "experiment"), []);
 assert.match(packagingProblems(conf, "release").join(), /separate experiment Android/);
 assert.match(packagingProblems({ ...conf, bundle: { ...conf.bundle, targets: ["msi"] } }, "experiment").join(), /MSI cannot express/);
 assert.equal(publicationPlan({ conf, mode: "build", publish: false }).publish, false);
-assert.deepEqual(publicationPlan({ conf, mode: "build", publish: true, tag: "beta" }), { channel: "beta", publish: true, prerelease: true, latest: false });
-for (const tag of ["latest", "v0.7.0", "v0.7.0-beta.1", undefined]) assert.throws(() => publicationPlan({ conf, mode: "build", publish: true, tag }));
+// Each Beta publishes to its own immutable tag; the moving `beta` tag is retired.
+assert.deepEqual(publicationPlan({ conf, mode: "build", publish: true, tag: "v0.7.0-beta.1" }), { channel: "beta", publish: true, prerelease: true, latest: false });
+for (const tag of ["latest", "v0.7.0", "beta", "v0.7.0-beta.2", undefined]) assert.throws(() => publicationPlan({ conf, mode: "build", publish: true, tag }));
 assert.throws(() => publicationPlan({ conf, mode: "promote", publish: false }));
 // A Beta version never rides the stable endpoint, and a stable version never rides beta.
 assert.throws(() => publicationPlan({ conf: { ...conf, plugins: { updater: { endpoints: [STABLE_ENDPOINT] } } }, mode: "build", publish: false }));
@@ -32,12 +33,18 @@ const stableConf = { version: "0.7.0", bundle: { targets: ["nsis", "dmg", "appim
 assert.throws(() => releaseChannel({ ...stableConf, plugins: { updater: { endpoints: [STABLE_ENDPOINT, BETA_ENDPOINT] } } }));
 assert.equal(releaseChannel(stableConf), "stable");
 assert.equal(releaseTag(stableConf), "v0.7.0");
-assert.equal(releaseTag(conf), "beta");
+assert.equal(releaseTag(conf), "v0.7.0-beta.1");
+// A build still reading the legacy moving-tag manifest is no longer a release build.
+assert.throws(() => releaseChannel({ ...conf, plugins: { updater: { endpoints: [LEGACY_BETA_ENDPOINT] } } }));
+assert.equal(BETA_ENDPOINT, "https://tine.page/updates/beta/latest.json");
 assert.deepEqual(packagingProblems(stableConf, "release"), []);
 assert.deepEqual(publicationPlan({ conf: stableConf, mode: "build", publish: true, tag: "v0.7.0" }), { channel: "stable", publish: true, prerelease: false, latest: true });
 for (const tag of ["beta", "latest", "v0.6.987", "0.7.0", undefined]) assert.throws(() => publicationPlan({ conf: stableConf, mode: "build", publish: true, tag }));
 assert.equal(updaterAssetUrl("owner/repo", "app.sig", "stable"), "https://github.com/owner/repo/releases/latest/download/app.sig");
-assert.equal(updaterAssetUrl("owner/repo", "app.sig", "beta"), "https://github.com/owner/repo/releases/download/beta/app.sig");
+assert.equal(updaterAssetUrl("owner/repo", "app.sig", "beta", "0.7.0-beta.1"), "https://github.com/owner/repo/releases/download/v0.7.0-beta.1/app.sig");
+assert.throws(() => updaterAssetUrl("owner/repo", "app.sig", "beta"));
+assert.equal(appImageUpdateInformation(conf, "owner/repo", "Tine-Beta_0.7.0-beta.1_aarch64.AppImage"), "zsync|https://tine.page/updates/beta/aarch64.AppImage.zsync");
+assert.equal(appImageUpdateInformation(stableConf, "owner/repo", "Tine_0.7.0_amd64.AppImage"), "gh-releases-zsync|owner|repo|latest|Tine_*_amd64.AppImage.zsync");
 assert.ok(releaseLayout(conf.version).allAssets.includes(`${IDENTITY.productName.replace(/\s+/g, "-")}_${conf.version}_android-arm64.apk`));
 const workflow = fs.readFileSync(".github/workflows/release.yml", "utf8");
 assert.match(workflow, /mode:[\s\S]*?options: \[build\]/);
@@ -48,6 +55,13 @@ assert.match(workflow, /publish-release-candidate.mjs "\$\(node [^\n]*releaseTag
 assert.match(workflow, /build-release-bundles.mjs/);
 assert.match(workflow, /group: release\n/);
 assert.doesNotMatch(workflow, /gh-releases-zsync\|[^"\n]+\|latest\|/);
+// A published Beta is served on tine.page: the publish job may dispatch master's
+// Pages deploy and waits until the fixed manifest reports this version.
+assert.match(workflow, /publish-release:[\s\S]*?permissions:\n      contents: write\n[\s\S]*?actions: write/);
+assert.match(workflow, /gh workflow run pages\.yml --ref master[\s\S]*?https:\/\/tine\.page\/updates\/beta\/latest\.json/);
+const pages = fs.readFileSync(".github/workflows/pages.yml", "utf8");
+assert.match(pages, /workflow_dispatch:/);
+assert.match(pages, /node scripts\/pages-beta-manifest\.mjs website[\s\S]*?upload-pages-artifact/);
 
 // Drive the actual assembler and publisher, with synthetic signed artifacts and
 // a local gh executable. No network call or release mutation is possible here.
@@ -57,9 +71,14 @@ try {
   const version = live.version;
   const channel = releaseChannel(live);
   const tag = releaseTag(live);
-  const wrongTag = channel === "beta" ? `v${version}` : "beta";
-  const zsyncChannel = channel === "beta" ? "beta" : "latest";
-  const updaterRoute = channel === "beta" ? "/releases/download/beta/" : "/releases/latest/download/";
+  const wrongTag = "beta";
+  const updateInformation = channel === "beta"
+    ? "zsync|https://tine.page/updates/beta/amd64.AppImage.zsync"
+    : "gh-releases-zsync|owner|repo|latest|Tine_*.AppImage.zsync";
+  const otherUpdateInformation = channel === "beta"
+    ? "gh-releases-zsync|owner|repo|beta|Tine_*.AppImage.zsync"
+    : "zsync|https://tine.page/updates/beta/amd64.AppImage.zsync";
+  const updaterRoute = channel === "beta" ? `/releases/download/v${version}/` : "/releases/latest/download/";
   const commit = "a".repeat(40);
   const input = path.join(temp, "input");
   const output = path.join(temp, "candidate");
@@ -67,7 +86,12 @@ try {
     const dir = path.join(input, lane);
     fs.mkdirSync(dir, { recursive: true });
     const assets = spec.assets.map((name) => {
-      const bytes = Buffer.from(`synthetic ${name}`);
+      // zsync metadata names its AppImage: relative on stable, absolute into
+      // the Beta's own release (stage-release-lane.mjs).
+      const appimage = name.slice(0, -".zsync".length);
+      const bytes = Buffer.from(name.endsWith(".AppImage.zsync")
+        ? `zsync: 0.6.2\nFilename: ${appimage}\nURL: ${channel === "beta" ? updaterAssetUrl("owner/repo", appimage, channel, version) : appimage}\n\nsynthetic`
+        : `synthetic ${name}`);
       fs.writeFileSync(path.join(dir, name), bytes);
       return { name, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
     });
@@ -99,7 +123,8 @@ function gh(args) {
     else stdout = JSON.stringify({isDraft:true,tagName:process.env.MOCK_TAG,assets:fs.readdirSync(process.env.MOCK_CANDIDATE).map(name=>({name}))});
   } else if (args[1] === 'download') {
     const dest = args[args.indexOf('--dir')+1];
-    fs.copyFileSync(path.join(process.env.MOCK_CANDIDATE,'latest.json'), path.join(dest,'latest.json'));
+    const pattern = args[args.indexOf('--pattern')+1];
+    fs.copyFileSync(path.join(process.env.MOCK_CANDIDATE,pattern), path.join(dest,pattern));
   }
   return {status, stdout, stderr:''};
 }
@@ -122,12 +147,16 @@ syncBuiltinESMExports();
   const env = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(loader).href}`, GITHUB_REPOSITORY: "owner/repo", GITHUB_SHA: commit, RELEASE_MODE: "build", MOCK_CALLS: calls, MOCK_STATE: state, MOCK_CANDIDATE: output, MOCK_TAG: tag };
   const buildRecord = path.join(temp, "build.json");
   const built = spawnSync(process.execPath, ["scripts/build-release-bundles.mjs", "--", "--features", "custom-protocol"], {
-    env: { ...env, MOCK_BUILD: buildRecord, UPDATE_INFORMATION: "gh-releases-zsync|owner|repo|latest|Tine_*.AppImage.zsync", LDAI_UPDATE_INFORMATION: "gh-releases-zsync|owner|repo|latest|Tine_*.AppImage.zsync" }, encoding: "utf8",
+    env: { ...env, MOCK_BUILD: buildRecord, UPDATE_INFORMATION: updateInformation, LDAI_UPDATE_INFORMATION: updateInformation }, encoding: "utf8",
   });
+  const crossed = spawnSync(process.execPath, ["scripts/build-release-bundles.mjs", "--"], {
+    env: { ...env, MOCK_BUILD: path.join(temp, "crossed.json"), UPDATE_INFORMATION: otherUpdateInformation }, encoding: "utf8",
+  });
+  assert.notEqual(crossed.status, 0, "AppImage update information naming the other channel must refuse the build");
   assert.equal(built.status, 0, built.stderr);
   const build = JSON.parse(fs.readFileSync(buildRecord, "utf8"));
   assert.deepEqual(build.args, ["run", "tauri", "build", "--", "--features", "custom-protocol"]);
-  for (const key of ["UPDATE_INFORMATION", "LDAI_UPDATE_INFORMATION"]) assert.equal(build.env[key], `gh-releases-zsync|owner|repo|${zsyncChannel}|Tine_*.AppImage.zsync`);
+  for (const key of ["UPDATE_INFORMATION", "LDAI_UPDATE_INFORMATION"]) assert.equal(build.env[key], updateInformation);
   const publish = (tag, value) => spawnSync(process.execPath, ["scripts/publish-release-candidate.mjs", tag, output], { env: { ...env, RELEASE_PUBLISH: value }, encoding: "utf8" });
   assert.equal(publish(tag, "false").status, 0);
   assert.equal(fs.existsSync(calls), false, "publish=false made a gh call");
@@ -144,10 +173,10 @@ syncBuiltinESMExports();
   assert.ok(edit.includes(`--prerelease=${beta}`) && edit.includes(`--latest=${!beta}`), JSON.stringify(edit));
   const firstPlatform = Object.keys(updater.platforms)[0];
   updater.platforms[firstPlatform].url = beta
-    ? updater.platforms[firstPlatform].url.replace("download/beta", "latest/download")
+    ? updater.platforms[firstPlatform].url.replace(`download/v${version}`, "download/beta")
     : updater.platforms[firstPlatform].url.replace("latest/download", "download/beta");
   fs.writeFileSync(path.join(output, "latest.json"), JSON.stringify(updater));
-  assert.match(candidateProblems(output, version, channel).join(), beta ? /escapes beta/ : /not a stable latest\/download URL/);
+  assert.match(candidateProblems(output, version, channel).join(), beta ? new RegExp(`escapes v${version.replaceAll(".", "\\.")}`) : /not a stable latest\/download URL/);
   const count = commands.length;
   assert.notEqual(publish(tag, "true").status, 0);
   assert.equal(fs.readFileSync(calls, "utf8").trim().split("\n").length, count, "bad updater map reached gh");

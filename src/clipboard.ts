@@ -146,6 +146,18 @@ export function writeClipboardTextStrict(text: string): Promise<void> {
   return navigator.clipboard.writeText(text);
 }
 
+/** Read the clipboard's plain text on demand (a command, not a paste event).
+ *  Desktop reads through the clipboard plugin; the web falls back to the async
+ *  Clipboard API. Rejects when neither can read; callers report that. */
+export async function readClipboardText(): Promise<string> {
+  try {
+    const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
+    return (await readText()) ?? "";
+  } catch {
+    return navigator.clipboard.readText();
+  }
+}
+
 /** Ordinary rich write: replacing the public clipboard invalidates private data. */
 export function writeClipboardRich(text: string, html: string): Promise<void> {
   clearClipboardPayload();
@@ -156,6 +168,12 @@ export function writeClipboardRich(text: string, html: string): Promise<void> {
 export function writeClipboardImage(bytes: Uint8Array): Promise<void> {
   clearClipboardPayload();
   return backend().copyImageToClipboard(bytes);
+}
+
+/** File copy owns the public clipboard just like ordinary image copy. */
+export function writeClipboardAssetFile(name: string): Promise<boolean> {
+  clearClipboardPayload();
+  return backend().copyAssetFileToClipboard(name);
 }
 
 /** Put an ordinary outline on the clipboard without recording a block payload. */

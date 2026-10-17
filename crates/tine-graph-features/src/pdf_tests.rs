@@ -204,6 +204,122 @@ fn c3u_page(ids: &[(&str, &str)]) -> String {
     page
 }
 
+#[test]
+fn a_sidecar_replaced_before_the_annotation_read_is_merged_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for area in ["pages", "assets", "logseq"] {
+        std::fs::create_dir(root.join(area)).unwrap();
+    }
+    std::fs::write(
+        root.join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    let loaded = vec![c3u_highlight(A, "text of a")];
+    std::fs::write(
+        root.join("assets/paper.edn"),
+        pdf::write_highlights(&loaded, ""),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages/hls__paper.md"),
+        c3u_page(&[(A, "text of a")]),
+    )
+    .unwrap();
+    let store = std::sync::Arc::new(Store::open(root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let app = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(&store, app.path()).unwrap();
+    let (paused, at_read) = std::sync::mpsc::channel();
+    let (resume, resumed) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let saver = scope.spawn(|| {
+            BEFORE_ANNOTATION_READ.with(|hook| {
+                *hook.borrow_mut() = Some(Box::new(move || {
+                    paused.send(()).unwrap();
+                    resumed
+                        .recv_timeout(std::time::Duration::from_secs(20))
+                        .unwrap();
+                }));
+            });
+            write_highlights(&store, Some(&host), "paper.pdf", "Paper", &loaded, &loaded)
+        });
+        at_read
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .unwrap();
+        let other = Store::open(root, Default::default()).unwrap().0;
+        other.whole_graph().unwrap();
+        let mut blue = loaded.clone();
+        blue[0].color = "blue".into();
+        write_highlights(&other, None, "paper.pdf", "Paper", &blue, &loaded).unwrap();
+        other.close();
+        resume.send(()).unwrap();
+        assert_eq!(saver.join().unwrap().unwrap()[0].color, "blue");
+    });
+    assert_eq!(
+        read_highlights_checked(&store, "paper.pdf").unwrap()[0].color,
+        "blue"
+    );
+    let page = std::fs::read_to_string(root.join("pages/hls__paper.md")).unwrap();
+    assert!(page.contains("hl-color:: blue"), "{page}");
+    drop(host);
+    store.close();
+}
+
+/// P3 review #7: when the annotation page cannot be updated after the
+/// sidecar was saved, the error says the highlights were saved.
+#[test]
+fn a_page_failure_after_the_sidecar_save_says_the_highlights_were_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for area in ["pages", "assets", "logseq"] {
+        std::fs::create_dir(root.join(area)).unwrap();
+    }
+    std::fs::write(
+        root.join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    let loaded = vec![c3u_highlight(A, "text of a")];
+    std::fs::write(
+        root.join("assets/paper.edn"),
+        pdf::write_highlights(&loaded, ""),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages/hls__paper.md"),
+        c3u_page(&[(A, "text of a")]),
+    )
+    .unwrap();
+    let store = std::sync::Arc::new(Store::open(root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let app = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(&store, app.path()).unwrap();
+    // A twin appears after the sidecar save, before the page read.
+    let twin = root.join("pages/hls__paper.org");
+    BEFORE_ANNOTATION_READ.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            std::fs::write(&twin, "* twin\n").unwrap();
+        }));
+    });
+    let mut blue = loaded.clone();
+    blue[0].color = "blue".into();
+    let error = write_highlights(&store, Some(&host), "paper.pdf", "Paper", &blue, &loaded)
+        .expect_err("the twin refuses the page update");
+    assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{error}");
+    assert_eq!(
+        error.to_string(),
+        "The highlights were saved, but page has both .md and .org files: hls__paper"
+    );
+    assert_eq!(
+        read_highlights_checked(&store, "paper.pdf").unwrap()[0].color,
+        "blue"
+    );
+    drop(host);
+    store.close();
+}
+
 fn c3u_entries(raw: &str) -> Vec<tine_core::edn::Edn> {
     tine_core::edn::parse_strict(raw)
         .unwrap()

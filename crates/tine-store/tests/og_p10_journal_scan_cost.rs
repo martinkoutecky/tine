@@ -1,39 +1,22 @@
 //! I-25: a live journal inventory validates paths without allocating directory
 //! prefixes or absolute copies for every eligibility check.
-use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::fs;
 use tine_store::{Area, OpenOptions, Store, WatchMode};
 
-struct Counting;
 thread_local! {
     static ALLOCATIONS: Cell<Option<usize>> = const { Cell::new(None) };
 }
-fn count() {
+pub(super) fn count() {
     let _ = ALLOCATIONS.try_with(|count| {
         if let Some(value) = count.get() {
             count.set(Some(value + 1));
         }
     });
 }
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        count();
-        unsafe { System.alloc(layout) }
-    }
-    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(pointer, layout) }
-    }
-    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-        count();
-        unsafe { System.realloc(pointer, layout, size) }
-    }
-}
-#[global_allocator]
-static ALLOCATOR: Counting = Counting;
-
 #[test]
 fn journal_inventory_keeps_path_validation_allocation_bounded() {
+    let _integration_guard = crate::integration_lock();
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("journals")).unwrap();
     for index in 0..300 {

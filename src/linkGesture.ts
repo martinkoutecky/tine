@@ -1,3 +1,15 @@
+import { isMobilePlatform } from "./nativeChrome";
+
+/** GH #705: a phone or tablet shell has no tab strip (App.tsx hides it for
+ *  every mobile OS), so a BACKGROUND tab opened there is unreachable. Every
+ *  surface that would open one asks here and offers something reachable
+ *  instead: OG Logseq, which has no tabs at all, offers only "Open in sidebar".
+ *  Foreground tab opens (Search tab, previews) are unaffected: they switch to
+ *  the tab, so the user can see it. Read at call time so tests can mock it. */
+export function backgroundTabsAvailable(): boolean {
+  return !isMobilePlatform;
+}
+
 // GH #283: ONE modified-click decision for internal page/block links, used by
 // every surface (main content, references, query results, search results,
 // Favorites, Recent, namespaces), so destinations can only be chosen here —
@@ -34,7 +46,7 @@ export function internalLinkDest(
   e: Pick<MouseEvent, "shiftKey" | "ctrlKey" | "metaKey" | "altKey">,
 ): InternalLinkDest {
   if (e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) return "sidebar";
-  if (!e.shiftKey && (e.ctrlKey || e.metaKey) && !e.altKey) return "background";
+  if (!e.shiftKey && (e.ctrlKey || e.metaKey) && !e.altKey) return backgroundTabsAvailable() ? "background" : "default";
   if (e.altKey) return "pane";
   return "default";
 }
@@ -59,7 +71,7 @@ export function internalLinkAuxClick(
   e: Pick<MouseEvent, "button" | "preventDefault">,
   openBackground: () => void,
 ): boolean {
-  if (e.button !== 1) return false;
+  if (e.button !== 1 || !backgroundTabsAvailable()) return false;
   e.preventDefault();
   openBackground();
   return true;

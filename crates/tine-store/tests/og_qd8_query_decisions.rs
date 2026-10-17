@@ -48,6 +48,7 @@ fn count(graph: &WholeGraph, query: &str) -> usize {
 }
 #[test]
 fn d2_whole_values_and_configured_atoms_reach_the_query_door() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture("{:property/separated-by-commas #{:authors}}");
     assert_eq!(count(&graph, "(property list \"foo, bar\")"), 2);
     assert_eq!(count(&graph, "(property list Foo)"), 0);
@@ -77,6 +78,7 @@ fn d2_whole_values_and_configured_atoms_reach_the_query_door() {
 }
 #[test]
 fn d4_query_text_is_exact_and_sees_raw_property_and_drawer_text() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, graph) = fixture("{}");
     for (query, expected) in [
         ("Alpha", 1),
@@ -90,6 +92,7 @@ fn d4_query_text_is_exact_and_sees_raw_property_and_drawer_text() {
     let search = graph
         .search(
             &tine_store::SearchRequest {
+                transliteration: false,
                 text: "CAFE".into(),
                 within: None,
                 page_limit: 0,
@@ -119,6 +122,7 @@ fn d4_query_text_is_exact_and_sees_raw_property_and_drawer_text() {
 }
 #[test]
 fn d7_legacy_table_spelling_reaches_the_wire_query_door() {
+    let _integration_guard = crate::integration_lock();
     for (text, properties) in [
         ("(task TODO)", vec![("query-table".into(), "true".into())]),
         ("(task TODO) table", vec![]),
@@ -147,6 +151,7 @@ fn d7_legacy_table_spelling_reaches_the_wire_query_door() {
 
 #[test]
 fn org_query_content_and_properties_use_the_same_rules() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     std::fs::create_dir(dir.path().join("logseq")).unwrap();

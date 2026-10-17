@@ -1,10 +1,11 @@
+import { msg } from "./i18n";
 import { backend } from "./backend";
 import { bindingOwner, graphOwner, readOwned, writeOwned, type Owner, type WriteOwner } from "./owned";
 import { focusedSurfaceOwner } from "./focusedSurface";
 import { openPage, openPageInNewTab } from "./router";
 import { loadGuidePages, pageByName } from "./document";
 import { bumpPageInventoryRev, graphMeta, setGraphMeta } from "./graphSession";
-import { pushToast } from "./toasts";
+import { pushToast, setToasts, toasts } from "./toasts";
 import type { GuidePage } from "./types";
 
 export const GUIDE_DISPLAY_PREFIX = "Tine-guide/";
@@ -15,6 +16,7 @@ let guideLoad: Promise<GuidePage[]> | null = null;
 let guideLoadOwner: Owner | null = null;
 const guideTitles = new Map<string, string>();
 const announcementShownForRoot = new Set<string>();
+let announcementToastId: number | null = null;
 
 function key(name: string): string {
   return name.trim().toLowerCase();
@@ -84,7 +86,7 @@ export async function openGuide(): Promise<void> {
     if (!owner()) return;
     openPageInNewTab(guidePageName(GUIDE_INDEX_TITLE), "page", undefined, true);
   } catch (e) {
-    if (graphWhenAsked()) pushToast(`Couldn't open the Guide. (${String(e)})`, "error");
+    if (graphWhenAsked()) pushToast(msg("guide-couldn-t-open-the-guide", { error: String(e) }), "error");
   }
 }
 
@@ -105,14 +107,12 @@ export async function copyGuideIntoGraph(pageName: string): Promise<void> {
     const result = copied.value;
     if ((result.created_pages?.length ?? 0) > 0) bumpPageInventoryRev();
     pushToast(
-      result.created
-        ? "Copied the guide into your graph under tine-guide/."
-        : "The guide is already in your graph - opened it.",
+      msg("guide-copy-result", { created: result.created ? 1 : 0 }),
       "success"
     );
     if (surface()) openPage(result.name, "page");
   } catch (e) {
-    pushToast(`Couldn't copy the Guide into your graph. (${String(e)})`, "error");
+    pushToast(msg("guide-couldn-t-copy-the-guide-into-your-graph", { error: String(e) }), "error");
   }
 }
 
@@ -127,7 +127,7 @@ function markGuideAnnounced(owner: WriteOwner) {
     if (current && current.root === meta?.root && current.guide_announced) {
       setGraphMeta({ ...current, guide_announced: false });
     }
-    pushToast("Could not save Guide announcement preference.", "error");
+    pushToast(msg("guide-could-not-save-guide-announcement-preference"), "error");
   });
 }
 
@@ -139,10 +139,13 @@ export function maybeShowGuideAnnouncement() {
   if (!meta || meta.guide_announced || announcementShownForRoot.has(meta.root)) return;
   announcementShownForRoot.add(meta.root);
   const owner = bindingOwner();
-  pushToast("New: in-app Guide \u2014 learn Sheets, formulas & queries.", "info", {
+  // Retire the old graph's sticky announcement without acknowledging it. The
+  // replacement's dismissal must belong to the graph now on screen.
+  setToasts(toasts().filter(toast => toast.id !== announcementToastId));
+  announcementToastId = pushToast(msg("guide-new-in-app-guide-learn-sheets-formulas-queries"), "info", {
     sticky: true,
     action: {
-      label: "Open Guide",
+      label: msg("guide-open-guide"),
       run: () => void openGuide(),
     },
     onDismiss: () => markGuideAnnounced(owner),

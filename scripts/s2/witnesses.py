@@ -17,6 +17,12 @@ ROOT = Path(__file__).resolve().parents[2]
 OPEN = [("wOpen", [0]), ("deliverUp", [1]), ("wRecv", [0])]
 EDIT = [("wEdit", [0, 2]), ("wSend", [0]), ("deliverUp", [1])]
 WITNESSES = {
+    "claimant-survives-power": {
+        "profile": "base",
+        "actions": [("extClaim", [2, 1]), ("powerKBits", [0, 0, 0]),
+                    ("launch", []), ("load", [2])],
+        "predicate": "s.claimed == Set(2) and s.pages.get(2).held",
+    },
     "discard-draft-equals-disk-not-buffer": {
         "profile": "base",
         "actions": OPEN + EDIT + [("switchReq", []), ("draftSync", [0]),
@@ -249,6 +255,7 @@ WITNESSES["diagnostic-queue-counter"] = {
 # This oracle also exercises rejected choices: successful traces alone cannot
 # detect a weakened guard. Domain selection remains exactly PAGES/TEXTS/BOOLS.
 GUARDS = {
+    "extClaim": "s.claimed.contains(p) != (present == 1)",
     "wOpen": "s.alive and not(s.w.get(p).on) and not(s.w.get(p).sent)",
     "wEdit": "s.alive and s.w.get(p).on and v != s.w.get(p).text",
     "wSend": "s.alive and s.w.get(p).on and s.w.get(p).pend and not(s.w.get(p).sent)",
@@ -398,11 +405,13 @@ def guard_oracle():
                    [range(2), [1, 2, 3], [1, 2, 3]] if name == "wOp" else
                    [range(3), range(3), [1,2,3], [1,2,3]] if name == "wOpTo" else
                    [range(3), [-1, 1, 2, 3], [0, 1]] if name == "extWriteD" else
+                   [range(3), [0, 1]] if name == "extClaim" else
                    [[0, 1], [0, 1]] if name == "power" else
                    [[0, 1]] if name in ["deliverUp", "dirSync"] else
                    [range(3)] if name in ["wOpen", "wSend", "wDiscard", "wClose", "wRecv", "observe", "load", "flush", "draftSync", "opDelete", "flushDel"] else [])
         for args in itertools.product(*domains):
-            params = (["p", "v"] if name in ["wEdit", "wResolve", "extWriteD"] else
+            params = (["p", "present"] if name == "extClaim" else
+                      ["p", "v"] if name in ["wEdit", "wResolve", "extWriteD"] else
                       ["p", "ds", "dd"] if name == "wOp" else ["p","q","ds","dd"] if name == "wOpTo" else ["p"])
             free = params[:len(args)] if name not in ["deliverUp", "dirSync", "power"] else []
             declaration = f"  def guard{name}(sys: Sys" + "".join(f", {p}: int" for p in free) + "): bool = " + re.sub(r"\bs\b", "sys", guard) + "\n"
@@ -440,7 +449,7 @@ def guard_oracle():
 def find(model_dir, quint, name, spec, reuse=False):
     work = ROOT / "scratch/s3/witnesses"
     work.mkdir(parents=True, exist_ok=True)
-    model = (model_dir / "storage-s3.qnt").read_text()
+    model = (model_dir / "storage-s35.qnt").read_text()
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
     pages = spec.get("pages", 3)
     if pages != 3:
@@ -453,7 +462,7 @@ def find(model_dir, quint, name, spec, reuse=False):
     steps = spec.get("steps", len(actions))
     branches = []
     for i, (action, args) in enumerate(actions):
-        boolean = {"deliverUp": {0}, "dirSync": {0}, "extWriteD": {2}, "power": {0, 1}, "powerKBits": {0,1,2}, "opRenameRaw": {2,3,4}}
+        boolean = {"deliverUp": {0}, "dirSync": {0}, "extClaim": {1}, "extWriteD": {2}, "power": {0, 1}, "powerKBits": {0,1,2}, "opRenameRaw": {2,3,4}}
         params = [str(bool(v)).lower() if j in boolean.get(action, set()) else str(v)
                   for j, v in enumerate(args)]
         call = action + ("(" + ", ".join(params) + ")" if args else "")

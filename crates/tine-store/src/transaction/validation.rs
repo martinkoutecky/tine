@@ -153,10 +153,20 @@ pub(super) fn validate_config_content(store: &Store, content: &Content) -> Resul
 }
 
 pub(super) fn validate_page_content(file: &FileId, content: &Content) -> Result<(), Why> {
+    page_content_bytes(file, content).map(drop)
+}
+
+/// Stage raw creation bytes with the same bounds and validation on the
+/// transaction and planning paths.
+pub(super) fn page_content_bytes<'a>(
+    file: &FileId,
+    content: &'a Content,
+) -> Result<std::borrow::Cow<'a, [u8]>, Why> {
     match content {
         Content::Bytes(bytes) => {
             crate::model::validate_parse_bytes_for_path(bytes, Path::new(file.as_str()))
-                .map_err(content_refusal)
+                .map_err(content_refusal)?;
+            Ok(std::borrow::Cow::Borrowed(bytes))
         }
         Content::Stream { source, max_bytes } => {
             use std::io::Read;
@@ -174,7 +184,8 @@ pub(super) fn validate_page_content(file: &FileId, content: &Content) -> Result<
                 ))));
             }
             crate::model::validate_parse_bytes_for_path(&bytes, Path::new(file.as_str()))
-                .map_err(content_refusal)
+                .map_err(content_refusal)?;
+            Ok(std::borrow::Cow::Owned(bytes))
         }
     }
 }

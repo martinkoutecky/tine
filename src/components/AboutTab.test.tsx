@@ -3,7 +3,8 @@ import { render } from "solid-js/web";
 import { AboutTab } from "./AboutTab";
 import { setToasts, toasts } from "../toasts";
 
-const { getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExternalMock, checkNowMock, getAppBoolMock, setAppBoolMock } = vi.hoisted(() => ({
+const { packagedMock, getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExternalMock, checkNowMock, getAppBoolMock, setAppBoolMock, openReleasesMock } = vi.hoisted(() => ({
+  packagedMock: vi.fn(async () => false),
   getAppBoolMock: vi.fn(async () => true),
   setAppBoolMock: vi.fn(async () => {}),
   getVersionMock: vi.fn(async () => "0.5.3"),
@@ -12,6 +13,7 @@ const { getVersionMock, copyVersionMock, isTauriMock, platformKindMock, openExte
   isTauriMock: vi.fn(() => false),
   platformKindMock: vi.fn(async (): Promise<"desktop" | "android" | "ios"> => "desktop"),
   openExternalMock: vi.fn(async () => {}),
+  openReleasesMock: vi.fn((_version?: string) => {}),
 }));
 
 vi.mock("../backend", () => ({
@@ -20,8 +22,9 @@ vi.mock("../backend", () => ({
 }));
 vi.mock("../platform", () => ({ platformKind: platformKindMock }));
 vi.mock("../update", () => ({
+  isMsixPackaged: packagedMock,
   checkForUpdateNow: checkNowMock,
-  openReleasesPage: () => {},
+  openReleasesPage: openReleasesMock,
 }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: getVersionMock }));
 vi.mock("../clipboard", () => ({ writeClipboardTextStrict: copyVersionMock }));
@@ -38,8 +41,22 @@ describe("AboutTab", () => {
     vi.clearAllMocks();
     isTauriMock.mockReturnValue(false);
     platformKindMock.mockResolvedValue("desktop");
+    packagedMock.mockResolvedValue(false);
     openExternalMock.mockResolvedValue(undefined);
     setToasts([]);
+  });
+
+  it("MSIX replaces update controls with Microsoft Store distribution text", async () => {
+    isTauriMock.mockReturnValue(true);
+    packagedMock.mockResolvedValue(true);
+    const host = document.createElement("div");
+    const dispose = render(() => <AboutTab />, host);
+    try {
+      await flush();
+      expect(host.textContent).toContain("Updates come from the Microsoft Store.");
+      expect(host.textContent).not.toContain("Check for updates");
+      expect(getAppBoolMock).not.toHaveBeenCalled();
+    } finally { dispose(); }
   });
 
   it("GH #618: exposes a device-local automatic-check toggle and keeps manual checks", async () => {
@@ -148,6 +165,9 @@ describe("AboutTab", () => {
       await flush();
       expect(host.textContent).toContain(`${IDENTITY.productName} 0.6.0 is available — choose Install update in the notification.`);
       expect(host.textContent).not.toContain("downloading");
+      // The Releases link opens the release of the version it just offered.
+      [...host.querySelectorAll("button")].find((b) => b.textContent === "Releases")?.click();
+      expect(openReleasesMock).toHaveBeenCalledExactlyOnceWith("0.6.0");
     } finally {
       dispose();
       host.remove();

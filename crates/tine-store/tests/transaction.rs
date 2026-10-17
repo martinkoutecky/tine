@@ -119,6 +119,7 @@ fn refused(outcome: TxOutcome) -> (Why, tine_store::Rollback) {
 
 #[test]
 fn read_only_expectation_passes_without_touching_file() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::with_watch(
         WatchMode::Notify,
         &[("assets/sidecar.edn", b"{:highlights []}")],
@@ -146,6 +147,7 @@ fn read_only_expectation_passes_without_touching_file() {
 
 #[test]
 fn missing_read_only_expectation_conflicts() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::with_watch(
         WatchMode::Notify,
         &[("assets/missing.edn", b"former bytes")],
@@ -168,6 +170,7 @@ fn missing_read_only_expectation_conflicts() {
 
 #[test]
 fn read_only_expectation_conflict_undoes_an_earlier_step() {
+    let _integration_guard = crate::integration_lock();
     use tine_store::FaultPoint;
 
     let f = Fixture::with_watch(WatchMode::Notify, &[("assets/sidecar.edn", b"original")]);
@@ -193,6 +196,7 @@ fn read_only_expectation_conflict_undoes_an_earlier_step() {
 #[cfg(all(feature = "test-faults", unix))]
 #[test]
 fn move_reports_directory_sync_failure_after_rename() {
+    let _integration_guard = crate::integration_lock();
     use tine_store::FaultPoint;
 
     let f = Fixture::with_watch(WatchMode::Notify, &[("assets/source.bin", b"source")]);
@@ -212,6 +216,7 @@ fn move_reports_directory_sync_failure_after_rename() {
 #[cfg(all(feature = "test-faults", unix))]
 #[test]
 fn create_undoes_publication_when_directory_sync_fails() {
+    let _integration_guard = crate::integration_lock();
     use tine_store::FaultPoint;
 
     let f = Fixture::new();
@@ -229,6 +234,7 @@ fn create_undoes_publication_when_directory_sync_fails() {
 
 #[test]
 fn step_successes_and_noop() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     f.put("pages/A.md", b"- before\n");
     f.put("pages/B.md", b"- [[A]]\n");
@@ -308,6 +314,7 @@ fn step_successes_and_noop() {
 
 #[test]
 fn preflight_refusals_leave_disk_and_rollback_empty() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     f.put("pages/A.md", b"- a\n");
     f.put("pages/A.org", b"* twin\n");
@@ -416,6 +423,7 @@ fn preflight_refusals_leave_disk_and_rollback_empty() {
 #[cfg(debug_assertions)]
 #[should_panic(expected = "OG-RULES Rule 8")]
 fn raw_page_write_without_an_edit_kind_is_a_caller_bug() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let id = f.id(Area::Pages, "Kindless.md");
     let mut tx = f.store.transaction(None);
@@ -425,6 +433,7 @@ fn raw_page_write_without_an_edit_kind_is_a_caller_bug() {
 
 #[test]
 fn raw_non_page_write_needs_no_edit_kind() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let id = f.id(Area::Assets, "note.txt");
     let mut tx = f.store.transaction(None);
@@ -434,6 +443,7 @@ fn raw_non_page_write_needs_no_edit_kind() {
 
 #[test]
 fn transaction_journal_create_updates_day_and_view() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let id = f.id(Area::Journals, "2026_09_25.org");
     let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
@@ -453,13 +463,17 @@ fn transaction_journal_create_updates_day_and_view() {
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
     assert!(view
-        .complete_page_names("Sep 25", 10)
+        .complete_page_names("Sep 25", 10, None, false, None)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect::<Vec<_>>()
         .iter()
         .any(|entry| entry.name == "Sep 25th, 2026"));
 }
 
 #[test]
 fn raw_page_create_refuses_hostile_input_but_move_preserves_rescue_bytes() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let hostile = format!("- {}x{}\n", "[".repeat(513), "]".repeat(513));
     let page = f.id(Area::Pages, "Deep.md");
@@ -505,6 +519,7 @@ fn raw_page_create_refuses_hostile_input_but_move_preserves_rescue_bytes() {
 
 #[test]
 fn stage_one_conflicts_for_guarded_steps() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     f.put("pages/A.md", b"- a\n");
     f.put("assets/x.bin", b"x");
@@ -543,6 +558,7 @@ fn stage_one_conflicts_for_guarded_steps() {
 
 #[test]
 fn indexed_twin_is_refused_before_any_write() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     f.put("pages/Twin.org", b"* existing\n");
     f.put("assets/other.bin", b"old");
@@ -576,6 +592,7 @@ fn indexed_twin_is_refused_before_any_write() {
 
 #[test]
 fn transaction_refuses_guide_dto_without_writing() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let mut guide = doc("Guide", "should stay ephemeral");
     guide.guide = true;
@@ -592,6 +609,7 @@ fn transaction_refuses_guide_dto_without_writing() {
 
 #[test]
 fn create_unique_refuses_an_indexed_page_twin() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::with_watch(WatchMode::Poll, &[("pages/Twin.md", b"- existing\n")]);
     let mut tx = f.store.transaction(Some(tine_store::EditKind::ReplacePage));
     tx.create_unique(
@@ -609,6 +627,7 @@ fn create_unique_refuses_an_indexed_page_twin() {
 
 #[test]
 fn unique_names_and_stream_limit() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     f.put("assets/x.png", b"old");
     f.put("assets/x_1.png", b"old1");
@@ -646,6 +665,7 @@ fn unique_names_and_stream_limit() {
 #[cfg(feature = "test-faults")]
 #[test]
 fn post_apply_read_failure_cannot_report_complete_publication() {
+    let _integration_guard = crate::integration_lock();
     use tine_store::FaultPoint;
     let f = Fixture::with_watch(WatchMode::Poll, &[("assets/x.bin", b"old")]);
     let id = f.id(Area::Assets, "x.bin");
@@ -660,6 +680,7 @@ fn post_apply_read_failure_cannot_report_complete_publication() {
 
 #[test]
 fn transaction_revision_advances_only_for_disk_change() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::with_watch(
         WatchMode::Poll,
         &[("assets/x.bin", b"old"), ("pages/A.md", b"- same\n")],
@@ -702,6 +723,7 @@ mod faults {
 
     #[test]
     fn failed_undo_of_own_bytes_stays_own_in_report_and_feed() {
+        let _integration_guard = crate::integration_lock();
         let f = Fixture::new();
         let changes = f.store.subscribe();
         let a = f.id(Area::Pages, "A.md");
@@ -803,6 +825,7 @@ mod faults {
 
     #[test]
     fn injected_three_step_failures_preserve_baselines() {
+        let _integration_guard = crate::integration_lock();
         triple(FaultPoint::Stage2Mismatch, false);
         triple(FaultPoint::NoReplaceCollision, false);
         triple(FaultPoint::MidStepIo, false);
@@ -814,6 +837,7 @@ mod faults {
 
     #[test]
     fn late_twin_withdraws_only_created_file() {
+        let _integration_guard = crate::integration_lock();
         let f = Fixture::new();
         let page = f.id(Area::Pages, "Twin.md");
         f.store.inject_fault(FaultPoint::TwinAfterPublish);
@@ -826,6 +850,7 @@ mod faults {
 
     #[test]
     fn each_step_rolls_back_after_mid_step_io() {
+        let _integration_guard = crate::integration_lock();
         for case in 0..7 {
             let f = Fixture::new();
             f.put("pages/A.md", b"- old A\n");
@@ -901,6 +926,7 @@ mod faults {
 
 #[test]
 fn opposite_name_order_serializes_without_deadlock() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     f.put("assets/a.bin", b"a");
     f.put("assets/b.bin", b"b");
@@ -944,6 +970,7 @@ fn opposite_name_order_serializes_without_deadlock() {
 /// left in the trash on success, and undo restores the source name.
 #[test]
 fn unchanged_move_is_a_rename_without_trash_copy() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     f.put("pages/A.md", b"- a\n");
     let a = f.id(Area::Pages, "A.md");
@@ -976,6 +1003,7 @@ mod rename_faults {
 
     #[test]
     fn later_failure_renames_back() {
+        let _integration_guard = crate::integration_lock();
         let f = Fixture::new();
         f.store.inject_fault(FaultPoint::MidStepIoAt(1));
         let (why, rollback) = refused(two_steps(&f));
@@ -988,6 +1016,7 @@ mod rename_faults {
 
     #[test]
     fn third_party_write_during_undo_keeps_both_versions() {
+        let _integration_guard = crate::integration_lock();
         let f = Fixture::new();
         f.store.inject_fault(FaultPoint::MidStepIoAt(1));
         f.store.inject_fault(FaultPoint::UndoLiveWrite);
@@ -1008,6 +1037,7 @@ mod rename_faults {
 /// skip an occupied name rather than abort ("Access is denied" on Windows).
 #[test]
 fn create_over_a_directory_reports_is_a_directory_on_every_platform() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     fs::create_dir(f.root.join("assets").join("taken.png")).unwrap();
     let id = f.id(Area::Assets, "taken.png");
@@ -1042,6 +1072,7 @@ fn thread_read_bytes() -> u64 {
 #[cfg(target_os = "linux")]
 #[test]
 fn unique_asset_name_probe_never_reads_the_occupant() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     let big = File::create(f.root.join("assets/movie.mp4")).unwrap();
     big.set_len(256 * 1024 * 1024).unwrap();
@@ -1065,6 +1096,7 @@ fn unique_asset_name_probe_never_reads_the_occupant() {
 #[cfg(feature = "test-faults")]
 #[test]
 fn trash_into_new_directories_syncs_every_created_entry() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::with_watch(WatchMode::Notify, &[("assets/clip.bin", b"only copy")]);
     let clip = f.id(Area::Assets, "clip.bin");
     assert!(!f.root.join("logseq/.tine-trash").exists());
@@ -1099,6 +1131,7 @@ fn trash_into_new_directories_syncs_every_created_entry() {
 /// rename completes with `rewrite_refs(.., TitleRebind::Own)` instead.
 #[test]
 fn rewrite_refs_reports_its_effect_and_a_self_move_is_refused() {
+    let _integration_guard = crate::integration_lock();
     let f = Fixture::new();
     f.put("pages/B.md", b"- [[A]]\n");
     f.put("pages/Plain.md", b"- nothing here\n");

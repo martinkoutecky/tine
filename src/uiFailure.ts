@@ -1,3 +1,4 @@
+import { msg, type Msg } from "./i18n";
 // UI failure presentation. Callers provide a fixed family and opaque cause;
 // this door owns the user text and opt-in diagnostic sink. Work is O(visible
 // toasts + error detail length), with no graph read or persistence. Callers
@@ -28,6 +29,7 @@ export type UiFailureFamily =
   | "asset-inventory"
   | "trash-inventory"
   | "custom-css"
+  | "css-draft"
   | "config-read"
   | "conflict-inventory"
   | "graph-verification"
@@ -40,40 +42,41 @@ export type UiFailureFamily =
   | "export-preview"
   | "sheet-export";
 
-const MESSAGES: Record<UiFailureFamily, string> = {
-  "custom-css": "Couldn't read custom.css. No custom CSS was applied; if you just edited it, the previous version is still in effect. Fix the file and save it again.",
-  "asset-read": "Couldn't read a file from this graph's assets. It may be unreadable.",
-  "page-refresh": "Couldn't refresh a page after a change. Reopen it to see the latest.",
-  "logbook": "Couldn't read or update a time-tracking entry.",
-  "marker-read": "Couldn't read a task marker from a block. It is shown as plain text.",
-  "page-header-read": "Couldn't read a page's property header. It is shown as ordinary text.",
-  "export-preview": "Couldn't prepare a block for the export preview. It is shown unresolved.",
-  "sheet-export": "Couldn't read the sheets for export. They are exported as plain outlines.",
-  "config-read": "Couldn't read config.edn. The graph is open read-only; repair the config and reopen the graph.",
-  "conflict-inventory": "Couldn't refresh conflicts. The last successful inventory is kept.",
-  "graph-verification": "Couldn't verify graph files.",
-  "unreadable-files": "Some page files couldn't be read. The rest of the graph is available; the file list is in the debug log.",
-  "asset-inventory": "Couldn't inspect orphan assets. The last successful scan is kept.",
-  "trash-inventory": "Couldn't inspect recoverable trash. The last successful count is kept.",
-  "backup-read": "Couldn't complete the launch backup. Your graph is still open.",
-  "backup-feedback": "Couldn't receive backup status updates.",
-  "page-inventory": "Couldn't refresh the page list. The last loaded list is kept.",
-  "session-read": "Couldn't load the saved session. The current workspace is kept.",
-  "template-read": "Couldn't load the template list. Try again before creating a template.",
-  "template-write": "Couldn't create the template. This block is no longer writable.",
-  "journal-feed": "Couldn't load more journals. Try again.",
-  "block-counts": "Couldn't refresh block reference counts. The last loaded counts are kept.",
-  "block-resolution": "Couldn't resolve block references. Try again.",
+const MESSAGES: Record<UiFailureFamily, Msg> = {
+  "custom-css": msg("ui-failure-custom-css"),
+  "css-draft": msg("ui-failure-css-draft"),
+  "asset-read": msg("ui-failure-asset-read"),
+  "page-refresh": msg("ui-failure-page-refresh"),
+  "logbook": msg("ui-failure-logbook"),
+  "marker-read": msg("ui-failure-marker-read"),
+  "page-header-read": msg("ui-failure-page-header-read"),
+  "export-preview": msg("ui-failure-export-preview"),
+  "sheet-export": msg("ui-failure-sheet-export"),
+  "config-read": msg("ui-failure-config-read"),
+  "conflict-inventory": msg("ui-failure-conflict-inventory"),
+  "graph-verification": msg("ui-failure-graph-verification"),
+  "unreadable-files": msg("ui-failure-unreadable-files"),
+  "asset-inventory": msg("ui-failure-asset-inventory"),
+  "trash-inventory": msg("ui-failure-trash-inventory"),
+  "backup-read": msg("ui-failure-backup-read"),
+  "backup-feedback": msg("ui-failure-backup-feedback"),
+  "page-inventory": msg("ui-failure-page-inventory"),
+  "session-read": msg("ui-failure-session-read"),
+  "template-read": msg("ui-failure-template-read"),
+  "template-write": msg("ui-failure-template-write"),
+  "journal-feed": msg("ui-failure-journal-feed"),
+  "block-counts": msg("ui-failure-block-counts"),
+  "block-resolution": msg("ui-failure-block-resolution"),
 
-  "external-link": "Couldn't open the link.",
-  "capture-preference": "Couldn't load the capture setting.",
-  "audio-load": "Couldn't load this audio file.",
-  "audio-play": "Couldn't play this audio file.",
-  "clipboard-association": "Couldn't paste these blocks.",
-  "window-state": "Couldn't read the window state.",
-  "window-action": "Couldn't change the window.",
-  "pdf-find": "Couldn't search this PDF. The search results were cleared.",
-  "query-hydration": "Couldn't load this query page for editing.",
+  "external-link": msg("ui-failure-external-link"),
+  "capture-preference": msg("ui-failure-capture-preference"),
+  "audio-load": msg("ui-failure-audio-load"),
+  "audio-play": msg("ui-failure-audio-play"),
+  "clipboard-association": msg("ui-failure-clipboard-association"),
+  "window-state": msg("ui-failure-window-state"),
+  "window-action": msg("ui-failure-window-action"),
+  "pdf-find": msg("ui-failure-pdf-find"),
+  "query-hydration": msg("ui-failure-query-hydration"),
 };
 
 /** Families whose cause is a read of the window's bound graph. */
@@ -100,5 +103,5 @@ function detail(error: unknown): string {
 export function reportUiFailure(family: UiFailureFamily, error: unknown): void {
   const unbound = GRAPH_READS.has(family) && captureBinding().backendGeneration === 0;
   dbg(`${family}${unbound ? " (window unbound; not reported)" : ""}: ${detail(error)}`);
-  if (!unbound) pushToastUnique(MESSAGES[family], "error");
+  if (!unbound) pushToastUnique(msg(MESSAGES[family].id), "error");
 }

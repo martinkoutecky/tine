@@ -102,6 +102,6 @@ policy, restore retiring only inside the recorded scope) carry over unchanged in
   lets its operation proceed, logged.
 - **Older builds.** Builds that read only schema 2/3 (v0.6.98 stable and earlier Betas) never open
   `<graph-id>.zips/`. They cannot list or restore zips, and they cannot prune them either.
-- **Surface.** `tine-store` exposes `DirectoryWitness` and `sync_directory_witness` (Save concept 5 → 7)
+- **Surface.** `tine-store` exposes `DirectoryWitness` and `sync_directory_witness` (Save concept 5 → 7 at the time; 4 → 6 after og moved `EditKind` to `tine-outline`)
   so that backups can distinguish weak durability from strong. `RestoreFile` carries `bytes` instead of
   a source handle and length (Restore 15 → 14).

@@ -8,6 +8,7 @@ import { initParser } from "../render/parse";
 import { ensurePageLoaded, pageByName, resetStore } from "../document";
 import { doc, setDoc, type FeedPage, type Node as StoreNode } from "../document/model";
 import type { PageDto, RefGroup } from "../types";
+import { adoptResults, captureResultsTicket } from "../queryResultsEpoch";
 
 beforeAll(async () => { await initParser(); });
 afterEach(() => { resetStore(); document.body.innerHTML = ""; });
@@ -23,7 +24,8 @@ describe("sheet prop-cell draft and working-set eviction (K17a)", () => {
   it("keeps the row's page loaded while its cell draft is open, and the draft commits", () => {
     setDoc({ byId: { table: node("table", "Table\ntine.view:: table", "Sheet"), r1: node("r1", "Row one\nowner:: old", "Remote") },
       pages: [page("Sheet", ["table"]), page("Remote", ["r1"])], feed: ["Sheet"], loaded: true });
-    const groups: RefGroup[] = [{ page: "Remote", kind: "page", blocks: [{ id: "r1", raw: "Row one\nowner:: old", collapsed: false, children: [] }] }];
+    // Query rows carry the provenance of the settled answer that produced them.
+    const groups = adoptResults<RefGroup[]>([{ page: "Remote", kind: "page", blocks: [{ id: "r1", raw: "Row one\nowner:: old", collapsed: false, children: [] }] }], captureResultsTicket())!;
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <SheetTable ownerId="table" rowSource="query" groups={groups} />, root);

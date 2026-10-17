@@ -1,5 +1,5 @@
 use std::{collections::BTreeMap, fs, path::Path};
-const RULE:&str="I-12: ask lsdoc through the block-region door; no regex over content structure. Exemplar: crates/tine-core/src/block_regions.rs";
+const RULE:&str="I-12: ask lsdoc through the block-region door; no regex over content structure. Exemplar: crates/tine-outline/src/block_regions.rs";
 fn count(source: &str, rust: bool) -> usize {
     let tests = regex::Regex::new(r"(?ms)^#\[cfg\(test\)\][\s\S]*?^}\s*$").unwrap();
     let source = if rust {
@@ -61,7 +61,7 @@ fn scan(root: &Path, dir: &Path, out: &mut BTreeMap<String, usize>) {
                 || file.contains(".test.")
                 || file.ends_with("_tests.rs")
                 || file.contains("testSetup")
-                || file == "crates/tine-core/src/block_regions.rs"
+                || file == "crates/tine-outline/src/block_regions.rs"
             {
                 continue;
             }

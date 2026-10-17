@@ -1,3 +1,5 @@
+import { shortcutKey } from "./shortcutKey";
+import { msg } from "./i18n";
 // Interface zoom (UI scale) — like a browser's Ctrl +/-/0. Scales the WHOLE
 // webview uniformly (fonts, spacing, images, the PDF pane, everything) via the
 // native webview zoom-level where the platform implements it. Wry's Android
@@ -60,24 +62,26 @@ export function applyAndroidInterfaceZoom(scale: number): void {
   document.documentElement.style.zoom = scale === 1 ? "" : String(scale);
 }
 
-/** Apply stored zoom asynchronously on Tauri: CSS zoom on Android, native zoom
- * elsewhere. Web build does nothing. Platform failures toast; return does not
+/** Apply stored zoom asynchronously on Tauri: CSS zoom on Android and iOS, native
+ * zoom on desktop. Web build does nothing. Platform failures toast; return does not
  * await the result. O(1) plus platform call latency. */
 export function applyZoom(): void {
   if (!isTauri()) return;
   void platformKind()
     .then((kind) => {
       const scale = interfaceZoom();
-      if (kind === "android") {
+      // Tauri registers the native webview zoom command for desktop only, so
+      // iOS uses the same CSS document zoom as Android (WebKit supports it).
+      if (kind === "android" || kind === "ios") {
         applyAndroidInterfaceZoom(scale);
         return;
       }
       // Clear an Android fallback left behind by an unusual hot-reload before
-      // handing scaling back to the native desktop/iOS webview implementation.
+      // handing scaling back to the native desktop webview implementation.
       document.documentElement.style.zoom = "";
       return getCurrentWebview().setZoom(scale);
     })
-    .catch(() => pushToast("Could not apply interface zoom.", "error"));
+    .catch(() => pushToast(msg("zoom-could-not-apply-interface-zoom"), "error"));
 }
 
 /** Apply the stored zoom to workspace window webview `label` (desktop only).
@@ -88,7 +92,7 @@ export function applyZoomToWebview(label: string, scale = interfaceZoom()): void
   if (!isTauri()) return;
   void Webview.getByLabel(label)
     .then((webview) => webview?.setZoom(scale))
-    .catch(() => pushToast("Could not apply interface zoom.", "error"));
+    .catch(() => pushToast(msg("zoom-could-not-apply-interface-zoom"), "error"));
 }
 
 function setZoom(z: number) {
@@ -99,7 +103,7 @@ function setZoom(z: number) {
     if (next === 1) localStorage.removeItem(ZOOM_KEY);
     else localStorage.setItem(ZOOM_KEY, String(next));
   } catch {
-    pushToast("Could not save interface zoom.", "error");
+    pushToast(msg("zoom-could-not-save-interface-zoom"), "error");
   }
   applyZoom();
 }
@@ -150,7 +154,7 @@ export function installInterfaceZoomKeys(): () => void {
     } else if (e.key === "-" || e.key === "_") {
       e.preventDefault();
       zoomOut();
-    } else if (e.key === "0") {
+    } else if (shortcutKey(e) === "0") {
       e.preventDefault();
       zoomReset();
     }

@@ -50,7 +50,7 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   `-->` → `⟶`, `--` → `–` (en), `---` → `—` (em) and friends as real glyphs,
   either *while reading* (your Markdown stays ASCII, only the rendered view
   changes — like `\Delta` → Δ) or *while typing* (rewrites the source itself). A
-  Tine touch, not Logseq; default *while reading*, or turn it off.
+  Tine touch, not Logseq; **off by default** (text shows as typed, as in Logseq), GH #583.
 - **In-block lists & checklists** — a `+`/`*`/ordered list *inside one bullet's
   content* renders as a styled list (distinct from outline bullets), with tickable
   `[ ]`/`[x]` checkboxes that are *not* TODO/agenda tasks. Uses `+` (OG's in-content

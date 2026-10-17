@@ -91,6 +91,7 @@ fn wait_for_asset(
 
 #[test]
 fn a_replaced_in_graph_asset_is_published_and_a_new_and_deleted_one_too() {
+    let _integration_guard = crate::integration_lock();
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let root = scratch("in-graph");
     graph_at(&root);
@@ -111,6 +112,7 @@ fn a_replaced_in_graph_asset_is_published_and_a_new_and_deleted_one_too() {
 
 #[test]
 fn nested_assets_use_the_assets_relative_id_and_temp_names_are_not_assets() {
+    let _integration_guard = crate::integration_lock();
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let root = scratch("nested");
     graph_at(&root);
@@ -132,6 +134,7 @@ fn nested_assets_use_the_assets_relative_id_and_temp_names_are_not_assets() {
 #[cfg(unix)]
 #[test]
 fn an_approved_external_assets_root_is_observed_through_a_symlinked_path() {
+    let _integration_guard = crate::integration_lock();
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     use std::os::unix::fs::symlink;
     let root = scratch("external");
@@ -158,6 +161,7 @@ fn an_approved_external_assets_root_is_observed_through_a_symlinked_path() {
 
 #[test]
 fn scan_refresh_and_poll_mode_see_an_asset_replaced_outside() {
+    let _integration_guard = crate::integration_lock();
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let root = scratch("poll");
     graph_at(&root);
@@ -172,6 +176,7 @@ fn scan_refresh_and_poll_mode_see_an_asset_replaced_outside() {
 
 #[test]
 fn an_own_asset_write_is_never_echoed_as_external() {
+    let _integration_guard = crate::integration_lock();
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let root = scratch("own");
     graph_at(&root);
@@ -239,6 +244,7 @@ fn wait_for_watch_release(descriptor: &Path) {
 #[cfg(target_os = "linux")]
 #[test]
 fn the_watch_is_released_when_the_store_closes() {
+    let _integration_guard = crate::integration_lock();
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let root = scratch("lifecycle");
     graph_at(&root);

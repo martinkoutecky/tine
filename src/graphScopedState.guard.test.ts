@@ -25,6 +25,7 @@ const RULE = "I-20: module state naming graph content (block id, page name, sele
 // Module-level signals whose declared type can name graph content, and why each
 // cannot write into another graph. Shrink-only: fix an entry rather than add one.
 const CLASSIFIED: Record<string, string> = {
+  "src/styleKnobs.ts#values": "the device preference style.knobs.v1 (knob ids and scalar choices), no graph content; it deliberately survives a graph switch, like the colour scheme",
   "src/components/blockGestures.ts#dragId": "drag state; a click ends the drag in the old graph first, and beginDrag commits only while bindingCurrent (asyncOwnership guard)",
   "src/components/blockGestures.ts#dropInd": "drop indicator of the same drag",
   "src/components/RightSidebar.tsx#rsDropTarget": "right-sidebar drag state (a row index and side, not graph content); pointerup ends the drag in the old graph first",
@@ -89,7 +90,7 @@ function productionSources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const file = path.join(dir, entry.name);
     if (entry.isDirectory()) return productionSources(file);
-    return /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file) && !file.endsWith(".d.ts") ? [file] : [];
+    return /\.tsx?$/.test(file) && !/\.test(?:\.support)?\.tsx?$/.test(file) && !file.endsWith(".d.ts") ? [file] : [];
   });
 }
 
@@ -139,6 +140,9 @@ const BOUNDED_COLLECTIONS: Record<string, string> = {
   "src/assetCache.ts#cache": "MAX_CACHE_ENTRIES=128 / MAX_CACHE_BYTES=128MiB retained LRU, plus pending mounted reads",
   "src/assetCache.ts#liveEntries": "active asset leases only; last release deletes the evicted entry; clearAssetBlobCache ends graph reuse",
   "src/render/parse.ts#cache": "CACHE_MAX=8000 LRU",
+  "src/i18n/index.ts#bundles": "one Fluent bundle per shipped UI locale (the generated LOCALES registry), app-lifetime; not graph state",
+  "src/i18n/index.ts#loading": "one in-flight catalog load per shipped UI locale; deleted when the load settles",
+  "src/i18n/index.ts#reported": "one key per (locale, message id) that failed to format: bounded by the catalog's message count",
   "src/workspaceWindows.ts#live": "one entry per open workspace window, at most MAX_WORKSPACE_WINDOWS (openWorkspaceWindow refuses past it); disposal deletes it, and a graph switch closes them all",
   "src/windowRealm.ts#registry": "one entry per open Tine window: main + at most MAX_WORKSPACE_WINDOWS popups; unregister on close",
   "src/windowRealm.ts#pendingFrames": "one entry per open Tine window with a frame pending; deleted when it fires or its window unregisters",
@@ -206,7 +210,6 @@ export function moduleCollections(sources: Sources = repoSources()): Collection[
 const LEGACY_COLLECTIONS = new Set([
   "src/assetRefresh.ts#pending",
   "src/binding.ts#scopedClears",
-  "src/components/Macro.tsx#youtubePlayers",
   "src/conflictQueue.ts#arrivalNotices",
   // Moved unchanged out of the save engine (step 3b P2b, engine.ts deleted).
   "src/document/instance.ts#pageInstanceGenerations",
@@ -254,7 +257,7 @@ const LEGACY_COLLECTIONS = new Set([
   "src/transientLayers.ts#layers",
   "src/themes/manager.ts#[revokedThemeVersions, setRevokedThemeVersions]",
 ]);
-const LEGACY_COLLECTION_COUNT = 46;
+const LEGACY_COLLECTION_COUNT = 45;
 function unownedCollections(sources: Sources): string[] {
   return moduleCollections(sources).filter((c) => !c.scoped && !c.fixed && !BOUNDED_COLLECTIONS[c.key]).map((c) => c.key);
 }
@@ -278,10 +281,14 @@ export function unprovenPopupConsumers(sources: Sources = repoSources()): string
 // Readers of a graph-scoped target that do not prove a binding check, and why
 // each cannot write into another graph. Shrink-only.
 const CLASSIFIED_CONSUMERS: Record<string, string> = {
+  "src/queryResultDrafts.ts#drafts": "read-only result retention leases, not a popup writer; graphScopedSignal clears them at binding invalidation, release checks its captured binding, and captureResultDraft guards the actual cell write",
+  "src/components/Page.tsx#upcomingFeed": "reads graph-bound feed metadata for rendering only; the owned feed restart publishes it after its graph/surface admission checks",
+  "src/components/RightSidebar.tsx#rightSidebarFocusRequest": "scrolls and focuses the mounted card only; no graph write. The queued callback rechecks request identity, and graphScopedSignal clears the request on a graph switch",
   "src/components/ContextMenu.tsx#contextMenu": "menu actions run synchronously on a click while the menu is mounted, and it is mounted only "
     + "while its target is bound (reads null after a switch). Every action that awaits before writing captures bindingOwner() first "
     + "and applies nothing when stale (make template, rename, delete, open file, copy as Markdown)",
   "src/components/Page.tsx#contextMenu": "reads whether its own page-actions menu is open (aria state); no write",
+  "src/render/PeekPopup.tsx#contextMenu": "reads only the page menu's opener identity to suspend hover/outside dismissal while its own menu is open; no graph write or delayed target action",
   "src/components/Block.tsx#blockReferencesRequest": "opens this block's own references panel when the request names it; no write",
   "src/components/ExportModal.tsx#exportModal": "exports the ids to the clipboard; never writes the graph",
   "src/components/PdfExportDialog.tsx#pdfExportPage": "prints the named page through the OS dialog; never writes the graph",

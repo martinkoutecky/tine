@@ -2,8 +2,25 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { setFavorites, setRecentPages } from "../ui";
-import { setToasts, toasts } from "../toasts";
+import { setToasts, toasts, toUiText } from "../toasts";
+import { renderEnglish } from "../i18n";
 import { GraphSwitcher, Sidebar } from "./Sidebar";
+import { openJournals, route } from "../router";
+import { readFileSync } from "node:fs";
+
+it("GH #335: All pages opens the full view directly", () => {
+  openJournals();
+  const root = document.createElement("div"); document.body.append(root);
+  const dispose = render(() => <Sidebar />, root);
+  try {
+    const entry = [...root.querySelectorAll<HTMLElement>(".nav-section-header")].find(el => /all pages/i.test(el.textContent ?? ""))!;
+    entry.click();
+    expect(route()).toMatchObject({ kind: "all-pages" });
+    expect(entry.hasAttribute("aria-expanded")).toBe(false);
+    const guide = readFileSync("crates/tine-core/src/templates/where-things-are.md", "utf8");
+    expect(guide).toContain("**All pages** entry opens");
+  } finally { dispose(); }
+});
 
 afterEach(() => {
   setFavorites([]);
@@ -16,7 +33,7 @@ afterEach(() => {
 describe("graph open recovery (master 9a9122b1544d)", () => {
   it("keeps a known graph's open failure sticky and retries its same target", async () => {
     vi.spyOn(backend(), "listKnownGraphs").mockResolvedValue([
-      { name: "Shared notes", path: "/graphs/shared-notes" },
+      { name: "Shared notes", path: "\\\\?\\C:\\shared-notes", display_path: "C:\\shared-notes" },
     ]);
     const openKnown = vi.fn(async () => {
       throw new Error("graph root is not readable");
@@ -37,16 +54,17 @@ describe("graph open recovery (master 9a9122b1544d)", () => {
         return current!;
       });
       row.click();
+      expect(row.title).toBe("C:\\shared-notes");
       await vi.waitFor(() => expect(toasts()).toHaveLength(1));
       const failure = toasts()[0]!;
       expect(failure.kind).toBe("error");
       expect(failure.message).toContain("graph root is not readable");
       expect(failure.sticky).toBe(true);
-      expect(failure.action?.label).toBe("Retry");
+      expect(renderEnglish(toUiText(failure.action!.label))).toBe("Retry");
 
       failure.action!.run();
       await vi.waitFor(() => expect(openKnown).toHaveBeenCalledTimes(2));
-      expect(openKnown).toHaveBeenLastCalledWith("/graphs/shared-notes", false);
+      expect(openKnown).toHaveBeenLastCalledWith("\\\\?\\C:\\shared-notes", false);
     } finally {
       dispose();
     }

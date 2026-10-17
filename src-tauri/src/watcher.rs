@@ -27,7 +27,16 @@ struct GraphChange {
 }
 
 pub(crate) fn watch_mode(app: &tauri::AppHandle) -> WatchMode {
-    let selected = settings_path(app)
+    watch_mode_from(settings_path(app))
+}
+
+/// `watch_mode` for a process without a Tauri handle (`tine serve`).
+pub(crate) fn watch_mode_in(app_data: &std::path::Path) -> WatchMode {
+    watch_mode_from(Some(crate::settings::settings_path_in(app_data)))
+}
+
+fn watch_mode_from(settings: Option<std::path::PathBuf>) -> WatchMode {
+    let selected = settings
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|source| serde_json::from_str::<serde_json::Value>(&source).ok())
         .and_then(|settings| settings.get("watch_mode")?.as_str().map(str::to_owned));
@@ -415,7 +424,7 @@ fn page_event_payloads(
 
 /// Emit one publication's window events; an external publication is also
 /// recorded as a fixed-shape `watcher.batch` diagnostic event (counts only).
-fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Change) {
+fn dispatch(app: &tauri::AppHandle, label: &str, slot: &Arc<GraphSlot>, change: Change) {
     let binding_generation = slot.binding_generation;
     let config_changed = change.origin == Origin::External
         && change
@@ -423,6 +432,15 @@ fn dispatch(app: &tauri::AppHandle, label: &str, slot: &GraphSlot, change: Chang
             .iter()
             .any(|(id, _, _)| id.as_str() == "logseq/config.edn");
     let (events, copies_changed) = window_events(&change);
+    crate::spotlight::observe(
+        app,
+        label,
+        slot,
+        events
+            .iter()
+            .map(|event| (event.name.clone(), event.kind, event.removed))
+            .collect(),
+    );
     let conflicts_dirty = concord_observe(slot, &change) || copies_changed;
     let pages = events.len();
     // Own publications also update derived answers for deletes/renames and

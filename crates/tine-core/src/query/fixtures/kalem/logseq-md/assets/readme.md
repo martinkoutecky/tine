@@ -1,0 +1,1 @@
+- A note outside pages/ and journals/: Logseq 0.10.9 reads it as the page readme, and so does the plugin. [[Read from Assets]]

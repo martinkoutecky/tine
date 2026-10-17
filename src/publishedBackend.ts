@@ -241,6 +241,9 @@ const OPTIONAL_METHODS = new Set([
   "retireDraft",
   // GH #181: external Tine links need the native URL handler; a published guide has none.
   "tineLinks",
+  // CLI slice 2: only a native window answers its graph owner's flush requests.
+  "onOwnerFlushRequest",
+  "ownerFlushAnswer",
 ]);
 
 /** Build the snapshot backend. `load` is awaited lazily by every method. */
@@ -414,6 +417,11 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       }));
       return { rev: "0", entries, unreadable: [] };
     },
+    // A published export carries no file times: the Updated column shows dashes.
+    async pageModified() {
+      return { rev: "0", modified: [] };
+    },
+    async pageBacklinkCounts(): Promise<[string, number][]> { return []; },
     async resolvePage(name: string, kind: "journal" | "page") {
       const snapshot = await load();
       const page = pageByName(snapshot, name);
@@ -531,7 +539,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return collect(snapshot, (block) => includesFolded(block.raw, wanted.folded), limit);
     },
     quickSwitch,
-    async captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+    async captureQuickSwitch(query: string, limit: number, _transliteration = false): Promise<PageEntry[]> {
       return quickSwitch(query, limit);
     },
     async queryFacets() {
@@ -574,7 +582,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
      *  aliases and block text from the snapshot — navigation, not a query. A
      *  query-language search (any other consumer) is refused: the export holds
      *  answers, not an index. */
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane?: string, _explain?: boolean, scope?: QueryPageScope, _pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, _views?: { page: ViewSettings; block: ViewSettings }): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane?: string, _explain?: boolean, scope?: QueryPageScope, _pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, _views?: { page: ViewSettings; block: ViewSettings }, _transliteration = false): Promise<QueryExecution> {
       const snapshot = await load();
       if (lane !== "quick-switch" && lane !== "quick-switch:current-page") throw await staticQueryRefusal();
       const wanted = literalNeedle(source);
@@ -657,7 +665,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return [];
     },
     async gpuEnv() {
-      return { software_forced: false, appimage: false, flatpak: false };
+      return { software_forced: false, appimage: false, flatpak: false, packaged: false };
     },
     // A published export has no backend clock; the browser's is the authority.
     async localClock() {
@@ -689,6 +697,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async setAppString(key: string, value: string) {
       appStrings.set(key, value);
     },
+    async setUiLocale() {},
     async loadSession() {
       return session;
     },
@@ -804,9 +813,6 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async defaultGraphParent() {
       return "";
     },
-    async graphSourceFiles() {
-      return { files: [], skipped: [] };
-    },
     async conflictInventory() {
       return { sync_conflicts: [], vcs_markers: [], queue: [] };
     },
@@ -869,6 +875,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     },
     onPageMail: unsubscribed,
     onGraphOpenWaiting: unsubscribed,
+    onGraphOpenOwnerWaiting: unsubscribed,
     async legacyDraftsFile() {
       return null;
     },
@@ -895,6 +902,8 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
  *  `Backend` method to be in exactly one. */
 export const PUBLISHED_ANSWERED_METHODS = [
   "pageInventory",
+  "pageModified",
+  "pageBacklinkCounts",
   "resolvePage",
   "loadGraph",
   "inspectGraphAccess",
@@ -983,6 +992,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "getWatchMode",
   "listSpellcheckDictionaries",
   "applySpellcheck",
+  "setUiLocale",
   "setSystemBarAppearance",
   "closeGraphWindow",
   "trayApply",
@@ -990,7 +1000,6 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "captureTarget",
   "bindCaptureGraph",
   "defaultGraphParent",
-  "graphSourceFiles",
   "conflictInventory",
   "listJournalConflicts",
   "listSyncConflicts",
@@ -1022,6 +1031,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "pageOwed",
   "onPageMail",
   "onGraphOpenWaiting",
+  "onGraphOpenOwnerWaiting",
   "legacyDraftsFile",
 ] as const;
 
@@ -1053,6 +1063,9 @@ export const PUBLISHED_REFUSED_METHODS = [
   "deletePage",
   "renamePage",
   "publishHtml",
+  "revealExport",
+  "readCssFile",
+  "saveCssFile",
   "publishQueryPlan",
   "publishQuery",
   "pagePrintHtml",
@@ -1073,6 +1086,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "setDefaultJournalTemplate",
   "setStartOfWeek",
   "openPageFile",
+  "openGraphFile",
   "editCustomCss",
   "editAssetExternal",
   "trashAsset",
@@ -1107,6 +1121,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "stopRecording",
   "cancelRecording",
   "copyImageToClipboard",
+  "copyAssetFileToClipboard",
   "writeHighlights",
   "savePdfAreaImage",
   "rollbackPdfAreaImage",

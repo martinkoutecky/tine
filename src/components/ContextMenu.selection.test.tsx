@@ -78,7 +78,11 @@ describe("selection context menu (GH #591)", () => {
     expect(raws()).toEqual(["One", "Two", ""]);
   });
   it.each(["Copy block ref", "Copy block embed"])("%s publishes all selected references after their IDs are saved", async (action) => {
-    load(); open(); click(action);
+    load(); open();
+    const submenu = [...document.querySelectorAll(".ctx-submenu")].find(el => el.textContent?.startsWith("Copy as"));
+    expect(submenu).toBeDefined();
+    expect(submenu!.textContent).toContain(`${action}s`);
+    click(action);
     await vi.waitFor(() => expect(backend().writeText).toHaveBeenCalledTimes(1));
     const text = vi.mocked(backend().writeText).mock.calls[0][0];
     for (const id of [A, child, B]) expect(text).toContain(action.endsWith("embed") ? `{{embed ((${id}))}}` : `((${id}))`);

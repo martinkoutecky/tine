@@ -18,6 +18,12 @@ if (!Number.isInteger(policy.reliability?.rounds) || policy.reliability.rounds <
 if (!Number.isInteger(policy.reliability?.runsPerRound) || policy.reliability.runsPerRound < 2) {
   problems.push("bench policy must require at least two measured runs per round");
 }
+const reruns = policy.reliability?.maxDisturbedRoundReruns ?? 0;
+if (!Number.isInteger(reruns) || reruns < 0 || reruns > 1) {
+  // One re-measurement replaces one disturbed round; more would let a
+  // genuinely noisy build be measured until it passes.
+  problems.push("reliability.maxDisturbedRoundReruns must be 0 or 1");
+}
 for (const [name, budget] of Object.entries(policy.metrics ?? {})) {
   if (!Number.isFinite(budget.maxRoundSpreadPct) || budget.maxRoundSpreadPct <= 0) {
     problems.push(`${name} is missing a positive maxRoundSpreadPct reliability budget`);
@@ -51,16 +57,7 @@ function reachableReleaseTags() {
 
 let expectedPrevious = argument("--expected-previous");
 const selection = policy.previousRelease?.selection ?? "latest-release";
-if (selection === "og-campaign") {
-  // A master's latest release is not this line's performance anchor; the line
-  // (Beta, and stable since 0.7.0) keeps v0.6.5. This selector cannot advance the
-  // anchor, and the configured application must be the switch's shipped identity.
-  const identity = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/app-identity.json"), "utf8"));
-  if (app.identifier !== identity.identities[identity.ship]?.identifier) {
-    problems.push("og-campaign performance selection requires the shipped application identity");
-  }
-  expectedPrevious = "v0.6.5";
-} else if (selection !== "latest-release") {
+if (selection !== "latest-release") {
   problems.push(`unknown previousRelease.selection: ${selection}`);
 }
 if (!expectedPrevious) {
@@ -89,11 +86,13 @@ if (!expectedPrevious) {
   problems.push("could not determine the most recent published release tag; fetch full tag history");
 } else if (policy.previousRelease?.ref !== expectedPrevious) {
   problems.push(
-    `previousRelease.ref is ${policy.previousRelease?.ref ?? "missing"}; expected ${selection === "og-campaign" ? "fixed OG campaign anchor" : "most recent published release"} ${expectedPrevious}`
+    `previousRelease.ref is ${policy.previousRelease?.ref ?? "missing"}; expected most recent published release ${expectedPrevious}`
   );
 }
-if (policy.immutableBaseline?.ref !== "v0.4.7") {
-  problems.push(`immutableBaseline.ref moved from the fixed v0.4.7 anchor to ${policy.immutableBaseline?.ref ?? "missing"}`);
+// Moved from v0.4.7 by Martin (2026-10-13); only he moves it again.
+const IMMUTABLE = "v0.7.2";
+if (policy.immutableBaseline?.ref !== IMMUTABLE) {
+  problems.push(`immutableBaseline.ref moved from the fixed ${IMMUTABLE} anchor to ${policy.immutableBaseline?.ref ?? "missing"}`);
 }
 
 if (problems.length) {

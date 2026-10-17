@@ -8,12 +8,15 @@ import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
+import { setActiveLocale } from "../i18n";
+import { COMMANDS, filterCommands } from "../editor/autocomplete";
 
 beforeAll(async () => {
   await initParser();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await setActiveLocale("en");
   resetStore();
   document.body.innerHTML = "";
 });
@@ -70,6 +73,28 @@ async function openAndChoose(raw: string, label: string, format: "md" | "org" = 
 }
 
 describe("task-state slash commands (GH #225)", () => {
+  it("shows English slash keywords with Chinese glosses and keeps marker insertion literal (GH #107)", async () => {
+    const english = COMMANDS.map((command) => command.matchLabel ?? command.label);
+    const ranking = filterCommands("TODO").map((command) => command.matchTieOrder);
+    await setActiveLocale("zh-CN");
+    loadSingle(taskPage("/"));
+    startEditing("task-slash-host", 1);
+    const { root, dispose } = mount(() => <Block id="task-slash-host" />);
+    try {
+      const textarea = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      inputAt(textarea, "/", 1);
+      await vi.waitFor(() => expect(document.querySelectorAll(".autocomplete .ac-label").length).toBe(COMMANDS.length));
+      const labels = [...document.querySelectorAll(".autocomplete .ac-label")].map((el) => el.textContent!);
+      for (const keyword of english) {
+        const label = labels.find((value) => value.startsWith(`${keyword} (`));
+        expect(label, keyword).toMatch(/[\u3400-\u9fff]/);
+      }
+      expect(filterCommands("TODO").map((command) => command.matchTieOrder)).toEqual(ranking);
+      expect(filterCommands("待办")[0].matchLabel).toBe("TODO");
+      choose(labels.find((label) => label.startsWith("TODO ("))!);
+      await vi.waitFor(() => expect(doc.byId["task-slash-host"].raw).toBe("TODO"));
+    } finally { dispose(); }
+  });
   it("replaces an existing marker from anywhere in a multiline block and moves the caret to the end", async () => {
     const { textarea, dispose } = await openAndChoose(
       "TODO [#A] Write report /done\nowner:: Martin",

@@ -79,18 +79,20 @@ fn page_base_score(
         QueryExpr::Never => None,
         QueryExpr::Text(pred) if pred.field != TextField::PageName => None,
         QueryExpr::Text(pred) => match pred.mode {
-            TextMatchMode::Fuzzy => fuzzy_name_score(lower, &pred.value).map(|(score, class)| {
-                if class == ObjectiveMatchClass::Exact
-                    && plan
-                        .page_exact
-                        .as_ref()
-                        .is_some_and(|exact| identity_fold(original) != *exact)
-                {
-                    (1000, ObjectiveMatchClass::Prefix)
-                } else {
-                    (score, class)
-                }
-            }),
+            TextMatchMode::Fuzzy => fuzzy_name_score(lower, &pred.value)
+                .map(|(score, class)| {
+                    if class == ObjectiveMatchClass::Exact
+                        && plan
+                            .page_exact
+                            .as_ref()
+                            .is_some_and(|exact| identity_fold(original) != *exact)
+                    {
+                        (1000, ObjectiveMatchClass::Prefix)
+                    } else {
+                        (score, class)
+                    }
+                })
+                .or_else(|| plan.transliteration_score(original, pred)),
             TextMatchMode::Regex => plan
                 .regexes
                 .get(&pred.clause_id)
@@ -112,7 +114,7 @@ fn page_base_score(
                 } else if lower.contains(&pred.value) {
                     Some((500, ObjectiveMatchClass::Substring))
                 } else {
-                    None
+                    plan.transliteration_score(original, pred)
                 }
             }
         },
@@ -128,14 +130,31 @@ fn page_base_score(
             }
             Some((score, class))
         }
-        QueryExpr::Or(children) => children
-            .iter()
-            .find_map(|child| page_base_score(plan, child, original, lower)),
+        QueryExpr::Or(children) => {
+            let mut expansion = None;
+            for child in children {
+                if let Some(hit) = page_base_score(plan, child, original, lower) {
+                    // Preserve the first native branch's existing authority,
+                    // even when an earlier alternative matched via expansion.
+                    if hit.1 != ObjectiveMatchClass::Transliteration {
+                        return Some(hit);
+                    }
+                    if expansion.is_none() {
+                        expansion = Some(hit);
+                    }
+                }
+            }
+            expansion
+        }
         QueryExpr::Not(child) => {
-            (!eval_expr_fast(plan, child, TextField::PageName, original, lower))
-                // A successful exclusion contributes no positive relevance and
-                // therefore must not weaken the class supplied by an AND sibling.
-                .then_some((0, ObjectiveMatchClass::Exact))
+            (if plan.transliteration {
+                page_base_score(plan, child, original, lower).is_none()
+            } else {
+                !eval_expr_fast(plan, child, TextField::PageName, original, lower)
+            })
+            // A successful exclusion contributes no positive relevance and
+            // therefore must not weaken the class supplied by an AND sibling.
+            .then_some((0, ObjectiveMatchClass::Exact))
         }
     }
 }
@@ -235,7 +254,11 @@ pub(super) fn execute_pages(
         }
     }
     let mut aliases_by_owner: HashMap<String, Vec<String>> = HashMap::new();
-    for (alias, _, owner_rel_path) in graph.page_aliases_with_owners() {
+    for (alias, _, owner_rel_path) in if plan.separate_aliases {
+        graph.page_alias_spellings_with_owners()
+    } else {
+        graph.page_aliases_with_owners()
+    } {
         aliases_by_owner
             .entry(owner_rel_path)
             .or_default()
@@ -249,6 +272,10 @@ pub(super) fn execute_pages(
     } else {
         usize::MAX
     };
+    let mut completion_names: HashSet<String> = file_pages
+        .iter()
+        .map(|page| identity_fold(&page.name))
+        .collect();
     for (index, page) in file_pages.iter().enumerate() {
         if cancelled() {
             return None;
@@ -258,7 +285,14 @@ pub(super) fn execute_pages(
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         let name_match = include_names
-            .then(|| best_page_match(plan, &branch.predicate, &page.name, aliases))
+            .then(|| {
+                best_page_match(
+                    plan,
+                    &branch.predicate,
+                    &page.name,
+                    if plan.separate_aliases { &[] } else { aliases },
+                )
+            })
             .flatten();
         let content_match = content_by_path.get(page.rel_path_str());
         if let Some((base_score, match_class, matched_text, matched_alias, content_text)) =
@@ -292,11 +326,35 @@ pub(super) fn execute_pages(
                 },
             );
         }
+        if plan.separate_aliases {
+            for alias in aliases {
+                // A physical page wins over an alias with the same identity.
+                if !completion_names.insert(identity_fold(alias)) {
+                    continue;
+                }
+                if let Some((base_score, match_class, matched_text, _)) =
+                    best_page_match(plan, &branch.predicate, alias, &[])
+                {
+                    has_more |= heap.len() >= selection_limit;
+                    push_page(
+                        &mut heap,
+                        selection_limit,
+                        ScoredPage {
+                            from_content: false,
+                            score: base_score - alias.len() as i32,
+                            match_class,
+                            matched_text,
+                            matched_alias: Some(alias.clone()),
+                            tie_key: format!("{}:{}", identity_fold(alias), page.rel_path_str()),
+                            candidate: PageCandidate::File(index),
+                            content_text: None,
+                        },
+                    );
+                }
+            }
+        }
     }
-    let mut have: HashSet<String> = file_pages
-        .iter()
-        .map(|page| identity_fold(&page.name))
-        .collect();
+    let mut have = completion_names;
     // GH #353 / #623: an alias of a file page names THAT page. The owner carries
     // the identity (with `matched_alias` as display context), so the alias text
     // must never also appear as a referenced, path-less page candidate: selecting
@@ -309,7 +367,11 @@ pub(super) fn execute_pages(
             .map(|alias| identity_fold(alias)),
     );
     for name in if include_names {
-        graph.referenced_page_names()
+        if let Some((owner, id, original)) = &plan.editor_reference_baseline {
+            graph.referenced_page_names_for_editor(owner, id, original)
+        } else {
+            graph.referenced_page_names()
+        }
     } else {
         Vec::new()
     } {
@@ -510,6 +572,7 @@ mod tests {
             .0;
         let graph = store.whole_graph().unwrap();
         let request = crate::SearchRequest {
+            transliteration: false,
             text: "Hit".into(),
             within: None,
             page_limit: 10,

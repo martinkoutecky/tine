@@ -1,5 +1,6 @@
 import { Show, Suspense, lazy, type JSX } from "solid-js";
 import { QuickSwitcher } from "./QuickSwitcher";
+import { CssEditor } from "./CssEditor";
 import { ContextMenu } from "./ContextMenu";
 import { Toasts, Lightbox } from "./Toasts";
 import { AudioOverlay } from "./AudioOverlay";
@@ -10,11 +11,14 @@ import { PageProps } from "./PageProps";
 import { ExportModal } from "./ExportModal";
 import { PdfExportDialog } from "./PdfExportDialog";
 import { QueryExportDialog } from "./QueryExportDialog";
+import { ShareDialog } from "./ShareDialog";
 import { GraphNamePrompt } from "./GraphNamePrompt";
 import { FailureBoundary } from "./FailureBoundary";
 import { DrawerBackground } from "./MobileDrawerShell";
 import { queryExportRequest, settingsOpen } from "../ui";
+import { shareTarget } from "../shareState";
 import { overlayWindowId } from "../transientLayers";
+import { t } from "../i18n";
 
 const Settings = lazy(() => import("./Settings").then((module) => ({ default: module.Settings })));
 
@@ -50,8 +54,10 @@ export function WindowOverlays(props: {
       {props.recovery}
       <Show when={here()}>
         <FailureBoundary region="PDF export"><PdfExportDialog /></FailureBoundary>
+        <FailureBoundary region="Share"><ShareDialog target={shareTarget} /></FailureBoundary>
         <FailureBoundary region="Query export"><QueryExportDialog request={queryExportRequest} /></FailureBoundary>
         <FailureBoundary region="Graph creation"><GraphNamePrompt /></FailureBoundary>
+        <FailureBoundary region={t("css-editor-title")}><CssEditor /></FailureBoundary>
         <Show when={settingsOpen()}>
           <Suspense>
             <FailureBoundary region="Settings"><Settings /></FailureBoundary>

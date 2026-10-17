@@ -191,7 +191,8 @@ describe("OG-P12B one answerer for page headers, fences and task markers", () =>
     expect(store).not.toMatch(/fn page_header_property_line|fn page_header_properties_only/);
     const query = readFileSync("crates/tine-store/src/query.rs", "utf8");
     expect(query).toContain("tine_core::block_regions::page_header_only(");
-    const conflicts = readFileSync("crates/tine-graph-features/src/conflicts.rs", "utf8");
+    const conflicts = readFileSync("crates/tine-graph-features/src/conflicts.rs", "utf8")
+      + readFileSync("crates/tine-graph-features/src/conflicts/queue.rs", "utf8");
     expect(conflicts, "I-12: conflict preambles are read through block_regions::parse_document").toContain("tine_core::block_regions::parse_document(");
     expect(conflicts).not.toMatch(/fn pre_property\(/);
   });
@@ -203,7 +204,7 @@ describe("OG-P12B one answerer for page headers, fences and task markers", () =>
     const fences = readFileSync("src/editor/fences.ts", "utf8");
     expect(fences).toContain("literal_blocks");
     expect(fences).toContain("open_fence");
-    const rust = readFileSync("crates/tine-core/src/block_regions.rs", "utf8");
+    const rust = readFileSync("crates/tine-outline/src/block_regions.rs", "utf8");
     expect(rust, "the unclosed-fence editor policy has exactly one home").toMatch(/fn open_fence\(/);
   });
   it("I-12: marker and priority spans come from markers.ts headerTokens (the parser's header)", () => {

@@ -16,7 +16,7 @@ describe("OG-B-DOOR2 shared-answer boundaries", () => {
     for (const source of [coreProps, props, icons]) expect(source).not.toMatch(/\.lines\(|parse_property_line|strip_prefix\(/);
     expect(read("crates/tine-store/src/query.rs")).not.toContain("fn org_property_line");
     expect(read("crates/tine-core/src/reference_evidence.rs")).not.toContain("fn property_values");
-    const regions = read("crates/tine-core/src/block_regions.rs");
+    const regions = read("crates/tine-outline/src/block_regions.rs");
     expect(regions, "I-15: imitate the accepted-key map; do not search a folded property list per entry").not.toContain("props.iter().find");
     expect(regions, "I-15: whole-file literal exclusion uses exclude_literals' monotone cursor").toContain("exclude_literals(&mut result.properties");
   });
@@ -39,7 +39,7 @@ describe("OG-B-DOOR2 shared-answer boundaries", () => {
   });
 
   it("uses Rust property separators and one grapheme-safe plain matcher (I-4/I-12)", () => {
-    expect(read("src/render/pageRefs.ts")).toContain("splitLinkableProperty(value)");
+    expect(read("src/render/pageRefs.ts")).toContain('linkable_property_names(value, format === "org")');
     expect(read("src/render/block.ts")).not.toContain(".split(/[,，]/)");
     expect(read("src/mock.ts")).not.toContain(".split(/[,，]/)");
     const source = read("crates/tine-core/src/reference_evidence/plain_match.rs");

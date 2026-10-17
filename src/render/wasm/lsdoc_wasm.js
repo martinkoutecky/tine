@@ -68,6 +68,92 @@ function __tine_raw_edit_block_regions_json(raw, is_org, regions, request) {
 }
 
 /**
+ * The editor (UTF-16) offset of raw UTF-16 offset `raw_utf16`.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {any} regions
+ * @param {string} policy
+ * @param {number} raw_utf16
+ * @returns {number}
+ */
+function __tine_raw_editor_offset_of_raw(raw, is_org, regions, policy, raw_utf16) {
+    const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.editor_offset_of_raw(ptr0, len0, is_org, regions, ptr1, len1, raw_utf16);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] >>> 0;
+}
+
+/**
+ * Editor text plus hidden lines back to raw (`editor_text::join_with`); the
+ * regions are the window's cached ones for exactly `visible` (read for Org).
+ * @param {string} visible
+ * @param {string} hidden
+ * @param {boolean} is_org
+ * @param {any} visible_regions
+ * @returns {string}
+ */
+function __tine_raw_editor_text_join(visible, hidden, is_org, visible_regions) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(visible, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(hidden, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.editor_text_join(ptr0, len0, ptr1, len1, is_org, visible_regions);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * The editor's view of one block (outline kernel `editor_text`, twin 13):
+ * `{visible, hidden}` from the window's cached regions for exactly `raw`.
+ * `policy` is a kernel `HidePolicy` as JSON. O(block bytes), no parse.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {any} regions
+ * @param {string} policy
+ * @returns {string}
+ */
+function __tine_raw_editor_text_json(raw, is_org, regions, policy) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.editor_text_json(ptr0, len0, is_org, regions, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Encode a Windows-safe Logseq page stem; legacy selects percent-encoded
  * namespaces, false selects triple-lowbar. O(title bytes), no I/O or failure.
  * @param {string} name
@@ -134,6 +220,24 @@ function __tine_raw_header_tokens_json(raw, is_org) {
     }
 }
 
+/**
+ * Whether hide `policy` hides property `key` (`HidePolicy::hides`).
+ * @param {string} policy
+ * @param {string} key
+ * @returns {boolean}
+ */
+function __tine_raw_hide_policy_hides(policy, key) {
+    const ptr0 = passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.hide_policy_hides(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] !== 0;
+}
+
 function __tine_raw_install_panic_hook() {
     wasm.install_panic_hook();
 }
@@ -182,6 +286,21 @@ function __tine_raw_last_panic() {
     } finally {
         wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
     }
+}
+
+/**
+ * OG property tokens, shared with native property atomization. O(value bytes).
+ * @param {string} value
+ * @param {boolean} is_org
+ * @returns {string[]}
+ */
+function __tine_raw_linkable_property_names(value, is_org) {
+    const ptr0 = passStringToWasm0(value, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.linkable_property_names(ptr0, len0, is_org);
+    var v2 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
 }
 
 /**
@@ -275,11 +394,6 @@ function __tine_raw_logbook_info_json(raw, is_org) {
 }
 
 /**
- * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
- * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
- * Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
- * build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
- * See docs/wasm-parse-plan.md §7D.
  * @returns {string}
  */
 function __tine_raw_lsdoc_tag() {
@@ -346,6 +460,71 @@ function __tine_raw_ordered_list_glyph(index, depth) {
         return getStringFromWasm0(ret[0], ret[1]);
     } finally {
         wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Run one outline-kernel verb (`outline::apply`). `request` is
+ * `{pages, verb, keys}`; the answer is `{"ok": Change, "editor_offset"}` (the
+ * focus caret in the editor's UTF-16 units) or `{"refused": Reason}`. O(blocks
+ * of the pages passed) to read them, plus the verb's own work.
+ * @param {string} request
+ * @returns {string}
+ */
+function __tine_raw_outline_apply_json(request) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(request, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.outline_apply_json(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * The kernel's outline depth cap (twin 4).
+ * @returns {number}
+ */
+function __tine_raw_outline_max_depth() {
+    const ret = wasm.outline_max_depth();
+    return ret >>> 0;
+}
+
+/**
+ * The blocks an outline verb reads (`Verb::reads`), as `[{key, subtree}]`, so
+ * the window can send only those (DESIGN §5.3, §8).
+ * @param {string} verb
+ * @returns {string}
+ */
+function __tine_raw_outline_reads_json(verb) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(verb, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.outline_reads_json(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 }
 
@@ -632,6 +811,27 @@ function __tine_raw_query_macro_is_tql(name) {
 }
 
 /**
+ * The raw UTF-8 byte offset (the kernel verbs' unit) of editor offset `editor_utf16`.
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {any} regions
+ * @param {string} policy
+ * @param {number} editor_utf16
+ * @returns {number}
+ */
+function __tine_raw_raw_byte_of_editor(raw, is_org, regions, policy, editor_utf16) {
+    const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(policy, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.raw_byte_of_editor(ptr0, len0, is_org, regions, ptr1, len1, editor_utf16);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0] >>> 0;
+}
+
+/**
  * Shared native target classification on an accepted AST link. O(target).
  * @param {string} kind
  * @param {string} value
@@ -654,6 +854,39 @@ function __tine_raw_reference_target_name(kind, value, label, org, filename_cand
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     }
     return v4;
+}
+
+/**
+ * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
+ * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
+ * Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
+ * build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
+ * See docs/wasm-parse-plan.md §7D.
+ * What removing blocks does to block references (`tine_outline::removal_refs`):
+ * `blocks` is a JSON array of `[raw, isOrg]`. Returns `{targets, removed_with}`.
+ * @param {string} blocks
+ * @param {boolean} with_content
+ * @returns {string}
+ */
+function __tine_raw_removal_refs_json(blocks, with_content) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(blocks, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.removal_refs_json(ptr0, len0, with_content);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
 }
 
 /**
@@ -1182,13 +1415,18 @@ function __tineGuard(name, raw) {
 export const canonical_group_field = __tineGuard("canonical_group_field", __tine_raw_canonical_group_field);
 export const decode_page_name = __tineGuard("decode_page_name", __tine_raw_decode_page_name);
 export const edit_block_regions_json = __tineGuard("edit_block_regions_json", __tine_raw_edit_block_regions_json);
+export const editor_offset_of_raw = __tineGuard("editor_offset_of_raw", __tine_raw_editor_offset_of_raw);
+export const editor_text_join = __tineGuard("editor_text_join", __tine_raw_editor_text_join);
+export const editor_text_json = __tineGuard("editor_text_json", __tine_raw_editor_text_json);
 export const encode_page_name = __tineGuard("encode_page_name", __tine_raw_encode_page_name);
 export const format_journal_date = __tineGuard("format_journal_date", __tine_raw_format_journal_date);
 export const header_tokens_json = __tineGuard("header_tokens_json", __tine_raw_header_tokens_json);
+export const hide_policy_hides = __tineGuard("hide_policy_hides", __tine_raw_hide_policy_hides);
 export const install_panic_hook = __tineGuard("install_panic_hook", __tine_raw_install_panic_hook);
 export const is_query_macro_name = __tineGuard("is_query_macro_name", __tine_raw_is_query_macro_name);
 export const is_render_hidden_prop = __tineGuard("is_render_hidden_prop", __tine_raw_is_render_hidden_prop);
 export const last_panic = __tineGuard("last_panic", __tine_raw_last_panic);
+export const linkable_property_names = __tineGuard("linkable_property_names", __tine_raw_linkable_property_names);
 export const logbook_apply_marker_transition = __tineGuard("logbook_apply_marker_transition", __tine_raw_logbook_apply_marker_transition);
 export const logbook_clock_in = __tineGuard("logbook_clock_in", __tine_raw_logbook_clock_in);
 export const logbook_clock_out = __tineGuard("logbook_clock_out", __tine_raw_logbook_clock_out);
@@ -1197,6 +1435,9 @@ export const lsdoc_tag = __tineGuard("lsdoc_tag", __tine_raw_lsdoc_tag);
 export const mime_from_path = __tineGuard("mime_from_path", __tine_raw_mime_from_path);
 export const nested_reference_names = __tineGuard("nested_reference_names", __tine_raw_nested_reference_names);
 export const ordered_list_glyph = __tineGuard("ordered_list_glyph", __tine_raw_ordered_list_glyph);
+export const outline_apply_json = __tineGuard("outline_apply_json", __tine_raw_outline_apply_json);
+export const outline_max_depth = __tineGuard("outline_max_depth", __tine_raw_outline_max_depth);
+export const outline_reads_json = __tineGuard("outline_reads_json", __tine_raw_outline_reads_json);
 export const page_header_json = __tineGuard("page_header_json", __tine_raw_page_header_json);
 export const page_identity_key = __tineGuard("page_identity_key", __tine_raw_page_identity_key);
 export const page_regions_json = __tineGuard("page_regions_json", __tine_raw_page_regions_json);
@@ -1210,7 +1451,9 @@ export const property_line_json = __tineGuard("property_line_json", __tine_raw_p
 export const query_edn_json = __tineGuard("query_edn_json", __tine_raw_query_edn_json);
 export const query_macro_extents_json = __tineGuard("query_macro_extents_json", __tine_raw_query_macro_extents_json);
 export const query_macro_is_tql = __tineGuard("query_macro_is_tql", __tine_raw_query_macro_is_tql);
+export const raw_byte_of_editor = __tineGuard("raw_byte_of_editor", __tine_raw_raw_byte_of_editor);
 export const reference_target_name = __tineGuard("reference_target_name", __tine_raw_reference_target_name);
+export const removal_refs_json = __tineGuard("removal_refs_json", __tine_raw_removal_refs_json);
 export const render_block_html = __tineGuard("render_block_html", __tine_raw_render_block_html);
 export const search_fold = __tineGuard("search_fold", __tine_raw_search_fold);
 export const search_matches = __tineGuard("search_matches", __tine_raw_search_matches);

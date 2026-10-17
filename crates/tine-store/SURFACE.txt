@@ -22,7 +22,9 @@
 # read-only question about the user-picked parent, approved 2026-10-08.
 # Page host: the concept (STEP3 §7, commit 835713dcf, option (a)) was approved
 # by Martin 2026-10-10; A-R1 then cut PageHost::release (13 -> 12).
-## Lifecycle (ceiling: 20)
+# GH #181: read_link_identity_at takes a LinkProbe so a cold link can rule out a closed graph without opening
+# it (rule 3: parameter on the existing link question, not a sibling)
+## Lifecycle (ceiling: 24)
 enum store::WatchMode
 enum store::OpenError
 field store::GraphAccessInspection.external_assets
@@ -44,6 +46,10 @@ struct store::OpenOptions
 # og-surface step 1: surface the old scan never saw (H1, a file outside its hand list).
 fn link_identity::Store::ensure_link_identity
 fn link_identity::Store::read_link_identity_at
+enum link_identity::LinkProbe
+struct link_identity::LinkInspection
+field link_identity::LinkInspection.identity
+field link_identity::LinkInspection.target_possible
 
 ## Freshness (ceiling: 26)
 enum store::Depth
@@ -88,7 +94,7 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 15)
+## Reads (ceiling: 16)
 const model::PARSE_INPUT_MAX_BYTES
 fn model::parse_input_depth_within_limit
 field store::PageRead.doc
@@ -106,6 +112,9 @@ fn store::Store::page_of
 fn store::Store::hold_page
 fn store::Store::read
 fn store::Store::whole_graph
+# GH #181: a one-shot lookup (a cold-start link) that misses in a served launch
+# checkpoint asks again after the launch diff, which may have added its target.
+fn store::Store::whole_graph_reconciled
 struct store::PageRead
 
 ## Config (ceiling: 6)
@@ -118,14 +127,15 @@ struct store::ConfigState
 
 # Step 3b P2b: the old save engine's Store::save_pages and SavePagesOutcome are
 # deleted; page saves are the page host's (STEP3 §12; 7 -> 5).
+# Outline kernel M0: EditKind moved to tine-outline (a leaf crate shared with the
+# window's wasm); tine-store re-exports it below (Save 5 -> 4, Re-exports 9 -> 10).
 # og-backup-zip (REVIEW-backup-zip R1): a launch backup deletes old snapshots
 # only after a strong directory sync. sync_directory_entry cannot answer that:
 # it folds the tolerated "no directory sync on this filesystem" into Ok, the
 # page host's contract for graph saves. The witness form the host already used
 # (DirectoryWitness, sync_directory_witness) becomes public instead of a copy
-# of the tolerated error set in src-tauri (5 -> 7).
-## Save (ceiling: 7)
-enum edit_kind::EditKind
+# of the tolerated error set in src-tauri (4 -> 6).
+## Save (ceiling: 6)
 fn directory_durability::sync_directory_entry
 enum directory_durability::DirectoryWitness
 fn directory_durability::sync_directory_witness
@@ -133,7 +143,7 @@ enum store::SaveBase
 enum store::SaveOutcome
 enum store::StoreError
 
-## Transaction steps (ceiling: 28)
+## Transaction steps (ceiling: 30)
 enum transaction::Content
 enum transaction::Refusal
 enum transaction::StepResult
@@ -149,6 +159,9 @@ field transaction::Rollback.kept_external
 field transaction::Rollback.undo_failed
 fn transaction::Store::transaction
 fn transaction::Transaction::commit
+# DESIGN §3.1c C1/C5: no existing step plans without publishing; commit publishes.
+# Replaces Store::page_bytes with commit's full preflight and staged effects.
+fn transaction::Transaction::plan
 fn transaction::Transaction::create
 fn transaction::Transaction::create_unique
 # Read-only revision dependency for a later step; avoids mutating sidecars to force a guard.
@@ -164,6 +177,12 @@ fn transaction::Transaction::replace
 # moved page's title rebind too (og-surface row 6).
 fn transaction::Transaction::rewrite_refs
 fn transaction::Transaction::save_page
+# host-only-writer P3 W8 (28 -> 29): a VCS-marker resolution run as a host operation
+# must stage the marker bytes' conflict-trash copy before the operation, with no
+# transaction to commit. `Transaction::trash` moves an existing file (removing it);
+# no item writes a given byte copy into the conflict trash and keeps the source, and
+# a mode parameter on `trash` would give one step two opposite effects.
+fn store::Store::stage_marker_copy
 fn transaction::Transaction::trash
 struct transaction::IoError
 struct transaction::RenameMap
@@ -176,7 +195,14 @@ enum store::TrashKind
 fn store::Store::trash_stats
 fn store::Store::purge_asset_trash
 
-## Diagnostics (ceiling: 1)
+## Diagnostics (ceiling: 3)
+# Storage A/B bench events (STEP3 §13 gate 2, branch og-bench-events): the
+# app asks once whether `TINE_BENCH_EVENTS` is set (its window then reports
+# `unfreeze`) and forwards that event. `Store::diagnostics` cannot answer
+# either: it is a per-Store pull dump, while these are one process-wide
+# append stream that exists before and without any Store.
+fn bench_events::enabled
+fn bench_events::unfreeze
 fn store::Store::diagnostics
 
 ## Listing (ceiling: 15)
@@ -230,7 +256,7 @@ field restore::RestoreFailed.phase
 field restore::RestoreFailed.cause
 field restore::RestoreFailed.done
 
-## WholeGraph: Names (ceiling: 16)
+## WholeGraph: Names (ceiling: 17)
 enum store::InventoryScope
 enum store::Resolved
 field store::InventoryEntry.name
@@ -246,6 +272,13 @@ fn store::WholeGraph::journal_content_days
 fn store::WholeGraph::resolve
 fn store::WholeGraph::rev
 fn store::WholeGraph::unreadable_files
+# GH #335 (All pages "Updated" column): `inventory` answers per NAME (aliases,
+# reference-only names, one entry per spelling) and is re-read on every page-index
+# refresh; a last-modified time is per FILE and wanted once, when the view opens.
+# A field on `InventoryEntry` would put ~10 bytes per entry on every refresh and
+# cover only the canonical file of a spelling twin, and no `InventoryScope` makes
+# it per-file, so this is one read of the mtimes the view already holds.
+fn store::WholeGraph::page_modified
 struct store::Inventory
 struct store::InventoryEntry
 struct store::WholeGraph
@@ -257,13 +290,18 @@ fn store::WholeGraph::explicit_referrers
 fn store::WholeGraph::referenced_assets
 fn store::WholeGraph::unlinked_references
 
-## WholeGraph: Block refs (ceiling: 4)
+## WholeGraph: Block refs (ceiling: 5)
 fn store::WholeGraph::block_ref_counts
+# CLI slice 2 (review 5 B1): a write by `id::` must know the id names one page's
+# block; the block-id index is a hint and keeps no duplicates.
+fn store::WholeGraph::block_pages
 fn store::WholeGraph::block_referrers
 fn store::WholeGraph::blocks
 fn store::WholeGraph::preview_block
 
-## WholeGraph: Search/Query (ceiling: 20)
+## WholeGraph: Search/Query (ceiling: 21)
+# GH #151: SearchRequest has no per-request expansion policy; the new bool is
+# the manager-approved parameter, rather than a sibling search/completion API.
 enum store::IrRequest
 enum store::IrAnswer
 enum store::Budget
@@ -275,6 +313,7 @@ field store::SearchRequest.page_match_scope
 field store::SearchRequest.explain
 field store::SearchRequest.page_limit
 field store::SearchRequest.page_view
+field store::SearchRequest.transliteration
 field store::SearchRequest.text
 field store::SearchRequest.within
 fn store::QueryError::bridge_search_hits
@@ -285,12 +324,18 @@ fn store::WholeGraph::search
 struct store::Cancel
 struct store::SearchRequest
 
-## WholeGraph: View meta (ceiling: 3)
+## WholeGraph: View meta (ceiling: 4)
+# GH #681: property_facets answers field presence/types, not page-reference
+# membership; a field parameter cannot name a reference target and count its
+# distinct referring blocks. page_modified answers times; block_ref_counts UUIDs.
+# The new All pages column is a domain question, not a faster sibling;
+# its reference rules and configuration belong to the same WholeGraph snapshot.
+fn page_backlinks::WholeGraph::page_backlink_counts
 fn store::WholeGraph::page_icons
 fn store::WholeGraph::property_facets
 fn store::WholeGraph::templates
 
-## Page host (ceiling: 38)
+## Page host (ceiling: 54)
 # Approved by Martin 2026-10-10 (surface concept, STEP3 §7): the binding's page host, exported
 # for its retained-writer callers (census writers in tine-graph-features, backup restore in
 # src-tauri) and, from step 3b P1 (ceiling 12 -> 36), for the window's page commands and
@@ -344,8 +389,37 @@ enum page_host::ReserveRefusal
 enum page_host::StopMode
 struct page_host::Stopped
 fn page_host::Stopped::relaunch
-## Re-exports (ceiling: 9)
-use crate::page_host::{DiskToken,DraftStatus,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
+# host-only-writer P2 (DESIGN §3.1/3.1a, 38 -> 47): one host operation (`apply` of a `HostOp`
+# with its fields, `Expected` bytes, `Effect`, `ApplyRefusal`) replaces a writer's reservation
+# window. `reserve`/`rename` cannot carry an op's expected bytes and effects: `reserve` fences
+# pages for the caller to write itself, `rename` is one fixed move. `reserve` goes in P4.
+struct page_host::HostOp
+field page_host::HostOp.pages
+field page_host::HostOp.moved
+field page_host::HostOp.policy
+field page_host::HostOp.kinds
+fn page_host::PageHost::apply
+enum page_host::Expected
+enum page_host::Effect
+enum page_host::ApplyRefusal
+# P2 review (47 -> 48): `flush_input`, the save-first half of `apply`'s `Input::Flush` before the
+# feature plans. Store reads answer saved bytes, so a page that exists only as typed input reads
+# as absent and the plan fails "not found" before `apply` could flush it. `apply` cannot carry it:
+# it needs the plan, and the plan needs the saved bytes.
+fn page_host::PageHost::flush_input
+# CLI slice 1 (48 -> 54, CLI PROTOCOL §5): `read`, a page as its host holds it (a held page's
+# buffer, unsaved input included, with its host version; else the file), with `HostRead` and its
+# fields and `HostReadError`. The command line's `page show` must show what the window shows;
+# `Store::read` answers saved bytes only and cannot see a held buffer.
+fn page_host::PageHost::read
+struct page_host::HostRead
+field page_host::HostRead.page
+field page_host::HostRead.bytes
+field page_host::HostRead.revision
+enum page_host::HostReadError
+## Re-exports (ceiling: 10)
+use crate::tine_outline::edit_kind
+use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
 use crate::file_kind::{is_asset_sidecar,is_graph_text}
 use crate::model::{parse_input_depth_within_limit,PARSE_INPUT_MAX_BYTES}

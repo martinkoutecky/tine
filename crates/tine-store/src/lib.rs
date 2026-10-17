@@ -62,7 +62,7 @@
 
 #[cfg(test)]
 mod derived_cache_fuzz_tests;
-pub mod edit_kind;
+pub use tine_outline::edit_kind;
 pub mod file_kind;
 pub use edit_kind::EditKind;
 #[cfg(test)]
@@ -76,6 +76,8 @@ mod journal_format_cost_tests;
 #[cfg(test)]
 mod journal_reference_tests;
 #[cfg(test)]
+mod kalem_parity_tests;
+#[cfg(test)]
 mod legacy_graph_writer_guard_tests;
 pub mod model;
 #[cfg(test)]
@@ -84,22 +86,26 @@ pub use file_kind::{is_asset_sidecar, is_graph_text};
 pub use model::{parse_input_depth_within_limit, PARSE_INPUT_MAX_BYTES};
 mod asset_watch;
 mod atomic_file;
+pub mod bench_events;
 #[cfg(feature = "test-faults")]
 pub mod cost_counters;
 pub mod directory_durability;
 mod launch_diag;
-mod link_identity;
+pub mod link_identity;
 mod no_replace;
 #[cfg(test)]
 mod no_replace_tests;
+mod page_backlinks;
 mod page_host;
 /// Fault and abort plants in the page host's I/O (tests only, Q-P2b-2).
 #[cfg(feature = "test-faults")]
 pub use page_host::faults as host_faults;
 pub use page_host::{
-    DiskToken, DraftStatus, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
+    ApplyRefusal, DiskToken, DraftStatus, Effect as HostEffect, Expected as HostExpected, HostOp,
+    HostRead, HostReadError, Input, Opened, PageHost, PageMail, PageOperation, PageRefusal,
     Reloaded, RenameRefusal, Reservation, ReserveRefusal, StopMode, StopState, Stopped,
 };
+#[cfg(test)]
 mod page_state;
 mod path_identity;
 mod platform_step;
@@ -113,10 +119,13 @@ pub mod restore;
 mod search_edit_tests;
 pub mod store;
 #[cfg(test)]
+mod test_cfg;
+#[cfg(test)]
 mod test_config_client;
 #[cfg(test)]
 mod test_fixture_io;
 pub mod transaction;
+mod transliteration;
 mod watch;
 pub use publish::{PublishDest, PublishFailed, PublishReceipt, SiteWriter};
 pub use restore::{RestoreFailed, RestoreFile, RestoreReport};

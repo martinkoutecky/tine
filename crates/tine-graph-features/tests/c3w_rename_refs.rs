@@ -46,6 +46,7 @@ fn fixture(files: &[(&str, &str)]) -> (PathBuf, std::sync::Arc<Store>) {
 
 #[test]
 fn w3_rename_rewrites_references_after_an_unmatched_opener_and_fullwidth_tags() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(&[
         ("pages/Target.md", "- the target\n"),
         (

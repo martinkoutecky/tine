@@ -25,6 +25,7 @@ fn asset_target(store: &Store, name: &str) -> Result<std::path::PathBuf, String>
 
 #[test]
 fn open_targets_require_existing_regular_files() {
+    let _integration_guard = crate::integration_lock();
     let root = std::env::temp_dir().join(format!(
         "tine-handoff-{}-{}",
         std::process::id(),

@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { QueryExportDialog } from "./QueryExportDialog";
+import { rawText, renderEnglish } from "../i18n";
 
 vi.mock("../owned", async (orig) => ({ ...await orig<typeof import("../owned")>(), graphOwner: () => () => true }));
 vi.mock("../sheet/exportSheets", () => ({ exportSheets: async () => [] }));
@@ -11,10 +12,11 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const request = { argument: "(task TODO)", dialect: "macro-query", properties: [], name: "Tasks" } as never;
 let dispose: (() => void) | undefined;
 afterEach(() => { dispose?.(); document.body.innerHTML = ""; vi.restoreAllMocks(); });
-async function dialog(exists = false) {
+async function dialog(exists = false, extra: Record<string, unknown> = {}) {
   vi.spyOn(backend(), "publishQueryPlan").mockResolvedValue({ anchor: "block", rowCount: 1,
-    pages: [{ name: "Public", path: "pages/Public.md", journal: false }], folder: "tasks", fingerprint: "reviewed",
-    path: "/graph/published-queries/tasks", exists, suggestedFolder: exists ? "tasks-2" : null } as never);
+    pages: [{ name: "Public", path: "pages/Public.md", journal: false }], leftOut: [], selectsHostPage: false,
+    folder: "tasks", fingerprint: "reviewed",
+    path: "/graph/published-queries/tasks", exists, suggestedFolder: exists ? "tasks-2" : null, ...extra } as never);
   const root = document.createElement("div"); document.body.append(root);
   dispose = render(() => <QueryExportDialog request={() => request} />, root);
   for (let i = 0; i < 4; i++) await tick();
@@ -30,8 +32,11 @@ it("exports a reviewed query directly into its graph and reports recovery and mi
   exportButton(root).click(); for (let i = 0; i < 4; i++) await tick();
   expect(api).toHaveBeenCalled();
   const { pushToast } = await import("../toasts");
-  expect(pushToast).toHaveBeenCalledWith(expect.stringContaining("old/previous"), "success", { sticky: true });
-  expect(pushToast).toHaveBeenCalledWith(expect.stringContaining("missing.png"), "warn", { sticky: true });
+  const calls = vi.mocked(pushToast).mock.calls.map(([text, kind, options]) => [
+    renderEnglish(typeof text === "string" ? rawText(text) : text), kind, options,
+  ]);
+  expect(calls).toContainEqual([expect.stringContaining("old/previous"), "success", { sticky: true }]);
+  expect(calls).toContainEqual([expect.stringContaining("missing.png"), "warn", { sticky: true }]);
 });
 it("requires an explicit Replace or separate folder choice", async () => {
   const api = vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "site", pages: 1, files: 12, retired: null, warnings: [] } as never);
@@ -65,4 +70,25 @@ it("pins the overlay window while open, so focusing another window does not remo
     setActiveWindowId(MAIN_WINDOW_ID);
     unregister();
   }
+});
+// REG-QUERY-EXPORT-PRIVATE-PAGES / PK3 (D-20261017-SD1): the review names the
+// pages left out and why, notes a selected host page, and ships the query
+// text only when "Include the query text" is ticked (off by default).
+it("names left-out pages, notes the host page, and sends the query text only when ticked", async () => {
+  const api = vi.spyOn(backend(), "publishQuery").mockResolvedValue({ path: "site", pages: 1, files: 12, retired: null, warnings: [] } as never);
+  const root = await dialog(false, {
+    leftOut: [{ name: "Diary", path: "pages/Diary.md", reason: "private" }, { name: "Exports", path: "pages/Exports.md", reason: "exportsPage" }],
+    selectsHostPage: true,
+  });
+  const text = root.textContent ?? "";
+  expect(text).toContain("2 selected pages are not included");
+  expect(text).toContain("Diary marked public:: false");
+  expect(text).toContain("Exports the exports page is never exported");
+  expect(text).toContain("This includes the page the query is written on.");
+  const include = root.querySelector<HTMLInputElement>(".query-export-include-query input")!;
+  expect(include.checked, "off by default").toBe(false);
+  exportButton(root).click(); for (let i = 0; i < 4; i++) await tick();
+  expect(api.mock.calls[0][0]).toMatchObject({ includeQueryText: false });
+  include.click(); exportButton(root).click(); for (let i = 0; i < 4; i++) await tick();
+  expect(api.mock.calls[1][0]).toMatchObject({ includeQueryText: true });
 });

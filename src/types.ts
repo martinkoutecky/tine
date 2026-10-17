@@ -67,6 +67,8 @@ export interface QueryPublicationRequest {
   folder?: string | null;
   replace?: boolean;
   assetBudgetBytes?: number | null;
+  /** "Include the query text" (off by default): only then does the export carry the query itself. */
+  includeQueryText?: boolean;
   name: string;
 }
 
@@ -74,6 +76,10 @@ export interface QueryPublicationPlan {
   anchor: "block" | "page";
   rowCount: number;
   pages: { name: string; path: string; journal: boolean }[];
+  /** Selected by the query but not exported: `public:: false` pages and the exports page. */
+  leftOut: { name: string; path: string; reason: "private" | "exportsPage" }[];
+  /** The query's own page is among the exported pages. */
+  selectsHostPage: boolean;
   folder: string;
   path: string;
   exists: boolean;
@@ -164,10 +170,19 @@ export interface PageInventory {
   unreadable?: string[];
 }
 
+/** `page_modified` result: `[graph-relative path, Unix seconds]` for each page
+ *  file whose last-modified time the store holds. A file with no time is absent. */
+export interface PageModified {
+  rev: string;
+  modified: [string, number][];
+}
+
 /** One authoritative Journals-feed transaction.  Cursor fields are ordinal
  * journal days, never counts of returned DTOs (a selected file may vanish). */
 export interface JournalFeedPage {
   pages: PageRead[];
+  /** Referenced future days, nearest first; returned on the first page only. */
+  upcoming?: PageRead[];
   next_before_day: number | null;
   done: boolean;
   as_of_day: number;
@@ -198,6 +213,8 @@ export interface TemplateDto {
 }
 
 export interface PageEntry {
+  /** Request-local completion evidence; absent on ordinary page inventories. */
+  match_class?: ObjectiveMatchClass;
   name: string;
   kind: PageKind;
   date_key: number | null;
@@ -441,7 +458,7 @@ export interface MatchEvidence {
   score?: number;
 }
 
-export type ObjectiveMatchClass = "exact" | "prefix" | "substring" | "fuzzy" | "body_evidence";
+export type ObjectiveMatchClass = "exact" | "prefix" | "substring" | "fuzzy" | "transliteration" | "body_evidence";
 
 export interface QueryDiagnostic {
   code: string;
@@ -507,11 +524,13 @@ export interface AdvancedQueryResult {
 }
 
 export interface GraphMeta {
-  default_journal_queries?: { title: string | null; body: string; error: string | null }[];
+  default_journal_queries?: { title: string | null; body: string; error: string | null; seed?: string | null }[];
   disable_scheduled_and_deadline_query?: boolean;
   scheduled_future_days?: number | null;
   journal_config_diagnostics?: string[];
   root: string;
+  /** Presentation only; root remains the canonical graph identity. */
+  display_root?: string;
   journals_dir: string;
   pages_dir: string;
   preferred_workflow: string; // "now" | "todo"
@@ -529,6 +548,10 @@ export interface GraphMeta {
   /** OG `:mobile {:gestures/disabled-in-block-with-tags [..]}`: tags that turn the
    *  block swipe gestures off inside a block carrying them. */
   mobile_gestures_disabled_in_block_with_tags: string[];
+  /** OG `:quick-capture-templates {:text "…"}`; null/absent = OG default (shareShape.ts). */
+  quick_capture_template_text?: string | null;
+  /** OG `:quick-capture-templates {:media "…"}`; null/absent = OG default (shareShape.ts). */
+  quick_capture_template_media?: string | null;
   journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
   preferred_format: Format; // :preferred-format — new pages/journals ("md" | "org")

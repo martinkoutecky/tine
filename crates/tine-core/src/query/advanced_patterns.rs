@@ -6,12 +6,14 @@
 //! [`advanced_pred`], the ONE advanced → IR lowerer (master's QA1 join-free
 //! subset; transcribed from master `query.rs` 5dfc84503).
 
-use super::ir::{Anchor, Attr, CmpOp, Filter, Quant, Query, Rel, Source, Value};
+use super::ir::{Anchor, Attr, CmpOp, Field, Filter, Quant, Query, Rel, SortDir, Source, Value};
 use super::{og, query_nesting_within_limit, query_source_within_limit, QUERY_NESTING_MAX};
 use crate::date::JournalDate;
 
 #[path = "advanced_joins.rs"]
 mod joins;
+#[path = "advanced_ref_journals.rs"]
+mod ref_journals;
 use joins::{lower_current_page_patterns, lower_date_disjunctions, lower_named_page_query};
 
 /// Collect balanced `(...)`/`[...]` groups at the top level of `s` (string-aware),
@@ -336,6 +338,11 @@ pub(super) fn lower_attribute_patterns(
     };
     let active: Vec<usize> = (0..groups.len()).filter(|i| !taken.contains(i)).collect();
 
+    let (ref_filters, ref_patterns) =
+        ref_journals::lower_ref_journal_patterns(groups, taken, block, inputs);
+    lowered.extend(ref_filters);
+    consumed.extend(ref_patterns);
+
     // The cookbook's built-in `missing?` is an attribute absence test.
     for &index in &active {
         let Some(body) = edn_body(&groups[index], '[', ']') else {
@@ -388,6 +395,9 @@ pub(super) fn lower_attribute_patterns(
     let mut bindings: std::collections::HashMap<String, (usize, AdvTarget, Attr, &'static str)> =
         std::collections::HashMap::new();
     for &index in &active {
+        if consumed.contains(&index) {
+            continue;
+        }
         let Some([subject, attribute, object]) = triple(&groups[index]) else {
             continue;
         };
@@ -594,6 +604,58 @@ pub(crate) fn advanced_pred(
     advanced_pred_inner(query_src, current_page, today, false)
 }
 
+/// The sort a declared `:result-transform` performs, when it is exactly OG's
+/// shipped default NOW query transform (Martin 2026-10-11):
+/// `(fn [r] (sort-by (fn [h] (get h :block/priority "Z")) r))`, with any
+/// parameter names. That is an ascending, stable sort on priority with a
+/// missing one as "Z", which the executor's `priority` sort is; the result set
+/// is unchanged, so running it is not a partial answer (the 10/03 rule). Read
+/// with the EDN owner, never by text. Any other transform: `None`, and the
+/// query refuses whole. No transform declared: `None`. O(source bytes).
+pub(crate) fn advanced_result_sort(src: &str) -> Option<Vec<(Field, SortDir)>> {
+    use crate::query_edn::{Form, Kind};
+    let value = crate::query_edn::option_value(src, ":result-transform")?;
+    let form = crate::query_edn::read(value)?;
+    let text = |form: &Form| &value[form.span.clone()];
+    let atom = |form: &Form, want: Option<&str>| {
+        form.kind == Kind::Atom && want.is_none_or(|want| text(form) == want)
+    };
+    // `(fn [param] body)` with exactly one symbol parameter: (param, body).
+    let lambda = |form: &'_ Form| -> Option<(String, Form)> {
+        let [head, params, body] = &form.children[..] else {
+            return None;
+        };
+        let [param] = &params.children[..] else {
+            return None;
+        };
+        let symbol = atom(param, None) && !text(param).starts_with(':');
+        (form.kind == Kind::List && atom(head, Some("fn")) && params.kind == Kind::Vector && symbol)
+            .then(|| (text(param).to_owned(), body.clone()))
+    };
+    let (result, body) = lambda(&form)?;
+    let [sort_by, key, over] = &body.children[..] else {
+        return None;
+    };
+    if body.kind != Kind::List
+        || !atom(sort_by, Some("sort-by"))
+        || !atom(over, Some(result.as_str()))
+    {
+        return None;
+    }
+    let (row, get) = lambda(key)?;
+    let [get_fn, of, attr, default] = &get.children[..] else {
+        return None;
+    };
+    let exact = get.kind == Kind::List
+        && atom(get_fn, Some("get"))
+        && atom(of, Some(row.as_str()))
+        && atom(attr, Some(":block/priority"))
+        && default.kind == Kind::String
+        && text(default) == "\"Z\""
+        && row != result;
+    exact.then(|| vec![(Field::new("priority"), SortDir::Asc)])
+}
+
 /// Suggest the translated row filter only when the sole refusal is a result
 /// transform. The suggestion explicitly discards that transform; it never runs
 /// a partial query automatically.
@@ -657,7 +719,13 @@ fn advanced_pred_inner(
         }
     }
     let groups = flatten_single_branch_groups(where_groups(vector));
-    if !joins::rules_target_result(&groups, advanced_find_var(query_src).as_deref().unwrap()) {
+    let find = advanced_find_var(query_src).unwrap();
+    let anchor = if joins::page_property_result(&groups, &find) {
+        Anchor::Page
+    } else {
+        Anchor::Block
+    };
+    if !joins::rules_target_result(&groups, &find, anchor) {
         return (None, ran, vec!["rule result binding".into()]);
     }
     // Authored rules may replace even familiar rule names. Never execute or
@@ -665,7 +733,10 @@ fn advanced_pred_inner(
     if crate::query_edn::declares_option(query_src, ":rules") {
         ignored.push("rules".into());
     }
-    if !suggest_rows && crate::query_edn::declares_option(query_src, ":result-transform") {
+    if !suggest_rows
+        && crate::query_edn::declares_option(query_src, ":result-transform")
+        && advanced_result_sort(query_src).is_none()
+    {
         ignored.push("result-transform".into());
     }
     if let Some(query) = lower_named_page_query(query_src, &groups, &inputs) {
@@ -675,9 +746,17 @@ fn advanced_pred_inner(
             (None, Vec::new(), ignored)
         };
     }
-    let (lowered_page_properties, consumed_patterns) = lower_page_property_patterns(&groups);
+    // Existing attribute/property-map lowerers describe blocks and their page.
+    // Page-entity queries only lower their supported rules; unrelated patterns
+    // stay visible as unsupported instead of being interpreted as block facts.
+    let block_groups = if anchor == Anchor::Block {
+        &groups[..]
+    } else {
+        &[]
+    };
+    let (lowered_page_properties, consumed_patterns) = lower_page_property_patterns(block_groups);
     let (lowered_current_pages, current_page_patterns) =
-        lower_current_page_patterns(&groups, &inputs, advanced_find_var(query_src).as_deref());
+        lower_current_page_patterns(block_groups, &inputs, Some(&find));
     let consumed_patterns = consumed_patterns
         .into_iter()
         .chain(current_page_patterns)
@@ -689,7 +768,7 @@ fn advanced_pred_inner(
         .chain(lowered_page_properties.keys().copied())
         .collect::<std::collections::HashSet<_>>();
     let (mut lowered_attributes, mut attribute_patterns) = lower_attribute_patterns(
-        &groups,
+        block_groups,
         &taken,
         advanced_find_var(query_src).as_deref(),
         &inputs,
@@ -698,7 +777,7 @@ fn advanced_pred_inner(
     // its predicates into each branch before OR, retaining existential
     // semantics when a block has both dates (one outside, one inside).
     let (date_or, date_or_patterns) = lower_date_disjunctions(
-        &groups,
+        block_groups,
         &taken,
         advanced_find_var(query_src).as_deref(),
         &inputs,
@@ -725,7 +804,7 @@ fn advanced_pred_inner(
                 return None;
             }
             let ignored_before = ignored.len();
-            let lowered = parse_adv_group(group, &inputs, today, &mut ran, &mut ignored, 0);
+            let lowered = parse_adv_group(group, &inputs, today, &mut ran, &mut ignored, anchor, 0);
             if lowered.is_none() && ignored.len() == ignored_before {
                 // Every clause that does not lower is named: refusing is the
                 // contract (below), so a silent drop would be a silent widening.
@@ -767,7 +846,7 @@ fn advanced_pred_inner(
     // already folded into the lowered clauses above, and the caller keeps
     // `ran`/`ignored`/`supported`.
     let query = Query::new(
-        Anchor::Block,
+        anchor,
         filter,
         Source::Advanced {
             original: query_src.to_string(),
@@ -857,6 +936,7 @@ fn parse_adv_group(
     today: JournalDate,
     ran: &mut Vec<String>,
     ignored: &mut Vec<String>,
+    anchor: Anchor,
     depth: usize,
 ) -> Option<Filter> {
     if depth > QUERY_NESTING_MAX {
@@ -880,7 +960,7 @@ fn parse_adv_group(
             let ignored_before = ignored.len();
             let kids: Vec<Filter> = scan_groups(inner)
                 .iter()
-                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored, depth + 1))
+                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored, anchor, depth + 1))
                 .collect();
             // GH #542: dropping a clause Tine does not understand only ever
             // WIDENS a conjunction. Under `not` it narrows the answer, and an
@@ -947,7 +1027,7 @@ fn parse_adv_group(
                 let val = adv_strings(inner).into_iter().next();
                 ran.push(head.clone());
                 let leaf = og::property_leaf(og::normalize_prop_key(&k), val);
-                if head == "property" {
+                if head == "property" || anchor == Anchor::Page {
                     leaf
                 } else {
                     Filter::rel(Rel::Page, Quant::Any, leaf)

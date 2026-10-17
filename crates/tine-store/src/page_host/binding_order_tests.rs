@@ -17,33 +17,81 @@ fn graph() -> Live {
     Live::new(&[(OLD, "- old\n"), (REF, "- see [[Old]]\n")])
 }
 
-/// The rename `pages.rs` runs, on a fresh view (one attempt: nothing else
-/// publishes in these tests).
+/// The rename `pages.rs` runs: Old to New over the referrer.
 fn rename(host: &PageHost, store: &Store) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
-    let view = store.whole_graph().unwrap();
-    host.rename(
-        &PageId::from(OLD),
-        &PageId::from(NEW),
-        &[PageId::from(REF)],
-        &RenameMap(vec![("Old".into(), "New".into())]),
-        &view,
-        &|_, _, _| None,
-    )
+    replanned(host, store, OLD, NEW, &[REF], ("Old", "New"))
+}
+
+/// A host rename as `pages.rs` drives it: planned in a fresh view, and
+/// replanned in a new one when a publication made it stale (B2: `Refused`
+/// is `pages.rs`'s replan). A save's publication bumps the graph revision
+/// after the host already shows the page saved, so a view taken right
+/// after a save can be stale by the time the host checks it.
+fn replanned(
+    host: &PageHost,
+    store: &Store,
+    source: &str,
+    target: &str,
+    referrers: &[&str],
+    (old, new): (&str, &str),
+) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
+    let referrers: Vec<PageId> = referrers.iter().map(|page| PageId::from(*page)).collect();
+    let map = RenameMap(vec![(old.into(), new.into())]);
+    for _ in 0..20 {
+        let view = store.whole_graph().unwrap();
+        match host.rename(
+            &PageId::from(source),
+            &PageId::from(target),
+            &referrers,
+            &map,
+            &view,
+            Arc::new(|_: &PageId, _: &[u8], _| None),
+        ) {
+            Err(RenameRefusal::Refused) => continue,
+            done => return done,
+        }
+    }
+    Err(RenameRefusal::Refused)
 }
 
 fn clear_faults(live: &Live) {
     live.host
         .driver
         .shared
-        .with_state(|state| state.progress.host.fs.faults.clear());
+        .with_state_for_tests(|state| state.progress.host.fs.faults.clear());
 }
 
 /// (running orders, caller slots).
+/// Read through the driver's queue, after every notice sent before it (a
+/// slot's or a reservation's release).
 fn census(host: &PageHost) -> (usize, usize) {
-    host.driver.shared.with_state(|state| {
+    let read = host.driver.shared.read(|state| {
         let order = &state.progress.host.order;
         (order.view().count(), order.slots())
-    })
+    });
+    read.unwrap()
+}
+
+/// A writer parked in the flush pause, undone on drop: faults cleared, the
+/// pause resumed, then `_held` released. A failed `until` inside a thread
+/// scope then fails the test instead of hanging the scope's join on the
+/// parked writer (seen on hosted Windows, run 38130589757 attempt 2).
+/// Poison-tolerant: it also runs while a failed assertion unwinds.
+struct Unpark<'a, H> {
+    live: &'a Live,
+    pause: crate::store::TestPause,
+    _held: H,
+}
+
+impl<H> Drop for Unpark<'_, H> {
+    fn drop(&mut self) {
+        let mut state = self.live.host.driver.shared.state_for_tests();
+        state.progress.host.fs.faults.clear();
+        drop(state);
+        let (state, resumed) = &*self.pause;
+        state.lock().unwrap_or_else(|poison| poison.into_inner()).1 = true;
+        resumed.notify_all();
+    }
 }
 
 fn until(what: &str, test: impl Fn() -> bool) {
@@ -131,11 +179,9 @@ fn a_discard_of_the_unwitnessed_destination_cancels_the_rename() {
     let renamed = std::thread::scope(|scope| {
         let caller = scope.spawn(|| rename(&live.host, &live.store));
         until("the rename is admitted", || census(&live.host).0 == 1);
-        let (key, page) = live.open(NEW);
+        let (key, _) = live.open(NEW);
         let id = live.id();
-        live.host
-            .discard(live.host.session(), id, &key, page.version)
-            .unwrap();
+        live.host.discard(live.host.session(), id, &key).unwrap();
         live.answer(&key, id);
         caller.join().unwrap()
     });
@@ -171,7 +217,7 @@ fn an_operation_over_a_running_order_is_busy_until_the_order_ends() {
     let id = live.submit(&key, "- typed\n", 0, None).unwrap();
     live.answer(&key, id);
     until("the referrer conflicts", || {
-        live.host.driver.shared.with_state(|state| {
+        live.host.driver.shared.with_state_for_tests(|state| {
             state
                 .progress
                 .host
@@ -184,10 +230,9 @@ fn an_operation_over_a_running_order_is_busy_until_the_order_ends() {
     until("the destination publishes", || live.root.join(NEW).exists());
     // Witnessed: published and released (no window holds it), or clean.
     until("the destination is witnessed", || {
-        live.host
-            .driver
-            .shared
-            .with_state(|state| state.progress.host.pages.get(NEW).is_none_or(|p| p.clean()))
+        live.host.driver.shared.with_state_for_tests(|state| {
+            state.progress.host.pages.get(NEW).is_none_or(|p| p.clean())
+        })
     });
     assert_eq!(
         live.host
@@ -195,14 +240,13 @@ fn an_operation_over_a_running_order_is_busy_until_the_order_ends() {
         PageOperation::Waiting
     );
     let started = Instant::now();
-    let view = live.store.whole_graph().unwrap();
-    let again = live.host.rename(
-        &PageId::from(NEW),
-        &PageId::from("pages/Newer.md"),
+    let again = replanned(
+        &live.host,
+        &live.store,
+        NEW,
+        "pages/Newer.md",
         &[],
-        &RenameMap(vec![("New".into(), "Newer".into())]),
-        &view,
-        &|_, _, _| None,
+        ("New", "Newer"),
     );
     assert_eq!(again, Err(RenameRefusal::Busy));
     assert!(started.elapsed() >= OPERATION_WAIT);
@@ -238,7 +282,7 @@ fn a_deletion_wait_ends_uncertain_when_the_session_changes() {
             live.host
                 .driver
                 .shared
-                .with_state(|state| state.progress.host.order.slots() == 1)
+                .with_state_for_tests(|state| state.progress.host.order.slots() == 1)
         });
         live.host.window_reloaded();
         caller.join().unwrap()
@@ -280,7 +324,7 @@ fn a_caller_on_a_poisoned_host_hears_uncertain_and_leaves_cleanly() {
         let poisoner = std::thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(20);
             while Instant::now() < deadline {
-                let state = shared.state.lock().unwrap();
+                let state = shared.state_for_tests();
                 if state.progress.host.order.slots() == 1 {
                     panic!("R2 test: poison the host state once the deletion is admitted");
                 }
@@ -356,11 +400,11 @@ fn a_retained_writer_over_a_running_order_waits_until_it_completes() {
     assert!(rename(&live.host, &live.store).is_err());
     let (key, _) = live.open(REF);
     let id = live.submit(&key, "- typed\n", 0, None).unwrap();
-    let conflicted = live.answer(&key, id).page.unwrap().version;
+    live.answer(&key, id);
     clear_faults(&live);
     until("the destination is witnessed", || {
         live.root.join(NEW).exists()
-            && live.host.driver.shared.with_state(|state| {
+            && live.host.driver.shared.with_state_for_tests(|state| {
                 state.progress.host.pages.get(NEW).is_none_or(|p| p.clean())
                     && state
                         .progress
@@ -384,9 +428,7 @@ fn a_retained_writer_over_a_running_order_waits_until_it_completes() {
         assert!(unrelated.is_ok(), "an unrelated writer stays available");
         drop(unrelated);
         let id = live.id();
-        live.host
-            .discard(live.host.session(), id, &key, conflicted)
-            .unwrap();
+        live.host.discard(live.host.session(), id, &key).unwrap();
         live.answer(&key, id);
         assert_eq!(
             waiting.recv_timeout(Duration::from_secs(20)),
@@ -424,11 +466,9 @@ fn a_retained_writer_over_a_running_order_waits_until_it_is_cancelled() {
         assert!(unrelated.is_ok(), "an unrelated writer stays available");
         drop(unrelated);
         clear_faults(&live);
-        let (key, page) = live.open(NEW);
+        let (key, _) = live.open(NEW);
         let id = live.id();
-        live.host
-            .discard(live.host.session(), id, &key, page.version)
-            .unwrap();
+        live.host.discard(live.host.session(), id, &key).unwrap();
         live.answer(&key, id);
         assert_eq!(
             waiting.recv_timeout(Duration::from_secs(20)),
@@ -466,7 +506,7 @@ fn a_retained_writer_over_an_unapplied_rename_is_told_busy_after_the_bound() {
         live.host
             .driver
             .shared
-            .with_state(|state| state.progress.host.worker.is_some())
+            .with_state_for_tests(|state| state.progress.host.worker.is_some())
     };
     std::thread::scope(|scope| {
         let renamed = scope.spawn(|| rename(&live.host, &live.store));
@@ -494,7 +534,7 @@ fn a_retained_writer_over_an_unapplied_rename_is_told_busy_after_the_bound() {
             "M6: a writer over an admitted rename's pages is refused Busy within its bound"
         );
         assert!(started.elapsed() >= OPERATION_WAIT);
-        live.host.driver.shared.with_state(|state| {
+        live.host.driver.shared.with_state_for_tests(|state| {
             assert!(
                 state.progress.host.retained.is_empty(),
                 "nothing is reserved"
@@ -533,7 +573,7 @@ fn the_writer_bound_covers_full_and_references_only_renames_not_a_deletion() {
         let live = Live::new(pages);
         live.faults(Phase::DraftSync, 10_000);
         let flag = || {
-            live.host.driver.shared.with_state(|state| {
+            live.host.driver.shared.with_state_for_tests(|state| {
                 state
                     .progress
                     .host
@@ -564,7 +604,396 @@ fn the_writer_bound_covers_full_and_references_only_renames_not_a_deletion() {
         "references only"
     );
     let deleted = |host: &PageHost, _: &Store| {
-        drop(host.delete(host.session(), &PageId::from(OLD), b"- old\n"));
+        let _ = host.delete(host.session(), &PageId::from(OLD), b"- old\n");
     };
     assert!(!observe(&[(OLD, "- old\n")], &deleted), "a deletion");
+}
+
+/// REVIEW-3b-P2b-2 N1: the flush shares the writer's deadline. A flush-first
+/// writer finds Old's edit unsaved and waits for its save holding nothing;
+/// the edit saves, and a rename over Old is admitted whose draft keeps
+/// failing. Old is now that rename's input, so the writer is refused Busy
+/// once `OPERATION_WAIT` has passed since it started, nothing reserved.
+#[test]
+fn a_flush_handed_to_a_rename_is_told_busy_after_the_bound() {
+    let live = graph();
+    live.submits_wait();
+    let (key, page) = live.open(OLD);
+    live.faults(Phase::PageTemp, 10_000);
+    let id = live.submit(&key, "- edited\n", page.version, None).unwrap();
+    live.answer(&key, id);
+    let pause: crate::store::TestPause = Default::default();
+    *live.host.driver.shared.flush_pause.lock().unwrap() = Some(Arc::clone(&pause));
+    let worker = || {
+        live.host
+            .driver
+            .shared
+            .with_state_for_tests(|state| state.progress.host.worker.is_some())
+    };
+    std::thread::scope(|scope| {
+        let _unpark = Unpark {
+            live: &live,
+            pause: Arc::clone(&pause),
+            _held: (),
+        };
+        let (sender, refused) = mpsc::channel();
+        let started = Instant::now();
+        let host = &live.host;
+        scope.spawn(move || {
+            let reserved = host.reserve(|| vec![PageId::from(OLD)], Input::Flush);
+            let _ = sender.send(reserved.err());
+        });
+        until("the writer waits in its flush", || {
+            pause.0.lock().unwrap().0
+        });
+        clear_faults(&live);
+        live.until_disk(OLD, "- edited\n");
+        until("the edit is saved", || {
+            live.host.driver.shared.with_state_for_tests(|state| {
+                matches!(state.progress.host.logical(&key), Logical::Settled(page) if page.clean())
+            })
+        });
+        live.faults(Phase::DraftSync, 10_000);
+        let renamed = scope.spawn(|| rename(&live.host, &live.store));
+        until("the rename is admitted", worker);
+        pause.0.lock().unwrap().1 = true;
+        pause.1.notify_all();
+        let outcome = refused.recv_timeout(OPERATION_WAIT + Duration::from_secs(3));
+        if outcome.is_err() {
+            // Unblock a flush that still waits (before N1).
+            clear_faults(&live);
+        }
+        assert_eq!(
+            outcome,
+            Ok(Some(ReserveRefusal::Busy)),
+            "N1: a flush over an admitted rename's page is refused Busy within the bound"
+        );
+        assert!(started.elapsed() >= OPERATION_WAIT);
+        live.host.driver.shared.with_state_for_tests(|state| {
+            assert!(
+                state.progress.host.retained.is_empty(),
+                "nothing is reserved"
+            );
+        });
+        clear_faults(&live);
+        let _ = renamed.join().unwrap();
+    });
+    until("the operation ends", || !worker());
+    live.host.stop();
+}
+
+/// REVIEW-3b-P2b-3 (Codex's mixed-set plant): a writer over clean Old and
+/// dirty Other flushes Other, whose save waits on its path lock held by
+/// another honest writer; meanwhile a rename over Old is admitted whose
+/// drafts keep failing. The rename holds a page of the writer's set, so the
+/// writer is refused Busy by its deadline though the page it waits to see
+/// saved is not the rename's: the dependency is the whole set, not the
+/// unsaved part.
+#[test]
+fn a_flush_over_a_mixed_set_is_told_busy_when_a_rename_holds_its_clean_page() {
+    let live = Live::new(&[
+        (OLD, "- old\n"),
+        (REF, "- see [[Old]]\n"),
+        (OTHER, "- other\n"),
+    ]);
+    live.submits_wait();
+    let (other, page) = live.open(OTHER);
+    let id = live
+        .submit(&other, "- edited\n", page.version, None)
+        .unwrap();
+    live.answer(&other, id);
+    // Inside the edit debounce: the save finds the path lock held.
+    let lock = live.store.graph.page_lock(&live.root.join(&other));
+    let held = lock.lock().unwrap();
+    assert_eq!(live.disk(&other), "- other\n", "held before Other's save");
+    let pause: crate::store::TestPause = Default::default();
+    *live.host.driver.shared.flush_pause.lock().unwrap() = Some(Arc::clone(&pause));
+    let worker = || {
+        live.host
+            .driver
+            .shared
+            .with_state_for_tests(|state| state.progress.host.worker.is_some())
+    };
+    std::thread::scope(|scope| {
+        let unpark = Unpark {
+            live: &live,
+            pause: Arc::clone(&pause),
+            _held: held,
+        };
+        let (sender, refused) = mpsc::channel();
+        let started = Instant::now();
+        let host = &live.host;
+        scope.spawn(move || {
+            let pages = || vec![PageId::from(OLD), PageId::from(OTHER)];
+            let _ = sender.send(host.reserve(pages, Input::Flush).err());
+        });
+        until("the writer waits in its flush", || {
+            pause.0.lock().unwrap().0
+        });
+        live.faults(Phase::DraftSync, 10_000);
+        let renamed = scope.spawn(|| rename(&live.host, &live.store));
+        until("the rename is admitted", worker);
+        pause.0.lock().unwrap().1 = true;
+        pause.1.notify_all();
+        let outcome = refused.recv_timeout(OPERATION_WAIT + Duration::from_secs(3));
+        let retained = live
+            .host
+            .driver
+            .shared
+            .with_state_for_tests(|state| state.progress.host.retained.is_empty());
+        drop(unpark);
+        assert_eq!(
+            outcome,
+            Ok(Some(ReserveRefusal::Busy)),
+            "a flush waiting on an unrelated page is refused Busy by its deadline \
+             while a rename holds a page of its set"
+        );
+        assert!(started.elapsed() >= OPERATION_WAIT);
+        assert!(retained, "nothing is reserved");
+        let _ = renamed.join().unwrap();
+    });
+    until("the operation ends", || !worker());
+    live.host.stop();
+}
+
+/// REVIEW-3b-P2b-2 N1: a writer entering a poisoned host (one that
+/// panicked under its lock) is refused Busy, never a panic.
+#[test]
+fn a_writer_entering_a_poisoned_host_is_told_busy() {
+    let poisoned = graph();
+    let shared = Arc::clone(&poisoned.host.driver.shared);
+    let poisoner = std::thread::spawn(move || {
+        let _state = shared.state_for_tests();
+        panic!("N1 test: poison the host state");
+    });
+    assert!(poisoner.join().is_err());
+    let reserved = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        poisoned
+            .host
+            .reserve(|| vec![PageId::from(OLD)], Input::Flush)
+            .err()
+    }));
+    drop_failed(poisoned);
+    assert_eq!(
+        reserved.ok(),
+        Some(Some(ReserveRefusal::Busy)),
+        "a poisoned host is a refused writer, not a panic"
+    );
+}
+
+/// REVIEW-3b-P2b-2 N1: a writer entering a host whose driver ended (nothing
+/// will answer it) is refused Busy with nothing reserved.
+#[test]
+fn a_writer_entering_an_ended_driver_is_told_busy() {
+    let mut ended = graph();
+    ended.host.driver.join();
+    assert!(ended.host.driver.shared.ended());
+    let reserved = ended
+        .host
+        .reserve(|| vec![PageId::from(OLD)], Input::Flush)
+        .err();
+    assert_eq!(
+        reserved,
+        Some(ReserveRefusal::Busy),
+        "an ended driver admits no writer"
+    );
+    ended.host.driver.shared.with_state_for_tests(|state| {
+        assert!(
+            state.progress.host.retained.is_empty(),
+            "nothing is reserved"
+        );
+    });
+}
+
+/// REVIEW-3b-P2b-2 N1: a host that goes down between the writer's fence
+/// and its input check refuses Busy, and the fenced pages are released.
+#[test]
+fn a_host_down_after_the_fence_refuses_busy_and_releases_the_pages() {
+    let live = graph();
+    let discovered = std::cell::Cell::new(0);
+    let reserved = live
+        .host
+        .reserve(
+            || {
+                discovered.set(discovered.get() + 1);
+                if discovered.get() == 2 {
+                    live.host
+                        .driver
+                        .shared
+                        .with_state_for_tests(|state| state.progress.host.stop());
+                }
+                vec![PageId::from(OLD)]
+            },
+            Input::Flush,
+        )
+        .err();
+    assert_eq!(discovered.get(), 2, "the fence ran, then the rediscovery");
+    assert_eq!(
+        reserved,
+        Some(ReserveRefusal::Busy),
+        "a down host admits no writer"
+    );
+    live.host.driver.shared.with_state_for_tests(|state| {
+        assert!(
+            state.progress.host.retained.is_empty(),
+            "the fenced pages are released"
+        );
+    });
+    live.host.stop();
+}
+
+/// `PageHost`'s production methods, by name, as token text: every `impl
+/// PageHost` in the binding's production files.
+fn page_host_methods() -> BTreeMap<String, String> {
+    use quote::ToTokens;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/page_host");
+    let mut methods = BTreeMap::new();
+    for entry in fs::read_dir(&dir).unwrap() {
+        let name = entry.unwrap().file_name().into_string().unwrap();
+        if !name.starts_with("binding") || name.contains("test") || !name.ends_with(".rs") {
+            continue;
+        }
+        let source = fs::read_to_string(dir.join(&name)).unwrap();
+        for item in syn::parse_file(&source)
+            .expect("Rust source must parse")
+            .items
+        {
+            let syn::Item::Impl(block) = item else {
+                continue;
+            };
+            if block.self_ty.to_token_stream().to_string() != "PageHost" {
+                continue;
+            }
+            for item in block.items {
+                if let syn::ImplItem::Fn(function) = item {
+                    let body = function.block.to_token_stream().to_string();
+                    methods.insert(function.sig.ident.to_string(), body);
+                }
+            }
+        }
+    }
+    methods
+}
+
+/// The forms the reserve path must not use, and why. No caller thread can
+/// lock the host state (it is private to `driver.rs`); what is left to
+/// police is how a writer treats an unanswered request and where it waits.
+/// A `read` or `call` is not a wait on host progress: the driver answers it
+/// between steps and never waits for a lock another thread holds (the
+/// store writer included: a reservation's writer may hold it), so it costs
+/// at most one step, as the state lock it replaced did. Pinned by
+/// `binding_tests.rs`
+/// `the_driver_answers_while_another_thread_holds_the_store_writer`.
+const UNCHECKED: &[(&str, &str)] = &[
+    (
+        "unwrap ()",
+        "a request's answer unwrapped: a driver that ended panics the writer",
+    ),
+    (
+        "expect (",
+        "a request's answer expected: a driver that ended panics the writer",
+    ),
+    (". locked_wait (", "a path-lock wait outside `bounded`"),
+    (". locked_step (", "a path-lock wait outside `bounded`"),
+    (
+        ". wait (",
+        "a host wait outside `bounded`: no writer deadline, no down check",
+    ),
+];
+
+/// The one function on the reserve path that waits on the host.
+const SANCTIONED_WAIT: &str = "bounded";
+
+/// Every function `reserve` reaches through `self.` calls, and each
+/// unchecked form one of them uses.
+fn reserve_path_violations(methods: &BTreeMap<String, String>) -> (BTreeSet<String>, Vec<String>) {
+    let mut path = BTreeSet::new();
+    let mut todo = vec!["reserve".to_string()];
+    while let Some(name) = todo.pop() {
+        if !path.insert(name.clone()) {
+            continue;
+        }
+        let body = &methods[&name];
+        todo.extend(
+            methods
+                .keys()
+                .filter(|callee| body.contains(&format!("self . {callee} (")))
+                .cloned(),
+        );
+    }
+    let mut violations = Vec::new();
+    for name in &path {
+        for (form, why) in UNCHECKED {
+            let sanctioned = name == SANCTIONED_WAIT && *form == ". wait (";
+            if !sanctioned && methods[name].contains(form) {
+                violations.push(format!("{name} uses `{form}`: {why}"));
+            }
+        }
+    }
+    (path, violations)
+}
+
+/// REVIEW-3b-P2b-2 N1, shape: every wait on a retained writer's
+/// reservation path goes through `bounded`, which carries the writer's
+/// deadline, and no unanswered request panics the writer. Exemplar:
+/// `binding_retained.rs` `PageHost::flush`.
+/// Scope: it catches honest mistakes written in the house style, not
+/// adversarial spellings. Known limit (REVIEW-3b-P2b-3 N1): it follows only
+/// `self.method(..)` calls among the binding files' `PageHost` methods, so a
+/// helper reached another way (`Self::f(self)`, a `Shared` or `Graph`
+/// helper) is not checked. Retired with `reserve` itself in the next storage
+/// step, when the page host becomes the only page writer.
+#[test]
+fn the_reserve_path_has_no_unchecked_lock_or_bare_wait() {
+    let methods = page_host_methods();
+    let (path, violations) = reserve_path_violations(&methods);
+    for reached in [
+        "bounded",
+        "flush",
+        "register_all",
+        "try_identify",
+        "try_register",
+    ] {
+        assert!(
+            path.contains(reached),
+            "the reserve path reaches {reached}: {path:?}"
+        );
+    }
+    assert!(
+        violations.is_empty(),
+        "M6/N1: the reserve path waits only through `bounded` (the writer's deadline; \
+         ended/down refuse Busy); exemplar binding_retained.rs flush:\n{}",
+        violations.join("\n")
+    );
+    // The guard's own necessity: each unchecked form is caught.
+    let mutants = [
+        (
+            "flush",
+            "{ let _ = self . driver . shared . read (| s | s . book . session) . unwrap () ; }",
+        ),
+        (
+            "flush",
+            "{ self . driver . shared . wait (Deadline :: Never , step) }",
+        ),
+        (
+            "bounded",
+            "{ self . driver . shared . locked_wait (deadline , step) }",
+        ),
+        (
+            "reserve",
+            "{ self . try_identify (page) . expect (\"ended\") }",
+        ),
+        (
+            "register_all",
+            "{ self . try_register (key , spelling) . unwrap () }",
+        ),
+    ];
+    for (function, added) in mutants {
+        let mut planted = methods.clone();
+        planted.get_mut(function).unwrap().push_str(added);
+        assert!(
+            !reserve_path_violations(&planted).1.is_empty(),
+            "the guard misses {added} in {function}"
+        );
+    }
 }

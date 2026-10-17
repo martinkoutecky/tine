@@ -1,4 +1,5 @@
-//! Unwired production phase adapter over the audited publication primitives.
+//! The production phase adapter over the audited publication primitives: the
+//! running host's I/O (`PageHost`).
 //!
 //! The two physical censuses retain observed bytes and successful metadata
 //! witnesses, not logical drafts. Only drafts::scan selects logical records.
@@ -48,6 +49,10 @@ pub(super) struct ProductionIo {
     untouchable: std::collections::BTreeSet<String>,
     #[cfg(any(test, feature = "test-faults"))]
     pub faults: BTreeMap<super::io::Phase, std::collections::VecDeque<io::ErrorKind>>,
+    /// Slow every call of the phase by this much: a long operation that
+    /// keeps making progress.
+    #[cfg(test)]
+    pub delays: BTreeMap<super::io::Phase, std::time::Duration>,
     /// Abort the process just before the phase's call number `n` (0-based).
     #[cfg(any(test, feature = "test-faults"))]
     abort: Option<(super::io::Phase, usize)>,
@@ -85,6 +90,8 @@ impl ProductionIo {
             untouchable: Default::default(),
             #[cfg(any(test, feature = "test-faults"))]
             faults: ATTACH_FAULTS.with(|faults| faults.take()),
+            #[cfg(test)]
+            delays: BTreeMap::new(),
             #[cfg(any(test, feature = "test-faults"))]
             abort: ATTACH_ABORT.with(|abort| abort.take()),
         };
@@ -135,6 +142,10 @@ impl ProductionIo {
             .and_then(|queue| queue.pop_front())
         {
             return Err(failure(io::Error::new(kind, "injected phase failure")));
+        }
+        #[cfg(test)]
+        if let Some(delay) = self.delays.get(&phase) {
+            std::thread::sleep(*delay);
         }
         let _ = phase;
         Ok(())
@@ -206,9 +217,17 @@ fn list(drafts: &Path) -> io::Result<BTreeMap<String, (PathBuf, Vec<u8>)>> {
     // stop the graph from opening (REVIEW-2b-r2 V1). The listing creates it.
     durability::create_dir_all_with_sync(drafts, durability::sync_private_directory)?;
     // Also cover a directory chain left readable by an interrupted earlier
-    // creation attempt.
+    // creation attempt: the chain Tine creates, up to and including the
+    // app-data directory (`drafts` is `<app_data>/drafts-v2/<graph id>`).
+    // Directories above app data belong to the OS and are not ours to sync;
+    // Android's `/data/user/0` is traversable but unreadable, so opening it
+    // failed with EACCES and switched crash recovery off (GH #685).
+    let app_data = drafts.parent().and_then(Path::parent);
     for dir in drafts.ancestors().filter(|dir| !dir.as_os_str().is_empty()) {
         durability::sync_private_directory(dir)?;
+        if Some(dir) == app_data {
+            break;
+        }
     }
     let mut found = BTreeMap::new();
     for entry in fs::read_dir(drafts)? {
@@ -558,10 +577,11 @@ impl HostIo for ProductionIo {
     fn trash_sync(&mut self, _page: &str, payload: &str) -> IoResult<Witness> {
         self.before(super::io::Phase::TrashSync)?;
         // The recorded basename locates the payload; the trash is never listed.
-        #[cfg(feature = "test-faults")]
-        crate::cost_counters::fsync();
-        match crate::atomic_file::sync_file_bytes(&self.trash.join(payload)) {
-            Ok(()) => {}
+        // RO3 (a) (Martin 2026-10-11): the payload's data is not synced. Tine's
+        // own saves synced it already; another program's unflushed bytes are
+        // R-UNFLUSHED. A payload removed meanwhile owes nothing (R-PURGE).
+        match std::fs::symlink_metadata(self.trash.join(payload)) {
+            Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Witness::Durable),
             Err(error) => return Err(failure(error)),
         }

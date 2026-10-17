@@ -4,6 +4,7 @@ use tine_store::{EditKind, PageId, SaveBase, SaveOutcome, Store};
 
 #[test]
 fn a_saved_shadow_journal_does_not_replace_the_canonical_published_day() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("journals")).unwrap();
     fs::create_dir(dir.path().join("logseq")).unwrap();
@@ -46,6 +47,7 @@ fn a_saved_shadow_journal_does_not_replace_the_canonical_published_day() {
 
 #[test]
 fn published_tree_matches_written_bytes_when_the_dto_does_not_round_trip() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
     fs::write(dir.path().join("pages/A.md"), "- before\n").unwrap();

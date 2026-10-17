@@ -20,6 +20,16 @@ pub fn normalize(name: &str) -> String {
     page_key(name)
 }
 
+/// OG's page-reference closure: the name and each nonempty namespace ancestor.
+/// Inputs retain their spelling; callers fold page identity before comparing.
+/// Work and output depend only on this name, never on graph size.
+pub fn namespace_refs(name: &str) -> impl Iterator<Item = &str> {
+    name.match_indices('/')
+        .map(move |(at, _)| &name[..at])
+        .chain(std::iter::once(name))
+        .filter(|name| !name.is_empty())
+}
+
 /// Pages whose text is never a reference source: the target page itself (OG
 /// excludes a page from its own references) and Tine's Favorites arrangement
 /// page (`:tine/favorites-page`), whose `[[links]]` are a sidebar layout, not a
@@ -299,7 +309,9 @@ pub fn rename_tags_property(raw: &str, from: &str, to: &str, is_org: bool) -> St
 
 /// The one reference rewrite a page rename applies to a file's text:
 /// `renames`' links, tags and embeds ([`rename_refs_multi`]), then bare
-/// `tags::` values ([`rename_tags_property_multi`]). Keys are raw old names,
+/// `tags::` values ([`rename_tags_property_multi`]), then the page selectors of
+/// export definition blocks, which name a page inside a query and so are no
+/// reference ([`crate::export_definition`]). Keys are raw old names,
 /// normalized here; values are display names. The store's rename steps and the
 /// rename planner both call this, so they cannot disagree on whether a rename
 /// changes a file. Pure, O(text).
@@ -313,11 +325,12 @@ pub fn rename_rewrite(
         .iter()
         .map(|(from, to)| (normalize(from), to.clone()))
         .collect();
-    rename_tags_property_multi(
+    let renamed = rename_tags_property_multi(
         &rename_refs_multi(text, &renames, is_org, file_name_format),
         &renames,
         is_org,
-    )
+    );
+    crate::export_definition::rename_selectors(&renamed, is_org, &renames).unwrap_or(renamed)
 }
 
 /// Multi-target `rename_tags_property`: rewrite bare `tags::` values that

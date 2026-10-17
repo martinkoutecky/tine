@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 import { render } from "solid-js/web";
 import { App } from "./App";
 import "./session";
@@ -8,6 +9,7 @@ import { applyTheme, applyAccent } from "./ui";
 import { pushToast } from "./toasts";
 import { startCommunityExtensions } from "./plugins/startup";
 import { backend, isTauri } from "./backend";
+import { startUiLanguage } from "./i18n/preference";
 import { installBackendClock } from "./journal";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -36,7 +38,9 @@ import "./styles/themePresentation.css";
 import "./styles/pdf-workspace.css";
 import "./styles/settingsControls.css";
 import "./styles/query.css";
+import "./styles/query-calm.css";
 import "./styles/conflicts.css";
+import "./styles/allPages.css";
 import "./styles/region-failure.css";
 import "./styles/published.css";
 
@@ -59,10 +63,10 @@ if (isPublishedExport()) document.documentElement.classList.add("tine-published"
 const communityExtensionsReady = isPublishedExport() ? Promise.resolve() : startCommunityExtensions()
   .then(({ pluginInitialization }) => {
     void pluginInitialization.catch((error) =>
-      pushToast(`Plugins unavailable: ${String(error)}`, "error")
+      pushToast(msg("ui-main-plugins-unavailable", { value1: String(error) }), "error")
     );
   })
-  .catch((error) => pushToast(`Community extensions unavailable: ${String(error)}`, "error"));
+  .catch((error) => pushToast(msg("ui-main-community-extensions-unavailable", { value1: String(error) }), "error"));
 
 // Restore the saved tab session before first paint, so tabs come back without a
 // flash. Capped so a slow/stuck backend read can never block startup — worst
@@ -110,4 +114,5 @@ void Promise.all([
   isPublishedExport() ? Promise.resolve() : parserSettled.then(() => Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))])),
   communityExtensionsReady,
   publishedSnapshotReady,
+  startUiLanguage(),
 ]).then(mount, () => { if (!isPublishedExport()) mount(); else console.error("published app startup failed"); });

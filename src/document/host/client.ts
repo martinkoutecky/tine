@@ -1,8 +1,11 @@
 // The window client of the page host (STEP3-DESIGN §4; plan v3 §5; REVIEW-3b-plan2
 // S4/S5/S7/R7). One instance per graph binding. It transcribes the model's window
 // (`storage-s3.qnt` wOpen/wEdit/wSend/wResolve/wDiscard/wOpTo/wClose/wRecv) over a
-// page-host port and a document port; it holds no base revisions, retries, drafts
-// or conflict detection of its own (§4.3).
+// page-host port and a document port. It holds no disk base revisions, save
+// retries, drafts or conflict detection of its own (§4.3): those are the host's.
+// It does keep the window's authoring baseline and version (`installed`, the
+// Open's `baseline`) and waits, with a pause between asks, until the host has
+// published what it took (J6 `needed`/`waited`).
 //
 // Wired by `wiring.ts` (step 3b P2b): the only page persistence of the window.
 
@@ -10,6 +13,7 @@ import type { ClipboardSourcePage } from "../../clipboard";
 import type { EditKind, EditKinds } from "../../editKind";
 import type { Format, PageDto, PageKind } from "../../types";
 import { cutSourceMatches } from "../cutSource";
+import { inFileFormat } from "../convert";
 import {
   STALE_VERSION, type DiskToken, type HostPort, type MailNotice, type MailPage, type OwedPage, type PageMail,
   type PageRefusal, type PublishedNeed,
@@ -44,8 +48,9 @@ export interface DocumentPort {
   holdsPush(name: string): boolean;
   /** The page was deleted in this window (delete tombstone). */
   tombstoned(name: string): boolean;
-  /** The host took this instance's text, now on disk at `rev` (a took
-   * answer's revision): the page's baseline for later reads. */
+  /** The host took this instance's text at `rev` (a took answer's revision):
+   * the page's baseline for later reads. Took means the host has custody of
+   * it, not that it is published on disk (that is `needed`/`waited`). */
   took(name: string, rev: string): void;
 }
 
@@ -78,7 +83,7 @@ interface Page {
   stash: PageMail[];
   /** The authoring baseline an Open compares (S5): fixed when the Open is sent. */
   baseline: (PageFacts & { version: number | null; entry: boolean }) | null;
-  observed: { version: number; disk: DiskToken | null; conflict: boolean; risk: boolean } | null;
+  observed: { disk: DiskToken | null; conflict: boolean } | null;
   notice: MailNotice | null;
   /** Host content withheld from the text by the installation gate (S4). */
   held: { content: Content; version: number } | null;
@@ -208,13 +213,13 @@ export class HostClient {
 
   /** The dirty funnel (`markDirty`/`addDirty`): every programmatic mutation. An
    * edit on a page no surface acquired opens it here (the fallback). */
-  noteEdit(name: string, kinds: EditKind | EditKinds, schedule = true): void {
+  noteEdit(name: string, kinds: EditKind | EditKinds): void {
     const page = this.state(name);
     page.editSeq += 1;
     this.editClock += 1;
     for (const kind of typeof kinds === "string" ? [kinds] : kinds) if (!page.kinds.includes(kind)) page.kinds.push(kind);
     this.open(page);
-    if (schedule) this.schedule(page);
+    this.schedule(page);
     this.onChange();
   }
 
@@ -246,6 +251,9 @@ export class HostClient {
     return !!page && (page.editSeq > page.sentSeq || page.phase.kind !== "idle" || page.stash.length > 0);
   }
 
+  /** Incoming host text not yet installed in the frontend working set. */
+  holdsContent(name: string): boolean { return !!this.pages.get(name)?.held; }
+
   conflicted(name: string): boolean {
     return !!this.pages.get(name)?.observed?.conflict;
   }
@@ -273,21 +281,12 @@ export class HostClient {
     return this.pages.get(name)?.refusal ?? null;
   }
 
-  /** The authoring version of the page's text (for tests and the UI's state line). */
-  versionOf(name: string): number | null {
-    return this.pages.get(name)?.version ?? null;
-  }
-
   keyOf(name: string): string | null {
     return this.pages.get(name)?.key ?? null;
   }
 
   isOpen(name: string): boolean {
     return !!this.pages.get(name)?.on;
-  }
-
-  heldVersion(name: string): number | null {
-    return this.pages.get(name)?.held?.version ?? null;
   }
 
   isFrozen(name: string): boolean {
@@ -353,7 +352,7 @@ export class HostClient {
     if (!page.on || this.pages.get(name) !== page) return { took: false, refusal: "not-open" };
     page.sentSeq = page.editSeq;
     page.kinds = [];
-    return this.request(page, "discard", (id) => this.host.discard(this.session, id, page.key!, page.version ?? STALE_VERSION));
+    return this.request(page, "discard", (id) => this.host.discard(this.session, id, page.key!));
   }
 
   /** A two-page move (model `wOpTo`): both endpoints open, idle and clean. The
@@ -485,10 +484,12 @@ export class HostClient {
       const expected = options.expected ?? { kind: "no-file" };
       const current = sameToken(disk, expected);
       if (!current && !options.expected) return { kind: "exists" };
-      this.doc.install(name, { kind: "page", dto });
+      // The page is held in the format of the file its key names (ORG-CREATED-FORMAT).
+      const held = inFileFormat(dto, page.key!);
+      this.doc.install(name, { kind: "page", dto: held });
       page.editSeq += 1;
       this.editClock += 1;
-      const answer = await this.request(page, "submit", (id) => this.host.submit(this.session, id, page.key!, dto,
+      const answer = await this.request(page, "submit", (id) => this.host.submit(this.session, id, page.key!, held,
         current ? page.version ?? STALE_VERSION : STALE_VERSION, null, options.kinds ?? ["create-page"]));
       if (!answer.took || page.needed === null) return { kind: "refused", refusal: answer.refusal };
       const version = page.needed;
@@ -630,6 +631,7 @@ export class HostClient {
     if (!page) return;
     this.reevaluate(page, acceptPush);
     this.maybeClose(page);
+    this.onChange();
   }
 
   // ------------------------------------------------------------- internals
@@ -706,7 +708,7 @@ export class HostClient {
   }
 
   private observe(page: Page, mail: MailPage): void {
-    page.observed = { version: mail.version, disk: mail.disk ?? null, conflict: mail.conflict, risk: mail.risk };
+    page.observed = { disk: mail.disk ?? null, conflict: mail.conflict };
   }
 
   private contentOf(mail: MailPage): Content | null {

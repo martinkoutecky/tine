@@ -2,7 +2,7 @@ import { attachBlockSwipe, swipeDisabledByTags, type BlockSwipeAction } from "..
 import { graphMeta } from "../graphSession";
 import { pageIdentityKey } from "../pageIdentity";
 import { pageRefsInText } from "../render/pageRefs";
-import { childIds, pageRoots, nextVisible, outlineFits, exportNodesFor, clearSelection, indentSelection, node as docNode, outdentSelection, pageByName, selectBlock } from "../document";
+import { canIndentBlock, childIds, pageRoots, nextVisible, clearSelection, indentSelection, node as docNode, outdentSelection, pageByName, selectBlock } from "../document";
 import type { OutlineScope } from "../document";
 import { dispatchFocusedEditorCommand, focusedEditorCommandBridge } from "../editorCommandBridge";
 import { touchGesturePlatform } from "../nativeChrome";
@@ -25,8 +25,9 @@ export interface BlockRowSwipeDeps {
  *  context menu opened at the release point on the selected block.
  *
  *  Cue availability uses the existing document reads: previous sibling and
- *  outlineFits for indent, parent/scope-root for outdent. The first revealed
- *  indent cue costs O(siblings + subtree + depth + visible scope); cached for that gesture.
+ *  the kernel's indent verb (canIndentBlock) for indent, parent/scope-root for
+ *  outdent. The first revealed indent cue costs O(page blocks + visible scope);
+ *  cached for that gesture.
  *  Returns the cleanup; a no-op off touch platforms. */
 export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () => void {
   return attachBlockSwipe(row, {
@@ -55,7 +56,7 @@ export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () =>
       const siblings = block.parent === null ? pageRoots(block.page) : childIds(block.parent);
       const index = siblings.indexOf(deps.id);
       if (index <= 0 || (deps.scope && nextVisible(siblings[index - 1], deps.scope) === null)) return false;
-      return outlineFits(siblings[index - 1], exportNodesFor([deps.id]), 1);
+      return canIndentBlock(deps.id);
     },
     run(action: BlockSwipeAction, x: number, y: number) {
       if (deps.readOnly()) return;

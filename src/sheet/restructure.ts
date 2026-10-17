@@ -170,7 +170,9 @@ export function flatten(parentId: string): boolean {
   const byId = new Map(groups.map((group) => [group.id, group]));
   const order = parent.children.flatMap((id) => {
     const group = byId.get(id);
-    return group ? [...(group.retain ? [id] : []), ...group.rows] : [id];
+    // A disposable group stays in place, emptied, until it is deleted below:
+    // a verb sees only blocks reachable from the page's roots.
+    return group ? [id, ...group.rows] : [id];
   });
 
   return withUndoUnit("sheet:flatten", [parent.page], () => {

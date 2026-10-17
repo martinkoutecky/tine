@@ -3,6 +3,7 @@ use tine_store::{IrRequest, Store};
 
 #[test]
 fn ir_store_refuses_large_answers_with_its_own_limits() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("pages")).unwrap();
     std::fs::write(dir.path().join("pages/Rows.md"), "- row\n".repeat(20_001)).unwrap();
@@ -34,6 +35,7 @@ fn ir_store_refuses_large_answers_with_its_own_limits() {
 
 #[test]
 fn ir_refusal_uses_the_complete_count_or_total_and_preserves_small_answers() {
+    let _integration_guard = crate::integration_lock();
     use tine_core::query::ir::{QueryReport, QueryResult, QueryRows};
     use tine_store::IrAnswer;
     let result = |matched_total, exceeded| QueryResult {
@@ -66,6 +68,7 @@ fn ir_refusal_uses_the_complete_count_or_total_and_preserves_small_answers() {
 
 #[test]
 fn result_limits_have_one_answerer() {
+    let _integration_guard = crate::integration_lock();
     let wire = include_str!("../../../src-tauri/src/commands/query_ir.rs");
     assert!(wire.contains("QueryResult::try_from(answer)") && !wire.contains("result-too-large: {"), "I-12: the store's TryFrom<IrAnswer> owns the IR refusal message; the wire only forwards it");
     for name in ["RESULT_BRIDGE_MAX_ROWS", "RESULT_BRIDGE_MAX_BYTES"] {

@@ -4,6 +4,7 @@ use tine_store::{cost_counters, EditKind, PageId, SaveBase, SaveOutcome, Store};
 
 #[test]
 fn ordinary_save_parses_old_and_output_once_and_publishes_the_written_tree() {
+    let _integration_guard = crate::integration_lock();
     for blocks in [1, 60] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();

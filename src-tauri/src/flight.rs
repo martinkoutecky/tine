@@ -469,6 +469,7 @@ const UPDATER_CAUSES: [&str; 7] = [
 /// (`frontend.error_toast`: that an error toast was shown; never its text,
 /// which may name pages — the opt-in debug log has it). Any other kind, or a
 /// token outside its list, drops the event.
+/// `journal_feed` records only an allowlisted publication-stage reason.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn diagnostic_frontend_event(
@@ -480,7 +481,18 @@ pub(crate) fn diagnostic_frontend_event(
     updater_cause: Option<String>,
     close_reason: Option<String>,
     pages: Option<u64>,
+    journal_feed_reason: Option<String>,
+    journal_feed_cause: Option<String>,
 ) {
+    if kind == "journal_feed" {
+        if let Some(fields) = journal_feed_event_fields(
+            journal_feed_reason.as_deref(),
+            journal_feed_cause.as_deref(),
+        ) {
+            record_fixed_event("journal.feed", fields);
+        }
+        return;
+    }
     if let Some((event, fields)) = frontend_event_fields(
         &kind,
         line,
@@ -492,6 +504,73 @@ pub(crate) fn diagnostic_frontend_event(
         pages,
     ) {
         record_fixed_event(event, fields);
+    }
+}
+
+/// GH #671: reject unknown tokens at the native trust boundary, even if a
+/// frontend caller supplies graph content in place of a reason.
+fn journal_feed_event_fields(
+    reason: Option<&str>,
+    cause: Option<&str>,
+) -> Option<Map<String, Value>> {
+    let reason = reason.filter(|value| {
+        matches!(
+            *value,
+            "template-deferred"
+                | "template-stale"
+                | "template-error"
+                | "template-day-changed"
+                | "active-edit"
+                | "owner-retired"
+                | "window-unbound"
+                | "read-stale"
+                | "day-mismatch"
+                | "generation-changed"
+                | "admission-stale"
+                | "admission-refused"
+                | "feed-error"
+                | "route-unpublished"
+        )
+    })?;
+    let mut fields = Map::new();
+    fields.insert("reason".into(), json!(reason));
+    if let Some(cause) = cause {
+        let cause = ["empty-rejection", "other-rejection"]
+            .into_iter()
+            .find(|allowed| *allowed == cause)?;
+        fields.insert("cause".into(), json!(cause));
+    }
+    Some(fields)
+}
+
+/// GH #181: a link's quick closed-graph check ruled out `ruled_out` graphs and
+/// no graph resolved the target, so they were fully opened; `rescued` of them
+/// held it (each one a prefilter false negative). Counts only, never paths.
+pub(crate) fn link_probe_rescue(ruled_out: u64, rescued: u64) {
+    let mut fields = Map::new();
+    fields.insert("ruledOut".into(), json!(ruled_out));
+    fields.insert("rescued".into(), json!(rescued));
+    record_fixed_event("link.probe.rescue", fields);
+}
+
+/// Capture the typed native failure before the bridge turns it into free text.
+/// Error messages can contain graph paths and must never enter this report.
+pub(crate) fn journal_feed_io_failure(kind: std::io::ErrorKind) {
+    let mut fields = Map::new();
+    fields.insert("reason".into(), json!(journal_feed_io_reason(kind)));
+    record_fixed_event("journal.feed.read_failed", fields);
+}
+
+fn journal_feed_io_reason(kind: std::io::ErrorKind) -> &'static str {
+    use std::io::ErrorKind;
+    match kind {
+        ErrorKind::PermissionDenied => "permission-denied",
+        ErrorKind::NotFound => "not-found",
+        ErrorKind::BrokenPipe => "broken-pipe",
+        ErrorKind::InvalidData => "invalid-data",
+        ErrorKind::Interrupted => "interrupted",
+        ErrorKind::TimedOut => "timed-out",
+        _ => "other-io",
     }
 }
 
@@ -945,6 +1024,60 @@ mod tests {
         let latency = latency_report();
         for name in latency["latency"].as_object().unwrap().keys() {
             assert!(TIMING_NAMES.contains(&name.as_str()), "{name}");
+        }
+    }
+
+    #[test]
+    fn journal_feed_reasons_are_closed_and_never_record_graph_content() {
+        for reason in [
+            "template-deferred",
+            "template-stale",
+            "template-error",
+            "template-day-changed",
+            "active-edit",
+            "owner-retired",
+            "window-unbound",
+            "read-stale",
+            "day-mismatch",
+            "generation-changed",
+            "admission-stale",
+            "admission-refused",
+            "feed-error",
+            "route-unpublished",
+        ] {
+            let fields = journal_feed_event_fields(Some(reason), None).unwrap();
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields["reason"], json!(reason));
+        }
+        for reason in [
+            None,
+            Some("Daily Template"),
+            Some("/private/graph"),
+            Some("read failed: secret page"),
+        ] {
+            assert!(journal_feed_event_fields(reason, None).is_none());
+        }
+        for cause in ["empty-rejection", "other-rejection"] {
+            let fields = journal_feed_event_fields(Some("feed-error"), Some(cause)).unwrap();
+            assert_eq!(fields["cause"], json!(cause));
+            assert_eq!(fields.len(), 2);
+        }
+        assert!(journal_feed_event_fields(Some("feed-error"), Some("/private/graph")).is_none());
+    }
+
+    #[test]
+    fn journal_feed_native_failures_use_typed_io_categories() {
+        use std::io::ErrorKind;
+        for (kind, reason) in [
+            (ErrorKind::PermissionDenied, "permission-denied"),
+            (ErrorKind::NotFound, "not-found"),
+            (ErrorKind::BrokenPipe, "broken-pipe"),
+            (ErrorKind::InvalidData, "invalid-data"),
+            (ErrorKind::Interrupted, "interrupted"),
+            (ErrorKind::TimedOut, "timed-out"),
+            (ErrorKind::Other, "other-io"),
+        ] {
+            assert_eq!(journal_feed_io_reason(kind), reason);
         }
     }
 

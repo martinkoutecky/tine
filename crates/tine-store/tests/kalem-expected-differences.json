@@ -1,0 +1,658 @@
+{
+  "logseq-md/backlinks/assets/readme.md": {
+    "logseq": [],
+    "tine": {
+      "unavailable": "InvalidTarget(\"assets/readme.md\")"
+    }
+  },
+  "logseq-md/backlinks/pages/contents.md": {
+    "logseq": [],
+    "tine": {
+      "unavailable": "NotFound"
+    }
+  },
+  "logseq-md/backlinks/whiteboards/Design.edn": {
+    "logseq": [
+      "project/plugins/graph"
+    ],
+    "tine": {
+      "unavailable": "InvalidTarget(\"whiteboards/Design.edn\")"
+    }
+  },
+  "logseq-md/graph_view": {
+    "logseq": {
+      "about": "The global graph view with the corpus's :graph/settings (orphans shown; journals, Logseq's own pages and excluded pages left out), as frontend.handler.graph/build-global-graph builds it: its nodes, and the links between them (get-pages-relation without journals, get-all-tagged-pages, get-all-namespace-relation), read with datascript_query and filtered as that function filters.",
+      "links": [
+        [
+          "6512c0de-0001-4000-8000-000000000001",
+          "project/plugins/graph"
+        ],
+        [
+          "a [[nested]] link",
+          "queries"
+        ],
+        [
+          "design",
+          "project/plugins/graph"
+        ],
+        [
+          "editor",
+          "kalem"
+        ],
+        [
+          "file",
+          "hls__paper_1700000000000_0"
+        ],
+        [
+          "file-path",
+          "hls__paper_1700000000000_0"
+        ],
+        [
+          "kalem",
+          "markdown"
+        ],
+        [
+          "kalem",
+          "org"
+        ],
+        [
+          "kalem",
+          "program"
+        ],
+        [
+          "kalem",
+          "project"
+        ],
+        [
+          "kalem",
+          "project/plugins"
+        ],
+        [
+          "kalem",
+          "project/plugins/graph"
+        ],
+        [
+          "kalem",
+          "queries"
+        ],
+        [
+          "kalem",
+          "related"
+        ],
+        [
+          "kalem",
+          "software"
+        ],
+        [
+          "kalem",
+          "the editor"
+        ],
+        [
+          "kalem",
+          "type"
+        ],
+        [
+          "kalem",
+          "writing"
+        ],
+        [
+          "nested",
+          "queries"
+        ],
+        [
+          "note graphs",
+          "queries"
+        ],
+        [
+          "project",
+          "project/plugins"
+        ],
+        [
+          "project",
+          "project/plugins/graph"
+        ],
+        [
+          "project/plugins",
+          "project/plugins/graph"
+        ],
+        [
+          "read from assets",
+          "readme"
+        ],
+        [
+          "templates",
+          "type"
+        ]
+      ],
+      "nodes": [
+        "6512c0de-0001-4000-8000-000000000001",
+        "a [[nested]] link",
+        "design",
+        "editor",
+        "file",
+        "file-path",
+        "hls__paper_1700000000000_0",
+        "kalem",
+        "markdown",
+        "meeting",
+        "nested",
+        "note graphs",
+        "org",
+        "program",
+        "project",
+        "project/plugins",
+        "project/plugins/graph",
+        "queries",
+        "questions?",
+        "read from assets",
+        "readme",
+        "related",
+        "software",
+        "templates",
+        "the editor",
+        "type",
+        "writing"
+      ]
+    },
+    "unavailable": "graph view is not implemented"
+  },
+  "logseq-md/query/06": {
+    "logseq_only": [
+      [
+        "kalem",
+        "plugins, as [[project/plugins]] lists them"
+      ],
+      [
+        "kalem",
+        "the core: org, markdown, csv, latex"
+      ],
+      [
+        "kalem",
+        "this one: [[project/plugins/graph]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "[[Kalem]]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-md/query/14": {
+    "logseq_only": [
+      [
+        "kalem",
+        "plugins, as [[project/plugins]] lists them"
+      ],
+      [
+        "kalem",
+        "the core: org, markdown, csv, latex"
+      ],
+      [
+        "kalem",
+        "this one: [[project/plugins/graph]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "(page \"Kalem\")",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-md/query/15": {
+    "logseq_only": [
+      [
+        "oct 10th, 2026",
+        "now start [[project/plugins/graph]]"
+      ],
+      [
+        "oct 3rd, 2026",
+        "decided: the graph plugin first"
+      ],
+      [
+        "oct 3rd, 2026",
+        "see [[oct 4th, 2026]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "(between -30d today)",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-md/query/16": {
+    "logseq_only": [
+      [
+        "oct 3rd, 2026",
+        "decided: the graph plugin first"
+      ],
+      [
+        "oct 3rd, 2026",
+        "see [[oct 4th, 2026]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "[[meeting]]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-md/query/19": {
+    "logseq_only": [
+      [
+        "kalem",
+        "plugins, as [[project/plugins]] lists them"
+      ],
+      [
+        "kalem",
+        "the core: org, markdown, csv, latex"
+      ],
+      [
+        "kalem",
+        "this one: [[project/plugins/graph]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [
+        "page-ref"
+      ],
+      "supported": true
+    },
+    "source": "[:find (pull ?b [*]) :where (page-ref ?b \"kalem\")]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-md/query/21": {
+    "logseq_only": [
+      [
+        "oct 10th, 2026"
+      ],
+      [
+        "oct 1st, 2026"
+      ],
+      [
+        "oct 2nd, 2026"
+      ],
+      [
+        "oct 3rd, 2026"
+      ],
+      [
+        "oct 4th, 2026"
+      ],
+      [
+        "oct 5th, 2026"
+      ],
+      [
+        "oct 6th, 2026"
+      ],
+      [
+        "oct 7th, 2026"
+      ],
+      [
+        "oct 8th, 2026"
+      ],
+      [
+        "oct 9th, 2026"
+      ]
+    ],
+    "report": {
+      "ignored": [
+        "pattern"
+      ],
+      "ran": [],
+      "supported": false
+    },
+    "source": "[:find (pull ?p [*]) :where [?p :block/journal? true]]",
+    "supported": false,
+    "tine_only": []
+  },
+  "logseq-md/query/23": {
+    "logseq_only": [
+      [
+        "kalem",
+        "this one: [[project/plugins/graph]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [
+        "current-page-ref"
+      ],
+      "supported": true
+    },
+    "source": "[:find (pull ?b [*]) :where [?b :block/refs ?p] [?p :block/name \"project/plugins\"]]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-md/query/24": {
+    "logseq_only": [
+      [
+        "kalem",
+        "this one: [[project/plugins/graph]]"
+      ],
+      [
+        "oct 3rd, 2026",
+        "decided: the graph plugin first"
+      ],
+      [
+        "oct 3rd, 2026",
+        "see [[oct 4th, 2026]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [
+        "page-path-ref"
+      ],
+      "supported": true
+    },
+    "source": "[:find (pull ?b [*]) :where [?b :block/path-refs ?p] [?p :block/name \"project/plugins\"]]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-md/query/25": {
+    "logseq_only": [
+      [
+        "kalem",
+        "# a heading block"
+      ],
+      [
+        "kalem",
+        "```rust"
+      ],
+      [
+        "kalem",
+        "a link with a label: [the plugins]([[project/plugins]]) and a url https://example.com/#anchor"
+      ],
+      [
+        "kalem",
+        "alias:: editor, [[the editor]]"
+      ],
+      [
+        "kalem",
+        "its keys are doom's: `[[not a link]]` in code"
+      ],
+      [
+        "kalem",
+        "its parts"
+      ],
+      [
+        "kalem",
+        "kalem is an editor of [[org]] and [[markdown]] files #software"
+      ]
+    ],
+    "report": {
+      "ignored": [
+        "pattern",
+        "pattern"
+      ],
+      "ran": [],
+      "supported": false
+    },
+    "source": "[:find (pull ?b [*]) :where [?b :block/page ?p] [?p :block/name \"kalem\"] [?b :block/parent ?p]]",
+    "supported": false,
+    "tine_only": []
+  },
+  "logseq-org/graph_view": {
+    "logseq": {
+      "about": "The global graph view with Logseq's default :graph/settings, built as frontend.handler.graph/build-global-graph builds it (see answers-0.10.9.json).",
+      "links": [
+        [
+          "editor",
+          "kalem"
+        ],
+        [
+          "kalem",
+          "org"
+        ],
+        [
+          "kalem",
+          "project"
+        ],
+        [
+          "kalem",
+          "project/plugins"
+        ],
+        [
+          "kalem",
+          "software"
+        ],
+        [
+          "plugins",
+          "project/plugins"
+        ],
+        [
+          "project",
+          "project/plugins"
+        ]
+      ],
+      "nodes": [
+        "editor",
+        "kalem",
+        "meeting",
+        "org",
+        "plugins",
+        "project",
+        "project/plugins",
+        "software"
+      ]
+    },
+    "unavailable": "graph view is not implemented"
+  },
+  "logseq-org/query/07": {
+    "logseq_only": [
+      [
+        "kalem",
+        "its core: org, markdown, csv, latex"
+      ],
+      [
+        "kalem",
+        "its plugins: [[project/plugins]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "[[Kalem]]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-org/query/09": {
+    "logseq_only": [
+      [
+        "oct 3rd, 2026",
+        "decided: the graph plugin first"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "[[Project/Plugins]]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-org/query/10": {
+    "logseq_only": [
+      [
+        "oct 3rd, 2026",
+        "decided: the graph plugin first"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "[[meeting]]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-org/query/12": {
+    "logseq_only": [
+      [
+        "kalem",
+        "its core: org, markdown, csv, latex"
+      ],
+      [
+        "kalem",
+        "its plugins: [[project/plugins]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "[[Org]]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-org/query/13": {
+    "logseq_only": [
+      [
+        "oct 3rd, 2026",
+        "decided: the graph plugin first"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "[[Project]]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-org/query/18": {
+    "logseq_only": [
+      [
+        "kalem",
+        "its core: org, markdown, csv, latex"
+      ],
+      [
+        "kalem",
+        "its plugins: [[project/plugins]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "(page \"Kalem\")",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-org/query/19": {
+    "logseq_only": [
+      [
+        "oct 3rd, 2026",
+        "decided: the graph plugin first"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "(between -30d today)",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-org/query/20": {
+    "logseq_only": [
+      [
+        "oct 3rd, 2026",
+        "decided: the graph plugin first"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [],
+      "supported": true
+    },
+    "source": "[[Oct 3rd, 2026]]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-org/query/22": {
+    "logseq_only": [
+      [
+        "kalem",
+        "its core: org, markdown, csv, latex"
+      ],
+      [
+        "kalem",
+        "its plugins: [[project/plugins]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [
+        "page-ref"
+      ],
+      "supported": true
+    },
+    "source": "[:find (pull ?b [*]) :where (page-ref ?b \"kalem\")]",
+    "supported": true,
+    "tine_only": []
+  },
+  "logseq-org/query/24": {
+    "logseq_only": [
+      [
+        "oct 3rd, 2026"
+      ],
+      [
+        "oct 4th, 2026"
+      ]
+    ],
+    "report": {
+      "ignored": [
+        "pattern"
+      ],
+      "ran": [],
+      "supported": false
+    },
+    "source": "[:find (pull ?p [*]) :where [?p :block/journal? true]]",
+    "supported": false,
+    "tine_only": []
+  },
+  "logseq-org/query/26": {
+    "logseq_only": [
+      [
+        "kalem",
+        "its core: org, markdown, csv, latex"
+      ],
+      [
+        "kalem",
+        "its plugins: [[project/plugins]]"
+      ]
+    ],
+    "report": {
+      "ignored": [],
+      "ran": [
+        "page-path-ref"
+      ],
+      "supported": true
+    },
+    "source": "[:find (pull ?b [*]) :where [?b :block/path-refs ?p] [?p :block/name \"kalem\"]]",
+    "supported": true,
+    "tine_only": []
+  }
+}

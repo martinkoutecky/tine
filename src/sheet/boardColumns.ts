@@ -1,4 +1,5 @@
 import { visibleBody } from "../render/block";
+import { t } from "../i18n";
 import { MARKERS } from "../markers";
 import type { FieldSpec } from "./config";
 import { groupKeysForBlock, isFieldId, isFormulaField, type FieldId } from "./fields";
@@ -12,8 +13,6 @@ export interface BoardColumn<R extends FormulaEvalRow = FormulaEvalRow> {
   label: string;
   rows: R[];
 }
-
-const NONE_LABEL = "(none)";
 
 /** The field a board groups by, from its `tine.group-by` token; state when the
  *  token is absent or names no field. O(1). */
@@ -109,7 +108,7 @@ export function buildBoardColumns<R extends FormulaEvalRow>(
   if (order.length === 0) order = [null];
   return order.map((key) => ({
     key,
-    label: key === null ? NONE_LABEL : groupBy === "priority" ? `[#${key}]` : key,
+    get label() { return key === null ? t("sheet-board-empty-column") : groupBy === "priority" ? `[#${key}]` : key; },
     rows: rowsByKey.get(key) ?? [],
   }));
 }
@@ -121,7 +120,7 @@ export function boardRowTitle(row: FormulaEvalRow): string {
 
 /** One field's text as the card chips show it, live or from a DTO. O(1). */
 function chipText(row: FormulaEvalRow, field: FieldId): string {
-  if (liveFormulaRowNode(row)) return readField(row.id, field)?.text ?? "";
+  if (liveFormulaRowNode(row, "mount")) return readField(row.id, field)?.text ?? "";
   if (isFormulaField(field)) return "";
   const f = recordFacets(row);
   if (!f) return "";

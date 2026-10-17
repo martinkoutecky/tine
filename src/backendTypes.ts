@@ -19,12 +19,24 @@ export interface DiagnosticReport {
 
 export type DiagnosticFrontendKind =
   | "uncaught_error" | "unhandled_rejection" | "heartbeat_delay"
-  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast";
+  | "updater_failure" | "updater_manual_only" | "close_discarded_unsaved" | "error_toast" | "journal_feed";
+
+/** Closed tokens only: journal names, paths and backend error text never enter
+ * the always-on report (I-5). These describe the read/publication boundary. */
+export type JournalFeedReason =
+  | "template-deferred" | "template-stale" | "template-error" | "template-day-changed"
+  | "active-edit" | "owner-retired" | "window-unbound" | "read-stale"
+  | "day-mismatch" | "generation-changed" | "admission-stale" | "admission-refused"
+  | "feed-error" | "route-unpublished";
+
+export type JournalFeedCause = "empty-rejection" | "other-rejection";
 
 /** Why a close discarded drafts: a save failed, or saves were still running. */
 export type DiscardReason = "failed" | "still-saving";
 
 export interface DiagnosticFrontendFields {
+  journalFeedReason?: JournalFeedReason;
+  journalFeedCause?: JournalFeedCause;
   line?: number;
   column?: number;
   delayMs?: number;
@@ -46,6 +58,7 @@ export interface GpuEnv {
   /** Running inside a Flatpak sandbox: it cannot update itself in place, so the
    *  updater offers a manual download there. */
   flatpak: boolean;
+  packaged: boolean | null;
 }
 
 export interface BackupInfo {
@@ -81,22 +94,6 @@ export interface AssetChangedBatch {
 export interface GraphConfigChange {
   binding_generation: number;
   meta: GraphMeta;
-}
-
-/** One raw graph file, as returned by `graphSourceFiles` — the input to the
- *  in-app lsdoc↔mldoc diff panel. `text` is the file's bytes exactly as on disk. */
-export interface GraphSourceFile {
-  rel: string;
-  text: string;
-  format: "md" | "org";
-  bytes: number;
-}
-
-/** The parser-comparison input: every eligible file, and `path: reason` for
- *  each file left out (unreadable, undecodable, over the size limit). */
-export interface GraphSources {
-  files: GraphSourceFile[];
-  skipped: string[];
 }
 
 export type GraphFolderPickResult =
@@ -143,6 +140,7 @@ export interface TrayStatus {
 
 export interface KnownGraph {
   path: string;
+  display_path?: string;
   name: string;
 }
 
@@ -178,6 +176,9 @@ export interface CaptureGraphBindingResult {
 
 export interface GraphAccessInspection {
   graph_root: string;
+  display_graph_root?: string;
+  display_external_assets_path?: string | null;
+  wsl_rootfs?: boolean;
   external_assets_path: string | null;
   approved: boolean;
 }
@@ -196,5 +197,6 @@ export interface GraphAnswersChange {
 /** `graph-custom-css-changed`: an outside actor created, replaced or deleted
  *  `logseq/custom.css`. Carries only the binding; the window re-reads it. */
 export interface CustomCssChange {
+  global?: boolean;
   binding_generation?: number;
 }

@@ -3,6 +3,9 @@
 //! Evaluation tests over a graph belong with execution (og lane Q2).
 
 use super::advanced_patterns::{adv_range, advanced_pred};
+use super::ir::{Field, SortDir};
+use super::registry::Registry;
+use super::{parse_query_input, QueryInput};
 
 #[test]
 fn gh628_inputs_resolve_without_changing_numeric_dates_or_string_identity() {
@@ -411,8 +414,9 @@ fn gh542_attribute_patterns_lower_only_block_local_meaning() {
 
 /// GH #542 (og lane Q1): a marker variable narrowed by `contains?` lowers to a
 /// task leaf. og's pre-port engine answered this query with an empty result.
-/// A `:result-transform` is a Clojure function Tine cannot run, so the same
-/// query WITH one is refused whole (Martin, 2026-10-03), never run without it.
+/// The same query WITH OG's shipped NOW transform (a priority sort) lowers to
+/// the same filter and carries the sort (Martin 2026-10-11); other transforms
+/// still refuse whole (Martin 2026-10-03), see the next test.
 #[test]
 fn gh542_contains_narrowed_marker_lowers_to_a_task_leaf() {
     let query = r#"[:find (pull ?h [*])
@@ -445,12 +449,97 @@ fn gh542_contains_narrowed_marker_lowers_to_a_task_leaf() {
         :result-transform (fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))}}"#
     );
     let (lowered, ran, ignored) = advanced_pred(&with_transform, None, TODAY);
-    assert!(
-        lowered.is_none(),
-        "a result-transform refuses the whole query"
+    assert_eq!(
+        lowered
+            .expect("OG's NOW transform is a sort, not a refusal")
+            .filter,
+        filter
     );
-    assert!(ran.is_empty());
-    assert_eq!(ignored, vec!["result-transform"]);
+    assert!(!ran.is_empty());
+    assert!(ignored.is_empty(), "{ignored:?}");
+    let (_, view) = parse_query_input(
+        &with_transform,
+        QueryInput::Advanced,
+        TODAY,
+        Registry::none(),
+    );
+    assert_eq!(view.sort, vec![(Field::new("priority"), SortDir::Asc)]);
+}
+
+#[test]
+fn gh690_next_lowers_one_direct_journal_reference() {
+    let source = r#"{:query [:find (pull ?h [*]) :in $ ?start ?next :where
+        [?h :block/marker ?marker] [?h :block/ref-pages ?p]
+        [?p :block/journal? true] [?p :block/journal-day ?d]
+        [(> ?d ?start)] [(< ?d ?next)]
+        [(contains? #{"NOW" "LATER" "TODO"} ?marker)]] :inputs [:today :14d-after]}"#;
+    let (query, _, ignored) = advanced_pred(source, None, TODAY);
+    assert!(ignored.is_empty(), "{ignored:?}");
+    assert!(query.unwrap().filter.any_leaf(&mut |leaf| matches!(
+        leaf,
+        crate::query::ir::Leaf::Rel {
+            rel: Rel::DirectRefs,
+            ..
+        }
+    )));
+    for extra in [
+        "[?p :block/name ?name]",
+        "[?other :block/ref-pages ?p]",
+        "[?h :block/scheduled ?d]",
+        "[(unknown ?p)]",
+        "[(unknown ?d)]",
+    ] {
+        let variant = source.replace("[(> ?d ?start)]", &format!("{extra} [(> ?d ?start)]"));
+        let (_, _, ignored) = advanced_pred(&variant, None, TODAY);
+        assert!(!ignored.is_empty(), "must refuse {extra}");
+    }
+}
+
+/// REG-OG-C5-Q-RESULT-TRANSFORM (Martin 2026-10-11): only OG's exact NOW
+/// priority sort is recognised. A transform that changes the result set, its
+/// order otherwise, or the missing-priority default still refuses the query
+/// whole; no transform declared means no sort.
+#[test]
+fn only_ogs_priority_sort_transform_runs() {
+    let vector = r#"[:find (pull ?h [*]) :where [?h :block/marker "TODO"]]"#;
+    let with = |transform: &str| format!("{{:query {vector} :result-transform {transform}}}");
+    for transform in [
+        r#"(fn [result] (sort-by (fn [h] (get h :block/priority "Z")) result))"#,
+        r#"(fn [xs]
+             (sort-by (fn [row] (get row :block/priority "Z")) xs))"#,
+    ] {
+        let src = with(transform);
+        let (lowered, _, ignored) = advanced_pred(&src, None, TODAY);
+        assert!(
+            lowered.is_some() && ignored.is_empty(),
+            "{transform}: {ignored:?}"
+        );
+        let (_, view) = parse_query_input(&src, QueryInput::Advanced, TODAY, Registry::none());
+        assert_eq!(
+            view.sort,
+            vec![(Field::new("priority"), SortDir::Asc)],
+            "{transform}"
+        );
+    }
+    for transform in [
+        r#"(fn [result] (take 1 (sort-by (fn [h] (get h :block/priority "Z")) result)))"#,
+        r#"(fn [result] (reverse (sort-by (fn [h] (get h :block/priority "Z")) result)))"#,
+        r#"(fn [result] (sort-by (fn [h] (get h :block/priority "A")) result))"#,
+        r#"(fn [result] (sort-by (fn [h] (get h :block/priority)) result))"#,
+        r#"(fn [result] (sort-by (fn [h] (get h :block/scheduled "Z")) result))"#,
+        r#"(fn [result] (sort-by (fn [result] (get result :block/priority "Z")) result))"#,
+        r#"(fn [result] (sort-by (fn [h] (get h :block/priority "Z")) other))"#,
+        r#"(fn [result] (filter (fn [h] (get h :block/priority "Z")) result))"#,
+        r#"#(sort-by (fn [h] (get h :block/priority "Z")) %)"#,
+        ":sort-by-priority",
+    ] {
+        let src = with(transform);
+        let (lowered, ran, ignored) = advanced_pred(&src, None, TODAY);
+        assert!(lowered.is_none() && ran.is_empty(), "{transform}");
+        assert_eq!(ignored, vec!["result-transform"], "{transform}");
+    }
+    let (_, view) = parse_query_input(vector, QueryInput::Advanced, TODAY, Registry::none());
+    assert!(view.sort.is_empty());
 }
 
 /// Checkpoint-5 Q (REG-OG-C5-Q-RESULT-TRANSFORM): the refusal fires on a

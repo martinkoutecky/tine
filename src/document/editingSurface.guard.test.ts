@@ -24,7 +24,9 @@ describe("document editing operations", () => {
         .filter((entry) => entry.line.startsWith("startEditing(")),
     );
     // Non-vacuity: this guard is worthless if the scan stops finding the calls.
-    expect(calls.length, "I-12: the startEditing scan of src/document found nothing").toBeGreaterThanOrEqual(5);
+    // (4 since outline-kernel M1: split, merge, indent, outdent; split's two
+    // branches became one kernel answer.)
+    expect(calls.length, "I-12: the startEditing scan of src/document found nothing").toBeGreaterThanOrEqual(4);
     for (const call of calls) {
       expect(
         call.line.split(",").length,

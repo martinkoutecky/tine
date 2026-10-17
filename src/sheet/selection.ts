@@ -1,9 +1,11 @@
+import { shortcutKey } from "../shortcutKey";
+import { msg } from "../i18n";
 import { createRoot, createSignal } from "solid-js";
 import { pushToast } from "../toasts";
 import { clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly, formatForBlock, node as docNode } from "../document";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { graphOwner } from "../owned";
-import { isSheetCellHidden, splitProps } from "../editor/properties";
+import { SHEET_CELL_HIDE, splitProps } from "../editor/properties";
 import {
   registerEditingStartListener,
   registerModeResetListener,
@@ -594,7 +596,7 @@ export function startCellEditing(sel: CellSelInput, offset?: number): boolean {
   if (blockPageReadOnly(blockId)) return false; // org round-trip gate (review finding)
   const node = docNode(blockId);
   if (!node) return false;
-  const visibleLen = splitProps(node.raw, isSheetCellHidden, formatForBlock(blockId)).visible.length;
+  const visibleLen = splitProps(node.raw, SHEET_CELL_HIDE, formatForBlock(blockId)).visible.length;
   setCellSel(scoped);
   startEditing(blockId, offset ?? visibleLen, cellOwner(scoped));
   return true;
@@ -1021,7 +1023,7 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
   const sel = cellSel();
   if (!sel) return false;
   const mod = e.ctrlKey || e.metaKey;
-  const key = e.key.toLowerCase();
+  const key = shortcutKey(e);
   const arrowDir = navDirectionForKey(e.key);
 
   // Sheet-specific chords first — mod/alt combos and Tab are surface commands,
@@ -1046,7 +1048,7 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
   if (mod && !e.altKey && !e.shiftKey && key === "r" && !isSeamSel(sel)) return fillSheetSelection(sel, "right");
   if (mod && !e.altKey && !e.shiftKey && key === "c" && !isSeamSel(sel)) {
     void copySheetSelection(sel)
-      .catch(() => pushToast("Couldn't copy cells: clipboard write failed.", "error"));
+      .catch(() => pushToast(msg("sheet-couldn-t-copy-cells-clipboard-write-failed"), "error"));
     return true;
   }
   if (mod && !e.altKey && !e.shiftKey && key === "x" && !isSeamSel(sel)) {

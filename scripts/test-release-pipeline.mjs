@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import "./test-macos-updater.mjs";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -84,11 +85,11 @@ assert.match(releaseWorkflow,
   /lane: windows-x86[\s\S]*?--target i686-pc-windows-msvc[\s\S]*?rust-targets: "i686-pc-windows-msvc"[\s\S]*?win-arch: x86[\s\S]*?win-exe-dir: target\/i686-pc-windows-msvc\/release/,
   "GH #275: release.yml must retain the Windows x86 cross-build");
 
-assert.equal(layout.allAssets.length, 27, "release layout must retain its exact 27-asset inventory");
-assert.equal(layout.platformAssets.length, 26, "release layout must retain its exact platform-asset inventory");
+assert.equal(layout.allAssets.length, 29, "release layout must retain its exact 29-asset inventory");
+assert.equal(layout.platformAssets.length, 28, "release layout must retain its exact platform-asset inventory");
 assert.equal(
   Object.keys(layout.updaterPlatforms).length,
-  12,
+  14,
   "AppImage update metadata must not add a Tauri updater platform"
 );
 assert.ok(
@@ -133,7 +134,7 @@ assert.match(flatpakWorkflow, /derive-flatpak-identity\.mjs --identity "\$FLATPA
   "the Flatpak workflow must derive its manifest through the identity-aware script");
 assert.match(
   releaseWorkflow,
-  /name: Verify Linux AppImage update information[\s\S]*?\.\/src-tauri\/\$zsync_name[\s\S]*?readelf --string-dump=\.upd_info "\$appimage"[\s\S]*?gh-releases-zsync\|/,
+  /name: Verify Linux AppImage update information[\s\S]*?\.\/src-tauri\/\$zsync_name[\s\S]*?readelf --string-dump=\.upd_info "\$appimage"[\s\S]*?gh-releases-zsync\\\|\|zsync\\\|https:\/\/tine\\\.page\/updates\/beta\//,
   "release workflow verify step must search src-tauri/ for the .zsync (appimagetool writes it into the build CWD) and fail closed when update information is absent"
 );
 assert.match(

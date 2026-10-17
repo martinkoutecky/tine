@@ -2,6 +2,7 @@
 //! host fields, physical draft selection or guarantee history.
 use super::*;
 use crate::page_state::conformance::Oracle;
+use crate::PageId;
 use io::Phase;
 use model_fs::{Fault, ModelFs};
 use serde_json::{json, Value};
@@ -58,62 +59,9 @@ impl ConformanceIo for ModelFs {
     }
 }
 
-const ABSENT: i64 = -1;
-const NONE: i64 = -2;
-const UNKNOWN: i64 = -3;
-
-fn key(p: usize) -> String {
-    format!("{p:04}.md")
-}
-
-/// Pages a model action names through the host: the window's own page,
-/// an operation's endpoints and referrers. External writes, faults and
-/// whole-host actions name none.
-fn named(name: &str, args: &[Value]) -> Vec<usize> {
-    let at = |i: usize| args[i].as_u64().unwrap() as usize;
-    let flag = |i: usize| {
-        args[i]
-            .as_bool()
-            .unwrap_or_else(|| args[i].as_i64() == Some(1))
-    };
-    match name {
-        "wOpen" | "wSend" | "wDiscard" | "wClose" | "wRecv" | "flush" | "observe" | "draftSync"
-        | "wEdit" | "wResolve" | "opDelete" | "flushDel" | "load" => vec![at(0)],
-        "wOp" => vec![at(0), 1 - at(0)],
-        "wOpTo" => vec![at(0), at(1)],
-        "opRename" => {
-            let refs: Vec<usize> = serde_json::from_value(args[2].clone()).unwrap();
-            [at(0), at(1)].into_iter().chain(refs).collect()
-        }
-        "opRenameRaw" | "opRenamePacked" => [at(0), at(1)]
-            .into_iter()
-            .chain((0..3).filter(|&i| flag(2 + i)))
-            .collect(),
-        _ => vec![],
-    }
-}
-
-/// The model page a harness key names.
-fn index(key: &str) -> usize {
-    key.trim_end_matches(".md").parse().unwrap()
-}
-
-fn text(label: i64) -> Text {
-    (label != ABSENT).then(|| Arc::from(label.to_string().into_bytes()))
-}
-
-fn label(bytes: &Text) -> i64 {
-    bytes
-        .as_ref()
-        .map_or(ABSENT, |b| std::str::from_utf8(b).unwrap().parse().unwrap())
-}
-
-fn base(base: &Base) -> i64 {
-    match base {
-        Base::Known(bytes) => label(bytes),
-        Base::Unknown => UNKNOWN,
-    }
-}
+#[path = "conformance_values.rs"]
+mod values;
+use values::*;
 
 #[derive(Clone, Serialize)]
 struct Window {
@@ -145,6 +93,10 @@ struct Driver<F: ConformanceIo = ModelFs> {
     oracle: Oracle,
     windows: Vec<Window>,
     pending_ids: Vec<Option<u64>>,
+    /// The raw version the window held at each admitted Discard, by
+    /// (generation, id): the model's `bv`, which the host's Discard does not
+    /// carry (`upDiscard` never reads it).
+    discard_versions: BTreeMap<(u64, u64), u64>,
     observed: Value,
     versions: BTreeMap<(u64, u64), i64>,
     record_versions: BTreeMap<u64, i64>,
@@ -152,6 +104,13 @@ struct Driver<F: ConformanceIo = ModelFs> {
     profile: String,
     barriers: usize,
     actions: usize,
+    twin_failures: usize,
+    occupied_refusals: usize,
+    queued_refusals: usize,
+    effective_renames: usize,
+    save_kind_refinements: usize,
+    refinement_schedule: bool,
+    twin_suffix: bool,
     stepped: bool,
     prepare_operations: bool,
     effect: Option<(String, Vec<Value>, u64, u64)>,
@@ -185,6 +144,7 @@ impl<F: ConformanceIo> Driver<F> {
             oracle,
             windows: vec![Window::default(); count],
             pending_ids: vec![None; count],
+            discard_versions: BTreeMap::new(),
             observed,
             versions: BTreeMap::new(),
             record_versions: BTreeMap::new(),
@@ -192,6 +152,13 @@ impl<F: ConformanceIo> Driver<F> {
             profile: profile.into(),
             barriers: 0,
             actions: 0,
+            twin_failures: 0,
+            occupied_refusals: 0,
+            queued_refusals: 0,
+            effective_renames: 0,
+            save_kind_refinements: 0,
+            refinement_schedule: false,
+            twin_suffix: false,
             stepped: false,
             prepare_operations: false,
             effect: None,
@@ -219,6 +186,7 @@ impl<F: ConformanceIo> Driver<F> {
                 drafts: h.drafts.clone(),
                 vehicles_of: h.vehicles_of.clone(),
                 durable: h.durable.clone(),
+                live_ops: h.live_ops.clone(),
                 changed: h.changed.clone(),
                 pages: h.pages.clone(),
                 queue: h.queue.clone(),
@@ -240,11 +208,12 @@ impl<F: ConformanceIo> Driver<F> {
                 switch_confirmation: h.switch_confirmation,
                 alive: h.alive,
                 #[cfg(test)]
-                paused: false,
+                test: Default::default(),
             },
             oracle: self.oracle.clone(),
             windows: self.windows.clone(),
             pending_ids: self.pending_ids.clone(),
+            discard_versions: self.discard_versions.clone(),
             observed: self.observed.clone(),
             versions: self.versions.clone(),
             record_versions: self.record_versions.clone(),
@@ -252,6 +221,13 @@ impl<F: ConformanceIo> Driver<F> {
             profile: self.profile.clone(),
             barriers: self.barriers,
             actions: self.actions,
+            twin_failures: self.twin_failures,
+            occupied_refusals: self.occupied_refusals,
+            queued_refusals: self.queued_refusals,
+            effective_renames: self.effective_renames,
+            save_kind_refinements: self.save_kind_refinements,
+            refinement_schedule: self.refinement_schedule,
+            twin_suffix: self.twin_suffix,
             stepped: self.stepped,
             prepare_operations: self.prepare_operations,
             effect: self.effect.clone(),
@@ -415,9 +391,10 @@ impl<F: ConformanceIo> Driver<F> {
                 match &r.kind {
                     RequestKind::Open => {}
                     RequestKind::Close => u["kind"] = json!("close"),
-                    RequestKind::Discard { version } => {
+                    RequestKind::Discard => {
                         u["kind"] = json!("discard");
-                        u["bv"] = json!(self.version(*version));
+                        let version = self.discard_versions[&(r.generation, r.id)];
+                        u["bv"] = json!(self.version(version));
                     }
                     RequestKind::Submit {
                         bytes,
@@ -472,7 +449,7 @@ impl<F: ConformanceIo> Driver<F> {
                 json!({"dst":index(dst),"src":index(src),"vers":vers,"open":open})
             })
             .collect();
-        json!({"alive":self.host.alive,"gates":gates,"disk":disk(&self.host.fs.physical().files),
+        json!({"alive":self.host.alive,"claimed":self.claims(),"gates":gates,"disk":disk(&self.host.fs.physical().files),
             "stable":disk(&self.host.fs.physical().stable),"drafts":records,"pages":pages,
             "mb":mail,"up":up,"job":job,"w":self.windows,
             "trash":trash(&self.host.fs.physical().files),"trashStable":trash(&self.host.fs.physical().stable)})
@@ -548,7 +525,7 @@ impl<F: ConformanceIo> Driver<F> {
         self.barriers += 1;
     }
 
-    fn admit(&mut self, p: usize, kind: RequestKind) {
+    fn admit(&mut self, p: usize, kind: RequestKind) -> u64 {
         let id = self.host.last_admitted + 1;
         if !matches!(kind, RequestKind::Close) {
             self.pending_ids[p] = Some(id);
@@ -566,6 +543,7 @@ impl<F: ConformanceIo> Driver<F> {
             }),
             Disposition::Applied
         );
+        id
     }
 
     /// The binding registers a key when the window opens it or an operation
@@ -642,9 +620,7 @@ impl<F: ConformanceIo> Driver<F> {
                 assert!(applied);
                 return;
             };
-            let application = worker.application.is_some()
-                && matches!(worker.task.stage, Stage::Present | Stage::Absent)
-                && (worker.task.bytes.is_some() || worker.remaining.is_empty());
+            let application = applies_next(worker);
             self.host.advance_draft();
             if application {
                 assert!(!applied);
@@ -658,661 +634,209 @@ impl<F: ConformanceIo> Driver<F> {
         panic!("{name}: nonterminal draft effect");
     }
 
-    fn step(&mut self, name: &str, args: &[Value]) -> bool {
-        if self.prepare_operations
-            && self.host.alive
-            && matches!(
-                name,
-                "opDelete" | "opRename" | "opRenameRaw" | "opRenamePacked"
-            )
-        {
-            let p = args[0].as_u64().unwrap() as usize;
-            if !self.host.pages.contains_key(&key(p)) {
-                assert!(self.step("load", &[json!(p)]));
-            }
-            if name != "opDelete" {
-                let q = args[1].as_u64().unwrap() as usize;
-                let mut needed: BTreeSet<usize> = if name == "opRename" {
-                    serde_json::from_value(args[2].clone()).unwrap()
-                } else {
-                    (0..3)
-                        .filter(|&i| {
-                            args[2 + i]
-                                .as_bool()
-                                .unwrap_or_else(|| args[2 + i].as_i64() == Some(1))
-                                && (name == "opRenameRaw" || i != p && i != q)
-                        })
-                        .collect()
-                };
-                if self.host.pages[&key(p)].buf.is_some() {
-                    needed.insert(q);
-                }
-                for r in needed {
-                    if !self.host.pages.contains_key(&key(r)) {
-                        assert!(self.step("load", &[json!(r)]));
-                    }
-                }
-            }
-        }
-        let successor = self.oracle.next(name, args);
-        if successor.is_none() {
-            return false;
-        }
-        for q in named(name, args) {
-            self.register(q);
-        }
-        let p = args.first().and_then(Value::as_u64).unwrap_or(0) as usize;
-        let v = |i: usize| args[i].as_i64().unwrap();
-        let b = |i: usize| args[i].as_bool().unwrap_or_else(|| v(i) == 1);
-        let old_inc = self.host.incarnation;
-        let old_version = self.host.version;
-        match name {
-            "load" => {
-                assert_eq!(self.host.load(&key(p)), Disposition::Applied);
-            }
-            "wOpen" => {
-                self.windows[p].sent = true;
-                self.admit(p, RequestKind::Open);
-            }
-            "wEdit" => {
-                self.windows[p].text = v(1);
-                self.windows[p].pend = true;
-            }
-            "wSend" | "wResolve" => {
-                let w = self.windows[p].clone();
-                let t = if name == "wResolve" { v(1) } else { w.text };
-                self.windows[p].text = t;
-                self.windows[p].pend = false;
-                self.windows[p].sent = true;
-                self.admit(
-                    p,
-                    RequestKind::Submit {
-                        bytes: text(t),
-                        version: self.raw(w.bv),
-                        resolve: (name == "wResolve").then(|| text(w.obs)),
-                    },
-                );
-            }
-            "wDiscard" => {
-                self.windows[p].pend = false;
-                self.windows[p].sent = true;
-                self.admit(
-                    p,
-                    RequestKind::Discard {
-                        version: self.raw(self.windows[p].bv),
-                    },
-                );
-            }
-            "wClose" => {
-                self.windows[p] = Window::default();
-                self.admit(p, RequestKind::Close);
-            }
-            "wOp" | "wOpTo" => {
-                let (q, ts, td) = if name == "wOp" {
-                    (1 - p, v(1), v(2))
-                } else {
-                    (v(1) as usize, v(2), v(3))
-                };
-                let vs = self.raw(self.windows[p].bv);
-                let vd = self.raw(self.windows[q].bv);
-                self.windows[p].text = ts;
-                self.windows[q].text = td;
-                self.windows[p].sent = true;
-                self.windows[q].sent = true;
-                self.admit(
-                    p,
-                    RequestKind::Move {
-                        receiver: key(q),
-                        source_text: text(ts),
-                        receiver_text: text(td),
-                        source_version: vs,
-                        receiver_version: vd,
-                    },
-                );
-            }
-            "wRecv" => self.receive(p),
-            "deliverUp" => {
-                let kind = self.host.abstract_queue()[0].kind.clone();
-                if !b(0) {
-                    let phase = if matches!(kind, RequestKind::Move { .. }) {
-                        Phase::DraftTemp
-                    } else {
-                        Phase::Read
-                    };
-                    if !matches!(kind, RequestKind::Submit { .. } | RequestKind::Close) {
-                        self.host.fs.physical_mut().inject(phase, [Fault::Before]);
-                    }
-                }
-                if self.host.applying.is_none() {
-                    assert_eq!(self.host.dequeue(), Disposition::Pending);
-                }
-                self.compare("dequeue");
-                self.host.apply_request();
-                if self.host.worker.is_none() {
-                    // rok belongs to this delivery; a held open or a stale
-                    // move performs no read/install and consumes no fault.
-                    self.host.fs.physical_mut().faults.clear();
-                }
-                if self.host.applying.is_some() && self.host.worker.is_some() {
-                    self.compare("install pending");
-                    self.drain(name, args, old_inc, old_version);
-                    return true;
-                }
-            }
-            "observe" => {
-                assert_eq!(self.host.observe(&key(p)), Disposition::Applied);
-            }
-            "flush" | "flushDel" => {
-                assert_eq!(self.host.start_save(&key(p)), Disposition::Pending);
-                self.custody_stutter();
-                if name == "flush" && !self.stepped {
-                    self.host.advance_save(0);
-                }
-            }
-            "check" => {
-                self.host.advance_save(0);
-            }
-            "rename" => {
-                let page = self.host.job.as_ref().unwrap().page.clone();
-                let ep = self
-                    .host
-                    .fs
-                    .physical()
-                    .epochs
-                    .get(&page)
-                    .copied()
-                    .unwrap_or(0);
-                if self.host.job.as_ref().unwrap().phase == SavePhase::Marker {
-                    self.host.advance_save(ep);
-                    self.compare("custody marker");
-                }
-                self.host.advance_save(ep);
-            }
-            "dirSync" => {
-                if self.host.job.as_ref().unwrap().phase == SavePhase::TrashSync {
-                    self.host.advance_save(0);
-                    self.compare("trash sync");
-                }
-                if !b(0) {
-                    // An explicit error wins over graph Unsupported too.
-                    self.host
-                        .fs
-                        .physical_mut()
-                        .inject(Phase::PageSync, [Fault::Before]);
-                }
-                self.host.advance_save(0);
-            }
-            "saveFail" => {
-                let phase = match self.host.job.as_ref().unwrap().phase {
-                    SavePhase::Custody => Phase::TrashSync,
-                    SavePhase::Marker => Phase::CustodyWrite,
-                    SavePhase::Temp => Phase::PageTemp,
-                    SavePhase::Check => Phase::Read,
-                    SavePhase::Rename if self.host.job.as_ref().unwrap().bytes.is_some() => {
-                        Phase::PageRename
-                    }
-                    SavePhase::Rename => Phase::TrashMove,
-                    _ => panic!("late saveFail"),
-                };
-                let fault = self.cut.take().map_or(Fault::Before, Fault::Cut);
-                self.host.fs.physical_mut().inject(phase, [fault]);
-                self.host.advance_save(0);
-            }
-            "draftSync" => {
-                assert_eq!(self.host.begin_draft(&key(p)), Disposition::Pending);
-                self.compare("draft pending");
-                self.drain(name, args, old_inc, old_version);
-                return true;
-            }
-            "opDelete" => {
-                assert_eq!(self.host.delete(&key(p)), Disposition::Pending);
-                self.compare("delete pending");
-                self.drain(name, args, old_inc, old_version);
-                return true;
-            }
-            // R5 (A-W1): the model's `refs` is the implementation's choice of
-            // referrers, which the spec leaves open. The concrete operation
-            // refines `opRename(src, dst, E, rt|E)` for its EFFECTIVE set E
-            // (`Host::rename_refs`): the caller's candidates, less a held one
-            // that is dirty or busy and whose rewrite leaves its buffer
-            // unchanged (untouched: no draft, version or write), plus each
-            // held buffer the rewrite changes. Endpoints and changed refs keep
-            // every model guard (clean, free, version checks, receiver-first
-            // drafting); a dirty or busy ref whose bytes change still refuses
-            // or waits. An empty E with an absent source is the model's
-            // `all3 != Set()` guard failing: a no-op, never an applied step.
-            // Enabled traces have only clean, free refs, so E is the trace's
-            // own `refs` here; the newly enabled concrete schedules are pinned
-            // by `mutation_tests` (R3a) against that effective-set step.
-            "opRename" | "opRenamePacked" | "opRenameRaw" => {
-                let q = v(1) as usize;
-                let refs: BTreeSet<usize> = if name == "opRename" {
-                    serde_json::from_value(args[2].clone()).unwrap()
-                } else {
-                    (0..3)
-                        .filter(|&i| b(2 + i) && (name == "opRenameRaw" || i != p && i != q))
-                        .collect()
-                };
-                let rt: BTreeMap<usize, i64> = if name == "opRename" {
-                    args[3]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|pair| {
-                            (
-                                pair[0].as_u64().unwrap() as usize,
-                                pair[1].as_i64().unwrap(),
-                            )
-                        })
-                        .collect()
-                } else {
-                    (0..3).map(|i| (i, v(5 + i))).collect()
-                };
-                let refkeys = refs.iter().map(|&r| key(r)).collect();
-                assert_eq!(
-                    self.host
-                        .rename_with(&key(p), &key(q), &refkeys, |bytes, k, moving| {
-                            let r = k.trim_end_matches(".md").parse::<usize>().unwrap();
-                            Ok(if !moving && refs.contains(&r) {
-                                text(rt[&r])
-                            } else {
-                                bytes.clone()
-                            })
-                        }),
-                    Disposition::Pending
-                );
-                self.compare("rename pending");
-                self.drain(name, args, old_inc, old_version);
-                return true;
-            }
-            "switchReq" => {
-                assert_eq!(self.host.switch_request(), Disposition::Applied);
-            }
-            "switchFin" => {
-                assert_eq!(
-                    self.host.switch_ready(self.host.last_admitted),
-                    Disposition::Applied
-                );
-                assert_eq!(self.host.switch_finish(), Disposition::Applied);
-                self.windows.fill(Window::default());
-                self.pending_ids.fill(None);
-            }
-            "extWrite" | "extWriteD" => {
+    /// Physical claimant paths are durable external files, separate from the
+    /// canonical page path. Occupancy is read from the filesystem witness.
+    fn claims(&self) -> Vec<usize> {
+        (0..self.windows.len())
+            .filter(|&p| {
                 self.host
                     .fs
-                    .external(&key(p), text(v(1)), name == "extWrite" || b(2));
-            }
-            "windowCrash" => {
-                self.host.window_crash();
-                self.windows.fill(Window::default());
-                self.pending_ids.fill(None);
-            }
-            "crash" => {
-                self.host.fs.crash();
-                self.host.stop();
-                self.fresh_binding();
-                self.windows.fill(Window::default());
-                self.pending_ids.fill(None);
-            }
-            "power" | "powerK" | "powerKBits" => {
-                let keep: BTreeSet<usize> = match name {
-                    "power" => (0..2).filter(|&i| b(i)).collect(),
-                    "powerKBits" => (0..3).filter(|&i| b(i)).collect(),
-                    _ => serde_json::from_value(args[0].clone()).unwrap(),
-                };
-                let keep = keep.into_iter().map(key).collect();
-                self.refine_power_cuts(&keep, &successor.as_ref().unwrap().state()["s"]["trash"]);
-                self.host.fs.power(&keep, false);
-                self.host.stop();
-                self.fresh_binding();
-                self.windows.fill(Window::default());
-                self.pending_ids.fill(None);
-            }
-            // Declared deviations of draft I/O that fails at launch (plan v3
-            // §4, B-Q1); the model's launch (storage-s3.qnt:609-619) always
-            // lists and syncs. Neither is replayed here.
-            // - M1: a drafts directory that cannot be created or listed
-            //   recovers nothing, where the model makes every draft its
-            //   buffer; no vehicle is read or touched, so a later launch
-            //   recovers them (`production_tests::b_q1_a_drafts_directory_
-            //   that_cannot_be_created..`, `b_q1_an_unlistable_drafts_
-            //   directory..`).
-            // - M2: a census launch cannot sync keeps its buffers at risk but
-            //   retires nothing until a Retry's sync, where the model retires
-            //   at once; while draft I/O is down every draft effect fails
-            //   untouched, the model's failed draft write (:446-455), so a
-            //   switch waits as `canSwitch` (:462-467) says (`tests::m2_an_
-            //   unsynced_launch..`, `production_tests::b_q1_m2_..`). Its known
-            //   vehicles stay cleanup debt until that sync: a stop aborts
-            //   naming their pages, where the model has none left
-            //   (REVIEW-3b-P1 R2, `production_tests::review_p1_m2_..`).
-            "launch" => {
-                for recovered in self.host.recovered_keys() {
-                    self.register(index(&recovered));
-                }
-                self.host.launch();
-                self.register_versions(name, args, old_inc);
-                self.finish(name, args);
-                while !self.stepped && self.host.worker.is_some() {
-                    self.host.advance_draft();
-                    self.compare("launch representation");
-                }
-                return true;
-            }
-            _ => panic!("unsupported host action {name}"),
+                    .physical()
+                    .files
+                    .contains_key(&format!("graph/{p:04}.org"))
+            })
+            .collect()
+    }
+
+    /// The binding's C3 predicate on a native projection of readable files.
+    /// The oracle never supplies occupancy or the transaction's answer.
+    fn slot_refusal(
+        &self,
+        eff: &BTreeMap<usize, i64>,
+        plan: &BTreeMap<usize, i64>,
+    ) -> Option<ApplyRefusal> {
+        let creations: Vec<_> = eff
+            .iter()
+            .filter(|(p, t)| **t != ABSENT && plan.get(p) == Some(&ABSENT))
+            .map(|(&p, _)| (crate::FileId::from(format!("pages/{}", key(p))), None, None))
+            .collect();
+        if creations.is_empty() {
+            return None;
         }
-        self.register_versions(name, args, old_inc);
-        self.finish(name, args);
+        let root = tempfile::tempdir().unwrap();
+        native_conformance::write_pages(self.host.fs.physical(), &root.path().join("pages"));
+        let store = crate::Store::open(root.path(), Default::default())
+            .unwrap()
+            .0;
+        let refusal = binding::creation_refusal(&store, &creations);
+        store.close();
+        refusal
+    }
+
+    fn rename_operation(&mut self, name: &str, args: &[Value]) -> Disposition {
+        let p = args[0].as_u64().unwrap() as usize;
+        let q = args[1].as_u64().unwrap() as usize;
+        let refs: BTreeSet<usize> = if name == "opRename" {
+            serde_json::from_value(args[2].clone()).unwrap()
+        } else {
+            (0..3)
+                .filter(|&i| {
+                    args[2 + i]
+                        .as_bool()
+                        .unwrap_or_else(|| args[2 + i].as_i64() == Some(1))
+                        && (name == "opRenameRaw" || i != p && i != q)
+                })
+                .collect()
+        };
+        let rt: BTreeMap<usize, i64> = if name == "opRename" {
+            args[3]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|pair| {
+                    (
+                        pair[0].as_u64().unwrap() as usize,
+                        pair[1].as_i64().unwrap(),
+                    )
+                })
+                .collect()
+        } else {
+            (0..3).map(|i| (i, args[5 + i].as_i64().unwrap())).collect()
+        };
+        let refkeys = refs.iter().map(|&r| key(r)).collect();
+        self.host
+            .rename_with(&key(p), &key(q), &refkeys, |bytes, k, moving| {
+                let r = k.trim_end_matches(".md").parse::<usize>().unwrap();
+                Ok(if !moving && refs.contains(&r) {
+                    text(rt[&r])
+                } else {
+                    bytes.clone()
+                })
+            })
+    }
+
+    fn apply_admission(&mut self, name: &str, args: &[Value]) -> Result<Disposition, ApplyRefusal> {
+        let (eff, plan, dst, src) = apply_args(name, args);
+        let keys = eff.keys().map(|&p| key(p)).collect();
+        let unsaved = binding::unsaved(&self.host, &keys);
+        // Compare the complete production admission set with the independent
+        // oracle, not merely the first page selected for the public refusal.
+        let expected: BTreeSet<_> = eff
+            .keys()
+            .filter(|&&p| {
+                let page = &self.oracle.state()["s"]["pages"][p];
+                page["held"] == true
+                    && (page["typed"] == true
+                        || page["risk"] == true
+                        || page["buf"] != page["base"])
+            })
+            .map(|&p| key(p))
+            .collect();
+        let actual: BTreeSet<_> = unsaved.keys().cloned().collect();
+        assert!(
+            expected.is_subset(&actual),
+            "{name}: production omitted oracle-dirty page"
+        );
+        for &p in eff.keys() {
+            if actual.contains(&key(p)) && !expected.contains(&key(p)) {
+                let state = &self.oracle.state()["s"];
+                assert!(
+                    state["w"][p]["pend"] == true
+                        || state["w"][p]["sent"] == true
+                        || state["up"].as_array().unwrap().iter().any(|u| {
+                            u["p"] == json!(p) || (u["kind"] == "op" && u["q"] == json!(p))
+                        }),
+                    "{name}: production unsaved page outside dirty-or-pending predicate"
+                );
+            }
+        }
+        if let Some(page) = unsaved.into_values().next() {
+            return Err(ApplyRefusal::Unsaved(page));
+        }
+        if let Some(refusal) = self.slot_refusal(&eff, &plan) {
+            return Err(refusal);
+        }
+        let effects = eff
+            .iter()
+            .map(|(&p, &t)| (key(p), (text(t), text(plan[&p]))))
+            .collect();
+        let ends = (dst != NONE).then(|| (key(dst as usize), key(src as usize)));
+        let moved = ends.as_ref().map(|(d, s)| (d.as_str(), s.as_str()));
+        match self.host.apply(&effects, moved) {
+            Disposition::Refused | Disposition::Disabled => Err(ApplyRefusal::Changed),
+            Disposition::Waiting => Err(ApplyRefusal::Busy),
+            disposition => Ok(disposition),
+        }
+    }
+
+    // The window side is the existing synthetic adapter, not native frontend
+    // conformance. Submit only when that adapter's current window permits it.
+    fn submit_input(&mut self, p: usize, resolve: Option<i64>) -> bool {
+        let w = self.windows[p].clone();
+        if !self.host.alive || !w.on || w.sent || if resolve.is_some() { !w.conf } else { !w.pend }
+        {
+            return false;
+        }
+        let t = resolve.unwrap_or(w.text);
+        self.windows[p].text = t;
+        self.windows[p].pend = false;
+        self.windows[p].sent = true;
+        self.admit(
+            p,
+            RequestKind::Submit {
+                bytes: text(t),
+                version: self.raw(w.bv),
+                // NONE is the model's absent resolution token, not bytes.
+                resolve: resolve.and_then(|_| (w.obs != NONE).then(|| text(w.obs))),
+            },
+        );
         true
     }
 
-    fn finish(&mut self, name: &str, args: &[Value]) {
-        let before = self.observed.clone();
-        let actual = self.abstract_state();
-        let mut after = json!({"s":actual,"g":before["g"]});
-        let actual = after["s"].clone();
-        let g = &mut after["g"];
-        g["vc"] = json!(self.counter);
-        let p = args.first().and_then(Value::as_u64).unwrap_or(0) as usize;
-        let mut tag = name;
-        let mut mine = BTreeSet::<usize>::new();
-        let pairset = |value: &Value| -> BTreeSet<(usize, i64)> {
-            serde_json::from_value(value.clone()).unwrap()
+    fn edit_input(&mut self, p: usize, text: i64) -> bool {
+        if !self.host.alive || !self.windows[p].on || self.windows[p].text == text {
+            return false;
+        }
+        self.windows[p].text = text;
+        self.windows[p].pend = true;
+        true
+    }
+
+    fn move_input(&mut self, p: usize, q: usize, ts: i64, td: i64) -> bool {
+        let a = &self.windows[p];
+        let Some(b) = self.windows.get(q) else {
+            return false;
         };
-        let mut owed = pairset(&g["owed"]);
-        // s3.2 order ghost: obligations a full rename records, retired by
-        // the dependency's Published or a Discard; a save start checks them.
-        let mut obl: BTreeSet<(usize, usize, i64, usize)> =
-            serde_json::from_value(g["obl"].clone()).unwrap();
-        let mut renamed: BTreeSet<(usize, usize)> =
-            serde_json::from_value(g["renamed"].clone()).unwrap();
-        let mut order_ok = g["orderOk"].as_bool().unwrap();
-        match name {
-            "wSend" | "wResolve" => {
-                owed.insert((p, self.windows[p].text));
-                if name == "wResolve" {
-                    insert(&mut g["seen"][p], json!(before["s"]["w"][p]["obs"]));
-                }
-            }
-            "wOp" | "wOpTo" => {
-                let q = if name == "wOp" {
-                    1 - p
-                } else {
-                    args[1].as_u64().unwrap() as usize
-                };
-                owed.extend([(p, self.windows[p].text), (q, self.windows[q].text)]);
-                tag = "wOp";
-            }
-            "wRecv" => {
-                if before["s"]["mb"][p]["ack"].as_i64().unwrap() >= 0
-                    && before["s"]["w"][p]["sent"] == true
-                {
-                    tag = "wAck";
-                }
-            }
-            "deliverUp" => {
-                let u = &before["s"]["up"][0];
-                let p = u["p"].as_u64().unwrap() as usize;
-                let kind = u["kind"].as_str().unwrap();
-                match kind {
-                    "submit" => {
-                        let resolve = u["ro"].as_i64().unwrap() != NONE;
-                        let stale = !resolve && u["bv"] != before["s"]["pages"][p]["ver"];
-                        owed.remove(&(p, u["t"].as_i64().unwrap()));
-                        if !stale {
-                            mine.insert(p);
-                        }
-                        tag = if resolve {
-                            "uResolve"
-                        } else if stale {
-                            "uStale"
-                        } else {
-                            "uSubmit"
-                        };
-                    }
-                    "op" => {
-                        let q = u["q"].as_u64().unwrap() as usize;
-                        owed.remove(&(p, u["t"].as_i64().unwrap()));
-                        owed.remove(&(q, u["t2"].as_i64().unwrap()));
-                        let took = actual["pages"][p]["ver"] != before["s"]["pages"][p]["ver"];
-                        if took {
-                            mine.extend([p, q]);
-                            tag = "uOp";
-                        } else {
-                            tag = "uOpRefused";
-                        }
-                    }
-                    "discard" => {
-                        // A running rename's unwitnessed destination: its
-                        // Discard may also revert the source.
-                        let partner = before["s"]["gates"]
-                            .as_array()
-                            .unwrap()
-                            .iter()
-                            .find(|gt| {
-                                gt["dst"] == p && gt["open"].as_array().unwrap().contains(&json!(p))
-                            })
-                            .map(|gt| gt["src"].as_u64().unwrap() as usize);
-                        if actual["pages"][p]["ver"] != before["s"]["pages"][p]["ver"] {
-                            for p in [Some(p), partner].into_iter().flatten() {
-                                let page = &actual["pages"][p];
-                                if page["ver"] == before["s"]["pages"][p]["ver"] {
-                                    continue;
-                                }
-                                mine.insert(p);
-                                let pr = &g["promise"][p];
-                                let live = pr["on"] == true
-                                    && !(pr["saved"] == true
-                                        && g["ext"][p].as_i64().unwrap()
-                                            > pr["ep"].as_i64().unwrap());
-                                if !live || pr["bytes"] != page["buf"] {
-                                    g["promise"][p]["on"] = json!(false);
-                                    g["promise"][p]["ver"] = page["ver"].clone();
-                                }
-                            }
-                            let cancels = obl.iter().any(|o| o.1 == p && o.3 == p);
-                            obl.retain(|o| !(o.0 == p || o.1 == p || (cancels && o.3 == p)));
-                            tag = "uDiscard";
-                        } else {
-                            tag = "uDiscardFail";
-                        }
-                    }
-                    "open" => tag = "uOpen",
-                    "close" => tag = "uClose",
-                    _ => panic!("unknown request"),
-                }
-            }
-            "opDelete" | "opRename" | "opRenamePacked" | "opRenameRaw" => {
-                for i in 0..self.windows.len() {
-                    if before["s"]["pages"][i] != actual["pages"][i] {
-                        mine.insert(i);
-                    }
-                }
-                let ends = if name == "opDelete" {
-                    vec![p]
-                } else {
-                    vec![p, args[1].as_u64().unwrap() as usize]
-                };
-                renamed.retain(|r| !(ends.contains(&r.0) || ends.contains(&r.1)));
-                // A full rename installed its order: the obligations follow
-                // the host's own gate, so a missing or misversioned gate
-                // diverges from the model's ghost.
-                let gates = actual["gates"].as_array().unwrap();
-                if name != "opDelete"
-                    && gates.len() > before["s"]["gates"].as_array().unwrap().len()
-                {
-                    let gt = gates.last().unwrap();
-                    let (src, dst) = (p, ends[1]);
-                    assert_eq!(
-                        (gt["src"].as_u64(), gt["dst"].as_u64()),
-                        (Some(src as u64), Some(dst as u64))
-                    );
-                    let ver = |k: usize| gt["vers"][k].as_i64().unwrap();
-                    let open: BTreeSet<usize> = serde_json::from_value(gt["open"].clone()).unwrap();
-                    for &r in open.iter().filter(|&&r| r != src && r != dst) {
-                        obl.insert((r, dst, ver(dst), dst));
-                        obl.insert((src, r, ver(r), dst));
-                    }
-                    obl.insert((src, dst, ver(dst), dst));
-                    if before["s"]["disk"][src] != ABSENT {
-                        renamed.insert((src, dst));
-                    }
-                }
-            }
-            "flush" | "flushDel" => {
-                order_ok = order_ok && !obl.iter().any(|o| o.0 == p);
-            }
-            "check" => {
-                g["guard"] = json!(self.host.job.is_some());
-            }
-            "rename" => {
-                let j = &before["s"]["job"];
-                let p = j["p"].as_u64().unwrap() as usize;
-                if g["guard"] != true
-                    || (before["s"]["disk"][p] != j["base"]
-                        && !matches!(self.profile.as_str(), "R1" | "all"))
-                {
-                    insert(&mut g["bad"], json!("C-overwrote-external"));
-                }
-                let seen = g["seen"][p].as_array().unwrap().contains(&j["base"]);
-                let wrote = g["wrote"][p]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|w| w[0] == j["base"]);
-                let read = g["opRead"][p].as_array().unwrap().contains(&j["base"]);
-                if g["guard"] == true && j["bytes"] != j["base"] && !seen && !wrote && !read {
-                    insert(&mut g["bad"], json!("G-overwrote-unseen"));
-                }
-                g["guard"] = json!(false);
-            }
-            "saveFail" => g["guard"] = json!(false),
-            "extWrite" | "extWriteD" => {
-                renamed.retain(|r| r.0 != p && r.1 != p);
-                g["ext"][p] = json!(self.host.fs.physical().epochs[&key(p)]);
-                tag = "extWrite";
-            }
-            "crash" | "switchFin" | "power" | "powerK" | "powerKBits" => {
-                owed.clear();
-                obl.clear();
-                renamed.clear();
-                g["guard"] = json!(false);
-                if name.starts_with("power") {
-                    tag = "power";
-                    for i in 0..self.windows.len() {
-                        let kept = match name {
-                            "power" => {
-                                i < 2
-                                    && args[i]
-                                        .as_bool()
-                                        .unwrap_or_else(|| args[i].as_i64() == Some(1))
-                            }
-                            "powerKBits" => args[i].as_i64() == Some(1),
-                            _ => args[0].as_array().unwrap().contains(&json!(i)),
-                        };
-                        if !kept {
-                            g["removed"][i] = g["delDurable"][i].clone();
-                        }
-                        let pr = &g["promise"][i];
-                        if matches!(self.profile.as_str(), "weak" | "all")
-                            && pr["on"] == true
-                            && pr["saved"] == true
-                            && actual["disk"][i] != pr["bytes"]
-                            && actual["drafts"][i]["bytes"] != pr["bytes"]
-                        {
-                            g["promise"][i]["on"] = json!(false);
-                        }
-                    }
-                }
-            }
-            _ => {}
+        if !self.host.alive
+            || p == q
+            || !a.on
+            || !b.on
+            || a.pend
+            || a.sent
+            || b.pend
+            || b.sent
+            || ts == a.text
+            || td == b.text
+        {
+            return false;
         }
-        for event in std::mem::take(&mut self.host.events) {
-            match event {
-                Event::Renamed {
-                    page,
-                    bytes,
-                    version,
-                } => {
-                    let p = index(&page);
-                    insert(
-                        &mut g["wrote"][p],
-                        json!([label(&bytes), self.version(version)]),
-                    );
-                }
-                Event::Draft(r) => {
-                    let p = index(&r.page);
-                    let v = self.record_versions[&r.wseq];
-                    insert(&mut g["wrote"][p], json!([label(&r.bytes), v]));
-                    promise(&mut g["promise"][p], label(&r.bytes), v, false, 0);
-                }
-                Event::Published {
-                    page,
-                    bytes,
-                    version,
-                    epoch,
-                } => {
-                    let p = index(&page);
-                    let v = self.version(version);
-                    obl.retain(|o| !(o.1 == p && v >= o.2));
-                    promise(&mut g["promise"][p], label(&bytes), v, true, epoch);
-                }
-                Event::Removed { page, bytes } => {
-                    let p = index(&page);
-                    insert(&mut g["removed"][p], json!(label(&bytes)));
-                }
-                Event::DeleteDurable { page, .. } => {
-                    let p = index(&page);
-                    // The physical witness may leave surplus durable trash.
-                    // Model dirSync L431/L439 certifies deletion only while
-                    // its path still contains the job's absent payload. This
-                    // is a test-side projection, never another host path read.
-                    if !self
-                        .host
-                        .fs
-                        .physical()
-                        .files
-                        .contains_key(&format!("graph/{page}"))
-                    {
-                        g["delDurable"][p] = g["removed"][p].clone();
-                    }
-                }
-                Event::CustodyError { page, payload } => {
-                    let k = format!("trash/{page}/{payload}");
-                    if let Some(bytes) = self.host.fs.physical().files.get(&k) {
-                        self.escaped.insert(k, label(&Some(bytes.clone())));
-                    }
-                }
-                Event::OperationRead { page, base: read } => {
-                    let p = index(&page);
-                    insert(&mut g["opRead"][p], json!(base(&read)));
-                }
-                _ => {}
-            }
-        }
-        g["mine"] = json!(mine);
-        g["owed"] = json!(owed);
-        g["obl"] = json!(obl);
-        g["renamed"] = json!(renamed);
-        g["orderOk"] = json!(order_ok);
-        let instrumented = self.oracle.observed_commit(&before, &after, tag);
-        // Keep the actual outbox; instrumentation is allowed to evaluate
-        // guarantee predicates, never to manufacture a host push.
-        after["g"] = instrumented["g"].clone();
-        self.observed = after;
-        self.oracle = self.oracle.next(name, args).unwrap();
-        self.compare(name);
-        assert_eq!(
-            self.observed["g"],
-            self.oracle.state()["g"],
-            "{name}/observed ghosts"
+        let vs = self.raw(a.bv);
+        let vd = self.raw(b.bv);
+        self.windows[p].text = ts;
+        self.windows[q].text = td;
+        self.windows[p].sent = true;
+        self.windows[q].sent = true;
+        self.admit(
+            p,
+            RequestKind::Move {
+                receiver: key(q),
+                source_text: text(ts),
+                receiver_text: text(td),
+                source_version: vs,
+                receiver_version: vd,
+            },
         );
-        assert!(
-            self.oracle.observed_guarantee(&self.observed),
-            "{name}/guarantee"
-        );
-        self.saves_start_only_where_the_model_may();
-        self.actions += 1;
+        true
     }
 
     /// The host never starts a save the model forbids (s3.2: a gated page's
@@ -1338,7 +862,7 @@ impl<F: ConformanceIo> Driver<F> {
     /// (A4 rule 4): Custody and Temp are both abstract phase 1.
     fn custody_stutter(&mut self) {
         if self.host.job.as_ref().unwrap().phase == SavePhase::Custody {
-            self.host.advance_save(0);
+            self.host.advance_save();
         }
     }
 
@@ -1371,13 +895,39 @@ impl<F: ConformanceIo> Driver<F> {
                 }
                 "fail" => {
                     let Some(mut probe) = self.fork() else {
+                        if op[1].as_array().is_some_and(|ops| ops.len() == 1)
+                            && op[1][0][0] == "action"
+                            && matches!(
+                                op[1][0][1].as_str(),
+                                Some("opApply" | "planCreate" | "opDelete" | "opRename")
+                            )
+                        {
+                            let before = self.abstract_state();
+                            let outcome = self.program(op[1].as_array().unwrap());
+                            if outcome == Err("effective-rename-refinement") {
+                                return outcome;
+                            }
+                            if outcome != Err("disabled") {
+                                return Err("false");
+                            }
+                            assert_eq!(
+                                self.abstract_state(),
+                                before,
+                                "native refusal changed state"
+                            );
+                            continue;
+                        }
                         return Err("unsupported-native-probe");
                     };
-                    if probe.program(op[1].as_array().unwrap()).is_ok() {
+                    let outcome = probe.program(op[1].as_array().unwrap());
+                    self.effective_renames = probe.effective_renames;
+                    if outcome.is_ok() {
                         return Err("false");
                     }
                 }
                 "action" => {
+                    let twin_failures = self.twin_failures;
+                    let effective_renames = self.effective_renames;
                     let args: Vec<_> = op[2]
                         .as_array()
                         .unwrap()
@@ -1405,6 +955,14 @@ impl<F: ConformanceIo> Driver<F> {
                     if !self.step(op[1].as_str().unwrap(), &args) {
                         return Err("disabled");
                     }
+                    if self.twin_failures > twin_failures {
+                        // The complete saveFail successor was compared. The
+                        // scripted publication suffix belongs to another choice.
+                        return Err("twin-saveFail-refinement");
+                    }
+                    if self.effective_renames > effective_renames {
+                        return Err("effective-rename-refinement");
+                    }
                 }
                 _ => panic!("unsupported program opcode {op}"),
             }
@@ -1415,6 +973,8 @@ impl<F: ConformanceIo> Driver<F> {
 
 #[path = "scheduler.rs"]
 mod scheduler;
+#[path = "conformance_step.rs"]
+mod step;
 #[path = "conformance_tests.rs"]
 mod tests;
 
@@ -1427,27 +987,18 @@ fn run(d: &mut Driver, actions: &[(&str, Value)]) {
     }
 }
 
-fn insert(set: &mut Value, value: Value) {
-    let mut values = set.as_array().unwrap().clone();
-    if !values.contains(&value) {
-        values.push(value);
-    }
-    // All set values here are numbers, pairs or tags. Use numeric order for
-    // pairs so crossing the diagnostic version bounds remains correct.
-    values.sort_by(|a, b| match (a, b) {
-        (Value::Number(a), Value::Number(b)) => a.as_i64().cmp(&b.as_i64()),
-        (Value::Array(a), Value::Array(b)) => a
-            .iter()
-            .map(|v| v.as_i64().unwrap())
-            .cmp(b.iter().map(|v| v.as_i64().unwrap())),
-        _ => a.to_string().cmp(&b.to_string()),
-    });
-    *set = json!(values);
-}
-
-fn promise(pr: &mut Value, bytes: i64, ver: i64, saved: bool, ep: u64) {
-    let old = pr["ver"].as_i64().unwrap();
-    if ver > old || (ver == old && pr["on"] == true && saved && pr["saved"] == false) {
-        *pr = json!({"on":true,"bytes":bytes,"ver":ver,"saved":saved,"ep":ep});
-    }
+/// Whether the worker's next advance applies its effect: a removal only at
+/// its last vehicle step, after the copies an operation vehicle it retires
+/// owes its other pages (RENAME-COST L2); anything else at its first
+/// vehicle's terminal. A failed copy is rewritten first (`advance_draft`).
+pub(super) fn applies_next(worker: &DraftWorker) -> bool {
+    let removal = matches!(
+        worker.application,
+        Some(Application::Removal | Application::Retire)
+    );
+    let retry = worker.retry_copy && worker.task.stage == Stage::Absent;
+    worker.application.is_some()
+        && matches!(worker.task.stage, Stage::Present | Stage::Absent)
+        && !(retry && worker.task.bytes.is_some())
+        && (worker.remaining.is_empty() || !removal && worker.task.bytes.is_some())
 }

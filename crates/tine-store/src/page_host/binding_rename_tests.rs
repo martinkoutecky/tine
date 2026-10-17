@@ -19,10 +19,14 @@ fn rename(
 ) -> Result<(Vec<PageId>, Vec<PageId>), RenameRefusal> {
     for _ in 0..20 {
         let view = live.store.whole_graph().unwrap();
-        match live
-            .host
-            .rename(source, target, referrers, map, &view, &|_, _, _| None)
-        {
+        match live.host.rename(
+            source,
+            target,
+            referrers,
+            map,
+            &view,
+            Arc::new(|_: &PageId, _: &[u8], _| None),
+        ) {
             Err(RenameRefusal::Refused) => continue,
             done => return done,
         }
@@ -113,14 +117,8 @@ fn host_rename_and_delete_publish_their_edit_kinds() {
     ];
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     let kinds = loop {
-        let kinds: BTreeMap<PageKey, Vec<EditKind>> = live
-            .host
-            .published_kinds
-            .lock()
-            .unwrap()
-            .iter()
-            .cloned()
-            .collect();
+        let kinds: BTreeMap<PageKey, Vec<EditKind>> =
+            live.kinds.lock().unwrap().iter().cloned().collect();
         if expected.iter().all(|(key, _)| kinds.contains_key(*key)) {
             break kinds;
         }
@@ -242,16 +240,18 @@ fn q4_a_case_only_rename_to_an_absent_entry_recovers_after_a_crash() {
             store,
             host,
             mail,
+            kinds,
             ..
         } = live;
         drop(host);
-        let host = PageHost::start(&store, &app, "test-graph", |_| {}).unwrap();
+        let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), |_| {}).unwrap();
         let live = Live {
             _dir,
             root,
             store,
             host,
             mail,
+            kinds,
             id: std::cell::Cell::new(100),
         };
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -334,9 +334,25 @@ fn an_alias_spelling_is_refused_for_a_respell_that_keeps_the_page() {
     live.host.stop();
 }
 
+/// The spelling lookups and registered-key visits counted on this thread.
+fn counted() -> (usize, usize) {
+    let lookups = super::super::production::SPELLING_LOOKUPS.with(|n| n.get());
+    (lookups, super::super::KEY_VISITS.with(|n| n.get()))
+}
+
+fn uncount() {
+    super::super::production::SPELLING_LOOKUPS.with(|n| n.set(0));
+    super::super::KEY_VISITS.with(|n| n.set(0));
+}
+
 /// A-R5 (D-10): a reservation's key lookup and a single-page rename cost
 /// the same however many keys the binding registered before (keys are
-/// never unregistered): no step walks every registered key.
+/// never unregistered): no step walks every registered key. The counters
+/// are per thread: the caller's and the driver's, where the host's work
+/// runs (host-only-writer P1), are summed. The driver's also count the
+/// steps it runs meanwhile (the reservation's release observation, the
+/// rename's saves), a few more or fewer by timing; a walk over every key
+/// would add at least one per extra key.
 #[test]
 fn rename_and_reserve_cost_is_independent_of_registered_keys() {
     let cost = |registered: usize| {
@@ -346,10 +362,11 @@ fn rename_and_reserve_cost_is_independent_of_registered_keys() {
         ]);
         for n in 0..registered {
             let page = PageId::from(format!("pages/k{n}.md").as_str());
-            live.host.register(page.as_str(), &page);
+            live.host.try_register(page.as_str(), &page).unwrap();
         }
-        super::super::production::SPELLING_LOOKUPS.with(|n| n.set(0));
-        super::super::KEY_VISITS.with(|n| n.set(0));
+        let shared = &live.host.driver.shared;
+        uncount();
+        shared.call(|_| uncount()).unwrap();
         drop(
             live.host
                 .reserve(|| vec![PageId::from("pages/r.md")], Input::Refuse)
@@ -363,17 +380,17 @@ fn rename_and_reserve_cost_is_independent_of_registered_keys() {
                 &[PageId::from("pages/r.md")],
                 &map("Old", "New"),
                 &view,
-                &|_, _, _| None,
+                Arc::new(|_: &PageId, _: &[u8], _| None),
             )
             .unwrap();
-        let lookups = super::super::production::SPELLING_LOOKUPS.with(|n| n.get());
-        let visits = super::super::KEY_VISITS.with(|n| n.get());
+        let (caller, driver) = (counted(), shared.read(|_| counted()).unwrap());
         live.host.stop();
-        (lookups, visits)
+        (caller.0 + driver.0, caller.1 + driver.1)
     };
     let (few, many) = (cost(10), cost(400));
-    assert_eq!(
-        few, many,
+    let extra = 400 - 10;
+    assert!(
+        many.0 < few.0 + extra && many.1 < few.1 + extra,
         "A-R5/D-10: a reserve plus a one-page rename cost (spelling lookups, registered-key \
          visits) {few:?} with 10 registered keys and {many:?} with 400; exemplars binding.rs \
          key_spelled and operations.rs rename_with's version allocation"
@@ -636,7 +653,7 @@ fn a_rename_refusal_names_a_fresh_key_referrer_by_its_spelling() {
 
 /// The host page `key` as the driver holds it now.
 fn held_page(live: &Live, key: &str) -> Option<Page> {
-    let state = live.host.driver.shared.state.lock().unwrap();
+    let state = live.host.driver.shared.state_for_tests();
     state.progress.host.pages.get(key).cloned()
 }
 
@@ -694,7 +711,7 @@ fn a_rename_leaves_an_unsaved_referrer_that_already_says_the_new_name() {
         } else {
             assert!(!live.root.join("pages/New.md").exists());
         }
-        let kinds = live.host.published_kinds.lock().unwrap().clone();
+        let kinds = live.kinds.lock().unwrap().clone();
         assert!(
             !kinds.iter().any(|(page, _)| page == "journals/m.md"),
             "{source}: {kinds:?}"
@@ -727,7 +744,7 @@ fn a_held_referrer_the_planner_missed_is_part_of_the_rename() {
     assert_eq!(live.disk("pages/h.md"), "- see [[New]]\n");
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        let kinds = live.host.published_kinds.lock().unwrap().clone();
+        let kinds = live.kinds.lock().unwrap().clone();
         if kinds
             .iter()
             .any(|(page, kinds)| page == "pages/h.md" && kinds == &[EditKind::RenamePage])
@@ -766,7 +783,7 @@ fn a_rename_planned_before_a_config_change_is_refused_unwritten() {
         &[PageId::from("pages/r.md")],
         &map("Old", "New"),
         &view,
-        &|_, _, _| None,
+        Arc::new(|_: &PageId, _: &[u8], _| None),
     );
     assert_eq!(renamed, Err(RenameRefusal::Refused));
     assert_eq!(live.disk("pages/Old.md"), "- old\n");
@@ -783,5 +800,130 @@ fn a_rename_planned_before_a_config_change_is_refused_unwritten() {
         ),
         Ok((vec![PageId::from("pages/r.md")], vec![]))
     );
+    live.host.stop();
+}
+
+/// The caller's bound is on a stall, not the operation (storage contract,
+/// page host binding, the caller's wait): a rename whose pages save one by
+/// one over more than `OPERATION_WAIT` in all, each well within it of the
+/// last, is waited for and answered Applied (hosted Windows: a thousand
+/// referrers outlast 10 s).
+#[test]
+fn a_long_rename_that_keeps_publishing_is_waited_for() {
+    use super::super::retained::OPERATION_WAIT;
+    let referrers: Vec<String> = (0..3).map(|i| format!("pages/r{i}.md")).collect();
+    let mut files = vec![("pages/Old.md", "- old\n")];
+    files.extend(
+        referrers
+            .iter()
+            .map(|key| (key.as_str(), "- see [[Old]]\n")),
+    );
+    let live = Live::new(&files);
+    let ids: Vec<PageId> = referrers
+        .iter()
+        .map(|key| PageId::from(key.as_str()))
+        .collect();
+    // Four page saves (the destination, three referrers), each a third of
+    // the bound: the whole outlasts it, no gap between saves comes near it.
+    live.host.driver.shared.with_state_for_tests(|state| {
+        state
+            .progress
+            .host
+            .fs
+            .delays
+            .insert(super::io::Phase::PageTemp, OPERATION_WAIT / 3);
+    });
+    let started = Instant::now();
+    let renamed = rename(
+        &live,
+        &PageId::from("pages/Old.md"),
+        &PageId::from("pages/New.md"),
+        &ids,
+        &map("Old", "New"),
+    );
+    assert!(
+        started.elapsed() > OPERATION_WAIT,
+        "the rename outlasted the bound"
+    );
+    assert_eq!(
+        renamed,
+        Ok((ids, vec![])),
+        "a rename that keeps publishing is waited for"
+    );
+    for key in &referrers {
+        assert_eq!(live.disk(key), "- see [[New]]\n");
+    }
+    assert!(!live.root.join("pages/Old.md").exists());
+    live.host.stop();
+}
+
+/// host-only-writer P1 (review F4): a host whose driver ended refuses each
+/// operation as a stopped host does; none panics.
+#[test]
+fn every_operation_on_an_ended_driver_is_refused() {
+    let mut live = Live::new(&[("pages/Old.md", "- body\n")]);
+    let session = live.host.session();
+    let view = live.store.whole_graph().unwrap();
+    live.host.driver.join();
+    assert!(live.host.driver.shared.ended());
+    let old = PageId::from("pages/Old.md");
+    let opened = live.host.open(session, 1, &old, "Old").err();
+    assert_eq!(opened, Some(PageRefusal::NotAdmitted), "open");
+    let deleted = live.host.delete(session, &old, b"- body\n");
+    assert_eq!(deleted, PageOperation::Refused, "delete");
+    assert_eq!(live.host.owed(session, Some(&[old.clone()])), None, "owed");
+    let renamed = live.host.rename(
+        &old,
+        &PageId::from("pages/New.md"),
+        &[],
+        &map("Old", "New"),
+        &view,
+        Arc::new(|_: &PageId, _: &[u8], _| None),
+    );
+    assert_eq!(renamed.err(), Some(RenameRefusal::Refused), "rename");
+}
+
+/// host-only-writer P1 (§3.2a deltas): a rename or a delete whose page's
+/// path lock another thread holds is not admitted past `OPERATION_WAIT`.
+/// The rename refuses `Busy` and the delete answers `Waiting`; nothing
+/// changed on disk. Before P1 both blocked on the lock without a bound.
+#[test]
+fn a_rename_or_delete_under_a_held_path_lock_is_bounded() {
+    use super::super::retained::OPERATION_WAIT;
+    let live = Live::new(&[("pages/Old.md", "- body\n"), ("pages/Gone.md", "- gone\n")]);
+    let session = live.host.session();
+    let view = live.store.whole_graph().unwrap();
+    let graph = &live.store.graph;
+    let old_lock = graph.page_lock(&live.root.join("pages/Old.md"));
+    let gone_lock = graph.page_lock(&live.root.join("pages/Gone.md"));
+    let held = (old_lock.lock().unwrap(), gone_lock.lock().unwrap());
+    let started = Instant::now();
+    let (renamed, deleted) = std::thread::scope(|scope| {
+        let renamed = scope.spawn(|| {
+            live.host.rename(
+                &PageId::from("pages/Old.md"),
+                &PageId::from("pages/New.md"),
+                &[],
+                &map("Old", "New"),
+                &view,
+                Arc::new(|_: &PageId, _: &[u8], _| None),
+            )
+        });
+        let gone = PageId::from("pages/Gone.md");
+        let host = &live.host;
+        let deleted = scope.spawn(move || host.delete(session, &gone, b"- gone\n"));
+        (renamed.join().unwrap(), deleted.join().unwrap())
+    });
+    let waited = started.elapsed();
+    drop(held);
+    assert!(
+        waited < OPERATION_WAIT + Duration::from_secs(3),
+        "bounded: {waited:?}"
+    );
+    assert_eq!(renamed.err(), Some(RenameRefusal::Busy), "rename");
+    assert_eq!(deleted, PageOperation::Waiting, "delete");
+    assert_eq!(live.disk("pages/Old.md"), "- body\n");
+    assert_eq!(live.disk("pages/Gone.md"), "- gone\n");
+    assert!(!live.root.join("pages/New.md").exists());
     live.host.stop();
 }

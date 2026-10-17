@@ -7,7 +7,7 @@
 //
 // Steps:
 //   1. Read the lsdoc git tag from crates/tine-core/Cargo.toml (the single source
-//      of truth) and from crates/lsdoc-wasm/Cargo.toml; REFUSE if they differ
+//      of truth), crates/tine-outline/Cargo.toml and crates/lsdoc-wasm/Cargo.toml; REFUSE if they differ
 //      (the stale-wasm / forgot-to-bump guard, plan §7D).
 //   2. wasm-pack build --target web (release), LSDOC_TAG stamped in.
 //   3. Base64-encode the .wasm into src/render/wasm/lsdoc_wasm_bytes.ts and copy
@@ -31,17 +31,19 @@ function lsdocTag(cargoTomlRelPath) {
 }
 
 const coreTag = lsdocTag("crates/tine-core/Cargo.toml");
+const outlineTag = lsdocTag("crates/tine-outline/Cargo.toml");
 const wrapTag = lsdocTag("crates/lsdoc-wasm/Cargo.toml");
-if (coreTag !== wrapTag) {
+if (coreTag !== wrapTag || coreTag !== outlineTag) {
   console.error(
     `\n  lsdoc pin mismatch (plan §7D guard):\n` +
-      `    crates/tine-core/Cargo.toml  -> ${coreTag}\n` +
-      `    crates/lsdoc-wasm/Cargo.toml -> ${wrapTag}\n` +
-      `  Bump both to the same tag before regenerating the wasm.\n`,
+      `    crates/tine-core/Cargo.toml    -> ${coreTag}\n` +
+      `    crates/tine-outline/Cargo.toml -> ${outlineTag}\n` +
+      `    crates/lsdoc-wasm/Cargo.toml   -> ${wrapTag}\n` +
+      `  Bump all three to the same tag before regenerating the wasm.\n`,
   );
   process.exit(1);
 }
-console.log(`lsdoc pin: ${coreTag} (tine-core == lsdoc-wasm ✓)`);
+console.log(`lsdoc pin: ${coreTag} (tine-core == tine-outline == lsdoc-wasm ✓)`);
 
 const tmp = mkdtempSync(join(tmpdir(), "lsdoc-wasm-"));
 console.log(`wasm-pack build → ${tmp}`);

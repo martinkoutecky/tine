@@ -15,7 +15,10 @@ use tine_store::{
 
 /// Run `work` on the binding's running host, under the slot's host read
 /// lock: a restore (S8) or a retirement waits for it, and it for them.
-fn with_host<T>(slot: &GraphSlot, work: impl FnOnce(&PageHost) -> T) -> Result<T, String> {
+pub(crate) fn with_host<T>(
+    slot: &GraphSlot,
+    work: impl FnOnce(&PageHost) -> T,
+) -> Result<T, String> {
     match &*slot.host.read().unwrap_or_else(|e| e.into_inner()) {
         PageHostSlot::Running(host) => Ok(work(host)),
         PageHostSlot::Off => Err("no page host runs for this graph".into()),
@@ -29,6 +32,14 @@ async fn hosted<T: Send + 'static>(
 ) -> Result<T, String> {
     let slot = slot_for_context(&ctx)?;
     off_ui(move || with_host(&slot, work)).await
+}
+
+/// A published page's edit kinds (OG-RULES Rule 8, STEP3 §3.2), in the
+/// opt-in debug log: the host's kinds sink.
+pub(crate) fn log_edit_kinds(page: &str, kinds: &[EditKind]) {
+    if crate::debug::debug_enabled() {
+        crate::debug::diag_private("edit-kinds", format!("{page}: {kinds:?}"));
+    }
 }
 
 /// Where page mail goes: the window that owns the binding (`label`). An
@@ -62,17 +73,36 @@ pub(crate) enum OpenReply {
     Refused(PageRefusal),
 }
 
-#[tauri::command]
-pub(crate) async fn page_open(
-    session: u64,
+/// One page of a `page_open` call.
+#[derive(serde::Deserialize)]
+pub(crate) struct OpenPage {
     id: u64,
     path: String,
     name: String,
+}
+
+/// PERF-FIXES D3: the window's back-to-back opens (a carry-over's sources)
+/// arrive as one call, in id order, and are admitted one by one as before;
+/// one round trip and one blocking-pool hop instead of one per page.
+#[tauri::command]
+pub(crate) async fn page_open(
+    session: u64,
+    pages: Vec<OpenPage>,
     ctx: GraphContext<'_>,
-) -> Result<OpenReply, String> {
+) -> Result<Vec<OpenReply>, String> {
     hosted(ctx, move |host| {
-        host.open(session, id, &PageId::from(path.as_str()), &name)
-            .map_or_else(OpenReply::Refused, OpenReply::Opened)
+        pages
+            .iter()
+            .map(|page| {
+                host.open(
+                    session,
+                    page.id,
+                    &PageId::from(page.path.as_str()),
+                    &page.name,
+                )
+                .map_or_else(OpenReply::Refused, OpenReply::Opened)
+            })
+            .collect()
     })
     .await
 }
@@ -123,13 +153,9 @@ pub(crate) async fn page_discard(
     session: u64,
     id: u64,
     key: String,
-    version: u64,
     ctx: GraphContext<'_>,
 ) -> Result<Option<PageRefusal>, String> {
-    hosted(ctx, move |host| {
-        host.discard(session, id, &key, version).err()
-    })
-    .await
+    hosted(ctx, move |host| host.discard(session, id, &key).err()).await
 }
 
 #[tauri::command]
@@ -252,4 +278,31 @@ pub(crate) async fn page_owed(
 #[tauri::command]
 pub(crate) async fn page_drafts_retry(ctx: GraphContext<'_>) -> Result<(), String> {
     hosted(ctx, PageHost::drafts_retry).await?
+}
+
+/// Bench-only (`tine_store::bench_events`): the window's `unfreeze` at `t`
+/// (its epoch ms). The window sends it only while `__TINE_BENCH_EVENTS__`
+/// is set; any other event name is ignored.
+#[tauri::command]
+pub(crate) fn bench_event(ev: String, t: f64) {
+    if ev == "unfreeze" {
+        tine_store::bench_events::unfreeze(t);
+    }
+}
+
+/// The window's answer to an `owner-flush-request`. Only the window bound to
+/// this graph (and this binding) can answer it; it runs no owner verb
+/// (CLI PROTOCOL §6: no Tauri command reaches the owner endpoint).
+#[tauri::command]
+pub(crate) fn owner_flush_answer(
+    id: u64,
+    saved: bool,
+    binding_generation: u64,
+    state: crate::state::GraphContext<'_>,
+) -> Result<(), String> {
+    let slot = crate::state::slot_for_context(&state)?;
+    if let Some(window) = slot.window.get() {
+        window.answer_flush(id, saved, binding_generation);
+    }
+    Ok(())
 }

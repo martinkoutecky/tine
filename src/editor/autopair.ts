@@ -38,6 +38,8 @@ const DOUBLE: Record<string, string> = { "[": "]", "(": ")", "{": "}" };
  *  Tine extra (OG doesn't pair it) kept because it's harmless and useful. Selection
  *  wrapping is ALWAYS-ON, independent of the opt-in empty-caret auto-pairing. */
 export const SELECTION_WRAP: Record<string, string> = {
+  "（": ")",
+  "【": "]",
   "(": ")",
   "[": "]",
   "{": "}",
@@ -101,6 +103,8 @@ export function autoPairInsertOnInput(
  *  (the OG wrap set, incl. emphasis marks), NOT the empty-caret `PAIRS`. Returns
  *  null for a non-wrap key or an empty selection. */
 export function wrapSelectionEdit(text: string, start: number, end: number, opener: string): Edit | null {
+  // OG keycode's full-width aliases wrap with the same ASCII delimiters.
+  opener = opener === "（" ? "(" : opener === "【" ? "[" : opener;
   const closer = SELECTION_WRAP[opener];
   if (!closer || start === end) return null;
   const sel = text.slice(start, end);

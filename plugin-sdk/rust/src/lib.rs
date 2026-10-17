@@ -1,4 +1,5 @@
-//! Minimal guest bindings for Tine plugin API 0.2.
+//! Minimal guest bindings for Tine plugin API 0.3 (0.3 = 0.2 plus the `color`
+//! setting type; the guest protocol is unchanged).
 //!
 //! A plugin receives JSON events and returns inert, host-validated effects. This
 //! crate intentionally exposes no host imports: compile with the template's

@@ -9,12 +9,7 @@ struct Mutations {
     hits: BTreeSet<(String, String)>,
 }
 
-fn test_only(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        attr.path().is_ident("test")
-            || (attr.path().is_ident("cfg") && quote::quote!(#attr).to_string().contains("test"))
-    })
-}
+use crate::test_cfg::is_test as test_only;
 
 impl<'ast> Visit<'ast> for Mutations {
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
@@ -99,6 +94,7 @@ impl<'ast> Visit<'ast> for Mutations {
 
 #[test]
 fn every_content_mutation_has_a_reviewed_owner() {
+    let _integration_guard = crate::integration_lock();
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let files = [
         "crates/tine-store/src/model.rs",
@@ -157,6 +153,15 @@ fn every_content_mutation_has_a_reviewed_owner() {
         ("crates/tine-store/src/restore.rs", "copy_new"),
         ("crates/tine-store/src/restore.rs", "move_if_present"),
         ("crates/tine-store/src/restore.rs", "publish_temp"),
+        // `cfg(feature = "test-faults")` only (a dev-dependency feature, never
+        // in a shipped build), censused since the cfg parser (N2) stopped
+        // reading "test-faults" as test: writes the `.tine-restore-test-paused`
+        // handshake marker in a test graph's root, never graph content. Crash
+        // matrix: a crash leaves a stray marker in a temporary test directory.
+        (
+            "crates/tine-store/src/restore.rs",
+            "pause_after_binding_for_test",
+        ),
         ("crates/tine-store/src/store.rs", "purge_asset_trash"),
         (
             "crates/tine-store/src/store.rs",
@@ -256,6 +261,7 @@ fn every_content_mutation_has_a_reviewed_owner() {
 
 #[test]
 fn census_detects_an_unreviewed_direct_write() {
+    let _integration_guard = crate::integration_lock();
     let planted =
         syn::parse_file("fn rogue() { std::fs::write(\"page.md\", b\"lost\").unwrap(); }").unwrap();
     let mut visitor = Mutations::default();
@@ -268,6 +274,7 @@ fn census_detects_an_unreviewed_direct_write() {
 
 #[test]
 fn census_detects_an_unreviewed_directory_creation() {
+    let _integration_guard = crate::integration_lock();
     let planted =
         syn::parse_file("fn rogue() { std::fs::create_dir_all(\"backups/x.zips\").unwrap(); }")
             .unwrap();
@@ -283,6 +290,7 @@ fn census_detects_an_unreviewed_directory_creation() {
 
 #[test]
 fn census_detects_an_unreviewed_directory_creation_through_a_handle() {
+    let _integration_guard = crate::integration_lock();
     let planted = syn::parse_file(
         "fn rogue(dir: &cap_std::fs::Dir) { dir.create_dir_all(\"backups/x.zips\").unwrap(); }",
     )
@@ -295,5 +303,22 @@ fn census_detects_an_unreviewed_directory_creation_through_a_handle() {
             .contains(&("rogue".into(), "create_dir_all".into())),
         "I-1: a handle-relative directory creation must trigger owner review too; exemplar \
          backup.rs write_snapshot"
+    );
+}
+
+/// N2 family (REVIEW-3b-P2b-2): a `cfg(not(test))` write is production and
+/// needs a reviewed owner like any other.
+#[test]
+fn census_detects_a_not_test_direct_write() {
+    let _integration_guard = crate::integration_lock();
+    let planted = syn::parse_file(
+        "#[cfg(not(test))] fn rogue() { std::fs::write(\"page.md\", b\"lost\").unwrap(); }",
+    )
+    .unwrap();
+    let mut visitor = Mutations::default();
+    visitor.visit_file(&planted);
+    assert!(
+        visitor.hits.contains(&("rogue".into(), "fs::write".into())),
+        "cfg(not(test)) is production"
     );
 }

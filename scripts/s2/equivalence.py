@@ -106,7 +106,7 @@ def main():
     ap.add_argument("--mutant", default="none")
     ap.add_argument("--profiles", help="comma-separated profiles for a correction of invalidated evidence")
     args = ap.parse_args()
-    model = (args.model_dir / "storage-s3.qnt").read_text()
+    model = (args.model_dir / "storage-s35.qnt").read_text()
     assert hashlib.sha256(model.encode()).hexdigest() == SHA
     quint = args.model_dir.parent / "model/tools/node_modules/.bin/quint"
     work = args.output.resolve()
@@ -131,7 +131,7 @@ def main():
                           "--seed", 20261009 + i * 7919, "--verbosity", "1",
                           "--out-itf", work / f"{profile}-failure.itf.json"],
                          work / f"{profile}.log", {**os.environ, "TMPDIR": str(work)})
-        assert result.returncode == 0, result.stdout + result.stderr
+        assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
         print(profile, args.samples, args.steps, "all reachability invariants hold", flush=True)
 
 

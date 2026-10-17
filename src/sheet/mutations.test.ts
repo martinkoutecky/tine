@@ -29,7 +29,7 @@ import { setToasts, toasts } from "../toasts";
 import { observeMatrixDimensions } from "./matrix";
 import { backend } from "../backend";
 import { writeClipboardText } from "../clipboard";
-import { OUTLINE_MAX_DEPTH, outlineDepth } from "../editor/outline";
+import { outlineMaxDepth, outlineDepth } from "../editor/outline";
 
 let counter = 0;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
@@ -351,7 +351,7 @@ describe("sheet structural mutations", () => {
     loadStructuralPasteDoc();
     const byId = { ...doc.byId };
     let parent = "s11c";
-    for (let i = 0; i < OUTLINE_MAX_DEPTH - 5; i++) {
+    for (let i = 0; i < outlineMaxDepth() - 5; i++) {
       const id = `deep-${i}`;
       byId[parent] = { ...byId[parent], children: [id] };
       byId[id] = { id, raw: `level ${i}`, collapsed: false, parent, page: "Sheet", children: [] };
@@ -363,7 +363,7 @@ describe("sheet structural mutations", () => {
     await copySheetSelection(copied);
     const copiedOutline = structuralSheetPasteNode(text);
     expect(copiedOutline).not.toBeNull();
-    expect(outlineDepth([copiedOutline!])).toBeGreaterThan(OUTLINE_MAX_DEPTH - 4);
+    expect(outlineDepth([copiedOutline!])).toBeGreaterThan(outlineMaxDepth() - 4);
     const before = pageToDto("Sheet");
     expect(splatStructuralSheetSelection({ kind: "cell", gridId: "target", row: 0, col: 0 }, text)).toBeNull();
     expect(pageToDto("Sheet")).toEqual(before);

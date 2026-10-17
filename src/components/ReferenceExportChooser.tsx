@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { formatForPage } from "../document";
 import { openExportNodesModal } from "../ui";
@@ -51,13 +52,13 @@ export function ReferenceExportChooser(props: {
   return (
     <div class="modal-overlay" onClick={props.onClose}>
       <div ref={root} class="export-modal ref-export-chooser" role="dialog"
-        aria-label={`Copy / export ${props.subject}`} onClick={(event) => event.stopPropagation()}>
-        <div class="export-head">Copy / export {props.subject}<span class="export-count">{count()} of {total()}</span></div>
-        <div class="ref-export-actions" role="group" aria-label="Reference selection">
-          <button type="button" disabled={!total()} onClick={() => setSelected(new Set(allKeys()))}>All</button>
-          <button type="button" disabled={!count()} onClick={() => setSelected(new Set())}>None</button>
+        aria-label={t("reference-export-chooser-copy-export", { subject: String(props.subject) })} onClick={(event) => event.stopPropagation()}>
+        <div class="export-head">{t("reference-export-chooser-copy-export", { subject: props.subject })}<span class="export-count">{t("reference-export-chooser-count", { count: String(count()), total: String(total()) })}</span></div>
+        <div class="ref-export-actions" role="group" aria-label={t("reference-export-chooser-reference-selection")}>
+          <button type="button" disabled={!total()} onClick={() => setSelected(new Set(allKeys()))}>{t("reference-export-chooser-all")}</button>
+          <button type="button" disabled={!count()} onClick={() => setSelected(new Set())}>{t("reference-export-chooser-none")}</button>
         </div>
-        <div class="ref-export-list" role="group" aria-label={`${props.subject} entries`}>
+        <div class="ref-export-list" role="group" aria-label={t("reference-export-chooser-entries", { subject: String(props.subject) })}>
           <For each={groups}>{(group) => (
             <div class="ref-export-group">
               <div class="ref-export-group-name"><EmojiText text={group.page} /></div>
@@ -71,11 +72,11 @@ export function ReferenceExportChooser(props: {
               }}</For>
             </div>
           )}</For>
-          <Show when={total() === 0}><div class="ref-export-empty">No entries in this section.</div></Show>
+          <Show when={total() === 0}><div class="ref-export-empty">{t("reference-export-chooser-no-entries-in-this-section")}</div></Show>
         </div>
         <div class="export-foot">
-          <button class="export-btn-secondary" onClick={props.onClose}>Cancel</button>
-          <button class="export-btn-primary" disabled={!count()} onClick={exportSelection}>Copy / export…</button>
+          <button class="export-btn-secondary" onClick={props.onClose}>{t("reference-export-chooser-cancel")}</button>
+          <button class="export-btn-primary" disabled={!count()} onClick={exportSelection}>{t("reference-export-chooser-open")}</button>
         </div>
       </div>
     </div>

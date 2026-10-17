@@ -1,5 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { graphRowMenuActions } from "./graphRowMenu";
+import { renderEnglish } from "../i18n";
+import { toUiText } from "../toasts";
 
 const graph = { name: "Notes", path: "/graphs/notes" };
 
@@ -36,7 +38,7 @@ it("keeps a context-menu open failure sticky and retries the same graph (master 
   expect(failure.kind).toBe("error");
   expect(failure.message).toContain("graph root is not readable");
   expect(failure.sticky).toBe(true);
-  expect(failure.action?.label).toBe("Retry");
+  expect(renderEnglish(toUiText(failure.action!.label))).toBe("Retry");
   failure.action!.run();
   await vi.waitFor(() => expect(openKnown).toHaveBeenCalledTimes(2));
   expect(openKnown).toHaveBeenLastCalledWith("/graphs/notes", false);

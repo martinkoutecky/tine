@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { msg, renderEnglish, type MessageId } from "./i18n";
 
 // GH #610: the public `--tine-*` tokens are a promise to users' custom.css.
 // docs/contracts/theme-tokens.md is the single source of truth. This guard
@@ -58,6 +59,13 @@ const codeFiles = walk("src", (f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.t
 const inCode = new Set(codeFiles.flatMap((f) => [...stripTsComments(readFileSync(f, "utf8")).matchAll(TOKEN)].map((m) => m[0])));
 
 describe("public theme tokens (GH #610)", () => {
+  it("documents the device-before-graph CSS cascade and guarded in-app saves", () => {
+    expect(contract).toContain("global.css");
+    expect(contract).toContain("creation on save");
+    expect(contract).toContain("base revision");
+    expect(contract).toContain("before the graph");
+    expect(readFileSync("src/customCss.ts", "utf8").indexOf("document.head.appendChild(global)")).toBeLessThan(readFileSync("src/customCss.ts", "utf8").indexOf("document.head.appendChild(el)"));
+  });
   it("the contract documents a meaningful set", () => {
     expect(publicTokens.size).toBeGreaterThanOrEqual(10);
     expect(publicTokens.size).toBeLessThanOrEqual(20);
@@ -108,8 +116,9 @@ describe("public theme tokens (GH #610)", () => {
     const guide = readFileSync(GUIDE, "utf8");
     expect([...tableTokens(guide, /^- ## 3\. The supported names/m)].sort()).toEqual([...publicTokens].sort());
     const settings = readFileSync("src/components/CustomCssSettings.tsx", "utf8");
-    for (const control of ["Edit custom.css", "Disable custom CSS", "Developer tools"]) {
-      expect(settings, `Settings must show the control the Guide names: ${control}`).toContain(`label="${control}"`);
+    for (const id of ["css-edit-graph", "settings-search-disable-custom-css", "settings-search-developer-tools"] satisfies MessageId[]) {
+      const control = renderEnglish(msg(id));
+      expect(settings, `Settings must show the control the Guide names: ${control}`).toContain(`label={t("${id}")}`);
       expect(guide, `the Guide must name the Settings control ${control}`).toContain(`**${control}**`);
     }
   });

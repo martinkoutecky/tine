@@ -1,3 +1,4 @@
+import { msg } from "./i18n";
 // Device-local spellcheck preferences (persisted in tine-settings.json via the
 // generic app_bool/app_string backend for atomic, WebView-independent state).
 // Read at startup by initSpellcheckSettings(); the
@@ -47,7 +48,7 @@ export function parseLanguages(s: string): string[] {
 
 function apply(): void {
   void backend().applySpellcheck(enabled(), parseLanguages(languages()))
-    .catch(() => pushToast("Could not apply spellcheck settings.", "error"));
+    .catch(() => pushToast(msg("settings-could-not-apply-spellcheck-settings"), "error"));
 }
 
 /** Apply immediately; native spellcheck runs without awaiting. Queue a device
@@ -100,7 +101,7 @@ export async function loadDictionaries(): Promise<void> {
   } catch {
     if (owner()) {
       setDictionaries([]);
-      pushToast("Could not load spellcheck dictionaries.", "error");
+      pushToast(msg("settings-could-not-load-spellcheck-dictionaries"), "error");
     }
   }
 }
@@ -115,13 +116,13 @@ export async function initSpellcheckSettings(): Promise<void> {
     const value = await backend().getAppBool(KEY_ENABLED, DEFAULT_ENABLED);
     if (preferenceReadCurrent(enabled, enabledRevision)) { setEnabledSig(value); seedPreference(enabled); }
   } catch {
-    pushToast("Could not load spellcheck preference.", "error");
+    pushToast(msg("settings-could-not-load-spellcheck-preference"), "error");
   }
   try {
     const value = await backend().getAppString(KEY_LANGS, DEFAULT_LANGS);
     if (preferenceReadCurrent(languages, languageRevision)) { setLanguagesSig(value); seedPreference(languages); }
   } catch {
-    pushToast("Could not load spellcheck languages.", "error");
+    pushToast(msg("settings-could-not-load-spellcheck-languages"), "error");
   }
   void loadDictionaries();
   apply();

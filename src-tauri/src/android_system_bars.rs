@@ -15,6 +15,7 @@ const PLUGIN_IDENTIFIER: &str = "page.tine.app";
 #[derive(Debug, Serialize)]
 struct SystemBarAppearance {
     dark: bool,
+    background: Option<String>,
 }
 
 #[cfg(target_os = "android")]
@@ -22,9 +23,9 @@ pub(crate) struct AndroidSystemBars<R: Runtime>(PluginHandle<R>);
 
 #[cfg(target_os = "android")]
 impl<R: Runtime> AndroidSystemBars<R> {
-    fn set_appearance(&self, dark: bool) -> Result<(), String> {
+    fn set_appearance(&self, dark: bool, background: Option<String>) -> Result<(), String> {
         self.0
-            .run_mobile_plugin::<()>("setAppearance", SystemBarAppearance { dark })
+            .run_mobile_plugin::<()>("setAppearance", SystemBarAppearance { dark, background })
             .map_err(|e| e.to_string())
     }
 }
@@ -35,14 +36,18 @@ pub(crate) async fn set_system_bar_appearance<R: Runtime>(
     _app: AppHandle<R>,
     bars: State<'_, AndroidSystemBars<R>>,
     dark: bool,
+    background: Option<String>,
 ) -> Result<(), String> {
-    bars.set_appearance(dark)
+    bars.set_appearance(dark, background)
 }
 
 #[cfg(not(target_os = "android"))]
 #[tauri::command]
-pub(crate) async fn set_system_bar_appearance(dark: bool) -> Result<(), String> {
-    let _ = dark;
+pub(crate) async fn set_system_bar_appearance(
+    dark: bool,
+    background: Option<String>,
+) -> Result<(), String> {
+    let _ = (dark, background);
     Ok(())
 }
 

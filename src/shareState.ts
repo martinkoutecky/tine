@@ -1,0 +1,26 @@
+// The share dialog's state (docs/contracts/export-definitions.md, SHARE-DIALOG.md §3): what it opened on, and the
+// hook a folder export runs once it has written its folder. Kept out of ui.ts (production files may not grow).
+import { graphScopedSignal } from "./binding";
+import type { QueryPublicationRequest } from "./types";
+import { openQueryExport } from "./ui";
+
+/** What the share dialog shares: the current page, or an existing query block (`macro` is its `{{…}}` text;
+ *  `query.hostBlockId` is the block, so the destination property goes on it). */
+export type ShareTarget =
+  | { page: string }
+  | { query: QueryPublicationRequest; macro: string };
+/** One graph-bound share dialog; a graph switch closes it. */
+export const [shareTarget, setShareTarget] = graphScopedSignal<ShareTarget>();
+export function openShareDialog(target: ShareTarget): void { setShareTarget(target); }
+export function closeShareDialog(): void { setShareTarget(null); }
+
+/** What a query export does once it has written its folder (the share dialog saves its definition then). */
+export type QueryExportAfter = (done: { folder: string }) => void | Promise<void>;
+// Keyed by the request object the export dialog is open on: a dismissed or replaced request takes its hook with it.
+const exportAfter = new WeakMap<QueryPublicationRequest, QueryExportAfter>();
+export function queryExportAfter(request: QueryPublicationRequest): QueryExportAfter | undefined { return exportAfter.get(request); }
+/** The share dialog hands its reviewed request to the folder export and saves the definition once it landed. */
+export function openQueryExportThen(request: QueryPublicationRequest, after: QueryExportAfter): void {
+  exportAfter.set(request, after);
+  openQueryExport(request);
+}

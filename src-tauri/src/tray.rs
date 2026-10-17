@@ -207,7 +207,7 @@ pub(crate) fn flatpak_icon_dir(
 
 #[cfg(desktop)]
 pub(crate) use desktop::{
-    init, main_start_hidden_pending, reveal_main_if_hidden, window_event, TrayState,
+    init, main_start_hidden_pending, quit, relabel, reveal_main_if_hidden, window_event, TrayState,
 };
 
 #[cfg(desktop)]
@@ -547,6 +547,41 @@ mod desktop {
         });
     }
 
+    /// The tray menu in `locale` (tine#107: literal shell text, selected natively).
+    fn menu(app: &AppHandle, locale: &str) -> Result<Menu<tauri::Wry>, String> {
+        let text = |id| crate::i18n_shell::shell_text(locale, id);
+        let open = MenuItem::with_id(app, MENU_OPEN, text("shell-tray-open"), true, None::<&str>)
+            .map_err(|e| e.to_string())?;
+        let capture = MenuItem::with_id(
+            app,
+            MENU_CAPTURE,
+            text("shell-tray-capture"),
+            true,
+            None::<&str>,
+        )
+        .map_err(|e| e.to_string())?;
+        let quit = MenuItem::with_id(app, MENU_QUIT, text("shell-tray-quit"), true, None::<&str>)
+            .map_err(|e| e.to_string())?;
+        Menu::with_items(app, &[&open, &capture, &quit]).map_err(|e| e.to_string())
+    }
+
+    /// Relabel a present tray in `locale` after the UI language changed.
+    pub(crate) fn relabel(app: &AppHandle, locale: &str) {
+        let for_main = app.clone();
+        let locale = locale.to_string();
+        let _ = app.run_on_main_thread(move || {
+            let Some(tray) = for_main.tray_by_id(TRAY_ID) else {
+                return;
+            };
+            match menu(&for_main, &locale) {
+                Ok(menu) => {
+                    let _ = tray.set_menu(Some(menu));
+                }
+                Err(reason) => crate::debug::diag_private("tray-relabel-failed", &reason),
+            }
+        });
+    }
+
     fn create_icon(app: &AppHandle) -> Result<(), String> {
         if tray_present(app) {
             return Ok(());
@@ -557,13 +592,9 @@ mod desktop {
             .default_window_icon()
             .cloned()
             .ok_or_else(|| "no application icon".to_string())?;
-        let open = MenuItem::with_id(app, MENU_OPEN, "Open Tine", true, None::<&str>)
-            .map_err(|e| e.to_string())?;
-        let capture = MenuItem::with_id(app, MENU_CAPTURE, "Quick Capture", true, None::<&str>)
-            .map_err(|e| e.to_string())?;
-        let quit = MenuItem::with_id(app, MENU_QUIT, "Quit", true, None::<&str>)
-            .map_err(|e| e.to_string())?;
-        let menu = Menu::with_items(app, &[&open, &capture, &quit]).map_err(|e| e.to_string())?;
+        let locale =
+            crate::i18n_shell::resolved_locale(crate::settings::read_settings_value(app).as_ref());
+        let menu = menu(app, &locale)?;
         let title = app
             .config()
             .product_name
@@ -887,10 +918,15 @@ mod tests {
         assert_eq!(SHOW_KEY, "tray_show");
         assert_eq!(MINIMIZE_KEY, "tray_minimize");
         assert_eq!(START_MINIMIZED_KEY, "tray_start_minimized");
-        let source = include_str!("tray.rs");
-        for label in ["\"Open Tine\"", "\"Quick Capture\"", "\"Quit\""] {
-            assert!(
-                source.contains(label),
+        // The English labels are the contract; other locales translate them.
+        for (id, label) in [
+            ("shell-tray-open", "Open Tine"),
+            ("shell-tray-capture", "Quick Capture"),
+            ("shell-tray-quit", "Quit"),
+        ] {
+            assert_eq!(
+                crate::i18n_shell::shell_text("en", id),
+                label,
                 "tray menu item {label} is part of the contract"
             );
         }

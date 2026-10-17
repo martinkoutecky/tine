@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 export interface PdfOutlineItem {
   id: string;
   label: string;
@@ -39,7 +40,7 @@ export function sanitizeOutlineItems(value: unknown): SanitizedPdfOutline {
       const id = `${parentId}-${index}`;
       const item: PdfOutlineItem = {
         id,
-        label: typeof raw.title === "string" && raw.title.trim() ? raw.title : "Untitled",
+        get label() { return typeof raw.title === "string" && raw.title.trim() ? raw.title : t("pdf-untitled"); },
         destination: typeof raw.dest === "string" || Array.isArray(raw.dest) ? raw.dest : null,
         children: [],
       };

@@ -1,3 +1,5 @@
+import { Rich } from "../i18n/Rich";
+import { t, msg } from "../i18n";
 import { For, Show, type JSX } from "solid-js";
 import { conflictReason, conflicts, pageByName, resolveConflict } from "../document";
 import { liveConflictForPage } from "../liveConflicts";
@@ -23,23 +25,18 @@ export function ConflictBar(): JSX.Element {
             return (
             <Show when={!live()} fallback={
               <div class="conflict-banner">
-                <span class="conflict-msg"><strong>“{name}” changed on disk while you were editing it.</strong> Your edits are kept; review them against the disk version on the page.</span>
+                <span class="conflict-msg"><Rich message={msg("conflict-bar-live-notice", { name })} /></span>
                 <span class="conflict-actions">
-                  <button class="conflict-btn" onClick={() => { const c = live(); if (c) openPageTarget({ name: c.page_name, pageKind: c.kind, path: c.page_path }); }}>Review</button>
+                  <button class="conflict-btn" onClick={() => { const c = live(); if (c) openPageTarget({ name: c.page_name, pageKind: c.kind, path: c.page_path }); }}>{t("conflict-bar-review")}</button>
                 </span>
               </div>
             }>
             <div class="conflict-banner">
               <span class="conflict-msg">
-                <strong>“{name}” {conflictReason(name)?.observedRev === null ? "was deleted on disk" : "changed on disk"}</strong>. Your unsaved changes weren't written.
-              </span>
+                <Rich message={msg("conflict-bar-unsaved-notice", { name, deleted: conflictReason(name)?.observedRev === null ? 1 : 0 })} /></span>
               <span class="conflict-actions">
-                <button class="conflict-btn" onClick={() => void resolveConflict(name, "disk")}>
-                  Use disk version
-                </button>
-                <button class="conflict-btn keep" onClick={() => void resolveConflict(name, "mine")}>
-                  Keep mine (overwrite)
-                </button>
+                <button class="conflict-btn" onClick={() => void resolveConflict(name, "disk")}>{t("conflict-bar-use-disk-version")}</button>
+                <button class="conflict-btn keep" onClick={() => void resolveConflict(name, "mine")}>{t("conflict-bar-keep-mine-overwrite")}</button>
               </span>
             </div>
             </Show>

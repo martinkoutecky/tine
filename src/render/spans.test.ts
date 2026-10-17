@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";
+import { BUILTIN_HIDE, rawOffsetToVisibleOffset } from "../editor/properties";
 import {
   beyondFinalGlyph,
   literalSpanAttrs,
@@ -99,12 +99,12 @@ describe("span offset helpers", () => {
 
   it("maps raw offsets into the editor-visible buffer using hidden property lines", () => {
     const raw = "alpha\nid:: 123\ncollapsed:: true\nbeta";
-    expect(rawOffsetToVisibleOffset(raw, raw.indexOf("beta") + 2, isBuiltinHidden)).toBe("alpha\nbe".length);
-    expect(rawOffsetToVisibleOffset(raw, raw.indexOf("123"), isBuiltinHidden)).toBe("alpha".length);
+    expect(rawOffsetToVisibleOffset(raw, raw.indexOf("beta") + 2, BUILTIN_HIDE)).toBe("alpha\nbe".length);
+    expect(rawOffsetToVisibleOffset(raw, raw.indexOf("123"), BUILTIN_HIDE)).toBe("alpha".length);
 
     const fenced = "```\nid:: visible\n```\nid:: hidden\nz";
-    expect(rawOffsetToVisibleOffset(fenced, fenced.indexOf("visible"), isBuiltinHidden)).toBe("```\nid:: ".length);
-    expect(rawOffsetToVisibleOffset(fenced, fenced.indexOf("hidden"), isBuiltinHidden)).toBe("```\nid:: visible\n```".length);
+    expect(rawOffsetToVisibleOffset(fenced, fenced.indexOf("visible"), BUILTIN_HIDE)).toBe("```\nid:: ".length);
+    expect(rawOffsetToVisibleOffset(fenced, fenced.indexOf("hidden"), BUILTIN_HIDE)).toBe("```\nid:: visible\n```".length);
   });
 });
 

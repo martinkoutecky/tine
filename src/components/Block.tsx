@@ -1,9 +1,16 @@
+import { shortcutKey } from "../shortcutKey";
+import { msg, t as translate } from "../i18n";
 import { codeWrapping } from "../codeDisplay";
+import { stickyParents } from "../stickyParents";
+import { StickyAncestor } from "./StickyAncestor";
+import { AstBody } from "../render/body";
+import { codeFences } from "../editor/fences";
 import { LineGutter } from "../render/LineGutter";
-import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
+import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, on, untrack, onMount, onCleanup, type JSX } from "solid-js";
 import { autocompleteFacets, backend } from "../backend";
+import { pinyinMatchingEnabled } from "../launcherRanking";
 import { reportUiFailure } from "../uiFailure";
-import { clearClipboardSlot, normalize, peekClipboardSlot } from "../clipboard";
+import { clearClipboardSlot, normalize, peekClipboardSlot, readClipboardText } from "../clipboard";
 import {
   detectTrigger,
   applyCompletion,
@@ -36,7 +43,7 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import { restoreMovedSelection } from "../editor/restoreMovedSelection";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import { pageByName, blockPageReadOnly, blockWritable, setRaw, setBlockProperty, makeOwnNumberedList, removeOwnNumberedList, stopOwnNumberedListOnEmptyEnter, splitBlock, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, toggleCollapse, setCollapsed, prevVisible, nextVisible, nextVisibleOrExtend, beginPageHeaderEdit, finishPageHeaderEdit, insertEmptyChildBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, insertOutlineChildren, outlineFits, pasteClipboardPayload, sanitizeOutlineIdsForPaste, deleteBlock, moveBlockFeed, moveItem, selectBlock, selectBlockSubtree, moveSelection, isSelected, persistBlockRefTarget, isBlockMoving, withBlockMoving, orderedListMarker, withUndoUnit, blockIsGridView, trackAssetWrite, formatForBlock, depthOf, setHeading, blockExternalId, pinPageWhileDrafting, type OutlineScope, node as docNode } from "../document";
-import { openDurableBlock } from "../blockRefActions";
+import { openDurableBlock, pasteAsLinkEdit } from "../blockRefActions";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import {
   clearFocusSurface,
@@ -90,9 +97,11 @@ import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
 import { Rendered, detectMacro } from "./Rendered";
-import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, type ThreadLineDecoration } from "./block/rowChrome";
+import { blockHasPageEmbed } from "../document";
+import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
+import { ResultWriteTargetContext, liveWriteTarget } from "./queryResultIdentity";
 import { dataRev, graphEpoch } from "../graphSession";
 import { pushToast, dismissToast } from "../toasts";
 import { copyBlockLink } from "./blockLinkCopy";
@@ -116,7 +125,7 @@ import {
   caretOffsetOnLastRow,
   textareaCaretLeft,
 } from "../editor/caretRows";
-import { splitProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
+import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
@@ -147,7 +156,9 @@ import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { wireBlockSwipe } from "./blockSwipeWiring";
-import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd } from "./blockGestures";
+import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
+import { clipboardSizeAllowed } from "../clipboardImage";
+import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
@@ -248,6 +259,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     return !surfaceKey.startsWith("ref:") && !surfaceKey.startsWith("embed:");
   };
   const hasChildren = () => node().children.length > 0;
+  const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id);
   const collapsed = () => collapseSurface?.collapsed(props.id, node().collapsed) ?? node().collapsed;
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {
@@ -264,11 +276,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // answer "false" thousands of times.
   const threadLineDecoration = (): ThreadLineDecoration => {
     if (!(hasChildren() && sheet().view === null)) return NO_THREAD_LINES;
-    return {
-      enabled: pluginManager.hasDeclarativeDecoration("thread-lines"),
-      active: pluginManager.declarativeDecorationSetting("thread-lines", "display") === "active",
-      standard: pluginManager.declarativeDecorationSetting("thread-lines", "intensity") === "standard",
-    };
+    return threadLineSettings(pluginManager.hasDeclarativeDecoration("thread-lines"),
+      key => pluginManager.declarativeDecorationSetting("thread-lines", key));
   };
   // Heading level of THIS block's first line, so the bullet column can match the
   // (taller) heading line box and the bullet stays centered on it. Shared with
@@ -280,7 +289,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     const n = node();
     if (!n) return "";
     const format = pageByName(n.page)?.format === "org" ? "org" : "md";
-    return splitProps(n.raw, isBuiltinHidden, format).visible;
+    return splitProps(n.raw, BUILTIN_HIDE, format).visible;
   };
   const editorIsUniline = () => !editorVisibleValue().includes("\n");
   // Block-level "linked references" panel toggled by the reference-count badge.
@@ -306,14 +315,24 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   return (
     <div
       class="ls-block"
-      classList={{
-        collapsed: collapsed(),
-        "block-embed-host": blockEmbedHost(),
-        ...rowDecorationClasses(threadLineDecoration()),
-      }}
+      {...(() => {
+        const thread = threadLineDecoration();
+        return {
+          style: rowDecorationStyle(thread, thread.enabled && thread.levels ? depthOf(props.id) : 0),
+          classList: {
+            collapsed: collapsed(),
+            "block-embed-host": blockEmbedHost(),
+            ...rowDecorationClasses(thread),
+          },
+        };
+      })()}
       data-block-id={props.id}
+      data-sticky-parent={stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !blockEmbedHost() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
+      <Show when={stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !blockEmbedHost()}>
+        <StickyAncestor id={props.id} raw={node().raw} />
+      </Show>
       <div
         class="block-main"
         ref={(el) => {
@@ -344,7 +363,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         <div class="block-controls">
           <span
             class="collapse-toggle"
-            classList={{ "has-children": hasChildren(), disabled: readOnly() }}
+            classList={{ "has-children": hasFoldableBody(), disabled: readOnly() }}
             aria-disabled={readOnly() ? "true" : undefined}
             onClick={() => {
               if (readOnly()) return;
@@ -352,7 +371,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               else toggleCollapse(props.id);
             }}
           >
-            <Show when={hasChildren()}>
+            <Show when={hasFoldableBody()}>
               <svg viewBox="0 0 24 24" class="triangle">
                 <path d="M8 5l8 7-8 7z" />
               </svg>
@@ -360,8 +379,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </span>
           <span
             class="bullet-container"
-            classList={{ "bullet-closed": collapsed() && hasChildren(), ordered: !!orderMarker() }}
-            title="Click to zoom; shift-click → sidebar; ctrl/cmd-click or middle-click → new tab; alt-click → other pane; drag to move"
+            classList={{ "bullet-closed": collapsed() && hasFoldableBody(), ordered: !!orderMarker() }}
+            title={translate("editor-block-click-to-zoom-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new-tab-alt-click-other-pane-drag-to-move")}
             onMouseDown={(e) => {
               // Shared link gesture contract (GH #207): suppress shift-range selection
               // and middle-button autoscroll / PRIMARY-paste the destinations replace.
@@ -429,7 +448,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
                     <a
                       class="block-refs-count"
                       classList={{ open: showRefs() }}
-                      title="Open block references (shift-click → sidebar)"
+                      title={translate("editor-block-open-block-references-shift-click-sidebar")}
                       onClick={(e) => {
                         e.stopPropagation();
                         if (e.shiftKey) openDurableBlock(props.id, "sidebar");
@@ -537,7 +556,7 @@ async function getTemplates(): Promise<import("../types").TemplateDto[]> {
     // I-9: a failed template listing is reported (sticky red toast with Copy, recorded in the error
     // log) and the last good list, if any, is kept; it is NOT replaced by "no templates", so the
     // next `/` retries once the cause is fixed. The slash menu still lists its commands.
-    if (owner()) pushToast(`Couldn't load templates: ${String(error)}`, "error");
+    if (owner()) pushToast(msg("editor-block-couldn-t-load-templates", { detail: String(error) }), "error");
   }
   return templateCache ?? [];
 }
@@ -568,6 +587,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const surfaceKey = useContext(SurfaceContext);
   const outlineScope = useContext(OutlineScopeContext);
   const embedNavExit = useContext(EmbedNavExitContext);
+  // Inside query results, the editor's pickers write only if no result changed meanwhile (GH #433 review).
+  const inResults = useContext(ResultWriteTargetContext);
+  const resultTarget = (id: string) => inResults(id) ? liveWriteTarget(id) : undefined;
   const collapseSurface = useContext(CollapseSurfaceContext);
   // Ref/query arrow navigation stays in the rendered result surface (master
   // GH #341), while structural edits still target the source outline: a
@@ -579,6 +601,13 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   // A navOnly display-list scope must never act as a merge/structural topology.
   const structuralScope = outlineScope?.navOnly ? null : outlineScope;
+  const setOccurrenceCollapsed = (value: boolean) => {
+    if (!collapseSurface) { setCollapsed(props.id, value); return; }
+    const n = docNode(props.id);
+    if (!n || (n.children.length === 0 && !blockHasPageEmbed(props.id))) return;
+    const current = collapseSurface.collapsed(props.id, n.collapsed);
+    if (current !== value) collapseSurface.toggle(props.id, current);
+  };
   let ref!: HTMLTextAreaElement;
   let pendingScrollAnchor: ReturnType<typeof captureEditorScrollAnchor> | undefined;
   onCleanup(() => pendingScrollAnchor?.cancel());
@@ -594,6 +623,16 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // returning to Tine resumes editing exactly where you left off.
   let savedSel: { start: number; end: number } | null = null;
   const node = () => docNode(props.id);
+  // The node this editor instance was built to show. A page replacement (an
+  // external change, the host's answer to an Open) purges the page's nodes and
+  // builds new ones, often under the same ids (runtime ids are structural), and
+  // remounts the outline; `upsertPage` carries the editor to the new copy.
+  // Chromium-family webviews then fire `blur` on this instance's removed,
+  // focused textarea. Such an instance is stale: its text is the pre-reload
+  // block, so writing it would silently revert the external change, and
+  // ending the edit would close the carried editor (UI-CARRY-RELOAD-STALE-BLUR).
+  const shownNode = node();
+  const replacedUnderEditor = () => !editorMounted && (!node() || node() !== shownNode);
   const sheetInitialRaw = sheetCell ? node()?.raw ?? "" : null;
   // Page format drives in-block list markers (`-` is an org bullet, not md).
   const pageFmt = (): "md" | "org" => (pageByName(node().page)?.format === "org" ? "org" : "md");
@@ -607,7 +646,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
   // Parsed editor facts travel with the committed buffer; hidden bytes survive.
   const isAnnot = () => annotationInfo(propertySession.facets(node().raw, pageFmt()).properties) !== null;
-  const hideFn = () => (isAnnot() ? hideAll : sheetCell ? isSheetCellHidden : isBuiltinHidden);
+  const hideFn = () => (isAnnot() ? HIDE_ALL : sheetCell ? SHEET_CELL_HIDE : BUILTIN_HIDE);
   const editorParts = createMemo(() => propertySession.split(node().raw, hideFn(), pageFmt()));
   const editorValue = () => editorParts().visible;
   // GH #357: while the buffer IS one whole-block code fence the editor presents
@@ -635,7 +674,23 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   });
   const isCalc = editingCalc;
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
+  let completionOriginalRaw: string | null = null;
+  let completionLease: { pageName: string; blockId: string; originalRaw: string; session: string } | null = null;
+  const releaseLease = (lease: NonNullable<typeof completionLease>) => {
+    // Releasing an ephemeral resource must finish even after its editor dies.
+    void readOwned(ownedWhen(() => true), backend().quickSwitch("", 0, lease, false))
+      .catch(error => dbg(`completion baseline release: ${String(error)}`));
+  };
+  const releaseCompletionLease = () => {
+    const lease = completionLease;
+    completionLease = null;
+    if (lease) releaseLease(lease);
+  };
+  onCleanup(releaseCompletionLease);
+  let rawBeforeLastCommit = node().raw;
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
+    // A disposed editor whose block was replaced never writes (see shownNode).
+    if (replacedUnderEditor()) return;
     const commitAsCalc = opts?.calc ?? isCalc();
     // For calc, `text` is the bare expressions the user sees — re-fence it.
     // Keep any trailing space the user left (or that a `/priority` insert added as
@@ -662,6 +717,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         ? captureEditorScrollAnchor(ref, nearestScrollableY(ref)) : null;
     }
     autosize();
+    rawBeforeLastCommit = node().raw;
     setRaw(props.id, next, setRawOpts);
   };
 
@@ -691,6 +747,13 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const [acIndex, setAcIndex] = createSignal(0);
   const codeView = createCodeBodyEditor(editorValue, pageFmt, () => !sheetCell && !isCalc() && ac()?.kind !== "code-language", () => node().raw);
   const codeShown = codeView.shown;
+  const mixedCodeContext = createMemo(() => {
+    const p = codeShown();
+    if (!p || !codeView.mixed()) return null;
+    const raw = editorValue();
+    const fence = codeFences(raw, pageFmt()).find(f => f.openEnd === p.open.length);
+    return fence ? { before: raw.slice(0, fence.start), after: raw.slice(fence.end) } : null;
+  });
   const codeEditing = createMemo(() => codeShown() !== null || codeFenceOnly(editorValue(), pageFmt()) !== null);
   const codeWrapCommit = codeView.join;
   // One door to the fence language picker: `/Code block` and the hand-typed ```
@@ -701,7 +764,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     setAc({ kind: "code-language", query: "", start: fenceEnd, end: fenceEnd });
     setAcIndex(0);
     setAcItems(codeLanguageItems("").map((language) => ({
-      label: language.label,
+      get label() { return language.label; },
       sub: [language.id, ...language.aliases].join(" · "),
       insert: language.id,
       caret: language.id.length + 1,
@@ -751,6 +814,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   });
 
   const closeAc = () => {
+    releaseCompletionLease();
+    completionOriginalRaw = null;
     setAc(null);
     setAcBlockState(null);
     setAcItems([]);
@@ -780,7 +845,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       .slice(0, 100)
       .map(({ value }) => ({ label: value, propertyValue: value }));
     if (q && !values.some((value) => value.toLowerCase() === q.toLowerCase())) {
-      ranked.push({ label: `Create "${q}"`, propertyValue: q });
+      ranked.push({ get label() { return translate("editor-block-create", { name: String(q) }); }, propertyValue: q });
     }
     return ranked;
   };
@@ -832,7 +897,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         .map(({ key }) => ({ label: key, propertyName: key }));
       const created = propertyKeyFold(t.query);
       if (created && !facets.some(([key]) => key === created)) {
-        ranked.unshift({ label: `Create "${created}"`, propertyName: created });
+        ranked.unshift({ get label() { return translate("editor-block-create", { name: String(created) }); }, propertyName: created });
       }
       setAcItems(ranked);
       return;
@@ -843,7 +908,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
     if (t.kind === "code-language") {
       setAcItems(codeLanguageItems(t.query).map((language) => ({
-        label: language.label,
+        get label() { return language.label; },
         sub: [language.id, ...language.aliases].join(" · "),
         insert: language.id,
         // If a completed fence scaffold already follows, land on its code line;
@@ -856,7 +921,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const fmt = formatForBlockId(props.id);
       setAcItems(filterAdvancedBlockCommands(t.query).map((command) => {
         const insertion = advancedBlockInsertion(command, fmt);
-        return { label: command.label, insert: insertion.insert, caret: insertion.caret };
+        return { get label() { return command.label; }, insert: insertion.insert, caret: insertion.caret };
       }));
       return;
     }
@@ -876,7 +941,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         if (c.action === "drawio" && isMobilePlatform) return;
         const s = q ? commandScore(q, c) : 1;
         if (s > 0)
-          scored.push({ item: { label: c.label, insert: c.insert, caret: c.caret, action: c.action, taskMarker: c.taskMarker }, s, idx: q ? c.matchTieOrder : c.bareOrder });
+          scored.push({ item: { get label() { return c.label; }, insert: c.insert, caret: c.caret, action: c.action, taskMarker: c.taskMarker }, s, idx: q ? c.matchTieOrder : c.bareOrder });
       });
       pluginManager.slashCommands().forEach(({ pluginId, contribution }, i) => {
         const s = q ? fuzzyScore(q, contribution.title) : 1;
@@ -897,7 +962,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           const s = showAllTemplates ? 1 : fuzzyScore(q, tp.name);
           if (s > 0)
             scored.push({
-              item: { label: `Template: ${tp.name}`, templateNodes: tp.blocks },
+              item: { get label() { return translate("editor-block-template", { name: String(tp.name) }); }, templateNodes: tp.blocks },
               s,
               idx: COMMANDS.length + pluginManager.slashCommands().length + j,
             });
@@ -944,22 +1009,43 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       setAcItems([]);
       return;
     }
-    const result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100));
+    completionOriginalRaw ??= node().raw;
+    const editor = { pageName: node().page, blockId: props.id, originalRaw: completionOriginalRaw };
+    if (!cap && pinyinMatchingEnabled() && !completionLease) {
+      completionLease = { ...editor, session: crypto.randomUUID() };
+    }
+    const lease = completionLease;
+    // Closing can overtake a blocking native query. Release again after its
+    // reply (including failure) so it cannot retain obsolete baseline keys.
+    let result: import("../owned").Owned<import("../types").PageEntry[]>;
+    try {
+      result = await readOwned(requestOwner, cap ? cap.quickSwitch(t.query, 100) : backend().quickSwitch(t.query, 100, lease ?? editor, pinyinMatchingEnabled()));
+    } finally {
+      if (lease && lease !== completionLease) releaseLease(lease);
+    }
     if (result.kind === "stale") return;
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
-        ? { label: name, insert: pageInsert(name), sub: aliasOfLabel(name, navigationName(name)) }
-        : { label: `#${name}`, insert: tagInsert(name), sub: aliasOfLabel(name, navigationName(name)) }; // tag context reads "#name"
+        ? { label: name, insert: pageInsert(name), get sub() { return aliasOfLabel(name, navigationName(name)); } }
+        : { label: `#${name}`, insert: tagInsert(name), get sub() { return aliasOfLabel(name, navigationName(name)); } }; // tag context reads "#name"
     const createItem: AcItem =
       t.kind === "page"
-        ? { label: `Create "${q}"`, insert: pageInsert(q) }
-        : { label: `Create #${q}`, insert: tagInsert(q) };
+        ? { get label() { return translate("editor-block-create", { name: String(q) }); }, insert: pageInsert(q) }
+        : { get label() { return translate("editor-block-create-tag", { name: String(q) }); }, insert: tagInsert(q) };
     setAcItems(orderAcItems(
-      result.value.map((page) => ({ name: page.name, item: pageItem(page.name) })),
+      result.value.map((page) => ({ name: page.name, matchClass: page.match_class, item: pageItem(page.name) })),
       { name: q, item: createItem },
       { query: q, policy: linkAutocompletePolicy(), removeAccents: searchRemoveAccents() },
     ));
   };
+
+  createEffect(on(pinyinMatchingEnabled, () => {
+    const trigger = untrack(ac);
+    if (trigger?.kind === "page" || trigger?.kind === "tag") {
+      if (!pinyinMatchingEnabled()) releaseCompletionLease();
+      void updateAutocomplete();
+    }
+  }, { defer: true }));
 
   // Apply a pure text edit (format toggle / kill motion) to the textarea and
   // restore the resulting selection.
@@ -1112,7 +1198,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const result = await writeOwned(owner, trackAssetWrite(backend().saveAsset(candidate, bytes, token.binding.backendGeneration)));
       if (result.kind === "stale") { reportStaleAsset(); return; }
       stored = result.value;
-    } catch (error) { pushToast(`Couldn’t save to assets/: ${String(error)}`, "error"); return; }
+    } catch (error) { pushToast(msg("editor-block-couldn-t-save-to-assets", { detail: String(error) }), "error"); return; }
     if (stored !== candidate) seedAssetBlob(stored, bytes);
     insertStoredAssets(token, [{ stored, label: origName }]);
   };
@@ -1177,7 +1263,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const pasteClipboardFiles = async (eventFiles: File[]) => {
     const editorToken = captureAssetEditorToken();
     const owner = bindingOwner();
-    const toastId = pushToast("Pasting files…", "info");
+    const toastId = pushToast(msg("editor-block-pasting-files"), "info");
     let skipped = 0;
     let nativeUnavailable = false;
     const stored: { stored: string; label?: string }[] = [];
@@ -1195,23 +1281,44 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
             const result = await writeOwned(owner, trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name), editorToken.binding.backendGeneration)));
             if (result.kind === "stale") return; stored.push({ stored: result.value, label: file.name });
           } catch (error) {
-            pushToast(`Couldn’t import pasted file: ${String(error)}`, "error");
+            pushToast(msg("editor-block-couldn-t-import-pasted-file", { detail: String(error) }), "error");
             skipped += 1;
           }
         }
       } else {
         const files = eventFiles.slice(0, MAX_CLIPBOARD_FILES);
         skipped += Math.max(0, eventFiles.length - files.length);
+        // A content-URI File can omit MIME as well as size/bytes. Let the
+        // native image reader identify it; non-image files keep generic ingress.
+        if (files.length === 1 && !files[0].type && clipboardSizeAllowed(files[0].size)) {
+          const result = await readOwned(bindingOwner(() => assetEditorCurrent(editorToken)), backend().readClipboardImage());
+          if (result.kind === "stale") return;
+          const bytes = result.value;
+          if (bytes?.length && bytes.length <= MAX_BYTE_CLIPBOARD_FILE) {
+            await insertAssetBytes(editorToken, bytes);
+            return;
+          }
+        }
         // Keep the screenshot/image behavior: image-only clipboard payloads use
         // timestamp names and optimistic rendering rather than synthetic names
         // such as Chromium's generic "image.png".
         if (files.length === 1 && files[0].type.startsWith("image/")) {
           const image = files[0];
-          if (image.size > MAX_BYTE_CLIPBOARD_FILE) skipped += Math.max(1, native.skipped);
+          if (!clipboardSizeAllowed(image.size)) skipped += Math.max(1, native.skipped);
           else {
             try {
-              const bytes = new Uint8Array(await image.arrayBuffer());
-              if (bytes.length && bytes.length <= MAX_BYTE_CLIPBOARD_FILE) {
+              let bytes: Uint8Array | null;
+              try { bytes = new Uint8Array(await image.arrayBuffer()); }
+              catch { bytes = null; }
+              // Android content-URI clips can expose an empty/unreadable File
+              // in the WebView. Read through ContentResolver instead of treating
+              // that failure as evidence that the image exceeds the budget.
+              if (!bytes?.length) {
+                const result = await readOwned(bindingOwner(() => assetEditorCurrent(editorToken)), backend().readClipboardImage());
+                if (result.kind === "stale") return;
+                bytes = result.value;
+              }
+              if (bytes?.length && bytes.length <= MAX_BYTE_CLIPBOARD_FILE) {
                 // A Windows bitmap clipboard can appear as one invalid native
                 // path plus one valid WebView2 image File. Once the bytes win,
                 // suppress that native pseudo-entry's skipped count (GH #78).
@@ -1225,13 +1332,13 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         }
         skipped += native.skipped;
         for (const file of files) {
-          if (file.size > MAX_BYTE_CLIPBOARD_FILE) {
+          if (!clipboardSizeAllowed(file.size)) {
             skipped += 1;
             continue;
           }
           try {
             const bytes = new Uint8Array(await file.arrayBuffer());
-            if (!bytes.length) {
+            if (!bytes.length || bytes.length > MAX_BYTE_CLIPBOARD_FILE) {
               skipped += 1;
               continue;
             }
@@ -1245,7 +1352,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
               // The durable asset + link are authoritative; cache warming is optional.
             }
           } catch (error) {
-            pushToast(`Couldn’t save pasted file: ${String(error)}`, "error");
+            pushToast(msg("editor-block-couldn-t-save-pasted-file", { detail: String(error) }), "error");
             skipped += 1;
           }
         }
@@ -1255,15 +1362,15 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       dismissToast(toastId);
       if (!bindingCurrent(editorToken.binding)) return;
       if (inserted) {
-        pushToast(`Inserted ${stored.length} file${stored.length === 1 ? "" : "s"}`, "success");
+        pushToast(msg("editor-block-inserted-file", { count: stored.length }), "success");
       }
       if (skipped) {
         pushToast(
-          `Skipped ${skipped} item${skipped === 1 ? "" : "s"}; folders and byte-only files over 64 MiB aren't pasted`,
+          msg("editor-block-skipped-item-folders-and-byte-only-files-over-64-mib-aren-t-pasted", { count: skipped }),
           "error"
         );
       } else if (nativeUnavailable && !eventFiles.length) {
-        pushToast("Couldn't read copied files; use Upload or drag-and-drop instead", "error");
+        pushToast(msg("editor-block-couldn-t-read-copied-files-use-upload-or-drag-and-drop-instead"), "error");
       }
     }
   };
@@ -1283,7 +1390,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     try {
       res = await backend().capturePhoto();
     } catch (err) {
-      if (bindingCurrent(editorToken.binding)) pushToast(`Couldn’t capture a photo (${String(err)})`, "error");
+      if (bindingCurrent(editorToken.binding)) pushToast(msg("editor-block-couldn-t-capture-a-photo", { detail: String(err) }), "error");
       return;
     }
     if (res.status === "ok" && res.path) {
@@ -1292,7 +1399,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         const stored = await trackAssetWrite(importCaptureToOrigin(editorToken, res.path, candidate));
         if (stored) insertStoredAssets(editorToken, [{ stored }]);
       } catch (err) {
-        pushToast(`Couldn’t import the photo (${String(err)})`, "error");
+        pushToast(msg("editor-block-couldn-t-import-the-photo", { detail: String(err) }), "error");
       }
     }
   });
@@ -1308,7 +1415,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       try {
         res = await backend().stopRecording();
       } catch (err) {
-        pushToast(`Couldn’t save the recording (${String(err)})`, "error");
+        pushToast(msg("editor-block-couldn-t-save-the-recording", { detail: String(err) }), "error");
         return;
       }
       if (res.status === "ok" && res.path) {
@@ -1317,7 +1424,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           const stored = await trackAssetWrite(importCaptureToOrigin(editorToken, res.path, candidate));
           if (stored) insertStoredAssets(editorToken, [{ stored }]);
         } catch (err) {
-          pushToast(`Couldn’t import the recording (${String(err)})`, "error");
+          pushToast(msg("editor-block-couldn-t-import-the-recording", { detail: String(err) }), "error");
         }
       }
       return;
@@ -1327,14 +1434,14 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     try {
       res = await backend().startRecording();
     } catch (err) {
-      if (bindingCurrent(editorToken.binding)) pushToast(`Couldn’t start recording (${String(err)})`, "error");
+      if (bindingCurrent(editorToken.binding)) pushToast(msg("editor-block-couldn-t-start-recording", { detail: String(err) }), "error");
       return;
     }
     if (!bindingCurrent(editorToken.binding)) { if (res.status === "recording") void backend().cancelRecording(); return; }
     if (res.status === "recording") {
       mobileRecordingEditorToken = editorToken;
       setRecordingAudio(true);
-      pushToast("Recording… tap the mic again to stop", "info");
+      pushToast(msg("editor-block-recording-tap-the-mic-again-to-stop"), "info");
     }
   };
 
@@ -1352,18 +1459,18 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     try {
       const status = await startDesktopVoiceRecording(desktopRecordingOwner, {
         complete: async (bytes, mime, limited) => {
-          if (limited) pushToast("Recording limit reached; saving the captured audio", "info");
+          if (limited) pushToast(msg("editor-block-recording-limit-reached-saving-the-captured-audio"), "info");
           await insertAssetBytes(editorToken, bytes, undefined, recordingExt(mime));
         },
-        error: (message) => pushToast(`Couldn’t save the recording (${message})`, "error"),
+        error: (message) => pushToast(msg("editor-block-desktop-recording-save-error", { error: String(message) }), "error"),
       });
       if (status === "busy") {
-        pushToast("Another voice recording is already active", "error");
+        pushToast(msg("editor-block-another-voice-recording-is-already-active"), "error");
         return;
       }
-      pushToast("Recording… run /record again to stop", "info");
+      pushToast(msg("editor-block-recording-run-record-again-to-stop"), "info");
     } catch (err) {
-      pushToast(`Couldn’t access the microphone (${String(err)})`, "error");
+      pushToast(msg("editor-block-couldn-t-access-the-microphone", { detail: String(err) }), "error");
     }
   };
   const uploadAsset = () => withNativeAssetPicker(async (editorToken) => {
@@ -1376,7 +1483,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const saved = await writeOwned(owner, trackAssetWrite(backend().importAsset(path, assetFileName(orig), editorToken.binding.backendGeneration)));
       if (saved.kind === "current") insertStoredAssets(editorToken, [{ stored: saved.value, label: orig }]);
     } catch (error) {
-      pushToast(`Couldn’t import asset: ${String(error)}`, "error");
+      pushToast(msg("editor-block-couldn-t-import-asset", { detail: String(error) }), "error");
     }
   });
 
@@ -1402,10 +1509,10 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const cmd = await resolveMediaEditorCommand(ed);
       if (!owner()) return;
       void writeOwned(owner, backend().editAssetExternal(saved, cmd, editorToken.binding.backendGeneration))
-        .catch(() => pushToast("Couldn’t open draw.io", "error"));
+        .catch(() => pushToast(msg("editor-block-couldn-t-open-draw-io"), "error"));
       refreshAssetOnReturn(saved);
     } catch (error) {
-      pushToast(`Couldn’t create the diagram: ${String(error)}`, "error");
+      pushToast(msg("editor-block-couldn-t-create-the-diagram", { detail: String(error) }), "error");
     }
   };
 
@@ -1456,8 +1563,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         return sourcePage;
       }, intended).then((saved) => {
         if (!saved && bindingCurrent(binding) && (inserted || ac() === trigger))
-          pushToast("Could not save the block reference. Resolve the page save and try again.", "error");
-      }).catch((error) => { if (bindingCurrent(binding)) pushToast(`Could not save the block reference: ${String(error)}`, "error"); });
+          pushToast(msg("editor-block-could-not-save-the-block-reference-resolve-the-page-save-and-try-again"), "error");
+      }).catch((error) => { if (bindingCurrent(binding)) pushToast(msg("editor-block-could-not-save-the-block-reference", { detail: String(error) }), "error"); });
       return;
     }
     if (item.plugin) {
@@ -1517,12 +1624,12 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         .then((effects) => {
           if (!editorIsCurrent()) {
             if (isPluginGraphOwnerCurrent(ownedBlock.owner) && textarea.isConnected && textarea.value !== before) {
-              pushToast("Plugin result was not inserted because the block changed while it ran.", "info");
+              pushToast(msg("editor-block-plugin-result-was-not-inserted-because-the-block-changed-while-it-ran"), "info");
             }
             return;
           }
           if (textarea.value !== before) {
-            pushToast("Plugin result was not inserted because the block changed while it ran.", "info");
+            pushToast(msg("editor-block-plugin-result-was-not-inserted-because-the-block-changed-while-it-ran"), "info");
             return;
           }
           const effect = effects.find((candidate) => candidate.kind === "insert-at-caret");
@@ -1546,7 +1653,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
             autosize();
           });
         })
-        .catch((error) => pushToast(`Plugin slash command failed: ${String(error)}`, "error"));
+        .catch((error) => pushToast(msg("editor-block-plugin-slash-command-failed", { detail: String(error) }), "error"));
       return;
     }
     if (item.templateNodes) {
@@ -1559,7 +1666,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       const wasEmpty =
         docNode(props.id).raw.trim() === "" && docNode(props.id).children.length === 0;
       const lastId = insertOutlineAfter(props.id, nodes);
-      if (!lastId) { pushToast("Outline is too deep to insert", "error"); return; }
+      if (!lastId) { pushToast(msg("editor-block-outline-is-too-deep-to-insert"), "error"); return; }
       if (wasEmpty) deleteBlock(props.id);
       startEditing(lastId, docNode(lastId).raw.length);
       return;
@@ -1611,7 +1718,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       case "deadline": {
         replaceTrigger("");
         const r = ref.getBoundingClientRect();
-        openDatePicker(props.id, item.action, r.left, r.bottom + 4);
+        openDatePicker(props.id, item.action, r.left, r.bottom + 4, resultTarget(props.id));
         return;
       }
       case "now-time":
@@ -1745,6 +1852,23 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
 
   const textareaValue = createMemo(() => isCalc() ? (calcLive() ?? "") : (codeShown()?.body ?? editorValue()));
+  const editMixedContext = (event: MouseEvent, side: "before" | "after") => {
+    const context = mixedCodeContext();
+    if (!context || event.button !== 0 || forbidsEditEntry(event)) return;
+    const raw = context[side];
+    const offset = (side === "after" ? editorValue().length - raw.length : 0)
+      + (renderedClickOffset(event.currentTarget as HTMLElement, raw, pageFmt(), event) ?? raw.length);
+    event.preventDefault();
+    event.stopPropagation();
+    // The same parser-owned entry boundary handles another code card, or
+    // returns to raw source for prose. No content is rewritten on a click.
+    codeView.enter(offset);
+    ref.value = textareaValue();
+    const caret = Math.max(0, Math.min(ref.value.length, offset - (codeShown()?.open.length ?? 0)));
+    ref.focus();
+    ref.setSelectionRange(caret, caret);
+    resizeNow();
+  };
   // GH #668: document-driven changes (planning dates, undo, external updates)
   // bypass commit/onInput. Resize from the same visible buffer bound to the DOM,
   // after Solid has assigned it, using the existing coalesced layout frame.
@@ -1888,6 +2012,14 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // Rows survive refinement of the same trigger, never a new family/location
     // or a now-blank page/tag lifecycle.
     const previous = ac();
+    if (next.kind !== "page" && next.kind !== "tag") releaseCompletionLease();
+    // OG save-current-block! withholds references while page-search is active.
+    // Preserve autosave and give the read-only picker its pre-trigger baseline.
+    if ((next.kind === "page" || next.kind === "tag") &&
+        (!previous || previous.kind !== next.kind || previous.start !== next.start)) {
+      releaseCompletionLease();
+      completionOriginalRaw = rawBeforeLastCommit;
+    }
     setAc(next);
     setAcIndex(0);
     setAcBlockState(next.kind === "block" ? "pending" : null);
@@ -1904,6 +2036,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     acTimer = setTimeout(() => void updateAutocomplete(), 90);
   };
   const applyFullWidthRefReplace = () => {
+    if (ref.selectionStart !== ref.selectionEnd) return false;
     const paired = fullWidthRefReplace(ref.value, ref.selectionStart);
     if (!paired) return false;
     ref.value = paired.value;
@@ -1965,7 +2098,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           handled = true;
         }
       }
-      if (ch === "【") {
+      if (ch === "【" || ch === "（" || ch === "〈") {
         handled = applyFullWidthRefReplace();
       }
       // GH #413: the third backtick of a whole-block fence trigger is an EXPLICIT
@@ -2056,7 +2189,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       if (ref === movedEditor && movedEditor.isConnected && editingId() === props.id
         && (documentOf(movedEditor).activeElement === movedEditor
           || documentOf(movedEditor).activeElement === documentOf(movedEditor).body)) restore();
-      await move;
+      const moved = await move;
+      // GH #641: a move this surface cannot show says where the block went.
+      if (moved !== false && moved !== "none") noticeMoveOutOfView(props.id, outlineScope);
       await nextFrame(ref);
       if (documentOf(ref).activeElement !== ref) restore();
     }).catch(() => console.error("Block move failed"));
@@ -2118,9 +2253,30 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     applyEdit({ text: ref.value.slice(0, start) + "/" + ref.value.slice(end), start: start + 1, end: start + 1 });
     queueMicrotask(() => void updateAutocomplete());
   };
+  // GH #448 "Paste as link": the clipboard's URL or block ref becomes a link
+  // around the selection (a bare link without one). A command, so it reads the
+  // clipboard itself; ordinary paste is untouched.
+  const pasteAsLinkCmd = async () => {
+    const before = { value: ref.value, start: ref.selectionStart, end: ref.selectionEnd };
+    let clipboard: string;
+    try {
+      clipboard = await readClipboardText();
+    } catch {
+      pushToast(msg("editor-block-couldn-t-read-the-clipboard"), "error");
+      return;
+    }
+    // The user kept typing while the clipboard was read: the request is stale.
+    if (!ref.isConnected || ref.value !== before.value) return;
+    const edit = pasteAsLinkEdit(before.value, before.start, before.end, clipboard, pageFmt());
+    if (!edit) {
+      pushToast(msg("editor-block-the-clipboard-doesn-t-hold-a-link-or-a-block-ref"), "warn");
+      return;
+    }
+    applyEdit(edit);
+  };
   const openScheduledDatePicker = () => {
     const r = ref.getBoundingClientRect();
-    openDatePicker(props.id, "scheduled", r.left, r.bottom + 4);
+    openDatePicker(props.id, "scheduled", r.left, r.bottom + 4, resultTarget(props.id));
   };
 
   const applyInlineFormat = (kind: InlineFormat) => {
@@ -2138,6 +2294,17 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // its own preventDefault when it handles the event and returns whether it did
   // (false → fall through to native handling). Read ref fresh at call time.
   const runEditorCmd: Record<string, (e: KeyboardEvent) => boolean> = {
+    "editor/select-embedding-block": (e) => {
+      if (!embedNavExit) return false;
+      e.preventDefault();
+      commit(ref.value);
+      // The source's outline scope belongs to the embed. Selection belongs to
+      // its containing outline instead (including a nested embed's host).
+      const host = ref.closest(".embed-block, .embed-page")?.closest<HTMLElement>(".ls-block");
+      selectBlock(embedNavExit.hostBlockId);
+      host?.querySelector<HTMLElement>(":scope > .block-main")?.scrollIntoView?.({ block: "nearest" });
+      return true;
+    },
     "editor/bold": (e) => { e.preventDefault(); applyInlineFormat("bold"); return true; },
     "editor/italics": (e) => { e.preventDefault(); applyInlineFormat("italic"); return true; },
     "editor/strike-through": (e) => { e.preventDefault(); applyInlineFormat("strikethrough"); return true; },
@@ -2154,8 +2321,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     "editor/forward-word": (e) => { e.preventDefault(); moveCaret(wordForward(ref.value, ref.selectionStart)); return true; },
     "editor/move-block-up": (e) => moveBlockCmd(e, -1),
     "editor/move-block-down": (e) => moveBlockCmd(e, 1),
-    "editor/collapse": (e) => { e.preventDefault(); setCollapsed(props.id, true); return true; },
-    "editor/expand": (e) => { e.preventDefault(); setCollapsed(props.id, false); return true; },
+    "editor/collapse": (e) => { e.preventDefault(); setOccurrenceCollapsed(true); return true; },
+    "editor/expand": (e) => { e.preventDefault(); setOccurrenceCollapsed(false); return true; },
     "editor/select-block-up": (e) => selectBlockCmd(e, -1),
     "editor/select-block-down": (e) => selectBlockCmd(e, 1),
     "editor/select-all": (e) => {
@@ -2180,7 +2347,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       if (!outlineScope?.navOnly && outlineScope?.roots.includes(props.id)) return true;
       const selection = { start: ref.selectionStart, end: ref.selectionEnd, direction: ref.selectionDirection };
       commit(ref.value);
-      if (indentBlock(props.id, selection, editSurface()) === false) pushToast("Outline is too deep to indent", "error");
+      if (indentBlock(props.id, selection, editSurface()) === false) pushToast(msg("editor-block-outline-is-too-deep-to-indent"), "error");
       return true;
     },
     "editor/outdent": (e) => {
@@ -2201,6 +2368,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       case "editor/indent":
       case "editor/move-block-up":
       case "editor/move-block-down":
+      case "editor/select-embedding-block":
       case "editor/cycle-todo":
         return runEditorCmd[command]?.(mobileKeyEvent) ?? false;
       case "editor/soft-newline":
@@ -2227,6 +2395,9 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       case "editor/open-slash-menu":
         insertSlashMenuTrigger();
         return true;
+      case "editor/paste-as-link":
+        void pasteAsLinkCmd();
+        return true;
     }
   };
   let unregisterFocusedEditorBridge: (() => void) | undefined;
@@ -2250,7 +2421,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     return (docNode(id)?.children ?? []).find((child) => blockIsGridView(child)) ?? null;
   };
   const sheetVisibleLength = (id: string): number =>
-    splitProps(docNode(id)?.raw ?? "", isSheetCellHidden).visible.length;
+    splitProps(docNode(id)?.raw ?? "", SHEET_CELL_HIDE).visible.length;
   const deepestLastSheetOutline = (id: string): string => {
     let cur = id;
     for (;;) {
@@ -2418,7 +2589,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     // ClipboardEvent does not expose modifier keys, so remember the preceding
     // keydown briefly and consume it in onPaste. Do not preventDefault: the
     // platform still has to perform the native clipboard read and dispatch paste.
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "v") {
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && shortcutKey(e) === "v") {
       clearPasteRaw();
       pasteRaw = true;
       const token = ++pasteRawToken;
@@ -2508,7 +2679,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       (e.ctrlKey || e.metaKey) &&
       !e.shiftKey &&
       !e.altKey &&
-      e.key.toLowerCase() === "c" &&
+      shortcutKey(e) === "c" &&
       start === end
     ) {
       e.preventDefault();
@@ -2838,8 +3009,18 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
 
   const onBlur = (e: FocusEvent) => {
     clearPasteRaw();
+    // The palette must retain the source occurrence until its contextual
+    // Select embedding block action runs. Blur still commits the draft.
+    if (embedNavExit && (e.relatedTarget as HTMLElement | null)?.closest?.(".switcher")) {
+      commit(ref.value);
+      savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
+      return;
+    }
     unregisterFocusedEditor();
     if (sheetCanceling) return;
+    // The engine's blur on a textarea removed by a page replacement: not the
+    // user leaving the block. The carried editor (if any) owns editing now.
+    if (replacedUnderEditor()) return;
     // A block-move reorder blurs us momentarily — stay in edit mode (the move
     // handler refocuses and restores the caret). Commit as-is, don't normalize.
     if (isBlockMoving()) {
@@ -2997,7 +3178,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
     if (text.includes("\n")) {
       e.preventDefault();
-      if (text.length > OUTLINE_MAX_SOURCE_CHARS) { pushToast("Pasted text is too large", "error"); return; }
+      if (text.length > OUTLINE_MAX_SOURCE_CHARS) { pushToast(msg("editor-block-pasted-text-is-too-large"), "error"); return; }
       if (syntaxSensitive) {
         pasteLiteralText(text);
         return;
@@ -3067,7 +3248,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     const looksImage = (e.clipboardData?.types ?? []).some(
       (t) => t.startsWith("image/") || t === "Files"
     );
-    const toastId = looksImage ? pushToast("Pasting image…", "info") : 0;
+    const toastId = looksImage ? pushToast(msg("editor-block-pasting-image"), "info") : 0;
     const editorToken = captureAssetEditorToken();
     const owner = bindingOwner(() => assetEditorCurrent(editorToken));
     void (async () => {
@@ -3085,7 +3266,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   function insertPastedOutline(nodes: OutlineNode[], tag: string, asChildren = false) {
     const current = docNode(props.id);
     if (!current) return;
-    if (!outlineFits(props.id, nodes, asChildren ? 1 : 0)) { pushToast("Pasted outline is too deep", "error"); return; }
+    if (!outlineFits(props.id, nodes, asChildren ? 1 : 0)) { pushToast(msg("editor-block-pasted-outline-is-too-deep"), "error"); return; }
     const rawAtPaste = ref.value;
     const pageAtPaste = current.page;
     const insert = (prepared: OutlineNode[] | null) => {
@@ -3095,7 +3276,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           commit(rawAtPaste);
           return insertOutlineChildren(props.id, prepared) ?? false;
         });
-        if (!inserted) pushToast("Pasted outline was refused", "error");
+        if (!inserted) pushToast(msg("editor-block-pasted-outline-was-refused"), "error");
         return;
       }
       const wasEmpty = rawAtPaste.trim() === "" && docNode(props.id).children.length === 0;
@@ -3105,7 +3286,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           ? replaceEmptyBlockWithOutline(props.id, prepared)
           : insertOutlineAfter(props.id, prepared)) ?? false;
       });
-      if (!lastId) { pushToast("Pasted outline was refused", "error"); return; }
+      if (!lastId) { pushToast(msg("editor-block-pasted-outline-was-refused"), "error"); return; }
       if (docNode(lastId)) startEditing(lastId, docNode(lastId).raw.length);
     };
     const prepared = sanitizeOutlineIdsForPaste(props.id, nodes);
@@ -3114,6 +3295,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   }
   return (
     <div class="editor-wrap" classList={{ "calc-wrap": isCalc(), "code-wrapping": codeEditing() && codeWrapping() }}>
+      <Show when={mixedCodeContext()?.before}>{before => <div class="block-content mixed-code-before" onMouseDown={event => editMixedContext(event, "before")}><AstBody raw={before()} format={pageFmt()} headingLevel={effectiveHeadingLevel(propertySession.facets(node().raw, pageFmt()), depthOf(props.id))} /></div>}</Show>
+      <div class="code-editor-region" classList={{ "mixed-code-region": !!mixedCodeContext() }}>
       <Show when={codeEditing()}>
         <span class="code-language">{(codeShown() ?? codeFenceOnly(editorValue(), pageFmt()))?.lang.toLowerCase()}</span>
         <LineGutter lines={(codeShown()?.body ?? editorValue()).split("\n")} code />
@@ -3137,7 +3320,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         onCompositionEnd={onCompositionEnd}
         onKeyDown={onKeyDown}
         onKeyUp={(e) => {
-          if (e.key.toLowerCase() === "v") clearPasteRaw();
+          if (shortcutKey(e) === "v") clearPasteRaw();
           if (e.key.startsWith("Arrow")) updateSel();
         }}
         onFocus={() => {
@@ -3150,6 +3333,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         onMouseUp={updateSel}
         rows={1}
       />
+      </div>
+      <Show when={mixedCodeContext()?.after}>{after => <div class="block-content mixed-code-after" onMouseDown={event => editMixedContext(event, "after")}><AstBody raw={after()} format={pageFmt()} /></div>}</Show>
       <Show when={isCalc()}>
         <div class="calc-results">
           <For each={calcRows()}>
@@ -3157,7 +3342,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
               <div class="calc-out" classList={{ "calc-error": !!r.error }}>
                 {r.output ?? ""}
                 <Show when={r.output !== null && !r.error}>
-                  <CopyButton text={r.output!} title="Copy result" class="calc-copy" />
+                  <CopyButton text={r.output!} title={translate("editor-block-copy-result")} class="calc-copy" />
                 </Show>
               </div>
             )}
@@ -3187,14 +3372,14 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           </div>
           <button
             class="sel-toolbar-more"
-            title="More formatting"
-            aria-label="More formatting"
+            title={translate("editor-block-more-formatting")}
+            aria-label={translate("editor-block-more-formatting")}
             aria-haspopup="menu"
             aria-expanded={selectionOverflowOpen()}
             onClick={() => setSelectionOverflowOpen((open) => !open)}
           >…</button>
           <Show when={selectionOverflowOpen()}>
-            <div ref={selectionOverflowRef} class="sel-toolbar-overflow" role="menu" aria-label="More formatting">
+            <div ref={selectionOverflowRef} class="sel-toolbar-overflow" role="menu" aria-label={translate("editor-block-more-formatting")}>
               <For each={secondarySelectionActions}>{(action) => (
                 <button
                   role="menuitem"

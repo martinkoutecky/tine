@@ -1,0 +1,128 @@
+/* All Pages view (GH #335): a windowed table; every row is the same fixed height
+   (ALL_PAGES_ROW_HEIGHT in AllPages.tsx), so only the visible slice is in the DOM. */
+.all-pages {
+  width: min(100%, 880px);
+  margin: 0 auto;
+  padding: 26px clamp(16px, 3vw, 34px) 24px;
+  box-sizing: border-box;
+}
+.all-pages-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 10px 0 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.all-pages-filter {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary, transparent);
+  color: var(--text-primary);
+  font: inherit;
+}
+.all-pages-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+/* One track per rendered cell: page, updated, backlinks, plus journal date only
+   while journals are listed (`all-pages-table--day`, set by AllPages.tsx). The
+   header and every row read the same track list, so a cell can never wrap into
+   an implicit second grid row. */
+.all-pages-table {
+  --all-pages-columns: minmax(0, 1fr) 10.5em 8em;
+}
+.all-pages-table--day {
+  --all-pages-columns: minmax(0, 1fr) 10.5em 8em 9em;
+}
+.all-pages-head,
+.all-pages-row {
+  display: grid;
+  grid-template-columns: var(--all-pages-columns);
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+}
+.all-pages-head {
+  border-bottom: 1px solid var(--border-color);
+}
+.all-pages-col {
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.all-pages-col:hover {
+  color: var(--text-primary);
+}
+.all-pages-scroll {
+  position: relative;
+  height: calc(100vh - 240px);
+  min-height: 240px;
+  overflow-y: auto;
+}
+.all-pages-spacer {
+  position: relative;
+}
+.all-pages-window {
+  position: absolute;
+  inset: 0 0 auto 0;
+}
+.all-pages-row {
+  border-bottom: 1px solid var(--border-color);
+}
+.all-pages-open {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link-color, var(--text-primary));
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.all-pages-open:hover {
+  text-decoration: underline;
+}
+.all-pages-row .all-pages-day,
+.all-pages-row .all-pages-updated {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.all-pages-empty {
+  position: absolute;
+  top: 0;
+  margin: 12px 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+@media (max-width: 640px) {
+  /* The journal-date cells are hidden here, so the grid has the three tracks
+     of the cells that remain, with or without journals. */
+  .all-pages-table,
+  .all-pages-table--day {
+    --all-pages-columns: minmax(0, 1fr) 9.5em 6em;
+  }
+  .all-pages-day,
+  .all-pages-day-col {
+    display: none;
+  }
+}

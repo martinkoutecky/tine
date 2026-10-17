@@ -350,6 +350,7 @@ mod diagnostics;
 #[cfg(test)]
 mod fold_save_tests;
 mod inventory;
+mod name_search;
 #[cfg(test)]
 mod page_open_tests;
 mod page_read;
@@ -731,7 +732,8 @@ pub struct ConfigState {
     /// without a date claim if neither the new format nor a fallback parses
     /// their stem; callers must plan any file migration separately.
     pub config: Arc<tine_core::config::Config>,
-    /// Config read error, if one occurred. Missing config is not an error.
+    /// Config read error, if one occurred. A missing config is not an error,
+    /// unless an iCloud placeholder stands in for it (`missing_config_problem`).
     /// Unrecognized or malformed config values may default individually and do
     /// not set this field. Journal format strings are not validated here:
     /// unsupported format characters become literal text, and a format that
@@ -1000,7 +1002,7 @@ impl Store {
             return Err(failed(parent, std::io::Error::new(std::io::ErrorKind::InvalidInput,
                 "Choose a non-empty graph name without path separators, control characters or <>:\"/\\|?*. Names cannot be . or .., end with a dot or space, or use a Windows device name (CON, NUL, COM1, etc.).")));
         }
-        let root = parent.join(name.trim());
+        let root = crate::path_identity::new_graph_root(parent, name.trim())?;
         match fs::create_dir(&root) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -1305,6 +1307,14 @@ impl Store {
             }),
             LoadStatus::Closed => Err(LoadError::Closed),
         }
+    }
+
+    /// Tests (REVIEW-3b-P2b-2 N3): true once the watcher has reconciled
+    /// every notification of a write made before the call and no racy
+    /// follow-up is due (`watch/test_drain.rs`); false at `timeout`.
+    #[cfg(feature = "test-faults")]
+    pub fn watcher_drained_for_tests(&self, timeout: std::time::Duration) -> bool {
+        self.watch.drained_for_tests(timeout)
     }
 
     /// Stop observation, wait for an in-flight writer, end the subscription,
@@ -2061,8 +2071,11 @@ impl Store {
     /// [`Self::whole_graph`] that never serves the launch checkpoint before
     /// the launch diff: graph-wide destructive operations (delete, rename,
     /// merge, orphan cleanup) wait for it, since an external edit made while
-    /// Tine was closed may have added a reference the checkpoint lacks.
-    pub(crate) fn whole_graph_reconciled(&self) -> Result<WholeGraph, LoadError> {
+    /// Tine was closed may have added a reference the checkpoint lacks. A
+    /// one-shot lookup that found nothing in a served checkpoint asks again
+    /// here (a cold-start `tine://` link, GH #181): the edit may have added
+    /// its target.
+    pub fn whole_graph_reconciled(&self) -> Result<WholeGraph, LoadError> {
         self.whole_graph_when(false)
     }
 
@@ -2470,6 +2483,9 @@ pub struct Inventory(pub Vec<InventoryEntry>);
 pub enum InventoryScope<'a> {
     /// Every name: file-claimed names, aliases and reference-only names.
     All,
+    /// Referenced journal dates, including dates without a file, once per day.
+    /// Uses the explicit-reference index; excludes ordinary date-page identity.
+    ReferencedJournals,
     /// Only the file-claimed names whose page key is this key or lies under
     /// `key/` (a page and its namespace descendants): what a rename moves.
     FilesAtOrUnder(&'a str),
@@ -2478,6 +2494,8 @@ pub enum InventoryScope<'a> {
 pub struct SearchRequest {
     /// Search expression.
     pub text: String,
+    /// Request-local name expansion; legacy callers pass false.
+    pub transliteration: bool,
     /// Restrict search to this physical page id, including a chosen twin; an
     /// alias does not broaden the scope. An absent file produces an empty
     /// result; check existence separately if it matters.
@@ -2828,6 +2846,24 @@ impl WholeGraph {
         &self.unreadable
     }
 
+    /// Last-modified time, in Unix seconds, of each page file this view holds,
+    /// keyed by graph-relative path (the `id` of an inventory `existing`
+    /// target), in path order. The times are the ones captured with this
+    /// view's page table (the launch stamp pass, then each save or watcher
+    /// reconcile), the same ones `(sort-by modified)` reads: a copy of data
+    /// already in memory, with no stat, no file read and no persisted record.
+    /// A file with no recorded time, or one before 1970, is absent. Cost O(P).
+    pub fn page_modified(&self) -> Vec<(String, i64)> {
+        self.graph
+            .observed_page_mtimes()
+            .iter()
+            .filter_map(|(path, time)| {
+                let elapsed = time.duration_since(std::time::UNIX_EPOCH).ok()?;
+                Some((path.clone(), i64::try_from(elapsed.as_secs()).ok()?))
+            })
+            .collect()
+    }
+
     /// Return an owned `Corpus` of pages in this view for evaluation. Cost
     /// O(P); parsed documents are shared while the result is held.
     // The evaluator receives a copy of the parsed-page table.
@@ -2890,9 +2926,13 @@ impl WholeGraph {
             .iter()
             .filter(|(entry, doc)| {
                 candidates.indexed
-                    || crate::query::document_explicit_reference_names(entry, doc)
-                        .iter()
-                        .any(|name| keys.contains(name))
+                    || crate::query::document_explicit_reference_names(
+                        entry,
+                        doc,
+                        self.graph.config(),
+                    )
+                    .iter()
+                    .any(|name| keys.contains(name))
             })
             .map(|(entry, _)| PageId::from(entry.rel_path_str()))
             .collect();
@@ -3111,6 +3151,7 @@ impl WholeGraph {
                 .unwrap_or(tine_core::query::ir::FriendlyPageMatchScope::Names),
             req.page_view.clone(),
             req.block_view.clone(),
+            req.transliteration,
         );
         if result.cancelled {
             Err(QueryError::Cancelled)
@@ -3205,6 +3246,13 @@ impl WholeGraph {
         }
     }
 
+    /// The pages holding the block with this persisted `id::`, at
+    /// most two: one means the id names one page's block, two means it is
+    /// duplicated across pages. Walks every page: O(B).
+    pub fn block_pages(&self, uuid: &str) -> Vec<String> {
+        crate::query::block_pages(&self.graph, uuid)
+    }
+
     /// Bounded subtree preview. `max_nodes` is clamped to 1..=2,000 and
     /// output is capped below 32 MiB. Inspect `BlockPreview::truncated`:
     /// `Some` can omit descendants or even the root under the byte cap.
@@ -3253,16 +3301,6 @@ impl WholeGraph {
     /// O(distinct referenced ids) entries; later reads clone that cached map.
     pub fn block_ref_counts(&self) -> Arc<HashMap<String, usize>> {
         self.graph.public_block_ref_counts()
-    }
-
-    /// `[[` completion over pages, journals, aliases and referenced names.
-    /// A first call can traverse all page blocks and reference text to build
-    /// indexes; later calls scan page, alias, and referenced-name candidates
-    /// and rank or sort matches, returning at most `limit` entries. Once an
-    /// index has been built, a later publication carries it forward by updating
-    /// changed pages; the first completion after every save does not rescan B.
-    pub fn complete_page_names(&self, text: &str, limit: usize) -> Vec<PageEntry> {
-        crate::query::quick_switch(&self.graph, text, limit)
     }
 
     /// Literal `((` block search, O(B) per call, at most `limit` blocks.
@@ -3973,6 +4011,7 @@ mod rev5_tests {
         assert_eq!(
             view.search(
                 &SearchRequest {
+                    transliteration: false,
                     text: "ordinary".into(),
                     within: None,
                     page_limit: 10,
@@ -5181,6 +5220,7 @@ mod rev5_tests {
                     "{:?}",
                     view.search(
                         &SearchRequest {
+                            transliteration: false,
                             text: "Target".into(),
                             within: None,
                             page_limit: 10,
@@ -5225,7 +5265,10 @@ mod rev5_tests {
                 "complete_page_names",
                 format!(
                     "{:?}",
-                    view.complete_page_names("", 20)
+                    view.complete_page_names("", 20, None, false, None)
+                        .into_iter()
+                        .map(|(page, _)| page)
+                        .collect::<Vec<_>>()
                         .iter()
                         .map(|entry| &entry.name)
                         .collect::<Vec<_>>()

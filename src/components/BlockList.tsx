@@ -9,20 +9,21 @@
  * Block surface context, and viewport/font come from DOM. Hosts register
  * descendant ids for model-driven reveal; callers provide only ids.
  */
-import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
+import { For, Show, batch, createEffect, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { node } from "../document";
 import { editingId } from "../editorController";
 import { clearOnBindingInvalidated } from "../binding";
 import { listenForOutlinePrint, printingOutline, registerOutlineWindow } from "../outlineViewport";
 import { Block, CollapseSurfaceContext, SurfaceContext } from "./Block";
 import { elementFromPointIn, newIntersectionObserver, newResizeObserver, windowOf } from "../windowRealm";
+import { createOutlineWindowGeometry, createOutlineWindowModel } from "./outlineWindowModel";
 
 const GROUP = 24;
 const WINDOW_AT = 80;
 type OutlineEntry = string | { readonly groups: readonly (readonly string[])[] };
 // Bounded, graph-scoped geometry only: never retain components or document nodes.
-const heights = new Map<string, { width: number; signature: string; height: number }>();
-clearOnBindingInvalidated(() => { heights.clear(); textWidths.clear(); });
+const heights = new Map<string, { width: number; structure: string; version: number; height: number }>();
+clearOnBindingInvalidated(() => heights.clear());
 
 export function BlockList(props: { ids: readonly string[] }): JSX.Element {
   return <For {...blockListProps(() => props.ids)} />;
@@ -119,19 +120,8 @@ function BlockWindow(props: { ids: readonly string[]; first: boolean; width: num
   const [near, setNear] = createSignal(props.first || typeof IntersectionObserver === "undefined");
   const [forced, setForced] = createSignal(false);
   const [height, setHeight] = createSignal(0);
-  const model = createMemo(() => {
-    const all: string[] = [];
-    const signature: string[] = [];
-    const visit = (id: string) => {
-      const n = node(id);
-      if (!n) return;
-      all.push(id);
-      signature.push(id, n.raw, String(collapsed(id, n.collapsed)));
-      n.children.forEach(visit);
-    };
-    props.ids.forEach(visit);
-    return { all, members: new Set(all), signature: signature.join("\0") };
-  });
+  const model = createOutlineWindowModel(() => props.ids, collapsed);
+  const geometry = createOutlineWindowGeometry(model, () => props.width, () => props.font);
   const active = () => {
     const id = editingId();
     return !!id && model().members.has(id);
@@ -144,16 +134,20 @@ function BlockWindow(props: { ids: readonly string[]; first: boolean; width: num
     setHeight(h);
     const key = cacheKey();
     heights.delete(key);
-    heights.set(key, { width: host.clientWidth, signature: untrack(() => model().signature), height: h });
+    heights.set(key, { width: host.clientWidth, structure: untrack(() => model().structure), version: untrack(() => geometry().version()), height: h });
     if (heights.size > 512) heights.delete(heights.keys().next().value!);
   };
   createEffect(() => {
     const current = model();
-    props.width; props.font;
     if (!host) return;
     onCleanup(registerOutlineWindow(current.all, host, () => { if (!untrack(near)) setForced(true); }));
+  });
+  createEffect(() => {
+    const current = model();
+    const version = geometry().version();
+    if (!host) return;
     const cached = heights.get(cacheKey());
-    if (cached?.signature === current.signature && cached.width === host.clientWidth) {
+    if (cached?.structure === current.structure && cached.version === version && cached.width === host.clientWidth) {
       setHeight(cached.height);
     } else {
       setHeight(0);
@@ -201,46 +195,9 @@ function BlockWindow(props: { ids: readonly string[]; first: boolean; width: num
   });
   return <div ref={host} class="outline-window" data-outline-window>
     <Show when={mounted()} fallback={
-      <div aria-hidden="true" style={{ height: `${height() || estimateHeight(props.ids, props.width, props.font, collapsed)}px` }} />
+      <div aria-hidden="true" style={{ height: `${height() || geometry().estimate()}px` }} />
     }>
       <For each={props.ids}>{(id) => <Block id={id} />}</For>
     </Show>
   </div>;
-}
-
-// Text layout estimate only; never infer Logseq structure. Text samples are
-// bounded and shared, so a page of long paragraphs needs neither offscreen DOM
-// nor repeated font shaping. Actual heights replace estimates on first visit.
-const textWidths = new Map<string, number>();
-let measuringFont = "";
-let canvas: CanvasRenderingContext2D | null | undefined;
-function estimateHeight(ids: readonly string[], width: number, font: string, collapsed: (id: string, stored: boolean) => boolean): number {
-  if (canvas === undefined) canvas = typeof CanvasRenderingContext2D === "undefined" ? null : document.createElement("canvas").getContext("2d");
-  if (font !== measuringFont) {
-    measuringFont = font; textWidths.clear();
-    if (canvas) canvas.font = font;
-  }
-  const available = Math.max(80, width - 42);
-  let height = 0;
-  for (const id of ids) {
-    const n = node(id);
-    if (!n) continue;
-    let lines = 0;
-    for (const line of n.raw.split("\n")) {
-      // Shape a bounded sample rather than every word of a long paragraph.
-      // Estimates may change once on first view; revisits use exact geometry.
-      const sample = line.slice(0, 160);
-      let size = textWidths.get(sample);
-      if (size === undefined) {
-        size = canvas?.measureText(sample).width ?? sample.length * 8;
-        if (textWidths.size >= 4096) textWidths.clear();
-        textWidths.set(sample, size);
-      }
-      const length = sample.length ? size * line.length / sample.length : 0;
-      lines += Math.max(1, Math.ceil(length / available));
-    }
-    height += Math.max(1, lines) * 26 + 2;
-    if (!collapsed(id, n.collapsed)) height += estimateHeight(n.children, width - 20, font, collapsed);
-  }
-  return height;
 }

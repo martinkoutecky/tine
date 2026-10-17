@@ -23,6 +23,7 @@ static ALLOCATED: AtomicU64 = AtomicU64::new(0);
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        super::og_p10_journal_scan_cost::count();
         if COUNTING.load(Ordering::Relaxed) {
             ALLOCATED.fetch_add(layout.size() as u64, Ordering::Relaxed);
             note_own(layout.size() as u64);
@@ -33,6 +34,7 @@ unsafe impl GlobalAlloc for Counting {
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        super::og_p10_journal_scan_cost::count();
         if COUNTING.load(Ordering::Relaxed) {
             ALLOCATED.fetch_add(
                 new_size.saturating_sub(layout.size()) as u64,
@@ -203,6 +205,11 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
 
 #[test]
 fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
+    let _integration_guard = crate::integration_lock();
+    if crate::isolated_case("query_unit_cost::a_query_side_edit_cost_does_not_grow_with_the_graph")
+    {
+        return;
+    }
     let _case = CASE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -270,6 +277,12 @@ fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
 /// probe on a text edit reads no page at all).
 #[test]
 fn a_property_edit_patches_the_registry_per_page_not_per_graph() {
+    let _integration_guard = crate::integration_lock();
+    if crate::isolated_case(
+        "query_unit_cost::a_property_edit_patches_the_registry_per_page_not_per_graph",
+    ) {
+        return;
+    }
     let _case = CASE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -314,6 +327,12 @@ fn a_property_edit_patches_the_registry_per_page_not_per_graph() {
 /// `status::` is held by all 9,999 other pages of this fixture.
 #[test]
 fn a_popular_property_edit_does_not_copy_the_key_postings() {
+    let _integration_guard = crate::integration_lock();
+    if crate::isolated_case(
+        "query_unit_cost::a_popular_property_edit_does_not_copy_the_key_postings",
+    ) {
+        return;
+    }
     let _case = CASE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -351,6 +370,12 @@ fn a_popular_property_edit_does_not_copy_the_key_postings() {
 /// a key that declares none).
 #[test]
 fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
+    let _integration_guard = crate::integration_lock();
+    if crate::isolated_case(
+        "query_unit_cost::a_save_that_moves_no_alias_does_not_copy_the_alias_list",
+    ) {
+        return;
+    }
     let _case = CASE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());

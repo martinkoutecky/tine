@@ -29,6 +29,16 @@ fn hold(store: &Store, key: &str) {
     store.graph.hold_unhosted(key);
 }
 
+/// Hold `key` as a page open does ([`super::Graph::hold_current`]), after
+/// `edit` ran under the same writer (no watcher reconcile in between).
+fn hold_open(store: &Store, key: &str, edit: impl FnOnce()) {
+    let _writer = store.writer.lock().unwrap();
+    edit();
+    store.graph.held.spellings().spell(key, key);
+    store.graph.hold_current(key.into());
+    store.publish_retired();
+}
+
 /// The owner's publication of held `key` (None: no file).
 fn publish(store: &Store, key: &str, bytes: Option<&str>) {
     let _writer = store.writer.lock().unwrap();
@@ -213,6 +223,103 @@ fn a_hold_with_no_publication_installs_no_row() {
         .find_claimants("Disk", PageKind::Page)
         .is_empty());
     store.close();
+}
+
+/// (G) as amended 2026-10-11 (PERF-FIXES D4): an open's hold of a file
+/// whose bytes are the installed row's keeps that row and publishes
+/// nothing; a rebuild under the hold derives the same row.
+#[test]
+fn an_opens_hold_of_an_unchanged_file_keeps_its_row() {
+    let body = "title:: Disk\n- a\n";
+    let (_temp, store) = graph(&[("pages/a.md", body.as_bytes())]);
+    let path = store.graph.root.join("pages/a.md");
+    let rev = store.whole_graph().unwrap().rev();
+    hold_open(&store, "pages/a.md", || {});
+    assert_eq!(store.graph.cached_rev(&path), Some(content_rev(body)));
+    assert_eq!(page(&store, "Disk").as_deref(), Some("pages/a.md"));
+    assert_eq!(
+        store.whole_graph().unwrap().rev(),
+        rev,
+        "D4: an unchanged open published a snapshot"
+    );
+    store.refresh(Depth::Rebuild).unwrap();
+    assert_eq!(store.graph.cached_rev(&path), Some(content_rev(body)));
+    assert_eq!(page(&store, "Disk").as_deref(), Some("pages/a.md"));
+    store.close();
+}
+
+/// REVIEW-3a4 #2 under the amended (G): an open's hold of a file that
+/// changed behind the index withholds the page until its owner publishes:
+/// no view names it from the stale row or from bytes the owner has not
+/// read.
+#[test]
+fn an_opens_hold_of_a_changed_file_installs_no_row() {
+    let (temp, store) = graph(&[("pages/a.md", b"title:: Disk\n- a\n")]);
+    let path = store.graph.root.join("pages/a.md");
+    hold_open(&store, "pages/a.md", || {
+        fs::write(temp.path().join("pages/a.md"), "title:: Edited\n- e\n").unwrap();
+    });
+    assert_eq!(store.graph.cached_rev(&path), None);
+    assert_eq!(page(&store, "Disk"), None, "the stale row stayed current");
+    assert_eq!(page(&store, "Edited"), None, "a name the owner never read");
+    publish(&store, "pages/a.md", Some("title:: Edited\n- e\n"));
+    assert_eq!(
+        store.graph.cached_rev(&path),
+        Some(content_rev("title:: Edited\n- e\n"))
+    );
+    store.close();
+}
+
+/// Claim `key` (an operation's page) whose owner observed `observed`.
+fn hold_claimed(store: &Store, key: &str, observed: Option<&str>) {
+    let _writer = store.writer.lock().unwrap();
+    store.graph.held.spellings().spell(key, key);
+    let observed = observed.map(|bytes| Arc::from(bytes.as_bytes()));
+    store.graph.hold_observed(key.into(), observed);
+    store.publish_retired();
+}
+
+/// A claim (an operation's page) whose owner observed the installed row's
+/// bytes keeps the row, as an unchanged open does ((G) as amended, extended to
+/// claims): nothing is published at the hold, and the owner's first
+/// publication of those bytes changes nothing. Before, every page a rename or
+/// delete took on was published as removed and then re-added: one snapshot and
+/// one inventory change each, and a Concord record for a page being deleted.
+#[test]
+fn a_claim_of_the_rows_bytes_keeps_its_row() {
+    let body = "title:: Disk\n- a\n";
+    let (_temp, store) = graph(&[("pages/a.md", body.as_bytes())]);
+    let path = store.graph.root.join("pages/a.md");
+    let rev = store.whole_graph().unwrap().rev();
+    hold_claimed(&store, "pages/a.md", Some(body));
+    assert_eq!(page(&store, "Disk").as_deref(), Some("pages/a.md"));
+    assert_eq!(
+        store.whole_graph().unwrap().rev(),
+        rev,
+        "an unchanged claim published a snapshot"
+    );
+    publish(&store, "pages/a.md", Some(body));
+    assert_eq!(store.whole_graph().unwrap().rev(), rev);
+    assert_eq!(store.graph.cached_rev(&path), Some(content_rev(body)));
+    store.close();
+}
+
+/// A claim whose owner observed other bytes than the row's, or nothing,
+/// withholds the page until the owner publishes (REVIEW-3a4 #2): no view names
+/// it from the stale row.
+#[test]
+fn a_claim_of_other_bytes_installs_no_row() {
+    for observed in [Some("title:: Edited\n- e\n"), None] {
+        let (_temp, store) = graph(&[("pages/a.md", b"title:: Disk\n- a\n")]);
+        let path = store.graph.root.join("pages/a.md");
+        hold_claimed(&store, "pages/a.md", observed);
+        assert_eq!(store.graph.cached_rev(&path), None);
+        assert_eq!(page(&store, "Disk"), None, "the stale row stayed current");
+        let published = observed.unwrap_or("title:: Disk\n- a\n");
+        publish(&store, "pages/a.md", Some(published));
+        assert_eq!(store.graph.cached_rev(&path), Some(content_rev(published)));
+        store.close();
+    }
 }
 
 /// R1: an owner's absent publication removes every row about the page,

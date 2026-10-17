@@ -104,6 +104,7 @@ fn differences(a: &BTreeMap<String, Vec<u8>>, b: &BTreeMap<String, Vec<u8>>) -> 
 
 #[test]
 fn fixture_print_and_publish_match_golden() {
+    let _integration_guard = crate::integration_lock();
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/publish_print");
     let (_old_dir, old_root) = scratch("fixture-old");
     let (_new_dir, new_root) = scratch("fixture-new");
@@ -126,6 +127,7 @@ fn fixture_print_and_publish_match_golden() {
 
 #[test]
 fn external_visibility_edit_is_seen_after_corpus_warmup() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, root) = scratch("visibility-edit");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::write(
@@ -150,6 +152,7 @@ fn external_visibility_edit_is_seen_after_corpus_warmup() {
 
 #[test]
 fn colliding_public_identity_does_not_publish_private_twin() {
+    let _integration_guard = crate::integration_lock();
     let (_dir, root) = scratch("public-twin");
     fs::create_dir_all(root.join("pages")).unwrap();
     fs::write(root.join("pages/Twin.md"), "public:: true\n- visible\n").unwrap();
@@ -167,6 +170,7 @@ fn colliding_public_identity_does_not_publish_private_twin() {
 #[test]
 #[ignore = "requires TINE_CORPUS and two cp -a graph copies"]
 fn corpus_print_and_publish_match_golden() {
+    let _integration_guard = crate::integration_lock();
     let source = PathBuf::from(std::env::var_os("TINE_CORPUS").expect("TINE_CORPUS"));
     let (_base_dir, base) = scratch("corpus");
     let old_root = base.join("old");

@@ -1,7 +1,7 @@
 {
   "crates/tine-core/src/concord_queue.rs": 2,
   "crates/tine-core/src/doc.rs": 1,
-  "crates/tine-core/src/logbook.rs": 2,
+  "crates/tine-outline/src/logbook.rs": 2,
   "crates/tine-core/src/query/print.rs": 1,
   "crates/tine-store/src/model/parse_depth.rs": 1,
   "crates/tine-store/src/query/page_properties.rs": 3,

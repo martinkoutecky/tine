@@ -11,7 +11,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const G = "/tmp/sheets-e2e";
+const TMP_ROOT = path.resolve(process.env.E2E_TMP_ROOT || process.env.TMPDIR || "/tmp");
+fs.mkdirSync(TMP_ROOT, { recursive: true });
+const TMP = fs.mkdtempSync(path.join(TMP_ROOT, "tine-sheets-e2e-"));
+const G = `${TMP}/graph`;
 const APP = process.env.TINE_APP || `${repo}/target/release/tine`;
 const TD =
   process.env.TAURI_DRIVER ||
@@ -68,26 +71,24 @@ const GRID_MD = [
   "",
 ].join("\n");
 
-fs.rmSync(G, { recursive: true, force: true });
 fs.mkdirSync(`${G}/pages`, { recursive: true });
 fs.mkdirSync(`${G}/journals`, { recursive: true });
 fs.writeFileSync(JFILE, GRID_MD);
 
-fs.rmSync("/tmp/sheets-e2e-xdg", { recursive: true, force: true });
-for (const d of ["data", "config", "cache"]) fs.mkdirSync(`/tmp/sheets-e2e-xdg/${d}`, { recursive: true });
+for (const d of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${d}`, { recursive: true });
 const env = {
   ...process.env,
   TINE_GRAPH: G,
-  XDG_DATA_HOME: "/tmp/sheets-e2e-xdg/data",
-  XDG_CONFIG_HOME: "/tmp/sheets-e2e-xdg/config",
-  XDG_CACHE_HOME: "/tmp/sheets-e2e-xdg/cache",
+  XDG_DATA_HOME: `${TMP}/xdg/data`,
+  XDG_CONFIG_HOME: `${TMP}/xdg/config`,
+  XDG_CACHE_HOME: `${TMP}/xdg/cache`,
   WEBKIT_DISABLE_DMABUF_RENDERER: "1",
   LIBGL_ALWAYS_SOFTWARE: "1",
   WEBKIT_DISABLE_COMPOSITING_MODE: "1",
   GDK_BACKEND: "x11",
 };
 
-const tdLog = fs.openSync("/tmp/sheets-e2e-td.log", "w");
+const tdLog = fs.openSync(`${TMP}/tauri-driver.log`, "w");
 const td = spawn(
   TD,
   ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"],
@@ -763,6 +764,17 @@ try {
   // proof: the backend must materialize both coarse rows, the formula editor
   // must persist tine.filter, and the same filtered identity must survive the
   // actual Table -> Board view switch without rewriting the coarse query.
+  const queryFilterBlockId = await browser.execute(() => [...document.querySelectorAll(".ls-block")]
+    .find((el) => (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof"))
+    ?.getAttribute("data-block-id"));
+  if (!queryFilterBlockId) throw new Error("missing query-filter block");
+  const queryFilterSelector = `[data-block-id="${queryFilterBlockId}"] .query-block`;
+  const openQueryView = async () => {
+    await browser.$(`${queryFilterSelector} .qc-actions > summary`).click();
+    await browser.$("//*[@class='qc-menu']//button[normalize-space()='View']").click();
+    await browser.$(`${queryFilterSelector} .qc-panel [aria-label="Query view"]`).waitForExist({ timeout: 5_000 });
+  };
+  await openQueryView();
   const queryFilterInitial = await browser.execute(() => {
     const block = [...document.querySelectorAll(".ls-block")].find((el) =>
       (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
@@ -772,18 +784,20 @@ try {
       .map((el) => (el.textContent ?? "").trim());
     return {
       found: true,
-      active: block.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
+      active: block.querySelector('.qc-panel [aria-label="Query view"] button.active')?.textContent?.trim() ?? null,
       count: block.querySelector(".query-count")?.textContent?.trim() ?? null,
       titles,
     };
   });
   check(
     "query-sourced Table starts from both coarse numeric rows",
-    queryFilterInitial.found && queryFilterInitial.active === "Table" &&
+    queryFilterInitial.found && queryFilterInitial.active === "table" &&
       queryFilterInitial.count === "2" &&
       queryFilterInitial.titles.includes("Low score") && queryFilterInitial.titles.includes("High score"),
     JSON.stringify(queryFilterInitial)
   );
+  await browser.$(`${queryFilterSelector} .qc-done`).click();
+  await browser.$(`${queryFilterSelector} .qc-panel`).waitForExist({ reverse: true, timeout: 5_000 });
 
   const filterMenuOpened = await browser.execute(() => {
     const block = [...document.querySelectorAll(".ls-block")].find((el) =>
@@ -854,17 +868,12 @@ try {
       JSON.stringify(tableDisk)
     );
 
-    const boardClicked = await browser.execute(() => {
-      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
-        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
-      );
-      const button = [...(block?.querySelectorAll(".query-view-switcher button") ?? [])]
-        .find((el) => (el.textContent ?? "").trim() === "Board");
-      if (!(button instanceof HTMLButtonElement)) return false;
-      button.click();
-      return true;
-    });
-    check("query filter proof switches through the real Board control", boardClicked);
+    await openQueryView();
+    const viewChoices = await browser.$(`${queryFilterSelector} .qc-panel [aria-label="Query view"]`);
+    await viewChoices.$(".//button[normalize-space()='board']").click();
+    const boardSelected = await browser.waitUntil(async () => (await browser.$(`${queryFilterSelector} .qc-panel [aria-label="Query view"] button.active`).getText()) === "board",
+      { timeout: 5_000, timeoutMsg: "View panel did not select board" });
+    check("query filter proof switches through the real Board control", boardSelected);
     await browser.waitUntil(async () => browser.execute(() => {
       const block = [...document.querySelectorAll(".ls-block")].find((el) =>
         (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
@@ -878,7 +887,7 @@ try {
         (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
       );
       return {
-        active: block?.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
+        active: block?.querySelector('.qc-panel [aria-label="Query view"] button.active')?.textContent?.trim() ?? null,
         count: block?.querySelector(".query-count")?.textContent?.trim() ?? null,
         titles: [...(block?.querySelectorAll(".sheet-board-card-title") ?? [])]
           .map((el) => (el.textContent ?? "").trim()),
@@ -886,10 +895,12 @@ try {
     });
     check(
       "query-sourced Board retains the same filtered subset and coarse count",
-      filteredBoard.active === "Board" && filteredBoard.count === "2" &&
+      filteredBoard.active === "board" && filteredBoard.count === "2" &&
         JSON.stringify(filteredBoard.titles) === JSON.stringify(["High score"]),
       JSON.stringify(filteredBoard)
     );
+    await browser.$(`${queryFilterSelector} .qc-done`).click();
+    await browser.$(`${queryFilterSelector} .qc-panel`).waitForExist({ reverse: true, timeout: 5_000 });
     await sleep(2400);
     const boardDisk = fs.readFileSync(JFILE, "utf8");
     check(
@@ -908,6 +919,7 @@ try {
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}
+  if (failures === 0) fs.rmSync(TMP, { recursive: true, force: true });
 }
 console.log(failures === 0 ? `\nALL PASS (${checks} checks)` : `\n${failures} FAILURES (${checks} checks)`);
 process.exit(failures === 0 ? 0 : 1);

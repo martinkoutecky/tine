@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { reviewedDiskToken } from "./client";
-import { applied, mail, mailPage, NOTICE, opened, page, setup, textOf, tick, took } from "./fakes.test.support";
+import { applied, heldVersion, mail, mailPage, NOTICE, opened, page, setup, textOf, tick, took, versionOf } from "./fakes.test.support";
+
+// Debounced sends stay scheduled and never fire unless a test advances time.
+beforeEach(() => { vi.useFakeTimers(); });
+afterEach(() => { vi.useRealTimers(); });
 
 const KEY = "pages/P.md";
 
@@ -9,15 +13,15 @@ describe("§4.2 send and answer (model wSend/wRecv)", () => {
     const ctx = await setup();
     const { host, doc, client } = ctx;
     await opened(ctx, "P", 3);
-    expect(client.versionOf("P")).toBe(3);
+    expect(versionOf(client, "P")).toBe(3);
     doc.type("P", "ab");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     client.sendNow("P");
     await tick();
     const submit = host.last("submit");
     expect([submit.version, textOf(submit.dto), submit.kinds]).toEqual([3, "ab", ["save-block"]]);
     client.receive(mail(7, KEY, mailPage(4, { kind: "unchanged" }), took(submit.id, 4)));
-    expect([client.versionOf("P"), client.isDirty("P"), client.busy("P")]).toEqual([4, false, false]);
+    expect([versionOf(client, "P"), client.isDirty("P"), client.busy("P")]).toEqual([4, false, false]);
   });
 
   it("applies an answer that beats its command reply at admission, exactly once", async () => {
@@ -26,17 +30,17 @@ describe("§4.2 send and answer (model wSend/wRecv)", () => {
     await opened(ctx, "P", 3);
     host.autoAdmit = false;
     doc.type("P", "ab");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     client.sendNow("P");
     const submit = host.last("submit");
     client.receive(mail(7, KEY, mailPage(4, { kind: "unchanged" }), took(submit.id, 4)));
-    expect([client.versionOf("P"), client.busy("P")]).toEqual([3, true]);
+    expect([versionOf(client, "P"), client.busy("P")]).toEqual([3, true]);
     host.reply(submit.id);
     await tick();
-    expect([client.versionOf("P"), client.busy("P")]).toEqual([4, false]);
+    expect([versionOf(client, "P"), client.busy("P")]).toEqual([4, false]);
     // The same answer delivered again is a push of that state, not a second answer.
     client.receive(mail(7, KEY, mailPage(4, { kind: "unchanged" }), took(submit.id, 4)));
-    expect(client.versionOf("P")).toBe(4);
+    expect(versionOf(client, "P")).toBe(4);
   });
 
   it("keeps the text and the dirty state when the host does not admit a command", async () => {
@@ -45,10 +49,10 @@ describe("§4.2 send and answer (model wSend/wRecv)", () => {
     await opened(ctx, "P", 3);
     host.refuse = { reason: "not-admitted" };
     doc.type("P", "ab");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     client.sendNow("P");
     await tick();
-    expect([client.isDirty("P"), client.busy("P"), doc.text("P"), client.versionOf("P")]).toEqual([true, true, "ab", 3]);
+    expect([client.isDirty("P"), client.busy("P"), doc.text("P"), versionOf(client, "P")]).toEqual([true, true, "ab", 3]);
   });
 
   it("debounces automatic sends", async () => {
@@ -74,7 +78,7 @@ describe("S4 installation gate and the took-answer rule", () => {
     const ctx = await setup();
     await opened(ctx, "P", 3);
     ctx.doc.type("P", text);
-    ctx.client.noteEdit("P", "save-block", false);
+    ctx.client.noteEdit("P", "save-block");
     ctx.client.sendNow("P");
     await tick();
     return { ...ctx, id: ctx.host.last("submit").id };
@@ -83,9 +87,9 @@ describe("S4 installation gate and the took-answer rule", () => {
   it("took + newer input: the input moves to the answer version, not a coalesced newer page version", async () => {
     const { host, doc, client, id } = await sending();
     doc.type("P", "abc");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     client.receive(mail(7, KEY, mailPage(6, { kind: "page", dto: page("P", "external") }), took(id, 4)));
-    expect([client.versionOf("P"), doc.text("P"), client.isDirty("P")]).toEqual([4, "abc", true]);
+    expect([versionOf(client, "P"), doc.text("P"), client.isDirty("P")]).toEqual([4, "abc", true]);
     client.sendNow("P");
     await tick();
     expect(host.last("submit").version).toBe(4);
@@ -94,7 +98,7 @@ describe("S4 installation gate and the took-answer rule", () => {
   it("took coalesced with a newer external page, no newer input: adopts the page at its version", async () => {
     const { doc, client, id } = await sending();
     client.receive(mail(7, KEY, mailPage(6, { kind: "page", dto: page("P", "external", "r6") }), took(id, 4)));
-    expect([client.versionOf("P"), doc.text("P")]).toEqual([6, "external"]);
+    expect([versionOf(client, "P"), doc.text("P")]).toEqual([6, "external"]);
   });
 
   it("not-took (discard) + newer input keeps the version the input was typed on", async () => {
@@ -105,10 +109,10 @@ describe("S4 installation gate and the took-answer rule", () => {
     await tick();
     const discard = host.last("discard");
     doc.type("P", "typed");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     client.receive(mail(7, KEY, mailPage(5, { kind: "page", dto: page("P", "disk") }), applied(discard.id, 5)));
     expect((await answer).took).toBe(false);
-    expect([client.versionOf("P"), doc.text("P"), client.isDirty("P")]).toEqual([3, "typed", true]);
+    expect([versionOf(client, "P"), doc.text("P"), client.isDirty("P")]).toEqual([3, "typed", true]);
   });
 
   it("a push held under a pin keeps the pin's start version for its commit; unpinned without input, it installs", async () => {
@@ -117,27 +121,27 @@ describe("S4 installation gate and the took-answer rule", () => {
     await opened(ctx, "P", 3);
     const unpin = client.acquire("P", { pin: true });
     client.receive(mail(7, KEY, mailPage(5, { kind: "page", dto: page("P", "external", "r5") })));
-    expect([client.versionOf("P"), doc.text("P"), client.heldVersion("P")]).toEqual([3, "a", 5]);
+    expect([versionOf(client, "P"), doc.text("P"), heldVersion(client, "P")]).toEqual([3, "a", 5]);
     unpin();
-    expect([client.versionOf("P"), doc.text("P"), client.heldVersion("P")]).toEqual([5, "external", null]);
+    expect([versionOf(client, "P"), doc.text("P"), heldVersion(client, "P")]).toEqual([5, "external", null]);
 
     const unpin2 = client.acquire("P", { pin: true });
     client.receive(mail(7, KEY, mailPage(7, { kind: "page", dto: page("P", "external2", "r7") })));
     doc.type("P", "cell commit");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     unpin2();
     client.sendNow("P");
     await tick();
-    expect([host.last("submit").version, doc.text("P"), client.heldVersion("P")]).toEqual([5, "cell commit", null]);
+    expect([host.last("submit").version, doc.text("P"), heldVersion(client, "P")]).toEqual([5, "cell commit", null]);
   });
 
   it("took under a pin: the version advances to the answer, the coalesced page waits for the unpin", async () => {
     const { doc, client, id } = await sending();
     const unpin = client.acquire("P", { pin: true });
     client.receive(mail(7, KEY, mailPage(6, { kind: "page", dto: page("P", "external", "r6") }), took(id, 4)));
-    expect([client.versionOf("P"), doc.text("P"), client.heldVersion("P")]).toEqual([4, "ab", 6]);
+    expect([versionOf(client, "P"), doc.text("P"), heldVersion(client, "P")]).toEqual([4, "ab", 6]);
     unpin();
-    expect([client.versionOf("P"), doc.text("P")]).toEqual([6, "external"]);
+    expect([versionOf(client, "P"), doc.text("P")]).toEqual([6, "external"]);
   });
 
   it("notice-only mail during an Always-ask hold never releases the held text/version pair", async () => {
@@ -148,9 +152,9 @@ describe("S4 installation gate and the took-answer rule", () => {
     client.receive(mail(7, KEY, mailPage(5, { kind: "page", dto: page("P", "external", "r5") })));
     client.receive(mail(7, KEY, mailPage(5, { kind: "unchanged" })));
     client.release("P");
-    expect([client.versionOf("P"), doc.text("P"), client.heldVersion("P")]).toEqual([3, "a", 5]);
+    expect([versionOf(client, "P"), doc.text("P"), heldVersion(client, "P")]).toEqual([3, "a", 5]);
     client.release("P", true);
-    expect([client.versionOf("P"), doc.text("P")]).toEqual([5, "external"]);
+    expect([versionOf(client, "P"), doc.text("P")]).toEqual([5, "external"]);
   });
 
   it("an editor on a different file or a block move holds content like a pin", async () => {
@@ -162,7 +166,7 @@ describe("S4 installation gate and the took-answer rule", () => {
     expect(doc.text("P")).toBe("a");
     doc.held.delete("P");
     client.release("P");
-    expect([client.versionOf("P"), doc.text("P")]).toEqual([5, "external"]);
+    expect([versionOf(client, "P"), doc.text("P")]).toEqual([5, "external"]);
   });
 
   it("freeze awaits a composition that commits after blur, and fails on a cell that cannot commit", async () => {
@@ -171,7 +175,7 @@ describe("S4 installation gate and the took-answer rule", () => {
     await opened(ctx, "P", 3);
     let end!: () => void;
     const composition = client.acquire("P", { pin: true, commit: () => new Promise<boolean>((resolve) => {
-      end = () => { doc.type("P", "composed"); client.noteEdit("P", "save-block", false); resolve(true); };
+      end = () => { doc.type("P", "composed"); client.noteEdit("P", "save-block"); resolve(true); };
     }) });
     const freezing = client.freeze(["P"]);
     await tick();
@@ -211,7 +215,7 @@ describe("S5 edit-intent acquisition and baseline provenance", () => {
       applied(host.last("open").id, 3)));
     const editing = client.acquire("P");
     doc.type("P", "b");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     client.sendNow("P");
     await tick();
     client.receive(mail(7, KEY, mailPage(4, { kind: "unchanged", rev: "r4" }), took(host.last("submit").id, 4)));
@@ -226,7 +230,7 @@ describe("S5 edit-intent acquisition and baseline provenance", () => {
   async function reopenWithInput(ctx: Awaited<ReturnType<typeof setup>>, answer: Parameters<typeof mailPage>) {
     const { host, doc, client } = ctx;
     doc.type("P", "typed early");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     await tick();
     const open = host.last("open");
     client.receive(mail(7, KEY, mailPage(...answer), applied(open.id, answer[0])));
@@ -256,7 +260,7 @@ describe("S5 edit-intent acquisition and baseline provenance", () => {
     host.nextId = 50;
     await client.rebind();
     doc.type("P", "typed early");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     await tick();
     const open = host.last("open");
     expect(open.id).toBe(50);
@@ -348,7 +352,7 @@ describe("S7 Concord review capture", () => {
     let finish!: (dto: ReturnType<typeof page>) => void;
     const result = client.submitReviewed(ticket, () => new Promise((resolve) => { finish = resolve; }));
     doc.type("P", "typed during merge");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     finish(page("P", "merged"));
     expect(await result).toBe("review-stale");
     expect([host.count("submit"), doc.text("P")]).toEqual([0, "typed during merge"]);
@@ -363,7 +367,7 @@ describe("R7 cut grants carry the host page and session", () => {
     const facts = doc.facts("P")!;
     const [source] = client.stampCutSources([{ name: "P", kind: "page", path: facts.path!, generation: facts.instance }]);
     expect([client.cutSourcesUsable([source]), client.cutSourcesRetired([source])]).toEqual([true, true]);
-    client.noteEdit("P", "delete-blocks", false);
+    client.noteEdit("P", "delete-blocks");
     expect([client.cutSourcesUsable([source]), client.cutSourcesRetired([source])]).toEqual([true, false]);
     expect(client.cutSourcesUsable([{ ...source, session: 99 }])).toBe(false);
     expect(client.cutSourcesUsable([{ ...source, key: "pages/other.md" }])).toBe(false);
@@ -439,7 +443,7 @@ describe("S8 session rebind", () => {
     await tick();
     client.receive(mail(8, KEY, mailPage(2, { kind: "page", dto: page("P", "restored", "r2") }, { disk: { kind: "file", rev: "r2" } }),
       applied(open.id, 2)));
-    expect([client.isOpen("P"), client.versionOf("P"), doc.text("P")]).toEqual([true, 2, "restored"]);
+    expect([client.isOpen("P"), versionOf(client, "P"), doc.text("P")]).toEqual([true, 2, "restored"]);
   });
 
   it("mail for the new session that arrives before the reload reply is kept", async () => {
@@ -453,7 +457,7 @@ describe("S8 session rebind", () => {
       applied(50, 2)));
     await rebinding;
     await tick();
-    expect([client.isOpen("P"), client.versionOf("P")]).toEqual([true, 2]);
+    expect([client.isOpen("P"), versionOf(client, "P")]).toEqual([true, 2]);
   });
 });
 
@@ -480,7 +484,7 @@ describe("close and move edges", () => {
     expect([client.isOpen("P"), client.busy("P"), client.names()]).toEqual([false, false, []]);
     const editing = client.acquire("P");
     doc.type("P", "later");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     await tick();
     expect(host.count("open")).toBe(2);
     client.receive(mail(7, KEY, mailPage(3, { kind: "page", dto: page("P", "a", "r3") }, { disk: { kind: "file", rev: "r3" } }),
@@ -498,7 +502,7 @@ describe("close and move edges", () => {
     host.onWait = () => new Promise<boolean | null>((resolve) => { publish = resolve; });
     const release = await opened(ctx, "P", 3);
     doc.type("P", "ab");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     client.sendNow("P");
     await tick();
     client.receive(mail(7, KEY, mailPage(4, { kind: "unchanged" }), took(host.last("submit").id, 4)));
@@ -520,7 +524,7 @@ describe("close and move edges", () => {
     host.onWait = () => new Promise<boolean | null>(() => {});
     const release = await opened(ctx, "P", 3);
     doc.type("P", "ab");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     client.sendNow("P");
     await tick();
     client.receive(mail(7, KEY, mailPage(4, { kind: "unchanged" }), took(host.last("submit").id, 4)));
@@ -542,7 +546,7 @@ describe("close and move edges", () => {
     host.onWait = () => new Promise<boolean | null>((resolve) => { answers.push(resolve); });
     const release = await opened(ctx, "P", 3);
     doc.type("P", "ab");
-    client.noteEdit("P", "save-block", false);
+    client.noteEdit("P", "save-block");
     client.sendNow("P");
     await tick();
     client.receive(mail(7, KEY, mailPage(4, { kind: "unchanged" }), took(host.last("submit").id, 4)));

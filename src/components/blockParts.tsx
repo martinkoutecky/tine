@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 /** Small stateless pieces of the block view and editor, split out of Block.tsx:
  * task-marker/checkbox toggles on one block (each one `setRaw` of that block),
  * the clock badge and calendar glyph, and pure text/DOM helpers the editor uses
@@ -7,7 +8,7 @@
 import { For, type JSX } from "solid-js";
 import { node as docNode, pageByName, setRaw } from "../document";
 import { literalBlockOfLine } from "../editor/literalLines";
-import { hideAll, splitProps } from "../editor/properties";
+import { HIDE_ALL, splitProps } from "../editor/properties";
 import { toggleMarkerLabel, toggleTaskDone } from "../editor/repeat";
 import type { LogbookInfo } from "../logbook";
 import { logbookWithSecondSupport, timetrackingEnabled, workflow } from "../ui";
@@ -50,10 +51,10 @@ export function ClockBadge(props: { info: LogbookInfo }): JSX.Element {
         <table>
           <thead>
             <tr>
-              <th>Type</th>
-              <th>Start</th>
-              <th>End</th>
-              <th>Span</th>
+              <th>{t("block-parts-type")}</th>
+              <th>{t("block-parts-start")}</th>
+              <th>{t("block-parts-end")}</th>
+              <th>{t("block-parts-span")}</th>
             </tr>
           </thead>
           <tbody>
@@ -110,7 +111,7 @@ export function resizeBlockEditor(editor: HTMLTextAreaElement): void {
  *  the candidate's label. Which lines are properties is lsdoc's (`splitProps` over the block-region
  *  door), so a `key:: value` line inside a code fence is content, not skipped metadata (I-12). */
 export function blockFirstLine(raw: string, format: "md" | "org" = "md"): string {
-  for (const line of splitProps(raw, hideAll, format).visible.split("\n")) {
+  for (const line of splitProps(raw, HIDE_ALL, format).visible.split("\n")) {
     if (line.trim() !== "") return line.trim();
   }
   return "";

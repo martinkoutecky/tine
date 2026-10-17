@@ -2,6 +2,7 @@ import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer } from "vite";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const css = ["theme.css", "app.css"]
@@ -45,7 +46,9 @@ const embed = `
       })}
     </div></div></div></div></div>
   </div>`;
-const sidebar = `<aside class="right-sidebar"><section class="rs-item"><div class="rs-item-body">${block({
+// This standalone row fixture has no App width classifier/drawer shell. Give it
+// the available phone width instead of the desktop sidebar's reserved-pane cap.
+const sidebar = `<aside class="right-sidebar" style="width:100%;max-width:100%"><section class="rs-item"><div class="rs-item-body">${block({
   id: "sidebar-parent",
   label: "Sidebar live parent keeps the same separated control.",
   children: block({ id: "sidebar-leaf", label: "Sidebar leaf text reaches the row edge." }),
@@ -248,8 +251,8 @@ async function verifyCoarsePage(browser, width) {
     }
   }
   if (width === 390) {
-    fs.mkdirSync(path.join(root, "test-results"), { recursive: true });
-    await page.screenshot({ path: path.join(root, "test-results/mobile-content-width.png"), fullPage: true });
+    fs.mkdirSync(path.join(root, "artifacts/sw-tap-target"), { recursive: true });
+    await page.screenshot({ path: path.join(root, "artifacts/sw-tap-target/mobile-content-width.png"), fullPage: true });
   }
   await page.close();
   return result;
@@ -269,11 +272,134 @@ async function verifyPrecisePage(browser) {
   assert(desktop.indent === 29 && desktop.foldWidth === 18 && !desktop.trailing, `precise-pointer outline geometry changed with the mobile fix: ${JSON.stringify(desktop)}`);
 }
 
+async function verifyCheckboxes(browser) {
+  const server = await createServer({ root, server: { host: "127.0.0.1", port: 0 }, plugins: [{
+    name: "mobile-checkbox-fixture",
+    configureServer(server) {
+      server.middlewares.use("/__mobile-checkbox", (_request, response) => {
+        response.setHeader("Content-Type", "text/html");
+        response.end('<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><script type="module" src="/scripts/fixtures/mobile-checkbox.tsx"></script>');
+      });
+    },
+  }] });
+  try {
+    await server.listen();
+    const address = server.httpServer.address();
+    for (const format of ["md", "org"]) {
+      const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+      try {
+        page.on("pageerror", error => console.error(error));
+        await page.goto(`http://127.0.0.1:${address.port}/__mobile-checkbox?format=${format}`);
+        await page.locator(".block-checkbox").nth(2).waitFor();
+        await page.evaluate(() => {
+          window.checkboxEvents = [];
+          for (const type of ["touchstart", "mousedown", "click"]) document.addEventListener(type, event => {
+            const point = event.touches?.[0] || event;
+            window.checkboxEvents.push({ type, target: event.target.className, x: point.clientX, y: point.clientY });
+          }, true);
+        });
+        const geometry = await page.evaluate(() => {
+          const boxes = [...document.querySelectorAll(".block-checkbox, .block-task-checkbox")];
+          return boxes.map(box => {
+            const rect = box.getBoundingClientRect();
+            const style = getComputedStyle(box);
+            return { left: rect.left, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height,
+              lineHeight: parseFloat(style.lineHeight), indent: parseFloat(style.getPropertyValue("--ls-block-indent")) };
+          });
+        });
+        assert(geometry.length === 5, `${format}: checkbox fixture is incomplete: ${JSON.stringify(geometry)}`);
+        assert(Math.abs(geometry[2].left - geometry[1].left - geometry[1].indent) <= 1,
+          `${format}: nested phone checkbox lost its outline indent: ${JSON.stringify(geometry)}`);
+        assert(geometry.every((box, index) => box.width === (index < 3 ? 15 : 14) && box.height === box.width),
+          `${format}: visible checkbox sizes changed: ${JSON.stringify(geometry)}`);
+        const assertSeparatedTargets = async () => {
+          const overlaps = await page.evaluate(() => {
+            const boxes = [...document.querySelectorAll(".block-checkbox, .block-task-checkbox")];
+            const targets = boxes.map(box => {
+              const rect = box.getBoundingClientRect();
+              const style = getComputedStyle(box);
+              const before = getComputedStyle(box, "::before");
+              const centerY = rect.top + rect.height / 2;
+              return { left: rect.left + parseFloat(style.borderLeftWidth) + parseFloat(before.left),
+                right: rect.right - parseFloat(style.borderRightWidth) - parseFloat(before.right),
+                top: centerY - parseFloat(before.height) / 2, bottom: centerY + parseFloat(before.height) / 2 };
+            });
+            const intersects = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+            return targets.some((target, index) => targets.slice(index + 1).some(other => intersects(target, other)))
+              || boxes.some((box, index) => {
+                if (!box.matches(".block-task-checkbox")) return false;
+                const bullet = box.closest(".block-main").querySelector(".bullet-container");
+                const marker = box.nextElementSibling;
+                return [bullet, marker].some(neighbor => neighbor && intersects(targets[index], neighbor.getBoundingClientRect()));
+              });
+          });
+          assert(!overlaps, `${format}: checkbox target overlaps an adjacent checkbox, outline bullet or task marker`);
+        };
+        await assertSeparatedTargets();
+        const liveBox = index => page.evaluate(index => {
+          const box = document.querySelectorAll(".block-checkbox, .block-task-checkbox")[index];
+          const rect = box.getBoundingClientRect();
+          return { left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+            lineHeight: parseFloat(getComputedStyle(box).lineHeight) };
+        }, index);
+        // Check the entire vertical target, including its outside edge: each
+        // adjacent item must own its own strip, including after checked styling.
+        for (let index = 0; index < geometry.length; index++) {
+          const box = await liveBox(index);
+          const x = index < 3 ? box.left - 6 : box.left + box.width / 2;
+          const y = box.top + box.height / 2;
+          const hit = await page.evaluate(({ index, x, y, lineHeight }) => {
+            const boxes = [...document.querySelectorAll(".block-checkbox, .block-task-checkbox")];
+            return [-lineHeight / 2 + 1, 0, lineHeight / 2 - 1].every(offset =>
+              document.elementFromPoint(x, y + offset)?.closest(".block-checkbox, .block-task-checkbox") === boxes[index]);
+          }, { index, x, y, lineHeight: box.lineHeight });
+          assert(hit, `${format}: near-edge touch misses checkbox ${index} at ${JSON.stringify({ x, y })}`);
+          await page.touchscreen.tap(x, index < 3 ? y : box.top - 3);
+          await page.waitForFunction(index => document.querySelectorAll(".block-checkbox, .block-task-checkbox")[index]?.getAttribute("aria-checked") === "true", index, { timeout: 2000 }).catch(async error => {
+            console.error({ format, index, geometry, events: await page.evaluate(() => window.checkboxEvents) });
+            throw error;
+          });
+          const state = await page.evaluate(() => ({
+            list: window.checkboxRaw("list"), task: window.checkboxRaw("task"), next: window.checkboxRaw("task-next"),
+            editors: document.querySelectorAll("textarea.block-editor").length,
+          }));
+          const marker = format === "org" ? "+" : "*";
+          const expectedList = `Checklist:\n${marker} [x] same\n${marker} [${index >= 1 ? "x" : " "}] same\n   ${marker} [${index >= 2 ? "x" : " "}] nested`;
+          assert(state.list === expectedList && state.task === (index >= 3 ? "DONE task" : "TODO task")
+            && state.next === (index >= 4 ? "DONE next task" : "TODO next task") && state.editors === 0,
+          `${format}: touch must toggle only its item without editing: ${JSON.stringify({ index, state })}`);
+        }
+        await assertSeparatedTargets();
+        await page.screenshot({ path: path.join(root, `artifacts/sw-tap-target/checkbox-${format}.png`) });
+        for (let index = 0; index < geometry.length; index++) {
+          const box = await liveBox(index);
+          await page.touchscreen.tap(index < 3 ? box.left - 6 : box.left + box.width / 2,
+            index < 3 ? box.top + box.height / 2 : box.top - 3);
+          await page.waitForFunction(index => document.querySelectorAll(".block-checkbox, .block-task-checkbox")[index]?.getAttribute("aria-checked") === "false", index, { timeout: 2000 }).catch(async error => {
+            console.error({ format, index, reset: true, events: await page.evaluate(() => window.checkboxEvents) });
+            throw error;
+          });
+        }
+        const reset = await page.evaluate(() => ({ list: window.checkboxRaw("list"), task: window.checkboxRaw("task"),
+          next: window.checkboxRaw("task-next"), editors: document.querySelectorAll("textarea.block-editor").length }));
+        const marker = format === "org" ? "+" : "*";
+        assert(reset.list === `Checklist:\n${marker} [ ] same\n${marker} [ ] same\n   ${marker} [ ] nested`
+          && reset.task === "TODO task" && reset.next === "TODO next task" && reset.editors === 0,
+        `${format}: checked touch targets must reopen their own items without editing: ${JSON.stringify(reset)}`);
+      } catch (error) {
+        await page.screenshot({ path: path.join(root, `artifacts/sw-tap-target/checkbox-${format}-failure.png`) });
+        throw error;
+      } finally { await page.close(); }
+    }
+  } finally { await server.close(); }
+}
+
 const browser = await chromium.launch({ headless: true });
 try {
   const results = [];
   for (const width of [390, 320]) results.push(await verifyCoarsePage(browser, width));
   await verifyPrecisePage(browser);
+  await verifyCheckboxes(browser);
   console.log(`PASS: coarse-pointer geometry and touchscreen hit paths hold at ${results.map((result) => Math.round(result.usable)).join("px and ")}px usable width`);
 } finally {
   await browser.close();

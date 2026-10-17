@@ -16,6 +16,7 @@ fn hosted<T>(
 
 #[test]
 fn case_only_rename_changes_filename_title_refs_and_namespace() {
+    let _integration_guard = crate::integration_lock();
     for (ext, header, block) in [
         ("md", "title:: my note\n", "- "),
         ("org", "#+TITLE: my note\n", "* "),
@@ -119,6 +120,7 @@ fn until(what: &str, test: impl Fn() -> bool) {
 /// writes fail, and the rename completes forward once one succeeds.
 #[test]
 fn case_move_io_failure_keeps_the_source_and_completes_forward() {
+    let _integration_guard = crate::integration_lock();
     let probe = tempfile::tempdir().unwrap();
     if folds_case(probe.path()) {
         return transaction_case_move_failures();
@@ -221,6 +223,7 @@ fn transaction_case_move_failures() {
 
 #[test]
 fn distinct_case_twins_refuse_without_writing() {
+    let _integration_guard = crate::integration_lock();
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
@@ -258,6 +261,7 @@ fn distinct_case_twins_refuse_without_writing() {
 
 #[test]
 fn case_rename_crash_worker() {
+    let _integration_guard = crate::integration_lock();
     let Ok(root) = std::env::var("TINE_QD1_CRASH_ROOT") else {
         return;
     };
@@ -286,7 +290,7 @@ fn case_rename_crash_worker() {
 /// Kill the case rename's worker at `point`, with its app data in `app_data`.
 fn kill_case_rename(dir: &std::path::Path, app_data: &std::path::Path, point: &str) {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "case_rename_crash_worker"])
+        .args(["--exact", "og_gh609_case_rename::case_rename_crash_worker"])
         .env("TINE_QD1_CRASH_ROOT", dir)
         .env("TINE_QD1_CRASH_POINT", point)
         .env("TINE_QD1_APP_DATA", app_data)
@@ -314,6 +318,7 @@ fn kill_case_rename(dir: &std::path::Path, app_data: &std::path::Path, point: &s
 /// `Old.md`. On a case-folding volume it is the retained transaction's move.
 #[test]
 fn case_rename_kill_reopen_preserves_bytes_and_relaunch_completes() {
+    let _integration_guard = crate::integration_lock();
     let probe = tempfile::tempdir().unwrap();
     if folds_case(probe.path()) {
         return transaction_case_rename_kills();
@@ -402,6 +407,7 @@ fn transaction_case_rename_kills() {
 
 #[test]
 fn a_competing_destination_before_case_move_is_never_overwritten() {
+    let _integration_guard = crate::integration_lock();
     use tine_store::{Area, EditKind, FaultPoint, TxOutcome};
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
@@ -454,6 +460,7 @@ fn a_competing_destination_before_case_move_is_never_overwritten() {
 #[cfg(unix)]
 #[test]
 fn separately_listed_hardlinked_case_destination_is_not_an_alias_spelling() {
+    let _integration_guard = crate::integration_lock();
     use tine_store::{Area, EditKind, TxOutcome};
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
@@ -479,6 +486,7 @@ fn separately_listed_hardlinked_case_destination_is_not_an_alias_spelling() {
 
 #[test]
 fn case_rename_uses_the_shared_unicode_identity_on_normalizing_filesystems() {
+    let _integration_guard = crate::integration_lock();
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
     // macOS can return a decomposed physical filename for a composed title.
@@ -521,6 +529,7 @@ fn case_rename_uses_the_shared_unicode_identity_on_normalizing_filesystems() {
 
 #[test]
 fn successful_case_rename_retains_only_the_existing_old_byte_copy() {
+    let _integration_guard = crate::integration_lock();
     for blocks in [1, 60] {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("pages")).unwrap();
@@ -545,6 +554,7 @@ fn successful_case_rename_retains_only_the_existing_old_byte_copy() {
 
 #[test]
 fn unchanged_case_move_has_one_live_name_and_creates_no_staging_directory() {
+    let _integration_guard = crate::integration_lock();
     use tine_store::{Area, EditKind, TxOutcome};
     let dir = tempfile::tempdir().unwrap();
     fs::create_dir(dir.path().join("pages")).unwrap();
@@ -570,6 +580,7 @@ fn unchanged_case_move_has_one_live_name_and_creates_no_staging_directory() {
 
 #[test]
 fn folded_alias_refusal_uses_atomic_rename_and_checks_the_result() {
+    let _integration_guard = crate::integration_lock();
     use tine_store::{Area, EditKind, FaultPoint, TxOutcome};
     for noop in [false, true] {
         let dir = tempfile::tempdir().unwrap();
@@ -607,6 +618,7 @@ fn folded_alias_refusal_uses_atomic_rename_and_checks_the_result() {
 
 #[test]
 fn failed_case_move_undo_keeps_live_bytes_and_recovers_the_baseline() {
+    let _integration_guard = crate::integration_lock();
     use tine_store::{Area, EditKind, FaultPoint, TxOutcome};
     for alias in [false, true] {
         let dir = tempfile::tempdir().unwrap();

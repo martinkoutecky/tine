@@ -80,6 +80,7 @@ jobs:
           node scripts/test-release-readiness-lib.mjs
           node scripts/test-release-pipeline.mjs
           node scripts/test-env-toolchain-fallback.mjs
+          node --test scripts/test-rust-integration-layout.mjs
 
       - name: lsdoc generated artifacts are current
         run: |
@@ -146,6 +147,7 @@ jobs:
           node scripts/test-release-readiness-lib.mjs
           node scripts/test-release-pipeline.mjs
           node scripts/test-env-toolchain-fallback.mjs
+          node --test scripts/test-rust-integration-layout.mjs
 
       - name: Performance baseline policy is current
         env:
@@ -197,6 +199,11 @@ jobs:
       - name: Launch-backup syscall gate (strace)
         run: node scripts/check-backup-syscalls.mjs
 
+      # packaged_csp_tests compile only with custom-protocol (the production
+      # context); without this step nothing ever ran them (discussion #564).
+      - name: Packaged CSP test (production context)
+        run: cargo test --no-fail-fast -p tine --lib --features custom-protocol packaged_csp_tests
+
       - name: Standalone plugin template builds and conforms
         run: npm run plugin:template-check
 
@@ -228,6 +235,15 @@ jobs:
         run: cargo test --locked --manifest-path vendor/cap-primitives-4.0.2/Cargo.toml --lib removing_extended_prefix_keeps_unc_paths_absolute -- --nocapture
       - name: Windows core and graph-feature tests (including junction filesystem behavior)
         run: cargo test --no-fail-fast -p tine-core -p tine-store -p tine-graph-features
+      # M4 availability measurement (REVIEW-3b-P2b-2 G1): the release rename of 250 and of
+      # 1000 referrers must reach its caller inside OPERATION_WAIT; the timings print here.
+      - name: Windows release rename availability (250 and 1000 referrers)
+        run: cargo test --release -p tine-graph-features --test integration -- --ignored --exact --nocapture rename_cost::a_250_referrer_rename_completes_inside_the_caller_bound rename_cost::a_thousand_referrer_rename_completes_inside_the_caller_bound
+      - name: Windows storage timing probes (informational, G1)
+        if: ${{ !cancelled() }}
+        run: |
+          cargo test --release -p tine-store --lib probe_deletion_step_timing -- --ignored --nocapture
+          cargo test --release -p tine-graph-features --test integration rename_cost::probe_rename_wall_time -- --ignored --exact --nocapture
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
       # Independent of the core step: a core-test failure still reports these.

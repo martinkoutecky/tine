@@ -7,6 +7,7 @@
 
 import { createEffect, createRoot, createSignal, on, untrack } from "solid-js";
 import { backend } from "../../backend";
+import { benchEvent } from "../../benchEvents";
 import { captureBinding, clearOnBindingInvalidated } from "../../binding";
 import type { ClipboardSourcePage } from "../../clipboard";
 import { conflictPolicyAlwaysAsk, holdExternalChange } from "../../conflictPolicy";
@@ -14,9 +15,10 @@ import type { EditKind, EditKinds } from "../../editKind";
 import { editingId } from "../../editorController";
 import { pagePropertyEntries } from "../../editor/properties";
 import { errorFamily } from "../../errorFamily";
-import { bindingOwner, readOwned, writeOwned } from "../../owned";
+import { bindingOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "../../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
 import { dismissToast, pushToast } from "../../toasts";
+import { msg, renderEnglish, type UiText } from "../../i18n";
 import type { BlockDto, MergeDecision, PageDto, PageKind } from "../../types";
 import { openUnsavedRecovery } from "../../unsavedRecovery";
 import { assetWritesStarted, pendingAssetWrites } from "../assetWrites";
@@ -31,6 +33,7 @@ import { HostClient, reviewedDiskToken, type BaselineRev, type DocumentPort, typ
 import { runSequence, type SequenceStep } from "./planner";
 import type { DiskToken, HostPort, MailNotice, PageMail, PageOperation, PageRefusal } from "./protocol";
 import { settle, unpublishedAfterDrain } from "./settle";
+import { beginResultsChange, installResultsPendingGate, resetResultsEpoch } from "../../queryResultsEpoch";
 
 // ------------------------------------------------------------------ state
 
@@ -58,6 +61,16 @@ const [conflictList, setConflictList] = createSignal<string[]>([]);
 /** Moves whenever a page's busy, conflicted, open or frozen state changes. */
 const [hostRevision, setHostRevision] = createSignal(0);
 let stateKey = "";
+installResultsPendingGate(() => {
+  hostRevision();
+  return pendingDataRevision() || early.size > 0
+    || !!client?.names().some(name => client!.busy(name) || client!.owes(name));
+}, "own-work");
+installResultsPendingGate(() => {
+  hostRevision();
+  return transferPages.size > 0
+    || !!client?.names().some(name => client!.conflicted(name) || client!.holdsContent(name));
+});
 
 function host(): HostClient | null {
   return bound ? client : null;
@@ -71,6 +84,10 @@ const failed = (error: unknown): PageRefusal => ({ reason: "failed", message: St
  * saves on its own cadence, and the barrier's next `page_wait` on the same
  * bridge reports the failure as a failed barrier. */
 function ignoreSaveHintFailure(_error: unknown): void {}
+
+// A lost flush answer is harmless: the owner stops waiting and refuses the
+// command-line write as `page-busy`; nothing is written.
+function ignoreLostFlushAnswer(_error: unknown): void {}
 
 function hostPort(): HostPort {
   const b = backend();
@@ -87,7 +104,7 @@ function hostPort(): HostPort {
       return refusal;
     },
     move: (session, id, source, receiver, kinds) => b.pageMove(session, id, source, receiver, kinds).catch(failed),
-    discard: (session, id, key, version) => b.pageDiscard(session, id, key, version).catch(failed),
+    discard: (session, id, key) => b.pageDiscard(session, id, key).catch(failed),
     close: (session, id, key) => b.pageClose(session, id, key).catch(failed),
     saveNow: (session, keys) => b.pageSaveNow(session, keys).catch(ignoreSaveHintFailure),
     // One bounded wait (F1); a failed call is a failed barrier, never success.
@@ -175,7 +192,7 @@ export async function bindHost(): Promise<void> {
   try {
     await next.bind();
   } catch (error) {
-    if (client === next) pushToast(`Tine can't save this graph: ${String(error)}`, "error");
+    if (client === next) pushToast(msg("document-wiring-tine-can-t-save-this-graph", { value1: String(error) }), "error");
     return;
   }
   if (client !== next) return;
@@ -189,6 +206,7 @@ export async function bindHost(): Promise<void> {
 // binding (store reset: graph switch, restore); the caller settled or reported
 // its input first.
 clearOnBindingInvalidated(() => {
+  resetResultsEpoch();
   // Its outstanding requests settle unanswered ("rebound"), so no caller of
   // the old graph waits forever (I-20).
   const old = client;
@@ -223,7 +241,8 @@ function listen(): void {
   void backend().onPageMail((mail: PageMail) => {
     const c = client;
     if (!c) return;
-    c.receive(mail);
+    const finish = mail.page && mail.page.text.kind !== "unchanged" && !mail.answer ? beginResultsChange() : () => {};
+    try { c.receive(mail); } finally { finish(); }
     const name = mail.session === c.session ? c.nameOfKey(mail.key) : null;
     if (!name || !mail.answer?.took) return;
     notePublication(mail.key, mail.answer.version);
@@ -275,6 +294,7 @@ let dataWaits = 0;
  * edits go quiet (today's 700 ms coalescing). */
 function notePublication(key: string, version: number): void {
   pendingNeeds.set(key, Math.max(version, pendingNeeds.get(key) ?? 0));
+  setHostRevision(value => value + 1);
   if (dataTimer) clearTimeout(dataTimer);
   dataTimer = setTimeout(() => {
     dataTimer = null;
@@ -287,6 +307,7 @@ function notePublication(key: string, version: number): void {
       dataWaits -= 1;
       if (client !== c) return;
       bumpDataRev();
+      setHostRevision(value => value + 1);
       if (inventoryPending) { inventoryPending = false; bumpPageInventoryRev(); }
     });
   }, 700);
@@ -316,7 +337,7 @@ function hostChanged(): void {
   const shown = names.filter((name) => c!.conflicted(name) && c!.notice(name)?.conflictReported);
   const current = conflictList();
   if (shown.length !== current.length || shown.some((name, i) => name !== current[i])) setConflictList(shown);
-  const key = names.map((name) => `${name}\u0000${+c!.busy(name)}${+c!.owes(name)}${+c!.conflicted(name)}${+c!.isOpen(name)}`)
+  const key = names.map((name) => `${name}\u0000${+c!.busy(name)}${+c!.owes(name)}${+c!.conflicted(name)}${+c!.isOpen(name)}${+c!.holdsContent(name)}`)
     .join("\u0001")
     + `\u0002${[...early.keys()].join("\u0001")}`;
   if (key !== stateKey) {
@@ -402,26 +423,25 @@ const SILENT = new Set(["not-admitted", "alias", "stale", "not-held", "not-open"
 
 /** R-CREATE-UNREADABLE-OWNER (docs/storage-contract.md): the host refused to
  * create `name` because a file it cannot read may already be that page. */
-function unreadableOwnerMessage(name: string, owner: string | undefined): string {
-  return `Couldn't create “${name}”: ${owner ?? "a page file"} can't be read and may already be this page. `
-    + "Fix or move that file; your edits stay in the editor.";
+function unreadableOwnerMessage(name: string, owner: string | undefined) {
+  return msg("document-create-unreadable", { name, owner: owner ?? "", hasOwner: owner == null ? 0 : 1 });
 }
 
-function refusalMessage(name: string, refusal: PageRefusal | string): string | null {
+function refusalMessage(name: string, refusal: PageRefusal | string): import("../../i18n").Msg | null {
   if (typeof refusal === "string") {
-    if (refusal === "read-failed") return `Couldn't read “${name}” from disk; your edits stay in the editor.`;
-    if (refusal === "draft-failed") return `Couldn't keep a crash-recovery copy of “${name}”; your edits stay in the editor.`;
+    if (refusal === "read-failed") return msg("document-read-refused", { name });
+    if (refusal === "draft-failed") return msg("document-draft-refused", { name });
     return null;
   }
   switch (refusal.reason) {
     case "invalid-target":
     case "read-only":
     case "failed":
-      return `Couldn't save “${name}” — ${refusal.message}`;
+      return msg("document-save-refused", { name, detail: refusal.message });
     case "twin":
-      return `Couldn't save “${name}”: ${refusal.existing} is already this page. Your edits stay in the editor.`;
+      return msg("document-save-twin", { name, existing: refusal.existing });
     case "undecodable":
-      return `Couldn't save “${name}”: its file is not readable text. Your edits stay in the editor.`;
+      return msg("document-save-undecodable", { name });
     case "unreadable-owner":
       return unreadableOwnerMessage(name, refusal.file);
     default:
@@ -446,17 +466,18 @@ function reportProblems(c: HostClient | null, names: string[]): void {
     const notice = c!.notice(name);
     const text = (refusal && !(typeof refusal === "object" ? SILENT.has(refusal.reason) : SILENT.has(refusal))
       ? refusalMessage(name, refusal) : null)
-      ?? (notice?.twin ? `Couldn't save “${name}”: ${notice.twin} is already this page. Your edits stay in the editor.` : null)
-      ?? (notice?.saveError ? `Couldn't save “${name}” yet${saveStep(notice)}; Tine keeps trying and keeps a crash-recovery copy.` : null)
-      ?? (notice?.dropped ? `A rename or delete of “${name}” that Tine couldn't confirm did not happen: it couldn't be recorded. Nothing changed.` : null)
-      ?? (notice?.draftError ? `Couldn't write the crash-recovery copy of “${name}”.` : null);
+      ?? (notice?.twin ? msg("document-save-twin", { name, existing: notice.twin }) : null)
+      ?? (notice?.saveError ? msg("document-save-retrying", { name, step: saveStep(notice) }) : null)
+      ?? (notice?.dropped ? msg("document-operation-unrecorded", { name }) : null)
+      ?? (notice?.draftError ? msg("document-draft-unwritten", { name }) : null);
     if (!text) continue;
     seen.add(name);
     const shown = problemToasts.get(name);
-    if (shown?.said === text) continue;
+    const key = JSON.stringify(text);
+    if (shown?.said === key) continue;
     if (shown) dismissToast(shown.id);
-    problemToasts.set(name, { said: text, id: pushToast(text, "error",
-      { sticky: true, action: { label: "Review unsaved", run: openUnsavedRecovery } }) });
+    problemToasts.set(name, { said: key, id: pushToast(text, "error",
+      { sticky: true, action: { label: msg("document-review-unsaved"), run: openUnsavedRecovery } }) });
   }
   for (const [name, shown] of [...problemToasts]) {
     if (seen.has(name)) continue;
@@ -503,13 +524,13 @@ async function settleTitleIdentity(name: string, path: string, dto: PageDto): Pr
       if (read.kind === "stale") return;
       effective = read.value?.name;
     } catch (error) {
-      pushToast(`Saved the page, but could not refresh its title: ${String(error)}`, "error");
+      pushToast(msg("document-wiring-saved-the-page-but-could-not-refresh-its-title", { value1: String(error) }), "error");
       return;
     }
   }
   if (host() !== c || pageInstanceGeneration(name) !== generation || pageByName(name)?.id !== path) return;
   if (effective && effective !== name && !rekeyPageIdentityByPath(path, effective, baseRev.get(name) ?? null, true)) {
-    pushToast("Saved the title, but its page identity could not be adopted safely. Reopen this page by its file path.", "error");
+    pushToast(msg("document-wiring-saved-the-title-but-its-page-identity-could-not-be"), "error");
     return;
   }
   titleIntents.delete(name);
@@ -534,10 +555,6 @@ export function setBaseRev(name: string, rev: string | null): void {
 
 export function baseRevFor(name: string): string | null | undefined {
   return baseRev.get(name);
-}
-
-export function tombstone(name: string): void {
-  deletedPages.add(name);
 }
 
 export function untombstone(name: string): void {
@@ -568,7 +585,7 @@ export function pageFrozen(name: string): boolean {
 export function refuseConflictedMove(pages: Iterable<string>): boolean {
   const blocked = [...pages].find(isConflicted);
   if (!blocked) return false;
-  pushToast(`Resolve the conflict on “${blocked}” first.`, "error");
+  pushToast(msg("document-wiring-resolve-the-conflict-on-first", { value1: blocked }), "error");
   return true;
 }
 
@@ -635,10 +652,10 @@ export async function resolveConflict(name: string, choice: "mine" | "disk"): Pr
   if (!ticket || !dto) return false;
   const answer = await c.submitReviewed(ticket, async () => dto);
   if (answer === "review-stale") {
-    pushToast(`“${name}” changed meanwhile. Choose again.`, "info");
+    pushToast(msg("document-wiring-changed-meanwhile-choose-again", { value1: name }), "info");
     return false;
   }
-  if (!answer.took) pushToast(`Couldn't overwrite “${name}”.`, "error");
+  if (!answer.took) pushToast(msg("document-wiring-couldn-t-overwrite", { value1: name }), "error");
   return answer.took;
 }
 
@@ -715,8 +732,11 @@ export async function createPage(name: string, dto: PageDto,
   const generation = pageInstanceGeneration(name);
   deletedPages.delete(name);
   const expected: DiskToken | undefined = options.baseRev ? { kind: "file", rev: options.baseRev } : undefined;
-  const created = await c.createPage(name, dto, { kinds: [expected ? "replace-page" : "create-page"], expected,
-    refusedNow: () => graphRewriteFrozen() ? "graph-rewrite" : null });
+  const finish = beginResultsChange();
+  let created: Awaited<ReturnType<HostClient["createPage"]>>;
+  try { created = await c.createPage(name, dto, { kinds: [expected ? "replace-page" : "create-page"], expected,
+    refusedNow: () => graphRewriteFrozen() ? "graph-rewrite" : null }); }
+  finally { finish(); }
   if (host() !== c) throw new CreatePageRefusal("graph-changed");
   if (created.kind === "exists") throw new Error("conflict");
   if (created.kind === "unpublished") throw new Error(`Couldn't save “${name}” to disk.`);
@@ -724,7 +744,8 @@ export async function createPage(name: string, dto: PageDto,
     const refusal = created.refusal;
     if (refusal === "graph-rewrite") throw new CreatePageRefusal("graph-rewrite");
     if (typeof refusal === "object" && refusal?.reason === "alias") throw new CreatePageRefusal("alias");
-    throw new Error(refusal ? (refusalMessage(name, refusal) ?? (typeof refusal === "string" ? refusal : refusal.reason))
+    const message = refusal ? refusalMessage(name, refusal) : null;
+    throw new Error(refusal ? (message ? renderEnglish(message) : (typeof refusal === "string" ? refusal : refusal.reason))
       : `Couldn't save “${name}”.`);
   }
   if (pageInstanceGeneration(name) === generation && pageByName(name) && !pageByName(name)!.id) setPageId(name, created.key);
@@ -745,15 +766,18 @@ export function isCreateConflict(error: unknown): boolean {
  * waits for the deletion to publish (Finding B), so only `applied` means the
  * file is gone; `pending`, `uncertain` and `superseded` keep the page and say
  * why. The backend's identity checks reject a twin or a stale `path`; the
- * rejection reaches the caller, which logs it (I-9). */
-export async function deletePageOnDisk(name: string, kind: PageKind, path?: string): Promise<boolean> {
+ * rejection reaches the caller, which logs it and can report it (I-9). */
+export async function deletePageOnDisk(name: string, kind: PageKind, path?: string, reportFailure?: (reason: UiText) => void): Promise<boolean> {
   const c = host();
   if (!c || !await settle(c, [name], { noConflict: true })) {
-    if (c && host() === c) pushToast(`Couldn't save “${name}”; the page was not deleted.`, "error");
+    const reason = c ? msg("delete-reason-unsaved", { name }) : msg("delete-reason-no-host");
+    if (reportFailure) reportFailure(reason);
+    else if (c && host() === c) pushToast(reason, "error");
     return false;
   }
   const owner = bindingOwner();
   deletedPages.add(name);
+  const finish = beginResultsChange();
   let operation: PageOperation;
   try {
     // A stale delete command deleted nothing the window can count on.
@@ -765,17 +789,18 @@ export async function deletePageOnDisk(name: string, kind: PageKind, path?: stri
   } catch (error) {
     if (host() === c) deletedPages.delete(name);
     throw error;
-  }
+  } finally { finish(); }
   if (operation === "applied") return true;
   if (host() === c) deletedPages.delete(name);
   const why = {
-    waiting: `“${name}” is still saving; try deleting it again in a moment.`,
-    pending: `“${name}” is deleted once its file can be written; Tine keeps trying.`,
-    uncertain: `Tine couldn't confirm that “${name}” was deleted; it keeps trying.`,
-    superseded: `“${name}” was changed by a later edit, so it was not deleted.`,
-    refused: null,
+    waiting: msg("delete-reason-waiting", { name }),
+    pending: msg("delete-reason-pending", { name }),
+    uncertain: msg("delete-reason-uncertain", { name }),
+    superseded: msg("delete-reason-superseded", { name }),
+    refused: msg("delete-reason-refused"),
   }[operation];
-  if (why) pushToast(why, "info");
+  if (reportFailure) reportFailure(why);
+  else if (operation !== "refused") pushToast(why, "info");
   return false;
 }
 
@@ -847,12 +872,12 @@ async function transfer(c: HostClient, endpoints: string[], before: ReadonlyMap<
       if (shown !== undefined && !(shown && sameText(shown, text))) installPageContent(name, text);
     }
     setHostRevision((n) => n + 1);
+    // The endpoints take input again: the storage A/B's `unfreeze` (bench only).
+    benchEvent("unfreeze");
   }
   if (outcome.ok && planned) return true;
   const pages = outcome.ok ? endpoints : outcome.pages;
-  pushToast(outcome.completed === 0
-    ? `The move did not happen: “${pages.join("”, “")}” could not be saved first.`
-    : `Only part of the move happened: the blocks from “${pages.join("”, “")}” did not move.`, "error");
+  pushToast(msg("document-move-incomplete", { completed: outcome.completed, pages: pages.join("”, “") }), "error");
   return false;
 }
 
@@ -932,7 +957,7 @@ async function landAliasDraft(c: HostClient, name: string, ownerPath: string): P
   try { owned = await readOwned(bindingOwner(), backend().getPageByPath(ownerPath)); }
   catch {
     // The draft stays in the editor, unsaved and listed; say why it did not move.
-    pushToast(`Couldn't read ${ownerPath}, the page “${name}” is an alias of; its text stays here, unsaved.`, "error");
+    pushToast(msg("document-wiring-couldn-t-read-the-page-is-an-alias-of-its", { value1: ownerPath, value2: name }), "error");
     return;
   }
   const read = owned.kind === "current" ? owned.value : null;
@@ -957,7 +982,7 @@ async function landAliasDraft(c: HostClient, name: string, ownerPath: string): P
       ? landed.owner === ownerPath ? replaceLandedAliasDraft(ownerText, landed.blocks, draft) : null
       : appendAliasDraft(ownerText, draft);
     if (!text) {
-      pushToast(`“${owner}” changed since “${name}” was added to it; copy the rest of “${name}” over by hand.`, "error");
+      pushToast(msg("document-wiring-changed-since-was-added-to-it-copy-the-rest-of", { value1: owner, value2: name, value3: name }), "error");
       return;
     }
     installPageContent(owner, text);
@@ -970,9 +995,50 @@ async function landAliasDraft(c: HostClient, name: string, ownerPath: string): P
     c.forget(name);
     forgetPage(name);
     aliasDraftRouteHandler?.(owner, read.kind);
-    pushToast(`Moved “${name}” into its alias owner “${owner}”.`, "info");
+    pushToast(msg("document-wiring-moved-into-its-alias-owner", { value1: name, value2: owner }), "info");
     bumpPageInventoryRev();
   } finally {
     release();
   }
+}
+
+// The command line's writes through this graph's owner (CLI slice 2,
+// `src-tauri/src/owner/window.rs`). Before a write reads a page, the owner
+// asks the window to save the text typed on it: the host only sees input the
+// window has submitted, and typing is debounced. The window runs its page
+// barrier and answers whether that text is saved.
+
+/** Answer the owner's flush requests for the graph this window is bound to; a
+ *  stale binding's request gets no answer (the owner then refuses the write). */
+export function subscribeOwnerFlush(): () => void {
+  let alive = true;
+  let unsub = () => {};
+  const subscribe = backend().onOwnerFlushRequest;
+  if (!subscribe) return () => {};
+  void readOwnedResource(
+    ownedWhen(() => alive),
+    subscribe.call(backend(), (request) => {
+      if (request.binding_generation !== captureBinding().backendGeneration) return;
+      void answerOwnerFlush(request.id, request.page, request.binding_generation);
+    }),
+    (stop) => stop(),
+  ).then((result) => { if (result.kind === "current") unsub = result.value; });
+  return () => { alive = false; unsub(); };
+}
+
+async function answerOwnerFlush(id: number, page: string, generation: number): Promise<void> {
+  let saved: boolean;
+  try {
+    saved = await flushPage(page);
+  } catch {
+    saved = false; // a failed barrier is unsaved text, never success
+  }
+  // Text a component holds outside the document (an IME composition, a
+  // title or sheet-cell edit) is not saved by the barrier (review 5 R2).
+  if (draftPinned(page)) saved = false;
+  // A rebinding during the barrier leaves the request with no answer: the
+  // owner it came from refuses its write (review 5 R3).
+  if (generation !== captureBinding().backendGeneration) return;
+  const answer = backend().ownerFlushAnswer?.(id, saved, generation);
+  if (answer) void readOwned(bindingOwner(), answer).catch(ignoreLostFlushAnswer);
 }

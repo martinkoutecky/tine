@@ -91,11 +91,13 @@ fn live_reload_in(mode: WatchMode) {
 
 #[test]
 fn an_outside_config_edit_is_taken_in_by_the_notify_watcher() {
+    let _integration_guard = crate::integration_lock();
     live_reload_in(WatchMode::Notify);
 }
 
 #[test]
 fn an_outside_config_edit_is_taken_in_by_the_poll_watcher() {
+    let _integration_guard = crate::integration_lock();
     live_reload_in(WatchMode::Poll);
 }
 
@@ -104,6 +106,7 @@ fn an_outside_config_edit_is_taken_in_by_the_poll_watcher() {
 /// Syncthing redelivers it) must publish no configuration change.
 #[test]
 fn an_identical_config_rewrite_publishes_nothing() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("identical");
     std::fs::write(root.join("logseq/config.edn"), "{:preferred-format :md}\n").unwrap();
     let (store, subscription) = open(&root, WatchMode::Notify);
@@ -124,6 +127,7 @@ fn an_identical_config_rewrite_publishes_nothing() {
 #[cfg(unix)]
 #[test]
 fn an_unsafe_delivered_config_keeps_the_served_one_and_pages_stay_observed() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("unsafe");
     std::fs::write(root.join("logseq/config.edn"), "{:preferred-format :md}\n").unwrap();
     let outside = root.with_extension("outside");
@@ -149,10 +153,13 @@ fn an_unsafe_delivered_config_keeps_the_served_one_and_pages_stay_observed() {
     let _ = std::fs::remove_dir_all(outside);
 }
 
-/// A config file that disappears is taken in as the default configuration
-/// (what Logseq does with no config.edn), and its return is taken in again.
+/// A config file that disappears keeps the config read from it, as Logseq's
+/// watcher does (an iCloud offload or a sync tool's replace must not switch the
+/// graph to the defaults and their :legacy file names); its return is taken in
+/// again.
 #[test]
-fn a_removed_then_restored_config_is_followed() {
+fn a_removed_config_keeps_its_settings_until_it_returns() {
+    let _integration_guard = crate::integration_lock();
     let root = scratch("removed");
     std::fs::write(root.join("logseq/config.edn"), "{:preferred-format :org}\n").unwrap();
     let (store, subscription) = open(&root, WatchMode::Poll);
@@ -168,14 +175,46 @@ fn a_removed_then_restored_config_is_followed() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(removed, "a removed config.edn is published");
-    assert_eq!(store.config().preferred_format.ext(), "md");
-    deliver(&root, "logseq/config.edn", "{:preferred-format :org}\n");
+    assert_eq!(
+        store.config().preferred_format.ext(),
+        "org",
+        "a vanished config.edn keeps the settings read from it"
+    );
+    assert!(store.config().problem.is_none());
+    deliver(&root, "logseq/config.edn", "{:preferred-format :md}\n");
     assert!(external_change_naming(
         &subscription,
         "logseq/config.edn",
         Duration::from_secs(10)
     ));
-    assert_eq!(store.config().preferred_format.ext(), "org");
+    assert_eq!(store.config().preferred_format.ext(), "md");
+    store.close();
+    drop(store);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A graph whose config.edn is only an iCloud placeholder opens read-only: its
+/// settings (above all :file/name-format) are unknown, and the defaults would
+/// write namespace pages under :legacy file names. A plainly absent config.edn
+/// still opens writable with Logseq's defaults.
+#[test]
+fn an_undownloaded_icloud_config_opens_the_graph_read_only() {
+    let _integration_guard = crate::integration_lock();
+    let root = scratch("icloud-placeholder");
+    std::fs::write(root.join("logseq/.config.edn.icloud"), b"bplist00").unwrap();
+    let (store, _subscription) = open(&root, WatchMode::Poll);
+    assert!(
+        store.config().problem.is_some(),
+        "an undownloaded config.edn is a config problem (read-only graph)"
+    );
+    store.close();
+    drop(store);
+    std::fs::remove_file(root.join("logseq/.config.edn.icloud")).unwrap();
+    let (store, _subscription) = open(&root, WatchMode::Poll);
+    assert!(
+        store.config().problem.is_none(),
+        "no config.edn at all is no problem"
+    );
     store.close();
     drop(store);
     let _ = std::fs::remove_dir_all(root);

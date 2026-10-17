@@ -1,4 +1,5 @@
 import type { FieldValue } from "./fields";
+import { t } from "../i18n";
 import { isoDatePrefix, sheetNumber } from "./typed";
 import type { QueryAggFn } from "../editor/queryAggregate";
 
@@ -37,23 +38,10 @@ export const AGGREGATE_FNS: readonly AggregateFn[] = [
   "count",
 ];
 
-export const AGGREGATE_LABELS: Record<AggregateFn, string> = {
-  sum: "Sum",
-  average: "Average",
-  median: "Median",
-  min: "Min",
-  max: "Max",
-  range: "Range",
-  stddev: "Stddev",
-  earliest: "Earliest",
-  latest: "Latest",
-  empty: "Empty",
-  filled: "Filled",
-  unique: "Unique",
-  checked: "Checked",
-  unchecked: "Unchecked",
-  count: "Count",
-};
+// Consumers may retain the table; each read resolves in the active locale.
+export const AGGREGATE_LABELS = Object.defineProperties({}, Object.fromEntries(
+  AGGREGATE_FNS.map(fn => [fn, { enumerable: true, get: () => t("sheet-aggregate-name", { fn }) }]),
+)) as Record<AggregateFn, string>;
 
 const AGGREGATE_SET = new Set<string>(AGGREGATE_FNS);
 

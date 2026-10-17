@@ -5,6 +5,7 @@ use tine_store::{PageId, SaveBase, SaveOutcome, Store};
 
 #[test]
 fn rust_save_matches_shared_page_header_golden() {
+    let _integration_guard = crate::integration_lock();
     let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/i12-page-header-golden.json");
     let mut fixture: serde_json::Value =

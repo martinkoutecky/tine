@@ -58,6 +58,7 @@ fn by_path_asset_stamps(assets: usize) -> (u64, u64) {
 
 #[test]
 fn an_asset_full_walk_stamps_from_the_listing_and_opens_no_asset() {
+    let _integration_guard = crate::integration_lock();
     const ASSETS: usize = 60;
     let fixed = by_path_asset_stamps(0);
     let with_assets = by_path_asset_stamps(ASSETS);

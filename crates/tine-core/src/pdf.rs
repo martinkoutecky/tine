@@ -645,6 +645,7 @@ fn highlight_block(h: &Highlight, format: Format) -> DocBlock {
         children: Vec::new(),
         uuid: String::new(),
         is_org: format == Format::Org,
+        property_ref_config: None,
         proj: std::sync::OnceLock::new(),
     }
 }

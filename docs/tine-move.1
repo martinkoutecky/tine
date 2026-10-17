@@ -1,0 +1,37 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-move 1  "move " 
+.SH NAME
+tine\-move \- Move a block, with its children, under, after or before another block on the same page
+.SH SYNOPSIS
+\fBtine move\fR [\fB\-\-under\fR] [\fB\-\-after\fR] [\fB\-\-debug\fR] [\fB\-\-before\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK\fR> 
+.SH DESCRIPTION
+Move a block, with its children, under, after or before another block on the same page
+.SH OPTIONS
+.TP
+\fB\-\-under\fR \fI<TARGET>\fR
+As the last child of TARGET
+.TP
+\fB\-\-after\fR \fI<TARGET>\fR
+Right after TARGET, as its next sibling
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-\-before\fR \fI<TARGET>\fR
+Right before TARGET, as its previous sibling
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+.TP
+\fB\-\-json\fR
+Print the typed result (schema tine.cli/1) as JSON
+.TP
+\fB\-\-rev\fR \fI<REV>\fR
+Write only if the page is still at this rev (as `page show` prints it); required for a bare PAGE/POS without a fingerprint
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIBLOCK\fR>
+

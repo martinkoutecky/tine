@@ -40,6 +40,7 @@ fn fixture(files: &[(&str, &str)]) -> (PathBuf, std::sync::Arc<Store>) {
 
 #[test]
 fn y4_merge_unites_full_width_separated_aliases_without_duplicates() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(&[
         ("pages/Old.md", "alias:: Shared，Former\n\n- source block\n"),
         ("pages/New.md", "alias:: Kept，Shared\n\n- survivor block\n"),
@@ -71,6 +72,7 @@ fn y4_merge_unites_full_width_separated_aliases_without_duplicates() {
 /// `alias::` member naming the renamed page stays; a bracketed one follows.
 #[test]
 fn y4_rename_keeps_a_bare_alias_member_and_rewrites_a_bracketed_one() {
+    let _integration_guard = crate::integration_lock();
     let (root, store) = fixture(&[
         ("pages/Old.md", "- old body\n"),
         ("pages/Other.md", "- other\n  alias:: Old，[[Old]]\n"),

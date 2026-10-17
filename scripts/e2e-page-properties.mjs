@@ -89,22 +89,14 @@ await sleep(2500);
 let browser;
 
 async function openPage(name) {
-  if ((await browser.$$(".nav-page")).length === 0) {
-    const toggled = await browser.execute(() => {
-      const header = [...document.querySelectorAll(".nav-section-header")]
-        .find((element) => element.textContent?.includes("ALL PAGES"));
-      if (!header) return false;
-      header.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
-      return true;
-    });
-    if (!toggled) throw new Error("missing ALL PAGES sidebar section");
-    await browser.waitUntil(async () => (await browser.$$(".nav-page")).length >= 2, {
-      timeout: 5_000,
-      timeoutMsg: "ALL PAGES did not reveal fixture pages",
-    });
-  }
+  await browser.$(".nav-all-pages-open").click();
+  await browser.$(".all-pages-filter").waitForExist({ timeout: 10_000 });
+  await browser.$(".all-pages-filter").setValue(name);
+  await browser.waitUntil(async () => (await browser.$$(".all-pages-open")).length > 0, {
+    timeout: 5_000, timeoutMsg: "All pages did not reveal fixture pages",
+  });
   const opened = await browser.execute((target) => {
-    const rows = [...document.querySelectorAll(".nav-page")];
+    const rows = [...document.querySelectorAll(".all-pages-open")];
     const row = rows.find((element) => element.textContent?.trim() === target);
     if (!row) return { ok: false, rows: rows.map((element) => element.textContent?.trim()) };
     row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));

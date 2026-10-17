@@ -4,6 +4,7 @@ import { render } from "solid-js/web";
 import { FailureBoundary } from "./FailureBoundary";
 import { markCommandSlow, resetSlowBackendStateForTests } from "../slowBackend";
 import { setToasts, toasts } from "../toasts";
+import { setActiveLocale, t } from "../i18n";
 
 const { recordDiagnostic, copyDetails } = vi.hoisted(() => ({ recordDiagnostic: vi.fn(async () => {}), copyDetails: vi.fn(async (_text: string) => {}) }));
 vi.mock("../clipboard", () => ({ writeClipboardText: copyDetails }));
@@ -27,6 +28,21 @@ function Boom(props: { when: () => boolean }) {
 }
 
 describe("FailureBoundary (GH #490/#332: a throw must not blank the app silently)", () => {
+  it("localizes an empty error on screen but copies English fallback details", async () => {
+    const error = new Error("");
+    error.stack = "";
+    function EmptyFailure(): never { throw error; }
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    await setActiveLocale("zh-CN");
+    const dispose = render(() => <FailureBoundary region="Panel"><EmptyFailure /></FailureBoundary>, host);
+    try {
+      expect(host.querySelector(".region-failure-message")?.textContent).toBe(t("app-prose-unexpected-failure"));
+      host.querySelector<HTMLButtonElement>(".region-failure-actions button")!.click();
+      expect(copyDetails).toHaveBeenCalledWith("Panel could not be displayed.\nUnexpected failure.");
+    } finally { dispose(); await setActiveLocale("en"); }
+  });
+
   it("shows the failing region, its message, and a Retry instead of rendering nothing", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);

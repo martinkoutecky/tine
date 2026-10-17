@@ -17,6 +17,7 @@ fn a_restore_stop_relaunches_one_host_on_the_restored_tree() {
         store,
         host,
         mail,
+        kinds,
         ..
     } = live;
     let Ok(stopped) = host.stop_saved(id, StopMode::Restore) else {
@@ -33,6 +34,7 @@ fn a_restore_stop_relaunches_one_host_on_the_restored_tree() {
         store,
         host: stopped.relaunch().unwrap(),
         mail,
+        kinds,
         id: std::cell::Cell::new(100),
     };
     // `wait` asserts every mail carries binding 7 on the original sink.
@@ -47,6 +49,7 @@ fn a_restore_stop_relaunches_one_host_on_the_restored_tree() {
 #[test]
 fn a_restore_stop_that_cannot_save_hands_the_host_back() {
     let live = Live::new(&[("pages/a.md", "- one\n")]);
+    live.submits_wait();
     let (key, page) = live.open("pages/a.md");
     let id = live.submit(&key, "- mine\n", page.version, None).unwrap();
     live.answer(&key, id);
@@ -57,6 +60,7 @@ fn a_restore_stop_that_cannot_save_hands_the_host_back() {
         store,
         host,
         mail,
+        kinds,
         id,
     } = live;
     let Err((host, pages)) = host.stop_saved(id.get(), StopMode::Restore) else {
@@ -69,6 +73,7 @@ fn a_restore_stop_that_cannot_save_hands_the_host_back() {
         store,
         host: *host,
         mail,
+        kinds,
         id,
     };
     assert!(live.submit(&key, "- again\n", page.version, None).is_ok());
@@ -251,7 +256,8 @@ fn launched_over_an_unsynced_copy() -> Live {
     });
     let (sender, mail) = mpsc::channel();
     let app = _dir.path().join("app");
-    let host = PageHost::start(&store, &app, "test-graph", move |mail| {
+    let kinds = Kinds::default();
+    let host = PageHost::start(&store, &app, "test-graph", recording(&kinds), move |mail| {
         let _ = sender.send(mail);
     })
     .unwrap();
@@ -265,6 +271,7 @@ fn launched_over_an_unsynced_copy() -> Live {
         store,
         host,
         mail,
+        kinds,
         id: std::cell::Cell::new(0),
     }
 }
@@ -284,6 +291,7 @@ fn review_p1_m2_a_restore_stop_aborts_over_a_known_unsynced_copy() {
         store,
         host,
         mail,
+        kinds,
         ..
     } = live;
     let Err((host, pages)) = host.stop_saved(0, StopMode::Restore) else {
@@ -296,6 +304,7 @@ fn review_p1_m2_a_restore_stop_aborts_over_a_known_unsynced_copy() {
         store,
         host: *host,
         mail,
+        kinds,
         id: std::cell::Cell::new(100),
     };
     assert_eq!(live.drafts(), copies, "nothing retired while down");

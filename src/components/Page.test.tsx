@@ -19,9 +19,10 @@ import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
 import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../router";
 import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
-import { isSaving } from "../document/host/wiring";
+import { isSaving, pendingDataRevision } from "../document/host/wiring";
 import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
+import { closeShareDialog, shareTarget } from "../shareState";
 import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
 import { favorites, isFavorite, seedFavorites } from "../favorites";
@@ -95,6 +96,25 @@ function unpinned(dto: PageDto): PageRead {
 function feedResponse(pages: PageDto[], patch: Partial<JournalFeedPage> = {}): JournalFeedPage {
   return { pages: pages.map(unpinned), next_before_day: null, done: true, as_of_day: localDay(), ...patch };
 }
+
+it.each([
+  ["page", "md"], ["journal", "md"], ["page", "org"], ["journal", "org"],
+] as const)("highlights survive the %s %s view boundary (GH #243)", async (kind, format) => {
+  const name = kind === "journal" ? journalTitle(new Date()) : "Highlights";
+  const dto: PageDto = { name, title: name, kind, pre_block: null, format,
+    blocks: [{ id: "highlights", raw: format === "md" ? "a ==one== b ^^two^^ c" : "a ^^one^^ b ^^two^^ c", children: [], collapsed: false }] };
+  if (kind === "journal") {
+    vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([dto]));
+  } else {
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto as PageRead);
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name, pageKind: kind });
+  }
+  const mounted = mount(() => <PageView />);
+  try {
+    await vi.waitFor(() => expect([...mounted.root.querySelectorAll(".block-content mark")].map(el => el.textContent)).toEqual(["one", "two"]));
+    expect(mounted.root.querySelector("textarea.block-editor")).toBeNull();
+  } finally { mounted.dispose(); }
+});
 
 describe("Journals feed generation lifecycle", () => {
   it.each([false, true])("adds a new day around an active editor (dirty: %s)", async (dirty) => {
@@ -557,6 +577,10 @@ describe("Journals feed generation lifecycle", () => {
       // still retries, lands the released feed, and then stops.
       await vi.waitFor(() => expect(api).toHaveBeenCalled(), { timeout: 2000 });
       await vi.waitFor(() => expect(doc.feed).toContain(`released-${gate}`));
+      // GH #481: the coalesced host publication also refreshes fileless-day
+      // membership. Only measure quiescence after that real publication lands.
+      await vi.waitFor(() => expect(pendingDataRevision()).toBe(false), { timeout: 2000 });
+      await flushMicrotasks();
       const reads = api.mock.calls.length;
       await new Promise((done) => setTimeout(done, 1000));
       expect(api).toHaveBeenCalledTimes(reads);
@@ -1379,6 +1403,62 @@ describe("page actions entry point", () => {
     }
   });
 
+  it("opens the share dialog for the page from the title-row share button, and hides the exports marker", async () => {
+    const dto: PageDto = {
+      name: "Exports",
+      kind: "page",
+      title: "Exports",
+      pre_block: "tine/exports:: true\npublic:: false",
+      blocks: [{ id: "exports-root", raw: "Body", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { "exports-root": node("exports-root", "Body", dto.name) },
+      pages: [page(dto.name, "page", ["exports-root"], dto.pre_block)],
+      feed: [],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      const button = root.querySelector<HTMLButtonElement>(".page-title-actions .page-share-btn")!;
+      expect(button).not.toBeNull();
+      expect(button.getAttribute("aria-label")).toBe("Share this page");
+      button.click();
+      expect(shareTarget()).toEqual({ page: "Exports" });
+      // The marker is machinery, not a property to edit; an ordinary property still shows.
+      expect(root.textContent).not.toContain("tine/exports");
+    } finally {
+      closeShareDialog();
+      dispose();
+    }
+  });
+
+  it("offers no title-row share button in a published export or quick-share viewer", async () => {
+    const dto: PageDto = { name: "Shown", kind: "page", title: "Shown", pre_block: null,
+      blocks: [{ id: "shown-root", raw: "Body", collapsed: false, children: [] }] };
+    setDoc({ byId: { "shown-root": node("shown-root", "Body", dto.name) }, pages: [page(dto.name, "page", ["shown-root"])], feed: [], loaded: true });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    const meta = document.createElement("meta");
+    meta.name = PUBLISHED_META_NAME;
+    meta.content = "snapshot.json";
+    document.head.append(meta);
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      expect(root.querySelector(".page-title-actions")).not.toBeNull();
+      expect(root.querySelector(".page-share-btn")).toBeNull();
+    } finally {
+      dispose();
+      meta.remove();
+    }
+  });
+
   it("exposes a named page actions ellipsis as a real menu button", async () => {
     const dto: PageDto = {
       name: "Actions",
@@ -1785,6 +1865,24 @@ describe("page route loading", () => {
 });
 
 describe("page properties", () => {
+  it("GH #346: keeps icon visible in the properties list and editable beside the title icon", async () => {
+    const propsId = "11111111-1111-4111-8111-111111111111";
+    const dto = { name: "Flag", kind: "page" as const, title: "Flag", pre_block: null,
+      blocks: [{ id: propsId, raw: "icon:: 🚩", collapsed: false, children: [] }] };
+    setDoc({ byId: { [propsId]: node(propsId, dto.blocks[0].raw, dto.name) },
+      pages: [page(dto.name, "page", [propsId])], feed: [dto.name], loaded: true });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      expect(root.querySelector(".page-properties")?.textContent).toContain("icon");
+      (root.querySelector(".page-properties .prop-row") as HTMLElement).click();
+      await tick();
+      expect(editingId()).toBe(propsId);
+      expect(root.querySelector("textarea")?.value).toContain("icon:: 🚩");
+    } finally { dispose(); }
+  });
   it("keeps a first-bullet alias editor mounted while the property is being typed (GH #62)", async () => {
     const propsId = "11111111-1111-4111-8111-111111111111";
     const dto = {

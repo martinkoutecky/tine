@@ -81,7 +81,7 @@ impl Fixture {
         assert_eq!(self.host.start_save(page), Disposition::Pending);
         let start = self.host.events.len();
         for _ in 0..15 {
-            self.host.advance_save(0);
+            self.host.advance_save();
             if self.host.job.is_none() {
                 return self.host.events[start..]
                     .iter()
@@ -260,10 +260,10 @@ fn a_failed_save_carries_its_platform_step_and_os_error() {
     let mut f = Fixture::new();
     f.edit("c.md", "mine");
     assert_eq!(f.host.start_save("c.md"), Disposition::Pending);
-    f.host.advance_save(0); // synced temp
-    f.host.advance_save(0); // absent base guard
+    f.host.advance_save(); // synced temp
+    f.host.advance_save(); // absent base guard
     fs::write(f.graph.join("c.md"), b"other").unwrap();
-    f.host.advance_save(0); // real EEXIST
+    f.host.advance_save(); // real EEXIST
     let cause = f
         .host
         .events
@@ -296,10 +296,10 @@ fn create_race_after_guard_is_no_replace_and_then_observes_conflict() {
     let mut f = Fixture::new();
     f.edit("c.md", "mine");
     assert_eq!(f.host.start_save("c.md"), Disposition::Pending);
-    f.host.advance_save(0); // synced temp
-    f.host.advance_save(0); // absent base guard
+    f.host.advance_save(); // synced temp
+    f.host.advance_save(); // absent base guard
     fs::write(f.graph.join("c.md"), b"other").unwrap();
-    f.host.advance_save(0); // real EEXIST
+    f.host.advance_save(); // real EEXIST
     assert_eq!(fs::read(f.graph.join("c.md")).unwrap(), b"other");
     assert!(f.host.events.iter().any(|e| matches!(
         e,
@@ -327,10 +327,10 @@ fn graph_unsupported_is_distinct_and_does_not_refuse_betas_tolerated_set() {
         f.edit("a.md", "mine");
         assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
         for _ in 0..3 {
-            f.host.advance_save(0);
+            f.host.advance_save();
         }
         crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(kind)));
-        f.host.advance_save(0);
+        f.host.advance_save();
         assert!(f.host.pages["a.md"].clean());
         assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"mine");
     }
@@ -342,13 +342,13 @@ fn post_rename_sync_error_is_tagged_uncertain_and_retry_preserves_input() {
     f.edit("a.md", "mine");
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
     for _ in 0..3 {
-        f.host.advance_save(0);
+        f.host.advance_save();
     }
     crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
     let error = f.host.fs.page_sync("a.md").unwrap_err();
     assert!(error.completed);
     crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
-    f.host.advance_save(0);
+    f.host.advance_save();
     assert!(f.host.events.iter().any(|e| matches!(
         e,
         Event::SaveOutcome { page, outcome: Outcome::Uncertain, .. } if page == "a.md"
@@ -388,13 +388,13 @@ fn weak_trash_and_strong_source_sync_do_not_claim_strong_delete_durability() {
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
-    f.host.advance_save(0); // move
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
+    f.host.advance_save(); // move
     crate::directory_durability::SYNC_ERROR
         .with(|error| error.set(Some(io::ErrorKind::InvalidInput)));
-    f.host.advance_save(0);
-    f.host.advance_save(0);
+    f.host.advance_save();
+    f.host.advance_save();
     assert!(f.host.pages["a.md"].clean());
     assert!(!f
         .host
@@ -403,19 +403,22 @@ fn weak_trash_and_strong_source_sync_do_not_claim_strong_delete_durability() {
         .any(|event| matches!(event, Event::DeleteDurable { .. })));
 }
 
+/// RO3 (a) (Martin 2026-10-11): the payload's data is not synced; its trash
+/// name is (custody (b)). A failed chain sync leaves the deletion Uncertain,
+/// and the retry finishes that witness before reporting the deletion.
 #[test]
-fn trashed_external_payload_is_file_synced_before_namespace_witness() {
+fn trashed_external_payload_is_named_durably_before_the_deletion_witness() {
     let mut f = Fixture::new();
     f.send("a.md", RequestKind::Open);
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
     fs::write(f.graph.join("a.md"), b"unflushed-external").unwrap(); // R1
-    f.host.advance_save(0); // moves actual external bytes
-    crate::atomic_file::FAIL_FILE_SYNC.with(|flag| flag.set(true));
-    f.host.advance_save(0);
+    f.host.advance_save(); // moves actual external bytes
+    crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
+    f.host.advance_save();
     assert!(f.host.pages["a.md"].risk);
     assert!(f.host.events.iter().any(|e| matches!(
         e,
@@ -438,8 +441,8 @@ fn trashed_external_payload_is_file_synced_before_namespace_witness() {
     assert_eq!(f.host.observe("a.md"), Disposition::Applied);
     crate::atomic_file::FILE_SYNCS.with(|count| count.set(0));
     assert_eq!(f.save("a.md"), Outcome::Published);
-    // The owed payload (custody before the save), then the retry's marker.
-    assert_eq!(crate::atomic_file::FILE_SYNCS.with(std::cell::Cell::get), 2);
+    // Only the retry's marker: no custody phase syncs payload data.
+    assert_eq!(crate::atomic_file::FILE_SYNCS.with(std::cell::Cell::get), 1);
 }
 
 #[test]
@@ -447,9 +450,9 @@ fn guarded_save_abandonment_cleans_only_its_own_unpublished_temp() {
     let mut f = Fixture::new();
     f.edit("a.md", "mine");
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0);
+    f.host.advance_save();
     fs::write(f.graph.join("a.md"), b"external").unwrap();
-    f.host.advance_save(0);
+    f.host.advance_save();
     assert!(f.host.job.is_none());
     assert!(f.host.pages["a.md"].conflict);
     assert!(fs::read_dir(&f.graph).unwrap().all(|entry| !entry
@@ -471,7 +474,7 @@ fn recapture_after_source_sync_error_does_not_revive_finished_trash_debt() {
         .insert(Phase::PageSync, [io::ErrorKind::Other].into());
     assert_eq!(f.save("a.md"), Outcome::Uncertain);
     assert!(f.host.pages["a.md"].risk);
-    // Custody (a)+(b) completed before the failed source sync, so the marker
+    // Custody completed before the failed source sync, so the marker
     // retired with that outcome (A4 rule 2.5). A recapture (nothing new to
     // write here) and a restart must not revive the finished debt.
     assert_eq!(markers(&mut f), 0);
@@ -497,6 +500,12 @@ fn markers(f: &mut Fixture) -> usize {
 
 fn syncs() -> u64 {
     crate::atomic_file::FILE_SYNCS.with(std::cell::Cell::get)
+}
+
+thread_local! {
+    /// File syncs `relaunch` saw up to the end of `launch`, before it drains
+    /// the representation worker (an operation vehicle's explosion).
+    static LAUNCH_SYNCS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 fn reset_syncs() {
@@ -528,9 +537,9 @@ fn delete_through_move(f: &mut Fixture) {
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
-    f.host.advance_save(0); // move
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
+    f.host.advance_save(); // move
     assert!(!f.graph.join("a.md").exists());
     assert_eq!(f.host.job.as_ref().unwrap().phase, SavePhase::TrashSync);
     assert_eq!(markers(f), 1);
@@ -548,6 +557,7 @@ fn relaunch(f: &mut Fixture) -> Vec<PathBuf> {
         f.host.launch(),
         Disposition::Applied | Disposition::Pending
     ));
+    LAUNCH_SYNCS.with(|count| count.set(syncs()));
     #[cfg(feature = "test-faults")]
     let synced = crate::directory_durability::take_synced_directories();
     #[cfg(not(feature = "test-faults"))]
@@ -557,8 +567,8 @@ fn relaunch(f: &mut Fixture) -> Vec<PathBuf> {
 }
 
 /// REVIEW-2b F1: every deletion producer (opDelete, an absent-text submit, a
-/// Move source) takes the one delete phase: marker, move, payload data sync,
-/// trash ancestors, publication, then marker retirement.
+/// Move source) takes the one delete phase: marker, move, trash custody
+/// (payload check, chain syncs), publication, then marker retirement.
 
 #[test]
 fn every_deletion_producer_takes_the_one_delete_phase() {
@@ -603,12 +613,8 @@ fn every_deletion_producer_takes_the_one_delete_phase() {
         crate::directory_durability::take_synced_directories();
         assert_eq!(f.save("a.md"), Outcome::Published, "{producer}");
         assert!(!f.graph.join("a.md").exists());
-        // The marker's own temp fsync, then the payload's data (custody (a)).
-        assert_eq!(
-            syncs(),
-            2,
-            "{producer}: published with no payload data sync"
-        );
+        // The marker's own temp fsync only: RO3 (a) syncs no payload data.
+        assert_eq!(syncs(), 1, "{producer}: file syncs");
         #[cfg(feature = "test-faults")]
         {
             let synced = crate::directory_durability::take_synced_directories();
@@ -633,10 +639,10 @@ fn every_deletion_producer_takes_the_one_delete_phase() {
 
 /// REVIEW-2b F2 + REVIEW-A2 B2 + REVIEW-A3 B2: an interrupted trash chain
 /// (an ancestor sync failed, or a crash right after the move) is completed by
-/// launch: payload data, then the whole ancestor chain, then retirement, and
-/// all of it before the graph-launch source-directory syncs.
+/// launch: the whole ancestor chain, then retirement, and all of it before the
+/// graph-launch source-directory syncs. No payload data sync (RO3 (a)).
 #[test]
-fn launch_redoes_payload_and_ancestor_custody_before_retiring_the_marker() {
+fn launch_redoes_ancestor_custody_before_retiring_the_marker() {
     for crash_before_b in [false, true] {
         let mut f = Fixture::new();
         fs::remove_dir_all(f.graph.join("logseq")).unwrap();
@@ -644,13 +650,17 @@ fn launch_redoes_payload_and_ancestor_custody_before_retiring_the_marker() {
         if !crash_before_b {
             crate::directory_durability::SYNC_ERROR
                 .with(|error| error.set(Some(io::ErrorKind::Other)));
-            f.host.advance_save(0);
+            f.host.advance_save();
             assert!(f.host.pages["a.md"].risk);
             assert_eq!(markers(&mut f), 1, "an Uncertain chain keeps its marker");
         }
         reset_syncs();
         let synced = relaunch(&mut f);
-        assert_eq!(syncs(), 1, "launch redoes the payload data sync");
+        assert_eq!(
+            LAUNCH_SYNCS.with(std::cell::Cell::get),
+            0,
+            "launch syncs no payload data"
+        );
         #[cfg(feature = "test-faults")]
         {
             let chain = chain(&f);
@@ -766,12 +776,12 @@ fn restart_must_not_forget_unflushed_trash_payload() {
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0);
-    f.host.advance_save(0);
+    f.host.advance_save();
+    f.host.advance_save();
     fs::write(f.graph.join("a.md"), b"unflushed-external").unwrap();
-    f.host.advance_save(0);
+    f.host.advance_save();
     crate::atomic_file::FAIL_FILE_SYNC.with(|flag| flag.set(true));
-    f.host.advance_save(0);
+    f.host.advance_save();
     assert_eq!(markers(&mut f), 1);
     reset_syncs();
     f.restart();
@@ -794,8 +804,8 @@ fn restart_after_marker_before_move_retires_the_missing_payload_marker() {
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
     assert_eq!(markers(&mut f), 1);
     relaunch(&mut f);
     assert_eq!(markers(&mut f), 0);
@@ -819,11 +829,11 @@ fn collision_after_launch_rewrites_no_draft_and_leaves_no_unused_marker() {
     f.restart();
     let drafts = f.host.fs.draft_files(true);
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
     let (_, payload) = f.host.job.as_ref().unwrap().marker.clone().unwrap();
     fs::write(f.trash.join(&payload), b"foreign").unwrap();
-    f.host.advance_save(0); // real EEXIST
+    f.host.advance_save(); // real EEXIST
     assert!(
         f.host.worker.is_none(),
         "collision installed a draft rewrite"
@@ -876,7 +886,7 @@ fn weak_trash_cycles_leave_zero_markers_and_bounded_work() {
                 crate::directory_durability::SYNC_ERROR
                     .with(|error| error.set(Some(io::ErrorKind::InvalidInput)));
             }
-            f.host.advance_save(0);
+            f.host.advance_save();
         }
         assert!(f.host.pages["a.md"].clean());
     };
@@ -898,13 +908,14 @@ fn weak_trash_cycles_leave_zero_markers_and_bounded_work() {
     );
 }
 
-/// REVIEW-2b F5 / R-STORAGE-ERROR: a payload that cannot be synced (here a
-/// foreign unreadable file at its name) fails saves of the page twice, then
-/// the three-failure escape lets the save go ahead with a sticky error.
-/// Discard never waits for trash custody.
+/// REVIEW-2b F5 / R-STORAGE-ERROR: trash custody that cannot complete (here an
+/// unreadable trash directory, so neither the payload's stat nor the
+/// directory's sync succeeds) fails saves of the page twice, then the
+/// three-failure escape lets the save go ahead with a sticky error. Discard
+/// never waits for trash custody.
 #[cfg(unix)]
 #[test]
-fn unsyncable_payload_escapes_after_three_failures_and_never_blocks_discard() {
+fn unsyncable_trash_escapes_after_three_failures_and_never_blocks_discard() {
     use std::os::unix::fs::PermissionsExt;
     for discard in [false, true] {
         let mut f = Fixture::new();
@@ -913,16 +924,12 @@ fn unsyncable_payload_escapes_after_three_failures_and_never_blocks_discard() {
             .fs
             .faults
             .insert(Phase::TrashSync, [io::ErrorKind::Other].into());
-        f.host.advance_save(0);
+        f.host.advance_save();
         assert!(f.host.job.is_none());
-        let payload = fs::read_dir(&f.trash)
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
-        fs::set_permissions(&payload, fs::Permissions::from_mode(0o000)).unwrap();
-        if fs::File::open(&payload).is_ok() {
+        let trash = f.trash.clone();
+        fs::set_permissions(&trash, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read_dir(&trash).is_ok() {
+            fs::set_permissions(&trash, fs::Permissions::from_mode(0o700)).unwrap();
             eprintln!("running with CAP_DAC_OVERRIDE; the unreadable fault is unavailable");
             return;
         }
@@ -931,8 +938,7 @@ fn unsyncable_payload_escapes_after_three_failures_and_never_blocks_discard() {
         assert_eq!(f.host.observe("a.md"), Disposition::Applied);
         f.edit("a.md", "recreated");
         if discard {
-            let version = f.host.pages["a.md"].version;
-            f.send("a.md", RequestKind::Discard { version });
+            f.send("a.md", RequestKind::Discard);
             assert!(!f.host.pages["a.md"].typed && f.host.pages["a.md"].buf.is_none());
             f.host
                 .fs
@@ -947,6 +953,7 @@ fn unsyncable_payload_escapes_after_three_failures_and_never_blocks_discard() {
                 3,
                 "no trash barrier"
             );
+            fs::set_permissions(&trash, fs::Permissions::from_mode(0o700)).unwrap();
             continue;
         }
         assert_eq!(f.save("a.md"), Outcome::Failed);
@@ -958,7 +965,7 @@ fn unsyncable_payload_escapes_after_three_failures_and_never_blocks_discard() {
             .iter()
             .any(|event| matches!(event, Event::CustodyError { .. })));
         assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), b"recreated");
-        fs::set_permissions(&payload, fs::Permissions::from_mode(0o600)).unwrap();
+        fs::set_permissions(&trash, fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(markers(&mut f), 1, "the marker stays for the next launch");
         relaunch(&mut f);
         assert_eq!(markers(&mut f), 0);
@@ -977,7 +984,7 @@ fn recreation_never_renames_before_custody_completes() {
                 .fs
                 .faults
                 .insert(Phase::TrashSync, [io::ErrorKind::Other].into());
-            f.host.advance_save(0);
+            f.host.advance_save();
             assert!(f.host.pages["a.md"].risk);
             assert_eq!(f.host.observe("a.md"), Disposition::Applied);
             fs::create_dir(f.trash.join("unrelated-unreadable__a.md")).unwrap();
@@ -1000,7 +1007,7 @@ fn recreation_never_renames_before_custody_completes() {
             assert!(!f.graph.join("a.md").exists(), "renamed before custody");
             reset_syncs();
             assert_eq!(f.save("a.md"), Outcome::Published);
-            assert_eq!(syncs(), 2, "payload, then the page's own temp");
+            assert_eq!(syncs(), 1, "the page's own temp (no payload data, RO3 (a))");
             assert_eq!(fs::read(f.graph.join("a.md")).unwrap(), bytes.as_bytes());
             assert_eq!(markers(&mut f), 0);
             assert!(f.host.custody.is_empty());
@@ -1017,19 +1024,14 @@ fn discard_has_no_trash_barrier_and_launch_completes_custody() {
     assert_eq!(f.host.delete("a.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
-    f.host.advance_save(0);
-    f.host.advance_save(0);
+    f.host.advance_save();
+    f.host.advance_save();
     fs::write(f.graph.join("a.md"), b"unflushed R1 payload").unwrap();
-    f.host.advance_save(0);
-    crate::atomic_file::FAIL_FILE_SYNC.with(|flag| flag.set(true));
-    f.host.advance_save(0);
+    f.host.advance_save();
+    crate::directory_durability::SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
+    f.host.advance_save();
     fs::write(f.graph.join("a.md"), b"externally recreated").unwrap();
-    f.send(
-        "a.md",
-        RequestKind::Discard {
-            version: f.host.pages["a.md"].version,
-        },
-    );
+    f.send("a.md", RequestKind::Discard);
     assert!(f.host.pages["a.md"].clean());
     f.host
         .fs
@@ -1048,7 +1050,7 @@ fn discard_has_no_trash_barrier_and_launch_completes_custody() {
     assert_eq!(markers(&mut f), 1);
     reset_syncs();
     relaunch(&mut f);
-    assert_eq!(syncs(), 1);
+    assert_eq!(syncs(), 0, "launch custody syncs no payload data (RO3 (a))");
     assert_eq!(markers(&mut f), 0);
     assert!(trash_holds(&f, b"unflushed R1 payload"));
     f.edit("a.md", "later edit");
@@ -1067,7 +1069,7 @@ fn second_deletion_with_owed_custody_keeps_both_payloads() {
             .fs
             .faults
             .insert(Phase::TrashSync, [io::ErrorKind::Other].into());
-        f.host.advance_save(0);
+        f.host.advance_save();
         if restart_before {
             f.host
                 .fs
@@ -1091,7 +1093,7 @@ fn second_deletion_with_owed_custody_keeps_both_payloads() {
         assert!(!f.host.pages["a.md"].conflict);
         reset_syncs();
         assert_eq!(f.save("a.md"), Outcome::Published);
-        assert_eq!(syncs(), 3, "the owed payload, the marker, the new payload");
+        assert_eq!(syncs(), 1, "the new marker (no payload data, RO3 (a))");
         assert!(trash_holds(&f, b"A") && trash_holds(&f, b"second"));
         assert_eq!(fs::read_dir(&f.trash).unwrap().count(), 2);
         assert_eq!(markers(&mut f), 0);
@@ -1141,7 +1143,7 @@ fn k_page_operation_keeps_independent_deletion_custody_after_restart() {
     assert_eq!(markers(&mut f), 2);
     reset_syncs();
     relaunch(&mut f);
-    assert_eq!(syncs(), 2);
+    assert_eq!(syncs(), 0, "launch custody syncs no payload data (RO3 (a))");
     assert_eq!(markers(&mut f), 0);
     for page in ["a.md", "b.md"] {
         assert_eq!(f.host.observe(page), Disposition::Applied);
@@ -1536,7 +1538,11 @@ fn r2_listing_failure_opens_the_graph_until_a_retry_settles_the_debt() {
         .fs
         .faults
         .insert(Phase::CustodyList, [io::ErrorKind::Other; 2].into());
-    assert_eq!(f.host.launch(), Disposition::Applied);
+    // Pending: launch explodes the deletion's surviving operation vehicle.
+    assert!(matches!(
+        f.host.launch(),
+        Disposition::Applied | Disposition::Pending
+    ));
     f.drain();
     let unknown = f.host.custody_unknown.clone().unwrap();
     assert!(unknown.contains("trash-custody"), "{unknown}");
@@ -1580,7 +1586,7 @@ fn r2_retirement_errors_do_not_turn_into_history() {
     let mut p = super::progress::Progress::new(host, clock);
     for now in (0..=1000).step_by(100) {
         p.clock.0.set(now);
-        p.poll(0);
+        p.poll();
     }
     assert!(p.host.retire.is_empty());
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
@@ -1626,7 +1632,7 @@ fn draft_after_failed_save(f: &mut Fixture, key: &str) {
         .faults
         .insert(Phase::PageTemp, [io::ErrorKind::Other].into());
     assert_eq!(f.host.start_save(key), Disposition::Pending);
-    f.host.advance_save(0);
+    f.host.advance_save();
     assert!(f.host.job.is_none() && f.host.pages[key].risk);
     if f.host.begin_draft(key) == Disposition::Pending {
         f.drain();
@@ -1704,9 +1710,9 @@ fn an_old_spelling_draft_and_custody_marker_recover_through_the_entry_spelling()
     assert_eq!(f.host.delete("Foo.md"), Disposition::Pending);
     f.drain();
     assert_eq!(f.host.start_save("Foo.md"), Disposition::Pending);
-    f.host.advance_save(0); // guard
-    f.host.advance_save(0); // marker
-    f.host.advance_save(0); // move
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker
+    f.host.advance_save(); // move
     assert!(spelled(&f.graph, "foo.md").is_empty());
     assert_eq!(markers(&mut f), 1);
     relaunch_as(&mut f, &[("Foo.md", "foo.md")]);
@@ -1827,11 +1833,11 @@ fn a_real_alternate_extension_twin_fails_or_annotates_a_creating_save() {
     f.edit("c.md", "created");
     assert_eq!(f.host.start_save("c.md"), Disposition::Pending);
     while f.host.job.as_ref().unwrap().phase != SavePhase::Rename {
-        f.host.advance_save(0);
+        f.host.advance_save();
     }
     fs::write(f.graph.join("c.org"), b"* org").unwrap();
     while f.host.job.is_some() {
-        f.host.advance_save(0);
+        f.host.advance_save();
     }
     assert!(f.host.events.iter().any(|event| matches!(
         event,
@@ -2153,4 +2159,100 @@ fn review_p1_m2_an_operation_vehicle_keeps_each_page_it_names_as_debt() {
     let last = f.host.last_admitted;
     assert_eq!(f.host.switch_ready(last), Disposition::Applied);
     assert!(f.host.can_switch());
+}
+
+/// G1 timing probe, not a gate: the wall time of each step of a page deletion
+/// on this platform's filesystem, next to a plain save of the same page. Run on
+/// hosted Windows (`ci.yml` scope `windows`) to see whether the custody
+/// marker's file flush is a material part of a deletion there (RO3 (b) is
+/// decided by it, Martin 2026-10-11).
+#[test]
+#[ignore = "timing probe: cargo test -p tine-store --lib probe_deletion_step_timing -- --ignored --nocapture"]
+fn probe_deletion_step_timing() {
+    use std::collections::BTreeMap;
+    use std::time::{Duration, Instant};
+    const PAGES: usize = 30;
+    let mut f = Fixture::new();
+    let keys: Vec<String> = (0..PAGES).map(|i| format!("p{i:02}.md")).collect();
+    for key in &keys {
+        fs::write(f.graph.join(key), b"- seed\n").unwrap();
+    }
+    let locks = keys
+        .iter()
+        .map(|key| (key.clone(), Arc::new(Mutex::new(()))))
+        .collect();
+    let io = ProductionIo::attach(&f.graph, &f.app, "test-graph", &f.trash);
+    f.host = Host::new(io, locks);
+    let mut steps: BTreeMap<String, Vec<Duration>> = BTreeMap::new();
+    let mut time = |label: &str, start: Instant| {
+        steps.entry(label.into()).or_default().push(start.elapsed());
+    };
+    for key in &keys {
+        f.edit(key, "- saved by Tine\n");
+        let start = Instant::now();
+        f.drain();
+        time("save: draft", start);
+        let start = Instant::now();
+        assert_eq!(f.save(key), Outcome::Published);
+        time("save: total", start);
+
+        let deletion = Instant::now();
+        assert_eq!(f.host.delete(key), Disposition::Pending);
+        let start = Instant::now();
+        f.drain();
+        time("delete: draft", start);
+        assert_eq!(f.host.start_save(key), Disposition::Pending);
+        while let Some(job) = f.host.job.as_ref() {
+            let label = format!("delete: {:?}", job.phase);
+            let start = Instant::now();
+            f.host.advance_save();
+            time(&label, start);
+        }
+        let start = Instant::now();
+        f.drain();
+        time("delete: draft retire", start);
+        time("delete: total", deletion);
+        assert!(!f.graph.join(key).exists());
+    }
+    eprintln!("G1 deletion timing, {PAGES} pages, median / max in ms:");
+    for (label, mut times) in steps {
+        times.sort();
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        eprintln!(
+            "  {label:<24} {:>8.3} / {:>8.3}  (n={})",
+            ms(times[times.len() / 2]),
+            ms(*times.last().unwrap()),
+            times.len()
+        );
+    }
+}
+
+/// GH #685: the drafts listing syncs only the chain Tine owns. An OS-owned
+/// ancestor above app data that is traversable but unreadable (Android's
+/// `/data/user/0`) must not switch crash recovery off.
+#[cfg(unix)]
+#[test]
+fn gh685_unreadable_os_ancestor_keeps_drafts_on() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let os_owned = root.path().join("data");
+    let app = os_owned.join("page.tine.beta");
+    let graph = root.path().join("graph");
+    let trash = graph.join("logseq/.tine-trash/pages");
+    fs::create_dir_all(&app).unwrap();
+    fs::create_dir_all(&trash).unwrap();
+    fs::set_permissions(&os_owned, fs::Permissions::from_mode(0o311)).unwrap();
+    let unreadable = fs::read_dir(&os_owned).is_err();
+    let io = ProductionIo::attach(&graph, &app, "g", &trash);
+    let status = io.draft_status();
+    fs::set_permissions(&os_owned, fs::Permissions::from_mode(0o755)).unwrap();
+    if !unreadable {
+        // Running as root: the ancestor stays readable, nothing to prove.
+        return;
+    }
+    assert_eq!(
+        status.unavailable, None,
+        "GH #685: crash recovery must stay on"
+    );
+    assert!(app.join("drafts-v2/g").is_dir());
 }

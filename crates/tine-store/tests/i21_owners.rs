@@ -6,6 +6,15 @@ use std::path::Path;
 // revocation signal; join-or-cancel describes who reaps or bounds the work.
 const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
+        "crates/tine-store/src/bench_events.rs",
+        ".spawn(move ||",
+        // Bench only: started at most once per process, and only while
+        // TINE_BENCH_EVENTS names a file (tests also start their own).
+        1,
+        "the channel's sender: the process-wide writer's lives until exit; a test writer's drops with its `Writer`, ending the thread's receive loop",
+        "detached; the thread ends with its channel or with the process, and an unwritten line is lost (best effort, never synced, by the bench contract)",
+    ),
+    (
         "crates/tine-store/src/model.rs",
         ".spawn(move ||",
         1,
@@ -122,9 +131,30 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // +2 GH #623: open_asset and edit_asset_external start the OS opener
         // (PATH search, exec) on the blocking pool, awaited by their futures.
         // -1 step 3b P2b: the deleted `delete_page` command (page_delete).
-        36,
+        // +1 All pages view: page_modified loads the whole-graph view off the
+        // main thread, awaited by its command future like get_page.
+        // +1 GH #457: open_graph_file resolves and opens a file link's target
+        // on the blocking pool, awaited by its future like open_asset.
+        // +1 GH #616: reveal_export awaits the shared OS reveal helper.
+        // -1 GH #481: moved to commands/journals_feed.rs, same awaited owner.
+        // -1 UI-CENSUS-18: the unused graph_source_files command was removed.
+        37,
         "command future",
         "caller awaits blocking result",
+    ),
+    (
+        "src-tauri/src/commands/journals_feed.rs",
+        "spawn_blocking(",
+        1,
+        "journal feed command future",
+        "caller awaits blocking result",
+    ),
+    (
+        "src-tauri/src/css_files.rs",
+        "spawn_blocking(",
+        4,
+        "read_css_file / save_css_file command future; graph operations retain their slot and Store close revokes writes",
+        "caller awaits each bounded read or guarded durable save before replying; no detached worker",
     ),
     (
         "src-tauri/src/settings.rs",
@@ -226,6 +256,7 @@ fn assert_owned(actual: &BTreeMap<(String, String), usize>) {
 
 #[test]
 fn production_acquisitions_have_owners() {
+    let _integration_guard = crate::integration_lock();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut files = Vec::new();
     rust_sources(&root.join("crates/tine-store/src"), &root, &mut files);
@@ -239,12 +270,14 @@ fn production_acquisitions_have_owners() {
         "src-tauri/src/backup/restore.rs",
         "src-tauri/src/commands.rs",
         "src-tauri/src/commands/concord.rs",
+        "src-tauri/src/commands/journals_feed.rs",
         "src-tauri/src/graph.rs",
         "src-tauri/src/host_retirement.rs",
         "src-tauri/src/settings.rs",
         "src-tauri/src/state.rs",
         "src-tauri/src/watcher.rs",
         "src-tauri/src/device_io.rs",
+        "src-tauri/src/css_files.rs",
     ] {
         files.push((
             file.to_owned(),
@@ -256,6 +289,7 @@ fn production_acquisitions_have_owners() {
 
 #[test]
 fn planted_unowned_worker_fails() {
+    let _integration_guard = crate::integration_lock();
     let source = vec![(
         "src-tauri/src/new_worker.rs".to_owned(),
         "std::thread::spawn(move || {});".to_owned(),

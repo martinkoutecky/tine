@@ -21,19 +21,50 @@ export const ORDERED_COMMANDS: ReadonlySet<string> = new Set([
   "set_app_string", "set_capture_enter_files", "set_smooth_scroll", "forget_known_graph", "set_backup_keep",
   "set_watch_mode", "dismiss_defender_hint", "approve_external_assets", "create_graph", "install_plugin",
   "uninstall_plugin", "set_plugin_enabled", "store_plugin_registry_cache", "diagnostic_session_active",
-  "clear_diagnostics",
+  "clear_diagnostics", "set_ui_locale",
 ]);
+
+/** An ordered lane: `lane(cmd, issue)` for one call, `lane.joined` to join a
+ *  batch. */
+export interface OrderedLane {
+  <T>(cmd: string, issue: () => Promise<T>): Promise<T>;
+  /** PERF-FIXES D3: join `item` to the lane's last batch of `key` when nothing
+   *  else entered the lane after it and it has not started, else start a new
+   *  batch there. `issue` gets the batch's items in call order and answers
+   *  each, so joining never moves a call past another one. A failure rejects
+   *  every call of its batch. */
+  joined<I, R>(key: string, item: I, issue: (items: I[]) => Promise<R[]>): Promise<R>;
+}
 
 /** A lane issues an ORDERED_COMMANDS call only after the previous one in the
  *  lane settled (either way); the tail is taken synchronously, so the lane
  *  order is the call order. Any other command is issued at once. A failure
- *  rejects only its own call and never jams the lane. Cost: O(1) per call. */
-export function orderedLane(): <T>(cmd: string, issue: () => Promise<T>) => Promise<T> {
+ *  rejects only its own call (or batch) and never jams the lane. Cost: O(1)
+ *  per call. */
+export function orderedLane(): OrderedLane {
   let tail: Promise<unknown> = Promise.resolve();
-  return <T>(cmd: string, issue: () => Promise<T>): Promise<T> => {
+  let open: { key: string; items: unknown[]; run: Promise<unknown[]> } | null = null;
+  const lane = <T>(cmd: string, issue: () => Promise<T>): Promise<T> => {
     if (!ORDERED_COMMANDS.has(cmd)) return issue();
+    open = null;
     const run = tail.then(issue);
     tail = run.then(() => undefined, () => undefined);
     return run;
   };
+  const joined = <I, R>(key: string, item: I, issue: (items: I[]) => Promise<R[]>): Promise<R> => {
+    if (open?.key === key) {
+      const index = open.items.push(item) - 1;
+      return (open.run as Promise<R[]>).then((answers) => answers[index]);
+    }
+    const items: I[] = [item];
+    const batch: { key: string; items: unknown[]; run: Promise<unknown[]> } = { key, items, run: Promise.resolve([]) };
+    batch.run = tail.then(() => {
+      if (open === batch) open = null;
+      return issue(items);
+    });
+    open = batch;
+    tail = batch.run.then(() => undefined, () => undefined);
+    return (batch.run as Promise<R[]>).then((answers) => answers[0]);
+  };
+  return Object.assign(lane, { joined });
 }

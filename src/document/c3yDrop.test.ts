@@ -6,7 +6,7 @@ import { initParser } from "../render/parse";
 import { isDirty, loadFeed, moveBlocksRelative, resetStore } from "./index";
 import { doc } from "./model";
 import { setToasts, toasts } from "../toasts";
-import { OUTLINE_MAX_DEPTH } from "../editor/outline";
+import { outlineMaxDepth } from "../editor/outline";
 import type { BlockDto, PageDto } from "../types";
 import { answerOpensFromDocument } from "./host/documentHost.test.support";
 import { bindTestHost } from "./host/wiring.test.support";
@@ -41,7 +41,7 @@ afterEach(async () => {
 
 describe("og c3y Y5", () => {
   it("a child drop refused by the outline ceiling shows the too-deep toast and changes nothing", async () => {
-    loadFeed([page("A", [chain(OUTLINE_MAX_DEPTH, 1000)]), page("B", [block(uuid(20), "target")])]);
+    loadFeed([page("A", [chain(outlineMaxDepth(), 1000)]), page("B", [block(uuid(20), "target")])]);
     expect(await moveBlocksRelative([uuid(1001)], uuid(20), "child")).toBe(false);
     expect(tooDeep()).toHaveLength(1);
     expect(doc.byId[uuid(1001)].page).toBe("A");
@@ -49,7 +49,7 @@ describe("og c3y Y5", () => {
   });
 
   it("a drop that fits shows no refusal", async () => {
-    loadFeed([page("A", [chain(OUTLINE_MAX_DEPTH, 1000)]), page("B", [block(uuid(20), "target")])]);
+    loadFeed([page("A", [chain(outlineMaxDepth(), 1000)]), page("B", [block(uuid(20), "target")])]);
     expect(await moveBlocksRelative([uuid(1001)], uuid(20), "after")).toBe(true);
     expect(tooDeep()).toHaveLength(0);
   });

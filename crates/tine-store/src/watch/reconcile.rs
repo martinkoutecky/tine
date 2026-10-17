@@ -71,8 +71,7 @@ impl Core {
             let config = self.graph.current_config();
             let began = Instant::now();
             let observed = SystemTime::now();
-            let dirs = self.dirs.read().unwrap().clone();
-            let (files, errors, times) = self.collect_full(&dirs, &config);
+            let (files, errors, times) = self.collect_full(&config);
             let prepared = PreparedWalk {
                 began,
                 observed,
@@ -248,7 +247,6 @@ impl Core {
         // A changed config can change which files are graph text (`:hidden`,
         // page and journal directories), so it takes a full scan.
         let paths = if config_changed { None } else { paths };
-        let dirs = self.dirs.read().unwrap().clone();
         let mut snapshot = self.snapshot.lock().unwrap();
         let (mut now, mut unreadable) = if let Some(paths) = paths {
             (
@@ -268,7 +266,7 @@ impl Core {
         } else {
             let (files, errors, times) = match prepared {
                 Some(walk) => (walk.files, walk.errors, walk.times),
-                None => self.collect_full(&dirs, &self.graph.current_config()),
+                None => self.collect_full(&self.graph.current_config()),
             };
             *walk = times;
             walk.full = true;
@@ -519,14 +517,13 @@ impl Core {
 
     fn collect_full(
         &self,
-        dirs: &[PathBuf; 1],
         config: &tine_core::Config,
     ) -> (
         HashMap<PathBuf, Stamp>,
         HashMap<PathBuf, String>,
         CollectTimes,
     ) {
-        let found = collect_with_errors(dirs, config);
+        let found = collect_with_errors(&self.graph.root, config);
         #[cfg(test)]
         crate::store::pause_at_hook(&self.full_walk_pause);
         #[cfg(test)]

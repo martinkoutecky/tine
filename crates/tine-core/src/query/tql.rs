@@ -13,6 +13,14 @@
 //! shapes that must never reach lowering at all (subqueries, `EXISTS`,
 //! `IN (SELECT …)`, placeholders), so their rejection message names what they
 //! are rather than what position they appeared in.
+//!
+//! **The page selector.** `@page and name = 'Project'` (the printer's spelling
+//! of `@page name = 'Project'`) selects one page as a row, so a page with no
+//! blocks is selected; it is the "this page" term of an export definition
+//! (`docs/contracts/export-definitions.md`). OG's `(page "x")` is a different
+//! query: the page's blocks. Inside an export definition block a rename
+//! rewrites the quoted name (`page_name_literals`,
+//! `crate::export_definition`); in any other query block it stays, as in OG.
 
 use std::ops::ControlFlow;
 
@@ -61,6 +69,34 @@ pub(crate) fn parse_tql_with_options(
     og_options: String,
     registry: &crate::query::registry::Registry,
 ) -> (Query, ViewSettings) {
+    lower_tql(text, og_options, registry, None)
+}
+
+/// The page names an ACTIVE `name` comparison of `text` spells as a quoted
+/// literal (`name = '…'`, `!=`, `in (…)`, `not in (…)`, and a block row's
+/// `page.name`), as `(authored byte range, decoded name)` with the range
+/// covering the quotes. Read by the same lowering that gives the comparison
+/// its meaning, so a literal of any other field, a disabled `-- ` row and a
+/// `[[x]]` the pre-pass spelled as a literal are never reported. The rename of
+/// an export definition's page selector is the reader
+/// (`crate::export_definition`). O(text).
+pub(crate) fn page_name_literals(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    let mut found = Vec::new();
+    lower_tql(
+        text,
+        String::new(),
+        crate::query::registry::Registry::none(),
+        Some(&mut found),
+    );
+    found
+}
+
+fn lower_tql(
+    text: &str,
+    og_options: String,
+    registry: &crate::query::registry::Registry,
+    name_literals: Option<&mut Vec<(std::ops::Range<usize>, String)>>,
+) -> (Query, ViewSettings) {
     let mut diagnostics = Vec::new();
     let pre = pre_pass(text, &mut diagnostics);
     let filter = match parse_expr_guarded(&pre.sql) {
@@ -79,6 +115,7 @@ pub(crate) fn parse_tql_with_options(
                     source_offset: pre.offset,
                     origins: &pre.origins,
                     not_applicable: None,
+                    name_literals,
                 };
                 let scope = match pre.anchor {
                     Anchor::Block => Scope::Block,
@@ -217,9 +254,45 @@ struct Lower<'a> {
     /// the retained `Raw` capsule. Always consumed by the enclosing `leaf`
     /// call, so it never leaks across siblings.
     not_applicable: Option<(String, Vec<String>)>,
+    /// [`page_name_literals`]' collector; `None` for an ordinary parse.
+    name_literals: Option<&'a mut Vec<(std::ops::Range<usize>, String)>>,
 }
 
 impl Lower<'_> {
+    /// Record `operand` for [`page_name_literals`] when it is a quoted literal
+    /// the author typed in an active row (its authored bytes are the quoted
+    /// text itself, so a desugared `[[x]]` is skipped).
+    fn note_name_literal(&mut self, operand: &Expr) {
+        if self.disabled_depth > 0 || self.name_literals.is_none() {
+            return;
+        }
+        let Expr::Value(value) = operand else { return };
+        let (SqlValue::SingleQuotedString(name) | SqlValue::DoubleQuotedString(name)) =
+            &value.value
+        else {
+            return;
+        };
+        let span = operand.span();
+        let Some((start, end)) =
+            byte_offset(self.source, span.start).zip(byte_offset(self.source, span.end))
+        else {
+            return;
+        };
+        let Some((&from, &to)) = self.origins.get(start).zip(self.origins.get(end)) else {
+            return;
+        };
+        let authored = self.original.get(from..to).unwrap_or_default().as_bytes();
+        let quoted = authored.len() >= 2
+            && matches!(authored[0], b'\'' | b'"')
+            && authored[authored.len() - 1] == authored[0];
+        if quoted {
+            let name = name.clone();
+            if let Some(found) = self.name_literals.as_deref_mut() {
+                found.push((from..to, name));
+            }
+        }
+    }
+
     fn reject(&mut self, kind: DiagnosticKind, message: impl Into<String>) -> Filter {
         self.diagnose(Diagnostic::new(kind, message));
         Filter::False
@@ -430,6 +503,16 @@ impl Lower<'_> {
         let Some(target) = self.target(left, scope) else {
             return Filter::False;
         };
+        if matches!(
+            target,
+            Target::Attr {
+                attr: Attr::Name,
+                ..
+            }
+        ) && matches!(op, CmpOp::Eq | CmpOp::NotEq)
+        {
+            self.note_name_literal(right);
+        }
         let ty = self.value_type(&target, right);
         let Some(value) = self.value(right, ty) else {
             return Filter::False;
@@ -458,6 +541,17 @@ impl Lower<'_> {
         let Some(target) = self.target(left, scope) else {
             return Filter::False;
         };
+        if matches!(
+            target,
+            Target::Attr {
+                attr: Attr::Name,
+                ..
+            }
+        ) {
+            for item in list {
+                self.note_name_literal(item);
+            }
+        }
         let ty = list
             .first()
             .map(|first| self.value_type(&target, first))
