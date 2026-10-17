@@ -54,14 +54,6 @@ export-modal-resolving = Resolving...
 
 export-modal-copy = Copy
 
-# Explicit mentions are authored links; plain mentions are unlinked text matches.
-# $index is the mention's one-based position within the block.
-reference-evidence-highlight-mention =
-    { $kind ->
-        [explicit] Highlight explicit mention { $index }
-       *[plain] Highlight plain mention { $index }
-    }
-
 # $kind is explicit for authored links or plain for unlinked text; $index is the one-based mention position.
 reference-evidence-jump-to-mention =
     { $kind ->
@@ -106,11 +98,7 @@ reference-evidence-mention-count =
         [one] { NUMBER($count, useGrouping: 0) } mention
        *[other] { NUMBER($count, useGrouping: 0) } mentions
     }
-reference-evidence-occurrence-label =
-    { $selecting ->
-        [1] Highlight mention { $index } of { $total }
-       *[other] Jump to mention { $index } of { $total }
-    }
+reference-evidence-occurrence-label = Jump to mention { $index } of { $total }
 
 # Helper-return and component-prop interface text (GH #107).
 export-prose-plain-text-output-has-no-markup-markers-to-remove = Plain text output has no markup markers to remove

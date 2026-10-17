@@ -52,11 +52,6 @@ export-modal-resolving = 正在解析…
 
 export-modal-copy = 复制
 
-reference-evidence-highlight-mention = { $kind ->
-    [explicit] 高亮显式提及 { $index }
-   *[plain] 高亮纯文本提及 { $index }
-    }
-
 reference-evidence-jump-to-mention = { $kind ->
     [explicit] 跳转到显式提及 { $index }
    *[plain] 跳转到纯文本提及 { $index }
@@ -100,10 +95,7 @@ reference-evidence-mention-count = { $count ->
    *[other] { NUMBER($count, useGrouping: 0) } 处提及
     }
 
-reference-evidence-occurrence-label = { $selecting ->
-    [1] 高亮第 { $index } / { $total } 处提及
-   *[other] 跳转到第 { $index } / { $total } 处提及
-    }
+reference-evidence-occurrence-label = 跳转到第 { $index } / { $total } 处提及
 
 # Helper-return and component-prop interface text (GH #107).
 export-prose-plain-text-output-has-no-markup-markers-to-remove = 纯文本输出中没有需要移除的标记
