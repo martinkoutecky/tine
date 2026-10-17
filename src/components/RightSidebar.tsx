@@ -2,7 +2,7 @@ import { t } from "../i18n";
 import { BlockList } from "./BlockList";
 import { resizeSidebar, commitSidebarWidth, setLeftSidebarReserve } from "../sidebarSizing";
 import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
-import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, closeOtherRightSidebarItems, collapseOtherRightSidebarItems, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarOpen, sidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, type SidebarBlock, type SidebarItem } from "../ui";
+import { rightSidebar, rightSidebarOpen, toggleRightSidebar, closeRightSidebarItem, closeOtherRightSidebarItems, collapseOtherRightSidebarItems, moveRightSidebarItem, closeAllRightSidebarItems, setRightSidebarItemCollapsed, setAllRightSidebarItemsCollapsed, rightSidebarWidth, sidebarOpen, sidebarWidth, sidebarItemKey, adoptResolvedPageName, registerRightSidebarClosePreparation, replaceSidebarBlock, replaceSidebarItem, openBlockInSidebar, type SidebarBlock, type SidebarItem } from "../ui";
 import { beginRowReorderDrag, rowReorderClickSuppressed, type RowDropTarget } from "./rowReorder";
 import "../styles/rightSidebarReorder.css";
 import { graphEpoch } from "../graphSession";
@@ -10,13 +10,15 @@ import { mobileDrawerMode } from "../mobileDrawers";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { FloatingPortal } from "./FloatingPortal";
 import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
-import { openPageTarget, openPageAtBlock, openPageTargetInNewTab } from "../router";
+import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
+import { InlineText } from "../render/inline";
+import { visibleBody } from "../render/block";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
 import { pageIconPrefix } from "../pageIconBatch";
 import { backend } from "../backend";
-import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, node as docNode } from "../document";
+import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
 import { LinkedReferences } from "./LinkedReferences";
@@ -487,6 +489,27 @@ function BlockItem(props: {
     const n = node();
     return n?.page ?? props.item.page;
   };
+  // GH #640, OG `breadcrumb` (block.cljs) as the sidebar uses it: the page, then
+  // the block's ancestors (not the block itself), at most the nearest three after
+  // a "⋯". O(depth) per change of this block's parent chain.
+  const CRUMB_LIMIT = 3;
+  const ancestors = () => {
+    const out: string[] = [];
+    for (let p = node()?.parent ?? null; p !== null; p = docNode(p)?.parent ?? null) out.unshift(p);
+    return out;
+  };
+  const shownAncestors = () => ancestors().slice(-CRUMB_LIMIT);
+  const openCrumb = (aid: string, event: MouseEvent) => {
+    if (rowReorderClickSuppressed()) return;
+    const ref = blockPositionRef(blockRef(aid));
+    const dest = internalLinkDest(event);
+    const where = { ...(ref.path ? { path: ref.path } : {}), ...(ref.blockPos ? { blockPos: [...ref.blockPos] } : {}) };
+    const route = { kind: "page" as const, name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...where };
+    if (dest === "sidebar") openBlockInSidebar(ref);
+    else if (dest === "background") openInNewTab(route);
+    else if (dest === "pane") openRouteInOtherPane(route);
+    else replaceSidebarItem(props.item as SidebarBlock, { kind: "block", uuid: ref.uuid, page: ref.page, pageKind: ref.pageKind, ...where, collapsed: false });
+  };
   const bodyId = `rs-item-body-${createUniqueId()}`;
   return (
     <div class="rs-item" data-sidebar-surface={props.surfaceKey} data-row-index={props.row.index} classList={{ collapsed: props.collapsed, "row-drop-before": props.row.before(), "row-drop-after": props.row.after() }}>
@@ -506,6 +529,24 @@ function BlockItem(props: {
         >
           {title()}
         </a>
+        <Show when={shownAncestors().length}>
+          <span class="rs-item-crumbs">
+            <Show when={ancestors().length > CRUMB_LIMIT}>
+              <span class="crumb-sep">›</span><span class="rs-crumb-more">⋯</span>
+            </Show>
+            <For each={shownAncestors()}>
+              {(aid) => (
+                <>
+                  <span class="crumb-sep">›</span>
+                  <a class="rs-crumb" onMouseDown={internalLinkMouseDown} onClick={(e) => openCrumb(aid, e)}
+                    onAuxClick={(e) => internalLinkAuxClick(e, () => openCrumb(aid, e))}>
+                    <InlineText text={visibleBody(docNode(aid)?.raw ?? "")[0] || "…"} format={formatForBlock(aid)} />
+                  </a>
+                </>
+              )}
+            </For>
+          </span>
+        </Show>
         <ItemActions index={props.row.index} surfaceKey={props.surfaceKey} collapsed={props.collapsed} onClose={props.onClose} />
       </div>
       <Show when={!props.collapsed}>

@@ -1264,6 +1264,16 @@ export function replaceSidebarBlock(from: SidebarBlock, to: SidebarBlock): void 
   setRightSidebar(items.map((item) => (item === from ? to : item)));
 }
 
+/** OG `sidebar-replace-block!`: a breadcrumb click swaps this card for its target
+ * in place. Another card already showing that target is dropped, so one target
+ * never has two live sidebar slots. O(sidebar items). */
+export function replaceSidebarItem(from: SidebarItem, to: SidebarItem): void {
+  const items = rightSidebar();
+  if (!items.includes(from)) return;
+  const key = sidebarItemKey(to);
+  setRightSidebar(items.flatMap((item) => item === from ? [to] : sidebarItemKey(item) === key ? [] : [item]));
+}
+
 /** Resolve block items in parallel; remove and save only confirmed missing targets.
  * Failed lookups remain and toast; pages are untouched. O(block items) backend calls plus save. */
 export async function pruneSidebarBlocks(): Promise<void> {

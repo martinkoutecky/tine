@@ -8247,6 +8247,14 @@ html.tine-embed-shading-accent .embed-block {
   white-space: nowrap;
 }
 
+/* GH #640: the opened block's ancestors after its page, as OG's sidebar shows. */
+.rs-item-crumbs { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 13px; color: var(--text-secondary); }
+.rs-item-crumbs .crumb-sep { margin: 0 4px; opacity: 0.6; flex: 0 0 auto; }
+.rs-crumb { cursor: pointer; color: inherit; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.rs-crumb:hover { color: var(--link-color); }
+.rs-crumb * { white-space: nowrap; }
+.rs-crumb-more { flex: 0 0 auto; }
+
 .rs-close {
   /* The title no longer stretches, so the close button keeps the right edge
      itself (GH #464). */

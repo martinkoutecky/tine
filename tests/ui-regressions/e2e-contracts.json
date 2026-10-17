@@ -73,6 +73,12 @@
       "nonRequirements":["Exact pixels, graph-wide search seeding or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-sidebar-crumbs.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true}],
+      "acceptableVariations":["Separator glyphs, truncation and styling may vary while the page, ancestor order and swap agree."],
+      "nonRequirements":["Modifier destinations of crumbs (component-level), and native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-search-tab-keyboard.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A bound Search tab shortcut opens the persistent input; typing finds pages, ArrowDown twice highlights the second displayed result with accessible focus, and Enter opens that page.","blocking":true}],
       "acceptableVariations":["Result ordering, layout, focus styling and search latency may vary while keyboard selection and opened page agree."],

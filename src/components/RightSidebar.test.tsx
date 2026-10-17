@@ -8,7 +8,7 @@ import { bindTestHost } from "../document/host/wiring.test.support";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import type { PageDto, PageRead } from "../types";
-import { applySidebarSession, openBlockInSidebar, rightSidebar, setRightSidebar } from "../ui";
+import { applySidebarSession, openBlockInSidebar, rightSidebar, setRightSidebar, type SidebarItem } from "../ui";
 import { RightSidebar } from "./RightSidebar";
 import { route } from "../router";
 
@@ -42,11 +42,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mount(items = [
+function mount(items: SidebarItem[] = [
   { kind: "page" as const, name: page.name, pageKind: "page" as const },
   { kind: "block" as const, uuid: "sidebar-second", page: page.name, pageKind: "page" as const },
-]) {
-  loadSingle(page);
+], dto: PageDto = page) {
+  loadSingle(dto);
   applySidebarSession({ right: true, items });
   vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
   vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
@@ -67,6 +67,30 @@ describe("right sidebar collection disclosures", () => {
       expect(root.textContent).toContain("Second block");
       root.querySelector<HTMLElement>(".rs-item-title")!.click();
       expect(route()).toMatchObject({ kind: "page", name: page.name });
+    } finally {
+      dispose();
+    }
+  });
+
+  it("shows the opened block's ancestors after its page, nearest three after an ellipsis, rendered (GH #640)", async () => {
+    let leaf = { id: "deep-leaf", raw: "Leaf itself", collapsed: false, children: [] as PageDto["blocks"] };
+    for (const [id, raw] of [["deep-4", "Fourth **bold**"], ["deep-3", "Third"], ["deep-2", "Second"], ["deep-1", "First"]] as const)
+      leaf = { id, raw, collapsed: false, children: [leaf] };
+    const deep: PageDto = { ...page, blocks: [leaf] };
+    const { root, dispose } = mount([{ kind: "block", uuid: "deep-leaf", page: page.name, pageKind: "page" }], deep);
+    try {
+      await expect.poll(() => root.querySelectorAll(".rs-crumb").length).toBe(3);
+      const crumbs = [...root.querySelectorAll(".rs-crumb")].map((el) => el.textContent);
+      expect(crumbs).toEqual(["Second", "Third", "Fourth bold"]);
+      expect(root.querySelector(".rs-item-crumbs strong")?.textContent).toBe("bold");
+      expect(root.querySelector(".rs-crumb-more")).not.toBeNull();
+      expect(root.querySelector(".rs-item-title")?.textContent).toBe(page.name);
+      expect(root.querySelector(".rs-item-crumbs")?.textContent).not.toContain("Leaf itself");
+      (root.querySelectorAll(".rs-crumb")[1] as HTMLElement).click();
+      expect(rightSidebar()).toHaveLength(1);
+      expect(rightSidebar()[0]).toMatchObject({ kind: "block", page: page.name });
+      await expect.poll(() => [...root.querySelectorAll(".rs-crumb")].map((el) => el.textContent)).toEqual(["First", "Second"]);
+      expect(root.querySelector(".rs-crumb-more")).toBeNull();
     } finally {
       dispose();
     }
