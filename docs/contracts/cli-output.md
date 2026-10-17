@@ -218,6 +218,67 @@ Not a read verb: `tine serve --stop`, and the app's handover. Its success payloa
 `{"schema":"tine.cli/1","kind":"yield","yielded":true}`, sent while the owner still holds the
 lock. It is produced by `serve.rs` and exercised by the handover tests, not by `output_tests`.
 
+### Writes: `block.add` / `block.edit` / `block.prop` / `block.move`
+
+`tine add`, `tine edit`, `tine prop set|remove`, `tine move`. Every write goes through the graph's owner and
+the page host's guarded save, the path the app's own edits use: the owner first saves any text typed in a window
+holding the page, then reads the page, resolves the command's blocks against what it read, plans the new bytes,
+checks they read back as the intended outline, and writes. If the page changed in between (someone typed), it
+re-reads and re-resolves once; a second change is `stale`. Writes are never retried by the client.
+
+- **Blocks** are named by a **handle**: `PAGE/POS~FP` as a read prints it (see "The text outline"), or a block's
+  `id::` UUID (graph-wide). The position is used when its fingerprint still matches; otherwise the one block on the
+  page with that fingerprint; otherwise `stale`. A bare `PAGE/POS` (no fingerprint) is accepted only with `--rev`.
+- **`--rev REV`** (optional, every write): write only if the page is still at that rev; else `stale` with the
+  current `detail.rev`.
+- **`block.add`**: `--under|--after|--before BLOCK`, or `--page PAGE` (created when absent), or `--journal`
+  (today) / `--journal=DATE` (created when absent); content `-` reads stdin. Content is a page fragment in the
+  page's format (Markdown `- ` or Org outline). Every created block gets `author::` (from `--author`, else
+  `TINE_AUTHOR`, else `agent`); edits never add one. An anchor without `id::` gets one in the same write. A
+  `((uuid))` that names no block is refused `broken-ref`.
+- **`block.edit`**: the text replaces the block's editor text, as typing it would: hidden `id::`, `collapsed::`
+  and `logseq.order-list-type::` lines and the children are kept; a marker change writes the logbook as the app
+  does.
+- **`block.move`**: the block and its children go under (last child), after or before a target on the same page.
+  A move to another page is refused `cross-page` in this version.
+
+Kind `written`. Write replies carry no page text.
+
+| field | type | presence | disclosure | meaning |
+|---|---|---|---|---|
+| `schema` | string | always | no | `"tine.cli/1"` |
+| `kind` | string | always | no | `"written"` |
+| `page` | string | always | no | the page id written (graph-relative path) |
+| `name` | string | always | no | the page's name |
+| `rev` | string | always | no | the page's rev after the write, from the written bytes; pass it as `--rev` to chain |
+| `blocks` | array of string | always | no | the handles (`PAGE/POS~FP`) of the blocks created or changed, in the new text, in outline order; at most 200 |
+| `more` | integer | always | yes | blocks created or changed beyond the 200 listed; the text output says how many |
+
+Read by the text output: `name`, `rev`, `blocks`, `more`.
+
+Text: `written NAME rev REV`, then one handle per line, then `... and N more blocks` when `more` is non-zero.
+
+### `block.delete`
+
+`tine delete BLOCK [--rev REV]`. The block and its children, through the same write path. Kind `deleted`: the
+`written` fields above (`blocks` is empty: the deleted blocks have no handle in the new text), plus:
+
+| field | type | presence | disclosure | meaning |
+|---|---|---|---|---|
+| `schema` | string | always | no | `"tine.cli/1"` |
+| `kind` | string | always | no | `"deleted"` |
+| `page` | string | always | no | as `written` |
+| `name` | string | always | no | as `written` |
+| `rev` | string | always | no | as `written` |
+| `blocks` | array of string | always | no | as `written` |
+| `more` | integer | always | yes | as `written` |
+| `deleted` | string | always | no | the deleted block's handle, as it was before the deletion |
+| `broken_refs` | integer | always | yes | `((uuid))` references elsewhere in the graph to an `id::` in the deleted subtree, not counting references inside the subtree itself (the app's delete notice counts the same way) |
+
+Read by the text output: `deleted`, `broken_refs`, `name`, `rev`.
+
+Text: `deleted HANDLE (breaks N references)`, then `NAME rev REV`.
+
 ## The text outline
 
 One block per line, indented two spaces per level:
@@ -271,8 +332,12 @@ A failed command prints one line to stderr and exits non-zero.
 | `error.message` | string | always | prose for a person; not stable |
 | `error.detail` | object | optional | owner replies always carry `detail.admitted`; a client-side failure (no reply) has no `detail` |
 | `error.detail.admitted` | boolean | optional | whether the owner admitted the request (PROTOCOL §2.4); present on every owner reply |
-| `error.detail.candidates` | array of string | optional | `ambiguous`: the page ids the name could mean |
-| `error.detail.reason` | string | optional | `refused`: why (`draft-namespace`, `app-owner`, …); the text puts it in `refused:<reason>` |
+| `error.detail.candidates` | array of string | optional | `ambiguous`: the page ids the name could mean; `stale`: the handles (`POS~FP`) of the blocks a handle could mean |
+| `error.detail.page` | string or null | optional | a write's page id (`stale`, `refused` and the admitted write codes) |
+| `error.detail.handle` | string | optional | `stale`: the handle that no longer resolves |
+| `error.detail.rev` | string | optional | `stale` on `--rev`: the page's current rev |
+| `error.detail.uuid` | string | optional | `refused` / `broken-ref`: the UUID no block has |
+| `error.detail.reason` | string | optional | `refused`: why (below); the text puts it in `refused:<reason>` |
 | `error.detail.diagnostics` | array of `Diagnostic` | optional | `bad-args` from a query that does not parse |
 | `error.detail.diag` | string | optional | `internal`: the diagnostic id (below) |
 
@@ -298,13 +363,31 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `owner-unsafe` | 5 | the owner namespace or endpoint path is not safe to use |
 | `owner-lock` | 5 | the owner lock call itself failed (not contention) |
 | `unsupported` | 5 | no owner endpoint on this platform yet (Windows, slice 1a) |
-| `stale` | 6 | reserved for writes: the expected content changed |
-| `refused` | 6 | the owner refused (`tine serve --stop` to an app-owned graph, or a draft-namespace mismatch on yield) |
-| `draft-failed` | 7 | reserved for writes: admitted, draft not written, nothing changed |
-| `unwritten` | 8 | reserved for writes: admitted, partial or pending |
-| `superseded` | 8 | reserved for writes: applied, then discarded before publishing |
+| `stale` | 6 | a write's page or block changed: `--rev` no longer matches, a handle no longer resolves (or resolves to several blocks), or the page changed twice while the write ran. Not admitted; read again |
+| `refused` | 6 | the owner refused; `detail.reason` says why (below). Nothing changed |
+| `draft-failed` | 7 | a write was admitted but its draft could not be saved (disk full, app-data error); nothing changed |
+| `unwritten` | 8 | a write was admitted and applied in the owner, but the file is not written yet; Tine keeps trying |
+| `superseded` | 8 | a write applied, then a later edit replaced it before it was saved |
 | `uncertain` | 8 | admitted, outcome unknown (the connection was lost after the request was sent; `tine serve --stop`) |
 | `internal` | 1 | an owner bug or unnamed failure; the message leads with a diagnostic id |
+
+**Refusal reasons** (`detail.reason`, and `refused:<reason>` in the text):
+
+| reason | when |
+|---|---|
+| `app-owner` | `tine serve --stop` to a graph the app owns |
+| `draft-namespace` | a yield whose opening app keeps its drafts elsewhere |
+| `unsaved` | the page has typed text Tine could not save; save or discard it in the app |
+| `page-busy` | other work held the page; try again |
+| `host` | the page host refused the write |
+| `no-host` | no page host could be started for the write |
+| `read-only` | the page is read-only in Tine (a Guide page, or a page that cannot round-trip) |
+| `does-not-round-trip` | the new text would not read back as written (an unclosed fence, a line that becomes a new block) |
+| `store` | the store refused the save plan |
+| `cross-page` | `move` between two pages (not supported yet) |
+| `broken-ref` | `add` content names a `((uuid))` no block has (`detail.uuid`) |
+| `kernel` | the edit itself cannot apply to the block (message says why) |
+| `kernel:<reason>` | the outline refused the verb: `kernel:depthcap`, `kernel:cycle`, `kernel:readonly`, `kernel:frozen`, `kernel:headerroot`, `kernel:nooutlinestep`, `kernel:incomplete`, `kernel:unparseable` |
 
 Spec A3's "1 refused or failed" is superseded for refusals by PROTOCOL §2.3 (`refused` is 6);
 exit 1 is `internal`, an unlisted code, and a `tine serve` failure that has no code of its own.

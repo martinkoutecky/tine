@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **The command line can write** (Linux and macOS): `tine add`, `tine edit`, `tine prop set|remove`, `tine move` and `tine delete` change blocks through the graph's owner and the same guarded save the app uses, for scripts and AI agents working beside you. Blocks are named by the handle a read prints (`Page/2.1~k7f2ab`) or by `id::`; a block that changed since the read is refused as `stale`, never guessed. Every block `tine add` creates carries `author::`. With the app open, your typed text is saved first and the window shows the change at once. `--json` replies and exit codes are in `docs/contracts/cli-output.md`; the Guide's **Command line** page explains the commands.
+
 ### Changed
 
 - **Collapse (one level)** and **Expand (one level)** (formerly "… children (one level)") now include the block itself: collapsing folds the block once its children are all folded, and expanding a folded block first opens only the block (GH #696).

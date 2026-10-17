@@ -201,6 +201,12 @@ impl Fixture {
             ("pages", self.ok("pages", json!({ "namespace": "NS" }))),
         ];
         all.extend(self.statuses().into_iter().map(|s| ("owner.status", s)));
+        // Writes last: they change the fixture the reads above answered from.
+        all.push((
+            "block.edit",
+            self.ok("block.edit", json!({ "handle": UUID, "text": "edited" })),
+        ));
+        all.push(("block.delete", self.ok("block.delete", json!({ "handle": UUID }))));
         all
     }
 }

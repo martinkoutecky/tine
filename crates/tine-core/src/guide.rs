@@ -1734,7 +1734,7 @@ mod og_20d_guide_tests {
         // Check connected concepts within a teaching block, not exact prose.
         let blocks: Vec<_> = cli.lines().map(str::to_lowercase).collect();
         for concepts in [
-            vec!["read-only", "edit", "notes"],
+            vec!["read commands", "do not change", "notes"],
             vec!["unsaved", "app", "page"],
             vec!["--graph", "tine_graph", "working directory", "logseq/"],
             vec!["id::", "uuid", "descendants"],
@@ -1746,6 +1746,40 @@ mod og_20d_guide_tests {
             vec!["--json", "stdout", "tine.cli/1"],
             vec!["stderr", "exit", "diagnostics", "truncation"],
             vec!["cli-output.md", "fields", "exit-code"],
+        ] {
+            assert!(
+                blocks
+                    .iter()
+                    .any(|block| concepts.iter().all(|concept| block.contains(concept))),
+                "Command-line onboarding must connect {concepts:?}"
+            );
+        }
+    }
+
+    /// CLI slice 2: the write commands, how blocks are named, attribution, and
+    /// what happens with the app open.
+    #[test]
+    fn command_line_guide_teaches_write_commands_handles_and_the_open_app() {
+        let cli = page("Reference/Command line");
+        for command in [
+            "tine add",
+            "tine edit",
+            "tine prop set",
+            "tine prop remove",
+            "tine move",
+            "tine delete",
+            "--rev",
+        ] {
+            assert!(cli.contains(command), "Guide must teach {command}");
+        }
+        let blocks: Vec<_> = cli.lines().map(str::to_lowercase).collect();
+        for concepts in [
+            vec!["handle", "fingerprint", "id::", "stale"],
+            vec!["author::", "agent", "--author", "tine_author"],
+            vec!["app open", "typed", "saved first", "window", "stale"],
+            vec!["--journal", "creating", "standard input"],
+            vec!["broken", "references", "delete"],
+            vec!["exits 6", "nothing changed", "exits 8"],
         ] {
             assert!(
                 blocks
