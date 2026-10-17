@@ -103,6 +103,8 @@ try {
   await openPageByName(browser,"Copy Source");
   await clipboard("write_text","sentinel");
   await browser.execute(() => document.querySelector('[data-page-actions-trigger]')?.click());
+  // Copy link sits in the "Copy as" submenu (7082edcea), shown on hover.
+  await browser.$('[data-page-action-id="copy-as"]').moveTo();
   await browser.$('[data-page-action-id="copy-link"]').click();
   await browser.waitUntil(async () => (await clipboard("read_text")) === `tine://page/Copy%20Source?graph=${graphId}`,{timeout:10000,timeoutMsg:"Page Copy link did not publish its external URL"});
   await clipboard("write_text","sentinel");

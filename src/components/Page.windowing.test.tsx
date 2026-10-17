@@ -142,6 +142,24 @@ it("revealing an already-visible row does not pin its window after scrolling awa
   } finally { dispose(); }
 });
 
+it("an offscreen window updates its spacer after a multiline edit and still reveals the edited text", async () => {
+  const { host, dispose } = await mount();
+  try {
+    revealOutlineBlock("window-1000", host);
+    const shell = host.querySelector('[data-block-id="window-1000"]')!.closest<HTMLElement>("[data-outline-window]")!;
+    WindowObserver.set(shell, true);
+    WindowObserver.set(shell, false);
+    const spacerHeight = () => parseFloat(shell.querySelector<HTMLElement>('[aria-hidden="true"]')!.style.height);
+    const before = spacerHeight();
+    const text = Array.from({ length: 30 }, (_, i) => `Updated line ${i}`).join("\n");
+    setDoc("byId", "window-1000", "raw", text);
+    expect(spacerHeight()).toBeGreaterThan(before);
+    expect(host.querySelector('[data-block-id="window-1000"]')).toBeNull();
+    expect(revealOutlineBlock("window-1000", host)).toBe(true);
+    expect(host.querySelector('[data-block-id="window-1000"]')?.textContent).toContain("Updated line 29");
+  } finally { dispose(); }
+});
+
 it("model edit intent mounts an unrendered destination and keeps its caret alive outside the window", async () => {
   const { host, dispose } = await mount();
   try {

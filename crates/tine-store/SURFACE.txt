@@ -94,7 +94,7 @@ fn store::Store::path_for_os_handoff
 struct store::Day
 struct store::FileRev
 
-## Reads (ceiling: 15)
+## Reads (ceiling: 16)
 const model::PARSE_INPUT_MAX_BYTES
 fn model::parse_input_depth_within_limit
 field store::PageRead.doc
@@ -112,6 +112,9 @@ fn store::Store::page_of
 fn store::Store::hold_page
 fn store::Store::read
 fn store::Store::whole_graph
+# GH #181: a one-shot lookup (a cold-start link) that misses in a served launch
+# checkpoint asks again after the launch diff, which may have added its target.
+fn store::Store::whole_graph_reconciled
 struct store::PageRead
 
 ## Config (ceiling: 6)

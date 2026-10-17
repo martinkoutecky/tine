@@ -2071,8 +2071,11 @@ impl Store {
     /// [`Self::whole_graph`] that never serves the launch checkpoint before
     /// the launch diff: graph-wide destructive operations (delete, rename,
     /// merge, orphan cleanup) wait for it, since an external edit made while
-    /// Tine was closed may have added a reference the checkpoint lacks.
-    pub(crate) fn whole_graph_reconciled(&self) -> Result<WholeGraph, LoadError> {
+    /// Tine was closed may have added a reference the checkpoint lacks. A
+    /// one-shot lookup that found nothing in a served checkpoint asks again
+    /// here (a cold-start `tine://` link, GH #181): the edit may have added
+    /// its target.
+    pub fn whole_graph_reconciled(&self) -> Result<WholeGraph, LoadError> {
         self.whole_graph_when(false)
     }
 

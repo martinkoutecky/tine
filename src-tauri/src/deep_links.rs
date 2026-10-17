@@ -166,7 +166,28 @@ fn target_in_store(
     root: &str,
     request: &LinkRequest,
 ) -> Result<Option<LinkTarget>, String> {
+    // A store still reconciling serves its launch checkpoint (ADR 0070), which
+    // lacks a target made while Tine was closed (a block that got its `id::`
+    // after the checkpoint was written). A miss asks once more after the
+    // launch diff; a ready store answers the same view again in O(1) (GH #181).
     let view = store.whole_graph().map_err(|e| format!("{e:?}"))?;
+    match target_in_view(store, &view, root, request)? {
+        Some(target) => Ok(Some(target)),
+        None => {
+            let view = store
+                .whole_graph_reconciled()
+                .map_err(|e| format!("{e:?}"))?;
+            target_in_view(store, &view, root, request)
+        }
+    }
+}
+
+fn target_in_view(
+    store: &Store,
+    view: &tine_store::WholeGraph,
+    root: &str,
+    request: &LinkRequest,
+) -> Result<Option<LinkTarget>, String> {
     let mut target = LinkTarget {
         root: root.into(),
         display_root: tine_core::graph_paths::normalize_graph_path(root),
@@ -805,6 +826,66 @@ mod tests {
             .count();
         assert_eq!(count, 1);
     }
+    /// GH #181: a block link opened while Tine was closed, to a block that got
+    /// its `id::` after the launch checkpoint was written. The store serves
+    /// that checkpoint until the launch diff ends; the lookup must not report
+    /// the block missing from it.
+    #[test]
+    fn a_cold_start_link_finds_a_block_the_launch_checkpoint_lacks() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("pages")).unwrap();
+        let cp = tempfile::tempdir().unwrap();
+        let cp = cp.path().join("graph.bin");
+        let open = || {
+            Store::open(
+                temp.path(),
+                tine_store::OpenOptions {
+                    watch: tine_store::WatchMode::Poll,
+                    launch_checkpoint: Some(cp.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0
+        };
+        std::fs::write(temp.path().join("pages/A.md"), "- linked\n").unwrap();
+        let store = open();
+        store.whole_graph_reconciled().unwrap();
+        assert!(matches!(
+            store.write_checkpoint_now(),
+            Some(tine_store::CheckpointWrite::Written { .. })
+        ));
+        store.close();
+        // While closed: the block gets its id:: (Copy block link elsewhere).
+        let id = "22222222-2222-4222-8222-222222222222";
+        std::fs::write(
+            temp.path().join("pages/A.md"),
+            format!("- linked\n  id:: {id}\n"),
+        )
+        .unwrap();
+        let pause = temp.path().join(".tine-test-pause-launch-diff");
+        std::fs::write(&pause, b"").unwrap();
+        let store = open();
+        assert!(
+            matches!(store.is_graph_ready(), Ok(false)),
+            "the store serves its checkpoint"
+        );
+        let resume = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::fs::remove_file(&pause).unwrap();
+        });
+        let block = LinkRequest {
+            graph: None,
+            page: None,
+            block: Some(id.into()),
+        };
+        let target = target_in_store(&store, "fixture", &block).unwrap();
+        resume.join().unwrap();
+        let target = target.expect("the block made while closed is found");
+        assert_eq!(target.name.as_deref(), Some("A"));
+        assert_eq!(target.block.as_deref(), Some(id));
+    }
+
     #[test]
     fn missing_targets_are_read_only_and_block_ids_survive_page_moves() {
         let temp = tempfile::tempdir().unwrap();
