@@ -16,7 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
-- Launch backups are now one `.zip` per snapshot instead of a folder of about a thousand files, and a launch where nothing changed writes nothing (on a 1,075-page graph: 1 file and 2 syncs instead of 1,076 files and 1,083 syncs). Any archive tool opens a snapshot without Tine; Settings → **Backups & recovery** marks a damaged snapshot, or one from a newer Tine, and offers no restore for it. Older snapshot folders stay listed and restorable.
+- Launch backups are now one `.zip` per snapshot instead of a folder of about a thousand files, and a launch where nothing changed writes nothing (on a 1,075-page graph: 1 file and 4 syncs instead of 1,076 files and 1,083 syncs). Any archive tool opens a snapshot without Tine; Settings → **Backups & recovery** marks a damaged snapshot, or one from a newer Tine, and offers no restore for it. Older snapshot folders stay listed and restorable.
 
 ### Fixed
 
