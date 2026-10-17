@@ -8,8 +8,24 @@ import { rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
-export function emptyPage(name: string, kind: "journal" | "page"): PageDto {
-  return { name, kind, title: name, pre_block: null, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }] };
+export function emptyPage(name: string, kind: "journal" | "page", format?: Format): PageDto {
+  return { name, kind, title: name, pre_block: null, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }],
+    ...(format ? { format } : {}) };
+}
+
+/** The format of the graph text file `path` names, by extension, as the store
+ * reads and serializes it (`tine_core::model::Format::from_path`): `.org` is
+ * Org, anything else (`.md`, `.markdown`) Markdown. */
+export function formatOfFile(path: string): Format {
+  return /\.org$/i.test(path) ? "org" : "md";
+}
+
+/** `dto` held in the format of the file it is written to (ORG-CREATED-FORMAT):
+ * the store serializes by the target's extension, so a created page whose DTO
+ * named no format (or another) would have later edits spelled for the wrong
+ * syntax, e.g. a Markdown `id::` line in an `.org` file. */
+export function inFileFormat(dto: PageDto, path: string): PageDto {
+  return { ...dto, format: formatOfFile(path) };
 }
 
 export function withToday(js: PageDto[]): PageDto[] {

@@ -13,6 +13,7 @@ import type { ClipboardSourcePage } from "../../clipboard";
 import type { EditKind, EditKinds } from "../../editKind";
 import type { Format, PageDto, PageKind } from "../../types";
 import { cutSourceMatches } from "../cutSource";
+import { inFileFormat } from "../convert";
 import {
   STALE_VERSION, type DiskToken, type HostPort, type MailNotice, type MailPage, type OwedPage, type PageMail,
   type PageRefusal, type PublishedNeed,
@@ -483,10 +484,12 @@ export class HostClient {
       const expected = options.expected ?? { kind: "no-file" };
       const current = sameToken(disk, expected);
       if (!current && !options.expected) return { kind: "exists" };
-      this.doc.install(name, { kind: "page", dto });
+      // The page is held in the format of the file its key names (ORG-CREATED-FORMAT).
+      const held = inFileFormat(dto, page.key!);
+      this.doc.install(name, { kind: "page", dto: held });
       page.editSeq += 1;
       this.editClock += 1;
-      const answer = await this.request(page, "submit", (id) => this.host.submit(this.session, id, page.key!, dto,
+      const answer = await this.request(page, "submit", (id) => this.host.submit(this.session, id, page.key!, held,
         current ? page.version ?? STALE_VERSION : STALE_VERSION, null, options.kinds ?? ["create-page"]));
       if (!answer.took || page.needed === null) return { kind: "refused", refusal: answer.refusal };
       const version = page.needed;
