@@ -1,6 +1,7 @@
 //! Bench events off (`tine_store::bench_events`): with `TINE_BENCH_EVENTS`
-//! unset, asking and emitting start no writer thread. A binary of its own
-//! with one test, so no other thread starts in this process meanwhile.
+//! unset, asking and emitting start no writer thread. It counts the process's
+//! threads, so it runs in a child process of its own (`isolated_case`): in the
+//! shared integration binary, libtest threads of other cases come and go.
 
 /// This process's threads (Linux).
 #[cfg(target_os = "linux")]
@@ -11,6 +12,9 @@ fn threads() -> usize {
 #[test]
 fn unset_spawns_no_writer_thread() {
     let _integration_guard = crate::integration_lock();
+    if crate::isolated_case("bench_events_off::unset_spawns_no_writer_thread") {
+        return;
+    }
     assert!(std::env::var_os("TINE_BENCH_EVENTS").is_none());
     #[cfg(target_os = "linux")]
     let before = threads();
