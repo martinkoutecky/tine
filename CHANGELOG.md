@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.0-beta.4] - 2026-10-17
+
 ### Changed
 
 - **Collapse (one level)** and **Expand (one level)** (formerly "… children (one level)") now include the block itself: collapsing folds the block once its children are all folded, and expanding a folded block first opens only the block (GH #696).
@@ -20,7 +22,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - The optional block embed breadcrumb shows the embedded block's parent blocks after its page, not just the page, in the same smaller, muted style as Linked References, starting at the embedded bullet (GH #440).
 - The parent-block trail above query results and Linked References shows bold, links and other formatting rendered, instead of raw text such as `**Queue**` (GH #643).
 - Windows: a save made while the previous save of the same page was still replacing the file could be refused with "write target escapes graph root"; Tine now checks the page again, and only if it still cannot inspect it reports a save error, keeping the text unsaved in the window rather than calling it outside the graph (REG-WIN-WRITE-TARGET-TRANSIENT).
-
 - A block link that starts Tine now opens its block the first time, even when the block was linked after Tine last closed; before, the first click reported the target missing and only a second click worked (GH #181).
 - Search tab: ArrowUp on the first result now returns to the search box instead of jumping to the last result, and the results no longer wrap around at either end (GH #697).
 
