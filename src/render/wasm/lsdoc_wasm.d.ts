@@ -86,13 +86,6 @@ export function logbook_clock_out(raw: string, is_org: boolean, with_seconds: bo
 
 export function logbook_info_json(raw: string, is_org: boolean): string;
 
-/**
- * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
- * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
- * Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
- * build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
- * See docs/wasm-parse-plan.md §7D.
- */
 export function lsdoc_tag(): string;
 
 /**
@@ -219,6 +212,17 @@ export function raw_byte_of_editor(raw: string, is_org: boolean, regions: any, p
 export function reference_target_name(kind: string, value: string, label: string, org: boolean, filename_candidates: boolean): string | undefined;
 
 /**
+ * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
+ * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
+ * Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
+ * build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
+ * See docs/wasm-parse-plan.md §7D.
+ * What removing blocks does to block references (`tine_outline::removal_refs`):
+ * `blocks` is a JSON array of `[raw, isOrg]`. Returns `{targets, removed_with}`.
+ */
+export function removal_refs_json(blocks: string, with_content: boolean): string;
+
+/**
  * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
  * contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
  * ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the
@@ -316,6 +320,7 @@ export interface InitOutput {
     readonly query_macro_is_tql: (a: number, b: number) => number;
     readonly raw_byte_of_editor: (a: number, b: number, c: number, d: any, e: number, f: number, g: number) => [number, number, number];
     readonly reference_target_name: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
+    readonly removal_refs_json: (a: number, b: number, c: number) => [number, number, number, number];
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];
     readonly search_fold: (a: number, b: number, c: number) => [number, number];
     readonly search_matches: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;

@@ -14,7 +14,7 @@
 // initialization is pending, deferring structural identity reads until ready.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_bundle_json, parse_inline_json, edit_block_regions_json, editor_text_json, editor_offset_of_raw, raw_byte_of_editor, editor_text_join, hide_policy_hides, outline_apply_json, outline_reads_json, outline_max_depth, removal_refs_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block, MacroInline, Inline } from "./ast";
 
@@ -192,6 +192,13 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
 export function blockRegions(raw: string, format: "md" | "org" = "md"): BlockRegions {
   if (!parserReady()) throw new Error("Structural edit refused: parser is not ready");
   return regionCache.get(parseBlock(raw, format === "org"))!;
+}
+/** What removing these blocks does to block references (`tine_outline::removal_refs`,
+ * shared with `tine delete`): the persisted `id::`s removed, and how many of their
+ * referrers go with them (once per target). `withContent` false: the text survives
+ * (a merge), so none does. O(removed bytes). */
+export function removalRefs(blocks: readonly (readonly [raw: string, format: "md" | "org"])[], withContent: boolean): { targets: string[]; removed_with: number } {
+  return JSON.parse(removal_refs_json(JSON.stringify(blocks.map(([raw, format]) => [raw, format === "org"])), withContent));
 }
 /** Parser-owned splice for one block. Warm regions avoid parsing; parse traps
  * refuse visibly by throwing. Callers must retain raw on refusal. */

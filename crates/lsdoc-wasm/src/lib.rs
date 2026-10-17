@@ -297,6 +297,17 @@ fn now_parts() -> logbook::TimestampParts {
 /// Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
 /// build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
 /// See docs/wasm-parse-plan.md §7D.
+/// What removing blocks does to block references (`tine_outline::removal_refs`):
+/// `blocks` is a JSON array of `[raw, isOrg]`. Returns `{targets, removed_with}`.
+#[wasm_bindgen]
+pub fn removal_refs_json(blocks: &str, with_content: bool) -> Result<String, JsValue> {
+    let blocks: Vec<(String, bool)> =
+        serde_json::from_str(blocks).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let removed: Vec<(&str, bool)> = blocks.iter().map(|(raw, org)| (raw.as_str(), *org)).collect();
+    let refs = tine_outline::removal_refs::removal_refs(&removed, with_content);
+    Ok(serde_json::to_string(&refs).unwrap())
+}
+
 #[wasm_bindgen]
 pub fn lsdoc_tag() -> String {
     option_env!("LSDOC_TAG").unwrap_or("unknown").to_string()

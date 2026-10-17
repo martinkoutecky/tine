@@ -18,11 +18,10 @@ import { startEditing, editingId, endEdit, type EditorSelection } from "../../ed
 import { batch } from "solid-js";
 import { isBlockMoving, setBlockMoving } from "./moves";
 import { depthOf, existingSubtreeFits, OutlineScope, prevVisible, nextVisible } from "../tree";
-import { blockExternalId, existingBlockId, isBlockRefUuid } from "./identity";
+import { existingBlockId } from "./identity";
 import { captureReferenceChangeCount, pushReferenceChangeNotice, pushToast } from "../../toasts";
 import { graphEpoch } from "../../graphSession";
-import { blockRefsInText } from "../../render/pageRefs";
-import { blockRegions, soleBlockMacro } from "../../render/parse";
+import { blockRegions, removalRefs, soleBlockMacro } from "../../render/parse";
 
 let referenceEditSeq = 0;
 /** Capture the edit's targets before mutation, then publish against its existing
@@ -35,16 +34,13 @@ export function prepareReferenceChangeNotice(roots: readonly string[], subtree: 
     if (subtree) doc.byId[id].children.forEach(visit);
   };
   roots.forEach(visit);
-  const targets = new Set([...removed].map((id) => blockExternalId(id)).filter((id): id is string => !!id && isBlockRefUuid(id)));
-  // A reference removed with its source is not left broken. Each source counts
-  // once per target, matching blockRefCounts (repeated ((id)) is one referrer).
-  let removedReferences = 0;
-  if (subtree) for (const id of removed) {
-    for (const target of new Set(blockRefsInText(doc.byId[id].raw, formatForBlock(id)))) {
-      if (targets.has(target)) removedReferences++;
-    }
-  }
-  const count = captureReferenceChangeCount([...targets]);
+  // One rule with `tine delete` (tine_outline::removal_refs): a reference removed
+  // with its source is not left broken; each source counts once per target.
+  const { targets, removed_with: removedReferences } = removalRefs(
+    [...removed].map((id) => [doc.byId[id].raw, formatForBlock(id)] as const),
+    subtree,
+  );
+  const count = captureReferenceChangeCount(targets);
   const epoch = graphEpoch();
   const tag = `reference-edit:${++referenceEditSeq}`;
   const showCount = (count: number | null | undefined) => {

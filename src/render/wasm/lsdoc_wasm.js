@@ -394,11 +394,6 @@ function __tine_raw_logbook_info_json(raw, is_org) {
 }
 
 /**
- * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
- * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
- * Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
- * build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
- * See docs/wasm-parse-plan.md §7D.
  * @returns {string}
  */
 function __tine_raw_lsdoc_tag() {
@@ -859,6 +854,39 @@ function __tine_raw_reference_target_name(kind, value, label, org, filename_cand
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
     }
     return v4;
+}
+
+/**
+ * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
+ * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
+ * Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
+ * build:wasm script (it refuses to build if this crate's pin ≠ tine-core's pin).
+ * See docs/wasm-parse-plan.md §7D.
+ * What removing blocks does to block references (`tine_outline::removal_refs`):
+ * `blocks` is a JSON array of `[raw, isOrg]`. Returns `{targets, removed_with}`.
+ * @param {string} blocks
+ * @param {boolean} with_content
+ * @returns {string}
+ */
+function __tine_raw_removal_refs_json(blocks, with_content) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(blocks, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.removal_refs_json(ptr0, len0, with_content);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
 }
 
 /**
@@ -1425,6 +1453,7 @@ export const query_macro_extents_json = __tineGuard("query_macro_extents_json", 
 export const query_macro_is_tql = __tineGuard("query_macro_is_tql", __tine_raw_query_macro_is_tql);
 export const raw_byte_of_editor = __tineGuard("raw_byte_of_editor", __tine_raw_raw_byte_of_editor);
 export const reference_target_name = __tineGuard("reference_target_name", __tine_raw_reference_target_name);
+export const removal_refs_json = __tineGuard("removal_refs_json", __tine_raw_removal_refs_json);
 export const render_block_html = __tineGuard("render_block_html", __tine_raw_render_block_html);
 export const search_fold = __tineGuard("search_fold", __tine_raw_search_fold);
 export const search_matches = __tineGuard("search_matches", __tine_raw_search_matches);
