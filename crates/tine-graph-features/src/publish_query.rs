@@ -74,6 +74,20 @@ pub struct QueryExportRequest {
     /// Device-local cumulative asset budget; None uses 1 GiB.
     #[serde(default)]
     pub asset_budget_bytes: Option<u64>,
+    /// "Include the query text" (PK3, off by default): only then does the
+    /// published home carry the query macro, its parsed form and its answer;
+    /// otherwise the home lists the exported pages and nothing of the query.
+    #[serde(default)]
+    pub include_query_text: bool,
+}
+
+/// A page the query selected that the export leaves out, and why.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeftOutPage {
+    pub name: String,
+    pub path: String,
+    pub reason: render::LeftOut,
 }
 
 /// One complete owner page in a reviewed query selection.
@@ -93,6 +107,11 @@ pub struct QueryExportPlan {
     pub anchor: String,
     pub row_count: usize,
     pub pages: Vec<ExportPage>,
+    /// Selected by the query but not exported (`public:: false`, the exports page).
+    pub left_out: Vec<LeftOutPage>,
+    /// The query's own page (`current_page`) is among the exported pages, so the
+    /// export carries the page the query is written on (PK3 (c) quiet notice).
+    pub selects_host_page: bool,
     pub folder: String,
     pub path: String,
     pub exists: bool,
@@ -279,19 +298,41 @@ fn resolve_plan(
     if paths.len() > MAX_PAGES {
         return Err(refusal("query selects too many pages"));
     }
-    let mut selected = tine_core::Corpus {
-        pages: corpus
-            .pages
-            .into_iter()
-            .filter(|page| paths.contains(page.id.as_str()))
-            .collect(),
-    };
-    if selected.pages.len() != paths.len() {
+    let mut chosen: Vec<_> = corpus
+        .pages
+        .into_iter()
+        .filter(|page| paths.contains(page.id.as_str()))
+        .collect();
+    if chosen.len() != paths.len() {
         return Err(refusal("query result owner is missing"));
     }
-    selected
-        .pages
-        .sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+    chosen.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+    // WYSIWYG selection minus the two rules every export applies
+    // (SHARE-DIALOG §1–2): private pages and the exports page stay out, and the
+    // plan names them so the review shows what was left out.
+    let mut left_out = Vec::new();
+    chosen.retain(|page| match render::export_left_out(page) {
+        Some(reason) => {
+            left_out.push(LeftOutPage {
+                name: page.name.clone(),
+                path: page.id.as_str().into(),
+                reason,
+            });
+            false
+        }
+        None => true,
+    });
+    if chosen.is_empty() && !left_out.is_empty() {
+        return Err(refusal(
+            "every page this query selects is private or the exports page",
+        ));
+    }
+    let selects_host_page = request.current_page.as_deref().is_some_and(|host| {
+        chosen
+            .iter()
+            .any(|page| page.name.to_lowercase() == host.to_lowercase())
+    });
+    let selected = tine_core::Corpus { pages: chosen };
     let pages: Vec<ExportPage> = selected
         .pages
         .iter()
@@ -308,6 +349,7 @@ fn resolve_plan(
     reviewed.folder = None;
     reviewed.replace = false;
     reviewed.asset_budget_bytes = None;
+    reviewed.include_query_text = false;
     hasher.update(serde_json::to_vec(&reviewed).map_err(io::Error::other)?);
     hasher.update(serde_json::to_vec(&result.rows).map_err(io::Error::other)?);
     for page in &selected.pages {
@@ -326,6 +368,8 @@ fn resolve_plan(
             anchor: anchor.into(),
             row_count: result.total,
             pages,
+            left_out,
+            selects_host_page,
             folder,
             path,
             exists,
@@ -533,7 +577,14 @@ fn snapshot(
         if !request.properties.is_empty() {
             query_block["properties"] = json!(request.properties);
         }
-        let mut home_blocks = vec![query_block];
+        // Without "Include the query text" the home is only the page list: no
+        // macro, no parsed query, no answer record (PK3, SHARE-DIALOG §1).
+        let with_query = request.include_query_text;
+        let mut home_blocks = if with_query {
+            vec![query_block]
+        } else {
+            Vec::new()
+        };
         for (index, page) in corpus.pages.iter().enumerate() {
             home_blocks.push(json!({ "id": format!("published-page:{index}"),
                 "raw": format!("[[{}]]", page.name), "collapsed": false,
@@ -555,12 +606,14 @@ fn snapshot(
         let executed_context = ExecutionContext {
             current_page: request.current_page.clone(),
         };
-        let view = anchored_view(parsed, parsed.query.anchor);
-        queries.push(
-            json!({ "host": home, "argument": request.argument, "dialect": request.dialect,
-            "properties": request.properties, "parsed": parsed, "context": context,
-            "executed_context": executed_context, "view": view, "result": result }),
-        );
+        if with_query {
+            let view = anchored_view(parsed, parsed.query.anchor);
+            queries.push(
+                json!({ "host": home, "argument": request.argument, "dialect": request.dialect,
+                "properties": request.properties, "parsed": parsed, "context": context,
+                "executed_context": executed_context, "view": view, "result": result }),
+            );
+        }
     }
     // Only selected sources may cross into a published answer. The whole-graph
     // backlink answerer supplies rows; this projection closes them by owner.
@@ -1055,6 +1108,7 @@ mod snapshot_consistency_tests {
             folder: None,
             replace: false,
             asset_budget_bytes: None,
+            include_query_text: false,
         };
         let graph = store.whole_graph().unwrap();
         let reviewed = resolve_plan(&store, &graph, &request).unwrap();

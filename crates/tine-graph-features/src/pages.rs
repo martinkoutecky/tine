@@ -199,6 +199,60 @@ fn claimants(target: Resolved) -> Vec<PageId> {
     }
 }
 
+/// Every page holding an export definition block whose page selector names
+/// one of `olds`, found by the definitions query
+/// (`tine_core::export_definition::definitions_query`) over the planning view
+/// and the selectors of the blocks it returns: O(P + B) in memory, memoized
+/// per generation, no file read, so a definition page the rename does not
+/// touch is not read. A view with more definition blocks than one bounded
+/// answer carries refuses the rename before anything is written, rather than
+/// leave a definition naming the old page (scenario: malformed or generated
+/// input; a later page with the old name would then be the one exported).
+fn export_definition_pages(
+    graph: &tine_store::WholeGraph,
+    olds: &[String],
+) -> io::Result<Vec<PageId>> {
+    use tine_core::query::ir::{ExecutionContext, QueryRows, ViewSettings};
+    use tine_store::{IrAnswer, IrRequest};
+    let parsed = tine_core::query::wire_parse::parse_query_pair(
+        &tine_core::export_definition::definitions_query(),
+        tine_core::query::wire_parse::QueryTextDialect::Og,
+        &[],
+        tine_core::query::registry::Registry::none(),
+    );
+    let answer = graph
+        .query_ir(IrRequest::Run {
+            query: &parsed.query,
+            view: &ViewSettings::default(),
+            context: &ExecutionContext::default(),
+        })
+        .map_err(|e| io::Error::other(e.to_string()))?;
+    let IrAnswer::Result(result) = answer else {
+        return Err(io::Error::other("query run returned another answer"));
+    };
+    if result.exceeded {
+        return Err(error(
+            io::ErrorKind::InvalidData,
+            "too many export definitions to rename their pages safely",
+        ));
+    }
+    let QueryRows::Block { groups } = result.rows else {
+        return Ok(Vec::new());
+    };
+    let olds: HashSet<String> = olds.iter().map(|old| refs::normalize(old)).collect();
+    Ok(groups
+        .iter()
+        .filter(|group| {
+            group.blocks.iter().any(|block| {
+                tine_core::export_definition::selected_names(&block.raw)
+                    .iter()
+                    .any(|name| olds.contains(&refs::normalize(name)))
+            })
+        })
+        .flat_map(|group| existing(graph.resolve(&group.page, group.kind == PageKind::Journal)))
+        .collect())
+}
+
 fn physical(target: &Resolved) -> Vec<PageId> {
     match target {
         Resolved::Existing { id, others } => {
@@ -674,9 +728,12 @@ fn plan_rename(
         .collect();
     // v0.6.5 model.rs 3681-3690 (warm index) and OG `:block/refs`: only
     // pages that explicitly reference a renamed name are rewritten, plus
-    // every moved page. A name mentioned only inside `{{query}}` stays.
+    // every moved page. A name mentioned only inside an ordinary query stays;
+    // the pages holding export definitions are read too, whose page
+    // selectors follow the rename (`tine_core::export_definition`).
     let olds: Vec<String> = map.0.iter().map(|(from, _)| from.clone()).collect();
     let mut candidates: Vec<PageId> = graph.explicit_referrers(&olds);
+    candidates.extend(export_definition_pages(&graph, &olds)?);
     candidates.extend(moves.keys().cloned());
     candidates.extend(moved_titles_to_rebind.iter().cloned());
     candidates.retain(|id| {

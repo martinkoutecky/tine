@@ -24,6 +24,8 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const [plannedName, setPlannedName] = createSignal(props.request.name);
   const [destination, setDestination] = createSignal<"create" | "replace" | "separate">("create");
   const [acknowledged, setAcknowledged] = createSignal(false);
+  // PK3: the query itself ships only when asked for; the default export is the page list.
+  const [includeQueryText, setIncludeQueryText] = createSignal(props.request.includeQueryText ?? false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
   const [overBudget, setOverBudget] = createSignal(false);
@@ -46,7 +48,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     setBusy(true);
     setError(""); setOverBudget(false);
     try {
-      const request = { ...props.request, name: plannedName(), folder: folder(), replace: destination() === "replace", assetBudgetBytes: queryExportBudgetBytes() };
+      const request = { ...props.request, name: plannedName(), folder: folder(), includeQueryText: includeQueryText(), replace: destination() === "replace", assetBudgetBytes: queryExportBudgetBytes() };
       const sheets = await exportSheets(undefined, { kind: "query", request });
       if (!owner()) return;
       const receipt = await writeOwned(owner, backend().publishQuery(request, selection.fingerprint, sheets));
@@ -96,10 +98,22 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
             <ul class="query-export-pages"><For each={selection().pages}>{(page) =>
               <li>{page.name} <small>{page.path}</small>{page.journal ? t("query-export-dialog-journal") : ""}</li>
             }</For></ul>
+            <Show when={selection().leftOut.length > 0}>
+              <div class="query-export-note query-export-left-out">{t("query-export-dialog-left-out", { count: selection().leftOut.length })}
+                <ul class="query-export-pages"><For each={selection().leftOut}>{(page) =>
+                  <li>{page.name} <small>{page.reason === "private" ? t("query-export-dialog-left-out-private") : t("query-export-dialog-left-out-exports-page")}</small></li>
+                }</For></ul>
+              </div>
+            </Show>
+            <Show when={selection().selectsHostPage}>
+              <div class="query-export-note query-export-host-note">{t("query-export-dialog-selects-host-page")}</div>
+            </Show>
             <Show when={selection().anchor === "block" && selection().pages.length > 0}>
               <label class="query-export-ack"><input type="checkbox" checked={acknowledged()}
                 onChange={(event) => setAcknowledged(event.currentTarget.checked)} />{t("query-export-dialog-all-blocks-on-these-pages-will-be-exported")}</label>
             </Show>
+            <label class="query-export-ack query-export-include-query"><input type="checkbox" checked={includeQueryText()}
+              onChange={(event) => setIncludeQueryText(event.currentTarget.checked)} />{t("query-export-dialog-include-query-text")}</label>
             <Show when={selection().exists}>
               <div role="group" aria-label={t("query-export-dialog-destination")}><Rich message={msg("query-export-dialog-existing", { folder: selection().folder })} /><label><input type="radio" name="query-export-destination" checked={destination() === "replace"}
                   onChange={() => setDestination("replace")} />{t("query-export-dialog-replace-it-the-previous-export-is-kept-in")}</label>

@@ -188,6 +188,9 @@ mod query_owner_context;
 #[path = "query_publication.rs"]
 mod query_publication;
 
+#[path = "share_selector.rs"]
+mod share_selector;
+
 #[path = "rename_cost.rs"]
 mod rename_cost;
 

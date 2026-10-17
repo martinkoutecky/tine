@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Export definitions follow page renames**: a query block carrying `export::` or `tine.share::` that selects a page with `{{tine-query @page and name = 'Project'}}` keeps selecting it after the page is renamed (namespace pages included), so a new page with the old name is never exported in its place. The selector also exports a page with no blocks. Other query blocks keep Logseq's rename behaviour (`docs/contracts/export-definitions.md`).
 - **The command line can write** (Linux and macOS): `tine add`, `tine edit`, `tine prop set|remove`, `tine move` and `tine delete` change blocks through the graph's owner and the same guarded save the app uses, for scripts and AI agents working beside you. Blocks are named by the handle a read prints (`Page/2.1~k7f2ab`) or by `id::`; a block that changed since the read is refused as `stale`, never guessed. Every block `tine add` creates carries `author::`. With the app open, your typed text is saved first and the window shows the change at once. `--json` replies and exit codes are in `docs/contracts/cli-output.md`; the Guide's **Command line** page explains the commands.
 
 ### Changed
@@ -18,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Query exports leave out pages marked `public:: false` and the exports page, as every other export already did; the review lists the pages left out and notes when the export includes the page the query is written on. The published export no longer carries the query itself unless **Include the query text** is ticked (REG-QUERY-EXPORT-PRIVATE-PAGES).
 - Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.
 - Typing and deleting in a zoomed block no longer scans every block on its page, including journal and sidebar views (GH #248).
 - Sticky parent bullets show the parent's rendered text (bold, links, block references) instead of raw markup, and each pinned bullet lines up with its block's own bullet instead of sitting one level to the left. They no longer cover Settings, menus or toolbars (GH #643).

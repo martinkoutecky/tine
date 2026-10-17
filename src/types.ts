@@ -67,6 +67,8 @@ export interface QueryPublicationRequest {
   folder?: string | null;
   replace?: boolean;
   assetBudgetBytes?: number | null;
+  /** "Include the query text" (off by default): only then does the export carry the query itself. */
+  includeQueryText?: boolean;
   name: string;
 }
 
@@ -74,6 +76,10 @@ export interface QueryPublicationPlan {
   anchor: "block" | "page";
   rowCount: number;
   pages: { name: string; path: string; journal: boolean }[];
+  /** Selected by the query but not exported: `public:: false` pages and the exports page. */
+  leftOut: { name: string; path: string; reason: "private" | "exportsPage" }[];
+  /** The query's own page is among the exported pages. */
+  selectsHostPage: boolean;
   folder: string;
   path: string;
   exists: boolean;
