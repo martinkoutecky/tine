@@ -149,8 +149,14 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
         <label class="all-pages-journals">
           <input
             type="checkbox"
+            class="themed-checkbox"
             checked={journals()}
-            onChange={(event) => { setJournals(event.currentTarget.checked); resetScroll(); }}
+            onChange={(event) => {
+              setJournals(event.currentTarget.checked);
+              // The journal-date column exists only while journals are listed; a sort by it cannot outlive it.
+              if (!event.currentTarget.checked && sort().key === "day") setSort(DEFAULT_SORT);
+              resetScroll();
+            }}
           />{" "}
           {t("pages-all-show-journals")}
         </label>
@@ -162,7 +168,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
           </Show>
         </span>
       </div>
-      <div class="all-pages-table" role="table" aria-label={t("pages-all-title")}>
+      <div class="all-pages-table" classList={{ "all-pages-table--day": journals() }} role="table" aria-label={t("pages-all-title")}>
         <div class="all-pages-head" role="row">
           <button type="button" class="all-pages-col" role="columnheader" aria-sort={ariaSort("title")} onClick={() => sortBy("title")}>
             {t("pages-all-column-page")}{arrow("title")}
@@ -173,9 +179,11 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
           <button type="button" class="all-pages-col" role="columnheader" aria-sort={ariaSort("backlinks")} onClick={() => sortBy("backlinks")}>
             {t("query-calm-backlinks")}{arrow("backlinks")}
           </button>
-          <button type="button" class="all-pages-col all-pages-day-col" role="columnheader" aria-sort={ariaSort("day")} onClick={() => sortBy("day")}>
-            {t("pages-all-column-journal-date")}{arrow("day")}
-          </button>
+          <Show when={journals()}>
+            <button type="button" class="all-pages-col all-pages-day-col" role="columnheader" aria-sort={ariaSort("day")} onClick={() => sortBy("day")}>
+              {t("pages-all-column-journal-date")}{arrow("day")}
+            </button>
+          </Show>
         </div>
         <div
           class="all-pages-scroll"
@@ -211,7 +219,9 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
                     </button>
                     <span class="all-pages-updated" role="cell">{formatUpdated(row.modified)}</span>
                     <span class="all-pages-backlinks" role="cell">{row.backlinks ?? "—"}</span>
-                    <span class="all-pages-day" role="cell">{formatPageDay(row.entry.date_key)}</span>
+                    <Show when={journals()}>
+                      <span class="all-pages-day" role="cell">{formatPageDay(row.entry.date_key)}</span>
+                    </Show>
                   </div>
                 )}
               </For>
