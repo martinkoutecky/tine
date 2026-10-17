@@ -206,6 +206,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
         "block.edit" => super::write::edit(slot, args),
         "block.prop" => super::write::prop(slot, args),
         "block.move" => super::write::move_block(slot, args),
+        "block.delete" => super::write::delete(slot, args),
         other => Err(ErrorBody::new(
             "unknown-verb",
             format!("this owner does not know `{other}`; it may be an older Tine"),

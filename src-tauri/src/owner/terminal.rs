@@ -346,6 +346,16 @@ pub(super) fn render(ok: &Value, out: &mut String) {
                 let _ = writeln!(out, "... and {more} more blocks");
             }
         }
+        "deleted" => {
+            let broken = count(ok, "broken_refs");
+            let _ = writeln!(
+                out,
+                "deleted {} (breaks {broken} reference{})",
+                text(ok, "deleted"),
+                if broken == 1 { "" } else { "s" }
+            );
+            let _ = writeln!(out, "{} rev {}", text(ok, "name"), text(ok, "rev"));
+        }
         "refs" => groups(list(ok, "groups"), out),
         "search" => {
             for diagnostic in list(ok, "diagnostics") {

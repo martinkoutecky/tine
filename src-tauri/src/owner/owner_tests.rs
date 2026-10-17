@@ -1065,3 +1065,52 @@ fn move_carries_the_subtree_and_refuses_a_cycle() {
         ("refused", Some("cross-page"))
     );
 }
+
+#[test]
+fn delete_removes_the_subtree_and_counts_only_the_references_it_breaks() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let child = read["page"]["blocks"][0]["children"][0]["handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // A reference inside the deleted subtree goes with it: not broken.
+    verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("a/{child}"), "text": format!("back (({UUID}))") }),
+    )
+    .unwrap();
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let one = block_handle(&read, 0);
+    let deleted = verb(
+        &slot,
+        "block.delete",
+        json!({ "handle": format!("a/{one}") }),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap(),
+        "- two\n",
+        "the block goes with its child; the rest keeps its bytes"
+    );
+    assert_eq!(deleted["kind"], "deleted");
+    assert_eq!(deleted["deleted"], format!("a/{one}"));
+    assert_eq!(
+        deleted["broken_refs"], 1,
+        "page b's reference breaks; the child's went with it: {deleted}"
+    );
+
+    // The page's last block: the page stays, empty, and nothing is broken.
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let two = block_handle(&read, 0);
+    let deleted = verb(
+        &slot,
+        "block.delete",
+        json!({ "handle": format!("a/{two}") }),
+    )
+    .unwrap();
+    assert_eq!(deleted["broken_refs"], 0);
+    assert!(graph.root.join("pages/a.md").exists());
+}

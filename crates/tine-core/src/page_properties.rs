@@ -120,3 +120,32 @@ pub fn document_block_ref_counts(doc: &Document) -> HashMap<String, usize> {
     walk(&doc.roots, &mut counts);
     counts
 }
+
+/// References a deletion leaves broken: every referrer of a removed block's
+/// `id::` (by the graph's `counts`, from [`document_block_ref_counts`]) except
+/// the referrers removed with it, each counted once per target as the counter
+/// does. `removed` is every deleted block's `(raw, is_org)`, subtrees included.
+/// The one rule behind the app's reference notice and `tine delete`.
+/// Cost O(removed blocks).
+pub fn refs_broken_by_removing(counts: &HashMap<String, usize>, removed: &[(&str, bool)]) -> usize {
+    let targets: std::collections::HashSet<String> = removed
+        .iter()
+        .filter_map(|(raw, is_org)| crate::refs::block_id(raw, *is_org))
+        .collect();
+    let referrers: usize = targets
+        .iter()
+        .map(|t| counts.get(t).copied().unwrap_or(0))
+        .sum();
+    let removed_with: usize = removed
+        .iter()
+        .map(|(raw, is_org)| {
+            let refs = crate::render::block_refs(raw, *is_org).block;
+            refs.iter()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .filter(|id| targets.contains(*id))
+                .count()
+        })
+        .sum();
+    referrers.saturating_sub(removed_with)
+}

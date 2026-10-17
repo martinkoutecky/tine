@@ -346,6 +346,22 @@ fn apply_refused(refusal: ApplyRefusal, page: &PageId) -> ErrorBody {
     }
 }
 
+fn outline_refused(
+    reason: tine_core::outline_kernel::Reason,
+    page: &PageId,
+    verb: &str,
+) -> ErrorBody {
+    let name = serde_json::to_value(reason)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default();
+    refused(
+        &format!("kernel:{name}"),
+        Some(page),
+        format!("the outline refused the {verb}: {reason:?}"),
+    )
+}
+
 fn host_failed(message: String) -> ErrorBody {
     if message == crate::state::STALE_BINDING {
         busy()
@@ -720,23 +736,71 @@ pub(crate) fn move_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorB
                 &verb,
                 &Default::default(),
             )
-            .map_err(|reason| {
-                refused(
-                    &format!(
-                        "kernel:{}",
-                        serde_json::to_value(reason)
-                            .ok()
-                            .and_then(|v| v.as_str().map(str::to_string))
-                            .unwrap_or_default()
-                    ),
-                    Some(page),
-                    format!("the outline refused the move: {reason:?}"),
-                )
-            })?;
+            .map_err(|reason| outline_refused(reason, page, "move"))?;
             let (next, changed) = arena.apply(doc, &change, &[key]);
             Ok(Planned { doc: next, changed })
         },
     )
+}
+
+#[derive(Deserialize)]
+struct DeleteArgs {
+    handle: String,
+    #[serde(default)]
+    rev: Option<String>,
+}
+
+/// `delete <handle>`: the block and its subtree, with the number of
+/// references the deletion leaves broken (the app's notice rule).
+pub(crate) fn delete(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
+    use tine_core::outline_kernel::{apply, Verb};
+    let DeleteArgs { handle: text, rev } = super::verbs::parse(args)?;
+    let handle = parse_handle(&text)?;
+    let page = handle_page(slot, &handle)?;
+    let counts = whole_graph(slot)?.block_ref_counts();
+    let mut deleted = (String::new(), 0usize);
+    let mut reply = write_page(
+        slot,
+        &page,
+        EditKind::DeleteBlocks,
+        rev.as_deref(),
+        |doc, page| {
+            let path = resolve_on(doc, page, &handle, &text, rev.is_some())?;
+            let org = is_org(doc);
+            let root = block_at(&doc.blocks, &path).expect("resolved path");
+            let mut raws: Vec<String> = Vec::new();
+            walk(
+                std::slice::from_ref(root),
+                &mut Vec::new(),
+                &mut |_, block| raws.push(block.raw.clone()),
+            );
+            let removed: Vec<(&str, bool)> = raws.iter().map(|raw| (raw.as_str(), org)).collect();
+            deleted = (
+                format!(
+                    "{}/{}",
+                    doc.name,
+                    handle_of(doc, &path).expect("resolved path")
+                ),
+                tine_core::page_properties::refs_broken_by_removing(&counts, &removed),
+            );
+            let arena = super::arena::Arena::of(doc);
+            let key = arena.key_at(&path).expect("resolved path");
+            let change = apply(
+                std::slice::from_ref(&arena.page),
+                &Verb::Delete {
+                    keys: vec![key.clone()],
+                },
+                &Default::default(),
+            )
+            .map_err(|reason| outline_refused(reason, page, "delete"))?;
+            let (next, changed) = arena.apply(doc, &change, &[key]);
+            Ok(Planned { doc: next, changed })
+        },
+    )?;
+    reply["kind"] = json!("deleted");
+    reply["deleted"] = json!(deleted.0);
+    reply["broken_refs"] = json!(deleted.1);
+    Ok(reply)
 }
 
 #[cfg(test)]
