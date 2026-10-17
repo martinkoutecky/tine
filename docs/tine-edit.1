@@ -1,0 +1,31 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-edit 1  "edit " 
+.SH NAME
+tine\-edit \- Replace a block\*(Aqs text, as typing it into the block would: hidden properties (id::, collapsed::) and children are kept
+.SH SYNOPSIS
+\fBtine edit\fR [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-debug\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK\fR> <\fITEXT\fR> 
+.SH DESCRIPTION
+Replace a block\*(Aqs text, as typing it into the block would: hidden properties (id::, collapsed::) and children are kept
+.SH OPTIONS
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-\-json\fR
+Print the typed result (schema tine.cli/1) as JSON
+.TP
+\fB\-\-rev\fR \fI<REV>\fR
+Write only if the page is still at this rev (as `page show` prints it); required for a bare PAGE/POS without a fingerprint
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIBLOCK\fR>
+The block: its id:: UUID, or PAGE/POS~FP as a read prints it
+.TP
+<\fITEXT\fR>
+The new text; `\-` reads it from standard input

@@ -225,14 +225,19 @@ One block per line, indented two spaces per level:
 ```
 # a
 id pages/a.md rev 9e8b1eedbf3d8ef0
-1 [author:: claude] one
-  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f
-  1.1 under one
-2 TODO two
+1~eea65l [author:: claude] one
+         id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f
+  1.1~3as2k7 under one
+2~hl6h22 TODO two
 ```
 
-- The address (`1`, `1.2`) is the block's outline position (PROTOCOL §10). `--if`-style content
-  handles arrive with the write verbs.
+- The address of a page read is the block's **handle**, `POS~FP`: its outline position (`1`, `1.2`,
+  PROTOCOL §10) and a 6-character fingerprint of its editor text (lowercase base32 of FNV-1a 64 over
+  the text a block editor shows; hidden `id::`, `collapsed::` and `logseq.order-list-type::` lines
+  are left out). A write names a block as `PAGE/POS~FP` or by its `id::` UUID; the fingerprint
+  resolves only when exactly one block on the page has it, else `stale`. The `--json` page carries the
+  same string as each block's `handle`. Continuation lines align under the first line's text.
+  Block previews (`block show`) and result groups (`refs`, `query`) print positions only.
 - **Attribution sits beside the address** (spec A3: "each block line starts with its address and
   its `author::` when there is one"): `ADDRESS [author:: NAME] first line`. The `author::` property
   line is not repeated among the block's other lines. The JSON `raw` is unchanged and still holds

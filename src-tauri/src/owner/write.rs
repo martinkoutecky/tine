@@ -491,15 +491,18 @@ fn written(
     rev: &tine_store::FileRev,
     changed: &[Vec<usize>],
 ) -> Value {
+    // Whole handles (`page/pos~fp`), so an agent chains them as printed.
     let handles: Vec<String> = changed
         .iter()
         .take(REPLY_HANDLES)
         .filter_map(|path| handle_of(doc, path))
+        .map(|handle| format!("{}/{handle}", doc.name))
         .collect();
     ok(
         "written",
         json!({
             "page": page.as_str(),
+            "name": doc.name,
             "rev": String::from(rev.clone()),
             "blocks": handles,
             "more": changed.len().saturating_sub(REPLY_HANDLES),

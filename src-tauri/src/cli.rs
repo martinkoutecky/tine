@@ -133,6 +133,58 @@ enum Command {
         #[command(flatten)]
         read: ReadArgs,
     },
+    /// Replace a block's text, as typing it into the block would: hidden
+    /// properties (id::, collapsed::) and children are kept.
+    Edit {
+        /// The block: its id:: UUID, or PAGE/POS~FP as a read prints it.
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        /// The new text; `-` reads it from standard input.
+        #[arg(value_name = "TEXT", allow_hyphen_values = true)]
+        text: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Set or remove one property of a block.
+    Prop {
+        #[command(subcommand)]
+        action: PropAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum PropAction {
+    /// Set KEY to VALUE on the block.
+    Set {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[arg(value_name = "KEY")]
+        key: String,
+        #[arg(value_name = "VALUE", allow_hyphen_values = true)]
+        value: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+    /// Remove KEY from the block.
+    Remove {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[arg(value_name = "KEY")]
+        key: String,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
+}
+
+/// Which graph a write asks, its optional page guard, and how it prints.
+#[derive(Debug, Args)]
+struct WriteArgs {
+    #[command(flatten)]
+    read: ReadArgs,
+    /// Write only if the page is still at this rev (as `page show` prints it);
+    /// required for a bare PAGE/POS without a fingerprint.
+    #[arg(long, value_name = "REV")]
+    rev: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -383,7 +435,9 @@ pub(crate) fn dispatch() -> Option<i32> {
             | Command::Refs { .. }
             | Command::Search { .. }
             | Command::Query { .. }
-            | Command::Pages { .. }),
+            | Command::Pages { .. }
+            | Command::Edit { .. }
+            | Command::Prop { .. }),
         ) => return Some(read_command(command)),
         Some(Command::Export { format }) => export(format).map(|receipt| {
             terminal_stdout(format_args!(
@@ -404,7 +458,7 @@ pub(crate) fn dispatch() -> Option<i32> {
 
 /// A read command: one request to the graph's owner (CLI PROTOCOL §5).
 fn read_command(command: Command) -> i32 {
-    use crate::owner::terminal::read_verb;
+    use crate::owner::terminal::{read_verb, write_verb};
     use serde_json::json;
     match command {
         Command::Status(args) => read_verb(args.target(), "owner.status", json!(null)),
@@ -445,6 +499,49 @@ fn read_command(command: Command) -> i32 {
             namespace,
             read: args,
         } => read_verb(args.target(), "pages", json!({ "namespace": namespace })),
+        Command::Edit {
+            handle,
+            text,
+            write,
+        } => {
+            let text = if text == "-" {
+                let mut buffer = String::new();
+                if let Err(error) =
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+                {
+                    eprintln!("tine: could not read the text from standard input: {error}");
+                    return 2;
+                }
+                buffer.trim_end_matches(['\n', '\r']).to_string()
+            } else {
+                text
+            };
+            write_verb(
+                write.read.target(),
+                "block.edit",
+                json!({ "handle": handle, "text": text, "rev": write.rev }),
+            )
+        }
+        Command::Prop {
+            action:
+                PropAction::Set {
+                    handle,
+                    key,
+                    value,
+                    write,
+                },
+        } => write_verb(
+            write.read.target(),
+            "block.prop",
+            json!({ "handle": handle, "key": key, "value": value, "rev": write.rev }),
+        ),
+        Command::Prop {
+            action: PropAction::Remove { handle, key, write },
+        } => write_verb(
+            write.read.target(),
+            "block.prop",
+            json!({ "handle": handle, "key": key, "value": null, "rev": write.rev }),
+        ),
         _ => 2,
     }
 }
@@ -751,6 +848,16 @@ mod tests {
             ("tine-refs.1", include_str!("../../docs/tine-refs.1")),
             ("tine-search.1", include_str!("../../docs/tine-search.1")),
             ("tine-query.1", include_str!("../../docs/tine-query.1")),
+            ("tine-edit.1", include_str!("../../docs/tine-edit.1")),
+            ("tine-prop.1", include_str!("../../docs/tine-prop.1")),
+            (
+                "tine-prop-set.1",
+                include_str!("../../docs/tine-prop-set.1"),
+            ),
+            (
+                "tine-prop-remove.1",
+                include_str!("../../docs/tine-prop-remove.1"),
+            ),
         ];
         if std::env::var_os("TINE_UPDATE_MAN_PAGE").is_some() {
             clap_mangen::generate_to(

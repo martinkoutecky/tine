@@ -104,6 +104,37 @@ pub(crate) fn read_verb(target: Target, verb: &str, args: Value) -> i32 {
     }
 }
 
+/// Run one write verb. Only `busy` (the owner yielding, never admitted) and
+/// an owner that cannot be reached yet are asked again; a connection lost
+/// after the request was sent is `uncertain` (PROTOCOL §2.3), never resent.
+pub(crate) fn write_verb(target: Target, verb: &str, args: Value) -> i32 {
+    let root = match graph_root(target.graph) {
+        Ok(root) => root,
+        Err(message) => {
+            eprintln!("tine: {message}");
+            return EXIT_USAGE;
+        }
+    };
+    let deadline = Instant::now() + RETRY_FOR;
+    loop {
+        let result = client::connect(&root)
+            .map_err(Failure::Reach)
+            .and_then(|mut conn| conn.call(verb, args.clone()));
+        let retry = matches!(&result, Err(Failure::Owner(body)) if body.code == "busy");
+        if retry && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(200));
+            continue;
+        }
+        return match result {
+            Ok(ok) => {
+                print(&ok, target.json);
+                0
+            }
+            Err(failure) => report_failure(failure, target.json, "uncertain"),
+        };
+    }
+}
+
 /// Print a failed call the one way and return its exit code.
 /// `lost_as` names a lost connection: `owner-start` for a read (it was
 /// asked again until the deadline), `uncertain` for a request that may have
@@ -303,6 +334,16 @@ pub(super) fn render(ok: &Value, out: &mut String) {
                     "... {} omitted (the preview is bounded at {PREVIEW_NODES} nodes and a byte cap)",
                     nodes(omitted)
                 );
+            }
+        }
+        "written" => {
+            let _ = writeln!(out, "written {} rev {}", text(ok, "name"), text(ok, "rev"));
+            for handle in list(ok, "blocks") {
+                let _ = writeln!(out, "{}", handle.as_str().unwrap_or(""));
+            }
+            let more = count(ok, "more");
+            if more > 0 {
+                let _ = writeln!(out, "... and {more} more blocks");
             }
         }
         "refs" => groups(list(ok, "groups"), out),
@@ -542,7 +583,12 @@ fn author_value(line: &str) -> Option<&str> {
 fn outline(blocks: &[Value], prefix: &str, depth: usize, out: &mut String) {
     use std::fmt::Write;
     for (index, block) in blocks.iter().enumerate() {
-        let address = format!("{prefix}{}", index + 1);
+        // A page read carries each block's handle (`pos~fp`); other
+        // outlines (previews, result groups) print positions only.
+        let address = match block.get("handle").and_then(Value::as_str) {
+            Some(handle) => handle.to_string(),
+            None => format!("{prefix}{}", index + 1),
+        };
         let indent = "  ".repeat(depth);
         let (author, lines) = split_author(text(block, "raw"), &block_properties(block));
         let mut lines = lines.into_iter();
@@ -561,7 +607,7 @@ fn outline(blocks: &[Value], prefix: &str, depth: usize, out: &mut String) {
         }
         outline(
             list(block, "children"),
-            &format!("{address}."),
+            &format!("{prefix}{}.", index + 1),
             depth + 1,
             out,
         );

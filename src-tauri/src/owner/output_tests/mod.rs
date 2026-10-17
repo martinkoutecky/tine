@@ -625,10 +625,57 @@ fn new_lines(before: &str, after: &str) -> String {
         .join("\n")
 }
 
+/// The text output with block handles left out (positions only), so the
+/// layout tests below read stable addresses; the handle column has its own
+/// test (`a_page_read_prints_each_blocks_handle`).
 fn text_of(payload: &Value) -> String {
+    fn strip(value: &mut Value) {
+        match value {
+            Value::Object(fields) => {
+                fields.remove("handle");
+                fields.values_mut().for_each(strip);
+            }
+            Value::Array(items) => items.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    let mut payload = payload.clone();
+    strip(&mut payload);
     let mut out = String::new();
-    render(payload, &mut out);
+    render(&payload, &mut out);
     out
+}
+
+#[test]
+fn a_page_read_prints_each_blocks_handle() {
+    let fixture = Fixture::new();
+    let page = fixture.ok("page.show", json!({ "name": "a" }));
+    let mut text = String::new();
+    render(&page, &mut text);
+    for (line, handle) in [
+        (
+            text.lines().nth(2).unwrap(),
+            &page["page"]["blocks"][0]["handle"],
+        ),
+        (
+            text.lines().nth(4).unwrap(),
+            &page["page"]["blocks"][0]["children"][0]["handle"],
+        ),
+    ] {
+        let handle = handle.as_str().unwrap();
+        assert!(
+            line.trim_start().starts_with(&format!("{handle} ")),
+            "{line:?} {handle}"
+        );
+    }
+    assert_eq!(
+        page["page"]["blocks"][0]["handle"].as_str().unwrap(),
+        format!(
+            "1~{}",
+            crate::owner::write::fingerprint("one\nauthor:: claude", false)
+        ),
+        "the fingerprint is the editor text's (hidden id:: left out)"
+    );
 }
 
 fn set(payload: &mut Value, path: &str, value: Value) {

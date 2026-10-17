@@ -85,7 +85,11 @@
           "usr/share/man/man1/tine-block-show.1": "../docs/tine-block-show.1",
           "usr/share/man/man1/tine-refs.1": "../docs/tine-refs.1",
           "usr/share/man/man1/tine-search.1": "../docs/tine-search.1",
-          "usr/share/man/man1/tine-query.1": "../docs/tine-query.1"
+          "usr/share/man/man1/tine-query.1": "../docs/tine-query.1",
+          "usr/share/man/man1/tine-edit.1": "../docs/tine-edit.1",
+          "usr/share/man/man1/tine-prop.1": "../docs/tine-prop.1",
+          "usr/share/man/man1/tine-prop-set.1": "../docs/tine-prop-set.1",
+          "usr/share/man/man1/tine-prop-remove.1": "../docs/tine-prop-remove.1"
         }
       },
       "rpm": {
@@ -110,7 +114,11 @@
           "/usr/share/man/man1/tine-block-show.1": "../docs/tine-block-show.1",
           "/usr/share/man/man1/tine-refs.1": "../docs/tine-refs.1",
           "/usr/share/man/man1/tine-search.1": "../docs/tine-search.1",
-          "/usr/share/man/man1/tine-query.1": "../docs/tine-query.1"
+          "/usr/share/man/man1/tine-query.1": "../docs/tine-query.1",
+          "/usr/share/man/man1/tine-edit.1": "../docs/tine-edit.1",
+          "/usr/share/man/man1/tine-prop.1": "../docs/tine-prop.1",
+          "/usr/share/man/man1/tine-prop-set.1": "../docs/tine-prop-set.1",
+          "/usr/share/man/man1/tine-prop-remove.1": "../docs/tine-prop-remove.1"
         }
       }
     },
