@@ -3431,8 +3431,16 @@ html[data-system-insets="native-viewport"] {
 }
 
 .sticky-ancestor { position: sticky; height: 30px; margin-bottom: -30px; pointer-events: none; }
-.sticky-ancestor button { pointer-events: auto; display: block; width: 100%; height: 30px; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border: 0; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); font: inherit; cursor: pointer; }
+.sticky-ancestor button { pointer-events: auto; display: flex; align-items: center; width: 100%; height: 30px; padding: 0; text-align: left; overflow: hidden; white-space: nowrap; border: 0; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); font: inherit; cursor: pointer; }
 .sticky-ancestor button[hidden] { display: none; }
+/* Same widths as .collapse-toggle and .bullet-container, so the pinned bullet
+   lines up with the row's own bullet (GH #643). */
+.sticky-ancestor-toggle { flex: 0 0 18px; }
+.sticky-ancestor-bullet { flex: 0 0 16px; height: 16px; margin-right: 6px; display: flex; align-items: center; justify-content: center; }
+.sticky-ancestor-dot { width: var(--tine-bullet-size, var(--ls-block-bullet-size)); height: var(--tine-bullet-size, var(--ls-block-bullet-size)); border-radius: 50%; background: var(--tine-bullet-color, var(--bullet-color)); }
+/* The whole row is one jump target; inline links inside it stay inert. */
+.sticky-ancestor-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.sticky-ancestor-label * { white-space: nowrap; }
 [data-sticky-parent] > .block-main { scroll-margin-top: 30px; }
 @media print { .sticky-ancestor { display: none; } }
 
@@ -6787,8 +6795,12 @@ img.emoji {
 .peek-page-actions { flex-shrink: 0; min-width: 36px; min-height: 36px; border-radius: 4px; }
 .peek-page-actions:hover, .peek-page-actions:focus-visible { background: var(--bg-tertiary); }
 .peek-page-properties { padding: 8px 16px; color: var(--text-secondary); }
-.embed-source-breadcrumb { display: none; color: var(--text-secondary); font-size: .85em; padding: 4px 8px; }
-.tine-embed-breadcrumbs .embed-source-breadcrumb { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+/* GH #440: the same muted trail as Linked References (.ref-breadcrumb), starting
+   at the embedded block's bullet column (18px toggle + bullet ring inset). */
+.embed-source-breadcrumb { display: none; color: var(--text-muted); font-size: 0.78em; padding: 4px 8px 0 22px; }
+.tine-embed-breadcrumbs .embed-source-breadcrumb { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.embed-source-breadcrumb .page-ref { color: inherit; }
+.embed-source-breadcrumb .ref-crumb * { white-space: nowrap; }
 
 .ref-export-actions { display: flex; gap: 8px; }
 .ref-export-actions button {
@@ -8246,6 +8258,14 @@ html.tine-embed-shading-accent .embed-block {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* GH #640: the opened block's ancestors after its page, as OG's sidebar shows. */
+.rs-item-crumbs { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 13px; color: var(--text-secondary); }
+.rs-item-crumbs .crumb-sep { margin: 0 4px; opacity: 0.6; flex: 0 0 auto; }
+.rs-crumb { cursor: pointer; color: inherit; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.rs-crumb:hover { color: var(--link-color); }
+.rs-crumb * { white-space: nowrap; }
+.rs-crumb-more { flex: 0 0 auto; }
 
 .rs-close {
   /* The title no longer stretches, so the close button keeps the right edge

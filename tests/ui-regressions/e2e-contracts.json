@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-sidebar-crumbs.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet (GH #440).","blocking":true}],
+      "acceptableVariations":["Separator glyphs, truncation and styling may vary while the page, ancestor order and swap agree."],
+      "nonRequirements":["Modifier destinations of crumbs (component-level), and native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sw-r2-residue.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Markdown and Org highlights appear in routed pages and journals; native Ctrl+A selects code body then full source; Alt-dragging a single query result creates a saved reference while ordinary dragging moves the source and preserves the query.","blocking":true}],
       "acceptableVariations":["Highlight colors, block layout and save latency may vary while highlighted text, selected/copied content and persisted block identities agree."],
@@ -71,6 +77,12 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"Page embeds fold to their page-name line, share the host children fold, survive navigation and save only the host; nested keyboard folds affect the occurrence and preserve both embedded source files; the existing Find key seeds editor and rendered selections with the first match active.","blocking":true}],
       "acceptableVariations":["Disclosure styling and save latency may vary while the host state, source bytes and selected query remain correct."],
       "nonRequirements":["Exact pixels, graph-wide search seeding or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-one-level-fold.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Bound Collapse (one level) on a block whose children are all folded folds the block itself and saves it; bound Expand (one level) then opens only that block, leaving its folded child folded on disk.","blocking":true}],
+      "acceptableVariations":["Selection styling, animation and save latency may vary while the saved collapsed properties and visible rows agree."],
+      "nonRequirements":["Page-scope (no selection) behaviour and multi-level progressions, which component tests cover; native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-search-tab-keyboard.mjs": {
@@ -178,7 +190,8 @@
     "scripts/e2e-editor-context.mjs": {
       "contracts": [
         {"class":"stateful-ux","userOutcome":"Editing an embedded mixed-code region leaves surrounding prose visible, and Select embedding block leaves that source editor and selects its macro host.","blocking":true},
-        {"class":"stateful-ux","userOutcome":"Scrolling a nested outline exposes pinned offscreen ancestors, clicking one returns to it, and the device setting turns pinning off and on.","blocking":true}
+        {"class":"stateful-ux","userOutcome":"Scrolling a nested outline exposes pinned offscreen ancestors, clicking one returns to it, and the device setting turns pinning off and on.","blocking":true},
+        {"class":"stateful-ux","userOutcome":"Pinned ancestors show rendered text (bold, links) rather than raw markup, and each pinned bullet sits over its block's own bullet (GH #643).","blocking":true}
       ],
       "acceptableVariations":["Fonts, theme, observer delivery and geometry may vary while code stays in its region, surrounding content remains visible and ancestors remain reachable."],
       "nonRequirements":["Exact pixels, certification beyond Linux WebKitGTK, or changing source Move Up/Down semantics."],

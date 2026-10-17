@@ -4,7 +4,9 @@ import { backend } from "../backend";
 import { pageIdentityKey } from "../ui";
 import { blocksContainEdit, createMembershipResource } from "../resultMembership";
 import { graphOwner, readOwned } from "../owned";
-import { blockHasPageEmbed, pageByName, resolveGuidePageDto, node as docNode } from "../document";
+import { blockHasPageEmbed, formatForBlock, pageByName, resolveGuidePageDto, node as docNode } from "../document";
+import { nearestAncestors } from "../render/blockTrail";
+import { visibleBody } from "../render/block";
 import { CollapseSurfaceContext } from "./Block";
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
@@ -64,6 +66,10 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
     const stored = docNode(props.blockId)?.collapsed ?? false;
     return collapseSurface?.collapsed(props.blockId, stored) ?? stored;
   };
+  const sourceTrail = () => {
+    const id = embedded()?.embedId;
+    return id && docNode(id) ? nearestAncestors(id) : null;
+  };
   return (
     <div class="embed-block" classList={{ "embed-page": !!pageTarget() }}>
       {/* GH #439: a page embed names its page (OG block.cljs `page-embed` header). */}
@@ -73,9 +79,19 @@ export function EmbedMacro(props: { body: string; blockId?: string }): JSX.Eleme
       <Show when={!selfPageEmbed() && !foldedPageBody()}>
         <Show when={embedded()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
           <Show when={!pageTarget() && styleKnobValues()["embed-breadcrumbs"] === true}>
+            {/* GH #440: the page, then the embedded block's nearest ancestors
+                (OG `breadcrumb`, as Linked References shows them); the backend
+                row carries no trail, so it is read from the loaded source. */}
             <div class="embed-source-breadcrumb">
-              <PageRef name={embedded()!.page} />
-              <For each={embedded()!.blocks[0]?.breadcrumb ?? []}>{label => <><span class="ref-crumb-sep">›</span><InlineText text={label} /></>}</For>
+              {/* OG breadcrumb names the page via page-cp: no link brackets. */}
+              <PageRef name={embedded()!.page} alias={embedded()!.page} />
+              <Show when={sourceTrail()?.more || (!sourceTrail() && (embedded()!.blocks[0]?.breadcrumb?.length ?? 0) > 3)}><span class="ref-crumb-sep">›</span><span class="ref-crumb">…</span></Show>
+              <Show when={sourceTrail()} fallback={
+                <For each={(embedded()!.blocks[0]?.breadcrumb ?? []).slice(-3)}>{(label) => <><span class="ref-crumb-sep">›</span><span class="ref-crumb"><InlineText text={label} /></span></>}</For>
+              }>
+                <For each={sourceTrail()!.ids}>{(id) => <><span class="ref-crumb-sep">›</span>
+                  <span class="ref-crumb"><InlineText text={visibleBody(docNode(id)?.raw ?? "")[0] || "…"} format={formatForBlock(id)} /></span></>}</For>
+              </Show>
             </div>
           </Show>
           <Show when={!insidePeek} fallback={

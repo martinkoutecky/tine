@@ -17,7 +17,7 @@ const sourceId = "e2100000-0000-4000-8000-000000000510";
 fs.writeFileSync(path.join(GRAPH,"logseq/config.edn"),"{}\n");
 const source = `- AAA\n  \`\`\`js\n  BBB\n  CCC\n  \`\`\`\n  DDD\n  id:: ${sourceId}\n`;
 fs.writeFileSync(path.join(GRAPH,"pages/Code source.md"), source);
-fs.writeFileSync(path.join(GRAPH,"pages/Editor context.md"), `- Above embed\n- {{embed ((${sourceId}))}}\n- ((${sourceId}))\n- Root ancestor\n  - Branch\n${Array.from({length:180},(_,i)=>`    - Child ${i}`).join("\n")}\n`);
+fs.writeFileSync(path.join(GRAPH,"pages/Editor context.md"), `- Above embed\n- {{embed ((${sourceId}))}}\n- ((${sourceId}))\n- Root **ancestor**\n  - Branch\n${Array.from({length:180},(_,i)=>`    - Child ${i}`).join("\n")}\n`);
 const now = new Date(), day = `${now.getFullYear()}_${String(now.getMonth()+1).padStart(2,"0")}_${String(now.getDate()).padStart(2,"0")}`;
 fs.writeFileSync(path.join(GRAPH,`journals/${day}.md`), "- [[Editor context]]\n");
 const APP = process.env.TINE_APP || path.join(ROOT,"target/release/tine");
@@ -73,6 +73,17 @@ try {
     return text.some(text=>text.includes("Branch")) && text.some(text=>text.includes("Root ancestor"));
   }),{timeout:10000});
   await browser.saveScreenshot(path.join(RUN,"sticky.png"));
+  // GH #643: pins render their text (no raw **) and their bullets sit over the rows' bullets.
+  const pins = await browser.execute(()=>[...document.querySelectorAll('.sticky-ancestor button:not([hidden])')].map(button=>{
+    const own=button.closest(".sticky-ancestor").parentElement.querySelector(":scope > .block-main .bullet")?.getBoundingClientRect();
+    const dot=button.querySelector(".sticky-ancestor-dot")?.getBoundingClientRect();
+    return {text:button.textContent,strong:button.querySelector("strong")?.textContent??null,
+      dx:own&&dot?Math.abs((own.left+own.width/2)-(dot.left+dot.width/2)):null};
+  }));
+  fs.writeFileSync(path.join(RUN,"sticky-pins.json"),JSON.stringify(pins,null,2));
+  const rootPin=pins.find(p=>p.text.includes("Root ancestor"));
+  if(!rootPin||rootPin.strong!=="ancestor"||pins.some(p=>p.text.includes("**"))) throw Error(`pinned parents show raw markup: ${JSON.stringify(pins)}`);
+  if(pins.some(p=>p.dx===null||p.dx>1)) throw Error(`pinned bullets do not line up with their rows: ${JSON.stringify(pins)}`);
   await browser.execute(()=> {
     const button=[...document.querySelectorAll('.sticky-ancestor button:not([hidden])')].find(el=>el.textContent.includes("Root ancestor"));
     if(!button) throw Error("pinned root disappeared before activation");

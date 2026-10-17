@@ -295,8 +295,10 @@ mod journal_guide_tests {
             "Duplicate block below (with children)",
             "Duplicate block above (with children)",
             "Insert child block",
-            "Collapse children (one level)",
-            "Expand children (one level)",
+            "Collapse (one level)",
+            "Expand (one level)",
+            "once its children are all folded",
+            "a folded block opens by itself first",
             "Copy block refs of the selected blocks",
             "Search for the selected text",
         ] {
@@ -323,6 +325,8 @@ mod journal_guide_tests {
             "**Shift+Enter**",
             "**Ctrl/Cmd+Enter**",
             "**Alt+Enter**",
+            "on the first result returns to the search box",
+            "does not wrap around",
         ] {
             assert!(
                 search.contains(outcome),

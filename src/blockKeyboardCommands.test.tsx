@@ -270,6 +270,8 @@ describe("collapse / expand one level (GH #525)", () => {
     selectBlock(A);
     run("editor/expand-children");
     expect(doc.byId[A].collapsed).toBe(false);
+    expect(doc.byId[C1].collapsed).toBe(true);
+    run("editor/expand-children");
     expect(doc.byId[C1].collapsed).toBe(false);
     expect(doc.byId[G1].collapsed).toBe(true);
     run("editor/expand-children");
@@ -278,8 +280,37 @@ describe("collapse / expand one level (GH #525)", () => {
     expect(doc.byId[G1].collapsed).toBe(true);
     expect(doc.byId[C1].collapsed).toBe(false);
     undo();
+    expect(doc.byId[C1].collapsed).toBe(true);
+    expect(doc.byId[A].collapsed).toBe(false);
+    undo();
+    expect(doc.byId[A].collapsed).toBe(true);
+  });
+
+  it.each(["md", "org"] as const)("GH #696: collapse folds the block itself once its children are folded, and never opens it, in %s", (format) => {
+    loadSingle({ name: "P", kind: "page", title: "P", format, pre_block: null,
+      blocks: [block(A, "Parent", [block(C2, "Leaf"),
+        block(C1, "Child", [block(G1, "Grand")]),
+      ])] });
+    selectBlock(A);
+    run("editor/collapse-children");
+    expect(doc.byId[C1].collapsed).toBe(true);
+    expect(doc.byId[A].collapsed).toBe(false);
+    run("editor/collapse-children");
+    expect(doc.byId[A].collapsed).toBe(true);
+    run("editor/collapse-children");
     expect(doc.byId[A].collapsed).toBe(true);
     expect(doc.byId[C1].collapsed).toBe(true);
+    undo();
+    expect(doc.byId[A].collapsed).toBe(false);
+    expect(doc.byId[C1].collapsed).toBe(true);
+  });
+
+  it("GH #696: collapse folds a block whose children are all leaves", () => {
+    loadSingle({ name: "P", kind: "page", title: "P", format: "md", pre_block: null,
+      blocks: [block(A, "Parent", [block(C1, "Leaf one"), block(C2, "Leaf two")])] });
+    selectBlock(A);
+    run("editor/collapse-children");
+    expect(doc.byId[A].collapsed).toBe(true);
   });
 
   it("GH #696: page scope advances past open roots and stops when everything is expanded", () => {
@@ -322,6 +353,8 @@ describe("collapse / expand one level (GH #525)", () => {
     selectBlock(A);
     run("editor/expand-children");
     expect(doc.byId[A].collapsed).toBe(false);
+    expect(doc.byId[C1].collapsed).toBe(true);
+    run("editor/expand-children");
     expect(doc.byId[C1].collapsed).toBe(false);
     expect(doc.byId[G1].collapsed).toBe(true);
   });
