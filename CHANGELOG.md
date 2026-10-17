@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Export definitions follow page renames**: a query block carrying `export::` or `tine.share::` that selects a page with `{{tine-query @page and name = 'Project'}}` keeps selecting it after the page is renamed (namespace pages included), so a new page with the old name is never exported in its place. The selector also exports a page with no blocks. Other query blocks keep Logseq's rename behaviour (`docs/contracts/export-definitions.md`).
 - **The command line can write** (Linux and macOS): `tine add`, `tine edit`, `tine prop set|remove`, `tine move` and `tine delete` change blocks through the graph's owner and the same guarded save the app uses, for scripts and AI agents working beside you. Blocks are named by the handle a read prints (`Page/2.1~k7f2ab`) or by `id::`; a block that changed since the read is refused as `stale`, never guessed. Every block `tine add` creates carries `author::`. With the app open, your typed text is saved first and the window shows the change at once. `--json` replies and exit codes are in `docs/contracts/cli-output.md`; the Guide's **Command line** page explains the commands.
 
 ### Changed
