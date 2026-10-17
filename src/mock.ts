@@ -1180,7 +1180,18 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       const q = fold(query.trim());
       if (!q) return [];
       let n = limit;
-      const groups = collect((b) => fold(b.raw).includes(q));
+      // OG's `((` leg `LIKE '%a%b%'`: fragments literal, in order, no overlap.
+      const fragments = q.split(/\s+/).filter(Boolean);
+      const groups = collect((b) => {
+        const text = fold(b.raw);
+        let at = 0;
+        for (const fragment of fragments) {
+          const found = text.indexOf(fragment, at);
+          if (found < 0) return false;
+          at = found + fragment.length;
+        }
+        return true;
+      });
       for (const g of groups) {
         if (g.blocks.length > n) g.blocks = g.blocks.slice(0, n);
         n -= g.blocks.length;
