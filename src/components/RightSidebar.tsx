@@ -13,6 +13,7 @@ import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell"
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
 import { InlineText } from "../render/inline";
 import { visibleBody } from "../render/block";
+import { nearestAncestors } from "../render/blockTrail";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
@@ -491,14 +492,9 @@ function BlockItem(props: {
   };
   // GH #640, OG `breadcrumb` (block.cljs) as the sidebar uses it: the page, then
   // the block's ancestors (not the block itself), at most the nearest three after
-  // a "⋯". O(depth) per change of this block's parent chain.
-  const CRUMB_LIMIT = 3;
-  const ancestors = () => {
-    const out: string[] = [];
-    for (let p = node()?.parent ?? null; p !== null; p = docNode(p)?.parent ?? null) out.unshift(p);
-    return out;
-  };
-  const shownAncestors = () => ancestors().slice(-CRUMB_LIMIT);
+  // a "⋯" (src/render/blockTrail.ts).
+  const trail = () => { const n = node(); return n ? nearestAncestors(n.id) : null; };
+  const shownAncestors = () => trail()?.ids ?? [];
   const openCrumb = (aid: string, event: MouseEvent) => {
     if (rowReorderClickSuppressed()) return;
     const ref = blockPositionRef(blockRef(aid));
@@ -531,7 +527,7 @@ function BlockItem(props: {
         </a>
         <Show when={shownAncestors().length}>
           <span class="rs-item-crumbs">
-            <Show when={ancestors().length > CRUMB_LIMIT}>
+            <Show when={trail()?.more}>
               <span class="crumb-sep">›</span><span class="rs-crumb-more">⋯</span>
             </Show>
             <For each={shownAncestors()}>

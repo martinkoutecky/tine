@@ -1,3 +1,4 @@
+import { loadSingle } from "../document/workingSet";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -49,6 +50,26 @@ describe("page embed header (GH #439)", () => {
       expect(root.querySelector(".embed-source-breadcrumb")?.textContent).toContain("Child");
       setKnob(knob!, undefined);
     } finally { dispose(); }
+  });
+  it("GH #440: with the source loaded, the trail is the live page and nearest three ancestors", async () => {
+    let row: BlockDto = leaf("e-leaf", "THE EMBEDDED BLOCK");
+    for (const [id, raw] of [["e-4", "Fourth **bold**"], ["e-3", "Third"], ["e-2", "Second"], ["e-1", "First"]] as const)
+      row = { id, raw, collapsed: false, children: [row] };
+    loadSingle({ name: "Source", title: "Source", kind: "page", pre_block: null, blocks: [row] });
+    vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([
+      { page: "Source", kind: "page", blocks: [{ ...leaf("e-leaf", "THE EMBEDDED BLOCK"), breadcrumb: [] }] },
+    ] as never);
+    vi.spyOn(backend(), "setAppString").mockResolvedValue(undefined);
+    const knob = KNOBS.find(k => k.id === "embed-breadcrumbs")!;
+    setKnob(knob, true);
+    const { root, dispose } = await mountEmbed("embed ((e-leaf))");
+    try {
+      const trail = root.querySelector(".embed-source-breadcrumb")!;
+      expect([...trail.querySelectorAll(".ref-crumb")].map((el) => el.textContent)).toEqual(["…", "Second", "Third", "Fourth bold"]);
+      expect(trail.querySelector("strong")?.textContent).toBe("bold");
+      expect(trail.textContent).toContain("Source");
+      expect(trail.textContent).not.toContain("THE EMBEDDED BLOCK");
+    } finally { setKnob(knob, undefined); dispose(); }
   });
   it("names the embedded page with a link to it", async () => {
     vi.spyOn(backend(), "getPage").mockResolvedValue(pageRead("Source", [leaf("s1", "source row")]));

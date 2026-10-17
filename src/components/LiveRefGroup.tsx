@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
+import { nearestAncestors } from "../render/blockTrail";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
 import { beginPageHeaderEdit, blockProperty, blockRef, collapseEpochOf, ensurePageLoaded, pageByName, setBlockProperty, node as docNode } from "../document";
@@ -217,26 +218,15 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   const liveBreadcrumb = (id: string): Crumb[] | null => {
     if (!ready() || !liveNode(id)) return null;
 
-    // The loaded source page is authoritative after hydration. Walk only the
-    // nearest four ancestors: three labels are rendered and the fourth proves
-    // that an ellipsis is needed. This keeps breadcrumb work O(1) per hit even
-    // for malformed or unusually deep outlines, and never invents ancestor IDs
-    // from result-row labels.
-    const nearest: Crumb[] = [];
-    const seen = new Set([id]);
-    let parent = liveNode(id)!.parent;
-    while (parent !== null && nearest.length < 4) {
-      if (seen.has(parent)) return null;
-      const ancestor = docNode(parent);
-      if (!ancestor) return null;
-      seen.add(parent);
-      const line = (visibleBody(ancestor.raw)[0] ?? "").trim();
-      const chars = [...line];
-      nearest.push({ id: parent, label: chars.length > 60 ? `${chars.slice(0, 60).join("")}…` : line });
-      parent = ancestor.parent;
-    }
-    const tail = nearest.slice(0, 3).reverse();
-    return nearest.length > 3 ? [{ label: "…" }, ...tail] : tail;
+    // The loaded source page is authoritative after hydration; never invent
+    // ancestor IDs from result-row labels (src/render/blockTrail.ts).
+    const trail = nearestAncestors(id);
+    if (!trail) return null;
+    const tail = trail.ids.map((parent): Crumb => {
+      const chars = [...(visibleBody(docNode(parent)!.raw)[0] ?? "").trim()];
+      return { id: parent, label: chars.length > 60 ? `${chars.slice(0, 60).join("")}…` : chars.join("") };
+    });
+    return trail.more ? [{ label: "…" }, ...tail] : tail;
   };
   // A ref/query/embed group can render a block that ALSO lives in the main outline
   // of the same page (e.g. the journal agenda re-lists today's scheduled/deadline

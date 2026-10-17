@@ -1,4 +1,4 @@
-// GH #640: a block opened in the right sidebar is titled with its page and ancestors, like OG.
+// GH #640/#440: a block in the right sidebar and a block embed show their page and ancestors, like OG.
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -19,7 +19,8 @@ for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph,
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(out, dir));
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{}\n");
 const file = path.join(graph, "pages", "Crumb Demo.md");
-fs.writeFileSync(file, "- First\n  - Second **bold**\n    - Third\n      - Fourth\n        - Leaf target\n");
+fs.writeFileSync(file, "- First\n  - Second **bold**\n    - Third\n      - Fourth\n        - Leaf target\n          id:: 6960a000-0000-4000-8000-000000000440\n");
+fs.writeFileSync(path.join(graph, "pages", "Embed Host.md"), "- {{embed ((6960a000-0000-4000-8000-000000000440))}}\n");
 const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(out, "data"),
   XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
@@ -29,7 +30,7 @@ const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServer
   { env, stdio: ["ignore", log, log], detached: true });
 const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   workingDiff: true, app, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"),
-  journey: "Shift-click a nested block's bullet; the sidebar card title shows page, ellipsis and the nearest three ancestors rendered; clicking an ancestor crumb swaps the card to that block" };
+  journey: "Shift-click a nested block's bullet; the sidebar card title shows page, ellipsis and the nearest three ancestors rendered; clicking an ancestor crumb swaps the card to that block; with Block embed breadcrumbs on, an embed of the block shows the same trail, muted and aligned with its bullet" };
 const crumbs = () => browser.execute(() => [...document.querySelectorAll(".right-sidebar .rs-item")].map(item => ({
   title: item.querySelector(".rs-item-title")?.textContent, more: !!item.querySelector(".rs-crumb-more"),
   crumbs: [...item.querySelectorAll(".rs-crumb")].map(el => el.textContent), bold: item.querySelector(".rs-item-crumbs strong")?.textContent ?? null })));
@@ -72,9 +73,37 @@ try {
     { timeout: 10000, timeoutMsg: "crumb click did not swap the card to that block" });
   const after = await crumbs();
   if (after[0].more) throw Error(`ellipsis shown with only two ancestors: ${JSON.stringify(after)}`);
-  if (fs.readFileSync(file, "utf8") !== "- First\n  - Second **bold**\n    - Third\n      - Fourth\n        - Leaf target\n") throw Error("navigation wrote the page");
+  if (fs.readFileSync(file, "utf8") !== "- First\n  - Second **bold**\n    - Third\n      - Fourth\n        - Leaf target\n          id:: 6960a000-0000-4000-8000-000000000440\n") throw Error("navigation wrote the page");
   try { execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, "swapped.png")], { env }); } catch {}
-  proof.outcome = "PASS"; proof.before = before; proof.after = after;
+  stage = "GH #440: embed breadcrumb on";
+  await browser.keys(["Control", "Shift", "p", "NULL"]);
+  await browser.$(".switcher-input").setValue("Settings");
+  await browser.keys(["Enter"]);
+  await browser.$(".settings-search-input").waitForDisplayed({ timeout: 10000 });
+  await browser.$(".settings-search-input").setValue("Block embed breadcrumbs");
+  await browser.$(".settings-search-result").waitForDisplayed({ timeout: 10000 });
+  await browser.$(".settings-search-result").click();
+  const knob = await browser.$('[data-setting-label="Block embed breadcrumbs"] [role="switch"]');
+  await knob.waitForDisplayed({ timeout: 10000 });
+  if (await knob.getAttribute("aria-checked") !== "true") await knob.click();
+  await browser.keys(["Escape"]);
+  stage = "GH #440: embed trail shows ancestors aligned with the bullet";
+  await openPageByName(browser, "Embed Host");
+  await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".embed-source-breadcrumb .ref-crumb").length >= 3),
+    { timeout: 15000, timeoutMsg: "embed breadcrumb shows no ancestors" });
+  const embed = await browser.execute(() => {
+    const trail = document.querySelector(".embed-source-breadcrumb");
+    const text = trail.firstElementChild.getBoundingClientRect();
+    const bullet = trail.closest(".embed-block").querySelector(".bullet").getBoundingClientRect();
+    return { crumbs: [...trail.querySelectorAll(".ref-crumb")].map(el => el.textContent), page: trail.querySelector(".page-ref")?.textContent,
+      textLeft: text.left, bulletLeft: bullet.left, bulletRight: bullet.right,
+      fontRatio: parseFloat(getComputedStyle(trail).fontSize) / parseFloat(getComputedStyle(trail.closest(".embed-block")).fontSize) };
+  });
+  if (embed.crumbs.join("|") !== "…|Second bold|Third|Fourth" || embed.page !== "Crumb Demo") throw Error(`embed trail: ${JSON.stringify(embed)}`);
+  if (embed.textLeft < embed.bulletLeft - 4 || embed.textLeft > embed.bulletRight + 4) throw Error(`embed trail not aligned with the bullet: ${JSON.stringify(embed)}`);
+  if (embed.fontRatio > 0.85) throw Error(`embed trail not reduced like Linked References: ${JSON.stringify(embed)}`);
+  try { execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, "embed.png")], { env }); } catch {}
+  proof.outcome = "PASS"; proof.before = before; proof.after = after; proof.embed = embed;
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
   console.log(`PASS GH #640: ${out}`);
 } catch (error) {
