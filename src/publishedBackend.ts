@@ -21,12 +21,16 @@ import { blockRegions } from "./render/parse";
 import { blockRefsInText } from "./render/pageRefs";
 import { searchSubstringSpans } from "./editor/searchQuery";
 import { searchFold } from "./editor/searchFold";
+import { setQuickSharePrefix } from "./publishedPermalink";
 
 type PublishedPage = PageDto & { path: string };
 
 /** `<meta name="tine-published" content="snapshot.json">` in the exported shell. */
 export const PUBLISHED_META_NAME = "tine-published";
 export const PUBLISHED_SNAPSHOT_SCHEMA = 1;
+/** The meta content of a quick share viewer (`/s/1/`): the snapshot is the
+ *  share named by the page's fragment (`quickShare/quickShare.ts`). */
+export const QUICK_SHARE_SNAPSHOT = "quick-share:1";
 /** The reason code every refused query carries (typed-errors contract). */
 export const PUBLISHED_QUERY_REASON = "published_export_static";
 export const PUBLISHED_QUERY_MESSAGE = "This export answers only the queries it was made with.";
@@ -128,6 +132,14 @@ export async function readBounded(response: Response, max: number, label: string
 export function loadPublishedSnapshot(url = publishedSnapshotUrl() ?? "snapshot.json"): Promise<PublishedSnapshot> {
   if (!snapshotPromise) {
     snapshotPromise = (async () => {
+      if (url === QUICK_SHARE_SNAPSHOT) {
+        // A quick share viewer: the snapshot comes from the link's gist,
+        // decrypted in the browser; navigation keeps the share prefix.
+        const { loadQuickShare } = await import("./quickShare/quickShare");
+        const share = await loadQuickShare(globalThis.location?.hash ?? "");
+        setQuickSharePrefix(share.link.prefix);
+        return share.snapshot;
+      }
       const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) throw new Error(`snapshot ${url}: HTTP ${response.status}`);
       // I-22: bound the served bytes before they become a string and an object graph.
