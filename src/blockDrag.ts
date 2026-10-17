@@ -9,7 +9,7 @@ import { documentOf, onEachWindow } from "./windowRealm";
 
 // Interactive chrome whose drags mean something else (bullet = reorder handle,
 // links/buttons/chips = clicks). A text-selection drag must not start on these.
-const CHROME = ".bullet-container, .block-controls, .collapse-toggle, a, button, .date-chip";
+const CHROME = ".bullet-container, .comment-handle, .block-controls, .collapse-toggle, a, button, .date-chip";
 const SHEET_INTERNAL =
   ".block-sheet-container, .sheet-grid, .sheet-table, .sheet-board, .sheet-cell, .sheet-board-card";
 
