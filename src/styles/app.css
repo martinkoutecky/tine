@@ -1437,6 +1437,39 @@ html[data-system-insets="native-viewport"] {
   opacity: 1;
 }
 
+/* The title's Share button: the star's hover pair, visible without hover on coarse pointers. */
+.page-share-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.share-icon {
+  width: 18px;
+  height: 18px;
+}
+.page-title-row:hover .page-share-btn,
+.page-share-btn:focus-visible {
+  opacity: 1;
+}
+.page-share-btn:hover,
+.page-share-btn:focus-visible {
+  color: var(--text-primary);
+}
+@media (pointer: coarse) {
+  .page-share-btn {
+    min-width: 36px;
+    min-height: 36px;
+    justify-content: center;
+    opacity: 1;
+  }
+}
+
 .page-actions-trigger {
   background: none;
   border: none;
@@ -1598,6 +1631,35 @@ html[data-system-insets="native-viewport"] {
 .pp-done:hover {
   background: var(--bg-tertiary);
 }
+
+/* Share dialog: the settings shell without the left navigation, sized to its content. */
+.settings-modal.share-dialog {
+  width: 640px;
+  height: auto;
+  max-height: 82vh;
+  outline: none;
+}
+.share-dialog .settings-pane-head { flex: 0 0 auto; }
+.share-choices { display: grid; gap: 4px; margin: 4px 0 8px; }
+.share-choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  align-items: baseline;
+  padding: 5px 4px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.share-choice .settings-hint { grid-column: 2; }
+.share-choice.disabled { opacity: 0.55; cursor: default; }
+.share-choice-label { color: var(--text-primary); }
+.share-query { display: grid; gap: 8px; margin: 4px 0 8px; }
+.share-review { display: grid; gap: 6px; font-size: 13px; }
+.share-pages { max-height: 160px; overflow-y: auto; margin: 0; padding-left: 20px; }
+.share-pages small { color: var(--text-muted); }
+.share-save-note, .share-existing { margin: 6px 0 0; }
+.share-foot { flex: 0 0 auto; padding: 12px 20px; border-top: 1px solid var(--border-color); }
+.share-dialog .query-export-refused { color: var(--tine-danger-color, var(--palette-danger)); overflow-wrap: anywhere; }
 
 /* Copy / export modal */
 .modal-overlay.graph-name-overlay { z-index: 9100; } /* Above first-run Welcome. */
@@ -2638,7 +2700,8 @@ html[data-system-insets="native-viewport"] {
     gap: 4px;
     min-width: 0;
   }
-  .page-title-row:has(.page-carry-actions) .fav-star {
+  .page-title-row:has(.page-carry-actions) .fav-star,
+  .page-title-row:has(.page-carry-actions) .page-share-btn {
     display: none;
   }
   .carry-btn {
@@ -2696,6 +2759,8 @@ html[data-system-insets="native-viewport"] {
     max-height: none;
     flex-direction: column;
   }
+  /* The share dialog's own two-class rule sizes it to its content on larger screens; a phone gets the full sheet. */
+  .settings-modal.share-dialog { width: 100%; max-width: none; height: 100%; max-height: none; }
   .settings-nav {
     width: auto;
     flex: 0 0 auto;
@@ -4224,8 +4289,11 @@ html[data-system-insets="native-viewport"] {
 /* Sheet field checkbox (table `checkbox` fields + boolean formula results).
    Custom-drawn from theme vars — a NATIVE checkbox renders white-on-dark under
    any theme that doesn't set `color-scheme: dark` (e.g. a custom gallery theme),
-   which is exactly Martin's dark-theme white-box nit. Mirrors .block-checkbox. */
-.sheet-checkbox {
+   which is exactly Martin's dark-theme white-box nit. Mirrors .block-checkbox.
+   `.themed-checkbox` is the same box for any other plain checkbox (All pages'
+   "Show journals"); it does not depend on the engine honouring `color-scheme`. */
+.sheet-checkbox,
+.themed-checkbox {
   appearance: none;
   -webkit-appearance: none;
   display: inline-block;
@@ -4240,14 +4308,17 @@ html[data-system-insets="native-viewport"] {
   cursor: pointer;
   position: relative;
 }
-.sheet-checkbox:not(:disabled):hover {
+.sheet-checkbox:not(:disabled):hover,
+.themed-checkbox:not(:disabled):hover {
   border-color: var(--accent, #4c8bf5);
 }
-.sheet-checkbox:checked {
+.sheet-checkbox:checked,
+.themed-checkbox:checked {
   background: var(--accent, #4c8bf5);
   border-color: var(--accent, #4c8bf5);
 }
-.sheet-checkbox:checked::after {
+.sheet-checkbox:checked::after,
+.themed-checkbox:checked::after {
   content: "";
   position: absolute;
   left: 4px;
@@ -4258,7 +4329,8 @@ html[data-system-insets="native-viewport"] {
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
-.sheet-checkbox:disabled {
+.sheet-checkbox:disabled,
+.themed-checkbox:disabled {
   cursor: default;
 }
 
@@ -7094,12 +7166,6 @@ img.emoji {
   border-radius: 10px;
   font-size: 10px;
   cursor: pointer;
-}
-
-/* The numbered circle whose mention the excerpt currently highlights. */
-.reference-occurrence-jump.selected {
-  color: var(--bg-primary);
-  background: var(--accent-color);
 }
 
 .reference-live-evidence {

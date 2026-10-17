@@ -7,6 +7,7 @@ import type { PageEntry, RefGroup } from "../types";
 import { pushToastUnique } from "../toasts";
 import { t } from "../i18n";
 import { QueryActions } from "./QueryActions";
+import { ShareIcon } from "./ShareIcon";
 import { openQueryResultsCopy } from "./queryResultsCopy";
 import { queryResultsHaveCollapsed } from "./QueryCollapse";
 
@@ -21,6 +22,8 @@ export function QueryMacroActions(props: {
   edit: (tab: "filter" | "display" | "text") => void;
   fold?: (collapsed: boolean) => void;
   export: () => void;
+  /** Open the share dialog seeded with this block (enabled with zero results: the dialog shows 0). */
+  share: () => void;
 }): JSX.Element {
   const search = () => {
     const current = props.current();
@@ -36,7 +39,13 @@ export function QueryMacroActions(props: {
       error => { if (owner()) pushToastUnique(t("query-calm-search-failed", { error: error instanceof Error ? error.message : String(error) }), "error"); },
     );
   };
-  return <QueryActions editable={props.editable} results={props.results} edit={props.edit} fold={props.fold}
-    folded={queryResultsHaveCollapsed(props.groups())}
-    copy={() => { void openQueryResultsCopy(props.groups(), props.pages()); }} search={search} export={props.export} />;
+  return <>
+    <button type="button" class="qc-share" title={t("share-query-icon")} aria-label={t("share-query-icon")}
+      onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); props.share(); }}>
+      <ShareIcon class="share-icon" />
+    </button>
+    <QueryActions editable={props.editable} results={props.results} edit={props.edit} fold={props.fold}
+      folded={queryResultsHaveCollapsed(props.groups())}
+      copy={() => { void openQueryResultsCopy(props.groups(), props.pages()); }} search={search} export={props.export} share={props.share} />
+  </>;
 }

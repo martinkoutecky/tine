@@ -5,9 +5,11 @@ import { reportUiFailure } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
-import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
+import { PaneContext, focusedRouter, layoutHasMultiplePanes, layoutRoot, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
+import { openShareDialog } from "../shareState";
+import { ShareIcon } from "./ShareIcon";
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
 import { captureBinding, graphScopedSignal } from "../binding";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
@@ -48,7 +50,9 @@ import { conflictForPage } from "../conflictQueue";
 import { pageIdentityKey } from "../pageIdentity";
 import { liveConflictForPage } from "../liveConflicts";
 import { ExternalChangeBar } from "./ExternalChangeBar";
-import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow } from "../windowRealm";
+import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow, useWindowId } from "../windowRealm";
+import { createMarginSurface } from "./MarginColumn";
+import { MarginContext } from "./marginContext";
 
 installPageIdentityNavigation((from, to) => {
   // Rewrite both pinned and formerly pathless routes to the exact file owner.
@@ -286,7 +290,8 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
 // Page properties NOT shown in the under-title property list: `alias` is surfaced
 // as "aka" chips above. `icon` stays editable here as well as decorating the
 // title, matching OG's editable-built-in-properties. Hide internal tag-table metadata.
-const PAGE_PROPS_HIDDEN = new Set(["alias", "tine.tag-table"]);
+// `tine/exports` is the exports page marker (docs/contracts/export-definitions.md), not something to edit.
+const PAGE_PROPS_HIDDEN = new Set(["alias", "tine.tag-table", "tine/exports"]);
 const TAG_TABLE_PROP = "tine.tag-table";
 
 function paneContextFromContext() {
@@ -902,6 +907,15 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
   const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
   const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
+  // Margin dialogue (vision §3.7): the main pane's single-page view, unsplit,
+  // draws comments in a right-hand column when it is wide enough.
+  let outline: HTMLDivElement | undefined;
+  const windowId = useWindowId();
+  const margin = createMarginSurface({
+    page: () => props.page,
+    eligible: () => pane.paneId === "main" && router.route().kind === "page" && !layoutHasMultiplePanes(layoutRoot(windowId)),
+    outline: () => outline,
+  });
   const editPreamble = () => {
     const id = promotePagePreamble(props.page.name);
     if (id) startEditing(id, docNode(id).raw.length);
@@ -1083,6 +1097,18 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           >
             <span aria-hidden="true">⋯</span>
           </button>
+          <Show when={!isPublishedExport()}>
+            <button
+              type="button"
+              class="page-share-btn"
+              data-page-share
+              title={t("share-page-title-button")}
+              aria-label={t("share-page-title-button")}
+              onClick={() => openShareDialog({ page: props.page.name })}
+            >
+              <ShareIcon class="share-icon" />
+            </button>
+          </Show>
           <button
             class="fav-star"
             classList={{ active: isFavorite(props.page.name, props.page.kind) }}
@@ -1146,7 +1172,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           </FailureBoundary>
         )}
       </Show>
-      <div class="page-blocks">
+      <MarginContext.Provider value={margin.placement}>
+      <div class="page-blocks" ref={outline} classList={{ "margin-active": margin.active() }}>
         <Show when={preambleContent()}>
           {(content) => (
             <div class="ls-block preamble-block" data-page-preamble={props.page.name}>
@@ -1166,6 +1193,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         </Show>
         <BlockList ids={rootsToRender()} />
       </div>
+      </MarginContext.Provider>
+      <margin.Column />
       {props.children}
       <PageTypingTarget page={() => props.page} surface={editSurface()} />
     </div>

@@ -5039,7 +5039,7 @@ dependencies = [
 
 [[package]]
 name = "tine"
-version = "0.8.0-beta.3"
+version = "0.8.0-beta.4"
 dependencies = [
  "base64 0.22.1",
  "cap-std",
@@ -5083,7 +5083,7 @@ dependencies = [
 
 [[package]]
 name = "tine-core"
-version = "0.8.0-beta.3"
+version = "0.8.0-beta.4"
 dependencies = [
  "ammonia",
  "chrono",
@@ -5105,7 +5105,7 @@ dependencies = [
 
 [[package]]
 name = "tine-graph-features"
-version = "0.8.0-beta.3"
+version = "0.8.0-beta.4"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -5123,7 +5123,7 @@ dependencies = [
 
 [[package]]
 name = "tine-ios-folder-picker-native"
-version = "0.8.0-beta.3"
+version = "0.8.0-beta.4"
 dependencies = [
  "tauri",
  "tauri-plugin",
@@ -5131,7 +5131,7 @@ dependencies = [
 
 [[package]]
 name = "tine-ios-native-integrations"
-version = "0.8.0-beta.3"
+version = "0.8.0-beta.4"
 dependencies = [
  "tauri",
  "tauri-plugin",
@@ -5139,7 +5139,7 @@ dependencies = [
 
 [[package]]
 name = "tine-outline"
-version = "0.8.0-beta.3"
+version = "0.8.0-beta.4"
 dependencies = [
  "lsdoc",
  "serde",
@@ -5156,7 +5156,7 @@ dependencies = [
 
 [[package]]
 name = "tine-search"
-version = "0.8.0-beta.3"
+version = "0.8.0-beta.4"
 dependencies = [
  "regex",
  "serde_json",
@@ -5166,7 +5166,7 @@ dependencies = [
 
 [[package]]
 name = "tine-store"
-version = "0.8.0-beta.3"
+version = "0.8.0-beta.4"
 dependencies = [
  "cap-std",
  "libc",

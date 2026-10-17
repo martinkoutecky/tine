@@ -1,10 +1,10 @@
 import { journalTitle, appNow } from "../../journal";
 import { outlineMaxDepth, outlineDepth, parseOutline, type OutlineNode } from "../../editor/outline";
-import { type PageKind } from "../../types";
+import { type Format, type PageKind } from "../../types";
 import { bindingOwner } from "../../owned";
-import { pageByName, freshId, setDoc } from "../model";
+import { pageByName, freshId, setDoc, formatForPage, doc } from "../model";
 import { admitPageFile, reportPageLoadRefusal } from "../workingSet";
-import { captureEmptyPage } from "../convert";
+import { captureEmptyPage, queryBlockRaw } from "../convert";
 import { pageWritable } from "./properties";
 import { insertOutlineAfter, deleteBlock } from "./blocks";
 import { withUndoUnit } from "../history";
@@ -62,6 +62,26 @@ export async function captureToPage(title: string, markdown: string): Promise<bo
   return captureOutlineInto(name, "page", parseOutline(markdown));
 }
 
+/** Append ONE query block (`query` macro text plus its `key:: value` properties,
+ *  spelled for the page's own format) at the END of the named existing page,
+ *  through the same single writer as {@link captureToPage}: the live store plus
+ *  an immediate flush, so it can't race an open edit of that page. The share
+ *  dialog's way of adding a definition to the exports page. True once the block
+ *  reached disk. */
+export async function appendQueryBlock(
+  page: string,
+  query: string,
+  properties: ReadonlyArray<readonly [string, string]>,
+): Promise<boolean> {
+  const name = page.trim();
+  if (!name || !query.trim()) return false;
+  // The same definition already at the root is not added twice: re-sharing an unchanged selection to the same folder.
+  return captureOutlineInto(name, "page", (format, roots) => {
+    const raw = queryBlockRaw(query, properties, format);
+    return roots.includes(raw) ? null : [{ raw, children: [] }];
+  });
+}
+
 /** Append outline `nodes` at the END of the named page (loaded — or synthesized
  *  if it has no file yet — first), then flush immediately. Shared by the journal
  *  append and the new-page capture; never clobbers in-progress edits and never
@@ -70,12 +90,13 @@ export async function captureToPage(title: string, markdown: string): Promise<bo
 async function captureOutlineInto(
   name: string,
   kind: PageKind,
-  nodes: OutlineNode[],
+  built: OutlineNode[] | ((format: Format, roots: readonly string[]) => OutlineNode[] | null),
   inserted?: (ids: string[]) => void,
   gate?: () => Promise<boolean>,
 ): Promise<boolean> {
   // Captured blocks land at root level, so the outline's own depth is the result's (I-22).
-  if (!nodes.length || outlineDepth(nodes) > outlineMaxDepth()) return false;
+  const fits = (list: OutlineNode[]) => list.length > 0 && outlineDepth(list) <= outlineMaxDepth();
+  if (typeof built !== "function" && !fits(built)) return false;
   const owner = bindingOwner();
   // Admit the file the name resolves to. Another file holding the name is
   // replaced when it has no unsaved input; when it has, stop rather than append
@@ -89,6 +110,13 @@ async function captureOutlineInto(
     return false;
   }
   if (!pageByName(name) || !pageWritable(name)) return false;
+  // A builder is spelled for the format of the page this name resolved to.
+  const nodes = typeof built === "function"
+    ? built(formatForPage(name), pageByName(name)!.roots.map((id) => doc.byId[id]?.raw ?? ""))
+    : built;
+  // A builder answers null when what it would add is already there: nothing to write, nothing lost.
+  if (nodes === null) return true;
+  if (!fits(nodes)) return false;
   if (gate && (!(await gate()) || !owner())) return false;
   // Re-read after the gate's await: the page may have been reloaded meanwhile.
   const page = pageByName(name);

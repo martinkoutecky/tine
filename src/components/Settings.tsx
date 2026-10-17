@@ -61,9 +61,10 @@ import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { LanguageSetting } from "./LanguageSetting";
+import { CommentNameSetting } from "./CommentNameSetting";
 import { GraphFolderSetting } from "./GraphFolderSetting";
 import { msg, render, renderEnglish, t, type Msg } from "../i18n";
-import { SETTING_SEARCH, settingMatches, settingHighlight, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
+import { SETTING_SEARCH, rankedSettingMatches, settingHighlight, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
 import { ThemeSettings } from "./ThemeSettings";
@@ -101,6 +102,8 @@ const TABS: { id: SettingsTabId; label: Msg }[] = [
   { id: "shortcuts", label: msg("settings-ui-keyboard-shortcuts") },
   { id: "about", label: msg("settings-ui-about") },
 ];
+/** How long a search result waits for an async-mounted target before giving up. */
+const SEARCH_SCROLL_WAIT_MS = 1000;
 export function Settings(): JSX.Element {
   const [tab, setTab] = createSignal<SettingsTabId>("appearance");
   const [settingsQuery, setSettingsQuery] = createSignal("");
@@ -119,21 +122,31 @@ export function Settings(): JSX.Element {
   const availableTabs = createMemo(() => pluginsAvailable() ? TABS : TABS.filter((entry) => entry.id !== "plugins"));
   const matches = createMemo(() => {
     const query = settingsQuery();
-    return query.trim() ? SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && settingMatches(entry, query)) : [];
+    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab)), query) : [];
   });
+  // A setting whose field mounts after an async load (Developer tools waits for
+  // the platform probe) is not in the DOM when the tab opens, so the lookup is
+  // retried per frame for a bounded time and then given up silently (GH #706).
+  let scrollRun = 0;
+  onCleanup(() => { scrollRun++; });
   const openSearchResult = (entry: SettingSearchEntry) => {
     setRevealedQuery(settingsQuery());
     setSettingsQuery("");
     setTab(entry.tab);
-    queueMicrotask(() => {
-      const fields = queryAllWindowsAll<HTMLElement>("[data-setting-label]");
-      const labels = typeof entry.label === "string" ? [entry.label] : [render(entry.label), renderEnglish(entry.label)];
-      const target = fields.find((field) => labels.includes(field.dataset.settingLabel ?? ""))
-        ?? queryAllWindowsAll<HTMLElement>(".settings-label, .settings-section, .settings-row h2, .settings-row h3, .diagnostics-tab h3")
-          .find((field) => labels.includes(field.textContent?.trim() ?? ""));
-      target?.scrollIntoView({ block: "center" });
-      searchInput?.focus({ preventScroll: true });
-    });
+    const run = ++scrollRun;
+    const labels = typeof entry.label === "string" ? [entry.label] : [render(entry.label), renderEnglish(entry.label)];
+    const findTarget = () => queryAllWindowsAll<HTMLElement>("[data-setting-label]").find((field) => labels.includes(field.dataset.settingLabel ?? ""))
+      ?? queryAllWindowsAll<HTMLElement>(".settings-label, .settings-section, .settings-row h2, .settings-row h3, .diagnostics-tab h3")
+        .find((field) => labels.includes(field.textContent?.trim() ?? ""));
+    const deadline = Date.now() + SEARCH_SCROLL_WAIT_MS;
+    const attempt = (first: boolean) => {
+      if (run !== scrollRun) return;
+      const target = findTarget();
+      if (first) searchInput?.focus({ preventScroll: true });
+      if (target) target.scrollIntoView({ block: "center" });
+      else if (Date.now() < deadline) (typeof requestAnimationFrame === "function" ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16))(() => attempt(false));
+    };
+    queueMicrotask(() => attempt(true));
   };
 
     const shortcuts = () => {
@@ -674,6 +687,7 @@ function EditorTab(props: { search: string }): JSX.Element {
   });
   return (
     <>
+      <CommentNameSetting />
       <Field
         label={t("settings-ui-file-format")}
         hint={

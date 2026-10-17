@@ -41,7 +41,7 @@ render(() => <main style={{ padding: "24px", "max-width": "640px" }}>
   <LinkedReferences name="Target" />
   <UnlinkedReferences name="Target" />
   <div class="query-block"><div class="query-header">Query results
-    <QueryActions editable results folded={folded()} fold={setFolded} edit={() => {}} copy={() => {}} search={() => {}} export={() => {}} />
+    <QueryActions editable results folded={folded()} fold={setFolded} edit={() => {}} copy={() => {}} search={() => {}} export={() => {}} share={() => {}} />
   </div></div>
   <ContextMenu />
 </main>, document.getElementById("root")!);

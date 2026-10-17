@@ -376,6 +376,7 @@ mod journal_guide_tests {
             "These actions switch to the new tab",
             "preview stays open while its **… → Page actions** menu is open",
             "keeps your current tab active and confirms **Opened in a new tab**",
+            "Phones and tablets have no tab strip, so their menus omit **Open in new tab**",
             "Block embed breadcrumbs",
         ] {
             assert!(
@@ -1152,6 +1153,33 @@ mod rename_guide_tests {
             files.contains("Queries inside a query export show only results on the exported pages")
         );
         assert!(files.contains("they do not report how many results were left out on other pages"));
+    }
+
+    #[test]
+    fn share_guide_explains_the_dialog_the_review_and_the_exports_page() {
+        // Share step 1 (docs/contracts/export-definitions.md): the Guide moves with the product.
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for outcome in [
+            "- ## Share pages",
+            "the share icon in the top bar",
+            "**Share…** in a page's **⋯** menu",
+            "**This page**",
+            "**A query starting at this page**",
+            "a page marked `public:: false` and the Exports page are never shared",
+            "**Include the query text** is off",
+            "`published-queries/<folder>/`",
+            "`export:: <folder>`",
+            "marked `tine/exports:: true` and `public:: false`",
+            "Exports 2",
+        ] {
+            assert!(
+                files.contains(outcome),
+                "share onboarding must explain {outcome}"
+            );
+        }
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("**Share…** in a query's **⋯** menu"));
+        assert!(queries.contains("**Share pages**"));
     }
 
     #[test]

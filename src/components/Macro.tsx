@@ -9,6 +9,7 @@ import { backend } from "../backend";
 import { isPublishedExport } from "../publishedBackend";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
 import { openPageInSidebar, openBlockInSidebar, openQueryExport, switcherOpen } from "../ui";
+import { openShareDialog } from "../shareState";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
@@ -49,7 +50,7 @@ import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import { QueryResultSections } from "./QueryResultSections";
 import { QueryOgHint, QueryPageRows, QueryStatisticsSummary, type QueryView } from "./QueryResultParts";
-import type { QueryHit, RefGroup } from "../types";
+import type { QueryHit, QueryPublicationRequest, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { bothFamilies } from "../queryTwin";
 import { declaresCurrentPageInput, queryCurrentPage } from "../queryCurrentPage";
@@ -274,6 +275,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
       : props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
     return page ? { current_page: page } : undefined;
   };
+  // What exporting or sharing this block starts from: its query text, host properties and page.
+  const exportRequest = (): QueryPublicationRequest => ({ argument: executionArg() ?? arg(), dialect: macroTextDialect(macroName()),
+    properties: hostProperties(), currentPage: executionContext()?.current_page, hostBlockId: props.blockId, name: titleText() });
   const friendlySearch = createMemo(() => {
     const s = runnable()?.query.source;
     return s?.kind === "og" ? savedDslToFriendlySearch(s.original) : null;
@@ -973,14 +977,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                       if (epochs) setBulkFold({ n: (bulkFold()?.n ?? 0) + 1, collapsed, epochs });
                     });
                   } : undefined}
-                  export={() => openQueryExport({
-                      argument: executionArg() ?? arg(),
-                      dialect: macroTextDialect(macroName()),
-                      properties: hostProperties(),
-                      currentPage: executionContext()?.current_page,
-                      hostBlockId: props.blockId,
-                      name: titleText(),
-                    })} />
+                  export={() => openQueryExport(exportRequest())}
+                  share={() => openShareDialog({ query: exportRequest(), macro: `{{${macroName()} ${arg()}}}` })} />
               </Show>
             </div>
             <Show when={isAdvanced() && editRequest()?.tab === "display"}>

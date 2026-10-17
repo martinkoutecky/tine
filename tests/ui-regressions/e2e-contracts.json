@@ -119,6 +119,12 @@
       "nonRequirements":["Exact pixels, identical EDN whitespace, native platform certification outside Linux WebKitGTK, or synchronizing the page back into config.edn."],
       "stability":"burn-in"
     },
+    "scripts/e2e-share-dialog.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"The topbar share button is disabled with no page open and shares the open page. Share opens with This page chosen, reviews exactly that page, and exporting to a folder writes an export folder holding that page and no other, then creates the Exports page (marked tine/exports and public:: false, with an overview block) and lists the definition with its export folder, in Markdown and Org graphs, without changing config.edn.","blocking":true}],
+      "acceptableVariations":["Dialog layout, focus, review wording and save or watcher latency may vary while the exported page set and the persisted Exports page content remain correct."],
+      "nonRequirements":["Exact pixels, the Link destination and neighbour selection (not built yet) or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-query-epoch-flicker.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Pressing Enter in today's journal keeps the Scheduled & Deadline result's child visible on every frame; the result never drops to its read-only stand-in while the query reruns.","blocking":true}],
       "acceptableVariations":["Frame counts and rerun timing may vary while no frame shows the task without its child."],
@@ -297,6 +303,18 @@
       "acceptableVariations": ["Filesystem polling intervals and save latency may vary."],
       "nonRequirements": ["An end-user journey by itself."],
       "stability": "stable"
+    },
+    "scripts/e2e-margin-comment.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "On a routed named page in a window too narrow for the margin column, with a name set in Settings > Editor > Your name, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying quote:: with the selected words and author:: with that name, Enter in it adds a nested reply that also carries the name, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked.", "blocking": true }],
+      "acceptableVariations": ["How the selection is made (mouse, Shift+arrows or a programmatic textarea selection) as long as the editor holds it when Ctrl+R is pressed.", "Card colours, chip and header layout, and save latency, which is awaited by polling the page file."],
+      "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved child bullet, only that it is a child of the commented block.", "Certification outside Linux WebKitGTK."],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-margin-column.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "On a wide window, Ctrl+R on selected words draws the new comment in the right-hand margin column beside its passage (not in the outline) with a count on the commented block; clicking the comment edits it in place, Enter adds a reply in its thread, and the page file holds the reply nested under the comment (which keeps quote::) under the unchanged commented block.", "blocking": true }],
+      "acceptableVariations": ["How the selection is made and where the click lands inside the comment text; the caret is placed at the end of the comment text before Enter.", "Column width, card styling and the exact pixel offset of the thread beside its passage (within 2 px of the passage's top)."],
+      "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved bullets, only their nesting.", "Certification outside Linux WebKitGTK."],
+      "stability": "burn-in"
     },
     "scripts/e2e-alias.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "First-block aliases and page properties remain editable, persist, and resolve their page.", "blocking": true }],
@@ -480,12 +498,12 @@
     "scripts/e2e-page-properties.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal.", "blocking": true }],
       "acceptableVariations": ["Panel layout and native form-control styling may evolve.", "Custom property and add-property controls may participate in native Tab traversal before Done; Done can be activated by keyboard."],
-      "nonRequirements": ["Exact section spacing, control dimensions, or debounce timing.", "A fixed five-preset-only Tab sequence."],
+      "nonRequirements": ["Exact section spacing, control dimensions, or debounce timing.", "A fixed five-preset-only Tab sequence.", "Sidebar navigation or a fixed post-paint delay before opening a fixture page."],
       "stability": "stable"
     },
     "scripts/e2e-page-trailing-block.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "The quiet target below page content always adds a new writable trailing block, even when the page already ends in an empty (possibly indented) bullet.", "blocking": true }],
-      "acceptableVariations": ["Target affordance styling and scroll position may evolve."],
+      "acceptableVariations": ["Target affordance styling and scroll position may evolve.", "Fixture pages may be reached through the shared Quick Switcher navigation helper."],
       "nonRequirements": ["Exact target height, cursor blink timing, or focus-ring style."],
       "stability": "stable"
     },
@@ -737,6 +755,7 @@
       "acceptableVariations": ["Save timing within the host's debounce and backoff, notice wording beyond the named phrases, and which watcher mode delivers the outside change may vary."],
       "nonRequirements": ["Exact toast placement, pixels, DOM nesting, or certification outside Linux WebKitGTK (the disk error is a read-only pages folder and the crash is SIGKILL)."],
       "stability":"burn-in"
-    }
+    },
+    "scripts/e2e-org-created-format.mjs": {"contracts": [{"class": "stateful-ux", "userOutcome": "On an Org graph, a page created from the Quick Switcher's Create row is written as an .org file and edited as Org: the first property the user adds to it (Copy block ref's durable id) is saved as a :PROPERTIES: drawer, never as a Markdown id:: line.", "blocking": true}], "acceptableVariations": ["Switcher row ranking, focus, file name casing and save or watcher latency may vary while the saved bytes carry the id in an Org drawer."], "nonRequirements": ["Exact pixels, the clipboard's contents, or native platform certification outside Linux WebKitGTK."], "stability": "burn-in"}
   }
 }

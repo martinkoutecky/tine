@@ -84,6 +84,7 @@ command-editor-italics = Italic
 command-editor-strike-through = Strikethrough
 command-editor-highlight = Highlight
 command-editor-insert-link = Insert link
+command-editor-comment = Comment on selected text
 command-editor-copy-embed = Copy block embed when no text is selected
 command-editor-clear-block = Clear block content
 command-editor-kill-line-before = Delete to line start
@@ -97,6 +98,7 @@ command-pane-focus-n = Focus pane { $index }
 # $title (string): the plugin's own command title (not translated).
 command-plugin = Plugin: { $title }
 command-go-search-selection = Search for the selected text
+command-comment-on-selection = Comment on selection
 command-select-copy-block-ref = Copy block refs of the selected blocks
 command-editor-duplicate-block = Duplicate block below (with children)
 command-editor-duplicate-block-above = Duplicate block above (with children)

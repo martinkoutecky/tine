@@ -211,3 +211,5 @@ settings-search-key-bindings-commands-remap = 按键 绑定 命令 重新绑定
 settings-search-about = 关于
 
 settings-search-version-licenses-updates = 版本 许可证 更新
+settings-search-your-name = 你的名字
+settings-search-comment-author-name-margin-reply = 批注 作者 名字 页边 回复 身份

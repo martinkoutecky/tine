@@ -38,6 +38,19 @@ describe("mock backend", () => {
     expect((await b.quickSwitch("cafe", 20)).map((entry) => entry.name)).not.toContain("Café");
     expect((await b.captureQuickSwitch("cafe", 20)).map((entry) => entry.name)).not.toContain("Café");
   });
+  it("block picker search matches whitespace-separated fragments in order, like OG's LIKE '%a%b%'", async () => {
+    const page: PageDto = { name: "P", title: "P", kind: "page", pre_block: null,
+      blocks: [{ id: "a", raw: "qzfoo qzdraft", collapsed: false, children: [] },
+        { id: "b", raw: "qzready only", collapsed: false, children: [] }], format: "md" };
+    const b = mockBackend([page]);
+    const ids = async (q: string) => (await b.search(q, 20)).flatMap((group) => group.blocks).map((block) => block.id);
+    expect(await ids("qzfo qzdr")).toEqual(["a"]);
+    expect(await ids("ZFOO  QZDRA")).toEqual(["a"]);
+    expect(await ids("qzdraft qzfoo")).toEqual([]);
+    expect(await ids("qzfdr")).toEqual([]);
+    expect(await ids("   ")).toEqual([]);
+  });
+
   it("query (todo TODO DOING) matches both open tasks", async () => {
     const b = mockBackend();
     const groups = await b.runQuery("(todo TODO DOING)");

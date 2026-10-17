@@ -4,7 +4,9 @@ import { openRouteInNewWindow, workspaceWindowsSupported } from "../workspaceWin
 import { reportUiFailure } from "../uiFailure";
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
+import { openShareDialog } from "../shareState";
 import { isMobilePlatform } from "../nativeChrome";
+import { backgroundTabsAvailable } from "../linkGesture";
 import { pushToast } from "../toasts";
 import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { isConflicted } from "../document";
@@ -20,6 +22,7 @@ import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
 import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
+import { commentOnRenderedSelection, renderedSelectionIn } from "../commentActions";
 import { favoriteBlock } from "../favorites";
 import { t, msg, render as renderUiText, type UiText, type Msg } from "../i18n";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
@@ -350,6 +353,9 @@ function CopyAsSubmenu(props: { items: MenuAction[]; page?: boolean; close: () =
 }
 
 function BlockMenu(props: { id: string; x: number; y: number; close: () => void }): JSX.Element {
+  // Margin dialogue: words selected in this block's rendered text when the menu
+  // opened (the menu's own focus change can clear the DOM selection later).
+  const commentSelection = renderedSelectionIn(props.id);
   const hasChildren = () => (docNode(props.id)?.children.length ?? 0) > 0;
   const readOnly = () => blockPageReadOnly(props.id);
   // A heading command applies to the active selection when there is one (GH #240).
@@ -384,7 +390,7 @@ function BlockMenu(props: { id: string; x: number; y: number; close: () => void 
 
       <Show when={!readOnly() || headingsWritable()}><div class="ctx-sep" /></Show>
 
-      <For each={blockActions(props.id, props.x, props.y)}>
+      <For each={blockActions(props.id, props.x, props.y, commentSelection)}>
         {(it) => (
           <Show when={it.children} fallback={
           <div
@@ -872,7 +878,7 @@ function PageMenu(props: {
   const items: MenuAction[] = [
     { id: "open", label: msg("context-menu-ui-open"), run: () => openPageTarget(target()) },
     { id: "open-sidebar", label: msg("context-menu-ui-open-in-sidebar"), run: () => openPageInSidebar(target()) },
-    { id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => { openPageTargetInNewTab(target()); pushToast(msg("links-opened-in-new-tab")); } },
+    ...(backgroundTabsAvailable() ? [{ id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => { openPageTargetInNewTab(target()); pushToast(msg("links-opened-in-new-tab")); } }] : []),
     ...(workspaceWindowsSupported() ? [{ id: "open-new-window", label: msg("context-menu-ui-open-in-new-window"), run: () => void openRouteInNewWindow({ ...target(), kind: "page" }) }] : []),
     { id: "favorite-toggle", label: fav() ? msg("context-menu-ui-remove-from-favorites") : msg("context-menu-ui-add-to-favorites"), run: () => toggleFavorite(props.name, props.pageKind) },
     { id: "copy-as", label: msg("context-menu-ui-copy-as"), children: [
@@ -894,6 +900,7 @@ function PageMenu(props: {
         openExportModal([...page!.roots]);
       },
     },
+    ...(!pageByName(props.name)?.guide ? [{ id: "share", label: msg("context-menu-ui-share"), run: () => openShareDialog({ page: props.name }) }] : []),
     ...(!isMobilePlatform ? [{ id: "export-pdf", label: msg("context-menu-ui-export-to-pdf"), run: () => openPdfExport(props.name) }] : []),
     ...(props.fileActions && !pageByName(props.name)?.guide
       ? [
@@ -1104,7 +1111,7 @@ function RenamePage(props: {
   );
 }
 
-function blockActions(id: string, x: number, y: number): MenuAction[] {
+function blockActions(id: string, x: number, y: number, commentSelection: ReturnType<typeof renderedSelectionIn> = null): MenuAction[] {
   const selected = selectedIds();
   const multi = selected.length > 1 && selected.includes(id);
   const ids = multi ? selected : [id];
@@ -1125,7 +1132,7 @@ function blockActions(id: string, x: number, y: number): MenuAction[] {
     return [
       { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
       { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-      { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
+      ...(backgroundTabsAvailable() ? [{ label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } }] : []),
       { label: msg("context-menu-ui-copy", { count: ids.length }), run: copy },
       {
         label: msg("context-menu-ui-copy-export-as"),
@@ -1138,7 +1145,11 @@ function blockActions(id: string, x: number, y: number): MenuAction[] {
   return [
     { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
     { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-    { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
+    ...(backgroundTabsAvailable() ? [{ label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } }] : []),
+    // Margin dialogue (vision §3.7): comment on the words selected in this block.
+    ...(commentSelection && !multi
+      ? [{ label: msg("command-comment-on-selection"), run: () => commentOnRenderedSelection(commentSelection) }]
+      : []),
     // GH #164: in the WRITABLE arm only; the read-only arm returned above.
     { label: msg("context-menu-ui-properties"), run: () => openBlockProps(id, x, y) },
     // The keyboard route to "a block above this one" is Enter at offset 0, which

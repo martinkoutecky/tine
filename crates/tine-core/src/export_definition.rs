@@ -284,6 +284,24 @@ mod tests {
         }
     }
 
+    /// The share dialog (src/exportsPage.ts `pageSelectorQuery`) builds the selector as
+    /// this exact wire value and has the engine print it; the TypeScript test pins the
+    /// same file, so the two cannot drift.
+    #[test]
+    fn the_share_dialogs_builder_selector_prints_as_the_contract_selector() {
+        let query: crate::query::ir::Query =
+            serde_json::from_str(include_str!("query/fixtures/share/page_selector.json"))
+                .expect("the fixture is a query");
+        let printed = query_print(
+            &query,
+            &crate::query::ir::ViewSettings::default(),
+            PrintDialect::TqlMacro,
+            false,
+        )
+        .unwrap();
+        assert_eq!(printed, "@page and name = 'Project'");
+    }
+
     #[test]
     fn a_rename_rewrites_the_selector_of_a_markdown_definition_only() {
         let text = "- {{tine-query @page name = 'Project'}}\n  export:: project-site\n\

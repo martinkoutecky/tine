@@ -6,6 +6,7 @@ import { resizeSidebar, commitSidebarWidth } from "./sidebarSizing";
 import { Match, Show, Suspense, Switch, createEffect, createSignal, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { JournalsIcon } from "./components/JournalsIcon";
+import { ShareIcon } from "./components/ShareIcon";
 import { PageView, reloadJournalsFeedFromStart, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { ConflictOverview } from "./components/ConflictOverview";
@@ -44,8 +45,9 @@ import { scheduleAutomaticUpdateCheck, setUpdateExitGuard } from "./update";
 import { flushCssEditor } from "./cssEditor";
 import { WelcomeLayer } from "./components/Welcome";
 import { FailureBoundary } from "./components/FailureBoundary";
-import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
+import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, openPage, route, sameRoute, type PaneRouter, type PdfRoute, type QueryRoute } from "./router";
 import { theme, toggleTheme, sidebarOpen, toggleSidebar, rightSidebarOpen, toggleRightSidebar, openSwitcher, sidebarWidth, openSettings, welcomeOpen, closeWelcome, shortcutOverrides, wideMode, documentMode, focusMode, dimInactiveBlocks, exitFocusMode, installPaneTracker, refreshSyncConflicts, graphTransitioning, setGraphTransitioning, activeDrawer, completeActiveLeftNavigation, dismissMobileDrawer, setLeftSidebarOpen } from "./ui";
+import { openShareDialog } from "./shareState";
 import { graphMeta, firstLoadDone, setFirstLoadDone, graphEpoch, setStartupOpenFailure } from "./graphSession";
 import { applyGraphChange, installAliasDraftRouteHandler, installExternalChangeUiHandler } from "./document";
 
@@ -54,7 +56,7 @@ import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, subscribeOwnerFlush, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount } from "./document";
+import { flushAll, subscribeOwnerFlush, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount, pageByName } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
@@ -67,6 +69,7 @@ import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
 import { initNavSettings } from "./navSettings";
+import { initCommentIdentity } from "./commentIdentity";
 import { initLocalFileSettings } from "./localFileSettings";
 import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
@@ -651,9 +654,15 @@ export function App(): JSX.Element {
     setActive: (active) => void recordSessionActive(active),
   })));
   let openCalendarJump = () => {};
+  // The page the focused pane shows, when it is one the user can share (not the bundled Guide).
+  const sharePage = (): string | null => {
+    const current = route();
+    return current.kind === "page" && !pageByName(current.name)?.guide ? current.name : null;
+  };
   const topbarActions = {
     calendar: () => openCalendarJump(),
     journals: () => openJournals(),
+    share: () => { const page = sharePage(); if (page) openShareDialog({ page }); },
     theme: () => toggleTheme(),
     rightSidebar: (trigger?: HTMLElement | null) => toggleRightSidebar(trigger),
     back: () => goBack(),
@@ -853,6 +862,7 @@ export function App(): JSX.Element {
   onMount(() => void initCopySettings());
   onMount(() => void initRefCompletionSettings());
   onMount(() => void initNavSettings());
+  onMount(() => initCommentIdentity());
   onMount(() => void initSettingsLayout());
   onMount(() => { void initContentWidths(); void initCodeDisplay(); void initStickyParents(); });
   // Load the local-file images opt-in (Settings → Editing). Default off.
@@ -1254,6 +1264,12 @@ export function App(): JSX.Element {
             <button class="icon-btn topbar-optional-action" title={t("app-journals")} data-pane-focus-neutral onClick={topbarActions.journals}>
               <JournalsIcon />
             </button>
+            <Show when={!isPublishedExport()}>
+              <button class="icon-btn topbar-optional-action topbar-share" title={sharePage() ? t("share-topbar-title") : t("share-dialog-no-page")}
+                aria-label={t("share-topbar-title")} data-pane-focus-neutral disabled={!sharePage()} onClick={topbarActions.share}>
+                <ShareIcon />
+              </button>
+            </Show>
             <button class="icon-btn topbar-optional-action" title={t("app-toggle-theme-t-t")} onClick={topbarActions.theme}>
               <Show
                 when={theme() === "light"}
@@ -1291,6 +1307,8 @@ export function App(): JSX.Element {
             <FailureBoundary region="The toolbar menu"><TopbarOverflowMenu
               onCalendar={topbarActions.calendar}
               onJournals={topbarActions.journals}
+              onShare={isPublishedExport() ? undefined : topbarActions.share}
+              canShare={() => !!sharePage()}
               onToggleTheme={topbarActions.theme}
               onToggleRightSidebar={topbarActions.rightSidebar}
               onBack={topbarActions.back}

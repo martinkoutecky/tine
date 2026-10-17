@@ -142,6 +142,8 @@ topbar-overflow-menu-calendar = 日历
 
 topbar-overflow-menu-journals = 日记
 
+topbar-overflow-menu-share = 分享此页面
+
 topbar-overflow-menu-toggle-theme = 切换主题
 
 topbar-overflow-menu-toggle-right-sidebar = 切换右侧边栏

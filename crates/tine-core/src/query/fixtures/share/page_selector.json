@@ -1,0 +1,19 @@
+{
+  "anchor": "page",
+  "filter": {
+    "kind": "leaf",
+    "leaf": {
+      "kind": "attr",
+      "attr": "name",
+      "op": "eq",
+      "value": {
+        "kind": "text",
+        "text": "Project"
+      }
+    }
+  },
+  "diagnostics": [],
+  "source": {
+    "kind": "builder"
+  }
+}
