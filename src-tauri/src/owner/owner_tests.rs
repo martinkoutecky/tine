@@ -25,6 +25,9 @@ const UUID: &str = "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f";
 #[path = "owner_tests/lifecycle_tests.rs"]
 mod lifecycle;
 
+#[path = "owner_tests/proof.rs"]
+mod proof;
+
 struct Graph {
     _dir: tempfile::TempDir,
     root: PathBuf,

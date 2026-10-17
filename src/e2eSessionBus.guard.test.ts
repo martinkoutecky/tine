@@ -15,7 +15,9 @@ describe("native launch forwarding environment", () => {
       expect(source, `${rule}: ${name}`).toContain('from "./lib/e2e-session-bus.mjs"');
       const setup = source.indexOf("ensurePrivateSessionBus();");
       expect(setup, `${rule}: ${name}`).toBeGreaterThan(0);
-      expect(setup, `${rule}: ${name}`).toBeLessThan(source.indexOf("fs.rmSync("));
+      const firstFixtureWrite = Math.min(...["fs.rmSync(", "fs.mkdirSync(", "fs.writeFileSync("]
+        .map((call) => source.indexOf(call)).filter((at) => at >= 0));
+      expect(setup, `${rule}: ${name}`).toBeLessThan(firstFixtureWrite);
     }
   });
 

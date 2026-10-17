@@ -1,6 +1,16 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-cli-writes.mjs": {
+      "contracts": [
+        { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit made while the user types flushes input before resolving its handle: an obsolete handle refuses stale, the user's typed text survives, and an edit to another block succeeds with the editor open.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
+        { "class": "core-operation", "userOutcome": "A CLI edit to a page open in the real app appears in its window without navigation and reaches the guarded page file.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
+        { "class": "exact-safety-interoperability", "userOutcome": "Opening the app while tine serve owns the graph transfers ownership to the app and preserves and displays the edits already accepted by serve.", "blocking": true, "authority": "Tine CLI v0 Spec §3" }
+      ],
+      "acceptableVariations": ["Save and handover latency may vary while the durable contents and visible outcome agree."],
+      "nonRequirements": ["Exact pixels, DOM structure, animation or non-Linux native certification."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-sidebar-crumbs.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet (GH #440).","blocking":true}],
       "acceptableVariations":["Separator glyphs, truncation and styling may vary while the page, ancestor order and swap agree."],
