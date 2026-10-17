@@ -311,7 +311,7 @@ pub(crate) struct Planned {
 }
 
 /// A host refusal as the protocol's code (design §1 table).
-fn apply_refused(refusal: ApplyRefusal, page: &PageId) -> ErrorBody {
+pub(super) fn apply_refused(refusal: ApplyRefusal, page: &PageId) -> ErrorBody {
     let with_page = |code: &str, message: &str, admitted: Value| {
         let mut body = ErrorBody::new(code, message, false);
         body.detail = Some(json!({ "admitted": admitted, "page": page.as_str() }));

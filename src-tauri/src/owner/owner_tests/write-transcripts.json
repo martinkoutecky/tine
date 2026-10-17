@@ -1,0 +1,1866 @@
+[
+  {
+    "after": "- ONE\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-edit",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "ONE",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "blocks": [
+        "proof/1~f6soug"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "8e60bbfa2fa6fa0f",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "ONE"
+      },
+      "verb": "block.edit"
+    },
+    "text": "written proof rev 8e60bbfa2fa6fa0f\nproof/1~f6soug\n"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n  status:: ready\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-prop-set",
+    "command": [
+      "tine",
+      "prop",
+      "set",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "status",
+      "ready",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "blocks": [
+        "proof/1~oy7fpn"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "aa15965e327fc148",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "key": "status",
+        "value": "ready"
+      },
+      "verb": "block.prop"
+    },
+    "text": "written proof rev aa15965e327fc148\nproof/1~oy7fpn\n"
+  },
+  {
+    "after": "- one\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-prop-remove",
+    "command": [
+      "tine",
+      "prop",
+      "remove",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "id",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "blocks": [
+        "proof/1~diekug"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "fbe64c0da61b83fb",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "key": "id"
+      },
+      "verb": "block.prop"
+    },
+    "text": "written proof rev fbe64c0da61b83fb\nproof/1~diekug\n"
+  },
+  {
+    "after": "- two\n- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- same\n- same\n",
+    "case": "md-move",
+    "command": [
+      "tine",
+      "move",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--after",
+      "proof/2~k4kngg",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "blocks": [
+        "proof/2~diekug"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "e59eea620e050fd9",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "to": "proof/2~k4kngg"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev e59eea620e050fd9\nproof/2~diekug\n"
+  },
+  {
+    "after": "- two\n- same\n- same\n",
+    "case": "md-delete",
+    "command": [
+      "tine",
+      "delete",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "blocks": [],
+      "broken_refs": 1,
+      "deleted": "proof/1~diekug",
+      "kind": "deleted",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "af3d00c0c23b984e",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+      },
+      "verb": "block.delete"
+    },
+    "text": "deleted proof/1~diekug (breaks 1 reference)\nproof rev af3d00c0c23b984e\n"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n- new\n  author:: proof\n\t- nested\n\t  author:: proof\n",
+    "case": "md-add",
+    "command": [
+      "tine",
+      "add",
+      "--page",
+      "proof",
+      "--author",
+      "proof",
+      "- new\n\t- nested",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "blocks": [
+        "proof/5~nlmiyf",
+        "proof/5.1~kxe5vv"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "c54bfb914a71a212",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "author": "proof",
+        "content": "- new\n\t- nested",
+        "page": "proof"
+      },
+      "verb": "block.add"
+    },
+    "text": "written proof rev c54bfb914a71a212\nproof/5~nlmiyf\nproof/5.1~kxe5vv\n"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-stale-candidates",
+    "command": [
+      "tine",
+      "edit",
+      "proof/3~bf5v4g",
+      "changed",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "stale",
+        "detail": {
+          "admitted": false,
+          "candidates": [
+            "3~bf5v4g",
+            "4~bf5v4g"
+          ],
+          "handle": "proof/3~bf5v4g",
+          "page": "pages/proof.md"
+        },
+        "message": "2 blocks on the page match `proof/3~bf5v4g`; address one by its id:: or by position with --rev"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "proof/3~bf5v4g",
+        "text": "changed"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: stale: 2 blocks on the page match `proof/3~bf5v4g`; address one by its id:: or by position with --rev\n  candidates: 3~bf5v4g, 4~bf5v4g"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-stale-rev",
+    "command": [
+      "tine",
+      "delete",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--rev",
+      "old",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "stale",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.md",
+          "rev": "0fcdeabf35fc386f"
+        },
+        "message": "the page is no longer at rev old; read it again"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "rev": "old"
+      },
+      "verb": "block.delete"
+    },
+    "text": "tine: stale: the page is no longer at rev old; read it again"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-not-found",
+    "command": [
+      "tine",
+      "edit",
+      "absent/1~aaaaaa",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 3,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "not-found",
+        "detail": {
+          "admitted": true
+        },
+        "message": "no page is named `absent`"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "absent/1~aaaaaa",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: not-found: no page is named `absent`"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-bad-args",
+    "command": [
+      "tine",
+      "prop",
+      "set",
+      "proof/1",
+      "status",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 2,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "bad-args",
+        "detail": {
+          "admitted": false
+        },
+        "message": "`proof/1` has no fingerprint; give POS~FP, or pass --rev"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "proof/1",
+        "key": "status",
+        "value": "x"
+      },
+      "verb": "block.prop"
+    },
+    "text": "tine: bad-args: `proof/1` has no fingerprint; give POS~FP, or pass --rev"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-cross-page",
+    "command": [
+      "tine",
+      "move",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--under",
+      "b/1~4jgoiz",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.md",
+          "reason": "cross-page"
+        },
+        "message": "moving a block to another page is not supported yet; both blocks must be on one page"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "to": "b/1~4jgoiz"
+      },
+      "verb": "block.move"
+    },
+    "text": "tine: refused:cross-page: moving a block to another page is not supported yet; both blocks must be on one page"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-cycle",
+    "command": [
+      "tine",
+      "move",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--under",
+      "proof/1.1~misdi5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.md",
+          "reason": "kernel:cycle"
+        },
+        "message": "the outline refused the move: Cycle"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "to": "proof/1.1~misdi5"
+      },
+      "verb": "block.move"
+    },
+    "text": "tine: refused:kernel:cycle: the outline refused the move: Cycle"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-round-trip",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x\n- accidental",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.md",
+          "reason": "does-not-round-trip"
+        },
+        "message": "the text would not read back as written (an unclosed fence, or a line that becomes a new block); nothing changed"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x\n- accidental"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: refused:does-not-round-trip: the text would not read back as written (an unclosed fence, or a line that becomes a new block); nothing changed"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-broken-ref",
+    "command": [
+      "tine",
+      "add",
+      "--page",
+      "proof",
+      "--author",
+      "proof",
+      "((00000000-0000-4000-8000-000000000001))",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.md",
+          "reason": "broken-ref",
+          "uuid": "00000000-0000-4000-8000-000000000001"
+        },
+        "message": "no block has id:: 00000000-0000-4000-8000-000000000001"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "author": "proof",
+        "content": "((00000000-0000-4000-8000-000000000001))",
+        "page": "proof"
+      },
+      "verb": "block.add"
+    },
+    "text": "tine: refused:broken-ref: no block has id:: 00000000-0000-4000-8000-000000000001"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-bad-placement",
+    "command": [
+      "tine",
+      "add",
+      "--page",
+      "proof",
+      "--under",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 2,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "bad-args",
+        "detail": {
+          "admitted": false
+        },
+        "message": "choose exactly one of under, after, before, page or journal"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "content": "x",
+        "page": "proof",
+        "under": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+      },
+      "verb": "block.add"
+    },
+    "text": "tine: bad-args: choose exactly one of under, after, before, page or journal"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-bad-property",
+    "command": [
+      "tine",
+      "prop",
+      "set",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "bad\nkey",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.md",
+          "reason": "kernel"
+        },
+        "message": "Invalid property edit"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "key": "bad\nkey",
+        "value": "x"
+      },
+      "verb": "block.prop"
+    },
+    "text": "tine: refused:kernel: Invalid property edit"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n\t- new\n\t  author:: proof\n- two\n- same\n- same\n",
+    "case": "md-add-under",
+    "command": [
+      "tine",
+      "add",
+      "--under",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--author",
+      "proof",
+      "- new",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "blocks": [
+        "proof/1.2~nlmiyf"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.md",
+      "rev": "9ccd1f475ae97d99",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "author": "proof",
+        "content": "- new",
+        "under": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+      },
+      "verb": "block.add"
+    },
+    "text": "written proof rev 9ccd1f475ae97d99\nproof/1.2~nlmiyf\n"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-depth-cap",
+    "command": [
+      "tine",
+      "add",
+      "--under",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--author",
+      "proof",
+      "- node 0\n\t- node 1\n\t\t- node 2\n\t\t\t- node 3\n\t\t\t\t- node 4\n\t\t\t\t\t- node 5\n\t\t\t\t\t\t- node 6\n\t\t\t\t\t\t\t- node 7\n\t\t\t\t\t\t\t\t- node 8\n\t\t\t\t\t\t\t\t\t- node 9\n\t\t\t\t\t\t\t\t\t\t- node 10\n\t\t\t\t\t\t\t\t\t\t\t- node 11\n\t\t\t\t\t\t\t\t\t\t\t\t- node 12\n\t\t\t\t\t\t\t\t\t\t\t\t\t- node 13\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 14\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 15\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 16\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 17\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 18\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 19\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 20\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 21\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 22\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 23\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 24\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 25\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 26\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 27\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 28\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 29\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 30\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 31\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 32\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 33\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 34\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 35\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 36\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 37\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 38\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 39\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 40\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 41\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 42\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 43\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 44\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 45\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 46\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 47\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 48\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 49\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 50\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 51\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 52\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 53\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 54\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 55\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 56\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 57\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 58\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 59\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 60\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 61\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 62\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 63\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 64\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 65\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 66\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 67\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 68\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 69\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 70\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 71\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 72\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 73\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 74\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 75\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 76\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 77\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 78\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 79\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 80\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 81\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 82\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 83\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 84\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 85\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 86\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 87\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 88\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 89\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 90\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 91\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 92\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 93\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 94\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 95\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 96\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 97\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 98\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 99\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 100\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 101\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 102\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 103\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 104\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 105\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 106\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 107\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 108\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 109\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 110\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 111\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 112\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 113\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 114\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 115\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 116\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 117\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 118\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 119\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 120\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 121\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 122\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 123\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 124\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 125\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 126\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 127\n",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.md",
+          "reason": "kernel:depth_cap"
+        },
+        "message": "the outline refused the add: DepthCap"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "author": "proof",
+        "content": "- node 0\n\t- node 1\n\t\t- node 2\n\t\t\t- node 3\n\t\t\t\t- node 4\n\t\t\t\t\t- node 5\n\t\t\t\t\t\t- node 6\n\t\t\t\t\t\t\t- node 7\n\t\t\t\t\t\t\t\t- node 8\n\t\t\t\t\t\t\t\t\t- node 9\n\t\t\t\t\t\t\t\t\t\t- node 10\n\t\t\t\t\t\t\t\t\t\t\t- node 11\n\t\t\t\t\t\t\t\t\t\t\t\t- node 12\n\t\t\t\t\t\t\t\t\t\t\t\t\t- node 13\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 14\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 15\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 16\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 17\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 18\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 19\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 20\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 21\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 22\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 23\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 24\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 25\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 26\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 27\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 28\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 29\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 30\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 31\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 32\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 33\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 34\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 35\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 36\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 37\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 38\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 39\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 40\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 41\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 42\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 43\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 44\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 45\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 46\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 47\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 48\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 49\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 50\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 51\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 52\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 53\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 54\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 55\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 56\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 57\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 58\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 59\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 60\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 61\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 62\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 63\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 64\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 65\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 66\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 67\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 68\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 69\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 70\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 71\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 72\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 73\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 74\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 75\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 76\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 77\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 78\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 79\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 80\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 81\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 82\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 83\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 84\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 85\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 86\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 87\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 88\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 89\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 90\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 91\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 92\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 93\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 94\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 95\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 96\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 97\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 98\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 99\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 100\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 101\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 102\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 103\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 104\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 105\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 106\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 107\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 108\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 109\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 110\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 111\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 112\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 113\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 114\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 115\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 116\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 117\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 118\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 119\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 120\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 121\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 122\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 123\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 124\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 125\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 126\n\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t- node 127\n",
+        "under": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+      },
+      "verb": "block.add"
+    },
+    "text": "tine: refused:kernel:depth_cap: the outline refused the add: DepthCap"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-host-changed-twice",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "injected_host_outcome": "changed-twice",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "stale",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.md"
+        },
+        "message": "the page changed while the command ran; read it again"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: stale: the page changed while the command ran; read it again"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-host-unsaved",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "injected_host_outcome": "unsaved",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.md",
+          "reason": "unsaved"
+        },
+        "message": "the page has typed changes Tine could not save; save or discard them in the app, then try again"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: refused:unsaved: the page has typed changes Tine could not save; save or discard them in the app, then try again"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-host-page-busy",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "injected_host_outcome": "page-busy",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.md",
+          "reason": "page-busy"
+        },
+        "message": "other work held the page; try again"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: refused:page-busy: other work held the page; try again"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-host-host",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "injected_host_outcome": "host",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.md",
+          "reason": "host"
+        },
+        "message": "the page host refused the write; nothing changed"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: refused:host: the page host refused the write; nothing changed"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-host-draft-failed",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 7,
+    "injected_host_outcome": "draft-failed",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "draft-failed",
+        "detail": {
+          "admitted": true,
+          "page": "pages/proof.md"
+        },
+        "message": "the write's draft could not be saved (disk full or an app-data error); nothing changed"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: draft-failed: the write's draft could not be saved (disk full or an app-data error); nothing changed"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-host-unwritten",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 8,
+    "injected_host_outcome": "unwritten",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "unwritten",
+        "detail": {
+          "admitted": true,
+          "page": "pages/proof.md"
+        },
+        "message": "the write was accepted but the file could not be written yet; Tine keeps trying"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: unwritten: the write was accepted but the file could not be written yet; Tine keeps trying"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-host-superseded",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 8,
+    "injected_host_outcome": "superseded",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "superseded",
+        "detail": {
+          "admitted": true,
+          "page": "pages/proof.md"
+        },
+        "message": "the write applied, then a later edit replaced it before it was saved"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: superseded: the write applied, then a later edit replaced it before it was saved"
+  },
+  {
+    "after": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "case": "md-host-uncertain",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 8,
+    "injected_host_outcome": "uncertain",
+    "input": "- one\n  id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n\t- child\n- two\n- same\n- same\n",
+    "json": {
+      "error": {
+        "code": "uncertain",
+        "detail": {
+          "admitted": null,
+          "page": "pages/proof.md"
+        },
+        "message": "no answer from the page host in time; the write may still complete. Read the page before retrying"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: uncertain: no answer from the page host in time; the write may still complete. Read the page before retrying"
+  },
+  {
+    "after": "* ONE\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-edit",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "ONE",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "blocks": [
+        "proof/1~f6soug"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "cb04fed9c0a797d9",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "ONE"
+      },
+      "verb": "block.edit"
+    },
+    "text": "written proof rev cb04fed9c0a797d9\nproof/1~f6soug\n"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:status: ready\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-prop-set",
+    "command": [
+      "tine",
+      "prop",
+      "set",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "status",
+      "ready",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "blocks": [
+        "proof/1~rqpwxo"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "fb58b57080ed3ce2",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "key": "status",
+        "value": "ready"
+      },
+      "verb": "block.prop"
+    },
+    "text": "written proof rev fb58b57080ed3ce2\nproof/1~rqpwxo\n"
+  },
+  {
+    "after": "* one\n** child\n* two\n* same\n* same\n",
+    "case": "org-prop-remove",
+    "command": [
+      "tine",
+      "prop",
+      "remove",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "id",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "blocks": [
+        "proof/1~diekug"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "0a3c5ea267689359",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "key": "id"
+      },
+      "verb": "block.prop"
+    },
+    "text": "written proof rev 0a3c5ea267689359\nproof/1~diekug\n"
+  },
+  {
+    "after": "* two\n* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* same\n* same\n",
+    "case": "org-move",
+    "command": [
+      "tine",
+      "move",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--after",
+      "proof/2~k4kngg",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "blocks": [
+        "proof/2~diekug"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "41fbc86a4d827b5d",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "after",
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "to": "proof/2~k4kngg"
+      },
+      "verb": "block.move"
+    },
+    "text": "written proof rev 41fbc86a4d827b5d\nproof/2~diekug\n"
+  },
+  {
+    "after": "* two\n* same\n* same\n",
+    "case": "org-delete",
+    "command": [
+      "tine",
+      "delete",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "blocks": [],
+      "broken_refs": 1,
+      "deleted": "proof/1~diekug",
+      "kind": "deleted",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "91d9a75ff352831f",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+      },
+      "verb": "block.delete"
+    },
+    "text": "deleted proof/1~diekug (breaks 1 reference)\nproof rev 91d9a75ff352831f\n"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n* new\n:PROPERTIES:\n:author: proof\n:END:\n** nested\n:PROPERTIES:\n:author: proof\n:END:\n",
+    "case": "org-add",
+    "command": [
+      "tine",
+      "add",
+      "--page",
+      "proof",
+      "--author",
+      "proof",
+      "* new\n** nested",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "blocks": [
+        "proof/5~7h5cff",
+        "proof/5.1~ljbpva"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "41976535131806f4",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "author": "proof",
+        "content": "* new\n** nested",
+        "page": "proof"
+      },
+      "verb": "block.add"
+    },
+    "text": "written proof rev 41976535131806f4\nproof/5~7h5cff\nproof/5.1~ljbpva\n"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-stale-candidates",
+    "command": [
+      "tine",
+      "edit",
+      "proof/3~bf5v4g",
+      "changed",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "stale",
+        "detail": {
+          "admitted": false,
+          "candidates": [
+            "3~bf5v4g",
+            "4~bf5v4g"
+          ],
+          "handle": "proof/3~bf5v4g",
+          "page": "pages/proof.org"
+        },
+        "message": "2 blocks on the page match `proof/3~bf5v4g`; address one by its id:: or by position with --rev"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "proof/3~bf5v4g",
+        "text": "changed"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: stale: 2 blocks on the page match `proof/3~bf5v4g`; address one by its id:: or by position with --rev\n  candidates: 3~bf5v4g, 4~bf5v4g"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-stale-rev",
+    "command": [
+      "tine",
+      "delete",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--rev",
+      "old",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "stale",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org",
+          "rev": "1c704cf1469516f9"
+        },
+        "message": "the page is no longer at rev old; read it again"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "rev": "old"
+      },
+      "verb": "block.delete"
+    },
+    "text": "tine: stale: the page is no longer at rev old; read it again"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-not-found",
+    "command": [
+      "tine",
+      "edit",
+      "absent/1~aaaaaa",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 3,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "not-found",
+        "detail": {
+          "admitted": true
+        },
+        "message": "no page is named `absent`"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "absent/1~aaaaaa",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: not-found: no page is named `absent`"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-bad-args",
+    "command": [
+      "tine",
+      "prop",
+      "set",
+      "proof/1",
+      "status",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 2,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "bad-args",
+        "detail": {
+          "admitted": false
+        },
+        "message": "`proof/1` has no fingerprint; give POS~FP, or pass --rev"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "proof/1",
+        "key": "status",
+        "value": "x"
+      },
+      "verb": "block.prop"
+    },
+    "text": "tine: bad-args: `proof/1` has no fingerprint; give POS~FP, or pass --rev"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-cross-page",
+    "command": [
+      "tine",
+      "move",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--under",
+      "b/1~4jgoiz",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org",
+          "reason": "cross-page"
+        },
+        "message": "moving a block to another page is not supported yet; both blocks must be on one page"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "to": "b/1~4jgoiz"
+      },
+      "verb": "block.move"
+    },
+    "text": "tine: refused:cross-page: moving a block to another page is not supported yet; both blocks must be on one page"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-cycle",
+    "command": [
+      "tine",
+      "move",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--under",
+      "proof/1.1~misdi5",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org",
+          "reason": "kernel:cycle"
+        },
+        "message": "the outline refused the move: Cycle"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "at": "under",
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "to": "proof/1.1~misdi5"
+      },
+      "verb": "block.move"
+    },
+    "text": "tine: refused:kernel:cycle: the outline refused the move: Cycle"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-round-trip",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x\n* accidental",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org",
+          "reason": "does-not-round-trip"
+        },
+        "message": "the text would not read back as written (an unclosed fence, or a line that becomes a new block); nothing changed"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x\n* accidental"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: refused:does-not-round-trip: the text would not read back as written (an unclosed fence, or a line that becomes a new block); nothing changed"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-broken-ref",
+    "command": [
+      "tine",
+      "add",
+      "--page",
+      "proof",
+      "--author",
+      "proof",
+      "((00000000-0000-4000-8000-000000000001))",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org",
+          "reason": "broken-ref",
+          "uuid": "00000000-0000-4000-8000-000000000001"
+        },
+        "message": "no block has id:: 00000000-0000-4000-8000-000000000001"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "author": "proof",
+        "content": "((00000000-0000-4000-8000-000000000001))",
+        "page": "proof"
+      },
+      "verb": "block.add"
+    },
+    "text": "tine: refused:broken-ref: no block has id:: 00000000-0000-4000-8000-000000000001"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-bad-placement",
+    "command": [
+      "tine",
+      "add",
+      "--page",
+      "proof",
+      "--under",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 2,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "bad-args",
+        "detail": {
+          "admitted": false
+        },
+        "message": "choose exactly one of under, after, before, page or journal"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "content": "x",
+        "page": "proof",
+        "under": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+      },
+      "verb": "block.add"
+    },
+    "text": "tine: bad-args: choose exactly one of under, after, before, page or journal"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-bad-property",
+    "command": [
+      "tine",
+      "prop",
+      "set",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "bad\nkey",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org",
+          "reason": "kernel"
+        },
+        "message": "Invalid property edit"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "key": "bad\nkey",
+        "value": "x"
+      },
+      "verb": "block.prop"
+    },
+    "text": "tine: refused:kernel: Invalid property edit"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n** new\n:PROPERTIES:\n:author: proof\n:END:\n* two\n* same\n* same\n",
+    "case": "org-add-under",
+    "command": [
+      "tine",
+      "add",
+      "--under",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--author",
+      "proof",
+      "* new",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 0,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "blocks": [
+        "proof/1.2~7h5cff"
+      ],
+      "kind": "written",
+      "more": 0,
+      "name": "proof",
+      "page": "pages/proof.org",
+      "rev": "501e326884c4c35a",
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "author": "proof",
+        "content": "* new",
+        "under": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+      },
+      "verb": "block.add"
+    },
+    "text": "written proof rev 501e326884c4c35a\nproof/1.2~7h5cff\n"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-depth-cap",
+    "command": [
+      "tine",
+      "add",
+      "--under",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "--author",
+      "proof",
+      "* node 0\n** node 1\n*** node 2\n**** node 3\n***** node 4\n****** node 5\n******* node 6\n******** node 7\n********* node 8\n********** node 9\n*********** node 10\n************ node 11\n************* node 12\n************** node 13\n*************** node 14\n**************** node 15\n***************** node 16\n****************** node 17\n******************* node 18\n******************** node 19\n********************* node 20\n********************** node 21\n*********************** node 22\n************************ node 23\n************************* node 24\n************************** node 25\n*************************** node 26\n**************************** node 27\n***************************** node 28\n****************************** node 29\n******************************* node 30\n******************************** node 31\n********************************* node 32\n********************************** node 33\n*********************************** node 34\n************************************ node 35\n************************************* node 36\n************************************** node 37\n*************************************** node 38\n**************************************** node 39\n***************************************** node 40\n****************************************** node 41\n******************************************* node 42\n******************************************** node 43\n********************************************* node 44\n********************************************** node 45\n*********************************************** node 46\n************************************************ node 47\n************************************************* node 48\n************************************************** node 49\n*************************************************** node 50\n**************************************************** node 51\n***************************************************** node 52\n****************************************************** node 53\n******************************************************* node 54\n******************************************************** node 55\n********************************************************* node 56\n********************************************************** node 57\n*********************************************************** node 58\n************************************************************ node 59\n************************************************************* node 60\n************************************************************** node 61\n*************************************************************** node 62\n**************************************************************** node 63\n***************************************************************** node 64\n****************************************************************** node 65\n******************************************************************* node 66\n******************************************************************** node 67\n********************************************************************* node 68\n********************************************************************** node 69\n*********************************************************************** node 70\n************************************************************************ node 71\n************************************************************************* node 72\n************************************************************************** node 73\n*************************************************************************** node 74\n**************************************************************************** node 75\n***************************************************************************** node 76\n****************************************************************************** node 77\n******************************************************************************* node 78\n******************************************************************************** node 79\n********************************************************************************* node 80\n********************************************************************************** node 81\n*********************************************************************************** node 82\n************************************************************************************ node 83\n************************************************************************************* node 84\n************************************************************************************** node 85\n*************************************************************************************** node 86\n**************************************************************************************** node 87\n***************************************************************************************** node 88\n****************************************************************************************** node 89\n******************************************************************************************* node 90\n******************************************************************************************** node 91\n********************************************************************************************* node 92\n********************************************************************************************** node 93\n*********************************************************************************************** node 94\n************************************************************************************************ node 95\n************************************************************************************************* node 96\n************************************************************************************************** node 97\n*************************************************************************************************** node 98\n**************************************************************************************************** node 99\n***************************************************************************************************** node 100\n****************************************************************************************************** node 101\n******************************************************************************************************* node 102\n******************************************************************************************************** node 103\n********************************************************************************************************* node 104\n********************************************************************************************************** node 105\n*********************************************************************************************************** node 106\n************************************************************************************************************ node 107\n************************************************************************************************************* node 108\n************************************************************************************************************** node 109\n*************************************************************************************************************** node 110\n**************************************************************************************************************** node 111\n***************************************************************************************************************** node 112\n****************************************************************************************************************** node 113\n******************************************************************************************************************* node 114\n******************************************************************************************************************** node 115\n********************************************************************************************************************* node 116\n********************************************************************************************************************** node 117\n*********************************************************************************************************************** node 118\n************************************************************************************************************************ node 119\n************************************************************************************************************************* node 120\n************************************************************************************************************************** node 121\n*************************************************************************************************************************** node 122\n**************************************************************************************************************************** node 123\n***************************************************************************************************************************** node 124\n****************************************************************************************************************************** node 125\n******************************************************************************************************************************* node 126\n******************************************************************************************************************************** node 127\n",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org",
+          "reason": "kernel:depth_cap"
+        },
+        "message": "the outline refused the add: DepthCap"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "author": "proof",
+        "content": "* node 0\n** node 1\n*** node 2\n**** node 3\n***** node 4\n****** node 5\n******* node 6\n******** node 7\n********* node 8\n********** node 9\n*********** node 10\n************ node 11\n************* node 12\n************** node 13\n*************** node 14\n**************** node 15\n***************** node 16\n****************** node 17\n******************* node 18\n******************** node 19\n********************* node 20\n********************** node 21\n*********************** node 22\n************************ node 23\n************************* node 24\n************************** node 25\n*************************** node 26\n**************************** node 27\n***************************** node 28\n****************************** node 29\n******************************* node 30\n******************************** node 31\n********************************* node 32\n********************************** node 33\n*********************************** node 34\n************************************ node 35\n************************************* node 36\n************************************** node 37\n*************************************** node 38\n**************************************** node 39\n***************************************** node 40\n****************************************** node 41\n******************************************* node 42\n******************************************** node 43\n********************************************* node 44\n********************************************** node 45\n*********************************************** node 46\n************************************************ node 47\n************************************************* node 48\n************************************************** node 49\n*************************************************** node 50\n**************************************************** node 51\n***************************************************** node 52\n****************************************************** node 53\n******************************************************* node 54\n******************************************************** node 55\n********************************************************* node 56\n********************************************************** node 57\n*********************************************************** node 58\n************************************************************ node 59\n************************************************************* node 60\n************************************************************** node 61\n*************************************************************** node 62\n**************************************************************** node 63\n***************************************************************** node 64\n****************************************************************** node 65\n******************************************************************* node 66\n******************************************************************** node 67\n********************************************************************* node 68\n********************************************************************** node 69\n*********************************************************************** node 70\n************************************************************************ node 71\n************************************************************************* node 72\n************************************************************************** node 73\n*************************************************************************** node 74\n**************************************************************************** node 75\n***************************************************************************** node 76\n****************************************************************************** node 77\n******************************************************************************* node 78\n******************************************************************************** node 79\n********************************************************************************* node 80\n********************************************************************************** node 81\n*********************************************************************************** node 82\n************************************************************************************ node 83\n************************************************************************************* node 84\n************************************************************************************** node 85\n*************************************************************************************** node 86\n**************************************************************************************** node 87\n***************************************************************************************** node 88\n****************************************************************************************** node 89\n******************************************************************************************* node 90\n******************************************************************************************** node 91\n********************************************************************************************* node 92\n********************************************************************************************** node 93\n*********************************************************************************************** node 94\n************************************************************************************************ node 95\n************************************************************************************************* node 96\n************************************************************************************************** node 97\n*************************************************************************************************** node 98\n**************************************************************************************************** node 99\n***************************************************************************************************** node 100\n****************************************************************************************************** node 101\n******************************************************************************************************* node 102\n******************************************************************************************************** node 103\n********************************************************************************************************* node 104\n********************************************************************************************************** node 105\n*********************************************************************************************************** node 106\n************************************************************************************************************ node 107\n************************************************************************************************************* node 108\n************************************************************************************************************** node 109\n*************************************************************************************************************** node 110\n**************************************************************************************************************** node 111\n***************************************************************************************************************** node 112\n****************************************************************************************************************** node 113\n******************************************************************************************************************* node 114\n******************************************************************************************************************** node 115\n********************************************************************************************************************* node 116\n********************************************************************************************************************** node 117\n*********************************************************************************************************************** node 118\n************************************************************************************************************************ node 119\n************************************************************************************************************************* node 120\n************************************************************************************************************************** node 121\n*************************************************************************************************************************** node 122\n**************************************************************************************************************************** node 123\n***************************************************************************************************************************** node 124\n****************************************************************************************************************************** node 125\n******************************************************************************************************************************* node 126\n******************************************************************************************************************************** node 127\n",
+        "under": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+      },
+      "verb": "block.add"
+    },
+    "text": "tine: refused:kernel:depth_cap: the outline refused the add: DepthCap"
+  },
+  {
+    "after": "* a\n*** skipped level\n",
+    "case": "org-read-only",
+    "command": [
+      "tine",
+      "edit",
+      "proof/1~aaaaaa",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "input": "* a\n*** skipped level\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org",
+          "reason": "read-only"
+        },
+        "message": "pages/proof.org is read-only in Tine: Org file does not round-trip"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "proof/1~aaaaaa",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: refused:read-only: pages/proof.org is read-only in Tine: Org file does not round-trip"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-host-changed-twice",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "injected_host_outcome": "changed-twice",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "stale",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org"
+        },
+        "message": "the page changed while the command ran; read it again"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: stale: the page changed while the command ran; read it again"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-host-unsaved",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "injected_host_outcome": "unsaved",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org",
+          "reason": "unsaved"
+        },
+        "message": "the page has typed changes Tine could not save; save or discard them in the app, then try again"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: refused:unsaved: the page has typed changes Tine could not save; save or discard them in the app, then try again"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-host-page-busy",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "injected_host_outcome": "page-busy",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org",
+          "reason": "page-busy"
+        },
+        "message": "other work held the page; try again"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: refused:page-busy: other work held the page; try again"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-host-host",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 6,
+    "injected_host_outcome": "host",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "refused",
+        "detail": {
+          "admitted": false,
+          "page": "pages/proof.org",
+          "reason": "host"
+        },
+        "message": "the page host refused the write; nothing changed"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: refused:host: the page host refused the write; nothing changed"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-host-draft-failed",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 7,
+    "injected_host_outcome": "draft-failed",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "draft-failed",
+        "detail": {
+          "admitted": true,
+          "page": "pages/proof.org"
+        },
+        "message": "the write's draft could not be saved (disk full or an app-data error); nothing changed"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: draft-failed: the write's draft could not be saved (disk full or an app-data error); nothing changed"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-host-unwritten",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 8,
+    "injected_host_outcome": "unwritten",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "unwritten",
+        "detail": {
+          "admitted": true,
+          "page": "pages/proof.org"
+        },
+        "message": "the write was accepted but the file could not be written yet; Tine keeps trying"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: unwritten: the write was accepted but the file could not be written yet; Tine keeps trying"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-host-superseded",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 8,
+    "injected_host_outcome": "superseded",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "superseded",
+        "detail": {
+          "admitted": true,
+          "page": "pages/proof.org"
+        },
+        "message": "the write applied, then a later edit replaced it before it was saved"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: superseded: the write applied, then a later edit replaced it before it was saved"
+  },
+  {
+    "after": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "case": "org-host-uncertain",
+    "command": [
+      "tine",
+      "edit",
+      "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "x",
+      "--graph",
+      "$GRAPH"
+    ],
+    "exit": 8,
+    "injected_host_outcome": "uncertain",
+    "input": "* one\n:PROPERTIES:\n:id: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f\n:END:\n** child\n* two\n* same\n* same\n",
+    "json": {
+      "error": {
+        "code": "uncertain",
+        "detail": {
+          "admitted": null,
+          "page": "pages/proof.org"
+        },
+        "message": "no answer from the page host in time; the write may still complete. Read the page before retrying"
+      },
+      "schema": "tine.cli/1"
+    },
+    "request": {
+      "args": {
+        "handle": "6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+        "text": "x"
+      },
+      "verb": "block.edit"
+    },
+    "text": "tine: uncertain: no answer from the page host in time; the write may still complete. Read the page before retrying"
+  }
+]
