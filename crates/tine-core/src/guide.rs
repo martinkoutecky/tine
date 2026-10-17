@@ -323,6 +323,8 @@ mod journal_guide_tests {
             "**Shift+Enter**",
             "**Ctrl/Cmd+Enter**",
             "**Alt+Enter**",
+            "on the first result returns to the search box",
+            "does not wrap around",
         ] {
             assert!(
                 search.contains(outcome),
