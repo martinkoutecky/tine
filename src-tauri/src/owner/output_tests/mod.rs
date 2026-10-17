@@ -206,7 +206,10 @@ impl Fixture {
             "block.edit",
             self.ok("block.edit", json!({ "handle": UUID, "text": "edited" })),
         ));
-        all.push(("block.delete", self.ok("block.delete", json!({ "handle": UUID }))));
+        all.push((
+            "block.delete",
+            self.ok("block.delete", json!({ "handle": UUID })),
+        ));
         all
     }
 }

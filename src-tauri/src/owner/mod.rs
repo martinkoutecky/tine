@@ -26,6 +26,7 @@ pub(crate) mod serve;
 #[cfg(desktop)]
 pub(crate) mod terminal;
 pub(crate) mod verbs;
+pub(crate) mod window;
 pub(crate) mod wire;
 pub(crate) mod write;
 

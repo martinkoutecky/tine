@@ -54,7 +54,7 @@ import { pushToast } from "./toasts";
 import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
 import { dismissTopTransient, topTransientLayer } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount } from "./document";
+import { flushAll, subscribeOwnerFlush, appendToTodayJournal, captureToPage, unsavedDrafts, unsavedPageCount } from "./document";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
 import { isPublishedExport, loadPublishedSnapshot } from "./publishedBackend";
@@ -898,6 +898,7 @@ export function App(): JSX.Element {
   onMount(() => {
     onCleanup(subscribeWatcherFreshness());
     onCleanup(subscribeAssetChanges());
+    onCleanup(subscribeOwnerFlush());
     installReloadOnFocus();
     void initConflictPolicy();
   });

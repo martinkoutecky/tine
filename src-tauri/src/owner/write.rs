@@ -408,10 +408,18 @@ pub(super) fn write_page_with_create(
     create: bool,
     mut compute: impl FnMut(&PageDto, &PageId) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
-    crate::page_commands::with_host(slot, |host| host.flush_input(std::slice::from_ref(page)))
-        .map_err(host_failed)?
-        .map_err(|refusal| apply_refused(refusal, page))?;
-    for _ in 0..2 {
+    let flush = || {
+        crate::page_commands::with_host(slot, |host| host.flush_input(std::slice::from_ref(page)))
+            .map_err(host_failed)?
+            .map_err(|refusal| apply_refused(refusal, page))
+    };
+    flush()?;
+    // A window bound to the graph holds typed text the host has not seen
+    // (it debounces typing): it saves that first, then the page is read
+    // again (owner::window). Once per write.
+    let mut window = slot.window.get();
+    let mut attempts = 0;
+    while attempts < 2 {
         let read = crate::page_commands::with_host(slot, |host| host.read(page))
             .map_err(host_failed)?
             .map_err(|error| match error {
@@ -431,6 +439,28 @@ pub(super) fn write_page_with_create(
             .store
             .page_of(&read.page, &bytes)
             .map_err(|error| store_refused(error, page))?;
+        if let Some(link) = window.take() {
+            match link.flush(&current.doc.name) {
+                super::window::Flushed::Saved => {}
+                super::window::Flushed::Unsaved => {
+                    return Err(refused(
+                        "unsaved",
+                        Some(&read.page),
+                        "the page has typed changes Tine could not save; save or discard them in the app, then try again",
+                    ))
+                }
+                super::window::Flushed::NoAnswer => {
+                    return Err(refused(
+                        "page-busy",
+                        Some(&read.page),
+                        "the window holding the page did not save its typed text in time; try again",
+                    ))
+                }
+            }
+            flush()?;
+            continue;
+        }
+        attempts += 1;
         if current.read_only.is_some() || current.doc.read_only || current.doc.guide {
             return Err(refused(
                 "read-only",
@@ -508,12 +538,22 @@ pub(super) fn write_page_with_create(
         op.policy = Input::Flush;
         match crate::page_commands::with_host(slot, |host| host.apply(op)).map_err(host_failed)? {
             Ok(()) => {
+                // A window that displays the page without holding it gets no
+                // page mail: tell it as of an outside edit (owner::window).
+                if let Some(link) = slot.window.get() {
+                    link.changed(
+                        read.page.as_str(),
+                        &reparsed.doc.name,
+                        reparsed.doc.kind,
+                        absent,
+                    );
+                }
                 return Ok(written(
                     &read.page,
                     &reparsed.doc,
                     &reparsed.rev,
                     &planned.changed,
-                ))
+                ));
             }
             Err(ApplyRefusal::Changed) => continue,
             Err(refusal) => return Err(apply_refused(refusal, &read.page)),

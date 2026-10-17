@@ -510,6 +510,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("serve", include_str!("serve.rs")),
         ("terminal", include_str!("terminal.rs")),
         ("verbs", include_str!("verbs.rs")),
+        ("window", include_str!("window.rs")),
         ("wire", include_str!("wire.rs")),
         ("write", include_str!("write.rs")),
     ] {
@@ -528,7 +529,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 13, "scan every owner/*.rs file");
+    assert_eq!(files, 14, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];

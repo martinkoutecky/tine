@@ -61,6 +61,9 @@ pub(crate) struct GraphSlot {
     /// retirement once the host has stopped. `None` when the platform or
     /// filesystem gives no arbitration (the graph opens without endpoint).
     pub(crate) owner: Mutex<Option<crate::owner::lease::Lease>>,
+    /// The window this binding belongs to, for the owner's command-line
+    /// writes (`owner::window`). Unset in tests and under `tine serve`.
+    pub(crate) window: std::sync::OnceLock<crate::owner::window::WindowLink>,
 }
 
 /// Where the binding's page host stands. `Off` before the open starts it,
@@ -112,6 +115,7 @@ impl GraphSlot {
             rescan: Default::default(),
             host: Default::default(),
             owner: Default::default(),
+            window: Default::default(),
         }
     }
 

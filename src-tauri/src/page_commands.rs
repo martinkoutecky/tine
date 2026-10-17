@@ -289,3 +289,19 @@ pub(crate) fn bench_event(ev: String, t: f64) {
         tine_store::bench_events::unfreeze(t);
     }
 }
+
+/// The window's answer to an `owner-flush-request`. Only the window bound to
+/// this graph (and this binding) can answer it; it runs no owner verb
+/// (CLI PROTOCOL §6: no Tauri command reaches the owner endpoint).
+#[tauri::command]
+pub(crate) fn owner_flush_answer(
+    id: u64,
+    saved: bool,
+    state: crate::state::GraphContext<'_>,
+) -> Result<(), String> {
+    let slot = crate::state::slot_for_context(&state)?;
+    if let Some(window) = slot.window.get() {
+        window.answer(id, saved);
+    }
+    Ok(())
+}

@@ -155,7 +155,7 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   // prepareGraphFolder: iOS container check + iCloud download before a graph
   // bind; it writes no graph data (master 027b5ae15).
   "pickGraphFolder", "prepareGraphFolder", "pickFile", "capturePhoto", "startRecording", "stopRecording", "cancelRecording",
-  "openPdf", "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onCustomCssChanged", "onAssetChanged", "getBackupKeep", "getCaptureEnterFiles", "getLinkFirstMatch",
+  "openPdf", "readHighlights", "onGraphChanged", "onGraphChangedBulk", "onGraphWatchStatus", "onGraphRescanComplete", "rescanGraphNow", "onGraphConfigChanged", "onCustomCssChanged", "onAssetChanged", "onOwnerFlushRequest", "ownerFlushAnswer", "getBackupKeep", "getCaptureEnterFiles", "getLinkFirstMatch",
   "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
   "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
   "diagnosticReport", "defenderHint", "appArchitecture", "watcherLatencyRecent", "takeDataHomeFallbackNotice",

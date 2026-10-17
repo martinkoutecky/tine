@@ -531,6 +531,11 @@ export interface Backend {
   rollbackPdfAreaImage(pdf: string, page: number, id: string, stamp: number, bindingGeneration: number): Promise<void>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
+  /** Native only: the graph owner asks the window to save the text typed on
+   *  `page` before a command-line write (`src/document/host/ownerFlush.ts`). */
+  onOwnerFlushRequest?(cb: (request: { id: number; page: string; binding_generation: number }) => void): Promise<() => void>;
+  /** The answer to `onOwnerFlushRequest`: whether that text is saved. */
+  ownerFlushAnswer?(id: number, saved: boolean): Promise<void>;
   /** Watcher freshness (family 10), native only: a checkout-sized batch as one
    *  event, a refused/restored OS watch, and a focus rescan (one full stat
    *  diff) whose returned sequence completes after its page events. */

@@ -241,6 +241,9 @@ const OPTIONAL_METHODS = new Set([
   "retireDraft",
   // GH #181: external Tine links need the native URL handler; a published guide has none.
   "tineLinks",
+  // CLI slice 2: only a native window answers its graph owner's flush requests.
+  "onOwnerFlushRequest",
+  "ownerFlushAnswer",
 ]);
 
 /** Build the snapshot backend. `load` is awaited lazily by every method. */

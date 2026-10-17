@@ -667,6 +667,11 @@ pub(crate) fn load_graph_for_label(
     drop(displaced);
     state.note_focused(window_label);
     crate::concord_ledger::attach(app.path().app_data_dir().ok(), &slot);
+    let _ = slot.window.set(crate::owner::window::WindowLink::new(
+        app.clone(),
+        window_label.to_string(),
+        slot.binding_generation,
+    ));
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
     backup_async(app.clone(), slot.clone());
     // The graph is bound above; a settings write that fails (disk full, EIO)

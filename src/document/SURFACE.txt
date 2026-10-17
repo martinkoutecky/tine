@@ -169,6 +169,7 @@ setSelectionHeading  # why: context-menu heading applies to the whole selection 
 settleBlockRef  # why: a restored position ref becomes the block's live identity once found (GH #623); batch-nav
 splitBlock
 stopOwnNumberedListOnEmptyEnter
+subscribeOwnerFlush  # why: the window answers its graph owner's flush before a CLI write (CLI slice 2); batch-cli-slice2
 switcherPage
 toLoadablePage
 toggleBlockProperty

@@ -15,7 +15,7 @@ import type { EditKind, EditKinds } from "../../editKind";
 import { editingId } from "../../editorController";
 import { pagePropertyEntries } from "../../editor/properties";
 import { errorFamily } from "../../errorFamily";
-import { bindingOwner, readOwned, writeOwned } from "../../owned";
+import { bindingOwner, ownedWhen, readOwned, readOwnedResource, writeOwned } from "../../owned";
 import { bumpDataRev, bumpPageInventoryRev } from "../../graphSession";
 import { dismissToast, pushToast } from "../../toasts";
 import { msg, renderEnglish, type UiText } from "../../i18n";
@@ -84,6 +84,10 @@ const failed = (error: unknown): PageRefusal => ({ reason: "failed", message: St
  * saves on its own cadence, and the barrier's next `page_wait` on the same
  * bridge reports the failure as a failed barrier. */
 function ignoreSaveHintFailure(_error: unknown): void {}
+
+// A lost flush answer is harmless: the owner stops waiting and refuses the
+// command-line write as `page-busy`; nothing is written.
+function ignoreLostFlushAnswer(_error: unknown): void {}
 
 function hostPort(): HostPort {
   const b = backend();
@@ -996,4 +1000,39 @@ async function landAliasDraft(c: HostClient, name: string, ownerPath: string): P
   } finally {
     release();
   }
+}
+
+// The command line's writes through this graph's owner (CLI slice 2,
+// `src-tauri/src/owner/window.rs`). Before a write reads a page, the owner
+// asks the window to save the text typed on it: the host only sees input the
+// window has submitted, and typing is debounced. The window runs its page
+// barrier and answers whether that text is saved.
+
+/** Answer the owner's flush requests for the graph this window is bound to; a
+ *  stale binding's request gets no answer (the owner then refuses the write). */
+export function subscribeOwnerFlush(): () => void {
+  let alive = true;
+  let unsub = () => {};
+  const subscribe = backend().onOwnerFlushRequest;
+  if (!subscribe) return () => {};
+  void readOwnedResource(
+    ownedWhen(() => alive),
+    subscribe.call(backend(), (request) => {
+      if (request.binding_generation !== captureBinding().backendGeneration) return;
+      void answerOwnerFlush(request.id, request.page);
+    }),
+    (stop) => stop(),
+  ).then((result) => { if (result.kind === "current") unsub = result.value; });
+  return () => { alive = false; unsub(); };
+}
+
+async function answerOwnerFlush(id: number, page: string): Promise<void> {
+  let saved: boolean;
+  try {
+    saved = await flushPage(page);
+  } catch {
+    saved = false; // a failed barrier is unsaved text, never success
+  }
+  const answer = backend().ownerFlushAnswer?.(id, saved);
+  if (answer) void readOwned(bindingOwner(), answer).catch(ignoreLostFlushAnswer);
 }
