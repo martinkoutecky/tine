@@ -4289,8 +4289,11 @@ html[data-system-insets="native-viewport"] {
 /* Sheet field checkbox (table `checkbox` fields + boolean formula results).
    Custom-drawn from theme vars — a NATIVE checkbox renders white-on-dark under
    any theme that doesn't set `color-scheme: dark` (e.g. a custom gallery theme),
-   which is exactly Martin's dark-theme white-box nit. Mirrors .block-checkbox. */
-.sheet-checkbox {
+   which is exactly Martin's dark-theme white-box nit. Mirrors .block-checkbox.
+   `.themed-checkbox` is the same box for any other plain checkbox (All pages'
+   "Show journals"); it does not depend on the engine honouring `color-scheme`. */
+.sheet-checkbox,
+.themed-checkbox {
   appearance: none;
   -webkit-appearance: none;
   display: inline-block;
@@ -4305,14 +4308,17 @@ html[data-system-insets="native-viewport"] {
   cursor: pointer;
   position: relative;
 }
-.sheet-checkbox:not(:disabled):hover {
+.sheet-checkbox:not(:disabled):hover,
+.themed-checkbox:not(:disabled):hover {
   border-color: var(--accent, #4c8bf5);
 }
-.sheet-checkbox:checked {
+.sheet-checkbox:checked,
+.themed-checkbox:checked {
   background: var(--accent, #4c8bf5);
   border-color: var(--accent, #4c8bf5);
 }
-.sheet-checkbox:checked::after {
+.sheet-checkbox:checked::after,
+.themed-checkbox:checked::after {
   content: "";
   position: absolute;
   left: 4px;
@@ -4323,7 +4329,8 @@ html[data-system-insets="native-viewport"] {
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
-.sheet-checkbox:disabled {
+.sheet-checkbox:disabled,
+.themed-checkbox:disabled {
   cursor: default;
 }
 

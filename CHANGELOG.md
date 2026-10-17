@@ -14,6 +14,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Export definitions follow page renames**: a query block carrying `export::` or `tine.share::` that selects a page with `{{tine-query @page and name = 'Project'}}` keeps selecting it after the page is renamed (namespace pages included), so a new page with the old name is never exported in its place. The selector also exports a page with no blocks. Other query blocks keep Logseq's rename behaviour (`docs/contracts/export-definitions.md`).
 - **The command line can write** (Linux and macOS): `tine add`, `tine edit`, `tine prop set|remove`, `tine move` and `tine delete` change blocks through the graph's owner and the same guarded save the app uses, for scripts and AI agents working beside you. Blocks are named by the handle a read prints (`Page/2.1~k7f2ab`) or by `id::`; a block that changed since the read is refused as `stale`, never guessed. Every block `tine add` creates carries `author::`. With the app open, your typed text is saved first and the window shows the change at once. `--json` replies and exit codes are in `docs/contracts/cli-output.md`; the Guide's **Command line** page explains the commands.
 
+### Fixed
+
+- On phones and tablets, which have no tab strip, **Open in new tab** is no longer offered in page, block and preview menus, and Ctrl/Cmd-click, middle-click and Ctrl/Cmd+Enter in Search open the link in place instead of in a background tab you cannot reach; use **Open in sidebar** there. Desktop is unchanged (GH #705).
+- All pages: the header no longer shows a lone "JOURNAL DATE" line under PAGE, and a "—" no longer strikes through the first letter of the next row (the journal-date cell had no grid column). The journal-date column now appears only while "Show journals" is on, and its checkbox is drawn from the theme instead of a white native box on dark surfaces (UI-ALL-PAGES-GRID-001).
+- Settings search no longer lists unrelated settings for a one-character query such as "发" (a single character now matches only a setting's name, keywords and aliases, not its description), puts settings whose name matches before those matching only their description, and scrolls to a result whose control appears a moment after the tab opens, such as Developer tools (GH #706).
+- Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.
+
+## [0.8.0-beta.4] - 2026-10-17
+
 ### Changed
 
 - **Collapse (one level)** and **Expand (one level)** (formerly "… children (one level)") now include the block itself: collapsing folds the block once its children are all folded, and expanding a folded block first opens only the block (GH #696).
@@ -28,7 +37,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - The optional block embed breadcrumb shows the embedded block's parent blocks after its page, not just the page, in the same smaller, muted style as Linked References, starting at the embedded bullet (GH #440).
 - The parent-block trail above query results and Linked References shows bold, links and other formatting rendered, instead of raw text such as `**Queue**` (GH #643).
 - Windows: a save made while the previous save of the same page was still replacing the file could be refused with "write target escapes graph root"; Tine now checks the page again, and only if it still cannot inspect it reports a save error, keeping the text unsaved in the window rather than calling it outside the graph (REG-WIN-WRITE-TARGET-TRANSIENT).
-
 - A block link that starts Tine now opens its block the first time, even when the block was linked after Tine last closed; before, the first click reported the target missing and only a second click worked (GH #181).
 - Search tab: ArrowUp on the first result now returns to the search box instead of jumping to the last result, and the results no longer wrap around at either end (GH #697).
 
