@@ -113,11 +113,11 @@ nodes left out; with a budget too small for even the root the block list is empt
 | `schema` | string | always | no | `"tine.cli/1"` |
 | `kind` | string | always | no | `"block"` |
 | `block` | `tine_core::model::BlockPreview` | always | no | the subtree and its truncation count |
-| `block.group` | `tine_core::model::RefGroup` | always | no | the source page name and kind, and the subtree as `blocks` (one root `BlockDto` with its `children`) |
+| `block.group` | `tine_core::model::RefGroup` | always | no | the source page name and kind, and the subtree as `blocks` (one root `BlockDto` with its `children`); each block also carries its page-absolute `handle` when the page could be read (see *Text output*) |
 | `block.truncated` | integer | always | yes | nodes omitted by the 2,000-node or byte bound; `0` = the preview is complete. The text output says how many were omitted |
 
 Read by the text output: `block.group.page`, `block.group.blocks[].raw`,
-`block.group.blocks[].children`, `block.group.blocks[].properties`.
+`block.group.blocks[].children`, `block.group.blocks[].properties`, `block.group.blocks[].handle`.
 
 ### `refs`
 
@@ -298,7 +298,10 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
   are left out). A write names a block as `PAGE/POS~FP` or by its `id::` UUID; the fingerprint
   resolves only when exactly one block on the page has it, else `stale`. The `--json` page carries the
   same string as each block's `handle`. Continuation lines align under the first line's text.
-  Block previews (`block show`) and result groups (`refs`, `query`) print positions only.
+  A block preview (`block show`) prints the same handles: page-absolute positions (a block at `3.1`
+  prints `3.1~FP`, its children `3.1.1~FP`), the root's position taken from the page as the host
+  holds it. When the page cannot be read at that moment the preview prints positions relative to
+  the block instead. Result groups (`refs`, `query`) print positions only.
 - **Attribution sits beside the address** (spec A3: "each block line starts with its address and
   its `author::` when there is one"): `ADDRESS [author:: NAME] first line`. The `author::` property
   line is not repeated among the block's other lines. The JSON `raw` is unchanged and still holds
@@ -331,8 +334,8 @@ A failed command prints one line to stderr and exits non-zero.
 | `error.code` | string | always | one of the codes below |
 | `error.message` | string | always | prose for a person; not stable |
 | `error.detail` | object | optional | owner replies always carry `detail.admitted`; a client-side failure (no reply) has no `detail` |
-| `error.detail.admitted` | boolean | optional | whether the owner admitted the request (PROTOCOL §2.4); present on every owner reply |
-| `error.detail.candidates` | array of string | optional | `ambiguous`: the page ids the name could mean; `stale`: the handles (`POS~FP`) of the blocks a handle could mean |
+| `error.detail.admitted` | boolean or null | optional | whether the owner admitted the request (PROTOCOL §2.4); present on every owner reply; `null` for `uncertain` (unknown) |
+| `error.detail.candidates` | array of string | optional | `ambiguous`: the page ids the name could mean, or for a duplicated `id::` the names of (at most two of) the pages holding it; `stale`: the handles (`POS~FP`) of the blocks a handle could mean |
 | `error.detail.page` | string or null | optional | a write's page id (`stale`, `refused` and the admitted write codes) |
 | `error.detail.handle` | string | optional | `stale`: the handle that no longer resolves |
 | `error.detail.rev` | string | optional | `stale` on `--rev`: the page's current rev |
@@ -350,7 +353,7 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | code | exit | meaning |
 |---|---|---|
 | `not-found` | 3 | the page, block or journal day does not exist |
-| `ambiguous` | 3 | a name matched several pages |
+| `ambiguous` | 3 | a name matched several pages, or a write's `id::` UUID is on several pages (nothing is written) |
 | `busy` | 4 | the owner is yielding or stopping; not admitted. Reads retry for 30 s first |
 | `unknown-verb` | 2 | the owner does not know the verb (an older Tine) |
 | `bad-args` | 2 | arguments invalid for the verb; also a query that does not parse |
@@ -387,7 +390,7 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `cross-page` | `move` between two pages (not supported yet) |
 | `broken-ref` | `add` content names a `((uuid))` no block has (`detail.uuid`) |
 | `kernel` | the edit itself cannot apply to the block (message says why) |
-| `kernel:<reason>` | the outline refused the verb: `kernel:depthcap`, `kernel:cycle`, `kernel:readonly`, `kernel:frozen`, `kernel:headerroot`, `kernel:nooutlinestep`, `kernel:incomplete`, `kernel:unparseable` |
+| `kernel:<reason>` | the outline refused the verb: `kernel:depth_cap`, `kernel:cycle`, `kernel:read_only`, `kernel:frozen`, `kernel:cross_page_merge`, `kernel:header_root`, `kernel:no_outline_step`, `kernel:incomplete`, `kernel:unparseable` |
 
 Spec A3's "1 refused or failed" is superseded for refusals by PROTOCOL §2.3 (`refused` is 6);
 exit 1 is `internal`, an unlisted code, and a `tine serve` failure that has no code of its own.

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { backend } from "../../backend";
 import { captureBinding } from "../../binding";
+import { pinPageWhileDrafting } from "../workingSet";
 import { subscribeOwnerFlush } from "./wiring";
 
 // CLI slice 2: before a command-line write reads a page, the owner asks the
@@ -33,7 +34,16 @@ describe("owner flush requests", () => {
   it("answers saved when the page has no unsaved typed text", async () => {
     const { emit, answer, stop } = await subscribe();
     emit({ id: 7, page: "Projects", binding_generation: generation() });
-    await vi.waitFor(() => expect(answer).toHaveBeenCalledWith(7, true));
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledWith(7, true, generation()));
+    stop();
+  });
+
+  it("answers not saved while a component holds typed text outside the document", async () => {
+    const release = pinPageWhileDrafting(() => "Composing");
+    const { emit, answer, stop } = await subscribe();
+    emit({ id: 8, page: "Composing", binding_generation: generation() });
+    await vi.waitFor(() => expect(answer).toHaveBeenCalledWith(8, false, generation()));
+    release();
     stop();
   });
 

@@ -278,8 +278,11 @@ fn store::WholeGraph::explicit_referrers
 fn store::WholeGraph::referenced_assets
 fn store::WholeGraph::unlinked_references
 
-## WholeGraph: Block refs (ceiling: 4)
+## WholeGraph: Block refs (ceiling: 5)
 fn store::WholeGraph::block_ref_counts
+# CLI slice 2 (review 5 B1): a write by `id::` must know the id names one page's
+# block; the block-id index is a hint and keeps no duplicates.
+fn store::WholeGraph::block_pages
 fn store::WholeGraph::block_referrers
 fn store::WholeGraph::blocks
 fn store::WholeGraph::preview_block

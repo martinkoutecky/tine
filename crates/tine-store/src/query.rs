@@ -2225,6 +2225,32 @@ pub(crate) fn preview_block_with_budget(
     })
 }
 
+/// The pages holding a block whose uuid or persisted `id::` is `uuid`, in page
+/// order, compared case-insensitively, stopping at the second: a writer needs to know the id names exactly
+/// one block's page. The block-id index is only a hint, so this walks every
+/// page (O(B), one in-memory pass; no cache).
+pub(crate) fn block_pages(graph: &ReadSnapshot, uuid: &str) -> Vec<String> {
+    graph.with_pages(|pages| {
+        let mut found = Vec::new();
+        for (entry, doc) in pages.iter() {
+            let mut here = false;
+            walk(&doc.roots, &mut |block| {
+                here |= block.uuid.eq_ignore_ascii_case(uuid)
+                    || block
+                        .property("id")
+                        .is_some_and(|id| id.trim().eq_ignore_ascii_case(uuid));
+            });
+            if here {
+                found.push(entry.name.clone());
+                if found.len() == 2 {
+                    break;
+                }
+            }
+        }
+        found
+    })
+}
+
 /// Walk `doc` once, resolving any block whose uuid (or persisted `id::`) is a
 /// still-unresolved id in `want`. First block in walk order wins per id (matches
 /// `resolve_block`).

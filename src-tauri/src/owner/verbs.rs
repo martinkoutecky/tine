@@ -83,7 +83,12 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
             let graph = whole_graph(slot)?;
             let max_nodes = max_nodes.unwrap_or(PREVIEW_NODES).clamp(1, PREVIEW_NODES);
             match graph.preview_block(&uuid, max_nodes) {
-                Ok(Some(preview)) => Ok(ok("block", json!({ "block": preview }))),
+                Ok(Some(preview)) => {
+                    let mut block = to_value(&preview)?;
+                    let page = resolve_page(&graph, &preview.group.page)?;
+                    absolute_handles(slot, &page, &uuid, &mut block["group"]["blocks"]);
+                    Ok(ok("block", json!({ "block": block })))
+                }
                 Ok(None) => Err(not_found(format!("no block has id:: {uuid}"))),
                 Err(error) => Err(read_failed(
                     Diag::ReadFailed,
@@ -396,6 +401,38 @@ pub(super) fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<Journa
 }
 
 /// Page `id` as the page host sees it: a held page's buffer, else its file.
+/// Give a block preview the handles a page read prints: page-absolute
+/// positions and fingerprints (design §2), the root's position taken from the
+/// host's read of its page. The fingerprint, not the position, decides a
+/// write, so a preview that lags the host can only make a handle `stale`.
+/// When the page cannot be read now (busy) the preview keeps positions only.
+fn absolute_handles(slot: &GraphSlot, page: &PageId, uuid: &str, blocks: &mut Value) {
+    let Ok(Ok(read)) = crate::page_commands::with_host(slot, |host| host.read(page)) else {
+        return;
+    };
+    let Some(parsed) = read
+        .bytes
+        .and_then(|bytes| slot.store.page_of(&read.page, &bytes).ok())
+    else {
+        return;
+    };
+    let handle = super::write::Handle::Uuid(uuid.to_ascii_lowercase());
+    let Ok(path) = super::write::resolve_on(&parsed.doc, page, &handle, uuid, false) else {
+        return;
+    };
+    let org = parsed.doc.format == tine_core::model::Format::Org;
+    let at = super::write::position(&path);
+    let Some(root) = blocks.get_mut(0).and_then(Value::as_object_mut) else {
+        return;
+    };
+    let raw = root.get("raw").and_then(Value::as_str).unwrap_or("");
+    let fp = super::write::fingerprint(raw, org);
+    root.insert("handle".into(), json!(format!("{at}~{fp}")));
+    if let Some(children) = root.get_mut("children") {
+        super::write::annotate_handles(children, org, &format!("{at}."));
+    }
+}
+
 fn page(slot: &GraphSlot, id: PageId, kind: &str) -> Result<Value, ErrorBody> {
     // The host lock is held for the read only (A-K3: nothing under it takes it again).
     let read = crate::page_commands::with_host(slot, |host| host.read(&id))

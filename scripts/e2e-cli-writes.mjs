@@ -1,5 +1,5 @@
 // CLI §3: serve -> app handover, immediate window update, typing preservation.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
@@ -9,6 +9,8 @@ import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 import { openPageByName } from "./lib/e2e-navigation.mjs";
 import { waitForFileText } from "./e2e-file-poll.mjs";
+
+const gitHead = () => { try { return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(); } catch { return "unknown"; } };
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
 
 ensurePrivateSessionBus();
@@ -119,7 +121,7 @@ try {
 } catch (error) {
     try { fs.writeFileSync(path.join(TMP,"failure-dom.json"),JSON.stringify(await browser.execute(() => ({text:document.body.innerText,editors:[...document.querySelectorAll("textarea")].map(e=>e.value),errors:window.__cliErrors})),null,2)); } catch {}
   try { await browser?.saveScreenshot(path.join(TMP,"failure.png")); } catch {}
-  fs.writeFileSync(path.join(TMP,"failure.json"),JSON.stringify({commit:"1943c5959",journey:steps.length,expected:"handover, window update and typing preservation",observed:String(error),classification:failures.length ? "product" : "ambiguous",steps,failures},null,2));
+  fs.writeFileSync(path.join(TMP,"failure.json"),JSON.stringify({commit:gitHead(),journey:steps.length,expected:"handover, window update and typing preservation",observed:String(error),classification:failures.length ? "product" : "ambiguous",steps,failures},null,2));
   console.error(error);
   process.exitCode=1;
 } finally {

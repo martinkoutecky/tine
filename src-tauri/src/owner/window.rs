@@ -24,6 +24,10 @@ use tine_core::model::PageKind;
 /// window that does not answer in this time refuses the write, never guesses.
 const FLUSH_WAIT: Duration = Duration::from_secs(5);
 
+/// Request ids are unique in the process, not per link: a late answer from a
+/// window's previous binding can never match a newer link's request.
+static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
+
 /// What the window answered to a flush request.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Flushed {
@@ -39,7 +43,6 @@ pub(crate) struct WindowLink {
     app: tauri::AppHandle,
     label: String,
     binding_generation: u64,
-    next: AtomicU64,
     waiting: Mutex<HashMap<u64, mpsc::SyncSender<bool>>>,
 }
 
@@ -49,7 +52,6 @@ impl WindowLink {
             app,
             label,
             binding_generation,
-            next: AtomicU64::new(1),
             waiting: Mutex::new(HashMap::new()),
         }
     }
@@ -57,7 +59,7 @@ impl WindowLink {
     /// Ask the window to save the text typed on page `name`, and wait for
     /// its answer. Called on the owner's request thread, never the main one.
     pub(crate) fn flush(&self, name: &str) -> Flushed {
-        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
         let (answer, answered) = mpsc::sync_channel(1);
         self.waiting.lock().unwrap().insert(id, answer);
         let sent = self.app.emit_to(
@@ -77,8 +79,12 @@ impl WindowLink {
         outcome
     }
 
-    /// The window's answer to request `id` (`owner_flush_answer`).
-    pub(crate) fn answer(&self, id: u64, saved: bool) {
+    /// The window's answer to request `id` (`owner_flush_answer`), made under
+    /// `binding_generation`; an answer from another binding is ignored.
+    pub(crate) fn answer(&self, id: u64, saved: bool, binding_generation: u64) {
+        if binding_generation != self.binding_generation {
+            return;
+        }
         if let Some(answer) = self.waiting.lock().unwrap().remove(&id) {
             let _ = answer.try_send(saved);
         }

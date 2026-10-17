@@ -3243,6 +3243,13 @@ impl WholeGraph {
         }
     }
 
+    /// The pages holding the block with this uuid or persisted `id::`, at
+    /// most two: one means the id names one page's block, two means it is
+    /// duplicated across pages. Walks every page: O(B).
+    pub fn block_pages(&self, uuid: &str) -> Vec<String> {
+        crate::query::block_pages(&self.graph, uuid)
+    }
+
     /// Bounded subtree preview. `max_nodes` is clamped to 1..=2,000 and
     /// output is capped below 32 MiB. Inspect `BlockPreview::truncated`:
     /// `Some` can omit descendants or even the root under the byte cap.

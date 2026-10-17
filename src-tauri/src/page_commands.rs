@@ -297,11 +297,12 @@ pub(crate) fn bench_event(ev: String, t: f64) {
 pub(crate) fn owner_flush_answer(
     id: u64,
     saved: bool,
+    binding_generation: u64,
     state: crate::state::GraphContext<'_>,
 ) -> Result<(), String> {
     let slot = crate::state::slot_for_context(&state)?;
     if let Some(window) = slot.window.get() {
-        window.answer(id, saved);
+        window.answer(id, saved, binding_generation);
     }
     Ok(())
 }

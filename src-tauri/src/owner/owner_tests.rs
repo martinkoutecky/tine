@@ -1373,3 +1373,78 @@ fn delete_removes_the_subtree_and_counts_only_the_references_it_breaks() {
     assert_eq!(deleted["broken_refs"], 0);
     assert!(graph.root.join("pages/a.md").exists());
 }
+
+/// Review 5 B1: an `id::` on two pages names no single block. A write by that
+/// id refuses `ambiguous` (case-insensitively) and writes neither page.
+#[test]
+fn a_write_by_an_id_on_two_pages_is_ambiguous_and_writes_nothing() {
+    let graph = Graph::new();
+    let twin = format!("- twin\n  id:: {}\n", UUID.to_ascii_uppercase());
+    std::fs::write(graph.root.join("pages/c.md"), &twin).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let a = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    for (verb_name, args) in [
+        ("block.edit", json!({ "handle": UUID, "text": "which?" })),
+        ("block.delete", json!({ "handle": UUID })),
+    ] {
+        let (code, detail) = error_code(verb(&slot, verb_name, args));
+        assert_eq!(code, "ambiguous", "{verb_name}: {detail}");
+        assert_eq!(detail["admitted"], false);
+        assert_eq!(detail["candidates"].as_array().map(Vec::len), Some(2));
+    }
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap(),
+        a
+    );
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/c.md")).unwrap(),
+        twin
+    );
+}
+
+/// Review 5 R4: a write's request carries page text past the hello's 1 MiB
+/// cap (PROTOCOL §2.1).
+#[test]
+fn a_write_request_larger_than_one_mebibyte_is_answered() {
+    let graph = Graph::new();
+    let slot = Arc::new(graph.slot());
+    let (_endpoint, _gate) = endpoint(&graph, slot);
+    let mut conn = graph.connect();
+    let text = "x".repeat(2 << 20);
+    let written = conn
+        .call("block.edit", json!({ "handle": UUID, "text": text }))
+        .unwrap();
+    assert_eq!(written["kind"], "written");
+    let page = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    assert!(page.contains(&text), "the 2 MiB text was written");
+}
+
+/// Review 5 R5: `block show` prints the handles a page read prints, with
+/// page-absolute positions, so a write can name the block it shows.
+#[test]
+fn block_show_prints_page_absolute_handles_a_write_accepts() {
+    let graph = Graph::new();
+    let deep = "7d1e0f2a-3b4c-4d5e-8f60-718293a4b5c6";
+    std::fs::write(
+        graph.root.join("pages/deep.md"),
+        format!("- first\n- second\n\t- nested\n\t  id:: {deep}\n\t\t- leaf\n"),
+    )
+    .unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let shown = verb(&slot, "block.show", json!({ "uuid": deep })).unwrap();
+    let root = &shown["block"]["group"]["blocks"][0];
+    let handle = root["handle"].as_str().unwrap();
+    assert!(handle.starts_with("2.1~"), "{handle}");
+    let leaf = root["children"][0]["handle"].as_str().unwrap();
+    assert!(leaf.starts_with("2.1.1~"), "{leaf}");
+    verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("deep/{leaf}"), "text": "leaf, edited" }),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(graph.root.join("pages/deep.md")).unwrap();
+    assert!(text.contains("\t\t- leaf, edited\n"), "{text}");
+}

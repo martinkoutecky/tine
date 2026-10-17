@@ -288,17 +288,25 @@ pub(super) fn handle_page(slot: &GraphSlot, handle: &Handle) -> Result<PageId, E
     let graph = whole_graph(slot)?;
     match handle {
         Handle::At { page, .. } => resolve_page(&graph, page),
-        Handle::Uuid(uuid) => match graph.preview_block(uuid, 1) {
-            Ok(Some(preview)) => resolve_page(&graph, &preview.group.page),
-            Ok(None) => Err(ErrorBody::new(
+        // Graph-wide: an id on two pages is `ambiguous`, never the first match
+        // (review 5 B1; design §2).
+        Handle::Uuid(uuid) => match graph.block_pages(uuid).as_slice() {
+            [page] => resolve_page(&graph, page),
+            [] => Err(ErrorBody::new(
                 "not-found",
                 format!("no block has id:: {uuid}"),
                 true,
             )),
-            Err(error) => Err(internal(
-                Diag::ReadFailed,
-                crate::commands::query_error_wire::reference_error(error),
-            )),
+            pages => {
+                let mut body = ErrorBody::new(
+                    "ambiguous",
+                    format!("blocks on several pages have id:: {uuid}; fix the duplicate id first"),
+                    false,
+                );
+                body.detail =
+                    Some(json!({ "admitted": false, "handle": uuid, "candidates": pages }));
+                Err(body)
+            }
         },
     }
 }

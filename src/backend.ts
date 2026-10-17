@@ -778,7 +778,7 @@ class TauriBackend implements Backend {
   }
   onGraphChanged(cb: (c: GraphChange) => void) { return this.on("graph-changed", cb); }
   onOwnerFlushRequest(cb: (request: { id: number; page: string; binding_generation: number }) => void) { return this.on("owner-flush-request", cb); }
-  ownerFlushAnswer(id: number, saved: boolean) { return this.call<void>("owner_flush_answer", { id, saved }); }
+  ownerFlushAnswer(id: number, saved: boolean, bindingGeneration: number) { return this.call<void>("owner_flush_answer", { id, saved, bindingGeneration }); }
   onGraphChangedBulk(cb: (bulk: { changes: GraphChange[]; binding_generation?: number; answers?: GraphAnswersChange | null }) => void) { return this.on("graph-changed-bulk", cb); }
   async onGraphWatchStatus(cb: (status: { refused: boolean; message: string; binding_generation?: number }) => void) {
     const [a, b] = await Promise.all([true, false].map((refused) => this.on<{ message: string }>(`graph-watch-${refused ? "refused" : "restored"}`, (p) => cb({ ...p, refused }))));

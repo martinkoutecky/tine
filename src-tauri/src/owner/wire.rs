@@ -11,8 +11,13 @@ use serde_json::Value;
 pub(crate) const PROTOCOL: u32 = 1;
 /// The `--json` / wire success schema (spec A3).
 pub(crate) const SCHEMA: &str = "tine.cli/1";
-/// Slice 1 verbs carry no page text (§2.1).
+/// A hello carries no page text (§2.1).
 pub(crate) const REQUEST_CAP: usize = 1 << 20;
+/// A request line after the hello: slice 2's write verbs carry page text, up
+/// to the parse bound JSON-escaped (§2.1: `8 × MAX_PARSE_BYTES + 1 MiB`). Only
+/// what a peer sends is buffered.
+pub(crate) const TEXT_REQUEST_CAP: usize =
+    8 * tine_store::PARSE_INPUT_MAX_BYTES as usize + REQUEST_CAP;
 /// Eight times the parse bound (JSON escaping) plus outline metadata.
 pub(crate) const REPLY_CAP: usize = 8 * tine_store::PARSE_INPUT_MAX_BYTES as usize + (16 << 20);
 

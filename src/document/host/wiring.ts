@@ -1019,20 +1019,26 @@ export function subscribeOwnerFlush(): () => void {
     ownedWhen(() => alive),
     subscribe.call(backend(), (request) => {
       if (request.binding_generation !== captureBinding().backendGeneration) return;
-      void answerOwnerFlush(request.id, request.page);
+      void answerOwnerFlush(request.id, request.page, request.binding_generation);
     }),
     (stop) => stop(),
   ).then((result) => { if (result.kind === "current") unsub = result.value; });
   return () => { alive = false; unsub(); };
 }
 
-async function answerOwnerFlush(id: number, page: string): Promise<void> {
+async function answerOwnerFlush(id: number, page: string, generation: number): Promise<void> {
   let saved: boolean;
   try {
     saved = await flushPage(page);
   } catch {
     saved = false; // a failed barrier is unsaved text, never success
   }
-  const answer = backend().ownerFlushAnswer?.(id, saved);
+  // Text a component holds outside the document (an IME composition, a
+  // title or sheet-cell edit) is not saved by the barrier (review 5 R2).
+  if (draftPinned(page)) saved = false;
+  // A rebinding during the barrier leaves the request with no answer: the
+  // owner it came from refuses its write (review 5 R3).
+  if (generation !== captureBinding().backendGeneration) return;
+  const answer = backend().ownerFlushAnswer?.(id, saved, generation);
   if (answer) void readOwned(bindingOwner(), answer).catch(ignoreLostFlushAnswer);
 }

@@ -535,7 +535,7 @@ export interface Backend {
    *  `page` before a command-line write (`src/document/host/ownerFlush.ts`). */
   onOwnerFlushRequest?(cb: (request: { id: number; page: string; binding_generation: number }) => void): Promise<() => void>;
   /** The answer to `onOwnerFlushRequest`: whether that text is saved. */
-  ownerFlushAnswer?(id: number, saved: boolean): Promise<void>;
+  ownerFlushAnswer?(id: number, saved: boolean, bindingGeneration: number): Promise<void>;
   /** Watcher freshness (family 10), native only: a checkout-sized batch as one
    *  event, a refused/restored OS watch, and a focus rescan (one full stat
    *  diff) whose returned sequence completes after its page events. */

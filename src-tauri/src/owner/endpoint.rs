@@ -317,7 +317,9 @@ mod unix {
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 
-    use crate::owner::wire::{self, FrameError, PROTOCOL, REPLY_CAP, REQUEST_CAP};
+    use crate::owner::wire::{
+        self, FrameError, PROTOCOL, REPLY_CAP, REQUEST_CAP, TEXT_REQUEST_CAP,
+    };
 
     const CONNECTION_THREAD: &str = "tine-owner-connection";
 
@@ -642,7 +644,7 @@ mod unix {
             return;
         }
         loop {
-            let line = match wire::read_frame(&mut reader, REQUEST_CAP) {
+            let line = match wire::read_frame(&mut reader, TEXT_REQUEST_CAP) {
                 Ok(Some(line)) => line,
                 Err(FrameError::TooLarge) => {
                     send(&mut writer, &error(0, frame_too_large()));
