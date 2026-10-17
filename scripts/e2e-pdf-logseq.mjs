@@ -435,11 +435,19 @@ async function nativeClickSelector(selector, id, text) {
       .map((element) => {
         const rect = element.getBoundingClientRect();
         const style = getComputedStyle(element);
-        const x = rect.left + rect.width / 2;
-        const y = rect.top + rect.height / 2;
+        // Inline references and links can wrap. Their union rectangle may
+        // contain only whitespace; use a fragment that receives the pointer.
+        const point = [...element.getClientRects()].map((fragment) => ({
+          x: fragment.left + fragment.width / 2,
+          y: fragment.top + fragment.height / 2,
+        })).find(({ x, y }) => {
+          const hit = document.elementFromPoint(x, y);
+          return hit && (hit === element || element.contains(hit));
+        });
+        const x = point?.x ?? rect.left + rect.width / 2;
+        const y = point?.y ?? rect.top + rect.height / 2;
         const inViewport = x >= 0 && x < innerWidth && y >= 0 && y < innerHeight;
-        const receivesPointer = inViewport && document.elementsFromPoint(x, y)
-          .some((hit) => hit === element || element.contains(hit));
+        const receivesPointer = inViewport && !!point;
         const actionable = rect.width > 0 && rect.height > 0
           && style.display !== "none" && style.visibility !== "hidden"
           && receivesPointer;
@@ -1523,7 +1531,7 @@ try {
     throw new Error("switching from PDF A wrote A's pending state or baseline into PDF B");
   }
 
-  await browser.$(`[data-block-ref="${SECOND_SECOND_ID}"]`).click();
+  await nativeClickSelector(`[data-block-ref="${SECOND_SECOND_ID}"]`, "second-pdf-second-highlight");
   await browser.waitUntil(() => browser.execute((highlightId) =>
     document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target") === highlightId &&
     document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_SECOND_ID), {

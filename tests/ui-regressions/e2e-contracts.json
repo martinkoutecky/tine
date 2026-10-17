@@ -298,7 +298,7 @@
         { "class": "core-operation", "userOutcome": "Copy block ref gives a fresh target one durable identity; a pasted reference updates its badge and referrer panel before reload, survives reload, and follows later source changes.", "blocking": true },
         { "class": "exact-safety-interoperability", "userOutcome": "The ((uuid)) that Copy block ref puts on the native clipboard names an id:: already present in the target's file at the moment the reference becomes available.", "blocking": true, "authority": "og batch 10 durable block-ref receipt (id persisted before the reference is handed out)" }
       ],
-      "acceptableVariations": ["Refresh timing may vary within the completed save lifecycle."],
+      "acceptableVariations": ["Refresh timing may vary within the completed save lifecycle.", "Copy block ref may live in a Copy as submenu."],
       "nonRequirements": ["Exact badge typography, panel layout, animation, or generated UUID value."],
       "stability": "stable"
     },
@@ -468,6 +468,7 @@
     },
     "scripts/e2e-pdf-logseq.mjs": {
       "contracts": [
+        { "class": "stateful-ux", "userOutcome": "On Linux, choosing PDFs in the native file chooser imports unchanged asset bytes and saves Markdown or Org links on the initiating page; uploaded PDFs reopen with interoperable text and area highlights.", "blocking": true },
         { "class": "core-operation", "userOutcome": "PDF highlights, links, annotations, outline destinations, and restored view state interoperate with Logseq data.", "blocking": true },
         { "class": "exact-safety-interoperability", "userOutcome": "PDF asset switches and target navigation isolate reader state without crashes or runaway resource use.", "blocking": true, "authority": "Tine PDF interoperability and reader resource-safety contract" }
       ],
@@ -520,7 +521,7 @@
     },
     "scripts/e2e-query-workspace.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Graph search, query workspaces, references, evidence, filters, and materialization preserve their visible query state.", "blocking": true }],
-      "acceptableVariations": ["Result presentation and pane layout may evolve while membership, predicates, evidence, and safe materialization remain correct; a highlighted unlinked mention may itself open and select the exact source occurrence without a redundant numbered jump row."],
+      "acceptableVariations": ["Result presentation and pane layout may evolve while membership, predicates, evidence, and safe materialization remain correct; a highlighted unlinked mention may itself open and select the exact source occurrence without a redundant numbered jump row.", "One state-dependent bulk toggle may replace separate Collapse all and Expand all buttons for linked and unlinked reference groups."],
       "nonRequirements": ["Exact row heights, result-card DOM structure, or tab animation."],
       "stability": "stable"
     },
@@ -557,7 +558,7 @@
         }
       ],
       "acceptableVariations": [
-        "The note's wording, placement and button styling; the order of markers is the engine printer's."
+        "The note's wording, placement and button styling; the order of markers is the engine printer's. A no-condition answer may invite adding a condition instead of saying No results."
       ],
       "nonRequirements": [
         "Exact note geometry, result DOM structure or row order."
