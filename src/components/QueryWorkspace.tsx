@@ -55,7 +55,7 @@ import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
 import { createPage, CreatePageRefusal, queryWorkspacePage } from "../document";
 import { internalLinkDest, internalLinkMouseDown, internalLinkAuxClick } from "../linkGesture";
-import { nextResultIndex } from "../resultNavigation";
+import { steppedResultIndex } from "../resultNavigation";
 import { openRouteInOtherPane } from "../panes";
 import { openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
@@ -985,9 +985,17 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       : event.key === "ArrowUp" || (event.ctrlKey && shortcutKey(event) === "p") ? -1 : 0;
     if (direction) {
       const rows = [...workspace.querySelectorAll<HTMLButtonElement>("button[data-query-result]")];
-      const index = nextResultIndex(fromInput ? -1 : rows.indexOf(target as HTMLButtonElement), direction, rows.length);
-      if (index < 0) return;
+      const index = steppedResultIndex(fromInput ? -1 : rows.indexOf(target as HTMLButtonElement), direction, rows.length);
+      if (index === null) {
+        if (!fromInput) { event.preventDefault(); event.stopPropagation(); }
+        return;
+      }
       event.preventDefault(); event.stopPropagation();
+      if (index < 0) {
+        setActiveResult(null);
+        sourceInput?.focus();
+        return;
+      }
       rows[index].focus();
       rows[index].scrollIntoView({ block: "nearest" });
     } else if (event.key === "Enter" && key) {
