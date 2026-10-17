@@ -42,7 +42,6 @@ sha2 = "0.10"
 # Zip launch backups (backup/archive.rs): raw Deflate through the pure-Rust
 # miniz_oxide backend only, no C codec on any target.
 flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
-unicode-normalization = "0.1"
 ed25519-dalek = "2"
 # Handle-relative no-replace restore publication on Unix-family platforms.
 libc = "0.2"
@@ -63,6 +62,8 @@ tempfile = "3"
 
 [dev-dependencies]
 clap_mangen = "0.2"
+# backup/tests.rs: NFC/NFD page names in a zip round trip.
+unicode-normalization = "0.1"
 tine-store = { path = "../crates/tine-store", features = ["test-faults"] }
 
 # Mobile + Windows: open http/mailto URLs via the OS — an ACTION_VIEW Intent on

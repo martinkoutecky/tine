@@ -87,9 +87,10 @@ policy, restore retiring only inside the recorded scope) carry over unchanged in
 - **Cost.** A launch costs one zip and four syncs, or four syncs and no file when unchanged. The
   keep-count now keeps the last N successive distinct states among the counted snapshots (not
   `pre-restore`, not another writer's, verified), not the last N launches (approved 2026-10-11).
-- **Memory.** A snapshot holds its capture plus either the baseline's verification or the archive
-  assembly: measured +1.0 GiB of peak memory for a 400 MiB text graph, estimated ~1.3 GiB at the
-  512 MiB limit.
+- **Memory.** A snapshot holds its capture plus either the baseline's check (one entry at a time,
+  read from the file) or the archive assembly: measured +0.39 GiB of peak memory for an unchanged
+  launch and +1.0 GiB for one that writes on a 400 MiB text graph, estimated ~1.3 GiB at the
+  512 MiB limit (re-measured 2026-10-17, og-merge review M1).
 - **Readable without Tine.** A snapshot opens in any archive tool. The Guide's "Where your backups are"
   names the folder per platform. There is no in-app "open backups folder" action. On Android and iOS
   the folder is in private app storage.

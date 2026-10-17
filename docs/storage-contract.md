@@ -653,14 +653,18 @@ cost ~54 ms before it settled its baseline (D2); 11 runs now give 55.7 to
 
 Peak memory of the backup itself (the process's peak RSS above its RSS
 before the backup, after the store's own graph load finished; same harness,
-2026-10-11): +4 to +5 MiB on the anonymized copy. On a synthetic graph of
-800 pages holding 400 MiB of text (a 235 MiB zip): +1.0 GiB for a first,
-unchanged or changed launch and +1.1 GiB for the prune run. The capture
-holds the payload (~400 MiB); on top of it either the baseline's full
-verification (the archive and every decompressed entry, ~650 MiB) or the
-archive assembly (the compressed entries and the assembled zip, ~650 MiB).
-The store's own loaded state for that graph was 2.2 GiB. At the 512 MiB
-payload limit the backup's own peak is estimated (not measured) at ~1.3 GiB.
+re-measured 2026-10-17 after the og-merge review): +2 to +6 MiB on the
+anonymized copy. On a synthetic graph of 800 pages holding 400 MiB of text
+(a 243 MiB zip): +0.39 GiB for an unchanged launch and +1.0 GiB for a first,
+changed, repair or prune run. The capture holds the payload (~400 MiB). An
+unchanged launch adds only the baseline's check, which reads the zip from
+the file one entry at a time and keeps no payload; a run that writes adds
+the archive assembly (the compressed entries and the assembled zip,
+~490 MiB). A retention pass checks each zip the same way, holding about one
+entry. Restore alone keeps the verified payloads, since it passes them to
+`Store::restore`. The store's own loaded state for that graph was 1.9 GiB.
+At the 512 MiB payload limit the backup's own peak is estimated (not
+measured) at ~1.3 GiB for a run that writes.
 
 ## I-8 refusal scenarios
 
