@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Block } from "./Block";
+import { stickyZ } from "./StickyAncestor";
 import { loadSingle } from "../document/workingSet";
 import { resetStore } from "../document";
 import { initParser } from "../render/parse";
@@ -47,5 +48,21 @@ it("GH #643: a pinned parent shows its rendered first line and a bullet in the r
     expect(button.textContent).not.toContain("second line");
     expect(button.querySelector(".sticky-ancestor-toggle")).not.toBeNull();
     expect(button.querySelector(".sticky-ancestor-bullet > .sticky-ancestor-dot")).not.toBeNull();
+  } finally { dispose(); }
+});
+
+it("GH #643: pins stay below menus, toolbars and modals at every depth", () => {
+  for (const depth of [0, 1, 5, 10, 40]) {
+    expect(stickyZ(depth)).toBeGreaterThan(8);
+    expect(stickyZ(depth)).toBeLessThan(20);
+  }
+  expect(stickyZ(0)).toBeGreaterThan(stickyZ(1));
+  let block: BlockDto = { id: "leaf", raw: "leaf", collapsed: false, children: [] };
+  block = { id: "top", raw: "top", collapsed: false, children: [block] };
+  loadSingle({ name: "Z", title: "Z", kind: "page", pre_block: null, blocks: [block] });
+  const root = document.createElement("div"); root.className = "main-content"; document.body.append(root);
+  const dispose = render(() => <Block id="top" />, root);
+  try {
+    expect(Number(root.querySelector<HTMLElement>('[data-sticky-block="top"]')!.style.zIndex)).toBeLessThan(20);
   } finally { dispose(); }
 });

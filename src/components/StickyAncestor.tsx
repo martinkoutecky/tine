@@ -9,6 +9,13 @@ import { visibleBody } from "../render/block";
 import { InlineText } from "../render/inline";
 import { formatForBlock } from "../document";
 
+/** GH #643: above outline content (which stays at z-index 8 or below) and below
+ * every resizer, menu, toolbar and modal (20 and up). Shallower pins stay on
+ * top of deeper ones while one slides out; past ten levels later rows paint last. */
+export function stickyZ(depth: number): number {
+  return 9 + Math.max(0, 10 - depth);
+}
+
 export function StickyAncestor(props: { id: string; raw: string }): JSX.Element {
   let host!: HTMLDivElement;
   const [above, setAbove] = createSignal(false);
@@ -38,7 +45,7 @@ export function StickyAncestor(props: { id: string; raw: string }): JSX.Element 
     onCleanup(() => observer?.disconnect());
   });
   return <div ref={host} class="sticky-ancestor" data-sticky-block={props.id}
-    style={{ top: `${depth() * 30}px`, "z-index": String(200 - depth()) }}>
+    style={{ top: `${depth() * 30}px`, "z-index": String(stickyZ(depth())) }}>
     <button type="button" hidden={!above()} onClick={() => {
       const block = host.parentElement!;
       revealOutlineBlock(props.id, block);
