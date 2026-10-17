@@ -413,6 +413,59 @@ fn a_damaged_baseline_is_never_the_reason_to_skip() {
     g.close();
 }
 
+/// Memory (og-merge review M1; Martin: memory over speed, an OOM is
+/// binary): checking a zip, for the unchanged-launch skip and for every
+/// retention pass, holds one entry at a time, never the whole archive or
+/// all of its payloads. Before the fix an unchanged launch peaked at the
+/// capture plus the archive plus every decompressed payload (about 2.7x
+/// the graph text) and a Settings prune at 1.7x per verified snapshot; the
+/// capture alone held 2x, every read keeping its growth headroom.
+#[test]
+fn checking_a_zip_holds_one_entry_not_the_archive() {
+    let g = Graph::new("backup-zip-check-memory");
+    // 24 pages of 1 MiB of noisy text: deflate keeps most of it.
+    let mut x = 0x9E37_79B9u32;
+    let alphabet = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -";
+    let text_bytes = 24usize << 20;
+    for page in 0..24 {
+        let text: String = (0..1 << 20)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                alphabet[(x % alphabet.len() as u32) as usize] as char
+            })
+            .collect();
+        write(&g.graph.join(format!("pages/noise-{page}.md")), &text);
+    }
+    assert!(g.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
+    let (unchanged, peak) =
+        archive::tests::peak_heap_on_this_thread(|| g.snap("", BACKUP_KEEP_DEFAULT));
+    assert!(unchanged.failure.is_none());
+    assert_eq!(g.zip_names().len(), 1, "the unchanged launch wrote nothing");
+    assert!(
+        peak < text_bytes * 3 / 2,
+        "I-14 (memory): an unchanged launch holds its capture and one checked entry, not \
+         the baseline archive and its payloads (exemplar backup.rs verify_zip); peak {peak} B \
+         for {text_bytes} B of text"
+    );
+    // A second state, then a prune to one: the retention pass verifies
+    // both zips and holds neither.
+    write(&g.graph.join("pages/A.md"), "- a, edited\n");
+    assert!(g.snap("", BACKUP_KEEP_DEFAULT).failure.is_none());
+    assert_eq!(g.zip_names().len(), 2);
+    let ((), peak) = archive::tests::peak_heap_on_this_thread(|| {
+        prune_now(&g.base, 1, std::time::Duration::from_secs(30))
+    });
+    assert_eq!(g.zip_names().len(), 1, "the prune ran");
+    assert!(
+        peak < text_bytes / 4,
+        "I-14 (memory): a prune checks each zip one entry at a time (exemplar backup.rs \
+         verify_zip); peak {peak} B for {text_bytes} B of text"
+    );
+    g.close();
+}
+
 /// Crash matrix (dossier gate): a crash before the rename leaves only a
 /// partial, never listed and removed by the next lock holder; a crash after
 /// it leaves a complete zip that verifies and lists.

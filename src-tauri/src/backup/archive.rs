@@ -787,11 +787,30 @@ pub(super) struct Verified {
     pub(super) files: Vec<Vec<u8>>,
 }
 
-/// Full verification (restore, the unchanged-launch skip, the prune keeper):
-/// the listing check, entries contiguous from offset 0 up to the central
-/// directory, every entry decompressed within the limits, its CRC, length
-/// and SHA-256 against the manifest.
+/// Full verification for restore: [`check`]'s walk, keeping every payload
+/// file's verified bytes for `Store::restore`.
 pub(super) fn verify(src: &mut impl Source) -> Result<Verified, Problem> {
+    let mut files = Vec::new();
+    let manifest = verify_each(src, |bytes| files.push(bytes))?;
+    Ok(Verified { manifest, files })
+}
+
+/// Full verification without keeping the payloads (the unchanged-launch
+/// skip, the retention pass and its keeper): the same checks as [`verify`],
+/// holding one entry at a time. Over a [`FileSource`] its peak memory is
+/// about one entry, not the archive (og-merge review M1).
+pub(super) fn check(src: &mut impl Source) -> Result<ZipManifest, Problem> {
+    verify_each(src, drop)
+}
+
+/// The listing check, entries contiguous from offset 0 up to the central
+/// directory, every entry decompressed within the limits, its CRC, length
+/// and SHA-256 against the manifest; each verified payload goes to `keep`,
+/// in manifest order.
+fn verify_each(
+    src: &mut impl Source,
+    mut keep: impl FnMut(Vec<u8>),
+) -> Result<ZipManifest, Problem> {
     let directory = read_directory(src)?;
     let mut expected = 0u64;
     let mut total = 0u64;
@@ -824,16 +843,15 @@ pub(super) fn verify(src: &mut impl Source) -> Result<Verified, Problem> {
         MAX_MANIFEST_BYTES,
     )?)?;
     check_listing(&directory, &manifest)?;
-    let mut files = Vec::with_capacity(payload.len());
     for (entry, file) in payload.iter().zip(&manifest.files) {
         let bytes = read_entry(src, entry, directory.cd_offset, MAX_ENTRY_BYTES)?;
         if bytes.len() as u64 != file.len || format!("{:x}", Sha256::digest(&bytes)) != file.sha256
         {
             return Err(Problem::Damaged("payload does not match the manifest"));
         }
-        files.push(bytes);
+        keep(bytes);
     }
-    Ok(Verified { manifest, files })
+    Ok(manifest)
 }
 
 #[cfg(test)]

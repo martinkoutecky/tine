@@ -545,9 +545,13 @@ impl Budget {
             return Err(ErrorKind::FileTooLarge);
         }
         let limit = archive::MAX_ENTRY_BYTES.min(self.bytes);
-        let (bytes, _) = store
+        let (mut bytes, _) = store
             .read(id, Some(limit))
             .map_err(|error| store_error_kind(&error))?;
+        // The capture holds every file until its zip is written: keep only
+        // the bytes, not the read's growth headroom (up to 2x; og-merge
+        // review M1).
+        bytes.shrink_to_fit();
         self.bytes -= bytes.len() as u64;
         self.entries -= 1;
         Ok(bytes)
@@ -900,9 +904,17 @@ fn read_archive(path: &std::path::Path) -> Result<Vec<u8>, archive::Problem> {
     })
 }
 
-/// A full verification of the zip at `path`.
-fn verify_zip(path: &std::path::Path) -> Result<archive::Verified, archive::Problem> {
-    read_archive(path).and_then(|bytes| archive::verify(&mut &bytes[..]))
+/// A full verification of the zip at `path`, read positionally from the
+/// file one entry at a time and keeping no payload (og-merge review M1:
+/// the skip and every retention pass would otherwise hold the archive and
+/// all of its payloads). Its manifest on success.
+fn verify_zip(path: &std::path::Path) -> Result<archive::ZipManifest, archive::Problem> {
+    let file = std::fs::File::open(path).map_err(|error| archive::Problem::Io(error.kind()))?;
+    let len = file
+        .metadata()
+        .map_err(|error| archive::Problem::Io(error.kind()))?
+        .len();
+    archive::check(&mut archive::FileSource { file, len })
 }
 
 /// The listing-time status of one zip: its manifest, read from the central
@@ -941,10 +953,12 @@ fn publish_locked(
         .last()
         .filter(|newest| suffix.is_empty() && newest.namespace == naming::Namespace::Zip)
         .filter(|newest| {
-            verify_zip(&newest.path).is_ok_and(|verified| verified.manifest == capture.manifest)
+            verify_zip(&newest.path).is_ok_and(|manifest| manifest == capture.manifest)
         });
     let (path, durability) = match baseline {
         Some(newest) => {
+            // Nothing is written: the retention pass below runs without it.
+            drop(capture);
             crate::debug::diag_private("backup-unchanged", newest.name.render());
             match settle(&newest.path, zips, "baseline_sync") {
                 Ok(durability) => (newest.path.clone(), durability),

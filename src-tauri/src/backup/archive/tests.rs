@@ -580,6 +580,14 @@ struct Largest;
 static TRACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LARGEST: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+std::thread_local! {
+    /// This thread's live heap bytes and their peak while `ON` is set
+    /// ([`peak_heap_on_this_thread`]); other threads never disturb them.
+    static THREAD_ON: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static THREAD_LIVE: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
+    static THREAD_PEAK: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
+}
+
 impl Largest {
     fn note(size: usize) {
         use std::sync::atomic::Ordering::Relaxed;
@@ -587,22 +595,50 @@ impl Largest {
             LARGEST.fetch_max(size, Relaxed);
         }
     }
+
+    /// Count `delta` live bytes on this thread when it is tracking.
+    fn live(delta: isize) {
+        let _ = THREAD_ON.try_with(|on| {
+            if on.get() {
+                let live = THREAD_LIVE.with(|live| {
+                    live.set(live.get() + delta);
+                    live.get()
+                });
+                THREAD_PEAK.with(|peak| peak.set(peak.get().max(live)));
+            }
+        });
+    }
+}
+
+/// The peak heap `run` held on this thread above what it held on entry
+/// (bytes freed that were allocated before entry count against it).
+pub(in crate::backup) fn peak_heap_on_this_thread<T>(run: impl FnOnce() -> T) -> (T, usize) {
+    THREAD_LIVE.with(|live| live.set(0));
+    THREAD_PEAK.with(|peak| peak.set(0));
+    THREAD_ON.with(|on| on.set(true));
+    let out = run();
+    THREAD_ON.with(|on| on.set(false));
+    (out, THREAD_PEAK.with(std::cell::Cell::get) as usize)
 }
 
 unsafe impl std::alloc::GlobalAlloc for Largest {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         Self::note(layout.size());
+        Self::live(layout.size() as isize);
         unsafe { std::alloc::System.alloc(layout) }
     }
     unsafe fn alloc_zeroed(&self, layout: std::alloc::Layout) -> *mut u8 {
         Self::note(layout.size());
+        Self::live(layout.size() as isize);
         unsafe { std::alloc::System.alloc_zeroed(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
+        Self::live(-(layout.size() as isize));
         unsafe { std::alloc::System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
         Self::note(new_size);
+        Self::live(new_size as isize - layout.size() as isize);
         unsafe { std::alloc::System.realloc(ptr, layout, new_size) }
     }
 }
