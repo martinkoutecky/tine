@@ -27,6 +27,10 @@ pub enum TextMatchMode {
     Regex,
     /// Ordered-subsequence fuzzy match.
     Fuzzy,
+    /// The query's whitespace-separated fragments occur literally, in order,
+    /// without overlapping (OG's `LIKE '%a%b%'`). Letters of one fragment are
+    /// never scattered.
+    Fragments,
 }
 
 /// Explainable objective relevance. Variant order is deliberately not used for

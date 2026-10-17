@@ -226,6 +226,22 @@ function includesFolded(text: string, needle: string): boolean {
   return searchFold(text).includes(needle);
 }
 
+/** OG's `((` block search leg `LIKE '%a%b%'`: every whitespace-separated
+ *  fragment of the folded query occurs literally, in order, without overlap. */
+function includesFragmentsInOrder(text: string, foldedQuery: string): boolean {
+  const folded = searchFold(text);
+  let at = 0;
+  let any = false;
+  for (const fragment of foldedQuery.split(/\s+/)) {
+    if (!fragment) continue;
+    const found = folded.indexOf(fragment, at);
+    if (found < 0) return false;
+    at = found + fragment.length;
+    any = true;
+  }
+  return any;
+}
+
 function firstMappedSpan(text: string, needle: string): { start: number; end: number } | null {
   if (!needle) return null;
   return searchSubstringSpans(text, needle, 1)[0] ?? null;
@@ -536,7 +552,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const snapshot = await load();
       const wanted = literalNeedle(query);
       if (wanted.empty || !wanted.folded) return [];
-      return collect(snapshot, (block) => includesFolded(block.raw, wanted.folded), limit);
+      return collect(snapshot, (block) => includesFragmentsInOrder(block.raw, wanted.folded), limit);
     },
     quickSwitch,
     async captureQuickSwitch(query: string, limit: number, _transliteration = false): Promise<PageEntry[]> {

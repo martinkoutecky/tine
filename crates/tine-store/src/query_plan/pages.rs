@@ -93,6 +93,13 @@ fn page_base_score(
                     }
                 })
                 .or_else(|| plan.transliteration_score(original, pred)),
+            TextMatchMode::Fragments => fragments_first_offset(lower, &pred.value).map(|first| {
+                if first == 0 {
+                    (1000, ObjectiveMatchClass::Prefix)
+                } else {
+                    (500, ObjectiveMatchClass::Substring)
+                }
+            }),
             TextMatchMode::Regex => plan
                 .regexes
                 .get(&pred.clause_id)
