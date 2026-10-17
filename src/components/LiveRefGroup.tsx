@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createResource, createSignal, crea
 import { nearestAncestors } from "../render/blockTrail";
 import { backend } from "../backend";
 import { graphOwner, latestOwner, readOwned } from "../owned";
-import { beginPageHeaderEdit, blockProperty, blockRef, collapseEpochOf, ensurePageLoaded, pageByName, setBlockProperty, node as docNode } from "../document";
+import { beginPageHeaderEdit, blockProperty, blockRef, collapseEpochOf, ensurePageLoaded, formatForBlock, formatForPage, pageByName, setBlockProperty, node as docNode } from "../document";
 import { loadSourcePage } from "../sourcePage";
 import { Block, CollapseSurfaceContext, EmbedNavExitContext, OutlineScopeContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
@@ -12,6 +12,7 @@ import { graphEpoch, graphMeta } from "../graphSession";
 import { OccurrenceControls, ReferenceExcerptBlocks, occurrenceSelection } from "./ReferenceEvidence";
 import { startEditing } from "../editorController";
 import { visibleBody } from "../render/block";
+import { InlineText } from "../render/inline";
 import { LinkDepthContext } from "./linkDepth";
 import { readOr } from "../resourceRead";
 import { openBlockInSidebar, openPageProps } from "../ui";
@@ -215,6 +216,10 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
   /** True when `id` starts a parent group, i.e. its breadcrumb is not a repeat. */
   const startsParentGroup = (id: string): boolean => displayed().starts.has(id);
   interface Crumb { label: string; id?: string }
+  // GH #643 (query trails): "…" is the elision marker, not block text.
+  const crumbLabel = (c: Crumb): JSX.Element => c.label === "…" && !c.id
+    ? <>…</>
+    : <span class="ref-crumb-label"><InlineText text={c.label || "…"} format={c.id ? formatForBlock(c.id) : formatForPage(props.page)} /></span>;
   const liveBreadcrumb = (id: string): Crumb[] | null => {
     if (!ready() || !liveNode(id)) return null;
 
@@ -222,10 +227,9 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
     // ancestor IDs from result-row labels (src/render/blockTrail.ts).
     const trail = nearestAncestors(id);
     if (!trail) return null;
-    const tail = trail.ids.map((parent): Crumb => {
-      const chars = [...(visibleBody(docNode(parent)!.raw)[0] ?? "").trim()];
-      return { id: parent, label: chars.length > 60 ? `${chars.slice(0, 60).join("")}…` : chars.join("") };
-    });
+    // Labels are markup, rendered inline like the block itself (OG block.cljs
+    // `breadcrumb`: `map-inline` over the title, no character cut); CSS caps width.
+    const tail = trail.ids.map((parent): Crumb => ({ id: parent, label: (visibleBody(docNode(parent)!.raw)[0] ?? "").trim() }));
     return trail.more ? [{ label: "…" }, ...tail] : tail;
   };
   // A ref/query/embed group can render a block that ALSO lives in the main outline
@@ -439,7 +443,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                           <Show when={i() > 0}>
                             <span class="ref-crumb-sep">›</span>
                           </Show>
-                          <Show when={c.id && props.surface !== "embed"} fallback={<span class="ref-crumb">{c.label}</span>}>
+                          <Show when={c.id && props.surface !== "embed"} fallback={<span class="ref-crumb">{crumbLabel(c)}</span>}>
                             <button type="button" class="ref-crumb" onClick={(event) => {
                               event.stopPropagation();
                               if (!c.id || !docNode(c.id)) return;
@@ -448,7 +452,7 @@ function MountedRefGroup(props: LiveRefGroupProps): JSX.Element {
                                 const key = displayed().starts.get(id);
                                 if (key !== undefined) setContextRoots((roots) => ({ ...roots, [key]: c.id! }));
                               }
-                            }}>{c.label}</button>
+                            }}>{crumbLabel(c)}</button>
                           </Show>
                         </>
                       )}

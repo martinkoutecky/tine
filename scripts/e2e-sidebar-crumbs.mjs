@@ -20,6 +20,8 @@ for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(out, dir))
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{}\n");
 const file = path.join(graph, "pages", "Crumb Demo.md");
 fs.writeFileSync(file, "- First\n  - Second **bold**\n    - Third\n      - Fourth\n        - Leaf target\n          id:: 6960a000-0000-4000-8000-000000000440\n");
+fs.writeFileSync(path.join(graph, "pages", "Queue Source.md"), "- **Queue** for [[Work]]\n  - TODO AAAI reviews\n");
+fs.writeFileSync(path.join(graph, "pages", "Query Host.md"), "- {{query (task TODO)}}\n");
 fs.writeFileSync(path.join(graph, "pages", "Embed Host.md"), "- {{embed ((6960a000-0000-4000-8000-000000000440))}}\n");
 const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(out, "data"),
   XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"),
@@ -30,7 +32,7 @@ const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServer
   { env, stdio: ["ignore", log, log], detached: true });
 const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   workingDiff: true, app, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"),
-  journey: "Shift-click a nested block's bullet; the sidebar card title shows page, ellipsis and the nearest three ancestors rendered; clicking an ancestor crumb swaps the card to that block; with Block embed breadcrumbs on, an embed of the block shows the same trail, muted and aligned with its bullet" };
+  journey: "Shift-click a nested block's bullet; the sidebar card title shows page, ellipsis and the nearest three ancestors rendered; clicking an ancestor crumb swaps the card to that block; with Block embed breadcrumbs on, an embed of the block shows the same trail, muted and aligned with its bullet; a query result's trail renders its parent's bold and link markup" };
 const crumbs = () => browser.execute(() => [...document.querySelectorAll(".right-sidebar .rs-item")].map(item => ({
   title: item.querySelector(".rs-item-title")?.textContent, more: !!item.querySelector(".rs-crumb-more"),
   crumbs: [...item.querySelectorAll(".rs-crumb")].map(el => el.textContent), bold: item.querySelector(".rs-item-crumbs strong")?.textContent ?? null })));
@@ -103,7 +105,17 @@ try {
   if (embed.textLeft < embed.bulletLeft - 4 || embed.textLeft > embed.bulletRight + 4) throw Error(`embed trail not aligned with the bullet: ${JSON.stringify(embed)}`);
   if (embed.fontRatio > 0.85) throw Error(`embed trail not reduced like Linked References: ${JSON.stringify(embed)}`);
   try { execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, "embed.png")], { env }); } catch {}
-  proof.outcome = "PASS"; proof.before = before; proof.after = after; proof.embed = embed;
+  stage = "GH #643 follow-up: a query result's trail renders its parent's markup";
+  await openPageByName(browser, "Query Host");
+  await browser.waitUntil(() => browser.execute(() => !!document.querySelector(".main-content .ref-breadcrumb .ref-crumb strong")),
+    { timeout: 15000, timeoutMsg: "query trail shows no rendered bold parent" });
+  const query = await browser.execute(() => {
+    const trail = document.querySelector(".main-content .ref-breadcrumb");
+    return { text: trail.textContent, bold: trail.querySelector("strong")?.textContent, ref: trail.querySelector(".page-ref")?.textContent ?? null };
+  });
+  if (query.bold !== "Queue" || query.text.includes("**") || !query.ref?.includes("Work")) throw Error(`query trail: ${JSON.stringify(query)}`);
+  try { execFileSync("rtk", ["proxy", "import", "-window", "root", path.join(out, "query.png")], { env }); } catch {}
+  proof.outcome = "PASS"; proof.before = before; proof.after = after; proof.embed = embed; proof.query = query;
   fs.writeFileSync(path.join(out, "proof.json"), JSON.stringify(proof, null, 2));
   console.log(`PASS GH #640: ${out}`);
 } catch (error) {

@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - A block opened in the right sidebar is titled with its page and its parent blocks (the nearest three, after "⋯"), as in Logseq; clicking a parent shows that block in the card instead (GH #640).
 - The optional block embed breadcrumb shows the embedded block's parent blocks after its page, not just the page, in the same smaller, muted style as Linked References, starting at the embedded bullet (GH #440).
+- The parent-block trail above query results and Linked References shows bold, links and other formatting rendered, instead of raw text such as `**Queue**` (GH #643).
 - Windows: a save made while the previous save of the same page was still replacing the file could be refused with "write target escapes graph root"; Tine now checks the page again, and only if it still cannot inspect it reports a save error, keeping the text unsaved in the window rather than calling it outside the graph (REG-WIN-WRITE-TARGET-TRANSIENT).
 
 - Search tab: ArrowUp on the first result now returns to the search box instead of jumping to the last result, and the results no longer wrap around at either end (GH #697).
