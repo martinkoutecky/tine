@@ -13,6 +13,7 @@ pub mod diag_line;
 pub mod doc;
 pub mod edn;
 pub use tine_outline::editor_text;
+pub use tine_outline::outline as outline_kernel;
 pub mod graph_paths;
 pub mod guide;
 pub mod html_sanitize;

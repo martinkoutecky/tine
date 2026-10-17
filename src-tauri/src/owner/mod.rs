@@ -13,6 +13,7 @@
 //! - `serve`, `client` and `terminal`: the command line's side (desktop
 //!   only): the headless owner, discovery and handover, the read commands.
 
+pub(crate) mod arena;
 #[cfg(desktop)]
 pub(crate) mod client;
 pub(crate) mod endpoint;

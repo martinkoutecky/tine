@@ -496,6 +496,7 @@ fn the_namespace_names_every_shipped_target() {
 #[test]
 fn the_endpoint_has_no_webview_or_plugin_door() {
     for (name, source) in [
+        ("arena", include_str!("arena.rs")),
         ("client", include_str!("client.rs")),
         ("endpoint", include_str!("endpoint.rs")),
         ("lease", include_str!("lease.rs")),
@@ -523,7 +524,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 11, "scan every owner/*.rs file");
+    assert_eq!(files, 12, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];
@@ -1006,5 +1007,61 @@ fn identical_blocks_are_stale_with_candidates_never_position_first() {
     assert_eq!(
         std::fs::read_to_string(graph.root.join("pages/dup.md")).unwrap(),
         "- same\n- same\n"
+    );
+}
+
+#[test]
+fn move_carries_the_subtree_and_refuses_a_cycle() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let one = block_handle(&read, 0);
+    let two = block_handle(&read, 1);
+    let moved = verb(
+        &slot,
+        "block.move",
+        json!({ "handle": format!("a/{one}"), "to": format!("a/{two}"), "at": "after" }),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap(),
+        format!("- two\n- one\n  id:: {UUID}\n\t- under one\n"),
+        "the block moves with its child and keeps its bytes"
+    );
+    assert!(
+        moved["blocks"][0].as_str().unwrap().starts_with("a/2~"),
+        "{moved}"
+    );
+
+    // Under its own child: the kernel's cycle refusal, nothing written.
+    let read = verb(&slot, "page.show", json!({ "name": "a" })).unwrap();
+    let one = block_handle(&read, 1);
+    let child = read["page"]["blocks"][1]["children"][0]["handle"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let before = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.move",
+        json!({ "handle": format!("a/{one}"), "to": format!("a/{child}"), "at": "under" }),
+    ));
+    assert_eq!(
+        (code.as_str(), detail["reason"].as_str()),
+        ("refused", Some("kernel:cycle"))
+    );
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap(),
+        before
+    );
+
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.move",
+        json!({ "handle": format!("a/{one}"), "to": "b/1", "at": "after", "rev": "x" }),
+    ));
+    assert_eq!(
+        (code.as_str(), detail["reason"].as_str()),
+        ("refused", Some("cross-page"))
     );
 }

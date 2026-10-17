@@ -145,6 +145,16 @@ enum Command {
         #[command(flatten)]
         write: WriteArgs,
     },
+    /// Move a block, with its children, under, after or before another block
+    /// on the same page.
+    Move {
+        #[arg(value_name = "BLOCK")]
+        handle: String,
+        #[command(flatten)]
+        place: MovePlace,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
     /// Set or remove one property of a block.
     Prop {
         #[command(subcommand)]
@@ -174,6 +184,21 @@ enum PropAction {
         #[command(flatten)]
         write: WriteArgs,
     },
+}
+
+/// Where `tine move` puts the block: exactly one of the three.
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+struct MovePlace {
+    /// As the last child of TARGET.
+    #[arg(long, value_name = "TARGET")]
+    under: Option<String>,
+    /// Right after TARGET, as its next sibling.
+    #[arg(long, value_name = "TARGET")]
+    after: Option<String>,
+    /// Right before TARGET, as its previous sibling.
+    #[arg(long, value_name = "TARGET")]
+    before: Option<String>,
 }
 
 /// Which graph a write asks, its optional page guard, and how it prints.
@@ -437,7 +462,8 @@ pub(crate) fn dispatch() -> Option<i32> {
             | Command::Query { .. }
             | Command::Pages { .. }
             | Command::Edit { .. }
-            | Command::Prop { .. }),
+            | Command::Prop { .. }
+            | Command::Move { .. }),
         ) => return Some(read_command(command)),
         Some(Command::Export { format }) => export(format).map(|receipt| {
             terminal_stdout(format_args!(
@@ -520,6 +546,23 @@ fn read_command(command: Command) -> i32 {
                 write.read.target(),
                 "block.edit",
                 json!({ "handle": handle, "text": text, "rev": write.rev }),
+            )
+        }
+        Command::Move {
+            handle,
+            place,
+            write,
+        } => {
+            let (at, to) = match (place.under, place.after, place.before) {
+                (Some(to), _, _) => ("under", to),
+                (_, Some(to), _) => ("after", to),
+                (_, _, Some(to)) => ("before", to),
+                _ => return 2,
+            };
+            write_verb(
+                write.read.target(),
+                "block.move",
+                json!({ "handle": handle, "to": to, "at": at, "rev": write.rev }),
             )
         }
         Command::Prop {
@@ -849,6 +892,7 @@ mod tests {
             ("tine-search.1", include_str!("../../docs/tine-search.1")),
             ("tine-query.1", include_str!("../../docs/tine-query.1")),
             ("tine-edit.1", include_str!("../../docs/tine-edit.1")),
+            ("tine-move.1", include_str!("../../docs/tine-move.1")),
             ("tine-prop.1", include_str!("../../docs/tine-prop.1")),
             (
                 "tine-prop-set.1",

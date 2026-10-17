@@ -536,6 +536,17 @@ struct EditArgs {
 }
 
 #[derive(Deserialize)]
+struct MoveArgs {
+    handle: String,
+    /// The block the moved one lands relative to.
+    to: String,
+    /// `under` (last child), `after` or `before`.
+    at: String,
+    #[serde(default)]
+    rev: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct PropArgs {
     handle: String,
     key: String,
@@ -645,6 +656,85 @@ pub(crate) fn prop(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
                 doc: next,
                 changed: vec![path],
             })
+        },
+    )
+}
+
+/// `block.move`: the kernel's `MoveTo` (the window's drag and drop), with
+/// its subtree. Both blocks on one page; a move across pages is refused
+/// until it is one operation over both pages (design §3).
+pub(crate) fn move_block(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
+    use tine_core::outline_kernel::{apply, Place, Verb};
+    let MoveArgs {
+        handle: text,
+        to: to_text,
+        at,
+        rev,
+    } = super::verbs::parse(args)?;
+    let handle = parse_handle(&text)?;
+    let target = parse_handle(&to_text)?;
+    let page = handle_page(slot, &handle)?;
+    if handle_page(slot, &target)? != page {
+        return Err(refused(
+            "cross-page",
+            Some(&page),
+            "moving a block to another page is not supported yet; both blocks must be on one page",
+        ));
+    }
+    if !matches!(at.as_str(), "under" | "after" | "before") {
+        return Err(ErrorBody::new(
+            "bad-args",
+            format!("`{at}` is not a place (use under, after or before)"),
+            false,
+        ));
+    }
+    write_page(
+        slot,
+        &page,
+        EditKind::MoveBlocks,
+        rev.as_deref(),
+        |doc, page| {
+            let from = resolve_on(doc, page, &handle, &text, rev.is_some())?;
+            let to = resolve_on(doc, page, &target, &to_text, rev.is_some())?;
+            let arena = super::arena::Arena::of(doc);
+            let key = arena.key_at(&from).expect("resolved path");
+            let target = arena.key_at(&to).expect("resolved path");
+            let place = match at.as_str() {
+                "under" => Place::LastChild {
+                    key: target.clone(),
+                },
+                "after" => Place::After {
+                    key: target.clone(),
+                },
+                _ => Place::Before {
+                    key: target.clone(),
+                },
+            };
+            let verb = Verb::MoveTo {
+                keys: vec![key.clone()],
+                to: place,
+                inherit_from: Some(target),
+            };
+            let change = apply(
+                std::slice::from_ref(&arena.page),
+                &verb,
+                &Default::default(),
+            )
+            .map_err(|reason| {
+                refused(
+                    &format!(
+                        "kernel:{}",
+                        serde_json::to_value(reason)
+                            .ok()
+                            .and_then(|v| v.as_str().map(str::to_string))
+                            .unwrap_or_default()
+                    ),
+                    Some(page),
+                    format!("the outline refused the move: {reason:?}"),
+                )
+            })?;
+            let (next, changed) = arena.apply(doc, &change, &[key]);
+            Ok(Planned { doc: next, changed })
         },
     )
 }
