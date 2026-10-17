@@ -125,13 +125,37 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "about", label: msg("settings-search-about"), description: msg("settings-search-version-licenses-updates") },
 ];
 
-/** Match all query words against one entry's label, description and aliases.
+function textsOf(...parts: (string | Msg | undefined)[]): string {
+  return parts.flatMap((text) => text === undefined ? [] : typeof text === "string" ? [text] : [render(text), renderEnglish(text)]).join(" ").toLowerCase();
+}
+
+/** A one-character term (any script) is too unspecific to match prose: a single
+ * "发" occurs incidentally in many descriptions (GH #706). */
+const isShortTerm = (term: string) => [...term].length === 1;
+const queryTerms = (query: string) => query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+
+/** Whether every query word hits the entry's label, keywords or aliases. */
+function nameMatches(entry: SettingSearchEntry, terms: string[]): boolean {
+  const names = textsOf(entry.label, entry.keywords, ...(entry.aliases ?? []));
+  return terms.every((term) => names.includes(term));
+}
+
+/** Match all query words against one entry's label, description, keywords and
+ * aliases; a one-character word matches everything but the description.
  * O(entry text × query words), no I/O or failure. */
 export function settingMatches(entry: SettingSearchEntry, query: string): boolean {
-  const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
-  const haystack = [entry.label, entry.description, entry.keywords ?? "", ...(entry.aliases ?? [])]
-    .flatMap((text) => typeof text === "string" ? [text] : [render(text), renderEnglish(text)]).join(" ").toLowerCase();
-  return terms.every((term) => haystack.includes(term));
+  const terms = queryTerms(query);
+  const haystack = textsOf(entry.label, entry.description, entry.keywords, ...(entry.aliases ?? []));
+  const names = textsOf(entry.label, entry.keywords, ...(entry.aliases ?? []));
+  return terms.every((term) => (isShortTerm(term) ? names : haystack).includes(term));
+}
+
+/** Matching entries with label/keyword/alias matches before description-only
+ * matches; the given order is kept within each group. O(entries × text × words). */
+export function rankedSettingMatches(entries: readonly SettingSearchEntry[], query: string): SettingSearchEntry[] {
+  const terms = queryTerms(query);
+  const hits = entries.filter((entry) => settingMatches(entry, query));
+  return [...hits.filter((entry) => nameMatches(entry, terms)), ...hits.filter((entry) => !nameMatches(entry, terms))];
 }
 
 /** Whether a tab has an advanced setting matching a nonempty query. Used to
