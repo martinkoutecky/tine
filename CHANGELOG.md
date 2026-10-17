@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.0-beta.3] - 2026-10-17
+
 ### Added
 
 - The Journal sections page explains what it controls and links to its Guide in the right sidebar (GH #710).
@@ -35,7 +37,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Journal carry buttons appear on title-row hover or keyboard focus, and stay visible on devices without hover (UI-CENSUS-7).
 - Removed the parser comparison runner from Help & diagnostics; diagnostic reports, rescan and graph verification remain available (UI-CENSUS-18).
 - Alt-dragging one block from a query result or an ordinary outline bullet now inserts a saved block reference while keeping the source in place (GH #494).
-
 - Image macros retain Copy image when previews are unavailable, and an open image viewer keeps file copy after an asset refresh (GH #700).
 - Plain navigation now switches to an already-open page tab even when one route uses the page name and the other its file path, preserving the source tab (GH #711).
 - Query table column choices now come from the current results instead of offering unrelated graph properties; saved choices survive changes to the results (GH #680).
