@@ -1,5 +1,5 @@
 import { type Format, type PageKind } from "../../types";
-import { doc, formatForBlock, pageByName, setDoc } from "../model";
+import { authoredBlockClaims, doc, formatForBlock, pageByName, setDoc } from "../model";
 import { captureBinding, bindingCurrent } from "../../binding";
 import { readOwned, bindingOwner } from "../../owned";
 import { blockWritable } from "./properties";
@@ -82,24 +82,10 @@ export function resolveBlockRef(ref: LoadedBlockRef, opts: { navigation?: boolea
     return id && node && node.page === ref.page && existingBlockId(node.raw, formatForBlock(id)) === null ? id : null;
   }
 
-  const stack = [...owner.roots];
-  const seen = new Set<string>();
-  let authoredClaim: string | null = null;
-  while (stack.length) {
-    const id = stack.pop()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const node = doc.byId[id];
-    if (!node || node.page !== ref.page) continue;
-    if (existingBlockId(node.raw, formatForBlock(id)) === ref.uuid) {
-      // A second authored claimant is ambiguous. Never guess, and never rewrite
-      // either block merely because a route exposed the conflict.
-      if (authoredClaim !== null) return null;
-      authoredClaim = id;
-    }
-    stack.push(...node.children);
-  }
-  if (authoredClaim !== null) return authoredClaim;
+  const claims = authoredBlockClaims(ref.page, ref.uuid);
+  // A second authored claimant is ambiguous. Never guess, and never rewrite
+  // either block merely because a route exposed the conflict.
+  if (claims?.size) return claims.size === 1 ? claims.values().next().value! : null;
 
   const runtime = doc.byId[ref.uuid];
   if (!runtime || runtime.page !== ref.page) return null;
