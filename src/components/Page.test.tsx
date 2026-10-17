@@ -22,6 +22,7 @@ import { bindTestHost, submittedPages } from "../document/host/wiring.test.suppo
 import { isSaving, pendingDataRevision } from "../document/host/wiring";
 import { conflictedInHost, openAsLoaded } from "./hostConflict.test.support";
 import { clearRecent, closeContextMenu, contextMenu, recentPages, rightSidebar, setRecentPages, setRightSidebar } from "../ui";
+import { closeShareDialog, shareTarget } from "../shareState";
 import { bumpGraphEpoch, graphEpoch, setGraphMeta } from "../graphSession";
 import { setToasts, toasts } from "../toasts";
 import { favorites, isFavorite, seedFavorites } from "../favorites";
@@ -1398,6 +1399,40 @@ describe("page actions entry point", () => {
       await tick();
       expect(triggers.map((trigger) => trigger.getAttribute("aria-expanded"))).toEqual(["false", "false"]);
     } finally {
+      dispose();
+    }
+  });
+
+  it("opens the share dialog for the page from the title-row share button, and hides the exports marker", async () => {
+    const dto: PageDto = {
+      name: "Exports",
+      kind: "page",
+      title: "Exports",
+      pre_block: "tine/exports:: true\npublic:: false",
+      blocks: [{ id: "exports-root", raw: "Body", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { "exports-root": node("exports-root", "Body", dto.name) },
+      pages: [page(dto.name, "page", ["exports-root"], dto.pre_block)],
+      feed: [],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      const button = root.querySelector<HTMLButtonElement>(".page-title-actions .page-share-btn")!;
+      expect(button).not.toBeNull();
+      expect(button.getAttribute("aria-label")).toBe("Share this page");
+      button.click();
+      expect(shareTarget()).toEqual({ page: "Exports" });
+      // The marker is machinery, not a property to edit; an ordinary property still shows.
+      expect(root.textContent).not.toContain("tine/exports");
+    } finally {
+      closeShareDialog();
       dispose();
     }
   });

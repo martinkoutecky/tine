@@ -4,6 +4,7 @@ import { For, Show, createResource, createSignal, onCleanup, onMount, type Acces
 import { backend } from "../backend";
 import { exportSheets } from "../sheet/exportSheets";
 import { closeQueryExport, openSettings } from "../ui";
+import { queryExportAfter } from "../shareState";
 import { pushToast } from "../toasts";
 import { bindingOwner, writeOwned } from "../owned";
 import type { QueryPublicationRequest } from "../types";
@@ -53,7 +54,11 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
       if (!owner()) return;
       const receipt = await writeOwned(owner, backend().publishQuery(request, selection.fingerprint, sheets));
       if (receipt.kind === "current") {
+        // What to do once the folder is written (the share dialog saves its definition then).
+        const after = queryExportAfter(props.request);
         closeQueryExport();
+        // The hook reports its own failures; a rejection it let through is shown, not dropped.
+        if (after) void Promise.resolve(after({ folder: request.folder! })).catch((cause) => pushToast(rawText(String((cause as Error)?.message ?? cause)), "error"));
         pushToast(msg("query-export-dialog-exported", { pages: String(receipt.value.pages), path: receipt.value.path, retired: receipt.value.retired ?? "", previous: receipt.value.retired ? 1 : 0 }), "success", { sticky: true });
         if (receipt.value.warnings.length) pushToast(rawText(receipt.value.warnings.join(" ")), "warn", { sticky: true });
       }

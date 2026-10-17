@@ -5,6 +5,7 @@ query-calm-text = Edit as text
 query-calm-copy = Copy results
 query-calm-search = Open in Search
 query-calm-export = Export…
+query-calm-share = Share…
 query-calm-done = Done
 query-calm-condition = Add a condition to see results.
 query-calm-columns = Columns

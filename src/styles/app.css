@@ -1437,6 +1437,39 @@ html[data-system-insets="native-viewport"] {
   opacity: 1;
 }
 
+/* The title's Share button: the star's hover pair, visible without hover on coarse pointers. */
+.page-share-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.share-icon {
+  width: 18px;
+  height: 18px;
+}
+.page-title-row:hover .page-share-btn,
+.page-share-btn:focus-visible {
+  opacity: 1;
+}
+.page-share-btn:hover,
+.page-share-btn:focus-visible {
+  color: var(--text-primary);
+}
+@media (pointer: coarse) {
+  .page-share-btn {
+    min-width: 36px;
+    min-height: 36px;
+    justify-content: center;
+    opacity: 1;
+  }
+}
+
 .page-actions-trigger {
   background: none;
   border: none;
@@ -1598,6 +1631,35 @@ html[data-system-insets="native-viewport"] {
 .pp-done:hover {
   background: var(--bg-tertiary);
 }
+
+/* Share dialog: the settings shell without the left navigation, sized to its content. */
+.settings-modal.share-dialog {
+  width: 640px;
+  height: auto;
+  max-height: 82vh;
+  outline: none;
+}
+.share-dialog .settings-pane-head { flex: 0 0 auto; }
+.share-choices { display: grid; gap: 4px; margin: 4px 0 8px; }
+.share-choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  align-items: baseline;
+  padding: 5px 4px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.share-choice .settings-hint { grid-column: 2; }
+.share-choice.disabled { opacity: 0.55; cursor: default; }
+.share-choice-label { color: var(--text-primary); }
+.share-query { display: grid; gap: 8px; margin: 4px 0 8px; }
+.share-review { display: grid; gap: 6px; font-size: 13px; }
+.share-pages { max-height: 160px; overflow-y: auto; margin: 0; padding-left: 20px; }
+.share-pages small { color: var(--text-muted); }
+.share-save-note, .share-existing { margin: 6px 0 0; }
+.share-foot { flex: 0 0 auto; padding: 12px 20px; border-top: 1px solid var(--border-color); }
+.share-dialog .query-export-refused { color: var(--tine-danger-color, var(--palette-danger)); overflow-wrap: anywhere; }
 
 /* Copy / export modal */
 .modal-overlay.graph-name-overlay { z-index: 9100; } /* Above first-run Welcome. */
@@ -2638,7 +2700,8 @@ html[data-system-insets="native-viewport"] {
     gap: 4px;
     min-width: 0;
   }
-  .page-title-row:has(.page-carry-actions) .fav-star {
+  .page-title-row:has(.page-carry-actions) .fav-star,
+  .page-title-row:has(.page-carry-actions) .page-share-btn {
     display: none;
   }
   .carry-btn {
@@ -2696,6 +2759,8 @@ html[data-system-insets="native-viewport"] {
     max-height: none;
     flex-direction: column;
   }
+  /* The share dialog's own two-class rule sizes it to its content on larger screens; a phone gets the full sheet. */
+  .settings-modal.share-dialog { width: 100%; max-width: none; height: 100%; max-height: none; }
   .settings-nav {
     width: auto;
     flex: 0 0 auto;

@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
-import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
+import { resetStore, loadFeed, restoreTodayJournalInFeed, markDirty, flushPage, flushAll, captureToPage, appendQueryBlock, reloadHlsIfLoaded, isDirty, deletePage, splitBlock, insertOutlineAfter, replaceEmptyBlockWithOutline, indentBlock, outdentBlock, mergeWithPrev, mergeWithNext, deleteBlock, ensureEmptyBlock, toggleCollapse, collapsibleDescendantIds, setCollapsedDescendants, visibleOrder, setRaw, undo, redo, selectBlock, selectedIds, moveSelection, deleteSelection, cycleSelectionTasks, moveSelectionItems, moveBlockFeed, moveBlock, indentSelection, pageByName, carryUnfinished, ensurePageLoaded, loadGuidePages, exportNodesFor, prevVisible, nextVisible, orderedListMarker, blockProperty, setBlockProperty, setSchedule, blockSubtreeMarkdown, selectionMarkdown, toggleListItemAtIndex, withUndoUnit, readSchedule, readPageProperty, setPageProperty, beginPageHeaderEdit, finishPageHeaderEdit, ensureBlockId, blockRef, blockPositionRef, settleBlockRef, persistBlockRefTarget, resolveBlockRef } from "./document";
 import { reloadPage, forgetPage } from "./document/workingSet";
 import { setBlockMoving, isBlockMoving } from "./document/edits/moves";
 import { loadSingle, reloadDisposition, installPageContent } from "./document/workingSet";
@@ -1868,6 +1868,61 @@ describe("save engine (persistence)", () => {
     expect(disk.writes).toHaveLength(2);
     expect(isConflicted("Test")).toBe(false);
     expect(baseRevFor("Test")).toBe(disk.files.get(disk.writes[1][0])!.rev);
+  });
+
+  describe("appendQueryBlock (the share dialog's definition on the exports page)", () => {
+    const exportsPage = (format: "md" | "org"): PageRead => ({
+      name: "Exports", kind: "page", title: "Exports", id: `pages/Exports.${format}`, rev: "r0", format,
+      pre_block: format === "org" ? "#+tine/exports: true\n#+public: false" : "tine/exports:: true\npublic:: false",
+      blocks: [blk("{{tine-query (or (property export) (property tine.share))}}")],
+    } as PageRead);
+
+    /** The page read that admits the named file answers from the in-memory disk. */
+    const readsFrom = (disk: Awaited<ReturnType<typeof bindMemoryDisk>>) =>
+      vi.spyOn(backend(), "getPage").mockImplementation(async (name: string) =>
+        [...disk.files.values()].find((dto) => dto.name === name) ?? null);
+
+    it("appends the definition as a root block with its property, once, and writes it to disk", async () => {
+      const disk = await bindMemoryDisk([exportsPage("md")]);
+      readsFrom(disk);
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      const roots = () => disk.files.get("pages/Exports.md")!.blocks.map((b) => b.raw);
+      expect(roots()).toEqual([
+        "{{tine-query (or (property export) (property tine.share))}}",
+        "{{tine-query @page and name = 'A'}}\nexport:: a-site",
+      ]);
+      // The identical definition is not appended twice.
+      const writes = disk.writes.length;
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      expect(roots()).toHaveLength(2);
+      expect(disk.writes).toHaveLength(writes);
+      // A different folder is a different definition.
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site-2"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      expect(roots()).toHaveLength(3);
+    });
+
+    it("spells the property for an Org page", async () => {
+      const disk = await bindMemoryDisk([exportsPage("org")]);
+      readsFrom(disk);
+      expect(await appendQueryBlock("Exports", "{{tine-query @page and name = 'A'}}", [["export", "a-site"]])).toBe(true);
+      expect(await flushAll()).toBe(true);
+      const raw = disk.files.get("pages/Exports.org")!.blocks[1].raw;
+      expect(raw).toContain("{{tine-query @page and name = 'A'}}");
+      expect(raw).toContain(":export: a-site");
+      expect(raw).not.toContain("export:: a-site");
+    });
+
+    it("refuses an empty query or page name without touching anything", async () => {
+      const disk = await bindMemoryDisk([exportsPage("md")]);
+      readsFrom(disk);
+      expect(await appendQueryBlock("Exports", "  ", [["export", "x"]])).toBe(false);
+      expect(await appendQueryBlock(" ", "{{tine-query @page}}", [])).toBe(false);
+      expect(await flushAll()).toBe(true);
+      expect(disk.writes).toEqual([]);
+    });
   });
 
   it("a late save does not advance the baseline of a same-name replacement", async () => {

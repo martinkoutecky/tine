@@ -119,6 +119,12 @@
       "nonRequirements":["Exact pixels, identical EDN whitespace, native platform certification outside Linux WebKitGTK, or synchronizing the page back into config.edn."],
       "stability":"burn-in"
     },
+    "scripts/e2e-share-dialog.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"The topbar share button is disabled with no page open and shares the open page. Share opens with This page chosen, reviews exactly that page, and exporting to a folder writes an export folder holding that page and no other, then creates the Exports page (marked tine/exports and public:: false, with an overview block) and lists the definition with its export folder, in Markdown and Org graphs, without changing config.edn.","blocking":true}],
+      "acceptableVariations":["Dialog layout, focus, review wording and save or watcher latency may vary while the exported page set and the persisted Exports page content remain correct."],
+      "nonRequirements":["Exact pixels, the Link destination and neighbour selection (not built yet) or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-query-epoch-flicker.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Pressing Enter in today's journal keeps the Scheduled & Deadline result's child visible on every frame; the result never drops to its read-only stand-in while the query reruns.","blocking":true}],
       "acceptableVariations":["Frame counts and rerun timing may vary while no frame shows the task without its child."],

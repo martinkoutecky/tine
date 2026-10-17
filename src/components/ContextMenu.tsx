@@ -4,6 +4,7 @@ import { openRouteInNewWindow, workspaceWindowsSupported } from "../workspaceWin
 import { reportUiFailure } from "../uiFailure";
 import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
+import { openShareDialog } from "../shareState";
 import { isMobilePlatform } from "../nativeChrome";
 import { pushToast } from "../toasts";
 import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
@@ -894,6 +895,7 @@ function PageMenu(props: {
         openExportModal([...page!.roots]);
       },
     },
+    ...(!pageByName(props.name)?.guide ? [{ id: "share", label: msg("context-menu-ui-share"), run: () => openShareDialog({ page: props.name }) }] : []),
     ...(!isMobilePlatform ? [{ id: "export-pdf", label: msg("context-menu-ui-export-to-pdf"), run: () => openPdfExport(props.name) }] : []),
     ...(props.fileActions && !pageByName(props.name)?.guide
       ? [

@@ -11,6 +11,7 @@ query-calm-copy = 复制结果
 query-calm-search = 在搜索中打开
 
 query-calm-export = 导出…
+query-calm-share = 分享…
 
 query-calm-done = 完成
 

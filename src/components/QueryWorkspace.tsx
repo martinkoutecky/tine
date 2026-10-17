@@ -61,6 +61,7 @@ import { openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../u
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { readLatestOr, readOr } from "../resourceRead";
 import { documentOf } from "../windowRealm";
+import { focusableElements } from "./focusableElements";
 import type { QueryTextDialect } from "../editor/queryIr";
 import { QueryOgHint } from "./QueryResultParts";
 import { t, msg, render } from "../i18n";
@@ -498,12 +499,6 @@ function friendlyFieldsFromSource(source: string): FriendlyFields | null {
     exclude: common.filter((term) => term.negated).map((term) => term.text).join(" "),
     regex: "",
   };
-}
-
-function focusableElements(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>(
-    'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])'
-  )].filter((element) => !element.hasAttribute("hidden") && !element.closest("details:not([open])"));
 }
 
 function AdvancedModal(props: {

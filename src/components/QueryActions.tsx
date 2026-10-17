@@ -13,6 +13,7 @@ export function QueryActions(props: {
   copy: () => void;
   search: () => void;
   export: () => void;
+  share: () => void;
   fold?: (collapsed: boolean) => void;
   folded?: boolean;
 }): JSX.Element {
@@ -62,6 +63,7 @@ export function QueryActions(props: {
       </Show>
       <button type="button" onClick={() => run(props.search)}>{t("query-calm-search")}</button>
       <button type="button" disabled={!props.results} onClick={() => run(props.export)}>{t("query-calm-export")}</button>
+      <button type="button" onClick={() => run(props.share)}>{t("query-calm-share")}</button>
     </div></FloatingPortal></Show>
   </details>;
 }

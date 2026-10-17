@@ -144,6 +144,8 @@ topbar-overflow-menu-calendar = Calendar
 
 topbar-overflow-menu-journals = Journals
 
+topbar-overflow-menu-share = Share this page
+
 topbar-overflow-menu-toggle-theme = Toggle theme
 
 topbar-overflow-menu-toggle-right-sidebar = Toggle right sidebar

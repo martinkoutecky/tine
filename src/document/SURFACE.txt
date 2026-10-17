@@ -14,6 +14,7 @@ PublishedNeed  # why: backend wire type of the page host protocol; batch-og-s3b
 UnsavedState  # why: the state label each unsaved page shows in that panel (GH #540); batch20b
 admitPageFile  # why: capture and carry load the file their write must land in, refusing a second file; batchJ1
 appendFeed
+appendQueryBlock  # why: the share dialog appends a definition block to the exports page through the single capture writer; batch-share-dialog-ui
 appendToJournalDay  # why: the share inbox appends into the exact day it recorded and records its recovery state inside the admitted read (ADR 0073); batchNativeIntegrations
 appendToTodayJournal
 applyGraphChange
@@ -61,6 +62,7 @@ existingBlockId  # why: editor buffers reuse the shared parser-owned identity an
 expandAncestors  # why: navigation reveals a block hidden in collapsed ancestors (GH #258); batch17a
 expandBlockSelection  # why: Ctrl/Cmd+A ladder in block selection (GH #262); batch17a
 exportNodesFor
+exportsPage  # why: the exports page DTO uses the canonical guarded-create boundary (export definitions); batch-share-dialog-ui
 extendFeedForScroll
 extendSelectionTo
 favoritesArrangementBlocks  # why: favorites arrangement read with collapsed:: moved off the raw; batch12c

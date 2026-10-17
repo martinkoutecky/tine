@@ -920,3 +920,10 @@ query-prose-aggregate-unavailable = 不可用（{ $reason ->
        *[non_numeric] 非数值
     }）
 query-prose-formula-statistics-notice = 暂不支持按公式精确统计，当前显示总体统计。
+query-export-dialog-left-out = { $count ->
+   *[other] 有 { $count } 个选中的页面未包含：
+}
+query-export-dialog-left-out-private = 已标记 public:: false
+query-export-dialog-left-out-exports-page = 导出页面永远不会被导出
+query-export-dialog-selects-host-page = 其中包含查询所在的页面。
+query-export-dialog-include-query-text = 包含查询文本（读者能看到查询本身，而不仅是页面）

@@ -1155,6 +1155,33 @@ mod rename_guide_tests {
     }
 
     #[test]
+    fn share_guide_explains_the_dialog_the_review_and_the_exports_page() {
+        // Share step 1 (docs/contracts/export-definitions.md): the Guide moves with the product.
+        let files = include_str!("templates/files-external-edits-backups.md");
+        for outcome in [
+            "- ## Share pages",
+            "the share icon in the top bar",
+            "**Share…** in a page's **⋯** menu",
+            "**This page**",
+            "**A query starting at this page**",
+            "a page marked `public:: false` and the Exports page are never shared",
+            "**Include the query text** is off",
+            "`published-queries/<folder>/`",
+            "`export:: <folder>`",
+            "marked `tine/exports:: true` and `public:: false`",
+            "Exports 2",
+        ] {
+            assert!(
+                files.contains(outcome),
+                "share onboarding must explain {outcome}"
+            );
+        }
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("**Share…** in a query's **⋯** menu"));
+        assert!(queries.contains("**Share pages**"));
+    }
+
+    #[test]
     fn diagnostics_guide_explains_launch_timings_shape_statistics_and_rescan() {
         // GH #623: the report carries launch timings and graph-shape statistics
         // (numbers only), and Settings has a "Rescan graph" button.

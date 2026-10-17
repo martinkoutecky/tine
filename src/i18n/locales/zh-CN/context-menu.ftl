@@ -123,6 +123,7 @@ context-menu-ui-copy-page-ref = 复制页面引用
 context-menu-ui-copied-page-ref = 已复制页面引用
 
 context-menu-ui-copy-export-as = 复制 / 导出为…
+context-menu-ui-share = 分享…
 
 context-menu-ui-copy-page-as-markdown = 将页面复制为 Markdown
 

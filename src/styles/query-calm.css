@@ -12,6 +12,12 @@
 .query-header { position: relative; gap: 8px; }
 .query-header .query-count { background: none; font-weight: 400; color: var(--text-muted); }
 .qc-actions { margin-left: auto; position: relative; font-weight: 400; }
+/* The always-reachable Share icon: the actions menu's hover reveal, a visible target on touch. */
+.qc-share { margin-left: auto; background: none; border: 0; padding: 2px 6px; cursor: pointer; color: var(--text-muted); opacity: 0; display: inline-flex; align-items: center; }
+.qc-share + .qc-actions { margin-left: 0; }
+.query-block:hover .qc-share, .query-block:focus-within .qc-share, .qc-share:focus-visible { opacity: 1; }
+.qc-share:hover { color: var(--text-primary); }
+@media (hover: none) { .qc-share { opacity: 1; } }
 .qc-actions > summary { cursor: pointer; list-style: none; padding: 2px 8px; opacity: 0; }
 .qc-actions > summary::-webkit-details-marker { display: none; }
 .query-block:hover .qc-actions > summary,

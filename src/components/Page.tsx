@@ -8,6 +8,8 @@ import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRou
 import { PaneContext, focusedRouter, openRouteInOtherPane, rewritePageTargetAcrossPanes } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { isFavorite, toggleFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu, carryDays, showCarryButtons, contextMenu, renamePageInNavigation, adoptResolvedPageName } from "../ui";
+import { openShareDialog } from "../shareState";
+import { ShareIcon } from "./ShareIcon";
 import { graphEpoch, dataRev, graphMeta } from "../graphSession";
 import { captureBinding, graphScopedSignal } from "../binding";
 import { graphOwner, latestOwner, readOwned, type Owner } from "../owned";
@@ -286,7 +288,8 @@ async function runJournalFeedRestart(owner: JournalsFeedOwner, retried: boolean,
 // Page properties NOT shown in the under-title property list: `alias` is surfaced
 // as "aka" chips above. `icon` stays editable here as well as decorating the
 // title, matching OG's editable-built-in-properties. Hide internal tag-table metadata.
-const PAGE_PROPS_HIDDEN = new Set(["alias", "tine.tag-table"]);
+// `tine/exports` is the exports page marker (docs/contracts/export-definitions.md), not something to edit.
+const PAGE_PROPS_HIDDEN = new Set(["alias", "tine.tag-table", "tine/exports"]);
 const TAG_TABLE_PROP = "tine.tag-table";
 
 function paneContextFromContext() {
@@ -1082,6 +1085,16 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
             }}
           >
             <span aria-hidden="true">⋯</span>
+          </button>
+          <button
+            type="button"
+            class="page-share-btn"
+            data-page-share
+            title={t("share-page-title-button")}
+            aria-label={t("share-page-title-button")}
+            onClick={() => openShareDialog({ page: props.page.name })}
+          >
+            <ShareIcon class="share-icon" />
           </button>
           <button
             class="fav-star"

@@ -8,6 +8,7 @@ import { editingId, endEdit } from "../editorController";
 import { type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { closeContextMenu, closeExportModal, closePageProps, exportModal, openContextMenu, openPageContextMenu, pagePropsPanel } from "../ui";
+import { closeShareDialog, shareTarget } from "../shareState";
 import { clearTransientLayersForTest, dismissTopTransient } from "../transientLayers";
 import { backend } from "../backend";
 import { clearClipboardPayload, peekClipboardPayload } from "../clipboard";
@@ -462,6 +463,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       "favorite-toggle",
       "copy-as", "copy-page-ref", "copy-link",
       "copy-export",
+      "share",
       "export-pdf",
       "show-in-folder",
       "open-default-app",
@@ -599,7 +601,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "P", "page", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-as", "copy-page-ref", "copy-link", "copy-export", "export-pdf",
+      "copy-as", "copy-page-ref", "copy-link", "copy-export", "share", "export-pdf",
       "show-in-folder", "open-default-app",
     ]);
     closeContextMenu();
@@ -611,7 +613,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     openPageContextMenu(10, 10, "2000-01-01", "journal", true);
     expect(ids()).toEqual([
       "open", "open-sidebar", "open-new-tab", "favorite-toggle",
-      "copy-as", "copy-page-ref", "copy-link", "copy-export", "export-pdf",
+      "copy-as", "copy-page-ref", "copy-link", "copy-export", "share", "export-pdf",
       "show-in-folder", "open-default-app", "page-properties",
       "set-page-icon",
       "carry-unfinished", "delete-journal",
@@ -629,6 +631,16 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     document.querySelector<HTMLButtonElement>('[data-page-action-id="copy-export"]')!.click();
 
     expect(exportModal()).toEqual({ ids: ["parent", "leaf"] });
+    dispose();
+  });
+
+  it("opens the share dialog for the page from the page menu", () => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+    openPageContextMenu(10, 10, "P", "page", true);
+    document.querySelector<HTMLButtonElement>('[data-page-action-id="share"]')!.click();
+    expect(shareTarget()).toEqual({ page: "P" });
+    closeShareDialog();
     dispose();
   });
 
