@@ -23,7 +23,9 @@ https://tine.page/s/1/#<login>/<gist_id>/<key>[/page/<name> | /block/<uuid>]
   hint only: when the raw URL under it is 404, the viewer asks
   `https://api.github.com/gists/<gist_id>` once and fetches that answer's
   `files["tine-share.bin"].raw_url`, accepted only on
-  `https://gist.githubusercontent.com`. At most three requests, one at a time.
+  `https://gist.githubusercontent.com`. At most three requests, one at a time,
+  none following a redirect (`redirect: "error"`): a redirect would leave the
+  trusted hosts and escape the count.
 - `<gist_id>`: `[0-9a-f]{20,32}`.
 - `<key>`: 32 bytes, canonical base64url (below).
 - The rest is the published reader's permalink (`publishedPermalink.ts`):
@@ -76,12 +78,19 @@ P        = gzip (RFC 1952) of the UTF-8 share document
 
 - `quick_share` greater than 1: "needs a newer viewer". Any other value, or a
   missing or mistyped field: refused as damaged. Unknown fields are ignored.
+- Admission checks the type of every field the reader dereferences (pages and
+  their blocks recursively, entries, backlink groups, reference counts,
+  aliases, icons, and each query record's fields; the query IR inside a record
+  only as an object), so a damaged document is refused before the reader
+  starts, never crashes it later (`admitShape` in `quickShare.ts`).
 - `snapshot` is the published snapshot, schema 1, that the published reader
   already renders (`PublishedSnapshot` in `publishedBackend.ts`; written by
   `publish_query::snapshot_at`). Its `exported_at` equals `created_at`.
 - **One page shared:** `home` and `title` are that page's name. **Several:**
   `home` and `title` are the share's name, and the home page is a synthetic
-  page (`path` "") whose blocks are one `[[page]]` link per shared page. The
+  page (`path` "") whose blocks are one `[[page]]` link per shared page. Its
+  name never equals a shared page's name or alias under page identity (the
+  writer refuses the share name; the viewer refuses such a document). The
   selecting query is never shipped (`include_query_text` is forced off).
 - Query records (`queries`) are looked up by host page, argument, dialect and
   `tine.*` block properties. Two identical macros in one page produce two
@@ -119,7 +128,7 @@ admission checks, so a share a viewer would refuse is never created.
 Viewer (enforced while reading): envelope text 8.5 MiB; decoded envelope
 6.4 MiB; gunzip aborts at 32 MiB of output; gist API answer 16 MiB; JSON depth
 512; 201 snapshot pages (200 plus the home list); 256 queries; 200,000 blocks;
-any string 1 MiB.
+any string or object key anywhere in the document, the title included, 1 MiB.
 
 Unverified: that GitHub accepts an 8 MiB gist create. The first trial measures
 it, and the writer cap is lowered if it fails.

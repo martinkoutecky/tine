@@ -240,6 +240,19 @@ fn quick_share_of_one_page_is_that_page() {
     let doc: Value = serde_json::from_slice(&doc).unwrap();
     assert_eq!(doc["snapshot"]["home"], "Empty");
     assert_eq!(doc["snapshot"]["pages"].as_array().unwrap().len(), 1);
+    for name in ["Project", "proj"] {
+        let clash = quick_share::prepare(
+            &store,
+            &request("@page and name = 'Project' or name = 'Empty'", name),
+            CREATED_AT,
+            &root.join("scratch"),
+        );
+        let message = clash.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(
+            message.contains("give the share another name"),
+            "{name}: {message}"
+        );
+    }
     let refused = quick_share::prepare(
         &store,
         &request("@page and name = 'Secret'", "x"),

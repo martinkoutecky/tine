@@ -228,6 +228,35 @@ fn validate_document(document: &[u8]) -> io::Result<()> {
     if count("queries") > VIEWER_MAX_QUERIES {
         return Err(refusal("the shared pages hold too many queries"));
     }
+    // A share of several pages adds a home page named after the share; it must
+    // not shadow a shared page or alias, or links to that page open the list.
+    let pages = snapshot["pages"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    if let Some(home) = pages.iter().find(|p| p["path"] == "") {
+        let key = tine_core::refs::page_key(home["name"].as_str().unwrap_or(""));
+        let names = pages
+            .iter()
+            .filter(|p| p["path"] != "")
+            .filter_map(|p| p["name"].as_str())
+            .chain(
+                snapshot["aliases"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter_map(|a| a[0].as_str()),
+            );
+        if let Some(clash) = names
+            .into_iter()
+            .find(|name| tine_core::refs::page_key(name) == key)
+        {
+            return Err(refusal(format!(
+                "a shared page is already called \"{clash}\"; give the share another name"
+            )));
+        }
+    }
     fn walk(v: &serde_json::Value, depth: usize) -> Result<(), &'static str> {
         if depth > VIEWER_MAX_DEPTH {
             return Err("the shared pages nest too deeply to share");

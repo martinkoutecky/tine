@@ -146,31 +146,82 @@ export interface ShareDocument {
   snapshot: PublishedSnapshot;
 }
 
-function admitCaps(snapshot: PublishedSnapshot): void {
+const isString = (v: unknown): v is string => typeof v === "string";
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const isKind = (v: unknown) => v === "page" || v === "journal";
+const isPair = (v: unknown) => Array.isArray(v) && v.length === 2 && isString(v[0]) && isString(v[1]);
+const isNullableString = (v: unknown) => v === null || v === undefined || isString(v);
+
+/** The fields the reader dereferences, typed as generation 1 writes them. */
+function blockShape(block: unknown, count: { blocks: number }): boolean {
+  if (!isObject(block) || !isString(block.id) || !isString(block.raw) || !Array.isArray(block.children)) return false;
+  if (block.collapsed !== undefined && typeof block.collapsed !== "boolean") return false;
+  count.blocks += 1;
+  return block.children.every((child) => blockShape(child, count));
+}
+
+function refGroupShape(group: unknown): boolean {
+  const scratch = { blocks: 0 };
+  return isObject(group) && isString(group.page) && isKind(group.kind) && Array.isArray(group.blocks)
+    && group.blocks.every((b) => blockShape(b, scratch));
+}
+
+function admitShape(snapshot: Record<string, unknown>): number {
+  const count = { blocks: 0 };
+  const ok = isString(snapshot.name) && isString(snapshot.home) && isString(snapshot.exported_at)
+    && Array.isArray(snapshot.pages) && snapshot.pages.every((page) =>
+      isObject(page) && isString(page.name) && isKind(page.kind) && isString(page.path)
+      && isNullableString(page.title) && isNullableString(page.pre_block)
+      && (page.format === undefined || page.format === "md" || page.format === "org")
+      && Array.isArray(page.blocks) && page.blocks.every((b) => blockShape(b, count)))
+    && Array.isArray(snapshot.entries) && snapshot.entries.every((e) =>
+      isObject(e) && isString(e.name) && isKind(e.kind) && isString(e.path)
+      && (e.date_key === null || e.date_key === undefined || typeof e.date_key === "number"))
+    && isObject(snapshot.backlinks) && Object.values(snapshot.backlinks).every((groups) => Array.isArray(groups) && groups.every(refGroupShape))
+    && isObject(snapshot.block_ref_counts) && Object.values(snapshot.block_ref_counts).every((n) => typeof n === "number")
+    && Array.isArray(snapshot.aliases) && snapshot.aliases.every(isPair)
+    && isObject(snapshot.icons) && Object.values(snapshot.icons).every(isString)
+    && Array.isArray(snapshot.queries) && snapshot.queries.every((q) =>
+      isObject(q) && isString(q.host) && isString(q.argument) && isString(q.dialect)
+      && Array.isArray(q.properties) && q.properties.every(isPair)
+      && isObject(q.parsed) && isObject(q.context) && isObject(q.executed_context) && isObject(q.view) && isObject(q.result)
+      && (q.execution === undefined || q.execution === null || (isObject(q.execution) && isString(q.execution.argument) && isObject(q.execution.parsed))));
+  if (!ok) fail("invalid", "This share is damaged.");
+  return count.blocks;
+}
+
+/** Caps over the whole document, strings included (the title too). */
+function admitCaps(doc: unknown, snapshot: PublishedSnapshot, blocks: number): void {
   const v = limits.viewer;
-  if (snapshot.pages.length > v.pages || snapshot.queries.length > v.queries) fail("too-large", "This share is larger than a viewer reads.");
-  let blocks = 0;
-  const pending: unknown[] = [snapshot];
+  if (snapshot.pages.length > v.pages || snapshot.queries.length > v.queries || blocks > v.blocks) {
+    fail("too-large", "This share is larger than a viewer reads.");
+  }
+  const encoder = new TextEncoder();
+  const pending: unknown[] = [doc];
   while (pending.length) {
     const node = pending.pop();
     if (typeof node === "string") {
       // UTF-16 length bounds UTF-8 bytes from below; 3× bounds it from above.
-      if (node.length * 3 > v.string_bytes && new TextEncoder().encode(node).length > v.string_bytes) {
+      if (node.length * 3 > v.string_bytes && encoder.encode(node).length > v.string_bytes) {
         fail("too-large", "This share holds a block larger than a viewer reads.");
       }
     } else if (node && typeof node === "object") {
-      for (const child of Object.values(node)) pending.push(child);
+      for (const [key, child] of Object.entries(node)) {
+        if (key.length * 3 > v.string_bytes && encoder.encode(key).length > v.string_bytes) {
+          fail("too-large", "This share holds a block larger than a viewer reads.");
+        }
+        pending.push(child);
+      }
     }
   }
-  const count = (list: unknown): void => {
-    if (!Array.isArray(list)) return;
-    for (const block of list) {
-      blocks += 1;
-      count((block as { children?: unknown }).children);
-    }
-  };
-  for (const page of snapshot.pages) count(page.blocks);
-  if (blocks > v.blocks) fail("too-large", "This share holds more blocks than a viewer reads.");
+  // The home list never shadows a shared page (the writer refuses that name).
+  const home = snapshot.pages.find((page) => page.path === "");
+  if (home) {
+    const key = (name: string) => name.trim().toLowerCase().normalize("NFC");
+    const wanted = key(home.name);
+    const others = [...snapshot.pages.filter((page) => page !== home).map((page) => page.name), ...snapshot.aliases.map(([alias]) => alias)];
+    if (others.some((name) => key(name) === wanted)) fail("invalid", "This share is damaged.");
+  }
 }
 
 /** Admit a gunzipped share document. */
@@ -193,15 +244,15 @@ export function decodeShareDocument(bytes: Uint8Array): ShareDocument {
   } catch {
     fail("invalid", "This share is damaged.");
   }
-  for (const key of ["pages", "entries", "aliases", "queries"] as const) {
-    if (!Array.isArray(snapshot[key])) fail("invalid", "This share is damaged.");
-  }
-  admitCaps(snapshot);
+  const blocks = admitShape(snapshot as unknown as Record<string, unknown>);
+  admitCaps(doc, snapshot, blocks);
   return { title: doc.title as string, createdAt: doc.created_at as string, snapshot };
 }
 
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
-const REQUEST: RequestInit = { credentials: "omit", referrerPolicy: "no-referrer", redirect: "follow" };
+// A redirect would leave the hosts this viewer trusts and escape the request
+// count, so none is followed: GitHub serves both answers directly.
+const REQUEST: RequestInit = { credentials: "omit", referrerPolicy: "no-referrer", redirect: "error" };
 
 async function envelopeText(link: ShareLink, fetchImpl: Fetch): Promise<string> {
   const read = async (response: Response) => {

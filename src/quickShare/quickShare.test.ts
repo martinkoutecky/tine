@@ -110,6 +110,13 @@ describe("quick share generation 1", () => {
     expect(evil.urls).toHaveLength(2);
     expect(await reason(loadQuickShare(hash, gistFetch({}).fetchImpl))).toBe("not-found");
     expect(await reason(loadQuickShare(hash, gistFetch({ [`https://gist.githubusercontent.com/tine-fixture/${gist}/raw/tine-share.bin`]: 503 }).fetchImpl))).toBe("unreachable");
+    // Review g1 R3: no request follows a redirect off GitHub's hosts.
+    const inits: RequestInit[] = [];
+    await loadQuickShare(hash, async (url, init) => {
+      inits.push(init ?? {});
+      return gistFetch({ [`https://gist.githubusercontent.com/tine-fixture/${gist}/raw/tine-share.bin`]: bin }).fetchImpl(url);
+    });
+    expect(inits.map((init) => init.redirect)).toEqual(["error"]);
   });
 
   it("refuses damaged, foreign, newer and wrong-key envelopes readably", async () => {
@@ -167,6 +174,22 @@ describe("quick share generation 1", () => {
     huge.snapshot.pages[1].blocks[0].raw = "x".repeat(limits.viewer.string_bytes + 1);
     expect(refusal(huge)).toBe("too-large");
     expect(() => decodeShareDocument(new TextEncoder().encode("{"))).toThrow(QuickShareError);
+    // Review g1 R1: nested field types are admitted only as generation 1 writes them.
+    const broken = (edit: (d: typeof doc) => void) => {
+      const copy = structuredClone(doc);
+      edit(copy);
+      return refusal(copy);
+    };
+    expect(broken((d) => { d.snapshot.queries = [null]; })).toBe("invalid");
+    expect(broken((d) => { d.snapshot.pages[1].blocks[0].raw = 42; })).toBe("invalid");
+    expect(broken((d) => { d.snapshot.name = 42; })).toBe("invalid");
+    expect(broken((d) => { delete d.snapshot.exported_at; })).toBe("invalid");
+    expect(broken((d) => { d.snapshot.aliases = [["a"]]; })).toBe("invalid");
+    expect(broken((d) => { d.snapshot.backlinks = { Project: [{ page: 1 }] }; })).toBe("invalid");
+    expect(broken((d) => { d.title = "t".repeat(limits.viewer.string_bytes + 1); })).toBe("too-large");
+    // Review g1 R2: a home list named like a shared page or alias is refused.
+    expect(broken((d) => { d.snapshot.pages[0].name = "project"; })).toBe("invalid");
+    expect(broken((d) => { d.snapshot.pages[0].name = "PROJ"; })).toBe("invalid");
   });
 
   it("parses only well-formed share fragments", () => {
