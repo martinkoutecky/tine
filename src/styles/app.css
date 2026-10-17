@@ -7168,12 +7168,6 @@ img.emoji {
   cursor: pointer;
 }
 
-/* The numbered circle whose mention the excerpt currently highlights. */
-.reference-occurrence-jump.selected {
-  color: var(--bg-primary);
-  background: var(--accent-color);
-}
-
 .reference-live-evidence {
   display: flex;
   justify-content: flex-end;

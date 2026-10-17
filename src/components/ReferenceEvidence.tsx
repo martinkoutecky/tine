@@ -56,24 +56,30 @@ function focusMainOccurrence(
 
 export function OccurrenceControls(props: {
   evidence: ReferenceBlockEvidence;
-  /** Jump mode (Linked References' live block has no excerpt to mark): each
-   *  numbered circle opens the mention in the editor. */
-  onOccurrence?: (span: MatchSpan) => void;
-  /** Select mode (Unlinked References' excerpt): the circles choose WHICH mention
-   *  the excerpt highlights, in place; nothing navigates (GH #556 item 3). */
-  selected?: number;
-  onSelect?: (index: number) => void;
+  onOccurrence: (span: MatchSpan) => void;
+  /**
+   * Occurrences the surrounding surface already shows the user. Unlinked
+   * References renders a highlighted excerpt, so a mention it marked is one the
+   * reader can already see and click; numbering it again is redundant. Linked
+   * References renders the live block and marks nothing, so it passes 0 and
+   * keeps the full control.
+   */
+  visible?: number;
 }): JSX.Element {
   const total = () => props.evidence.total ?? props.evidence.occurrences.length;
-  const selecting = () => props.onSelect !== undefined;
   // Logseq shows no per-block mention count or occurrence-jump controls in
   // Linked References. For a single mention the "1 mention" label + lone "1" jump
   // button are redundant and confusing (GH #200), so surface these controls only
   // when a block mentions the page more than once — where jumping to a specific
   // occurrence is actually useful. Gate on the true total (GH #137), not the
   // capped occurrence list, so an honest ">1" is what shows the controls.
+  //
+  // Second gate (GH #200 option A, Martin 2026-09-16; kept over GH #556 on
+  // 2026-10-17): only when the surface cannot already show the occurrences
+  // itself. Derived from the excerpt, not a tuned constant: only the mentions
+  // beyond its window need a numbered jump.
   return (
-    <Show when={total() > 1}>
+    <Show when={total() > 1 && total() > (props.visible ?? 0)}>
     <span class="reference-occurrence-controls">
       <span class="reference-mention-count">
         {t("reference-evidence-mention-count", { count: total() })}
@@ -83,11 +89,9 @@ export function OccurrenceControls(props: {
           <button
             type="button"
             class="reference-occurrence-jump"
-            classList={{ selected: selecting() && props.selected === index() }}
-            title={selecting() ? t("reference-evidence-highlight-mention", { kind: String(occurrence.kind), index: String(index() + 1) }) : t("reference-evidence-jump-to-mention", { kind: String(occurrence.kind), index: String(index() + 1) })}
-            aria-label={t("reference-evidence-occurrence-label", { selecting: selecting() ? 1 : 0, index: String(index() + 1), total: String(total()) })}
-            aria-pressed={selecting() ? props.selected === index() : undefined}
-            onClick={() => (selecting() ? props.onSelect!(index()) : props.onOccurrence?.(occurrence.span))}
+            title={t("reference-evidence-jump-to-mention", { kind: String(occurrence.kind), index: String(index() + 1) })}
+            aria-label={t("reference-evidence-occurrence-label", { index: String(index() + 1), total: String(total()) })}
+            onClick={() => props.onOccurrence(occurrence.span)}
           >
             {index() + 1}
           </button>
@@ -128,22 +132,20 @@ export function ReferenceExcerptBlocks(props: {
 }): JSX.Element {
   const evidenceById = createMemo(() => new Map(props.evidence.map((item) => [item.block_id, item])));
   const [full, setFull] = createSignal<Record<string, boolean>>({});
-  // GH #556 item 1/3: ONE mention is highlighted per block (the first until the
-  // reader picks another with the numbered circles), not every mention at once:
-  // all-occurrence marking cluttered long blocks and fought the user's own
-  // highlighting. Picking a circle stays in this view; the excerpt re-centres on it.
-  const [selected, setSelected] = createSignal<Record<string, number>>({});
   return (
     <For each={props.blocks}>
       {(block) => {
         const evidence = () => evidenceById().get(block.id);
         const spans = () => evidence()?.occurrences.map((occurrence) => occurrence.span) ?? [];
-        const selectedIndex = () => Math.min(selected()[block.id] ?? 0, Math.max(0, spans().length - 1));
-        const markedSpans = () => (spans().length ? [spans()[selectedIndex()]] : []);
         const segments = (): Segment[] => {
           if (!evidence()) return [{ text: block.raw, marked: false }];
-          return full()[block.id] ? buildFullMarkedSegments(block.raw, markedSpans()) : buildSearchExcerpt(block.raw, markedSpans());
+          return full()[block.id] ? buildFullMarkedSegments(block.raw, spans()) : buildSearchExcerpt(block.raw, spans());
         };
+        // What the reader can already see and click; drives the circles' second
+        // gate, so expanding a block retires them on its own.
+        const shownOccurrences = () => new Set(
+          segments().filter((segment) => segment.marked && segment.span).map((segment) => `${segment.span!.start}:${segment.span!.end}`),
+        ).size;
         // The label names the MENTION's ordinal, not the excerpt segment's.
         const ordinalOf = (span: MatchSpan) => {
           const index = spans().findIndex((candidate) => candidate.start === span.start && candidate.end === span.end);
@@ -216,8 +218,8 @@ export function ReferenceExcerptBlocks(props: {
                   {(item) => (
                     <OccurrenceControls
                       evidence={item()}
-                      selected={selectedIndex()}
-                      onSelect={(index) => setSelected((state) => ({ ...state, [block.id]: index }))}
+                      visible={shownOccurrences()}
+                      onOccurrence={jumpTo}
                     />
                   )}
                 </Show>

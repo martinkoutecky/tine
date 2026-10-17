@@ -97,9 +97,7 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
       root.querySelector<HTMLElement>(".references-header")!.click();
       await tick();
       await tick();
-      // GH #556: the numbered circles no longer navigate; the highlighted
-      // mention does (this test is about the authored-id routing, unchanged).
-      root.querySelector<HTMLButtonElement>(".reference-excerpt-mark")!.click();
+      root.querySelector<HTMLButtonElement>(".reference-occurrence-jump")!.click();
       expect(route()).toMatchObject({ kind: "page", name: "Source", pageKind: "page", path });
       await vi.waitFor(() => expect(editingId()).toBe(runtimeId));
     } finally {
@@ -225,7 +223,7 @@ describe("Unlinked References evidence and disclosure (GH #144/#145)", () => {
     expect(root.querySelector(".reference-truncation")?.textContent).toContain("Showing 1 of 70");
     expect(root.querySelector(".reference-mention-count")?.textContent).toContain("70 mentions");
     expect(root.querySelector(".reference-occurrence-jump")?.getAttribute("aria-label"))
-      .toBe("Highlight mention 1 of 70");
+      .toBe("Jump to mention 1 of 70");
     dispose();
   });
 

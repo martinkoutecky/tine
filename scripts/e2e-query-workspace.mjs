@@ -762,8 +762,9 @@ await withApp(2, async (browser) => {
     const excerpt = source?.querySelector(".reference-excerpt-text")?.textContent ?? "";
     return {
       groupCount: groups.length,
-      // GH #556: one mention is highlighted (the first), and the numbered
-      // circles choose which; the highlighted mention is its own jump control.
+      // GH #200 option A: every mention that fits the excerpt is marked and is
+      // its own jump control; the numbered circles exist only for mentions
+      // past the excerpt, so there are none here.
       circles: source?.querySelectorAll(".reference-occurrence-jump").length,
       markText: [...(source?.querySelectorAll(".reference-excerpt-mark") ?? [])]
         .map((mark) => mark.textContent?.trim()),
@@ -773,8 +774,8 @@ await withApp(2, async (browser) => {
     };
   }, unlinkedRaw);
   if (unlinkedProof.groupCount < 2 || !unlinkedProof.marksAreControls || !unlinkedProof.bounded
-    || unlinkedProof.circles !== 2
-    || JSON.stringify(unlinkedProof.markText) !== JSON.stringify(["Query parity"])) {
+    || unlinkedProof.circles !== 0
+    || JSON.stringify(unlinkedProof.markText) !== JSON.stringify(["Query parity", "Query parity"])) {
     throw new Error(`unlinked reference evidence is incomplete: ${JSON.stringify(unlinkedProof)}`);
   }
 
@@ -797,14 +798,9 @@ await withApp(2, async (browser) => {
   const jumped = await browser.execute(() => {
     const source = [...document.querySelectorAll(".unlinked-references .reference-group")]
       .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Unlinked source");
-    // GH #556: pick the second mention with its numbered circle (stays in the
-    // view), then open the mention that is now highlighted.
-    const circle = source?.querySelectorAll(".reference-occurrence-jump")[1];
-    if (!(circle instanceof HTMLButtonElement)) return false;
-    circle.click();
-    const marks = source?.querySelectorAll(".reference-excerpt-mark") ?? [];
-    const jump = marks[0];
-    if (marks.length !== 1 || !(jump instanceof HTMLButtonElement)
+    // GH #200 option A: the second highlighted mention is itself the control.
+    const jump = source?.querySelectorAll(".reference-excerpt-mark")[1];
+    if (!(jump instanceof HTMLButtonElement)
       || !jump.getAttribute("aria-label")?.startsWith("Open mention 2 ")) return false;
     jump.click();
     return true;
