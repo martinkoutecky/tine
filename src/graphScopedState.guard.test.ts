@@ -90,7 +90,7 @@ function productionSources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const file = path.join(dir, entry.name);
     if (entry.isDirectory()) return productionSources(file);
-    return /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file) && !file.endsWith(".d.ts") ? [file] : [];
+    return /\.tsx?$/.test(file) && !/\.test(?:\.support)?\.tsx?$/.test(file) && !file.endsWith(".d.ts") ? [file] : [];
   });
 }
 
