@@ -29,10 +29,20 @@
   margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
+/* One track per rendered cell: page, updated, backlinks, plus journal date only
+   while journals are listed (`all-pages-table--day`, set by AllPages.tsx). The
+   header and every row read the same track list, so a cell can never wrap into
+   an implicit second grid row. */
+.all-pages-table {
+  --all-pages-columns: minmax(0, 1fr) 10.5em 8em;
+}
+.all-pages-table--day {
+  --all-pages-columns: minmax(0, 1fr) 10.5em 8em 9em;
+}
 .all-pages-head,
 .all-pages-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 10.5em 8em;
+  grid-template-columns: var(--all-pages-columns);
   align-items: center;
   gap: 12px;
   box-sizing: border-box;
@@ -51,6 +61,9 @@
   letter-spacing: 0.04em;
   text-align: left;
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
 }
 .all-pages-col:hover {
@@ -102,9 +115,11 @@
   font-size: 13px;
 }
 @media (max-width: 640px) {
-  .all-pages-head,
-  .all-pages-row {
-    grid-template-columns: minmax(0, 1fr) 9.5em;
+  /* The journal-date cells are hidden here, so the grid has the three tracks
+     of the cells that remain, with or without journals. */
+  .all-pages-table,
+  .all-pages-table--day {
+    --all-pages-columns: minmax(0, 1fr) 9.5em 6em;
   }
   .all-pages-day,
   .all-pages-day-col {

@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- All pages: the header no longer shows a lone "JOURNAL DATE" line under PAGE, and a "—" no longer strikes through the first letter of the next row (the journal-date cell had no grid column). The journal-date column now appears only while "Show journals" is on, and its checkbox is drawn from the theme instead of a white native box on dark surfaces (UI-ALL-PAGES-GRID-001).
+
 ## [0.8.0-beta.4] - 2026-10-17
 
 ### Changed
