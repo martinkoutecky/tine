@@ -2131,32 +2131,26 @@ fn checked_write_target(root: &Path, target: &Path, label: &str) -> io::Result<(
     }
 }
 
-/// Pauses before re-probing a write target that cannot be inspected (under
-/// 50 ms in all): Windows refuses to open a page for a moment while a save
-/// replaces it (REG-WIN-WRITE-TARGET-TRANSIENT).
+/// Pauses before re-probing a target that cannot be inspected (under 50 ms in
+/// all): Windows refuses to open a page for a moment while a save replaces it
+/// (REG-WIN-WRITE-TARGET-TRANSIENT).
 const TARGET_PROBE_PAUSES: [std::time::Duration; 3] = [
     std::time::Duration::from_millis(2),
     std::time::Duration::from_millis(8),
     std::time::Duration::from_millis(32),
 ];
 
-/// A write target's containment: `Ok(false)` when it resolves outside `root`
-/// or through an alias of a managed directory (`path_uses_managed_alias`).
-/// One that cannot be inspected is re-probed after each pause, then answered
-/// as that I/O error: unverified, which the caller fails, rather than outside,
-/// which it refuses.
+/// A write target's containment: `Ok(false)` when it resolves outside `root`,
+/// through an alias of a managed directory (`path_uses_managed_alias`), or
+/// through a link that does not resolve. One that cannot be inspected (after
+/// `canonical_existing_ancestor`'s re-probes) is answered as that I/O error:
+/// unverified, which the caller fails, rather than outside, which it refuses.
 fn write_target_contained(root: &Path, target: &Path) -> io::Result<bool> {
     let canonical_root = canonical_existing_path(root).unwrap_or_else(|_| root.to_path_buf());
-    let mut pauses = TARGET_PROBE_PAUSES.iter();
-    let (existing, resolved) = loop {
-        match resolve_existing_ancestor(target) {
-            Ok(found) => break found,
-            Err(error) if error.kind() == io::ErrorKind::InvalidInput => return Err(error),
-            Err(error) => match pauses.next() {
-                Some(pause) => std::thread::sleep(*pause),
-                None => return Err(error),
-            },
-        }
+    let (existing, resolved) = match reprobed_existing_ancestor(target) {
+        Ok(found) => found,
+        Err(Unresolved::Link(_)) => return Ok(false),
+        Err(Unresolved::Io(error)) => return Err(error),
     };
     let Ok(relative) = existing.strip_prefix(root) else {
         return Ok(false);
@@ -2164,54 +2158,69 @@ fn write_target_contained(root: &Path, target: &Path) -> io::Result<bool> {
     Ok(resolved == canonical_root.join(relative))
 }
 
-/// `canonical_existing_ancestor` for writers. An existing entry that is not a
-/// link but cannot be opened (Windows, while a save replaces it) resolves
-/// through its parent: a link-free entry's canonical path is its parent's plus
-/// its name.
-fn resolve_existing_ancestor(target: &Path) -> io::Result<(&Path, PathBuf)> {
+/// Why the deepest existing ancestor did not resolve.
+enum Unresolved {
+    /// A link whose target does not resolve (dangling or looping): it is not
+    /// at its own canonical location, and re-probing cannot change that.
+    Link(io::Error),
+    /// The entry could not be inspected.
+    Io(io::Error),
+}
+
+/// Resolve the deepest existing ancestor without following a missing suffix.
+/// An entry that cannot be inspected is re-probed after each pause, then
+/// answered as that error. An existing entry that is not a link but cannot be
+/// opened (Windows, while a save replaces it) resolves through its parent: a
+/// link-free entry's canonical path is its parent's plus its name.
+pub(crate) fn canonical_existing_ancestor(target: &Path) -> io::Result<(&Path, PathBuf)> {
+    reprobed_existing_ancestor(target).map_err(|unresolved| match unresolved {
+        Unresolved::Link(error) | Unresolved::Io(error) => error,
+    })
+}
+
+fn reprobed_existing_ancestor(target: &Path) -> Result<(&Path, PathBuf), Unresolved> {
+    let mut pauses = TARGET_PROBE_PAUSES.iter();
+    loop {
+        match existing_ancestor_once(target) {
+            Err(Unresolved::Io(error)) if error.kind() != io::ErrorKind::InvalidInput => {
+                match pauses.next() {
+                    Some(pause) => std::thread::sleep(*pause),
+                    None => return Err(Unresolved::Io(error)),
+                }
+            }
+            answer => return answer,
+        }
+    }
+}
+
+fn existing_ancestor_once(target: &Path) -> Result<(&Path, PathBuf), Unresolved> {
     let mut existing = target;
     loop {
         match probe_lstat(existing) {
             Ok(metadata) => {
                 let resolved = match probe_canonical(existing) {
                     Ok(resolved) => resolved,
+                    Err(error) if metadata.file_type().is_symlink() => {
+                        return Err(Unresolved::Link(error))
+                    }
                     Err(error) => match (existing.parent(), existing.file_name()) {
-                        (Some(parent), Some(name)) if !metadata.file_type().is_symlink() => {
-                            probe_canonical(parent)?.join(name)
+                        (Some(parent), Some(name)) => {
+                            probe_canonical(parent).map_err(Unresolved::Io)?.join(name)
                         }
-                        _ => return Err(error),
+                        _ => return Err(Unresolved::Io(error)),
                     },
                 };
                 return Ok((existing, resolved));
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 existing = existing.parent().ok_or_else(|| {
-                    io::Error::new(
+                    Unresolved::Io(io::Error::new(
                         io::ErrorKind::InvalidInput,
                         "target has no existing ancestor",
-                    )
+                    ))
                 })?;
             }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-/// Resolve the deepest existing ancestor without following a missing suffix.
-pub(crate) fn canonical_existing_ancestor(target: &Path) -> io::Result<(&Path, PathBuf)> {
-    let mut existing = target;
-    loop {
-        match probe_lstat(existing) {
-            Ok(_) => return Ok((existing, probe_canonical(existing)?)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                existing = existing.parent().ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "target has no existing ancestor",
-                    )
-                })?;
-            }
-            Err(error) => return Err(error),
+            Err(error) => return Err(Unresolved::Io(error)),
         }
     }
 }
@@ -2337,6 +2346,30 @@ mod write_target_probe_tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// REG-WIN-WRITE-TARGET-TRANSIENT, the submit's first check: a page's OS
+    /// path resolves through the same re-probes and folder fallback.
+    #[test]
+    fn an_unopenable_page_still_resolves_for_its_save() {
+        let (dir, graph) = graph("handoff");
+        let page = graph.root.join("pages/Page.md");
+        let expected = canonical_existing_path(&graph.root.join("pages"))
+            .unwrap()
+            .join("Page.md");
+        fault(page.clone(), ProbeStep::Canonical, u32::MAX);
+        let unopenable = canonical_existing_ancestor(&page).map(|(_, resolved)| resolved);
+        clear();
+        assert_eq!(unopenable.unwrap(), expected);
+        fault(page.clone(), ProbeStep::Lstat, 3);
+        let brief = canonical_existing_ancestor(&page).map(|(_, resolved)| resolved);
+        clear();
+        assert_eq!(
+            brief.unwrap(),
+            expected,
+            "three brief failures are re-probed"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// The parent fallback is for ordinary entries only: a link that cannot be
     /// resolved is still refused.
     #[cfg(unix)]
@@ -2352,9 +2385,11 @@ mod write_target_probe_tests {
         fault(link.clone(), ProbeStep::Canonical, u32::MAX);
         let checked = graph.ensure_write_target(&link);
         clear();
-        assert!(
-            checked.is_err(),
-            "a link is never resolved through its folder"
+        let error = checked.expect_err("a link is never resolved through its folder");
+        assert_eq!(
+            error.kind(),
+            io::ErrorKind::InvalidInput,
+            "refused, not failed: {error}"
         );
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&outside);
