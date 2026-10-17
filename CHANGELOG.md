@@ -22,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Settings search no longer lists unrelated settings for a one-character query such as "发" (a single character now matches only a setting's name, keywords and aliases, not its description), puts settings whose name matches before those matching only their description, and scrolls to a result whose control appears a moment after the tab opens, such as Developer tools (GH #706).
 - Org graphs: a page you create from Search (Ctrl+K), with **Customize** for Today's sections, or by opening a page or journal that has no file yet is now edited as Org from the start. Before, until Tine next read the file, a property added to it (a block id from **Copy block ref**, a page property, a collapsed or heading flag) was written Markdown-style (`id:: …`) into the `.org` file, where Logseq and Tine show it as text instead of reading it as a property (ORG-CREATED-FORMAT).
 - Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.
+- Unlinked References show every mention that fits the excerpt as a highlight again, and the numbered circles come back only for mentions past the excerpt, as before 0.8.0-beta.1 (GH #200; GH #556's one-highlight-at-a-time change is reverted, its bullet that opens the source block stays).
 
 ## [0.8.0-beta.4] - 2026-10-17
 

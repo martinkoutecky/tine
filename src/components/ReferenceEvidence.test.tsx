@@ -49,6 +49,17 @@ describe("OccurrenceControls (GH #200: no redundant count/jump for a single ment
   });
 });
 
+describe("OccurrenceControls second gate (GH #200 option A: only what the surface cannot show)", () => {
+  it("hides the circles when the surface already shows every mention, shows them past it", () => {
+    const shown = document.createElement("div");
+    render(() => <OccurrenceControls evidence={evidence(3)} onOccurrence={() => {}} visible={3} />, shown);
+    expect(shown.querySelector(".reference-occurrence-controls")).toBeNull();
+    const past = document.createElement("div");
+    render(() => <OccurrenceControls evidence={evidence(4)} onOccurrence={() => {}} visible={3} />, past);
+    expect(past.querySelectorAll(".reference-occurrence-jump")).toHaveLength(4);
+  });
+});
+
 const WORD = "Books";
 
 function blockWith(mentions: number, gap: number): { block: BlockDto; evidence: ReferenceBlockEvidence } {
@@ -79,49 +90,61 @@ const marks = (host: HTMLElement) => [...host.querySelectorAll<HTMLButtonElement
 const circle = (host: HTMLElement, ordinal: number) =>
   host.querySelectorAll<HTMLButtonElement>(".reference-occurrence-jump")[ordinal - 1];
 
-// GH #556 items 1 and 3 (the issue's "Expected behavior" list): one mention is
-// highlighted by default, not every mention; the numbered circles choose which,
-// in place, instead of navigating.
-describe("Unlinked reference occurrences (GH #556: one highlighted mention, chosen by the circles)", () => {
-  it("highlights only the first mention by default, however many fit the excerpt", () => {
-    // Four short-gap mentions used to render four highlights.
+// GH #200 option A (Martin 2026-09-16, re-affirmed 2026-10-17 over GH #556
+// items 1 and 3): the marks are the affordance; numbered circles exist only for
+// mentions the excerpt cannot show (total > what the surface already shows).
+describe("Unlinked reference occurrences (GH #200 option A: the highlight is the affordance)", () => {
+  it("retires the numbered circles when the excerpt already shows every mention", () => {
+    // A SHORT block with four mentions used to render four marks AND four
+    // numbered circles saying the same thing twice.
     const host = renderExcerpt(4, 4);
-    expect(marks(host).map((mark) => mark.getAttribute("aria-label"))).toEqual(["Open mention 1 in Journal"]);
-    expect(host.querySelector(".reference-excerpt-text")!.textContent).toContain("Books");
+    expect(marks(host)).toHaveLength(4);
+    expect(host.querySelectorAll(".reference-occurrence-jump")).toHaveLength(0);
+    expect(host.querySelector(".reference-occurrence-controls")).toBeNull();
+    expect(host.textContent ?? "").not.toContain("4 mentions");
   });
 
-  it("offers a numbered circle per mention, with the highlighted one marked pressed", () => {
+  it("makes each highlighted mention a real button naming the page and the mention's ordinal", () => {
     const host = renderExcerpt(3, 4);
-    expect(host.textContent ?? "").toContain("3 mentions");
-    const circles = [...host.querySelectorAll<HTMLButtonElement>(".reference-occurrence-jump")];
-    expect(circles.map((c) => c.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
+    expect(marks(host).map((mark) => mark.tagName)).toEqual(["BUTTON", "BUTTON", "BUTTON"]);
+    expect(marks(host).map((mark) => mark.getAttribute("aria-label"))).toEqual([
+      "Open mention 1 in Journal",
+      "Open mention 2 in Journal",
+      "Open mention 3 in Journal",
+    ]);
   });
 
-  it("a circle moves the highlight to that mention without leaving the view", () => {
+  it("shows no circles at the cap: every mention fits the excerpt", () => {
+    // The excerpt caps at three windows; three far-apart mentions all fit.
+    const host = renderExcerpt(3, 400);
+    expect(marks(host)).toHaveLength(3);
+    expect(host.querySelectorAll(".reference-occurrence-jump")).toHaveLength(0);
+  });
+
+  it("shows the circles only once mentions fall past the excerpt windows", () => {
+    // One mention more than the cap: the fourth is unreachable without a circle.
+    const host = renderExcerpt(4, 400);
+    expect(marks(host).length).toBeLessThan(4);
+    expect(host.querySelector(".reference-occurrence-controls")).not.toBeNull();
+    expect(host.textContent ?? "").toContain("4 mentions");
+    expect(host.querySelectorAll(".reference-occurrence-jump")).toHaveLength(4);
+  });
+
+  it("a circle jumps to its mention in the source page (it does not re-pick a highlight)", () => {
     vi.useFakeTimers();
-    const host = renderExcerpt(3, 4);
-    circle(host, 3).click();
-    expect(marks(host).map((mark) => mark.getAttribute("aria-label"))).toEqual(["Open mention 3 in Journal"]);
-    expect(circle(host, 3).getAttribute("aria-pressed")).toBe("true");
-    expect(circle(host, 1).getAttribute("aria-pressed")).toBe("false");
-    vi.advanceTimersByTime(500);
-    expect(startEditing).not.toHaveBeenCalled();
-    expect(route()).toMatchObject({ kind: "journals" });
-  });
-
-  it("re-centres the excerpt on a mention that was outside every window", () => {
-    // 6 mentions 400 characters apart: the excerpt shows only the first one's neighbourhood.
     const host = renderExcerpt(6, 400);
-    expect(marks(host).map((mark) => mark.getAttribute("aria-label"))).toEqual(["Open mention 1 in Journal"]);
     circle(host, 6).click();
-    expect(marks(host).map((mark) => mark.getAttribute("aria-label"))).toEqual(["Open mention 6 in Journal"]);
+    vi.advanceTimersByTime(200);
+    expect(route()).toMatchObject({ kind: "page", name: "Journal", pageKind: "journal" });
+    expect(startEditing).toHaveBeenCalledOnce();
+    expect(circle(host, 6).getAttribute("aria-pressed")).toBeNull();
   });
 
-  it("the full block keeps only the chosen mention highlighted", () => {
+  it("marks every mention once the block is expanded, and retires the circles with it", () => {
     const host = renderExcerpt(6, 400);
-    circle(host, 4).click();
     host.querySelector<HTMLButtonElement>(".reference-show-full")!.click();
-    expect(marks(host).map((mark) => mark.getAttribute("aria-label"))).toEqual(["Open mention 4 in Journal"]);
+    expect(marks(host)).toHaveLength(6);
+    expect(host.querySelector(".reference-occurrence-controls")).toBeNull();
     expect(host.querySelector(".reference-excerpt-text")!.textContent).toBe(blockWith(6, 400).block.raw);
   });
 
@@ -129,16 +152,6 @@ describe("Unlinked reference occurrences (GH #556: one highlighted mention, chos
     const host = renderExcerpt(1, 4);
     expect(host.querySelector(".reference-occurrence-controls")).toBeNull();
     expect(marks(host)).toHaveLength(1);
-  });
-
-  it("the highlighted mention still opens that mention in its page", () => {
-    vi.useFakeTimers();
-    const host = renderExcerpt(3, 4);
-    circle(host, 2).click();
-    marks(host)[0].click();
-    vi.advanceTimersByTime(200);
-    expect(route()).toMatchObject({ kind: "page", name: "Journal", pageKind: "journal" });
-    expect(startEditing).toHaveBeenCalledOnce();
   });
 });
 

@@ -1916,10 +1916,9 @@ export interface MessageArgs {
   "quick-switcher-searching": {};
   "quick-switcher-that-pane-is-no-longer-available-close-this": {};
   "quick-switcher-the-graph-changed-before-the-page-was-created": {};
-  "reference-evidence-highlight-mention": { "index": string | number; "kind": string | number };
   "reference-evidence-jump-to-mention": { "index": string | number; "kind": string | number };
   "reference-evidence-mention-count": { "count": number };
-  "reference-evidence-occurrence-label": { "index": string | number; "selecting": number; "total": string | number };
+  "reference-evidence-occurrence-label": { "index": string | number; "total": string | number };
   "reference-evidence-open-mention-in": { "page": string | number; "span": string | number };
   "reference-evidence-open-this-block-in": { "page": string | number };
   "reference-evidence-open-this-mention-in": { "page": string | number };
