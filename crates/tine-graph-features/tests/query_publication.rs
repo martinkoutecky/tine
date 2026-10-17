@@ -48,6 +48,7 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
         folder: None,
         replace: false,
         asset_budget_bytes: None,
+        include_query_text: false,
     };
     let plan = plan_query(&store, &request).unwrap();
     assert_eq!(plan.anchor, "block");
@@ -80,14 +81,41 @@ fn query_publication_reviews_owner_pages_and_rejects_a_stale_plan() {
         &fs::read(graph.join("published-queries/my-todos/app/snapshot.json")).unwrap(),
     )
     .unwrap();
-    assert_eq!(snapshot["pages"].as_array().unwrap().len(), 2); // synthetic query home + selected owner
-    assert_eq!(snapshot["queries"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["pages"].as_array().unwrap().len(), 2); // synthetic home + selected owner
+                                                                // PK3 / SHARE-DIALOG §1: without "Include the query text" nothing of the
+                                                                // query is published; the home only lists the exported pages.
+    assert_eq!(snapshot["queries"].as_array().unwrap().len(), 0);
+    let text = String::from_utf8(
+        fs::read(graph.join("published-queries/my-todos/app/snapshot.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(!text.contains("(task TODO)"), "query text leaked: {text}");
+    assert_eq!(snapshot["pages"][0]["blocks"][0]["raw"], "[[Public]]");
     assert!(
         !fs::read_to_string(graph.join("published-queries/my-todos/pages.html"))
             .unwrap()
             .contains("DOING hidden")
     );
     assert!(!graph.join("publish").exists());
+
+    // Ticked, the home carries the query and its answer as before.
+    let with_text = QueryExportRequest {
+        include_query_text: true,
+        replace: true,
+        ..request.clone()
+    };
+    let plan = plan_query(&store, &with_text).unwrap();
+    assert_eq!(
+        plan.fingerprint, fresh.fingerprint,
+        "the disclosure choice is not a re-review"
+    );
+    publish_query(&store, &with_text, &plan.fingerprint, &bundle()).unwrap();
+    let snapshot: serde_json::Value = serde_json::from_slice(
+        &fs::read(graph.join("published-queries/my-todos/app/snapshot.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(snapshot["queries"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["queries"][0]["argument"], "(task TODO)");
     store.close();
 }
 
@@ -153,6 +181,7 @@ fn query_export_nested_queries_do_not_disclose_outside_match_counts() {
         folder: None,
         replace: false,
         asset_budget_bytes: None,
+        include_query_text: false,
     };
     let plan = plan_query(&store, &request).unwrap();
     let receipt = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
@@ -207,6 +236,7 @@ fn selected_static_page_keeps_outside_references_inert() {
         folder: None,
         replace: false,
         asset_budget_bytes: None,
+        include_query_text: false,
     };
     let plan = plan_query(&store, &request).unwrap();
     publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
@@ -249,6 +279,7 @@ fn live_export_artifact_cost_is_bounded_per_selected_block() {
             folder: None,
             replace: false,
             asset_budget_bytes: None,
+            include_query_text: false,
         };
         let plan = plan_query(&store, &request).unwrap();
         let receipt = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
@@ -297,6 +328,7 @@ fn build_real_query_site_for_browser_smoke() {
         folder: None,
         replace: false,
         asset_budget_bytes: None,
+        include_query_text: false,
     };
     let plan = plan_query(&store, &request).unwrap();
     let dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../dist");
@@ -400,6 +432,7 @@ fn query_export_uses_the_graph_leaf_and_reports_missing_assets() {
         folder: None,
         replace: false,
         asset_budget_bytes: None,
+        include_query_text: false,
     };
     let plan = plan_query(&store, &request).unwrap();
     let receipt = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
@@ -444,6 +477,7 @@ fn query_export_default_budget_accepts_assets_above_the_old_ceiling() {
         folder: None,
         replace: false,
         asset_budget_bytes: None,
+        include_query_text: false,
     };
     let plan = plan_query(&store, &request).unwrap();
     let result = publish_query(&store, &request, &plan.fingerprint, &bundle());
@@ -482,6 +516,7 @@ fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
         folder: None,
         replace: false,
         asset_budget_bytes: None,
+        include_query_text: false,
     };
     let plan = plan_query(&store, &request).unwrap();
     let first = publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
@@ -540,5 +575,107 @@ fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
         fs::read(graph.join("pages/Public.md")).unwrap(),
         text.as_bytes()
     );
+    store.close();
+}
+
+/// REG-QUERY-EXPORT-PRIVATE-PAGES (D-20261017-SD1): a query export publishes the
+/// pages its query selects, minus `public:: false` pages and the exports page
+/// (`tine/exports:: true`, Markdown or Org, with or without `public:: false`),
+/// and the plan names what it left out. The live site drops the exports page
+/// even when every page is public.
+#[test]
+fn query_export_leaves_out_private_pages_and_the_exports_page() {
+    let _integration_guard = crate::integration_lock();
+    let (graph, output, store) = fixture();
+    fs::write(
+        graph.join("pages/Private.md"),
+        "public:: false\n- TODO private text\n",
+    )
+    .unwrap();
+    fs::write(
+        graph.join("pages/Exports.md"),
+        "tine/exports:: true\n- TODO exports md\n",
+    )
+    .unwrap();
+    fs::write(
+        graph.join("pages/Org exports.org"),
+        "#+tine/exports: true\n* TODO exports org\n",
+    )
+    .unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    let request = QueryExportRequest {
+        argument: "(task TODO)".into(),
+        dialect: QueryTextDialect::MacroQuery,
+        properties: vec![],
+        current_page: Some("Public".into()),
+        name: "All TODOs".into(),
+        host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+        include_query_text: false,
+    };
+    let plan = plan_query(&store, &request).unwrap();
+    let names: Vec<_> = plan.pages.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["Public"]);
+    let mut left: Vec<_> = plan
+        .left_out
+        .iter()
+        .map(|p| {
+            (
+                p.name.to_lowercase(),
+                serde_json::to_value(p.reason).unwrap(),
+            )
+        })
+        .collect();
+    left.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        left,
+        [
+            ("exports".to_owned(), serde_json::json!("exportsPage")),
+            ("org exports".to_owned(), serde_json::json!("exportsPage")),
+            ("private".to_owned(), serde_json::json!("private")),
+        ]
+    );
+    assert!(plan.selects_host_page, "the query's own page is exported");
+    publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
+    let text =
+        fs::read_to_string(graph.join("published-queries/all-todos/app/snapshot.json")).unwrap();
+    for leaked in ["private text", "exports md", "exports org"] {
+        assert!(!text.contains(leaked), "{leaked} was published");
+    }
+
+    let site = publish_live(&store, &output, "All public", true, &bundle()).unwrap();
+    let snapshot =
+        fs::read_to_string(std::path::Path::new(&site.path).join("app/snapshot.json")).unwrap();
+    assert!(!snapshot.contains("exports md") && !snapshot.contains("exports org"));
+    assert!(snapshot.contains("TODO selected"));
+    store.close();
+}
+
+#[test]
+fn query_export_refuses_when_every_selected_page_is_left_out() {
+    let _integration_guard = crate::integration_lock();
+    let (graph, _output, store) = fixture();
+    fs::write(
+        graph.join("pages/Private.md"),
+        "public:: false\n- DONE only private\n",
+    )
+    .unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    let request = QueryExportRequest {
+        argument: "(task DONE)".into(),
+        dialect: QueryTextDialect::MacroQuery,
+        properties: vec![],
+        current_page: None,
+        name: "Done".into(),
+        host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+        include_query_text: false,
+    };
+    let error = plan_query(&store, &request).unwrap_err();
+    assert!(error.to_string().contains("private"), "{error}");
     store.close();
 }

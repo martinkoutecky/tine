@@ -1482,11 +1482,16 @@ export interface MessageArgs {
   "query-export-dialog-export-query-results": {};
   "query-export-dialog-exported": { "pages": string | number; "path": string | number; "previous": number; "retired": string | number };
   "query-export-dialog-exporting": {};
+  "query-export-dialog-include-query-text": {};
   "query-export-dialog-journal": {};
+  "query-export-dialog-left-out": { "count": number };
+  "query-export-dialog-left-out-exports-page": {};
+  "query-export-dialog-left-out-private": {};
   "query-export-dialog-name": {};
   "query-export-dialog-path": { "path": string | number };
   "query-export-dialog-replace-it-the-previous-export-is-kept-in": {};
   "query-export-dialog-resolving-pages": {};
+  "query-export-dialog-selects-host-page": {};
   "query-export-dialog-separate": { "folder": string | number };
   "query-export-dialog-summary": { "pages": string | number; "results": string | number };
   "query-export-limit-setting-default-1-gi-b": {};

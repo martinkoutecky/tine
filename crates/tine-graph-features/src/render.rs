@@ -2057,12 +2057,53 @@ impl PageSelection {
     }
 
     pub(crate) fn includes(self, page: &CorpusPage) -> bool {
+        if page_is_exports_page(page) && !matches!(self, Self::Preselected) {
+            return false;
+        }
         match (self, page_public_flag(page)) {
             (Self::Preselected, _) => true,
             (_, Some(flag)) => flag,
             (selection, None) => matches!(selection, Self::AllButOptedOut),
         }
     }
+}
+
+/// Why a page selected by a query or a share is still left out of the
+/// published output (SHARE-DIALOG §1–2, D-20261017-SD1). Every export path
+/// asks here; the live site's `Marked`/`AllButOptedOut` selection applies the
+/// same two rules through `PageSelection::includes`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LeftOut {
+    /// `public:: false`: privacy settings apply on every export run (vision §4.3).
+    Private,
+    /// The exports page (`tine/exports:: true`) holds export definitions and is
+    /// never exported, even when a query selects it.
+    ExportsPage,
+}
+
+pub fn export_left_out(page: &CorpusPage) -> Option<LeftOut> {
+    if page_is_exports_page(page) {
+        Some(LeftOut::ExportsPage)
+    } else if page_public_flag(page) == Some(false) {
+        Some(LeftOut::Private)
+    } else {
+        None
+    }
+}
+
+/// The exports page's marker, `tine/exports:: true` (Org `#+tine/exports:
+/// true`), read from the parser's page properties like `public`.
+pub(crate) fn page_is_exports_page(page: &CorpusPage) -> bool {
+    let org = Format::from_path(page.id.as_str().as_ref()) == Format::Org;
+    let Some(pre) = page.document.pre_block.as_deref() else {
+        return false;
+    };
+    let regions = tine_core::block_regions::parse_document(pre, org);
+    let found = regions.page_properties().any(|property| {
+        doc::property_key_norm(&property.key) == "tine/exports" && property.value == "true"
+    });
+    found
 }
 
 /// A page's `public` property: Markdown `public:: v` or Org `#+public: v` / head

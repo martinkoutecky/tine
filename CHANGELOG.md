@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Query exports leave out pages marked `public:: false` and the exports page, as every other export already did; the review lists the pages left out and notes when the export includes the page the query is written on. The published export no longer carries the query itself unless **Include the query text** is ticked (REG-QUERY-EXPORT-PRIVATE-PAGES).
 - Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.
 - Typing and deleting in a zoomed block no longer scans every block on its page, including journal and sidebar views (GH #248).
 - Sticky parent bullets show the parent's rendered text (bold, links, block references) instead of raw markup, and each pinned bullet lines up with its block's own bullet instead of sitting one level to the left. They no longer cover Settings, menus or toolbars (GH #643).
