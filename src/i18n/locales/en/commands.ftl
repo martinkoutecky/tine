@@ -102,8 +102,8 @@ command-editor-duplicate-block = Duplicate block below (with children)
 command-editor-duplicate-block-above = Duplicate block above (with children)
 command-editor-insert-child-block = Insert child block
 command-editor-select-embedding-block = Select embedding block
-command-editor-collapse-children = Collapse children (one level)
-command-editor-expand-children = Expand children (one level)
+command-editor-collapse-children = Collapse (one level)
+command-editor-expand-children = Expand (one level)
 command-editor-paste-as-link = Paste as link
 
 # Interface text; variables carry untranslated names, paths or diagnostic details.

@@ -137,19 +137,34 @@ export function setTargetChildrenCollapsed(collapsed: boolean): boolean {
     if (!pageRoots) return false;
     parents = [];
   }
-  let level = pageRoots ?? parents.flatMap((id) => docNode(id)?.children ?? []);
-  if (!collapsed) {
+  const folded = (id: string) => {
+    const n = docNode(id);
+    return !!n?.children.length && n.collapsed;
+  };
+  const children = (ids: string[]) => ids.flatMap((id) => docNode(id)?.children ?? []);
+  // GH #696: one level includes the targets themselves. Collapse folds the
+  // children first and the targets once no child is left open; it never opens
+  // a target. Expand opens a folded target alone before reaching its children.
+  let opened: string[] = [];
+  let level: string[];
+  if (pageRoots) level = pageRoots;
+  else if (collapsed) {
+    const open = parents.filter((id) => docNode(id)?.children.length && !docNode(id)?.collapsed);
+    const kids = children(open);
+    level = kids.some((id) => docNode(id)?.children.length && !docNode(id)?.collapsed) ? kids : open;
+  } else {
+    opened = parents.filter(folded);
+    level = opened.length ? [] : children(parents);
+  }
+  if (!collapsed && !opened.length) {
     // Breadth first: one press changes one depth across every target. Leaves
     // never stop the search; all changes still use the existing undo/save path.
-    while (level.length && !level.some((id) => {
-      const n = docNode(id);
-      return n?.children.length && n.collapsed;
-    })) level = level.flatMap((id) => docNode(id)?.children ?? []);
+    while (level.length && !level.some(folded)) level = children(level);
   }
-  const pages = [...new Set([...parents, ...level].map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
+  const pages = [...new Set([...opened, ...level].map((id) => docNode(id)?.page).filter((p): p is string => !!p))];
   if (!pages.length) return false;
   withUndoUnit(collapsed ? "collapse-children" : "expand-children", pages, () => {
-    for (const id of parents) if (docNode(id)?.collapsed) setCollapsed(id, false);
+    for (const id of opened) setCollapsed(id, false);
     for (const id of level) setCollapsed(id, collapsed);
   });
   return true;

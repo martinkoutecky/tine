@@ -198,9 +198,9 @@ command-editor-insert-child-block = 插入子块
 
 command-editor-select-embedding-block = 选择嵌入所在块
 
-command-editor-collapse-children = 折叠子块（一层）
+command-editor-collapse-children = 折叠（一层）
 
-command-editor-expand-children = 展开子块（一层）
+command-editor-expand-children = 展开（一层）
 
 command-editor-paste-as-link = 粘贴为链接
 
