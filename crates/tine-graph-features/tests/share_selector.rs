@@ -48,6 +48,7 @@ fn request(argument: &str, dialect: QueryTextDialect) -> QueryExportRequest {
         folder: None,
         replace: false,
         asset_budget_bytes: None,
+        include_query_text: false,
     }
 }
 
