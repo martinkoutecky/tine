@@ -11,6 +11,8 @@ import { revealOutlineBlock } from "../outlineViewport";
 import { openInPageFind, setInPageFindQuery, inPageFindMatches, closeInPageFind } from "../inpageFind";
 import { installKeybindings } from "../keybindings";
 import { PageView } from "./Page";
+import * as blockIdentity from "../blockIdentity";
+import { setDoc } from "../document/model";
 
 class WindowObserver {
   static observers: WindowObserver[] = [];
@@ -59,6 +61,24 @@ async function mount(count = 2000, nested = false, branched = false, collapse?: 
   await vi.waitFor(() => expect(host.querySelector(".page-title")?.textContent).toContain("Window"));
   return { host, dispose };
 }
+
+it.each([400, 1500])("GH #248: typing in a zoomed block does not read identities of %i page siblings", async count => {
+  const { host, dispose } = await mount(count);
+  try {
+    mainPaneRouter.focusBlock("window-0");
+    await vi.waitFor(() => expect(host.querySelector(".zoomed-page")).not.toBeNull());
+    startEditing("window-0", 0);
+    await vi.waitFor(() => expect(host.querySelector("textarea.block-editor")).not.toBeNull());
+    const identityReads = vi.spyOn(blockIdentity, "existingBlockId");
+    // Exercise the shared raw-write boundary used by input and ID stamping.
+    for (const suffix of ["x", "xy", "x", ""]) {
+      identityReads.mockClear();
+      setDoc("byId", "window-0", "raw", `Row 0 unique content${suffix}`);
+      expect(host.querySelector(".zoomed-page textarea.block-editor")).not.toBeNull();
+      expect(identityReads.mock.calls.length).toBeLessThan(30);
+    }
+  } finally { dispose(); }
+});
 
 it("GH #623: the routed 2,000-block page mounts bounded shells, including its first usable row", async () => {
   const { host, dispose } = await mount();

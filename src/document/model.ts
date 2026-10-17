@@ -1,10 +1,11 @@
 import { type PageKind, type Format } from "../types";
 import { createStore, produce } from "solid-js/store";
-import { batch, createRoot, createMemo } from "solid-js";
-import { acceptedBlockIdentityClaims } from "../blockIdentity";
+import { batch, createRoot, createMemo, createSignal, untrack } from "solid-js";
+import { acceptedBlockIdentityClaims, existingBlockId } from "../blockIdentity";
 import { graphMeta } from "../graphSession";
 import { sheetConfigFromRaw } from "../sheet/config";
 import { beginResultsChange } from "../queryResultsEpoch";
+import { clearOnBindingInvalidated } from "../binding";
 
 export interface Node {
   id: string;
@@ -71,7 +72,19 @@ export const setDoc: typeof writeDoc = ((...args: unknown[]) => {
     || (args[0] === "pages" && ["preBlock", "title"].includes(String(args[2]))));
   batch(() => {
     const finish = hydrating || fieldOnly || args[0] === "feed" || args[0] === "loaded" ? null : beginResultsChange();
-    try { (writeDoc as (...args: unknown[]) => void)(...args); }
+    try {
+      (writeDoc as (...args: unknown[]) => void)(...args);
+      untrack(() => {
+        if (args.length === 4 && args[0] === "byId" && args[2] === "raw" && typeof args[1] === "string") {
+          updateAuthoredIdentity(args[1]);
+        } else if (!fieldOnly && args[0] !== "feed" && args[0] !== "loaded") {
+          // Producers can replace/reparent/remove arbitrary nodes. Rebuild on
+          // the next lookup, never on ordinary raw-only typing or folding.
+          authoredIdentityPages.clear();
+          setIdentityStructureRevision(v => v + 1);
+        }
+      });
+    }
     finally {
       // A whole-state reset is complete here (workingSet.resetStore); edit
       // producers stay pending through their following markDirty call.
@@ -104,6 +117,74 @@ export function pageRoots(name: string): readonly string[] { return pageByName(n
 export function loadedPage(name: string): ReadonlyFeedPage | undefined { return pageByName(name); }
 export function feedNames(): readonly string[] { return doc.feed; }
 export function isLoaded(name?: string): boolean { return name === undefined ? doc.loaded : !!pageByName(name); }
+
+// GH #248: references and zoom routes need authored-ID precedence and ambiguity
+// checks, but must not walk the page on every render/input. Index membership
+// once, then maintain only the edited node's claim at the shared write boundary.
+// This is scoped to reachable outline nodes, just like the former resolver walk
+// (pre-blocks and orphan store entries are not authored claimants).
+interface AuthoredIdentityPage {
+  byNode: Map<string, string | null>;
+  claims: Map<string, Set<string>>;
+  revision: () => number;
+  changed: () => void;
+}
+const authoredIdentityPages = new Map<string, AuthoredIdentityPage>();
+clearOnBindingInvalidated(() => authoredIdentityPages.clear());
+const [identityStructureRevision, setIdentityStructureRevision] = createSignal(0);
+
+function updateAuthoredIdentity(id: string): void {
+  const node = doc.byId[id];
+  const index = node && authoredIdentityPages.get(node.page);
+  if (!index || !index.byNode.has(id)) return;
+  const before = index.byNode.get(id)!;
+  const after = existingBlockId(node.raw, formatForBlock(id));
+  if (before === after) return;
+  if (before !== null) {
+    const claims = index.claims.get(before)!;
+    claims.delete(id);
+    if (claims.size === 0) index.claims.delete(before);
+  }
+  if (after !== null) {
+    const claims = index.claims.get(after) ?? new Set<string>();
+    claims.add(id);
+    index.claims.set(after, claims);
+  }
+  index.byNode.set(id, after);
+  index.changed();
+}
+
+/** All reachable authored claimants, including duplicates. Reactive to ID and
+ * structural changes; ordinary body edits update just one index entry. */
+export function authoredBlockClaims(page: string, identity: string): ReadonlySet<string> | undefined {
+  identityStructureRevision();
+  let index = authoredIdentityPages.get(page);
+  if (!index) {
+    index = untrack(() => {
+      const [revision, setRevision] = createSignal(0);
+      const next: AuthoredIdentityPage = { byNode: new Map(), claims: new Map(), revision, changed: () => setRevision(v => v + 1) };
+      const stack = [...(pageByName(page)?.roots ?? [])];
+      while (stack.length) {
+        const id = stack.pop()!;
+        if (next.byNode.has(id)) continue;
+        const node = doc.byId[id];
+        if (!node || node.page !== page) continue;
+        const authored = existingBlockId(node.raw, formatForBlock(id));
+        next.byNode.set(id, authored);
+        if (authored !== null) {
+          const claims = next.claims.get(authored) ?? new Set<string>();
+          claims.add(id);
+          next.claims.set(authored, claims);
+        }
+        stack.push(...node.children);
+      }
+      authoredIdentityPages.set(page, next);
+      return next;
+    });
+  }
+  index.revision();
+  return index.claims.get(identity);
+}
 
 // Retain claims with each live node, beyond the bounded render AST cache. A
 // second paste over >8k loaded blocks must not reparse the entire working set.
