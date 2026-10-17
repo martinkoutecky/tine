@@ -63,8 +63,12 @@ inspection. Page saves are the page host's single-file renames (STEP3 §3.2),
 which have no multi-file rollback; a failed one keeps the input in custody.
 
 A held `WholeGraph` view does not wait for later writers. Acquiring the first
-view with `whole_graph()` can wait for the initial parse. The public operation
-surface is 45 operations: the methods of `Store` and `Transaction` plus every
+view with `whole_graph()` can wait for the initial parse; with a launch
+checkpoint (ADR 0070) it answers from the checkpoint until the launch diff ends.
+`whole_graph_reconciled()` never serves the checkpoint: it waits for the launch
+diff, for graph-wide destructive operations and for a one-shot lookup that
+missed in the checkpoint (a cold-start `tine://` link, GH #181). The public operation
+surface is 46 operations: the methods of `Store` and `Transaction` plus every
 public function taking either. `crates/tine-store/SURFACE.txt` budgets it per
 concept and `crates/tine-store/tests/shallow_ratchet.rs` keeps this count true.
 The graph-command boundary guard lives at `crates/tine-store/tests/graph_command_boundary.rs`; the client path guard is
