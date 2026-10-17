@@ -8,6 +8,7 @@
  *  Every limit comes from `quick-share-limits.json`, which the Rust writer
  *  also checks. The fragment never leaves the browser: it is not put into a
  *  request, a log or an error message. */
+import { pageIdentityKey } from "../pageIdentity";
 import limits from "../../docs/contracts/quick-share-limits.json";
 import type { PublishedSnapshot } from "../publishedBackend";
 import { readBounded, validateSnapshot } from "../publishedBackend";
@@ -214,13 +215,13 @@ function admitCaps(doc: unknown, snapshot: PublishedSnapshot, blocks: number): v
       }
     }
   }
-  // The home list never shadows a shared page (the writer refuses that name).
+  // The home list never shadows a shared page (the writer refuses that name). The key is the writer's own
+  // refs::page_key (WASM twin), so a name the writer accepted is never refused here.
   const home = snapshot.pages.find((page) => page.path === "");
   if (home) {
-    const key = (name: string) => name.trim().toLowerCase().normalize("NFC");
-    const wanted = key(home.name);
+    const wanted = pageIdentityKey(home.name);
     const others = [...snapshot.pages.filter((page) => page !== home).map((page) => page.name), ...snapshot.aliases.map(([alias]) => alias)];
-    if (others.some((name) => key(name) === wanted)) fail("invalid", "This share is damaged.");
+    if (others.some((name) => pageIdentityKey(name) === wanted)) fail("invalid", "This share is damaged.");
   }
 }
 

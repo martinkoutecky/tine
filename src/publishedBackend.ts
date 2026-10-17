@@ -17,7 +17,7 @@ import type { ExecutionContext, ParsedQuery, Query, QueryResult, QueryTextDialec
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, MatchEvidence, PageDto, PageEntry, PageRead, QueryExecution, QueryHit, QueryPageScope, RefGroup } from "./types";
 import { previewDtoSubtree } from "./previewProjection";
 import { pageIdentityKey } from "./pageIdentity";
-import { blockRegions } from "./render/parse";
+import { blockRegions, initParser } from "./render/parse";
 import { blockRefsInText } from "./render/pageRefs";
 import { searchSubstringSpans } from "./editor/searchQuery";
 import { searchFold } from "./editor/searchFold";
@@ -135,6 +135,8 @@ export function loadPublishedSnapshot(url = publishedSnapshotUrl() ?? "snapshot.
       if (url === QUICK_SHARE_SNAPSHOT) {
         // A quick share viewer: the snapshot comes from the link's gist,
         // decrypted in the browser; navigation keeps the share prefix.
+        // Admission keys page names with the WASM page identity, so the parser must be up first.
+        await initParser();
         const { loadQuickShare } = await import("./quickShare/quickShare");
         const share = await loadQuickShare(globalThis.location?.hash ?? "");
         setQuickSharePrefix(share.link.prefix);

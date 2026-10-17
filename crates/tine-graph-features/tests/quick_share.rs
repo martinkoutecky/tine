@@ -240,7 +240,7 @@ fn quick_share_of_one_page_is_that_page() {
     let doc: Value = serde_json::from_slice(&doc).unwrap();
     assert_eq!(doc["snapshot"]["home"], "Empty");
     assert_eq!(doc["snapshot"]["pages"].as_array().unwrap().len(), 1);
-    for name in ["Project", "proj"] {
+    for name in ["Project", "proj", "/Project/"] {
         let clash = quick_share::prepare(
             &store,
             &request("@page and name = 'Project' or name = 'Empty'", name),
@@ -253,6 +253,17 @@ fn quick_share_of_one_page_is_that_page() {
             "{name}: {message}"
         );
     }
+    // Review g1 r2 B1: a BOM is not whitespace to page_key, so this name is no clash (the viewer agrees).
+    let bom = quick_share::prepare(
+        &store,
+        &request(
+            "@page and name = 'Project' or name = 'Empty'",
+            "Project\u{feff}",
+        ),
+        CREATED_AT,
+        &root.join("scratch"),
+    );
+    assert!(bom.is_ok(), "{:?}", bom.err().map(|e| e.to_string()));
     let refused = quick_share::prepare(
         &store,
         &request("@page and name = 'Secret'", "x"),

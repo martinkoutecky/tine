@@ -190,6 +190,10 @@ describe("quick share generation 1", () => {
     // Review g1 R2: a home list named like a shared page or alias is refused.
     expect(broken((d) => { d.snapshot.pages[0].name = "project"; })).toBe("invalid");
     expect(broken((d) => { d.snapshot.pages[0].name = "PROJ"; })).toBe("invalid");
+    // Review g1 r2 B1: the key is the writer's page_key. A BOM is not Rust whitespace, so the writer accepts
+    // "Project\uFEFF" and the viewer must too; one boundary slash per side folds, as in the writer.
+    expect(broken((d) => { d.snapshot.pages[0].name = "Project\uFEFF"; })).toBe("admitted");
+    expect(broken((d) => { d.snapshot.pages[0].name = "/Project/"; })).toBe("invalid");
   });
 
   it("parses only well-formed share fragments", () => {
