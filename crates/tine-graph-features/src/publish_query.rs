@@ -333,6 +333,17 @@ fn resolve_plan(
             .any(|page| page.name.to_lowercase() == host.to_lowercase())
     });
     let selected = tine_core::Corpus { pages: chosen };
+    // The answer is closed to the exported pages too, so neither a ticked
+    // "Include the query text" home nor the row count carries a left-out row.
+    if !left_out.is_empty() {
+        let paths: HashSet<&str> = selected.pages.iter().map(|p| p.id.as_str()).collect();
+        let names: HashSet<_> = selected
+            .pages
+            .iter()
+            .map(|p| (p.kind, p.name.to_lowercase()))
+            .collect();
+        result = close_query_result(result, &paths, &names);
+    }
     let pages: Vec<ExportPage> = selected
         .pages
         .iter()

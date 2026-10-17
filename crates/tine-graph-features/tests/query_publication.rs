@@ -645,6 +645,25 @@ fn query_export_leaves_out_private_pages_and_the_exports_page() {
         assert!(!text.contains(leaked), "{leaked} was published");
     }
 
+    // Ticked, the published answer is closed to the exported pages too.
+    let ticked = QueryExportRequest {
+        include_query_text: true,
+        replace: true,
+        ..request.clone()
+    };
+    let plan = plan_query(&store, &ticked).unwrap();
+    assert_eq!(plan.row_count, 1, "left-out rows are not counted");
+    publish_query(&store, &ticked, &plan.fingerprint, &bundle()).unwrap();
+    let text =
+        fs::read_to_string(graph.join("published-queries/all-todos/app/snapshot.json")).unwrap();
+    assert!(text.contains("(task TODO)"));
+    for leaked in ["private text", "exports md", "exports org"] {
+        assert!(
+            !text.contains(leaked),
+            "{leaked} was published with the query text"
+        );
+    }
+
     let site = publish_live(&store, &output, "All public", true, &bundle()).unwrap();
     let snapshot =
         fs::read_to_string(std::path::Path::new(&site.path).join("app/snapshot.json")).unwrap();
