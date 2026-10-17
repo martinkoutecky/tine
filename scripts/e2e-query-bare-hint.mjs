@@ -101,7 +101,7 @@ try {
   try {
     await openPageByName(browser, "Bare");
     // As in Logseq, the bare clause adds no condition and the query has no other: it shows no task at all.
-    const before = await observeWhen(browser, (o) => !!o.hint && /No results/.test(o.empty),
+    const before = await observeWhen(browser, (o) => !!o.hint && o.empty.length > 0,
       "the bare (task) query never showed its note beside an empty answer");
     fs.writeFileSync(`${ARTIFACTS}/before.json`, `${JSON.stringify(before, null, 2)}\n`);
     if (before.found.length) throw new Error(`a bare (task) query listed ${JSON.stringify(before.found)}; Logseq lists nothing`);

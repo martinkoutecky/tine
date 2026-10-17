@@ -137,8 +137,10 @@ try {
   });
   if (!sourceMenuOpened) throw new Error("fresh source block did not open Tine's context menu");
   await browser.$(".ctx-menu").waitForExist({ timeout: 5000 });
-  const copyRef = await browser.$("//div[contains(concat(' ', normalize-space(@class), ' '), ' ctx-menu ')]//div[contains(concat(' ', normalize-space(@class), ' '), ' ctx-item ') and normalize-space(.) = 'Copy block ref']");
-  await copyRef.waitForExist({ timeout: 5000 });
+  const copyAs = await browser.$(".ctx-menu [role=menuitem][aria-haspopup=menu]");
+  await copyAs.moveTo();
+  const copyRef = await browser.$('//*[@role="menuitem" and normalize-space(.)="Copy block ref"]');
+  await copyRef.waitForDisplayed({ timeout: 5000 });
   // Durable receipt (og 10g): the reference the user receives must name an id
   // that is already on disk. Put a sentinel on the native clipboard, then read
   // the target file at the first moment the clipboard holds a reference.

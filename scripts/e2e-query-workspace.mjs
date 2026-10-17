@@ -733,12 +733,19 @@ await withApp(2, async (browser) => {
     timeoutMsg: "third facet click did not clear the persisted include/exclude state",
   });
 
-  const linkedBulk = await browser.$$(".linked-references .reference-bulk-controls button");
-  await linkedBulk[0].click();
+  // The bulk action is one state-dependent toggle. Reacquire it by its
+  // current label so both linked and unlinked groups prove each transition.
+  async function bulkReferenceAction(section, label) {
+    const controls = await browser.$(`${section} .reference-bulk-controls`);
+    const action = await controls.$(`button=${label}`);
+    await action.waitForDisplayed({ timeout: 5_000 });
+    await action.click();
+  }
+  await bulkReferenceAction(".linked-references", "Collapse all");
   await browser.waitUntil(async () => (await browser.$$(".linked-references .reference-blocks")).length === 0, {
     timeout: 5_000, timeoutMsg: "Collapse all did not unmount linked reference bodies",
   });
-  await linkedBulk[1].click();
+  await bulkReferenceAction(".linked-references", "Expand all");
   await browser.waitUntil(async () => (await browser.$$(".linked-references .reference-blocks")).length === linkedProof.groupCount, {
     timeout: 5_000, timeoutMsg: "Expand all did not restore linked reference bodies",
   });
@@ -778,12 +785,11 @@ await withApp(2, async (browser) => {
   }
   await showFull.click();
 
-  const unlinkedBulk = await browser.$$(".unlinked-references .reference-bulk-controls button");
-  await unlinkedBulk[0].click();
+  await bulkReferenceAction(".unlinked-references", "Collapse all");
   await browser.waitUntil(async () => (await browser.$$(".unlinked-references .reference-blocks")).length === 0, {
     timeout: 5_000, timeoutMsg: "Collapse all did not unmount unlinked reference bodies",
   });
-  await unlinkedBulk[1].click();
+  await bulkReferenceAction(".unlinked-references", "Expand all");
   await browser.waitUntil(async () => (await browser.$$(".unlinked-references .reference-blocks")).length === unlinkedProof.groupCount, {
     timeout: 5_000, timeoutMsg: "Expand all did not restore unlinked reference bodies",
   });
