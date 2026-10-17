@@ -1478,3 +1478,59 @@ fn block_show_fingerprints_the_text_the_host_holds() {
         format!("- U, edited\n  id:: {u}\n- old\n")
     );
 }
+
+/// Review 7: `block show` names the page the index resolved, not the name its
+/// bytes now declare. `a.md` takes `title:: b` after indexing while `b.md`
+/// holds a block with the same text; a handle shown for `U` must not edit
+/// `b.md`.
+#[test]
+fn block_show_names_the_page_it_read_not_its_new_title() {
+    let graph = Graph::new();
+    let u = "6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e";
+    let a = graph.root.join("pages/a.md");
+    let b = graph.root.join("pages/b.md");
+    std::fs::write(&a, format!("- new\n  id:: {u}\n")).unwrap();
+    std::fs::write(&b, "- new\n").unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    std::fs::write(&a, format!("title:: b\n\n- new\n  id:: {u}\n")).unwrap();
+    let shown = verb(&slot, "block.show", json!({ "uuid": u })).unwrap();
+    let group = &shown["block"]["group"];
+    assert_eq!(group["page"], "a", "{group}");
+    let handle = group["blocks"][0]["handle"].as_str().unwrap().to_string();
+    verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": format!("a/{handle}"), "text": "U, edited" }),
+    )
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&b).unwrap(), "- new\n");
+    assert!(
+        std::fs::read_to_string(&a)
+            .unwrap()
+            .contains("- U, edited\n"),
+        "{}",
+        std::fs::read_to_string(&a).unwrap()
+    );
+}
+
+/// Review 7: the host preview charges each node as the store's projector
+/// does. A root whose text fits the byte bound but whose projected properties
+/// do not is omitted (`truncated` 1), as the store preview omits it.
+#[test]
+fn block_show_charges_projected_properties_against_the_byte_bound() {
+    let graph = Graph::new();
+    let u = "7c8d9e0f-1a2b-4c3d-8e4f-5a6b7c8d9e0f";
+    let big = "x".repeat(17 << 20);
+    std::fs::write(
+        graph.root.join("pages/big.md"),
+        format!("- root\n  id:: {u}\n  p:: {big}\n"),
+    )
+    .unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let shown = verb(&slot, "block.show", json!({ "uuid": u })).unwrap();
+    let block = &shown["block"];
+    assert_eq!(block["truncated"], 1, "{}", block["group"]["page"]);
+    assert_eq!(block["group"]["blocks"].as_array().unwrap().len(), 0);
+}

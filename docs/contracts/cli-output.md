@@ -103,7 +103,8 @@ today: the reply is `internal` with the diagnostic id `cli-store-failed` and the
 not accepted). Kind `block`. Errors: `bad-args` (not a UUID), `not-found`, `too-large`.
 
 The preview is **bounded**: at most 2,000 nodes (the block itself counts) and a byte cap of
-32 MiB minus 4 KiB, whichever is reached first. The request's optional `max_nodes` lowers the
+32 MiB minus 4 KiB, whichever is reached first; each node is charged its estimated projected size
+(id, text, properties, tags, breadcrumb and a fixed overhead), as the index charges it. The request's optional `max_nodes` lowers the
 node bound (clamped to 1..=2000); `tine block show` does not send it. `truncated` counts the
 nodes left out; with a budget too small for even the root the block list is empty and
 `truncated` is the whole subtree.
@@ -301,7 +302,9 @@ id pages/a.md rev 9e8b1eedbf3d8ef0
   A block preview (`block show`) prints the same handles: page-absolute positions (a block at `3.1`
   prints `3.1~FP`, its children `3.1.1~FP`). The preview's text, positions and fingerprints all come
   from one read of the page as the host holds it, so a handle it prints names the block it shows or
-  is `stale`. When the page cannot be read at that moment the preview comes from the graph's index
+  is `stale`. The group's `page` is the name the graph's index resolved to the file it read, never
+  a name the bytes declare since (a new `title::`), so the address a handle forms opens that same
+  file. When the page cannot be read at that moment the preview comes from the graph's index
   and prints positions relative to the block, with no handles. Result groups (`refs`, `query`) print positions only.
 - **Attribution sits beside the address** (spec A3: "each block line starts with its address and
   its `author::` when there is one"): `ADDRESS [author:: NAME] first line`. The `author::` property

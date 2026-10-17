@@ -88,7 +88,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                     // One host read gives the content, positions and
                     // fingerprints together (review 6); the store preview is
                     // the fallback, positions only, when the page is busy.
-                    let block = match host_preview(slot, &page, &uuid, max_nodes)? {
+                    let block = match host_preview(slot, &page, &preview.group, &uuid, max_nodes)? {
                         Some(block) => block,
                         None => to_value(&preview)?,
                     };
@@ -413,11 +413,15 @@ const PREVIEW_BYTES: usize = (32 << 20) - 4 * 1024;
 /// host holds it, bounded like the store's preview (`max_nodes`, then the
 /// byte bound, in outline order), with the handles a page read prints:
 /// page-absolute positions and fingerprints of that same text (design §2), so
-/// a handle it prints resolves to the block it shows or is `stale`. `None`
-/// when the host cannot read the page now or no longer holds the id there.
+/// a handle it prints resolves to the block it shows or is `stale`. The page
+/// is named as `indexed` names it, the name that resolved to `page`, never the
+/// name the bytes now declare: a `title::` changed since indexing would route
+/// a printed handle to another file (review 7). `None` when the host cannot
+/// read the page now or no longer holds the id there.
 fn host_preview(
     slot: &GraphSlot,
     page: &PageId,
+    indexed: &tine_core::model::RefGroup,
     uuid: &str,
     max_nodes: usize,
 ) -> Result<Option<Value>, ErrorBody> {
@@ -444,8 +448,8 @@ fn host_preview(
     let emitted = max_nodes - nodes;
     let preview = tine_core::model::BlockPreview {
         group: tine_core::model::RefGroup {
-            page: parsed.doc.name.clone(),
-            kind: parsed.doc.kind,
+            page: indexed.page.clone(),
+            kind: indexed.kind,
             blocks,
             evidence: Vec::new(),
         },
@@ -472,21 +476,27 @@ fn node_count(block: &tine_core::model::BlockDto) -> usize {
     1 + block.children.iter().map(node_count).sum::<usize>()
 }
 
-/// `block` and its descendants in outline order until a bound is reached.
+/// `block` and its descendants in outline order until a bound is reached,
+/// each node charged as the store's projector charges it (id, text,
+/// properties, tags, breadcrumb, overhead; review 7).
 fn bounded(
     block: &tine_core::model::BlockDto,
     nodes: &mut usize,
     bytes: &mut usize,
 ) -> Option<tine_core::model::BlockDto> {
-    if *nodes == 0 || block.raw.len() > *bytes {
+    if *nodes == 0 || block.raw.len().saturating_add(block.id.len()) > *bytes {
         return None;
     }
-    *nodes -= 1;
-    *bytes -= block.raw.len();
     let mut kept = tine_core::model::BlockDto {
         children: Vec::new(),
         ..block.clone()
     };
+    let cost = tine_core::model::block_dto_estimated_bytes(&kept);
+    if cost > *bytes {
+        return None;
+    }
+    *nodes -= 1;
+    *bytes -= cost;
     for child in &block.children {
         match bounded(child, nodes, bytes) {
             Some(child) => kept.children.push(child),
