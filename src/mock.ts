@@ -18,6 +18,7 @@ import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from ".
 import { searchFold } from "./editor/searchFold";
 import { parseJournalWith } from "./journal";
 import { mockJournalFiles } from "./mockJournalFiles";
+import { marginRegressionPages } from "./mockMarginPages";
 
 /** Mock feed membership must use a Logseq journal-title parser, never the
  * host's permissive/non-portable Date string parser. Keep the same explicit
@@ -479,6 +480,7 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
         b("Source root two"),
       ],
     },
+    ...marginRegressionPages(b).map(([name, blocks]) => ({ name, kind: "page" as const, title: name, pre_block: null, blocks })),
   );
 }
 

@@ -187,6 +187,51 @@ fn guide_explains_following_the_link_at_the_caret() {
 }
 
 #[test]
+fn guide_explains_margin_comments() {
+    // Margin dialogue slice 1 (vision 2026-10 §3.7): Ctrl/Cmd+R comments on a
+    // selection as a `quote::` child; a stale quote is kept, never dropped.
+    let tips = bundled_guide_pages()
+        .into_iter()
+        .find(|page| page.title == "Features/Tips & shortcuts")
+        .expect("tips guide is bundled");
+    assert!(tips.markdown.contains("## Comment on a passage — Ctrl+R"));
+    assert!(tips
+        .markdown
+        .contains("select a few words and press **Ctrl/Cmd+R**"));
+    assert!(tips
+        .markdown
+        .contains("an ordinary child bullet carrying a `quote::` property"));
+    assert!(tips
+        .markdown
+        .contains("**Comment on selection** in the command palette"));
+    assert!(tips
+        .markdown
+        .contains("right-clicking words you have selected in a block's text"));
+    assert!(tips
+        .markdown
+        .contains("struck through with **quoted text changed**"));
+    assert!(tips
+        .markdown
+        .contains("A bullet with an `author::` property"));
+    // Comment identity (D-20261017-LD1): the "Your name" setting.
+    assert!(tips.markdown.contains("**Settings > Editor > Your name**"));
+    assert!(tips.markdown.contains("saved with `author:: <your name>`"));
+    // Slice 2b: comments draw no bullets; the author chip is their handle.
+    assert!(tips.markdown.contains("draw no bullet of their own"));
+    assert!(tips.markdown.contains("the name chip is the handle"));
+    // Slice 2: the margin column on wide windows, and where it does not apply.
+    assert!(tips
+        .markdown
+        .contains("shows the comments in a column on the right"));
+    assert!(tips
+        .markdown
+        .contains("**Enter** in a comment's text adds a reply under it"));
+    assert!(tips
+        .markdown
+        .contains("in a split pane or in the sidebar, comments stay in the outline"));
+}
+
+#[test]
 fn pdf_guide_explains_conflict_discard_and_crop_cleanup_retry() {
     let _integration_guard = crate::integration_lock();
     let pdf = bundled_guide_pages()

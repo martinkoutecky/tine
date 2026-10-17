@@ -69,6 +69,7 @@ import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
 import { initNavSettings } from "./navSettings";
+import { initCommentIdentity } from "./commentIdentity";
 import { initLocalFileSettings } from "./localFileSettings";
 import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
@@ -861,6 +862,7 @@ export function App(): JSX.Element {
   onMount(() => void initCopySettings());
   onMount(() => void initRefCompletionSettings());
   onMount(() => void initNavSettings());
+  onMount(() => initCommentIdentity());
   onMount(() => void initSettingsLayout());
   onMount(() => { void initContentWidths(); void initCodeDisplay(); void initStickyParents(); });
   // Load the local-file images opt-in (Settings → Editing). Default off.

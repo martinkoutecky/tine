@@ -26,3 +26,20 @@ describe("shortcuts pane data", () => {
     expect(new Set(actual)).toEqual(new Set(expected));
   });
 });
+
+// Margin dialogue (vision §3.7): Ctrl/Cmd+R is a built-in editor chord. It must
+// be listed in the shortcuts pane, and no other built-in command may share it
+// (the webview's own reload is consumed by the editor command instead).
+describe("comment on selection chord", () => {
+  it("is listed once under Editor and collides with no other default binding", () => {
+    const data = buildShortcutPaneData(rows());
+    const editor = data.find((section) => section.scope === "editor")!;
+    const row = editor.commands.find((c) => c.id === "editor/comment");
+    expect(row?.binding).toBe("mod+r");
+    expect(row?.english).toBe("Comment on selected text");
+    const holders = commandDefaults().filter((c) => c.binding.split(/\s+/).includes("mod+r") || c.alias === "mod+r");
+    expect(holders.map((c) => c.id)).toEqual(["editor/comment"]);
+    const palette = data.flatMap((section) => section.commands).find((c) => c.id === "comment/on-selection");
+    expect(palette?.english).toBe("Comment on selection");
+  });
+});
