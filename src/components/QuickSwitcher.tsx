@@ -9,6 +9,7 @@ import { bindingOwner, readOwned, writeOwned, type Owned } from "../owned";
 import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPrefill, switcherPluginBlock, recentPages, isFavorite, openPageInSidebar, openBlockInSidebar, openPageContextMenu } from "../ui";
 import { createLongPress } from "../render/longPress";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { backgroundTabsAvailable } from "../linkGesture";
 import { graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { openPage, openPageTarget, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route, type PageTarget } from "../router";
@@ -413,6 +414,7 @@ export function QuickSwitcher(): JSX.Element {
   // itself (self-contained and durable — the tab shows exactly what you found);
   // create/command have no background-tab meaning, so they're ignored.
   const openInBackground = async (it: Item) => {
+    if (!backgroundTabsAvailable()) return; // GH #705: no tab strip to reach it
     recordChoice(it);
     if (it.t === "page")
       it.path
@@ -491,7 +493,7 @@ export function QuickSwitcher(): JSX.Element {
         const shiftOnly = e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
         const cmdCtrlOnly = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
         if (shiftOnly && !switcherEmbryo() && (it.t === "page" || it.t === "block")) void chooseSidebar(it);
-        else if (cmdCtrlOnly && (it.t === "page" || it.t === "block")) void openInBackground(it);
+        else if (cmdCtrlOnly && backgroundTabsAvailable() && (it.t === "page" || it.t === "block")) void openInBackground(it);
         else if (e.altKey && !switcherEmbryo()) void chooseOther(it);
         else void choose(it);
       }
@@ -599,7 +601,7 @@ export function QuickSwitcher(): JSX.Element {
                               openInBackground(it);
                             } else if (e.button === 0) {
                               const mod = e.ctrlKey || e.metaKey;
-                              if (mod && !e.altKey && !e.shiftKey && (it.t === "page" || it.t === "block"))
+                              if (mod && backgroundTabsAvailable() && !e.altKey && !e.shiftKey && (it.t === "page" || it.t === "block"))
                                 void openInBackground(it);
                               else if (!switcherEmbryo() && e.shiftKey && !e.altKey && !mod && (it.t === "page" || it.t === "block"))
                                 void chooseSidebar(it);

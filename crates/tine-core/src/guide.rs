@@ -376,6 +376,7 @@ mod journal_guide_tests {
             "These actions switch to the new tab",
             "preview stays open while its **… → Page actions** menu is open",
             "keeps your current tab active and confirms **Opened in a new tab**",
+            "Phones and tablets have no tab strip, so their menus omit **Open in new tab**",
             "Block embed breadcrumbs",
         ] {
             assert!(
