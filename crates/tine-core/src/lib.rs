@@ -12,6 +12,7 @@ pub mod date;
 pub mod diag_line;
 pub mod doc;
 pub mod edn;
+pub mod export_definition;
 pub use tine_outline::editor_text;
 pub use tine_outline::outline as outline_kernel;
 pub mod graph_paths;

@@ -612,7 +612,7 @@ fn tql_value(value: &Value) -> String {
     }
 }
 
-fn sql_string(text: &str) -> String {
+pub(crate) fn sql_string(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
