@@ -959,7 +959,7 @@ fn publish_locked(
         Some(newest) => {
             // Nothing is written: the retention pass below runs without it.
             drop(capture);
-            crate::debug::diag_private("backup-unchanged", newest.name.render());
+            crate::debug::diag_private("backup-unchanged", newest.name.snapshot_name());
             match settle(&newest.path, zips, "baseline_sync") {
                 Ok(durability) => (newest.path.clone(), durability),
                 Err(error) => return BackupOutcome::failed(n, "publish-sync", error.kind()),
@@ -1017,10 +1017,10 @@ fn publish_zip(
     let partial = zips.join(format!(
         "{}{}{}",
         naming::PARTIAL_PREFIX,
-        name.render(),
+        name.snapshot_name(),
         naming::ZIP_EXT
     ));
-    let path = zips.join(format!("{}{}", name.render(), naming::ZIP_EXT));
+    let path = zips.join(format!("{}{}", name.snapshot_name(), naming::ZIP_EXT));
     let written = step("partial_create").and_then(|_| {
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
@@ -1183,7 +1183,7 @@ fn maintain_locked(
     match certified {
         Ok(Durability::Strong) => {}
         Ok(Durability::Weak) => {
-            crate::debug::diag_private("backup-prune-weak-keeper", keeper.name.render());
+            crate::debug::diag_private("backup-prune-weak-keeper", keeper.name.snapshot_name());
             return;
         }
         Err(error) => {
@@ -1314,7 +1314,7 @@ fn list_backups_from_base(base: &std::path::Path, root: &std::path::Path) -> Vec
     };
     let mut out = Vec::new();
     for record in scan.records.iter().rev() {
-        let name = record.name.render();
+        let name = record.name.snapshot_name();
         let info = match record.namespace {
             naming::Namespace::Legacy => match read_manifest(&record.path) {
                 Some(manifest) if manifest.root == current_root => BackupInfo {

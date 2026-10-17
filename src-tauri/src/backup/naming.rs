@@ -70,7 +70,10 @@ impl SnapshotName {
         })
     }
 
-    pub(super) fn render(&self) -> String {
+    /// The snapshot's name without extension or partial prefix. Not named
+    /// `render`: the A-K3 host-slot guard resolves callees by name, and the
+    /// CLI's `owner::terminal::render` is on a host-lock path.
+    pub(super) fn snapshot_name(&self) -> String {
         let mut name = self.stamp.clone();
         if !self.suffix.is_empty() {
             name.push('-');
@@ -184,7 +187,7 @@ mod tests {
             "2026-10-11_09-00-00-pre-restore-3",
             "2026-10-11_09-00-00-pre-journal-rename",
         ] {
-            assert_eq!(name(raw).render(), raw);
+            assert_eq!(name(raw).snapshot_name(), raw);
         }
         assert_eq!(
             name("2026-10-11_09-00-00-pre-restore-3").suffix,
@@ -266,22 +269,27 @@ mod tests {
     #[test]
     fn allocation_reserves_above_every_counter_of_that_second() {
         let now = "2026-10-11_09-00-00";
-        assert_eq!(allocate(now, "", &[]).unwrap().render(), now);
+        assert_eq!(allocate(now, "", &[]).unwrap().snapshot_name(), now);
         let existing = [
             name("2026-10-11_09-00-00-pre-restore"),
             name("2026-10-11_09-00-00-9"),
             name("2026-10-10_23-59-59-40"),
         ];
         assert_eq!(
-            allocate(now, "", &existing).unwrap().render(),
+            allocate(now, "", &existing).unwrap().snapshot_name(),
             "2026-10-11_09-00-00-10"
         );
         assert_eq!(
-            allocate(now, "pre-restore", &existing).unwrap().render(),
+            allocate(now, "pre-restore", &existing)
+                .unwrap()
+                .snapshot_name(),
             "2026-10-11_09-00-00-pre-restore-10"
         );
         let later = "2026-10-11_09-00-01";
-        assert_eq!(allocate(later, "", &existing).unwrap().render(), later);
+        assert_eq!(
+            allocate(later, "", &existing).unwrap().snapshot_name(),
+            later
+        );
     }
 
     /// A clock that moved backward: the new name still sorts last.
@@ -289,7 +297,10 @@ mod tests {
     fn a_backward_clock_never_sorts_a_new_snapshot_first() {
         let existing = [name("2026-10-11_09-00-00-3")];
         let allocated = allocate("2025-01-01_00-00-00", "pre-restore", &existing).unwrap();
-        assert_eq!(allocated.render(), "2026-10-11_09-00-00-pre-restore-4");
+        assert_eq!(
+            allocated.snapshot_name(),
+            "2026-10-11_09-00-00-pre-restore-4"
+        );
         assert_eq!(allocated.chrono_cmp(&existing[0]), Ordering::Greater);
     }
 

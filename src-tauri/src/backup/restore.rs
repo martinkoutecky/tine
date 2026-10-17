@@ -199,7 +199,7 @@ fn verified_zip(
     name: &naming::SnapshotName,
     source: &BackupSource,
 ) -> Result<Verified, String> {
-    let path = zip_base(base).join(format!("{}{}", name.render(), naming::ZIP_EXT));
+    let path = zip_base(base).join(format!("{}{}", name.snapshot_name(), naming::ZIP_EXT));
     let bytes = under_namespace_lock(base, || match read_archive(&path) {
         Ok(bytes) => Ok(bytes),
         Err(archive::Problem::Io(ErrorKind::NotFound)) => Err("backup not found".into()),
@@ -265,7 +265,7 @@ fn verified_dir(
     name: &naming::SnapshotName,
     source: &BackupSource,
 ) -> Result<Verified, String> {
-    let src = base.join(name.render());
+    let src = base.join(name.snapshot_name());
     under_namespace_lock(base, || {
         if !src.is_dir() {
             return Err("backup not found".into());
