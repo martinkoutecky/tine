@@ -82,8 +82,8 @@ function main() {
   if (!version || compare(version, floor) < 0) {
     throw new Error(`usage: retire-beta-tag.mjs v<X.Y.Z-beta.N ≥ ${FIRST_FIXED_MANIFEST_BETA}> [--execute]`);
   }
-  const gh = (...args) => execFileSync("gh", [...args, "--repo", repository], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
-  const ghApi = (...args) => execFileSync("gh", ["api", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+  const gh = (...args) => execFileSync("gh", [...args, "--repo", repository], { encoding: "utf8", maxBuffer: 512 * 1024 * 1024, stdio: ["ignore", "pipe", "inherit"] });
+  const ghApi = (...args) => execFileSync("gh", ["api", ...args], { encoding: "utf8", maxBuffer: 512 * 1024 * 1024, stdio: ["ignore", "pipe", "inherit"] });
   const fetchText = (url) => execFileSync("curl", ["-fsSL", "--max-time", "60", url], { encoding: "latin1" });
   // Reads that may find nothing: only GitHub's own "not there" answer means
   // absent; any other failure (network, auth, 5xx) stops the run.
