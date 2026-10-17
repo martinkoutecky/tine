@@ -1086,16 +1086,18 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
           >
             <span aria-hidden="true">⋯</span>
           </button>
-          <button
-            type="button"
-            class="page-share-btn"
-            data-page-share
-            title={t("share-page-title-button")}
-            aria-label={t("share-page-title-button")}
-            onClick={() => openShareDialog({ page: props.page.name })}
-          >
-            <ShareIcon class="share-icon" />
-          </button>
+          <Show when={!isPublishedExport()}>
+            <button
+              type="button"
+              class="page-share-btn"
+              data-page-share
+              title={t("share-page-title-button")}
+              aria-label={t("share-page-title-button")}
+              onClick={() => openShareDialog({ page: props.page.name })}
+            >
+              <ShareIcon class="share-icon" />
+            </button>
+          </Show>
           <button
             class="fav-star"
             classList={{ active: isFavorite(props.page.name, props.page.kind) }}
