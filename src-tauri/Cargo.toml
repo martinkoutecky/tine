@@ -31,6 +31,7 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 serde = { workspace = true }
+uuid = { workspace = true }
 serde_json = { workspace = true }
 # Asset write commands receive bytes as base64 (a single compact string) instead
 # of a JSON number[] (~4-5x payload + a giant per-element parse on the UI thread).

@@ -509,7 +509,7 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
         verb: outline::Verb,
         keys: outline::KeySource,
     }
-    let req: Request = serde_json::from_str(request).map_err(|e| JsValue::from_str(&format!("Invalid outline request: {e}")))?;
+    let req: Request = outline_request(request)?;
     Ok(match outline::apply(&req.pages, &req.verb, &req.keys) {
         Err(reason) => serde_json::json!({ "refused": reason }).to_string(),
         Ok(change) => {
@@ -546,8 +546,41 @@ pub fn outline_apply_json(request: &str) -> Result<String, JsValue> {
 /// the window can send only those (DESIGN §5.3, §8).
 #[wasm_bindgen]
 pub fn outline_reads_json(verb: &str) -> Result<String, JsValue> {
-    let verb: outline::Verb = serde_json::from_str(verb).map_err(|e| JsValue::from_str(&format!("Invalid outline verb: {e}")))?;
+    let verb: outline::Verb = outline_request(verb)?;
     serde_json::to_string(&verb.reads()).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// An imported forest has two JSON containers per outline level. Serde's
+/// default 128-container ceiling would reject valid 128-block pastes. Bound
+/// nesting before deserialization, then let the kernel enforce outline depth.
+fn outline_request<'a, T: serde::Deserialize<'a>>(input: &'a str) -> Result<T, JsValue> {
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut escaped = false;
+    for byte in input.bytes() {
+        if quoted {
+            if escaped { escaped = false; }
+            else if byte == b'\\' { escaped = true; }
+            else if byte == b'"' { quoted = false; }
+        } else {
+            match byte {
+                b'"' => quoted = true,
+                b'{' | b'[' => {
+                    depth += 1;
+                    if depth > 2 * outline::OUTLINE_MAX_DEPTH + 16 {
+                        return Err(JsValue::from_str("Invalid outline request: excessive JSON nesting"));
+                    }
+                }
+                b'}' | b']' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    let mut decoder = serde_json::Deserializer::from_str(input);
+    decoder.disable_recursion_limit();
+    let value = T::deserialize(&mut decoder).map_err(|e| JsValue::from_str(&format!("Invalid outline request: {e}")))?;
+    decoder.end().map_err(|e| JsValue::from_str(&format!("Invalid outline request: {e}")))?;
+    Ok(value)
 }
 
 /// Shared comparison form; O(text bytes), no graph access.

@@ -1,0 +1,46 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-add 1  "add " 
+.SH NAME
+tine\-add \- Insert a page fragment, attributing every new block to its author
+.SH SYNOPSIS
+\fBtine add\fR [\fB\-\-under\fR] [\fB\-\-after\fR] [\fB\-\-debug\fR] [\fB\-\-before\fR] [\fB\-\-page\fR] [\fB\-\-journal\fR] [\fB\-\-author\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fICONTENT\fR> 
+.SH DESCRIPTION
+Insert a page fragment, attributing every new block to its author
+.SH OPTIONS
+.TP
+\fB\-\-under\fR \fI<BLOCK>\fR
+Append as the last child of BLOCK
+.TP
+\fB\-\-after\fR \fI<BLOCK>\fR
+Insert as the next sibling of BLOCK
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-\-before\fR \fI<BLOCK>\fR
+Insert as the previous sibling of BLOCK
+.TP
+\fB\-\-page\fR \fI<PAGE>\fR
+Append to PAGE, creating it when absent
+.TP
+\fB\-\-journal\fR[=\fI<DATE>\fR]
+Append to a journal, creating it when absent: `\-\-journal` is today, `\-\-journal=DATE` another day
+.TP
+\fB\-\-author\fR \fI<AUTHOR>\fR
+Author on created blocks (default: TINE_AUTHOR, else agent)
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+.TP
+\fB\-\-json\fR
+Print the typed result (schema tine.cli/1) as JSON
+.TP
+\fB\-\-rev\fR \fI<REV>\fR
+Write only if the page is still at this rev (as `page show` prints it); required for a bare PAGE/POS without a fingerprint
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fICONTENT\fR>
+Markdown or Org page fragment; `\-` reads standard input

@@ -145,6 +145,19 @@ enum Command {
         #[command(flatten)]
         write: WriteArgs,
     },
+    /// Insert a page fragment, attributing every new block to its author.
+    Add {
+        /// Markdown or Org page fragment; `-` reads standard input.
+        #[arg(value_name = "CONTENT", allow_hyphen_values = true)]
+        content: String,
+        #[command(flatten)]
+        place: AddPlace,
+        /// Author on created blocks (default: TINE_AUTHOR, else agent).
+        #[arg(long)]
+        author: Option<String>,
+        #[command(flatten)]
+        write: WriteArgs,
+    },
     /// Delete a block with its children; prints how many references to it
     /// the deletion leaves broken.
     Delete {
@@ -207,6 +220,27 @@ struct MovePlace {
     /// Right before TARGET, as its previous sibling.
     #[arg(long, value_name = "TARGET")]
     before: Option<String>,
+}
+
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+struct AddPlace {
+    /// Append as the last child of BLOCK.
+    #[arg(long, value_name = "BLOCK")]
+    under: Option<String>,
+    /// Insert as the next sibling of BLOCK.
+    #[arg(long, value_name = "BLOCK")]
+    after: Option<String>,
+    /// Insert as the previous sibling of BLOCK.
+    #[arg(long, value_name = "BLOCK")]
+    before: Option<String>,
+    /// Append to PAGE, creating it when absent.
+    #[arg(long, value_name = "PAGE")]
+    page: Option<String>,
+    /// Append to a journal, creating it when absent: `--journal` is today,
+    /// `--journal=DATE` another day.
+    #[arg(long, value_name = "DATE", num_args = 0..=1, require_equals = true, default_missing_value = "today")]
+    journal: Option<String>,
 }
 
 /// Which graph a write asks, its optional page guard, and how it prints.
@@ -472,7 +506,8 @@ pub(crate) fn dispatch() -> Option<i32> {
             | Command::Edit { .. }
             | Command::Prop { .. }
             | Command::Move { .. }
-            | Command::Delete { .. }),
+            | Command::Delete { .. }
+            | Command::Add { .. }),
         ) => return Some(read_command(command)),
         Some(Command::Export { format }) => export(format).map(|receipt| {
             terminal_stdout(format_args!(
@@ -555,6 +590,33 @@ fn read_command(command: Command) -> i32 {
                 write.read.target(),
                 "block.edit",
                 json!({ "handle": handle, "text": text, "rev": write.rev }),
+            )
+        }
+        Command::Add {
+            content,
+            place,
+            author,
+            write,
+        } => {
+            let content = if content == "-" {
+                let mut text = String::new();
+                if let Err(error) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+                {
+                    eprintln!("tine: could not read content from standard input: {error}");
+                    return 2;
+                }
+                text
+            } else {
+                content
+            };
+            write_verb(
+                write.read.target(),
+                "block.add",
+                json!({
+                    "content": content, "under": place.under, "after": place.after,
+                    "before": place.before, "page": place.page, "journal": place.journal,
+                    "author": author.or_else(|| std::env::var("TINE_AUTHOR").ok()), "rev": write.rev,
+                }),
             )
         }
         Command::Delete { handle, write } => write_verb(
@@ -656,6 +718,11 @@ fn prepare_console_if_needed(argv: &[OsString]) {
                 | "search"
                 | "query"
                 | "pages"
+                | "add"
+                | "edit"
+                | "prop"
+                | "move"
+                | "delete"
                 | "-h"
                 | "--help"
                 | "-v"
@@ -743,6 +810,50 @@ mod tests {
                 "{form:?}"
             );
         }
+    }
+
+    #[test]
+    fn add_accepts_each_target_and_stdin_and_rejects_multiple_targets() {
+        for form in [
+            vec!["tine", "add", "--under", "P/1~abcdef", "-"],
+            vec!["tine", "add", "--after", "P/1~abcdef", "- root"],
+            vec!["tine", "add", "--before", "P/1~abcdef", "text"],
+            vec!["tine", "add", "--page", "P", "--author", "Ada", "text"],
+            vec!["tine", "add", "--journal=2026-10-18", "text"],
+            vec!["tine", "add", "text", "--journal"],
+            vec!["tine", "add", "--journal", "text"],
+        ] {
+            assert!(
+                matches!(
+                    Cli::try_parse_from(&form).unwrap().command,
+                    Some(Command::Add { .. })
+                ),
+                "{form:?}"
+            );
+        }
+        assert!(Cli::try_parse_from([
+            "tine",
+            "add",
+            "--under",
+            "P/1~abcdef",
+            "--page",
+            "P",
+            "text"
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from(["tine", "add", "text"]).is_err());
+        let Some(Command::Add { content, place, .. }) =
+            Cli::try_parse_from(["tine", "add", "--journal", "text"])
+                .unwrap()
+                .command
+        else {
+            panic!("add");
+        };
+        assert_eq!(content, "text");
+        assert_eq!(place.journal.as_deref(), Some("today"));
+        assert!(Cli::try_parse_from(["tine", "add", "--journal"]).is_err());
+        // A date without `=` is content, never a silently re-read date.
+        assert!(Cli::try_parse_from(["tine", "add", "--journal", "2026-10-18", "text"]).is_err());
     }
 
     #[test]
@@ -907,6 +1018,7 @@ mod tests {
             ("tine-query.1", include_str!("../../docs/tine-query.1")),
             ("tine-edit.1", include_str!("../../docs/tine-edit.1")),
             ("tine-delete.1", include_str!("../../docs/tine-delete.1")),
+            ("tine-add.1", include_str!("../../docs/tine-add.1")),
             ("tine-move.1", include_str!("../../docs/tine-move.1")),
             ("tine-prop.1", include_str!("../../docs/tine-prop.1")),
             (

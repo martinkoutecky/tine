@@ -7,6 +7,7 @@
 import { produce, unwrap } from "solid-js/store";
 import type { EditKind, EditKinds } from "../editKind";
 import type { PageDto } from "../types";
+import type { OutlineNode } from "../editor/outline";
 import { outlineApply, outlineReads } from "../render/parse";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { capturePages, markDirty, pageFrozen, persistTransfer } from "./host/wiring";
@@ -19,6 +20,7 @@ export type OutlineRefusal =
 
 /** One kernel verb (`outline::Verb`). Offsets are raw UTF-8 bytes. */
 export type OutlineVerb =
+  | { verb: "insert_outline"; place: OutlinePlace; blocks: readonly OutlineNode[]; live_ids?: string[]; reuse?: string }
   | { verb: "split"; key: string; raw_offset: number; force_child: boolean; children_visible: boolean; keep_start_in_scope: boolean }
   | { verb: "merge"; survivor: string; absorbed: string; absorbed_referenced: boolean }
   | { verb: "indent"; keys: string[] }
@@ -136,7 +138,7 @@ export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): 
     const pages = names.map((name) => outlinePage(name, reads)).filter((p) => p !== null);
     return JSON.parse(outlineApply(JSON.stringify({ pages, verb, keys: keySource() })));
   };
-  const reads = outlineMarshal.whole ? null : (JSON.parse(outlineReads(JSON.stringify(verb))) as OutlineRead[]);
+  const reads = outlineMarshal.whole || verb.verb === "insert_outline" ? null : (JSON.parse(outlineReads(JSON.stringify(verb))) as OutlineRead[]);
   let answer = ask(reads);
   if (reads && answer.refused === "incomplete") {
     outlineMarshal.fallbacks++;

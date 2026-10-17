@@ -48,7 +48,8 @@ import { BUILTIN_HIDE, rawOffsetToVisibleOffset } from "../../editor/properties"
 import { doc, setDoc } from "../model";
 import { nextVisible } from "../tree";
 import { loadFeed, resetStore } from "../workingSet";
-import { deleteBlock, indentBlock, insertEmptyChildBlock, mergeWithNext, outdentBlock, splitBlock } from "./blocks";
+import { deleteBlock, indentBlock, insertEmptyChildBlock, insertOutlineAfter, insertOutlineBefore, insertOutlineChildren, replaceEmptyBlockWithOutline, mergeWithNext, outdentBlock, splitBlock } from "./blocks";
+import { outlineChange, applyOutlineChange, markOutlineDirty, type OutlineVerb } from "../kernel";
 import { moveBlock, moveBlocksRelative, moveItem, moveSelectionItems } from "./moves";
 import { clearSelection, deleteSelection, extendSelectionTo, indentSelection, outdentSelection, selectBlock, topSelected } from "./selection";
 
@@ -105,6 +106,23 @@ async function run(c: Case): Promise<Expect> {
   logical = false;
   let depthRefusal = false;
   switch (v.verb) {
+    case "insert_outline": {
+      let key: string | null = null;
+      if (v.reuse) key = replaceEmptyBlockWithOutline(v.reuse, v.blocks);
+      else if (v.place.at === "after") key = insertOutlineAfter(v.place.key, v.blocks);
+      else if (v.place.at === "before") key = insertOutlineBefore(v.place.key, v.blocks);
+      else if (v.place.at === "last_child") key = insertOutlineChildren(v.place.key, v.blocks);
+      else {
+        const change = outlineChange(v as OutlineVerb, [c.page.name]);
+        if (!("refused" in change)) {
+          applyOutlineChange(change);
+          markOutlineDirty(change);
+          key = change.focus?.key ?? null;
+        }
+      }
+      if (key) focus = { key, editor_offset: null };
+      break;
+    }
     case "split": {
       const raw = doc.byId[v.key].raw;
       const offset = rawOffsetToVisibleOffset(raw, utf16(raw, v.raw_offset), BUILTIN_HIDE, c.page.format);

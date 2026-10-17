@@ -207,6 +207,7 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
         "block.prop" => super::write::prop(slot, args),
         "block.move" => super::write::move_block(slot, args),
         "block.delete" => super::write::delete(slot, args),
+        "block.add" => super::add::add(slot, args),
         other => Err(ErrorBody::new(
             "unknown-verb",
             format!("this owner does not know `{other}`; it may be an older Tine"),
@@ -369,7 +370,7 @@ pub(super) fn resolve_page(graph: &WholeGraph, name: &str) -> Result<PageId, Err
 
 /// The journal day `date` names: today when absent, else `YYYY-MM-DD` (or
 /// `YYYY_MM_DD`), else a title in the graph's journal format.
-fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<JournalDate, ErrorBody> {
+pub(super) fn journal_day(slot: &GraphSlot, date: Option<&str>) -> Result<JournalDate, ErrorBody> {
     let Some(date) = date.map(str::trim) else {
         return Ok(JournalDate::today());
     };

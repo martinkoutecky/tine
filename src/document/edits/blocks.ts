@@ -1,6 +1,6 @@
 import { msg } from "../../i18n";
-import { blockWritable, pageWritable, rawWithInheritedOrderListType, writeCollapsed } from "./properties";
-import { doc, docHasBlockIdentity, formatForBlock, setDoc, freshId, type DocState, formatForPage, pageByName } from "../model";
+import { blockWritable, pageWritable, writeCollapsed } from "./properties";
+import { doc, docHasBlockIdentity, formatForBlock, setDoc, freshId, pageByName } from "../model";
 
 /** Reveal a search result without creating an edit, undo entry, or save. */
 export function revealNode(id: string): void {
@@ -11,9 +11,9 @@ import { timetrackingEnabled, logbookWithSecondSupport, logicalOutdenting, remov
 import { pushRawUndo, pushUndo, undo, undoTopTag } from "../history";
 import { markDirty, noteTitleIdentityIntent } from "../host/wiring";
 import { produce } from "solid-js/store";
-import { applyOutlineChange, markOutlineDirty, outlineChange, type OutlineChange } from "../kernel";
+import { applyOutlineChange, markOutlineDirty, outlineChange, type OutlineChange, type OutlinePlace } from "../kernel";
 import { outlineMaxDepth, outlineDepth, type OutlineNode } from "../../editor/outline";
-import { splitProps, BUILTIN_HIDE, HIDE_ID, joinProps, isPropertiesOnly, readPropertyValue, visibleOffsetToRawByte } from "../../editor/properties";
+import { splitProps, BUILTIN_HIDE, isPropertiesOnly, readPropertyValue, visibleOffsetToRawByte } from "../../editor/properties";
 import { startEditing, editingId, endEdit, type EditorSelection } from "../../editorController";
 import { batch } from "solid-js";
 import { isBlockMoving, setBlockMoving } from "./moves";
@@ -21,7 +21,7 @@ import { depthOf, existingSubtreeFits, OutlineScope, prevVisible, nextVisible } 
 import { existingBlockId } from "./identity";
 import { captureReferenceChangeCount, pushReferenceChangeNotice, pushToast } from "../../toasts";
 import { graphEpoch } from "../../graphSession";
-import { blockRegions, removalRefs, soleBlockMacro } from "../../render/parse";
+import { removalRefs, soleBlockMacro } from "../../render/parse";
 
 let referenceEditSeq = 0;
 /** Capture the edit's targets before mutation, then publish against its existing
@@ -58,38 +58,17 @@ export function prepareReferenceChangeNotice(roots: readonly string[], subtree: 
 // ---------------------------------------------------------------------------
 
 
-/** Keep imported properties except an id already owned by a live block. */
-function outlineRaw(raw: string, format: "md" | "org", incoming: Set<string>): string {
-  const id = existingBlockId(raw, format)?.toLowerCase();
-  if (!id) return raw;
-  if (incoming.has(id) || docHasBlockIdentity(id))
-    return splitProps(raw, HIDE_ID, format).visible;
-  incoming.add(id);
-  return raw;
-}
-
-/** Build imported nodes inside the existing transaction. The first root may
- * reuse an empty host's identity/hidden props; all other nodes get fresh ids. */
-function createOutline(
-  state: DocState, nodes: readonly OutlineNode[], parent: string | null,
-  page: string, inheritFrom: string, incoming: Set<string>,
-  reuse?: { id: string; hidden: string },
-): string[] {
-  const format = formatForPage(page);
-  const create = (outline: OutlineNode, parent: string | null, host?: typeof reuse): string => {
-    const id = host?.id ?? freshId();
-    const children = outline.children.map((child) => create(child, id));
-    const imported = outlineRaw(outline.raw, format, incoming);
-    const source = host ? joinProps(imported, host.hidden, format) : imported;
-    const raw = rawWithInheritedOrderListType(source, format, inheritFrom);
-    // Imported raw owns persistent collapse state, just as on page reload.
-    // Ask lsdoc so property-looking text in code never folds a block.
-    const collapsed = blockRegions(raw, format).properties
-      .find((p) => p.primary && p.key.toLowerCase() === "collapsed")?.value === "true";
-    state.byId[id] = { id, raw, collapsed, parent, page, children };
-    return id;
+/** Supply graph identity context; insertion and duplicate handling live in Rust. */
+function importedOutlineChange(anchor: string, nodes: OutlineNode[], place: OutlinePlace, reuse?: string) {
+  const liveIds: string[] = [];
+  const format = formatForBlock(anchor);
+  const visit = (node: OutlineNode) => {
+    const id = existingBlockId(node.raw, format)?.toLowerCase();
+    if (id && docHasBlockIdentity(id)) liveIds.push(id);
+    node.children.forEach(visit);
   };
-  return nodes.map((outline, index) => create(outline, parent, index === 0 ? reuse : undefined));
+  nodes.forEach(visit);
+  return outlineChange({ verb: "insert_outline", place, blocks: nodes, live_ids: liveIds, reuse }, [doc.byId[anchor].page]);
 }
 
 export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean }) {
@@ -176,19 +155,12 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
   if (!nodes.length) return null;
   const parent = doc.byId[parentId];
   if (!parent || !blockWritable(parentId) || !outlineFits(parentId, nodes, 1)) return null;
-  const pageName = parent.page;
-  let lastId: string | null = null;
-  pushUndo("paste-children", [pageName]);
-  const incoming = new Set<string>();
-  setDoc(
-    produce((s) => {
-      const created = createOutline(s, nodes, parentId, pageName, parentId, incoming);
-      s.byId[parentId].children.push(...created);
-      lastId = created[created.length - 1] ?? null;
-    })
-  );
-  markDirty(pageName, "insert-blocks");
-  return lastId;
+  const change = importedOutlineChange(parentId, nodes, { at: "last_child", key: parentId });
+  if ("refused" in change) return null;
+  pushUndo("paste-children", [parent.page]);
+  applyOutlineChange(change);
+  markOutlineDirty(change);
+  return change.focus?.key ?? null;
 }
 
 /** Enter: split the block at `offset`, a caret in the editor's visible text
@@ -374,24 +346,12 @@ function insertOutlineBeside(
   // must not mutate a page the round-trip self-check marked read-only
   // (Phase-6 review finding, validated).
   if (!blockWritable(anchorId) || !outlineFits(anchorId, nodes)) return null;
+  const change = importedOutlineChange(anchorId, nodes, { at: side, key: anchorId });
+  if ("refused" in change) return null;
   pushUndo(undoLabel, [doc.byId[anchorId].page]);
-  const parent = doc.byId[anchorId].parent;
-  const pageName = doc.byId[anchorId].page;
-  const incoming = new Set<string>();
-  let focusId = anchorId;
-  setDoc(
-    produce((s) => {
-      const created = createOutline(s, nodes, parent, pageName, anchorId, incoming);
-      const sibs =
-        parent === null
-          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-          : s.byId[parent].children;
-      sibs.splice(sibs.indexOf(anchorId) + (side === "after" ? 1 : 0), 0, ...created);
-      focusId = side === "after" ? created[created.length - 1] : created[0];
-    })
-  );
-  markDirty(pageName, "insert-blocks");
-  return focusId;
+  applyOutlineChange(change);
+  markOutlineDirty(change);
+  return change.focus?.key ?? null;
 }
 
 /** Replace one empty leaf with a parsed outline in one transaction and undo
@@ -403,22 +363,14 @@ export function replaceEmptyBlockWithOutline(id: string, nodes: OutlineNode[]): 
   if (!nodes.length || !current || current.children.length || !blockWritable(id)) return null;
   if (!outlineFits(id, nodes)) return null;
   const format = formatForBlock(id);
-  const incoming = new Set<string>();
   const split = splitProps(current.raw, BUILTIN_HIDE, format);
   if (split.visible.trim()) return null;
+  const change = importedOutlineChange(id, nodes, { at: "before", key: id }, id);
+  if ("refused" in change) return null;
   pushUndo("paste-replace-empty", [current.page]);
-  let lastId = id;
-  setDoc(produce((state) => {
-    // Reuse the first host's identity and hidden props, preserving inbound refs.
-    const created = createOutline(state, nodes, current.parent, current.page, id, incoming, { id, hidden: split.hidden });
-    const siblings = current.parent === null
-      ? state.pages[state.pages.findIndex((page) => page.name === current.page)].roots
-      : state.byId[current.parent].children;
-    siblings.splice(siblings.indexOf(id), 1, ...created);
-    lastId = created[created.length - 1];
-  }));
-  markDirty(current.page, ["save-block", "insert-blocks"]);
-  return lastId;
+  applyOutlineChange(change);
+  markOutlineDirty(change);
+  return change.focus?.key ?? null;
 }
 
 /** Remove a block and its subtree (outline::delete). */

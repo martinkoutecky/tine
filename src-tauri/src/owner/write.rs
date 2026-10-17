@@ -91,7 +91,10 @@ fn block_at<'a>(blocks: &'a [BlockDto], path: &[usize]) -> Option<&'a BlockDto> 
     }
 }
 
-fn block_at_mut<'a>(blocks: &'a mut [BlockDto], path: &[usize]) -> Option<&'a mut BlockDto> {
+pub(super) fn block_at_mut<'a>(
+    blocks: &'a mut [BlockDto],
+    path: &[usize],
+) -> Option<&'a mut BlockDto> {
     let (first, rest) = path.split_first()?;
     let block = blocks.get_mut(*first)?;
     if rest.is_empty() {
@@ -176,7 +179,11 @@ fn stale(page: &PageId, message: impl Into<String>, extra: Value) -> ErrorBody {
     body
 }
 
-fn refused(reason: &str, page: Option<&PageId>, message: impl Into<String>) -> ErrorBody {
+pub(super) fn refused(
+    reason: &str,
+    page: Option<&PageId>,
+    message: impl Into<String>,
+) -> ErrorBody {
     let mut body = ErrorBody::new("refused", message, false);
     body.detail = Some(json!({
         "admitted": false,
@@ -277,7 +284,7 @@ pub(crate) fn resolve_on(
 }
 
 /// The page a handle writes: its own page, or the page holding the `id::`.
-fn handle_page(slot: &GraphSlot, handle: &Handle) -> Result<PageId, ErrorBody> {
+pub(super) fn handle_page(slot: &GraphSlot, handle: &Handle) -> Result<PageId, ErrorBody> {
     let graph = whole_graph(slot)?;
     match handle {
         Handle::At { page, .. } => resolve_page(&graph, page),
@@ -346,7 +353,7 @@ fn apply_refused(refusal: ApplyRefusal, page: &PageId) -> ErrorBody {
     }
 }
 
-fn outline_refused(
+pub(super) fn outline_refused(
     reason: tine_core::outline_kernel::Reason,
     page: &PageId,
     verb: &str,
@@ -388,6 +395,17 @@ pub(crate) fn write_page(
     page: &PageId,
     kind: EditKind,
     rev: Option<&str>,
+    compute: impl FnMut(&PageDto, &PageId) -> Result<Planned, ErrorBody>,
+) -> Result<Value, ErrorBody> {
+    write_page_with_create(slot, page, kind, rev, false, compute)
+}
+
+pub(super) fn write_page_with_create(
+    slot: &GraphSlot,
+    page: &PageId,
+    kind: EditKind,
+    rev: Option<&str>,
+    create: bool,
     mut compute: impl FnMut(&PageDto, &PageId) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
     crate::page_commands::with_host(slot, |host| host.flush_input(std::slice::from_ref(page)))
@@ -400,13 +418,15 @@ pub(crate) fn write_page(
                 HostReadError::Ended => busy(),
                 HostReadError::Store(error) => store_refused(error, page),
             })?;
-        let Some(bytes) = read.bytes else {
+        if read.bytes.is_none() && !create {
             return Err(ErrorBody::new(
                 "not-found",
                 format!("{} does not exist", page.as_str()),
                 false,
             ));
-        };
+        }
+        let absent = read.bytes.is_none();
+        let bytes = read.bytes.unwrap_or_else(|| std::sync::Arc::from(&b""[..]));
         let current = slot
             .store
             .page_of(&read.page, &bytes)
@@ -426,7 +446,7 @@ pub(crate) fn write_page(
             ));
         }
         if let Some(rev) = rev {
-            if String::from(current.rev.clone()) != rev {
+            if absent || String::from(current.rev.clone()) != rev {
                 return Err(stale(
                     &read.page,
                     format!("the page is no longer at rev {rev}; read it again"),
@@ -439,7 +459,11 @@ pub(crate) fn write_page(
         tx.save_page(
             &[kind],
             &read.page,
-            SaveBase::Existing(current.rev.clone()),
+            if absent {
+                SaveBase::CreateNew
+            } else {
+                SaveBase::Existing(current.rev.clone())
+            },
             &planned.doc,
         );
         let mut op = match tx.plan() {
@@ -454,9 +478,10 @@ pub(crate) fn write_page(
         };
         // The store planned from its own read; the host's must be the same
         // bytes, or the page moved in between (PROTOCOL §5).
-        let planned_from_host = op.pages.iter().all(
-            |(_, _, expected)| matches!(expected, HostExpected::Bytes(old) if **old == *bytes),
-        );
+        let planned_from_host = op.pages.iter().all(|(_, _, expected)| match expected {
+            HostExpected::Absent => absent,
+            HostExpected::Bytes(old) => !absent && **old == *bytes,
+        });
         if !planned_from_host {
             continue;
         }
@@ -526,7 +551,7 @@ fn written(
     )
 }
 
-fn store_refused(error: StoreError, page: &PageId) -> ErrorBody {
+pub(super) fn store_refused(error: StoreError, page: &PageId) -> ErrorBody {
     match error {
         StoreError::TooLarge { limit, len } => ErrorBody::new(
             "too-large",

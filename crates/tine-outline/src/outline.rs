@@ -17,6 +17,9 @@ use crate::editor_text::{self, js_blank, HidePolicy};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
+mod insert;
+use insert::insert_outline;
+
 /// The deepest outline the kernel builds (the window's `OUTLINE_MAX_DEPTH`,
 /// the store's `PARSE_INPUT_MAX_DEPTH`): a root is depth 0, so the deepest
 /// block sits at depth 127.
@@ -197,10 +200,29 @@ pub enum Place {
     },
 }
 
+/// Imported text, before runtime keys are allocated. Paste and page fragments
+/// have different grammars; both hand this forest to the same insertion rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutlineNode {
+    pub raw: String,
+    #[serde(default)]
+    pub children: Vec<OutlineNode>,
+}
+
 /// The verbs. Offsets are raw UTF-8 bytes in the block's current text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "verb", rename_all = "snake_case")]
 pub enum Verb {
+    InsertOutline {
+        place: Place,
+        blocks: Vec<OutlineNode>,
+        /// Identities outside the supplied arena, supplied by the graph index.
+        #[serde(default)]
+        live_ids: Vec<String>,
+        /// Empty-leaf paste keeps its host key and hidden properties.
+        #[serde(default)]
+        reuse: Option<Key>,
+    },
     /// Enter at `raw_offset`. `children_visible`: the block's children are
     /// shown in this view; `keep_start_in_scope`: a split at the head of a
     /// zoom root keeps the new block inside the zoom.
@@ -276,6 +298,19 @@ impl Verb {
         // Blocks that change depth or page, or are deleted, are read whole.
         let whole = |keys: &[Key]| keys.iter().map(|k| read(k, true)).collect::<Vec<_>>();
         match self {
+            Verb::InsertOutline { place, reuse, .. } => {
+                let mut reads = match place {
+                    Place::Before { key } | Place::After { key } | Place::LastChild { key } => {
+                        vec![read(key, false)]
+                    }
+                    Place::Slot {
+                        parent: Some(key), ..
+                    } => vec![read(key, false)],
+                    Place::Slot { parent: None, .. } => vec![],
+                };
+                reads.extend(reuse.iter().map(|key| read(key, false)));
+                reads
+            }
             Verb::Split { key, .. } => vec![read(key, false)],
             Verb::Merge {
                 survivor, absorbed, ..
@@ -319,6 +354,12 @@ pub fn apply(pages: &[OutlinePage], verb: &Verb, keys: &KeySource) -> Result<Cha
         transfers: Vec::new(),
     };
     match verb {
+        Verb::InsertOutline {
+            place,
+            blocks,
+            live_ids,
+            reuse,
+        } => insert_outline(&mut cx, place, blocks, live_ids, reuse.as_deref())?,
         Verb::Split {
             key,
             raw_offset,

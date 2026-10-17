@@ -2,6 +2,598 @@
  "_comment": "Outline-kernel M1 verb fixtures (DESIGN §9). `expect` is recorded from the window's TS functions by src/document/edits/kernelFixtures.test.ts (TINE_RECORD_KERNEL_FIXTURES=1) and checked against the Rust kernel by crates/tine-outline/tests/ops_fixtures.rs. A difference is investigated, never resolved by editing `expect` alone. Keys created by a verb are n0, n1, ...; focus is the editor offset (UTF-16, hidden properties removed), null keeps the caret. A case's `note` records an investigated difference from the pre-kernel TS that `expect` now takes.",
  "cases": [
   {
+   "name": "insert outline: after forest",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "anchor"
+     },
+     {
+      "key": "b",
+      "raw": "tail"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "insert_outline",
+    "place": {
+     "at": "after",
+     "key": "a"
+    },
+    "blocks": [
+     {
+      "raw": "root",
+      "children": [
+       {
+        "raw": "child",
+        "children": []
+       }
+      ]
+     },
+     {
+      "raw": "last",
+      "children": []
+     }
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "anchor"
+      },
+      {
+       "key": "n0",
+       "raw": "root",
+       "children": [
+        {
+         "key": "n1",
+         "raw": "child"
+        }
+       ]
+      },
+      {
+       "key": "n2",
+       "raw": "last"
+      },
+      {
+       "key": "b",
+       "raw": "tail"
+      }
+     ]
+    },
+    "focus": {
+     "key": "n2",
+     "editor_offset": null
+    },
+    "kinds": [
+     "insert-blocks"
+    ]
+   }
+  },
+  {
+   "name": "insert outline: before focuses first",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "anchor"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "insert_outline",
+    "place": {
+     "at": "before",
+     "key": "a"
+    },
+    "blocks": [
+     {
+      "raw": "first",
+      "children": []
+     },
+     {
+      "raw": "last",
+      "children": []
+     }
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "n0",
+       "raw": "first"
+      },
+      {
+       "key": "n1",
+       "raw": "last"
+      },
+      {
+       "key": "a",
+       "raw": "anchor"
+      }
+     ]
+    },
+    "focus": {
+     "key": "n0",
+     "editor_offset": null
+    },
+    "kinds": [
+     "insert-blocks"
+    ]
+   }
+  },
+  {
+   "name": "insert outline: children inherit anchor order at every depth",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "anchor\nlogseq.order-list-type:: number",
+      "children": [
+       {
+        "key": "b",
+        "raw": "old"
+       }
+      ]
+     }
+    ]
+   },
+   "verb": {
+    "verb": "insert_outline",
+    "place": {
+     "at": "last_child",
+     "key": "a"
+    },
+    "blocks": [
+     {
+      "raw": "root",
+      "children": [
+       {
+        "raw": "child",
+        "children": []
+       }
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "anchor\nlogseq.order-list-type:: number",
+       "children": [
+        {
+         "key": "b",
+         "raw": "old"
+        },
+        {
+         "key": "n0",
+         "raw": "root\nlogseq.order-list-type:: number",
+         "children": [
+          {
+           "key": "n1",
+           "raw": "child\nlogseq.order-list-type:: number"
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    "focus": {
+     "key": "n0",
+     "editor_offset": null
+    },
+    "kinds": [
+     "insert-blocks"
+    ]
+   }
+  },
+  {
+   "name": "insert outline: own order wins",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "anchor\nlogseq.order-list-type:: number"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "insert_outline",
+    "place": {
+     "at": "after",
+     "key": "a"
+    },
+    "blocks": [
+     {
+      "raw": "root\nlogseq.order-list-type:: bullet",
+      "children": []
+     }
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "anchor\nlogseq.order-list-type:: number"
+      },
+      {
+       "key": "n0",
+       "raw": "root\nlogseq.order-list-type:: bullet"
+      }
+     ]
+    },
+    "focus": {
+     "key": "n0",
+     "editor_offset": null
+    },
+    "kinds": [
+     "insert-blocks"
+    ]
+   }
+  },
+  {
+   "name": "insert outline: empty page slot",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": []
+   },
+   "verb": {
+    "verb": "insert_outline",
+    "place": {
+     "at": "slot",
+     "parent": null,
+     "page": "P",
+     "index": 0
+    },
+    "blocks": [
+     {
+      "raw": "first",
+      "children": []
+     }
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "n0",
+       "raw": "first"
+      }
+     ]
+    },
+    "focus": {
+     "key": "n0",
+     "editor_offset": null
+    },
+    "kinds": [
+     "insert-blocks"
+    ]
+   }
+  },
+  {
+   "name": "insert outline: live and repeated ids drop child first",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "anchor\nid:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "insert_outline",
+    "place": {
+     "at": "after",
+     "key": "a"
+    },
+    "blocks": [
+     {
+      "raw": "root\nid:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f",
+      "children": []
+     },
+     {
+      "raw": "next\nid:: 00000000-0000-4000-8000-000000000001",
+      "children": [
+       {
+        "raw": "child\nid:: 00000000-0000-4000-8000-000000000001",
+        "children": []
+       }
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "anchor\nid:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+      },
+      {
+       "key": "n0",
+       "raw": "root"
+      },
+      {
+       "key": "n1",
+       "raw": "next",
+       "children": [
+        {
+         "key": "n2",
+         "raw": "child\nid:: 00000000-0000-4000-8000-000000000001"
+        }
+       ]
+      }
+     ]
+    },
+    "focus": {
+     "key": "n1",
+     "editor_offset": null
+    },
+    "kinds": [
+     "insert-blocks"
+    ]
+   }
+  },
+  {
+   "name": "insert outline: collapsed comes from parsed primary property",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "anchor"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "insert_outline",
+    "place": {
+     "at": "after",
+     "key": "a"
+    },
+    "blocks": [
+     {
+      "raw": "fold\ncollapsed:: true",
+      "children": []
+     },
+     {
+      "raw": "```\ncollapsed:: true\n```",
+      "children": []
+     }
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "anchor"
+      },
+      {
+       "key": "n0",
+       "raw": "fold\ncollapsed:: true",
+       "collapsed": true
+      },
+      {
+       "key": "n1",
+       "raw": "```\ncollapsed:: true\n```"
+      }
+     ]
+    },
+    "focus": {
+     "key": "n1",
+     "editor_offset": null
+    },
+    "kinds": [
+     "insert-blocks"
+    ]
+   }
+  },
+  {
+   "name": "insert outline: Org order and collapse",
+   "page": {
+    "name": "P",
+    "format": "org",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "anchor\n:PROPERTIES:\n:logseq.order-list-type: number\n:END:"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "insert_outline",
+    "place": {
+     "at": "last_child",
+     "key": "a"
+    },
+    "blocks": [
+     {
+      "raw": "fold\n:PROPERTIES:\n:collapsed: true\n:END:",
+      "children": []
+     }
+    ]
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "org",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "anchor\n:PROPERTIES:\n:logseq.order-list-type: number\n:END:",
+       "children": [
+        {
+         "key": "n0",
+         "raw": "fold\n:PROPERTIES:\n:collapsed: true\n:logseq.order-list-type: number\n:END:",
+         "collapsed": true
+        }
+       ]
+      }
+     ]
+    },
+    "focus": {
+     "key": "n0",
+     "editor_offset": null
+    },
+    "kinds": [
+     "insert-blocks"
+    ]
+   }
+  },
+  {
+   "name": "insert outline: empty host keeps key and identity",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "id:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+     }
+    ]
+   },
+   "verb": {
+    "verb": "insert_outline",
+    "place": {
+     "at": "before",
+     "key": "a"
+    },
+    "blocks": [
+     {
+      "raw": "first",
+      "children": []
+     },
+     {
+      "raw": "last",
+      "children": []
+     }
+    ],
+    "reuse": "a"
+   },
+   "expect": {
+    "page": {
+     "name": "P",
+     "format": "md",
+     "roots": [
+      {
+       "key": "a",
+       "raw": "first\nid:: 6512bd43-d9ca-4e3b-9f7a-1a2b3c4d5e6f"
+      },
+      {
+       "key": "n0",
+       "raw": "last"
+      }
+     ]
+    },
+    "focus": {
+     "key": "n0",
+     "editor_offset": null
+    },
+    "kinds": [
+     "save-block",
+     "insert-blocks"
+    ]
+   }
+  },
+  {
+   "name": "insert outline: read only",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "anchor"
+     }
+    ],
+    "read_only": true
+   },
+   "verb": {
+    "verb": "insert_outline",
+    "place": {
+     "at": "after",
+     "key": "a"
+    },
+    "blocks": [
+     {
+      "raw": "x",
+      "children": []
+     }
+    ]
+   },
+   "expect": {
+    "refused": true,
+    "reason": "read_only"
+   }
+  },
+  {
+   "name": "insert outline: preserves existing paste under a materialized header",
+   "page": {
+    "name": "P",
+    "format": "md",
+    "roots": [
+     {
+      "key": "a",
+      "raw": "title:: P"
+     }
+    ],
+    "header_root": "a"
+   },
+   "verb": {
+    "verb": "insert_outline",
+    "place": {
+     "at": "last_child",
+     "key": "a"
+    },
+    "blocks": [
+     {
+      "raw": "x",
+      "children": []
+     }
+    ]
+   },
+   "expect": {
+    "page": {"name": "P", "format": "md", "roots": [{"key": "a", "raw": "title:: P", "children": [{"key": "n0", "raw": "x"}]}]},
+    "kinds": ["insert-blocks"],
+    "focus": {"key": "n0", "editor_offset": null}
+   }
+  },
+  {
    "name": "split: middle of a line",
    "page": {
     "name": "P",

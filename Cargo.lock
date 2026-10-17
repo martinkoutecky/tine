@@ -5075,6 +5075,7 @@ dependencies = [
  "tine-ios-folder-picker-native",
  "tine-ios-native-integrations",
  "tine-store",
+ "uuid",
  "webkit2gtk",
  "windows-sys 0.61.2",
  "x11",

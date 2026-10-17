@@ -496,6 +496,7 @@ fn the_namespace_names_every_shipped_target() {
 #[test]
 fn the_endpoint_has_no_webview_or_plugin_door() {
     for (name, source) in [
+        ("add", include_str!("add.rs")),
         ("arena", include_str!("arena.rs")),
         ("client", include_str!("client.rs")),
         ("endpoint", include_str!("endpoint.rs")),
@@ -524,7 +525,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 12, "scan every owner/*.rs file");
+    assert_eq!(files, 13, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];
@@ -941,6 +942,260 @@ fn edit_and_prop_write_through_the_host_and_keep_hidden_properties() {
     let text = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
     assert!(!text.contains("status::"), "{text}");
     assert!(text.contains(&format!("id:: {UUID}")), "{text}");
+}
+
+#[test]
+fn add_places_forests_and_attributes_every_created_block_only() {
+    for placement in ["under", "after", "before", "page"] {
+        let graph = Graph::new();
+        let slot = graph.slot();
+        let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+        let mut args = json!({"content": "- added\n\t- nested\n- last", "author": "Ada"});
+        args[placement] = if placement == "page" {
+            json!("a")
+        } else {
+            json!(format!("a/{}", block_handle(&read, 1)))
+        };
+        let request_bytes =
+            serde_json::to_vec(&json!({"id": 1, "verb": "block.add", "args": args}))
+                .unwrap()
+                .len()
+                + 1;
+        let before_bytes = std::fs::metadata(graph.root.join("pages/a.md"))
+            .unwrap()
+            .len();
+        let reply = verb(&slot, "block.add", args).unwrap();
+        eprintln!("add {placement}: page {before_bytes} -> {} bytes; one NDJSON request {request_bytes} bytes, reply {} bytes; 3 created blocks", std::fs::metadata(graph.root.join("pages/a.md")).unwrap().len(), serde_json::to_vec(&json!({"id": 1, "ok": reply})).unwrap().len() + 1);
+        assert_eq!(reply["kind"], "written");
+        assert_eq!(reply["blocks"].as_array().unwrap().len(), 3);
+        assert_eq!(reply["more"], 0);
+        let doc = graph.store.page(&PageId::from("pages/a.md")).unwrap().doc;
+        let added = if placement == "under" {
+            &doc.blocks[1].children
+        } else {
+            &doc.blocks[if placement == "before" { 1 } else { 2 }..]
+        };
+        assert!(added[0].raw.starts_with("added\n"));
+        assert!(added[1].raw.starts_with("last\n"));
+        for block in [&added[0], &added[0].children[0], &added[1]] {
+            assert_eq!(
+                tine_core::block_regions::parse(&block.raw, false)
+                    .property("author")
+                    .map(|p| p.value.as_str()),
+                Some("Ada")
+            );
+        }
+        let anchor = &doc.blocks[if placement == "before" { 3 } else { 1 }];
+        let regions = tine_core::block_regions::parse(&anchor.raw, false);
+        assert!(regions.property("author").is_none());
+        assert_eq!(
+            regions.id.is_some(),
+            placement != "page",
+            "lazy anchor id for {placement}"
+        );
+        assert_eq!(doc.blocks[0].raw, format!("one\nid:: {UUID}"));
+        assert_eq!(doc.blocks[0].children[0].raw, "under one");
+        // Returned handles really chain into a subsequent write, with no author added.
+        verb(
+            &slot,
+            "block.edit",
+            json!({"handle": reply["blocks"][0], "text": "edited"}),
+        )
+        .unwrap();
+        let bytes = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+        assert_eq!(bytes.matches("author::").count(), 2);
+        assert!(!bytes.contains("author:: agent"));
+    }
+}
+
+#[test]
+fn add_creates_page_and_journal_through_create_new_and_bounds_handles() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    for (target, value, path) in [
+        ("page", "new page", "pages/new page.md"),
+        ("journal", "2026-10-18", "journals/2026_10_18.md"),
+    ] {
+        let mut args = json!({"content": "plain first block"});
+        args[target] = json!(value);
+        let reply = verb(&slot, "block.add", args).unwrap();
+        assert_eq!(reply["page"], path);
+        let text = std::fs::read_to_string(graph.root.join(path)).unwrap();
+        assert!(
+            text.contains("- plain first block\n  author:: agent"),
+            "{text}"
+        );
+        // Existing pages append rather than overwrite.
+        let mut args = json!({"content": "- second"});
+        args[target] = json!(value);
+        verb(&slot, "block.add", args).unwrap();
+        let text = std::fs::read_to_string(graph.root.join(path)).unwrap();
+        assert!(text.contains("plain first block") && text.contains("second"));
+    }
+    let content = (0..205)
+        .map(|n| format!("- block {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let reply = verb(
+        &slot,
+        "block.add",
+        json!({"page": "bounded", "content": content}),
+    )
+    .unwrap();
+    assert_eq!(
+        reply["blocks"].as_array().unwrap().len(),
+        super::write::REPLY_HANDLES
+    );
+    assert_eq!(reply["more"], 5);
+}
+
+#[test]
+fn add_refusals_leave_page_bytes_and_new_targets_absent() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let before = std::fs::read(graph.root.join("pages/a.md")).unwrap();
+    let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+    let anchor = format!("a/{}", block_handle(&read, 1));
+    let missing = "00000000-0000-4000-8000-000000000001";
+    for target in [
+        json!({"under": anchor}),
+        json!({"page": "missing"}),
+        json!({"journal": "2026-10-19"}),
+    ] {
+        let mut args = target;
+        args["content"] = json!(format!("- broken (({missing}))"));
+        let (code, detail) = error_code(verb(&slot, "block.add", args));
+        assert_eq!(code, "refused");
+        assert_eq!(detail["reason"], "broken-ref");
+        assert_eq!(detail["uuid"], missing);
+        assert_eq!(detail["admitted"], false);
+    }
+    for args in [
+        json!({"under": anchor, "content": "- x", "rev": "wrong"}),
+        json!({"under": "a/99~aaaaaa", "content": "- x"}),
+        json!({"under": anchor, "content": ""}),
+        json!({"under": anchor, "page": "missing", "content": "- x"}),
+        json!({"page": "missing", "content": "- x", "author": "Ada\n- injected"}),
+    ] {
+        assert!(verb(&slot, "block.add", args).is_err());
+    }
+    assert_eq!(
+        std::fs::read(graph.root.join("pages/a.md")).unwrap(),
+        before
+    );
+    assert!(!graph.root.join("pages/missing.md").exists());
+    assert!(!graph.root.join("journals/2026_10_19.md").exists());
+    let readonly = "* a\n*** c\n";
+    std::fs::write(graph.root.join("pages/readonly.org"), readonly).unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.add",
+        json!({"page": "readonly", "content": "* x"}),
+    ));
+    assert_eq!(code, "refused");
+    assert_eq!(detail["reason"], "read-only");
+    assert_eq!(
+        std::fs::read_to_string(graph.root.join("pages/readonly.org")).unwrap(),
+        readonly
+    );
+    verb(
+        &slot,
+        "block.add",
+        json!({"under": anchor, "content": format!("- valid (({UUID}))\n  id:: {UUID}")}),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(graph.root.join("pages/a.md")).unwrap();
+    assert_eq!(
+        text.matches(&format!("id:: {UUID}")).count(),
+        1,
+        "live id collision dropped"
+    );
+}
+
+#[test]
+fn add_to_org_uses_page_grammar_and_property_drawers() {
+    let graph = Graph::new();
+    std::fs::write(graph.root.join("pages/org.org"), "* anchor\n").unwrap();
+    graph.store.refresh(tine_store::Depth::Bytes).unwrap();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "org"})).unwrap();
+    let reply = verb(&slot, "block.add", json!({"under": format!("org/{}", block_handle(&read, 0)), "content": "* root\n** child", "author": "Ada"})).unwrap();
+    assert_eq!(reply["blocks"].as_array().unwrap().len(), 2);
+    let text = std::fs::read_to_string(graph.root.join("pages/org.org")).unwrap();
+    assert!(
+        text.contains("** root") && text.contains("*** child"),
+        "{text}"
+    );
+    assert_eq!(text.matches(":author: Ada").count(), 2, "{text}");
+    assert!(text.contains(":id:"), "{text}");
+    let doc = graph
+        .store
+        .page(&PageId::from("pages/org.org"))
+        .unwrap()
+        .doc;
+    assert!(tine_core::block_regions::parse(&doc.blocks[0].raw, true)
+        .property("author")
+        .is_none());
+}
+
+#[test]
+fn add_resolves_author_environment_and_explicit_override() {
+    // A child process owns its environment, so parallel owner tests never see
+    // a process-global env mutation.
+    if std::env::var_os("TINE_ADD_AUTHOR_TEST_CHILD").is_none() {
+        assert!(std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "owner::owner_tests::add_resolves_author_environment_and_explicit_override"
+            ])
+            .env("TINE_ADD_AUTHOR_TEST_CHILD", "1")
+            .env("TINE_AUTHOR", "Environment Author")
+            .status()
+            .unwrap()
+            .success());
+        return;
+    }
+    let graph = Graph::new();
+    let slot = graph.slot();
+    verb(
+        &slot,
+        "block.add",
+        json!({"page": "env", "content": "- from env"}),
+    )
+    .unwrap();
+    verb(
+        &slot,
+        "block.add",
+        json!({"page": "env", "content": "- explicit", "author": "Ada"}),
+    )
+    .unwrap();
+    let text = std::fs::read_to_string(graph.root.join("pages/env.md")).unwrap();
+    assert!(text.contains("author:: Environment Author"), "{text}");
+    assert!(text.contains("author:: Ada"), "{text}");
+}
+
+#[test]
+fn add_depth_refusal_writes_neither_the_anchor_id_nor_the_forest() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let read = verb(&slot, "page.show", json!({"name": "a"})).unwrap();
+    let before = std::fs::read(graph.root.join("pages/a.md")).unwrap();
+    let content = (0..128)
+        .map(|depth| format!("{}- node {depth}", "\t".repeat(depth)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.add",
+        json!({"under": format!("a/{}", block_handle(&read, 1)), "content": content}),
+    ));
+    assert_eq!(code, "refused");
+    assert_eq!(detail["reason"], "kernel:depth_cap");
+    assert_eq!(
+        std::fs::read(graph.root.join("pages/a.md")).unwrap(),
+        before
+    );
 }
 
 #[test]
