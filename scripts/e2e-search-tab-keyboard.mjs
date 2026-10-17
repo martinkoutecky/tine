@@ -27,7 +27,7 @@ const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", webdriverServer
   { env, stdio: ["ignore", log, log], detached: true });
 const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   workingDiff: true, app, sha256: crypto.createHash("sha256").update(fs.readFileSync(app)).digest("hex"),
-  journey: "Open Search tab through bound shortcut; type; ArrowDown twice; Enter opens second displayed page" };
+  journey: "Open Search tab through bound shortcut; type; ArrowDown then ArrowUp returns to the search box; ArrowDown twice; Enter opens second displayed page" };
 let browser;
 let stage = "startup";
 try {
@@ -57,6 +57,12 @@ try {
     { timeout: 10000, timeoutMsg: "typed query did not return the three fixture pages" });
   const rows = await browser.execute(() => [...document.querySelectorAll(".query-workspace button[data-query-result]")]
     .map(row => row.querySelector(".search-result-excerpt")?.textContent));
+  stage = "ArrowUp on the first row returns to the search box";
+  await browser.keys(["ArrowDown"]);
+  await browser.keys(["ArrowUp"]);
+  const back = await browser.execute(() => ({ input: document.activeElement?.classList.contains("query-workspace-source"),
+    active: document.querySelectorAll(".query-workspace button[data-query-result].active").length }));
+  if (!back.input || back.active !== 0) throw Error(`ArrowUp on the first row did not return to the search box: ${JSON.stringify(back)}`);
   stage = "ArrowDown twice";
   await browser.keys(["ArrowDown"]);
   await browser.keys(["ArrowDown"]);

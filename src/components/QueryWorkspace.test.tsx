@@ -448,7 +448,7 @@ describe("QueryWorkspace", () => {
     } finally { dispose(); HTMLElement.prototype.scrollIntoView = previous; }
   });
 
-  it.each(["search", "list", "table", "board"] as const)("GH #697: arrows enter and wrap %s results, Enter preserves click destinations and typing", async (presentation) => {
+  it.each(["search", "list", "table", "board"] as const)("GH #697: arrows enter and stop at the ends of %s results, Enter preserves click destinations and typing", async (presentation) => {
     const route: QueryRoute = { kind: "query", id: "keyboard", sourceKind: "search", source: "alpha", presentation };
     const router = routerMock(route);
     const root = document.createElement("div"); document.body.append(root);
@@ -470,8 +470,7 @@ describe("QueryWorkspace", () => {
       key("Enter", { ctrlKey: true });
       expect(router.openInNewTab).toHaveBeenLastCalledWith(expect.objectContaining({ name: "Research", block: "authored-block-1" }), false);
       key("ArrowDown");
-      expect(document.activeElement?.textContent).toContain("Alpha notes");
-      key("ArrowUp");
+      expect(document.activeElement?.textContent).toContain("alpha result");
       key("Enter", { shiftKey: true });
       expect(rightSidebar().some(item => item.kind === "block" && item.uuid === "authored-block-1")).toBe(true);
       key("ArrowUp");
@@ -490,6 +489,29 @@ describe("QueryWorkspace", () => {
       expect(router.updateActiveQuery).toHaveBeenCalledWith({ source: "beta", sourceKind: "search" });
       expect(document.activeElement).toBe(input);
     } finally { dispose(); closeAllRightSidebarItems(); resetPaneLayoutToSingle(); HTMLElement.prototype.scrollIntoView = previous; }
+  });
+
+  it.each(["search", "list", "table", "board"] as const)("GH #697: ArrowUp on the first %s result returns to the search box and never jumps to the last result", async (presentation) => {
+    const route: QueryRoute = { kind: "query", id: "keyboard-up", sourceKind: "search", source: "alpha", presentation };
+    const root = document.createElement("div"); document.body.append(root);
+    const previous = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={workspaceDeps()} />, root);
+    const key = (key: string) => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    try {
+      await waitFor(() => expect(root.textContent).toContain("Alpha notes"));
+      const input = root.querySelector<HTMLInputElement>(".query-workspace-source")!;
+      input.focus();
+      key("ArrowUp");
+      expect(document.activeElement).toBe(input);
+      key("ArrowDown");
+      expect(document.activeElement?.textContent).toContain("Alpha notes");
+      key("ArrowUp");
+      expect(document.activeElement).toBe(input);
+      expect(root.querySelector("button[data-query-result].active")).toBeNull();
+      key("ArrowDown"); key("ArrowDown"); key("ArrowDown");
+      expect(document.activeElement?.textContent).toContain("alpha result");
+    } finally { dispose(); HTMLElement.prototype.scrollIntoView = previous; }
   });
 
   it("an opened DSL window refuses, converts only on click and can be undone before saving", async () => {
