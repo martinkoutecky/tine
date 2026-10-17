@@ -12,20 +12,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - **The command line can write** (Linux and macOS): `tine add`, `tine edit`, `tine prop set|remove`, `tine move` and `tine delete` change blocks through the graph's owner and the same guarded save the app uses, for scripts and AI agents working beside you. Blocks are named by the handle a read prints (`Page/2.1~k7f2ab`) or by `id::`; a block that changed since the read is refused as `stale`, never guessed. Every block `tine add` creates carries `author::`. With the app open, your typed text is saved first and the window shows the change at once. `--json` replies and exit codes are in `docs/contracts/cli-output.md`; the Guide's **Command line** page explains the commands.
 
+### Fixed
+
+- Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.
+
+## [0.8.0-beta.4] - 2026-10-17
+
 ### Changed
 
 - **Collapse (one level)** and **Expand (one level)** (formerly "… children (one level)") now include the block itself: collapsing folds the block once its children are all folded, and expanding a folded block first opens only the block (GH #696).
 
 ### Fixed
 
-- Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.
 - Typing and deleting in a zoomed block no longer scans every block on its page, including journal and sidebar views (GH #248).
 - Sticky parent bullets show the parent's rendered text (bold, links, block references) instead of raw markup, and each pinned bullet lines up with its block's own bullet instead of sitting one level to the left. They no longer cover Settings, menus or toolbars (GH #643).
 - A block opened in the right sidebar is titled with its page and its parent blocks (the nearest three, after "⋯"), as in Logseq; clicking a parent shows that block in the card instead (GH #640).
 - The optional block embed breadcrumb shows the embedded block's parent blocks after its page, not just the page, in the same smaller, muted style as Linked References, starting at the embedded bullet (GH #440).
 - The parent-block trail above query results and Linked References shows bold, links and other formatting rendered, instead of raw text such as `**Queue**` (GH #643).
 - Windows: a save made while the previous save of the same page was still replacing the file could be refused with "write target escapes graph root"; Tine now checks the page again, and only if it still cannot inspect it reports a save error, keeping the text unsaved in the window rather than calling it outside the graph (REG-WIN-WRITE-TARGET-TRANSIENT).
-
 - A block link that starts Tine now opens its block the first time, even when the block was linked after Tine last closed; before, the first click reported the target missing and only a second click worked (GH #181).
 - Search tab: ArrowUp on the first result now returns to the search box instead of jumping to the last result, and the results no longer wrap around at either end (GH #697).
 
