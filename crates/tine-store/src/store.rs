@@ -3103,15 +3103,9 @@ impl WholeGraph {
     /// without constructing any (N19); `Registry` is the observed property
     /// registry (§6.1). Only a statistics fold over its memory budget fails.
     ///
-    ///
-    /// `cancel` is the caller's flag (the one `search` takes): `Run` and
-    /// `ExplainEmpty` check it cooperatively, once per candidate page and, for
-    /// `links`/`linked_by`/`near`, once per 1024 references or reached pages
-    /// (docs/contracts/tql-links-near.md). `Ok(None)` means cancelled: no
-    /// partial answer, and a cancelled run is never served from the memo nor
-    /// stored into it. A flag that is never set always answers `Some`.
-    ///
-    /// Cost: graph-wide `Run`/`ExplainEmpty` is O(P + B) per plan/probe, memoized.
+    /// `Run`/`ExplainEmpty` check `cancel` once per candidate page and within
+    /// link work (docs/contracts/tql-links-near.md); `Ok(None)` = cancelled: no
+    /// partial answer, never served from nor stored into the memo. Cost: graph-wide `Run`/`ExplainEmpty` is O(P + B) per plan/probe, memoized.
     /// Exact page-name scopes visit their owners unless global coercions/tag
     /// facts are needed. Registry build is O(P + B) once per generation, then shared.
     pub fn query_ir(
