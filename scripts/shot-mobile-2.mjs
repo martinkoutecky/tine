@@ -73,18 +73,25 @@ try {
       await page.locator('[data-mobile-drawer-panel="left"]').waitFor();
       await page.keyboard.press("Escape");
       console.log(`${label}: real touch hold previews, release stays, outside tap dismisses, tap navigates, bottom Back/Forward and sidebar work`);
-
+    }
+    if (platform === "android") {
       // GH #716: Back (or the IME's own hide key) closes the keyboard but keeps
-      // the block editor focused. Android's native viewport shrinks with the
-      // IME, which a viewport resize reproduces. The bottom row must come back
-      // unobscured and tappable, not stay replaced by the editing dock.
+      // the block editor focused. Android pads the WebView above the IME, which
+      // a viewport resize reproduces, and MainActivity reports the IME as a
+      // `tine-ime` event, sent here by hand. The bottom row must come back
+      // unobscured and tappable, not stay replaced by the editing dock. iOS
+      // shrinks only the visual viewport, which Chromium cannot reproduce; the
+      // unit tests cover it.
+      const ime = (visible) => page.evaluate((detail) => window.dispatchEvent(new CustomEvent("tine-ime", { detail })), visible);
       // A plain-text block on the routed Tine page (no link under the tap).
       await page.locator(".main-content .ls-block .block-content").filter({ hasText: "Reads the same markdown graph", visible: true }).first().tap();
       await page.locator("textarea.block-editor").waitFor();
       const dock = page.locator("[data-mobile-keyboard-toolbar]");
+      await ime(true);
       await page.setViewportSize({ width, height: height - 300 });
       await dock.waitFor();
       await page.screenshot({ path: `${out}/${label}-keyboard-open.png` });
+      await ime(false);
       await page.setViewportSize({ width, height });
       await dock.waitFor({ state: "hidden" });
       assert.ok(await page.locator("textarea.block-editor").evaluate((el) => el === document.activeElement), `${label}: the editor keeps focus after the keyboard closes`);

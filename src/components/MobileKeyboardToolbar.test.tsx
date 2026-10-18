@@ -369,54 +369,131 @@ describe("MobileKeyboardToolbar", () => {
     expect(root.hasAttribute("data-mobile-editing-dock")).toBe(false);
   });
 
-  it("gives the bottom row back once the keyboard is dismissed while the editor keeps focus (GH #716)", async () => {
-    // Android pads the WebView above the IME (MainActivity), so the keyboard
-    // shrinks innerHeight together with the visual viewport.
-    let height = 800;
-    Object.defineProperty(window, "innerHeight", { get: () => height, configurable: true });
+  // GH #716. `layout` is the window's innerHeight, `visual` the visual
+  // viewport's bottom. Android pads the WebView above the IME, so there the IME
+  // and a window resize both move `layout`; only MainActivity's `tine-ime`
+  // event tells them apart. iOS keeps `layout` and shrinks `visual`.
+  async function keyboardProbe(initial: number) {
+    let layout = initial;
+    let visual = initial;
+    Object.defineProperty(window, "innerHeight", { get: () => layout, configurable: true });
     Object.defineProperty(window, "visualViewport", {
-      value: { get height() { return height; }, offsetTop: 0, addEventListener: vi.fn(), removeEventListener: vi.fn() },
+      value: { get height() { return visual; }, offsetTop: 0, addEventListener: vi.fn(), removeEventListener: vi.fn() },
       configurable: true,
     });
-    const keyboard = async (open: boolean) => {
-      height = open ? 500 : 800;
-      window.dispatchEvent(new Event("resize"));
-      await Promise.resolve();
-    };
     platform.mobile = true;
     const { render } = await import("solid-js/web");
     const bridge = await import("../editorCommandBridge");
-    const { MobileKeyboardToolbar } = await import("./MobileKeyboardToolbar");
-    const root = document.documentElement;
+    const { MobileKeyboardToolbar, NATIVE_IME_EVENT } = await import("./MobileKeyboardToolbar");
     const editor = document.createElement("textarea");
     editor.className = "block-editor";
     document.body.appendChild(editor);
-    editor.focus();
-    const unregister = bridge.registerFocusedEditorCommandBridge({ blockId: "b1", dispatch: () => true, blur() {} });
     const { div, dispose } = mount(render, MobileKeyboardToolbar);
-    const toolbar = div.querySelector<HTMLElement>("[data-mobile-keyboard-toolbar]")!;
-    await Promise.resolve();
-    // Focused, keyboard not (yet) seen: the dock stays available (hardware keyboard).
-    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(true);
+    let unregister = () => {};
+    const settle = () => Promise.resolve();
+    return {
+      async focus() {
+        editor.focus();
+        unregister = bridge.registerFocusedEditorCommandBridge({ blockId: "b1", dispatch: () => true, blur() {} });
+        await settle();
+      },
+      /** A window resize, or the Android IME moving the padded viewport. */
+      async resize(layoutHeight: number, visualHeight = layoutHeight) {
+        layout = layoutHeight;
+        visual = visualHeight;
+        window.dispatchEvent(new Event("resize"));
+        await settle();
+      },
+      async nativeIme(visible: boolean) {
+        window.dispatchEvent(new CustomEvent(NATIVE_IME_EVENT, { detail: visible }));
+        await settle();
+      },
+      dock() {
+        const shown = document.documentElement.hasAttribute("data-mobile-editing-dock");
+        const toolbar = div.querySelector<HTMLElement>("[data-mobile-keyboard-toolbar]")!;
+        expect(toolbar.hidden).toBe(!shown);
+        return shown;
+      },
+      editorFocused: () => document.activeElement === editor,
+      cleanup() { unregister(); dispose(); editor.remove(); },
+    };
+  }
 
-    await keyboard(true);
-    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(true);
-    expect(toolbar.hidden).toBe(false);
+  it("gives the bottom row back once the Android keyboard is dismissed while the editor keeps focus (GH #716)", async () => {
+    const probe = await keyboardProbe(800);
+    try {
+      await probe.focus();
+      // Focused, keyboard not (yet) seen: the dock stays available (hardware keyboard).
+      expect(probe.dock()).toBe(true);
+      await probe.nativeIme(true);
+      await probe.resize(500);
+      expect(probe.dock()).toBe(true);
+      // Back / the IME's own hide key: the keyboard goes, the editor stays focused.
+      await probe.nativeIme(false);
+      await probe.resize(800);
+      expect(probe.editorFocused()).toBe(true);
+      expect(probe.dock()).toBe(false);
+      // Tapping the editor brings the keyboard, and the dock, back.
+      await probe.nativeIme(true);
+      await probe.resize(500);
+      expect(probe.dock()).toBe(true);
+    } finally { probe.cleanup(); }
+  });
 
-    // Back / the IME's own hide key: the keyboard goes, the editor stays focused.
-    await keyboard(false);
-    expect(document.activeElement).toBe(editor);
-    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(false);
-    expect(toolbar.hidden).toBe(true);
+  it("gives the bottom row back once the iOS keyboard is dismissed while the editor keeps focus (GH #716)", async () => {
+    const probe = await keyboardProbe(800);
+    try {
+      await probe.focus();
+      await probe.resize(800, 500);
+      expect(probe.dock()).toBe(true);
+      await probe.resize(800, 800);
+      expect(probe.editorFocused()).toBe(true);
+      expect(probe.dock()).toBe(false);
+    } finally { probe.cleanup(); }
+  });
 
-    // Tapping the editor brings the keyboard, and the dock, back.
-    await keyboard(true);
-    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(true);
-    expect(toolbar.hidden).toBe(false);
+  it("keeps the hardware-keyboard dock through a height-only window resize (GH #716 review)", async () => {
+    // Android before and after MainActivity's first report, and iOS: no IME is used.
+    for (const reported of [false, true]) {
+      const probe = await keyboardProbe(900);
+      try {
+        if (reported) await probe.nativeIme(false);
+        await probe.focus();
+        expect(probe.dock()).toBe(true);
+        await probe.resize(700);
+        expect(probe.dock()).toBe(true);
+        await probe.resize(900);
+        expect(probe.dock(), `no IME was used (native report: ${reported})`).toBe(true);
+      } finally { probe.cleanup(); }
+    }
+  });
 
-    unregister();
-    dispose();
-    editor.remove();
+  it("keeps the dock while the IME stays open and the window grows (GH #716 review)", async () => {
+    for (const reported of [false, true]) {
+      const probe = await keyboardProbe(900);
+      try {
+        await probe.focus();
+        if (reported) await probe.nativeIme(true);
+        await probe.resize(600); // 900px window minus a 300px IME
+        expect(probe.dock()).toBe(true);
+        await probe.resize(900); // window enlarged to 1200px, the IME still open
+        expect(probe.dock(), `the IME is still open (native report: ${reported})`).toBe(true);
+      } finally { probe.cleanup(); }
+    }
+  });
+
+  it("gives the bottom row back after the IME closes in a window made shorter (GH #716 review)", async () => {
+    const probe = await keyboardProbe(900);
+    try {
+      await probe.resize(700); // the window, not a keyboard
+      await probe.focus();
+      await probe.nativeIme(true);
+      await probe.resize(400);
+      expect(probe.dock()).toBe(true);
+      await probe.nativeIme(false);
+      await probe.resize(700);
+      expect(probe.dock(), "the keyboard is closed in the current 700px window").toBe(false);
+    } finally { probe.cleanup(); }
   });
 
   it("does not render on desktop even with a focused editor bridge", async () => {

@@ -44,6 +44,9 @@ const ACTIONS: ToolbarAction[] = [
 ];
 
 const KEYBOARD_GAP_THRESHOLD = 48;
+/** Dispatched on window by Android's MainActivity with `detail: true|false`
+ *  whenever the soft keyboard's visibility changes (GH #716). */
+export const NATIVE_IME_EVENT = "tine-ime";
 const EDITOR_TOOLBAR_MARGIN = 8;
 
 function activeEditorHasFocus(): boolean {
@@ -117,10 +120,10 @@ export function MobileKeyboardToolbar(): JSX.Element {
   const [focusedFallback, setFocusedFallback] = createSignal(false);
   let revealFrame = 0;
   // Android pads the WebView itself above the IME (MainActivity), so there the
-  // keyboard shrinks innerHeight along with the visual viewport. Measure its gap
-  // against the tallest viewport seen at this width instead (GH #716).
-  let fullWidth = -1;
-  let fullTop = 0;
+  // keyboard looks exactly like a window resize. MainActivity reports the real
+  // IME state as a `tine-ime` event; until one arrives (iOS, a browser, or an
+  // Android page that has not seen a change yet) the visual viewport decides.
+  let nativeIme: boolean | undefined;
   // A focused editor with no keyboard keeps the dock (hardware keyboard) only
   // until a keyboard has been seen: once Back or the IME's hide key closes it,
   // the editor stays focused but the dock yields to the navigation row, like
@@ -129,14 +132,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
 
   const updateDock = () => {
     const top = viewportKeyboardTop();
-    if (window.innerWidth !== fullWidth) {
-      // Rotation or a new window size: unknown baseline, back to the fallback.
-      fullWidth = window.innerWidth;
-      fullTop = 0;
-      keyboardSeen = false;
-    }
-    fullTop = Math.max(fullTop, window.innerHeight);
-    const keyboardUp = fullTop - top > KEYBOARD_GAP_THRESHOLD;
+    const keyboardUp = nativeIme ?? window.innerHeight - top > KEYBOARD_GAP_THRESHOLD;
     const focused = activeEditorHasFocus();
     keyboardSeen = focused && (keyboardSeen || keyboardUp);
     setDockTop(top);
@@ -166,7 +162,12 @@ export function MobileKeyboardToolbar(): JSX.Element {
         scheduleEditorReveal();
       }
     };
+    const updateFromNativeIme = (event: Event) => {
+      nativeIme = (event as CustomEvent<unknown>).detail === true;
+      updateViewport();
+    };
     updateDock();
+    window.addEventListener(NATIVE_IME_EVENT, updateFromNativeIme);
     vv?.addEventListener("resize", updateViewport);
     vv?.addEventListener("scroll", updateViewport);
     window.addEventListener("resize", updateViewport);
@@ -174,6 +175,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
     window.addEventListener("focusout", updateAfterFocusChange);
     document.addEventListener("input", revealAfterEditorInput, true);
     onCleanup(() => {
+      window.removeEventListener(NATIVE_IME_EVENT, updateFromNativeIme);
       vv?.removeEventListener("resize", updateViewport);
       vv?.removeEventListener("scroll", updateViewport);
       window.removeEventListener("resize", updateViewport);
