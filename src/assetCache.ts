@@ -20,6 +20,8 @@ import { isStaticIconImage } from "./staticImage";
 // URLs keep their Blob alive even after every image unmounts.
 interface CacheEntry {
   icon?: boolean;
+  /** The read limit this entry's IPC read was issued with. */
+  maxBytes: number;
   staticIcon?: boolean;
   failure?: ErrorFamily;
   promise: Promise<string>;
@@ -128,7 +130,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
   }
   const live = liveEntries.get(key);
   if (live) return live;
-  const entry: CacheEntry = { promise: Promise.resolve(""), bytes: 0, leases: 0, evicted: false };
+  const entry: CacheEntry = { promise: Promise.resolve(""), bytes: 0, leases: 0, evicted: false, maxBytes };
   const owner = graphOwner();
   // Publish identity before starting the limiter: its first two tasks begin
   // synchronously, and must see themselves in the cache.
@@ -143,6 +145,9 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
       entry.staticIcon = isStaticIconImage(bytes);
       if (bytes.byteLength > maxBytes) {
         entry.failure = "asset-too-large";
+        // Leave the cache like a thrown refusal does, so a caller with a larger
+        // allowance reads afresh instead of inheriting this refusal.
+        if (cache.get(key) === entry) cache.delete(key);
         return "";
       }
       if (!bytes.length) {
@@ -189,8 +194,15 @@ async function acquire(entry: CacheEntry): Promise<BlobLease> {
 
 /** A blob URL for the asset at `rel` (relative to `assets/`), reading it over IPC
  *  at most once per open graph. Resolves to "" if the asset is missing/unreadable. */
-export function acquireAssetBlob(rel: string): Promise<BlobLease> {
-  return acquire(cachedBlob(rel, () => backend().readAsset(rel, MAX_IMAGE_BYTES), rel, "graph"));
+export async function acquireAssetBlob(rel: string): Promise<BlobLease> {
+  const read = () => cachedBlob(rel, () => backend().readAsset(rel, MAX_IMAGE_BYTES), rel, "graph");
+  const entry = read();
+  const lease = await acquire(entry);
+  // A pending icon read (1 MiB limit) may have been joined; its refusal must
+  // not cost a block image its own larger allowance. The failed entry has left
+  // the cache, so this issues a fresh full-limit read.
+  if (lease.failure === "asset-too-large" && entry.maxBytes < MAX_IMAGE_BYTES) return acquire(read());
+  return lease;
 }
 
 /** Icons share the exact same entry/Blob as block images. Enforce the smaller
@@ -249,6 +261,7 @@ export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
     return url;
   }
   const entry: CacheEntry = {
+    maxBytes: MAX_IMAGE_BYTES,
     staticIcon: isStaticIconImage(bytes),
     promise: Promise.resolve(url),
     bytes: bytes.byteLength,
