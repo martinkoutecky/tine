@@ -116,12 +116,32 @@ export function MobileKeyboardToolbar(): JSX.Element {
   const [keyboardVisible, setKeyboardVisible] = createSignal(false);
   const [focusedFallback, setFocusedFallback] = createSignal(false);
   let revealFrame = 0;
+  // Android pads the WebView itself above the IME (MainActivity), so there the
+  // keyboard shrinks innerHeight along with the visual viewport. Measure its gap
+  // against the tallest viewport seen at this width instead (GH #716).
+  let fullWidth = -1;
+  let fullTop = 0;
+  // A focused editor with no keyboard keeps the dock (hardware keyboard) only
+  // until a keyboard has been seen: once Back or the IME's hide key closes it,
+  // the editor stays focused but the dock yields to the navigation row, like
+  // OG's keyboardWillHide (show-toolbar? false, show-tabbar? true) (GH #716).
+  let keyboardSeen = false;
 
   const updateDock = () => {
     const top = viewportKeyboardTop();
+    if (window.innerWidth !== fullWidth) {
+      // Rotation or a new window size: unknown baseline, back to the fallback.
+      fullWidth = window.innerWidth;
+      fullTop = 0;
+      keyboardSeen = false;
+    }
+    fullTop = Math.max(fullTop, window.innerHeight);
+    const keyboardUp = fullTop - top > KEYBOARD_GAP_THRESHOLD;
+    const focused = activeEditorHasFocus();
+    keyboardSeen = focused && (keyboardSeen || keyboardUp);
     setDockTop(top);
-    setKeyboardVisible(window.innerHeight - top > KEYBOARD_GAP_THRESHOLD);
-    setFocusedFallback(activeEditorHasFocus());
+    setKeyboardVisible(keyboardUp);
+    setFocusedFallback(focused && !keyboardSeen);
   };
 
   onMount(() => {
@@ -206,7 +226,9 @@ export function MobileKeyboardToolbar(): JSX.Element {
       return;
     }
     requestAnimationFrame(() => {
-      if (!toolbarRef) return;
+      // The dock may have hidden since (the keyboard closed in the same
+      // resize); measuring it now would publish a lift from a 0 top (GH #716).
+      if (!toolbarRef || !visible()) return;
       const top = toolbarRef.getBoundingClientRect().top;
       const lift = Math.max(0, window.innerHeight - top) + 8;
       root.style.setProperty("--mobile-kb-toolbar-lift", `${lift}px`);
@@ -224,7 +246,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
     // The viewport grows while the keyboard closes. Keep the button under the
     // active pointer until its trailing click is consumed; otherwise a mounted
     // toolbar can still move away and expose the note before pointer-up.
-    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop())}px - env(safe-area-inset-bottom))`,
+    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop())}px - var(--system-inset-bottom))`,
   });
   const keepEditorFocus = (e: Event) => e.preventDefault();
 

@@ -369,6 +369,56 @@ describe("MobileKeyboardToolbar", () => {
     expect(root.hasAttribute("data-mobile-editing-dock")).toBe(false);
   });
 
+  it("gives the bottom row back once the keyboard is dismissed while the editor keeps focus (GH #716)", async () => {
+    // Android pads the WebView above the IME (MainActivity), so the keyboard
+    // shrinks innerHeight together with the visual viewport.
+    let height = 800;
+    Object.defineProperty(window, "innerHeight", { get: () => height, configurable: true });
+    Object.defineProperty(window, "visualViewport", {
+      value: { get height() { return height; }, offsetTop: 0, addEventListener: vi.fn(), removeEventListener: vi.fn() },
+      configurable: true,
+    });
+    const keyboard = async (open: boolean) => {
+      height = open ? 500 : 800;
+      window.dispatchEvent(new Event("resize"));
+      await Promise.resolve();
+    };
+    platform.mobile = true;
+    const { render } = await import("solid-js/web");
+    const bridge = await import("../editorCommandBridge");
+    const { MobileKeyboardToolbar } = await import("./MobileKeyboardToolbar");
+    const root = document.documentElement;
+    const editor = document.createElement("textarea");
+    editor.className = "block-editor";
+    document.body.appendChild(editor);
+    editor.focus();
+    const unregister = bridge.registerFocusedEditorCommandBridge({ blockId: "b1", dispatch: () => true, blur() {} });
+    const { div, dispose } = mount(render, MobileKeyboardToolbar);
+    const toolbar = div.querySelector<HTMLElement>("[data-mobile-keyboard-toolbar]")!;
+    await Promise.resolve();
+    // Focused, keyboard not (yet) seen: the dock stays available (hardware keyboard).
+    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(true);
+
+    await keyboard(true);
+    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(true);
+    expect(toolbar.hidden).toBe(false);
+
+    // Back / the IME's own hide key: the keyboard goes, the editor stays focused.
+    await keyboard(false);
+    expect(document.activeElement).toBe(editor);
+    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(false);
+    expect(toolbar.hidden).toBe(true);
+
+    // Tapping the editor brings the keyboard, and the dock, back.
+    await keyboard(true);
+    expect(root.hasAttribute("data-mobile-editing-dock")).toBe(true);
+    expect(toolbar.hidden).toBe(false);
+
+    unregister();
+    dispose();
+    editor.remove();
+  });
+
   it("does not render on desktop even with a focused editor bridge", async () => {
     platform.mobile = false;
     const { render } = await import("solid-js/web");

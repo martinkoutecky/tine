@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Phones: closing the keyboard with Back or the keyboard's own hide key brings back the bottom row (sidebar, Search, Back, Forward). Before, the block stayed in editing, so the editing toolbar stayed in the row's place without a keyboard, and the help button could jump off screen. Tap the block to bring the keyboard and the editing toolbar back (GH #716).
 - A query that lists a block you just edited no longer sometimes stays at "Loading query results…" with a count of 0 after you leave the editor, until some later change re-ran it (UI-QUERY-STUCK-LOADING-AFTER-EDIT). Leaving the editor briefly marked the page busy without telling the query blocks, so a result that arrived in that moment was dropped and never asked for again.
 - Sticky parent bullets appear as their row reaches its place in the sticky stack, so they no longer pop up over the next child while scrolling (GH #717; GH #718).
 - On phones and tablets, which have no tab strip, **Open in new tab** is no longer offered in page, block and preview menus, and Ctrl/Cmd-click, middle-click and Ctrl/Cmd+Enter in Search open the link in place instead of in a background tab you cannot reach; use **Open in sidebar** there. Desktop is unchanged (GH #705).
