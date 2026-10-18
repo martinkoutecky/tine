@@ -74,7 +74,7 @@ it('sending callbacks tolerate acquire/release, sendNow, discard, and move re-en
     const temporary = client.acquire('P');
     temporary();
     client.sendNow('P');
-    nested.push(client.move('P', 'Q', page('P'), page('Q'), ['move-block']));
+    nested.push(client.move('P', 'Q', page('P'), page('Q'), ['move-blocks']));
     nested.push(client.discard('P'));
   };
   const releaseP = await opened(ctx, 'P', 3);
@@ -85,16 +85,16 @@ it('sending callbacks tolerate acquire/release, sendNow, discard, and move re-en
     expect(++callbacks).toBeLessThan(10);
     const temporary = client.acquire('P'); temporary();
     client.sendNow('P');
-    nested.push(client.move('P', 'Q', page('P'), page('Q'), ['move-block']));
+    nested.push(client.move('P', 'Q', page('P'), page('Q'), ['move-blocks']));
   };
   await tick();
   // Complete the one discard queued once the Open had answered.
-  if (client['pages'].get('P')?.phase.request === 'discard') {
+  if ((client['pages'].get('P')?.phase as { request?: string } | undefined)?.request === 'discard') {
     client.receive(mail(7, 'pages/P.md', mailPage(3, { kind: 'unchanged' }), applied(host.last('discard').id, 3)));
   }
   await tick();
   host.autoAdmit = false;
-  void client.move('P', 'Q', page('P', 'moved'), page('Q', 'received'), ['move-block']);
+  void client.move('P', 'Q', page('P', 'moved'), page('Q', 'received'), ['move-blocks']);
   expect(host.count('move')).toBe(1);
   expect(client.busy('P')).toBe(true);
   expect(client.busy('Q')).toBe(true);
