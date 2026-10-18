@@ -36,11 +36,13 @@ export function StickyAncestor(props: { id: string; raw: string }): JSX.Element 
     row.style.scrollMarginTop = `${count * 30}px`;
     const observer = newIntersectionObserver(host, entries => {
       for (const entry of entries) {
-        // Out below the viewport is not an offscreen ancestor. Root-margin
-        // moves the boundary below already pinned ancestors, without a cap.
+        // Out below the viewport is not an offscreen ancestor. Replace the
+        // row when its bottom reaches the bottom of its sticky slot. Waiting
+        // for the slot's top lets the next child enter that slot first, then
+        // suddenly covers it when this pin appears (GH #717/#718).
         setAbove(!entry.isIntersecting && entry.boundingClientRect.bottom <= (entry.rootBounds?.top ?? 0));
       }
-    }, { root, rootMargin: `-${count * 30}px 0px 0px 0px` });
+    }, { root, rootMargin: `-${(count + 1) * 30}px 0px 0px 0px` });
     observer?.observe(row);
     onCleanup(() => observer?.disconnect());
   });
