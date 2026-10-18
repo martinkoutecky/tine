@@ -338,14 +338,18 @@ mod journal_guide_tests {
     #[test]
     fn page_icon_property_remains_editable_in_the_guide() {
         let reference = include_str!("templates/pages-links-references-search.md");
-        assert!(reference.contains("`icon::` property stays visible in the page-properties block"));
+        assert!(
+            reference.contains("`tine.icon::` property stays visible in the page-properties block")
+        );
         assert!(reference.contains("click its row to edit it"));
         for detail in [
             "**Set page icon…**",
             "**Remove page icon**",
             "emoji or short text",
             "including external file changes",
-            "`#+icon:`",
+            "`#+tine.icon:`",
+            "A page with no `tine.icon::` uses its `icon::` property instead",
+            "`tine.icon::` wins",
         ] {
             assert!(
                 reference.contains(detail),

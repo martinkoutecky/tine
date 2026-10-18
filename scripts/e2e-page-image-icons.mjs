@@ -23,10 +23,14 @@ fs.writeFileSync(path.join(graph, "assets/actual.png"), png);
 fs.symlinkSync("actual.png", path.join(graph, "assets/logo.png"));
 fs.writeFileSync(path.join(graph, "assets/next.png"), png);
 const file = path.join(graph, "pages/Image.md");
-fs.writeFileSync(file, 'icon:: ![](../assets/logo.png){:width "90%"}\n\n- Image body\n');
-fs.writeFileSync(path.join(graph, "pages/Remote.md"), `icon:: ![](${remoteUrl})\n\n- Remote body\n`);
-fs.writeFileSync(path.join(graph, "pages/Org.org"), "#+icon: [[file:../assets/logo.png]]\n\n* Org body\n");
-fs.writeFileSync(path.join(graph, "logseq/config.edn"), '{:favorites ["Image" "Remote" "Org"]}\n');
+// D-20261018-IC1: tine.icon:: is the documented property; icon:: (what OG prints) is the fallback.
+fs.writeFileSync(file, 'tine.icon:: ![](../assets/logo.png){:width "90%"}\n\n- Image body\n');
+fs.writeFileSync(path.join(graph, "pages/Remote.md"), `tine.icon:: ![](${remoteUrl})\n\n- Remote body\n`);
+fs.writeFileSync(path.join(graph, "pages/Org.org"), "#+tine.icon: [[file:../assets/logo.png]]\n\n* Org body\n");
+fs.writeFileSync(path.join(graph, "pages/Legacy.md"), "icon:: ![](../assets/logo.png)\n\n- Legacy body\n");
+// Both properties: tine.icon wins, so the remote icon:: is neither shown nor requested.
+fs.writeFileSync(path.join(graph, "pages/Both.md"), `icon:: ![](${remoteUrl})\ntine.icon:: ![](../assets/logo.png)\n\n- Both body\n`);
+fs.writeFileSync(path.join(graph, "logseq/config.edn"), '{:favorites ["Image" "Remote" "Org" "Legacy" "Both"]}\n');
 const memoryOnly = process.env.ICON_MEMORY === "1";
 const memoryBytes = Number(process.env.ICON_MEMORY_BYTES || 2 * 1024 * 1024);
 if (memoryOnly) {
@@ -105,12 +109,18 @@ try {
   await browser.$('[data-page-action-id="set-page-icon"]').click();
   await browser.$('[data-page-icon-input]').setValue("![](../assets/next.png)");
   await browser.keys("Enter");
-  await browser.waitUntil(() => fs.readFileSync(file, "utf8").includes("icon:: ![](../assets/next.png)"), { timeout: 10000 });
+  await browser.waitUntil(() => fs.readFileSync(file, "utf8").includes("tine.icon:: ![](../assets/next.png)"), { timeout: 10000 });
   await rendered();
   proof.steps.push(journey);
   journey = "Org file image link renders";
   await openPageByName(browser, "Org");
   await rendered("Org");
+  proof.steps.push(journey);
+  journey = "icon:: fallback image renders, and tine.icon:: wins over a remote icon:: on the same page";
+  await openPageByName(browser, "Legacy");
+  await rendered("Legacy");
+  await openPageByName(browser, "Both");
+  await rendered("Both");
   proof.steps.push(journey);
   journey = "remote icon shows no image or raw-text icon in title and Favorites, preserves its property and makes no requests";
   await openPageByName(browser, "Remote");

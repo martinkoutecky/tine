@@ -8,11 +8,11 @@ import { pushToast } from "./toasts";
 import { PAGE_ICON_PROPERTIES } from "./pageIconImage";
 import { pageNameForPath, resolvedTarget } from "./pageIndex";
 
-// Inline page-icon lookups, made cheap for icon-heavy pages. Every `icon::`
+// Inline page-icon lookups, made cheap for icon-heavy pages. Every icon property
 // requested in the same microtask tick is coalesced into ONE page_icons IPC, each
 // name is fetched at most ONCE per publication, and — crucially — a batch whose
 // answers match what is shown does NOT touch the signal, so the common case (few/no
-// icon:: pages, e.g. a 2000-block page of plain refs) costs one IPC and zero
+// icon pages, e.g. a 2000-block page of plain refs) costs one IPC and zero
 // re-renders. A publication keeps the shown icons until their fresh answer lands
 // (no flash of every icon on each save).
 // A plain reactive read (not createResource-per-ref) keeps the per-reference cost
@@ -76,7 +76,7 @@ function flush() {
     });
 }
 
-/** Reactive: the referenced page's `icon::` (emoji/character) or "". Reading it
+/** Reactive: the referenced page's icon (`tine.icon::`, else `icon::`) or "". Reading it
  *  lazily enqueues a batched fetch; the value fills in once the batch resolves. */
 export function pageIcon(name: string): string {
   if (pageByName(name)) return readPageIconProperty(name);
@@ -92,11 +92,19 @@ export function pageIcon(name: string): string {
   return iconMap()[name] ?? "";
 }
 
-/** Loaded-page lookup, with the shared policy's property precedence. */
+/** Loaded-page lookup, with the shared policy's property precedence
+ *  (`tine.icon::`, then the OG-compatible `icon::`). */
 export function readPageIconProperty(name: string): string {
+  const property = pageIconPropertyInUse(name);
+  return property ? readPageProperty(name, property)?.trim() ?? "" : "";
+}
+
+/** The property currently supplying a loaded page's icon (first nonblank in
+ *  policy order), or "" when it has none. The menu edits this one in place so a
+ *  page written for OG (`icon:: 🏁`) keeps a single, OG-visible property. */
+export function pageIconPropertyInUse(name: string): string {
   for (const property of PAGE_ICON_PROPERTIES) {
-    const value = readPageProperty(name, property)?.trim();
-    if (value) return value;
+    if (readPageProperty(name, property)?.trim()) return property;
   }
   return "";
 }
@@ -118,7 +126,7 @@ export function pageIconOwnerPath(name: string, value: string): string {
   return "";
 }
 
-/** `pageIcon(name)` as a label prefix ("🏁 "), or "" when the page has no `icon::`.
+/** `pageIcon(name)` as a label prefix ("🏁 "), or "" when the page has no icon property.
  *  Sidebar rows (Favorites, Recent, All pages) and right-sidebar item titles label
  *  themselves with it, as OG does (GH #346). */
 export function pageIconPrefix(name: string): string {

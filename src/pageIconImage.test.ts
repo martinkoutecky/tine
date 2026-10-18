@@ -1,10 +1,14 @@
 import { beforeAll, expect, it } from "vitest";
 import { initParser } from "./render/parse";
-import { pageIconAsset, pageIconImageLink, PAGE_ICON_PROPERTY } from "./pageIconImage";
+import { pageIconAsset, pageIconImageLink, PAGE_ICON_PROPERTIES, PAGE_ICON_PROPERTY } from "./pageIconImage";
 import { isStaticIconImage } from "./staticImage";
 
 beforeAll(initParser);
-it("uses the shared property policy", () => expect(PAGE_ICON_PROPERTY).toBe("icon"));
+// D-20261018-IC1: `tine.icon::` is the property Tine writes and documents; OG-compatible `icon::` is the fallback.
+it("uses the shared property policy", () => {
+  expect(PAGE_ICON_PROPERTY).toBe("tine.icon");
+  expect(PAGE_ICON_PROPERTIES).toEqual(["tine.icon", "icon"]);
+});
 it.each([
   ["![](https://example.com/a.png)", "pages/A.md", true],
   ["![](../images/a.gif)", "pages/A.md", true],

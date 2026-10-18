@@ -1125,7 +1125,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async pageIcons(names: string[]): Promise<Record<string, string>> {
       const out: Record<string, string> = {};
       for (const name of names) {
-        const m = all.find((p) => p.name === name)?.pre_block?.match(/^icon::\s*(.+)$/m);
+        const pre = all.find((p) => p.name === name)?.pre_block;
+        const m = pre?.match(/^tine\.icon::\s*(.+)$/m) ?? pre?.match(/^icon::\s*(.+)$/m);
         if (m) out[name] = m[1].trim();
       }
       return out;

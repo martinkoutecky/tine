@@ -1,5 +1,5 @@
 import { PAGE_ICON_PROPERTIES, PAGE_ICON_PROPERTY } from "../pageIconImage";
-import { readPageIconProperty } from "../pageIconBatch";
+import { pageIconPropertyInUse, readPageIconProperty } from "../pageIconBatch";
 import { focusOnMount } from "../focusOnMount";
 import { Rich } from "../i18n/Rich";
 import { boardGroupField as groupFieldForToken, formulaReferenceName } from "../sheet/boardColumns";
@@ -988,7 +988,7 @@ function PageIconMenu(props: { name: string; close: (restoreFocus?: boolean) => 
     if (!owner()) pushToast(msg("page-icon-stale"), "error");
     else if (value === null) {
       for (const property of PAGE_ICON_PROPERTIES) setPageProperty(props.name, property, null);
-    } else setPageProperty(props.name, PAGE_ICON_PROPERTY, value);
+    } else setPageProperty(props.name, pageIconPropertyInUse(props.name) || PAGE_ICON_PROPERTY, value);
     props.close();
   };
   createEffect(() => { if (editing()) queueMicrotask(() => input?.focus()); });

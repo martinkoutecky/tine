@@ -352,8 +352,8 @@ async function completeJournalFeed(owner: JournalsFeedOwner, generation: number,
 }
 
 // Page properties NOT shown in the under-title property list: `alias` is surfaced
-// as "aka" chips above. `icon` stays editable here as well as decorating the
-// title, matching OG's editable-built-in-properties. Hide internal tag-table metadata.
+// as "aka" chips above. `tine.icon` and the OG-compatible `icon` stay editable here as well as decorating the
+// title (OG's editable-built-in-properties lists `icon`). Hide internal tag-table metadata.
 // `tine/exports` is the exports page marker (docs/contracts/export-definitions.md), not something to edit.
 const PAGE_PROPS_HIDDEN = new Set(["alias", "tine.tag-table", "tine/exports"]);
 const TAG_TABLE_PROP = "tine.tag-table";

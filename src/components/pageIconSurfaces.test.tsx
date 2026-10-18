@@ -54,7 +54,7 @@ const labels = (root: Element, selector: string) => [...root.querySelectorAll(se
 
 describe("left sidebar rows carry the page icon", () => {
   it("title and Favorites share reads, follow replacement and property edits, and refuse remote images", async () => {
-    const page = { id: "pages/Image.md", name: "Image", kind: "page" as const, title: "Image", pre_block: "icon:: ![](../assets/a.png)", blocks: [] };
+    const page = { id: "pages/Image.md", name: "Image", kind: "page" as const, title: "Image", pre_block: "tine.icon:: ![](../assets/a.png)", blocks: [] };
     loadSingle(page);
     vi.spyOn(backend(), "getPage").mockResolvedValue(page);
     vi.spyOn(backend(), "getPageByPath").mockResolvedValue(page);
@@ -80,31 +80,31 @@ describe("left sidebar rows carry the page icon", () => {
       expect(read).toHaveBeenCalledTimes(2);
       images()[0].dispatchEvent(new Event("error"));
       expect(root.querySelector(".page-title-icon")?.textContent ?? "").toBe("");
-      setPageProperty("Image", "icon", "![](../assets/b.png)");
+      setPageProperty("Image", "tine.icon", "![](../assets/b.png)");
       await vi.waitFor(() => expect(images().map(img => img.getAttribute("src"))).toEqual(["blob:icon-3", "blob:icon-3"]));
       read.mockRejectedValue(new Error("not-found"));
-      setPageProperty("Image", "icon", "![](../assets/missing.png)");
+      setPageProperty("Image", "tine.icon", "![](../assets/missing.png)");
       await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(4));
       await settle();
       noIcon();
       read.mockRejectedValue(new Error("permission-denied"));
-      setPageProperty("Image", "icon", "![](../assets/unreadable.png)");
+      setPageProperty("Image", "tine.icon", "![](../assets/unreadable.png)");
       await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(5));
       await settle();
       noIcon();
       for (const value of ["![](https://example.com/assets/icon.png)", "![](data:image/png;base64,AAAA)", "![](../images/a.png)", "![](../assets/a.gif)", "![](../../assets/a.png)"]) {
-        setPageProperty("Image", "icon", value);
+        setPageProperty("Image", "tine.icon", value);
         await settle();
         noIcon();
       }
       expect(root.querySelector('img[src^="https://example.com"]')).toBeNull();
       expect(read).toHaveBeenCalledTimes(5);
-      setPageProperty("Image", "icon", "AB");
+      setPageProperty("Image", "tine.icon", "AB");
       expect(root.querySelector(".page-title-icon")?.textContent).toBe("AB");
       expect(labels(root, "#sidebar-favorites-list .nav-page-label")).toEqual(["AB Image"]);
     } finally { dispose(); }
   });
-  it("renders a local image icon in Favorites without using its link sizing", async () => {
+  it("renders a local image icon from the OG-compatible icon:: fallback in Favorites without using its link sizing", async () => {
     loadSingle({ id: "pages/Image.md", name: "Image", kind: "page", title: "Image", pre_block: 'icon:: ![](../assets/logo.PNG){:width "90%"}', blocks: [] });
     vi.spyOn(backend(), "readAsset").mockResolvedValue(Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aFOkAAAAASUVORK5CYII="), c => c.charCodeAt(0)));
     vi.stubGlobal("URL", Object.assign(class extends URL {}, { createObjectURL: vi.fn(() => "blob:page-icon"), revokeObjectURL: vi.fn() }));
@@ -115,6 +115,35 @@ describe("left sidebar rows carry the page icon", () => {
     try {
       await vi.waitFor(() => expect(root.querySelector('#sidebar-favorites-list img[data-page-image-icon]')?.getAttribute("src")).toBe("blob:page-icon"));
       expect(backend().readAsset).toHaveBeenCalledWith("logo.PNG", expect.any(Number));
+    } finally { dispose(); }
+  });
+  it("tine.icon:: wins over icon::, and a change to either property updates title and Favorites", async () => {
+    const page = { id: "pages/Both.md", name: "Both", kind: "page" as const, title: "Both", pre_block: "icon:: 🏁", blocks: [] };
+    loadSingle(page);
+    vi.spyOn(backend(), "getPage").mockResolvedValue(page);
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(page);
+    seedFavorites(["Both"]);
+    mainPaneRouter.replaceActiveRoute({ kind: "page", name: "Both", pageKind: "page" });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <><Sidebar /><PageView /></>, root);
+    const shown = () => [logical(root.querySelector(".page-title-icon") ?? document.createElement("i")).trim(), ...labels(root, "#sidebar-favorites-list .nav-page-label")];
+    try {
+      await expect.poll(shown).toEqual(["🏁", "🏁 Both"]);
+      setPageProperty("Both", "tine.icon", "AB");
+      await expect.poll(shown).toEqual(["AB", "AB Both"]);
+      setPageProperty("Both", "icon", "EF");
+      await settle();
+      expect(shown()).toEqual(["AB", "AB Both"]);
+      setPageProperty("Both", "tine.icon", null);
+      await expect.poll(shown).toEqual(["EF", "EF Both"]);
+      setPageProperty("Both", "icon", null);
+      await expect.poll(shown).toEqual(["", "⭐ Both"]);
+      setPageProperty("Both", "tine.icon", "![](../assets/missing.png)");
+      setPageProperty("Both", "icon", "EF");
+      await settle();
+      // A refused tine.icon image shows no icon; it does not fall back to icon:: (the property that is present wins).
+      expect(root.querySelector(".page-title-icon")?.textContent ?? "").toBe("");
     } finally { dispose(); }
   });
   it("AAA's exact header fixture, live header typing, removal and external reload update Favorites and Recent", async () => {
