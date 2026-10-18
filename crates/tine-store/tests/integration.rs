@@ -86,6 +86,9 @@ mod favorites_page_bytes;
 #[path = "favorites_reference_source.rs"]
 mod favorites_reference_source;
 
+#[path = "gh210_sheet_first_bullet.rs"]
+mod gh210_sheet_first_bullet;
+
 #[path = "gh540_numbered_first_bullet.rs"]
 mod gh540_numbered_first_bullet;
 

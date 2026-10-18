@@ -83,6 +83,23 @@ export function isPageHeaderPropertiesOnly(raw: string): boolean {
   return header.entries.length > 0 && header.end === raw.length;
 }
 
+/** The first line that keeps `raw` from being a complete page header, as
+ * `{ line, text }` (1-based line number, trimmed text), or null when `raw` is a
+ * complete header or has no such line. The line is the first non-empty one after
+ * the leading run of accepted properties (the whole first line when `raw` does
+ * not start with one): the same boundary {@link isPageHeaderPropertiesOnly}
+ * judges, so a message built from it names what that predicate refused. */
+export function pageHeaderBadLine(raw: string): { line: number; text: string } | null {
+  const header = pageHeader(raw);
+  if (header.entries.length > 0 && header.end === raw.length) return null;
+  let offset = header.entries.length > 0 ? header.end : 0;
+  for (const line of raw.slice(offset).split("\n")) {
+    if (line.trim() !== "") return { line: raw.slice(0, offset).split("\n").length, text: line.trim() };
+    offset += line.length + 1;
+  }
+  return null;
+}
+
 /** Keep the canonical page-header predicate shared by display and edit paths so
  * a candidate cannot be hidden in one place but edited as ordinary text in
  * another. */

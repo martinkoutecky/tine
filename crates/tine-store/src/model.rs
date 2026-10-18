@@ -4346,14 +4346,17 @@ impl Graph {
 /// empty title line, and its serializer promotes only a first block whose FIRST
 /// line holds `:: ` (`file/core.cljs` `transform-content`); Tine's raw has no
 /// empty title line, so the key itself must decide (GH #540). `id` marks a
-/// referenced outline block. Mirrored by `BLOCK_SCOPED_PROPERTY_KEYS` in
-/// `src/document/convert.ts`; `src/i12PageHeader.test.ts` keeps them equal.
+/// referenced outline block. `tine.view` is a Tine table/grid/board block whose
+/// title is typed after its view is chosen (GH #210): its rows are children and
+/// its first line is text, so it is never page properties. Mirrored by
+/// `BLOCK_SCOPED_PROPERTY_KEYS` in `src/document/convert.ts`; `src/i12PageHeader.test.ts` keeps them equal.
 pub(crate) const BLOCK_SCOPED_PROPERTY_KEYS: &[&str] = &[
     "id",
     "heading",
     "collapsed",
     "background-color",
     "logseq.order-list-type",
+    "tine.view",
 ];
 
 fn first_root_is_promotable_page_header(doc: &Document) -> bool {

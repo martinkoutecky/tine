@@ -4,7 +4,7 @@ import { seedFacets, facetsFromDto } from "../render/facets";
 import { trimBlockTrailingSpace } from "../editor/format";
 import { isPageHeaderPropertiesOnly, pageHeaderKeys } from "../editor/properties";
 import { journalTitle, appNow } from "../journal";
-import { rawWithCollapsed } from "./edits/properties";
+import { pageHeaderDraftProblem, rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
@@ -204,14 +204,18 @@ function toDto(id: string): BlockDto {
  *  bullet carrying one stays an outline block. An empty numbered-list item is
  *  exactly `logseq.order-list-type:: number`, and folding it into the page
  *  header turned the list into page properties and jammed every later save
- *  (GH #540). Mirror of Rust `BLOCK_SCOPED_PROPERTY_KEYS` (tine-store
- *  model.rs), which carries the OG provenance. */
+ *  (GH #540). `tine.view` is the same case for a table/grid/board block with no
+ *  title yet: its rows are its children and its title is typed next, so folding
+ *  it into the preamble made every later edit an invalid page header (GH #210).
+ *  Mirror of Rust `BLOCK_SCOPED_PROPERTY_KEYS` (tine-store model.rs), which
+ *  carries the OG provenance. */
 export const BLOCK_SCOPED_PROPERTY_KEYS: readonly string[] = [
   "id",
   "heading",
   "collapsed",
   "background-color",
   "logseq.order-list-type",
+  "tine.view",
 ];
 
 /** Mirror of Rust `first_root_is_promotable_page_header` (model.rs): a childless
@@ -236,11 +240,10 @@ export function foldMarkedPageHeader(p: FeedPage): { preBlock: string | null; ro
   const first = doc.byId[p.roots[0]];
   if (!first?.originatedFromPageHeader) return { preBlock: p.preBlock, rootIds: p.roots };
   // Tolerate only Enter's authoring artifact at the disk firewall; keep the
-  // strict shared display predicate and live raw intact.
+  // strict shared display predicate and live raw intact. The exit toast reports
+  // this same predicate (`pageHeaderDraftProblem`).
+  if (pageHeaderDraftProblem(first)) return null;
   const canonicalRaw = first.raw.replace(/\n+$/, "");
-  if (first.children.length > 0 || (first.raw !== "" && !isPageHeaderPropertiesOnly(canonicalRaw))) {
-    return null;
-  }
   // Exact raw is authoritative here: ordinary toDto trimming must never eat a
   // page-header value or its separator trivia. An empty draft deletes the
   // header and emits no stray outline bullet.

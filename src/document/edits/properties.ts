@@ -3,17 +3,17 @@ import type { PageDto } from "../../types";
 import { ordered_list_glyph } from "../../render/wasm/lsdoc_wasm.js";
 import { scheduleParts, planningTimestamp } from "../../editor/repeat";
 import { blockRegions, editBlock, parserReady } from "../../render/parse";
-import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type ReadonlyFeedPage } from "../model";
+import { bumpCollapseEpochs, doc, formatForBlock, pageByName, setDoc, freshId, type Node, type ReadonlyFeedPage } from "../model";
 import { facetsOf } from "../../render/facets";
 import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
-import { isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
+import { isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
-import { pushToast } from "../../toasts";
+import { pushToast, pushToastUnique } from "../../toasts";
 
 /** Pure Markdown property rewrite for one compound store mutation. It scans only
  * the canonical head (title — or, when the first line is itself a property, no
@@ -210,6 +210,9 @@ export function finishPageHeaderEdit(id: string): void {
   reportInvalidPageHeaderOnExit(id);
   const node = doc.byId[id];
   if (!node?.originatedFromPageHeader || node.raw !== "" || node.children.length > 0 || graphRewriteFrozen()) return;
+  // Only the page's first root is its header; a marked node pushed below another
+  // block is an ordinary block and stays where it is.
+  if (pageByName(node.page)?.roots[0] !== id) return;
   setDoc(
     produce((s) => {
       const page = s.pages.find((p) => p.name === node.page);
@@ -219,13 +222,40 @@ export function finishPageHeaderEdit(id: string): void {
   );
 }
 
-/** Report a still-invalid header when its editor closes, once per edit exit. */
+/** Why a marked header root cannot be written as the page's preamble, or null
+ * when it can: the one rule `pageToDto` refuses a draft by and the exit toast
+ * explains, so the toast never says less than the refusal (GH #210). Enter's
+ * terminal newlines are an authoring artifact the disk firewall tolerates. */
+export type PageHeaderDraftProblem =
+  | { kind: "children" }
+  | { kind: "line"; line: number; text: string }
+  | { kind: "invalid" };
+export function pageHeaderDraftProblem(node: Node): PageHeaderDraftProblem | null {
+  if (node.children.length > 0) return { kind: "children" };
+  if (node.raw === "") return null;
+  const canonicalRaw = node.raw.replace(/\n+$/, "");
+  if (isPageHeaderPropertiesOnly(canonicalRaw)) return null;
+  const bad = pageHeaderBadLine(canonicalRaw);
+  return bad ? { kind: "line", ...bad } : { kind: "invalid" };
+}
+
+const BAD_LINE_SHOWN = 60;
+
+/** Report a still-invalid header when its editor closes: one toast per distinct
+ * complaint (an identical one already on screen is not stacked into a x2 badge),
+ * only while the node really is the page's header, i.e. its first root. A marked
+ * node moved below another block is saved as the ordinary block it now is, so
+ * the "before they can be saved" warning would be false (GH #210). */
 export function reportInvalidPageHeaderOnExit(id: string): void {
   const node = doc.byId[id];
-  if (!node?.originatedFromPageHeader) return;
-  const raw = node.raw.replace(/\n+$/, "");
-  if (node.children.length > 0 || (raw !== "" && !isPageHeaderPropertiesOnly(raw)))
-    pushToast(msg("properties-page-header-properties-must-contain-only-valid-key"), "error");
+  if (!node?.originatedFromPageHeader || pageByName(node.page)?.roots[0] !== id) return;
+  const problem = pageHeaderDraftProblem(node);
+  if (!problem) return;
+  if (problem.kind === "children") pushToastUnique(msg("properties-page-header-has-child-blocks"), "error");
+  else if (problem.kind === "line") {
+    const text = problem.text.length > BAD_LINE_SHOWN ? `${problem.text.slice(0, BAD_LINE_SHOWN)}…` : problem.text;
+    pushToastUnique(msg("properties-page-header-bad-line", { line: problem.line, text }), "error");
+  } else pushToastUnique(msg("properties-page-header-properties-must-contain-only-valid-key"), "error");
 }
 
 /** A successful save folded the first root into the file's preamble. Keep the

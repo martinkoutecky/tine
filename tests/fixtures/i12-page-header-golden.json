@@ -479,6 +479,29 @@
         "pre_block": null,
         "title": "I12_20"
       }
+    },
+    {
+      "input": {
+        "blocks": [
+          {
+            "children": [],
+            "collapsed": false,
+            "id": "root-0",
+            "raw": "tine.view:: table\ntine.table-widths:: prop%3Atest=171"
+          }
+        ],
+        "format": "md",
+        "kind": "page",
+        "name": "I12_21",
+        "pre_block": null,
+        "title": "I12_21"
+      },
+      "expected": {
+        "blocks": [
+          "tine.view:: table\ntine.table-widths:: prop%3Atest=171"
+        ],
+        "pre_block": null
+      }
     }
   ]
 }
