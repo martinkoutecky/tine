@@ -40,3 +40,11 @@ export function isSinglePaneShell(): boolean {
 export function tabStripFits(): boolean {
   return !mobileDrawerMode();
 }
+
+/** Does a PDF fill its pane instead of opening in a companion pane beside the
+ *  notes? True in a single-pane shell, and in any window under 640 px whatever
+ *  the pointer: a half of that is too narrow for the reader's toolbar. A split
+ *  the user made keeps working. Automatic placement only; reactive. */
+export function pdfTakesOverPane(): boolean {
+  return isSinglePaneShell() || mobileDrawerMode();
+}

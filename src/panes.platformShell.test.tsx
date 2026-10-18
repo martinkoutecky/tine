@@ -46,3 +46,39 @@ describe("split panes follow the device shell, not the OS (GH #446)", () => {
     expect(panes.splitPane("main", "row")).not.toBeNull();
   });
 });
+
+// Review r1 (D-20261018-W1): automatic PDF placement follows available room,
+// whatever the pointer. A fine-pointer 390 px window must not get a 195 px
+// companion pane; a wide one still does.
+async function loadPanesFine(platform: "android" | "desktop", width: number) {
+  vi.resetModules();
+  globalThis.__TINE_PLATFORM__ = platform;
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(max-width: 639px)" ? width < 640 : false, // fine pointer
+    addEventListener: () => {}, removeEventListener: () => {},
+  }));
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: 844 });
+  const { initParser } = await import("./render/parse");
+  await initParser();
+  const panes = await import("./panes");
+  panes.resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
+  return panes;
+}
+
+describe("automatic PDF placement follows room, not the pointer (review r1)", () => {
+  afterEach(() => { delete globalThis.__TINE_PLATFORM__; vi.unstubAllGlobals(); });
+
+  for (const platform of ["android", "desktop"] as const) {
+    it(`${platform}, fine pointer, 390 px: the PDF opens in place, no companion pane`, async () => {
+      const panes = await loadPanesFine(platform, 390);
+      expect(panes.openPdf("sample.pdf", "sample")).not.toBeNull();
+      expect(panes.layoutPaneIds()).toEqual(["main"]);
+    });
+    it(`${platform}, fine pointer, 1280 px: the PDF opens in a companion pane`, async () => {
+      const panes = await loadPanesFine(platform, 1280);
+      expect(panes.openPdf("sample.pdf", "sample")).not.toBeNull();
+      expect(panes.layoutPaneIds()).toHaveLength(2);
+    });
+  }
+});

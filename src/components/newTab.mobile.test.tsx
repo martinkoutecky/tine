@@ -6,6 +6,10 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For } from "solid-js";
 import { render } from "solid-js/web";
+// Identity is varied independently of capability (review r1): this file runs
+// as an Android app WITH a finger; newTab.ios.test.tsx runs an iOS identity
+// with a fine pointer. The old identity gate (!isMobilePlatform) fails both.
+vi.hoisted(() => { globalThis.__TINE_PLATFORM__ = "android"; });
 vi.mock("../inputCapability", async (original) => ({
   ...(await original<typeof import("../inputCapability")>()), touchPrimary: () => true, touchCapable: () => true,
 }));
@@ -45,6 +49,9 @@ const page = (readOnly = false): PageDto => ({
 
 const labels = () => [...document.querySelectorAll(".ctx-item")].map((e) => e.textContent?.trim() ?? "");
 const tabCount = () => paneRouter("main").tabs().length;
+
+import { isMobilePlatform } from "../nativeChrome";
+it("really runs as an Android identity", () => { expect(isMobilePlatform).toBe(true); });
 
 describe("GH #705 + D-20261018-W1: a touch-first screen offers Open in new tab", () => {
   it("page menu offers Open in sidebar and Open in new tab", () => {

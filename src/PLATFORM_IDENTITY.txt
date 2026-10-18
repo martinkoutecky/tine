@@ -1,72 +1,74 @@
 # Every remaining read of platform identity in src (D-20261018-W1).
 # UI features follow room (viewport width) and input (pointer/hover), never
 # the platform's name; identity is allowed only for the reasons below. Format:
-#   <file> <symbol>  # why: <reason>; <detail>
+#   <file> <symbol> x<uses>  # why: <reason>; <detail>
+# x<uses> pins the number of references (aliases and namespace accesses
+# included): a second use in an approved file is a NEW use and needs a decision.
 # reasons: window-chrome | native-api | memory-cap | os-convention | host-event
 # Sorted; src/platformIdentity.guard.test.ts fails on an unlisted read, a stale
 # entry, or a reason outside the list ("ui-layout" is not one).
-src/App.tsx appPlatform  # why: host-event; asks the host for its kind to pick the edge-swipe back model and Android back/system-bar wiring
-src/App.tsx isMac  # why: window-chrome; macOS overlay title bar class on the frame
-src/App.tsx isMobilePlatform  # why: host-event; session-activity wiring (resume/suspend lifecycle events exist on mobile hosts only)
-src/App.tsx osDrawsWindowControls  # why: window-chrome; draw our own window controls only where the OS does not
-src/App.tsx platform-literal  # why: host-event; native host kind selects the edge-swipe back model
-src/App.tsx touchGesturePlatform  # why: host-event; edge-swipe back model (iOS history swipe vs Android back event)
-src/androidBack.ts platform-literal  # why: host-event; Android back button is a host event
-src/components/AboutTab.tsx platform-literal  # why: native-api; update and store channel differ per host
-src/components/AboutTab.tsx platformKind  # why: native-api; update and store channel differ per host
-src/components/Block.tsx isMobilePlatform  # why: native-api; /drawio launches a desktop-only external editor
-src/components/ContextMenu.tsx isMobilePlatform  # why: native-api; Export to PDF needs the desktop print/save pipeline
-src/components/CustomCssSettings.tsx isMac  # why: os-convention; the developer-tools shortcut hint names the OS chord
-src/components/CustomCssSettings.tsx platform-literal  # why: native-api; developer tools exist on desktop hosts only
-src/components/CustomCssSettings.tsx platformKind  # why: native-api; developer tools exist on desktop hosts only
-src/components/DiagnosticsTab.tsx isMobilePlatform  # why: native-api; saving a report file uses the desktop file dialog
-src/components/GraphFolderSetting.tsx canRevealInFileManager  # why: native-api; reveal-in-file-manager is a desktop shell call
-src/components/GraphPublish.tsx platform-literal  # why: native-api; publish folder access differs per host
-src/components/GraphPublish.tsx platformKind  # why: native-api; publish folder access differs per host
-src/components/GraphVerification.tsx isMobilePlatform  # why: native-api; report export uses the desktop file dialog
-src/components/PdfViewer.tsx isMac  # why: os-convention; the area-highlight modifier is the OS convention
-src/components/PluginsTab.tsx platformKind  # why: native-api; plugin manifests declare the platforms they support (ADR 0052)
-src/components/Settings.tsx isMac  # why: window-chrome; native frame toggle exists off macOS only
-src/components/Settings.tsx platform-literal  # why: native-api; plugins tab availability fails closed per host (ADR 0052)
-src/components/Settings.tsx platformKind  # why: native-api; plugins tab availability fails closed per host (ADR 0052)
-src/components/Sidebar.tsx canRevealInFileManager  # why: native-api; reveal-in-file-manager is a desktop shell call
-src/components/Welcome.tsx osDrawsWindowControls  # why: window-chrome; draw our own window controls only where the OS does not
-src/components/Welcome.tsx platform-literal  # why: native-api; iOS opens graphs only inside the app's own containers
-src/components/Welcome.tsx platformKind  # why: native-api; iOS opens graphs only inside the app's own containers
-src/components/WindowChrome.tsx isMobilePlatform  # why: window-chrome; mobile hosts have no window frame to drag or resize
-src/components/pdfFind.ts isMobilePlatform  # why: memory-cap; find-text cache bytes
-src/components/pdfTiles.ts isMobilePlatform  # why: memory-cap; tile count cap
-src/components/pdfViewerPrimitives.ts isMobilePlatform  # why: memory-cap; canvas pixel, cache and page caps
-src/components/pdfViewerView.tsx isMac  # why: os-convention; the area-highlight modifier hint names the OS key
-src/debug.ts navigator.userAgent  # why: native-api; diagnostic log line names the host
-src/debug.ts platformKind  # why: native-api; diagnostic log line names the host
-src/deepLinkNavigation.ts platform-literal  # why: native-api; asks the Android host to raise the soft keyboard
-src/deepLinkNavigation.ts platformKind  # why: native-api; asks the Android host to raise the soft keyboard
-src/edgeSwipe.ts platform-literal  # why: host-event; iOS history swipe vs Android back model
-src/editableEmoji.ts browserPlatform  # why: os-convention; emoji font stack differs per OS
-src/editableEmoji.ts navigator.userAgent  # why: os-convention; emoji font stack differs per OS
-src/graph.ts isMobile  # why: native-api; folder picking and graph containers differ per host
-src/graph.ts platform-literal  # why: native-api; folder picking and graph containers differ per host
-src/graph.ts platformKind  # why: native-api; folder picking and graph containers differ per host
-src/keybindings.ts browserPlatform  # why: os-convention; mod key is Cmd on macOS
-src/keybindings.ts navigator.platform  # why: os-convention; mod key is Cmd on macOS
-src/plugins/manager.ts platformKind  # why: native-api; plugin manifests declare the platforms they support (ADR 0052)
-src/plugins/startup.ts platform-literal  # why: native-api; plugin host initialisation differs on iOS (ADR 0052)
-src/plugins/startup.ts platformKind  # why: native-api; plugin host initialisation differs on iOS (ADR 0052)
-src/render/inline.tsx isMobilePlatform  # why: native-api; external media editor launches a desktop program
-src/router.ts isMobilePlatform  # why: host-event; Android Back and iOS swipe-back drive the history API
-src/shareIngest.ts platform-literal  # why: host-event; share source (Android intent vs iOS extension) is a host event
-src/shareShape.ts platform-literal  # why: host-event; share source (Android intent vs iOS extension) is a host event
-src/systemBars.ts appPlatform  # why: native-api; Android system-bar colouring
-src/systemBars.ts platform-literal  # why: native-api; Android system-bar colouring
-src/systemInsets.ts platform-literal  # why: native-api; Android reports insets natively
-src/systemInsets.ts platformKind  # why: native-api; Android reports insets natively
-src/ui.ts isMobilePlatform  # why: native-api; PDF export uses the desktop print pipeline
-src/update.ts browserPlatform  # why: native-api; updater picks the artifact for this OS
-src/update.ts navigator.userAgent  # why: native-api; updater picks the artifact for this OS
-src/update.ts platform-literal  # why: native-api; updater exists on desktop hosts only
-src/update.ts platformKind  # why: native-api; updater exists on desktop hosts only
-src/workspaceWindows.ts platform-literal  # why: native-api; extra OS windows exist on desktop hosts only
-src/workspaceWindows.ts platformKind  # why: native-api; extra OS windows exist on desktop hosts only
-src/zoom.ts platform-literal  # why: native-api; desktop uses the native webview zoom, mobile hosts CSS zoom
-src/zoom.ts platformKind  # why: native-api; desktop uses the native webview zoom, mobile hosts CSS zoom
+src/App.tsx appPlatform x3  # why: host-event; asks the host for its kind to pick the edge-swipe back model and Android back/system-bar wiring
+src/App.tsx isMac x1  # why: window-chrome; macOS overlay title bar class on the frame
+src/App.tsx isMobilePlatform x1  # why: host-event; session-activity wiring (resume/suspend lifecycle events exist on mobile hosts only)
+src/App.tsx osDrawsWindowControls x2  # why: window-chrome; draw our own window controls only where the OS does not
+src/App.tsx platform-literal x2  # why: host-event; native host kind selects the edge-swipe back model
+src/App.tsx touchGesturePlatform x1  # why: host-event; edge-swipe back model (iOS history swipe vs Android back event)
+src/androidBack.ts platform-literal x1  # why: host-event; Android back button is a host event
+src/components/AboutTab.tsx platform-literal x8  # why: native-api; update and store channel differ per host
+src/components/AboutTab.tsx platformKind x1  # why: native-api; update and store channel differ per host
+src/components/Block.tsx isMobilePlatform x1  # why: native-api; /drawio launches a desktop-only external editor
+src/components/ContextMenu.tsx isMobilePlatform x1  # why: native-api; Export to PDF needs the desktop print/save pipeline
+src/components/CustomCssSettings.tsx isMac x1  # why: os-convention; the developer-tools shortcut hint names the OS chord
+src/components/CustomCssSettings.tsx platform-literal x1  # why: native-api; developer tools exist on desktop hosts only
+src/components/CustomCssSettings.tsx platformKind x1  # why: native-api; developer tools exist on desktop hosts only
+src/components/DiagnosticsTab.tsx isMobilePlatform x1  # why: native-api; saving a report file uses the desktop file dialog
+src/components/GraphFolderSetting.tsx canRevealInFileManager x1  # why: native-api; reveal-in-file-manager is a desktop shell call
+src/components/GraphPublish.tsx platform-literal x1  # why: native-api; publish folder access differs per host
+src/components/GraphPublish.tsx platformKind x1  # why: native-api; publish folder access differs per host
+src/components/GraphVerification.tsx isMobilePlatform x1  # why: native-api; report export uses the desktop file dialog
+src/components/PdfViewer.tsx isMac x1  # why: os-convention; the area-highlight modifier is the OS convention
+src/components/PluginsTab.tsx platformKind x1  # why: native-api; plugin manifests declare the platforms they support (ADR 0052)
+src/components/Settings.tsx isMac x2  # why: window-chrome; native frame toggle exists off macOS only
+src/components/Settings.tsx platform-literal x2  # why: native-api; plugins tab availability fails closed per host (ADR 0052)
+src/components/Settings.tsx platformKind x1  # why: native-api; plugins tab availability fails closed per host (ADR 0052)
+src/components/Sidebar.tsx canRevealInFileManager x1  # why: native-api; reveal-in-file-manager is a desktop shell call
+src/components/Welcome.tsx osDrawsWindowControls x1  # why: window-chrome; draw our own window controls only where the OS does not
+src/components/Welcome.tsx platform-literal x1  # why: native-api; iOS opens graphs only inside the app's own containers
+src/components/Welcome.tsx platformKind x1  # why: native-api; iOS opens graphs only inside the app's own containers
+src/components/WindowChrome.tsx isMobilePlatform x1  # why: window-chrome; mobile hosts have no window frame to drag or resize
+src/components/pdfFind.ts isMobilePlatform x1  # why: memory-cap; find-text cache bytes
+src/components/pdfTiles.ts isMobilePlatform x1  # why: memory-cap; tile count cap
+src/components/pdfViewerPrimitives.ts isMobilePlatform x3  # why: memory-cap; canvas pixel, cache and page caps
+src/components/pdfViewerView.tsx isMac x1  # why: os-convention; the area-highlight modifier hint names the OS key
+src/debug.ts navigator.userAgent x1  # why: native-api; diagnostic log line names the host
+src/debug.ts platformKind x1  # why: native-api; diagnostic log line names the host
+src/deepLinkNavigation.ts platform-literal x1  # why: native-api; asks the Android host to raise the soft keyboard
+src/deepLinkNavigation.ts platformKind x1  # why: native-api; asks the Android host to raise the soft keyboard
+src/edgeSwipe.ts platform-literal x2  # why: host-event; iOS history swipe vs Android back model
+src/editableEmoji.ts browserPlatform x1  # why: os-convention; emoji font stack differs per OS
+src/editableEmoji.ts navigator.userAgent x1  # why: os-convention; emoji font stack differs per OS
+src/graph.ts isMobile x1  # why: native-api; folder picking and graph containers differ per host
+src/graph.ts platform-literal x13  # why: native-api; folder picking and graph containers differ per host
+src/graph.ts platformKind x4  # why: native-api; folder picking and graph containers differ per host
+src/keybindings.ts browserPlatform x1  # why: os-convention; mod key is Cmd on macOS
+src/keybindings.ts navigator.platform x1  # why: os-convention; mod key is Cmd on macOS
+src/plugins/manager.ts platformKind x1  # why: native-api; plugin manifests declare the platforms they support (ADR 0052)
+src/plugins/startup.ts platform-literal x1  # why: native-api; plugin host initialisation differs on iOS (ADR 0052)
+src/plugins/startup.ts platformKind x1  # why: native-api; plugin host initialisation differs on iOS (ADR 0052)
+src/render/inline.tsx isMobilePlatform x1  # why: native-api; external media editor launches a desktop program
+src/router.ts isMobilePlatform x1  # why: host-event; Android Back and iOS swipe-back drive the history API
+src/shareIngest.ts platform-literal x1  # why: host-event; share source (Android intent vs iOS extension) is a host event
+src/shareShape.ts platform-literal x1  # why: host-event; share source (Android intent vs iOS extension) is a host event
+src/systemBars.ts appPlatform x1  # why: native-api; Android system-bar colouring
+src/systemBars.ts platform-literal x1  # why: native-api; Android system-bar colouring
+src/systemInsets.ts platform-literal x1  # why: native-api; Android reports insets natively
+src/systemInsets.ts platformKind x1  # why: native-api; Android reports insets natively
+src/ui.ts isMobilePlatform x1  # why: native-api; PDF export uses the desktop print pipeline
+src/update.ts browserPlatform x1  # why: native-api; updater picks the artifact for this OS
+src/update.ts navigator.userAgent x1  # why: native-api; updater picks the artifact for this OS
+src/update.ts platform-literal x1  # why: native-api; updater exists on desktop hosts only
+src/update.ts platformKind x1  # why: native-api; updater exists on desktop hosts only
+src/workspaceWindows.ts platform-literal x1  # why: native-api; extra OS windows exist on desktop hosts only
+src/workspaceWindows.ts platformKind x1  # why: native-api; extra OS windows exist on desktop hosts only
+src/zoom.ts platform-literal x2  # why: native-api; desktop uses the native webview zoom, mobile hosts CSS zoom
+src/zoom.ts platformKind x1  # why: native-api; desktop uses the native webview zoom, mobile hosts CSS zoom

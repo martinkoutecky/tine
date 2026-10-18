@@ -79,7 +79,7 @@ import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls, touchGesturePlatform } from "./nativeChrome";
 import { touchPrimary } from "./inputCapability";
-import { isSinglePaneShell, tabStripFits } from "./viewportClass";
+import { pdfTakesOverPane, tabStripFits } from "./viewportClass";
 import {
   PaneContext,
   closePane,
@@ -391,7 +391,7 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
         </div>}
       </Show>
     }>
-      {(pdf) => <div class="pdf-pane pdf-route-pane" classList={{ "pdf-pane-mobile": isSinglePaneShell(), "pdf-pane-touch": touchPrimary() }}
+      {(pdf) => <div class="pdf-pane pdf-route-pane" classList={{ "pdf-pane-mobile": pdfTakesOverPane(), "pdf-pane-touch": touchPrimary() }}
         data-pane-id={props.scrollerClass ? undefined : props.paneId} data-pdf-view-id={pdf().viewId}>
         <FailureBoundary region="This PDF"><Suspense fallback={<div class="pdf-loading" />}>
           <KeyedPdfViewer route={() => props.router.route() as PdfRoute} owner={currentPdfOwnership}

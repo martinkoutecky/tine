@@ -20,7 +20,7 @@ import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
 import type { Highlight, Rect } from "../types";
 import { isMac } from "../nativeChrome";
 import { touchCapable } from "../inputCapability";
-import { isSinglePaneShell } from "../viewportClass";
+import { pdfTakesOverPane } from "../viewportClass";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { createPdfHighlightState } from "./pdfHighlightState";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
@@ -1325,7 +1325,7 @@ export function PdfViewer(props: {
   // still peel first; once they are gone, either Android Back or Escape closes
   // the pane.
   createEffect(() => {
-    if (!isSinglePaneShell()) return;
+    if (!pdfTakesOverPane()) return;
     const unregister = registerTransientLayer({
       id: props.onClose ? surfaceLayerId : "pdf-pane",
       root: () => viewerRootEl ?? null,

@@ -21,7 +21,7 @@ import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
 import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
 import { journalTitle, appNow } from "./journal";
-import { isSinglePaneShell } from "./viewportClass";
+import { isSinglePaneShell, pdfTakesOverPane } from "./viewportClass";
 import {
   nearestPane,
   nearestPaneInDirection,
@@ -111,7 +111,14 @@ export function togglePaneMaximize(paneId = focusedPaneId()): boolean {
   return true;
 }
 
+// Counts changes to the MAIN window's pane tree (split, close, restore, reset).
+// session.ts uses it to know whether the retained saved layout of a single-pane
+// start still describes what the user has: any tree change retires it.
+let mainLayoutEpochValue = 0;
+export const mainLayoutEpoch = () => mainLayoutEpochValue;
+
 function commitLayout(node: LayoutNode, windowId: string) {
+  if (windowId === MAIN_WINDOW_ID) mainLayoutEpochValue++;
   const id = maximizedPanes()[windowId];
   if (id && !layoutPaneIds(node).includes(id)) setMaximizedPaneId(windowId, null);
   setLayouts({ ...layouts(), [windowId]: node });
@@ -652,7 +659,7 @@ export function openPdf(filename: string, label: string, page?: number,
   if (options.anotherView) return null;
   const route = makePdfRoute(filename, label, { page });
   publishPdfNavigationIntent(route.viewId, { page, highlightId });
-  if (isSinglePaneShell() || options.inPlace) {
+  if (pdfTakesOverPane() || options.inPlace) {
     paneRouter(sourcePaneId).openPdf(route);
     return route;
   }
@@ -670,7 +677,7 @@ export function openPdf(filename: string, label: string, page?: number,
 /** Open a PDF's notes in the companion pane, reusing its existing page tab.
  * On mobile the notes enter the current route history. Cost O(open tabs). */
 export function openPdfNotes(sourcePaneId: string, notesPage: string, block?: string): string | null {
-  if (isSinglePaneShell()) {
+  if (pdfTakesOverPane()) {
     const router = paneRouter(sourcePaneId);
     if (block) router.openPageAtBlock(notesPage, "page", block);
     else router.openPage(notesPage, "page");

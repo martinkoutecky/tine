@@ -20,6 +20,7 @@ vi.mock("../inputCapability", async (importOriginal) => ({
 vi.mock("../viewportClass", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../viewportClass")>()),
   isSinglePaneShell: () => true,
+  pdfTakesOverPane: () => true,
 }));
 
 const getDocumentMock = vi.hoisted(() => vi.fn());
