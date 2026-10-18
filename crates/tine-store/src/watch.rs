@@ -478,6 +478,12 @@ pub(crate) struct Core {
     /// Event-driven batches that took the full stat diff (GH #623 tests).
     #[cfg(test)]
     pub(crate) event_full_diffs: std::sync::atomic::AtomicUsize,
+    /// Files `announce_written_since_open` considered, and the duplicate
+    /// checks it made for them (GJ5 S8).
+    #[cfg(test)]
+    pub(crate) announce_candidates: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    pub(crate) announce_dedup_probes: std::sync::atomic::AtomicUsize,
     /// Drop every OS notification: a watch that installs but never reports
     /// (a network or FUSE mount a sync service writes to).
     #[cfg(test)]
@@ -836,6 +842,10 @@ impl WatchHandle {
             force_mismatched_rev_once: AtomicBool::new(false),
             #[cfg(test)]
             event_full_diffs: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            announce_candidates: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            announce_dedup_probes: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             deaf: AtomicBool::new(false),
             #[cfg(feature = "test-faults")]
@@ -1820,6 +1830,33 @@ mod tests {
             assert!(!full, "{platform}: an own save forced the full stat diff");
             assert_eq!(paths, HashSet::from([page.clone()]), "{platform}");
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// GJ5 S8: a launch right after a bulk write (a fresh clone, unzip,
+    /// restore or sync batch) announces every file written since open with
+    /// one duplicate check each, not one per file already announced (the
+    /// former scan was quadratic: 13,000 such files cost 1.5 s).
+    #[test]
+    fn announcing_files_written_since_open_is_linear() {
+        let root = temp_root("announce-linear");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        const FILES: usize = 400;
+        for i in 0..FILES {
+            fs::write(root.join(format!("pages/P{i}.md")), format!("- page {i}\n")).unwrap();
+        }
+        let store = Store::open(&root, OpenOptions::default()).unwrap().0;
+        store.whole_graph().unwrap();
+        let core = store.watch.core_for_load();
+        let candidates = core.announce_candidates.load(Ordering::Relaxed);
+        let probes = core.announce_dedup_probes.load(Ordering::Relaxed);
+        // The files were written just before open, inside the racy window.
+        assert!(candidates >= FILES / 2, "only {candidates} files announced");
+        assert!(
+            probes <= candidates,
+            "{probes} duplicate checks for {candidates} announced files"
+        );
+        store.close();
         fs::remove_dir_all(root).unwrap();
     }
 

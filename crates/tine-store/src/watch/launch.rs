@@ -8,6 +8,7 @@
 //! Unit cost: no file is read here except one whose stamp changed or was
 //! racy; one stat per graph file (the launch diff); nothing is written.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -93,18 +94,28 @@ impl Core {
     /// Files the load pass found written since open: a client may have read
     /// their earlier bytes while the graph was loading, so the Ready
     /// publication names them (as the open-time baseline walk this replaced
-    /// did). A file the launch diff already reports is not repeated.
+    /// did). A file the launch diff already reports is not repeated. One
+    /// set lookup per file (GJ5 S8: a scan of the growing list was quadratic
+    /// in the files a clone, unzip or sync batch wrote just before launch).
     pub(crate) fn announce_written_since_open(
         &self,
         written: Vec<(PathBuf, bool, tine_core::model::PageKind, String)>,
         deferred: &mut Deferred,
     ) {
         let snapshot = self.snapshot.lock().unwrap();
+        let mut known: HashSet<FileId> =
+            deferred.files.iter().map(|(id, _, _)| id.clone()).collect();
         for (path, created, kind, name) in written {
             let Some(id) = self.file_id(&path) else {
                 continue;
             };
-            if deferred.files.iter().any(|(known, _, _)| *known == id) {
+            #[cfg(test)]
+            {
+                use std::sync::atomic::Ordering::Relaxed;
+                self.announce_candidates.fetch_add(1, Relaxed);
+                self.announce_dedup_probes.fetch_add(1, Relaxed);
+            }
+            if known.contains(&id) {
                 continue;
             }
             let Some(rev) = snapshot.get(&path).and_then(|value| value.rev.clone()) else {
@@ -115,6 +126,7 @@ impl Core {
             } else {
                 ChangeKind::Modified
             };
+            known.insert(id.clone());
             deferred.files.push((id.clone(), change, Some(rev)));
             deferred.pages.push((id, kind, name));
         }
