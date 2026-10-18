@@ -24,6 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- On iOS, a back swipe now slides the page fully off to the right before the previous page appears, like the native back gesture, instead of stopping partway (GH #501).
 - Journals shows today's body and nearby saved days while the graph loads, then merges referenced days without losing an open editor or your place (GF4).
 
 - The `((` block picker matches like Logseq: a block is listed when each space-separated piece of what you typed occurs in its text, in that order, ignoring case and accents. Before, any block containing your letters in order matched, however far apart (`fdr` found "foo draft"), which made results feel scattered. Search (Ctrl+K), the page switcher and `[[` are unchanged (UI-BLOCK-PICKER-OG-FRAGMENTS).
