@@ -210,6 +210,9 @@ export class HostClient {
       if (!page.refs.delete(ref) || this.pages.get(page.name) !== page) return;
       if (ref.pin) this.reevaluate(page);
       this.maybeClose(page);
+      // An unpin can install held content (holdsContent turns false) while
+      // another acquisition keeps the page open, so maybeClose says nothing.
+      if (ref.pin) this.onChange();
     };
   }
 
