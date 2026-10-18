@@ -171,15 +171,54 @@ fn resolve(exe: &Path, identifier: &str, facts: Facts) -> Option<PortableDirs> {
 }
 
 /// Can Tine, Tauri and WebView2 create files in both portable folders?
-/// `create_dir_all` succeeds on an existing read-only folder, so create an
-/// unnamed temporary file in each as well (nothing persists).
+/// Creating an existing read-only folder succeeds, so create an unnamed
+/// temporary file in each as well (nothing persists). A refused
+/// probe removes exactly the folders it created (newest first), keeping
+/// anything that was already there (GH #719 review r2).
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn usable(dirs: &PortableDirs) -> std::io::Result<()> {
+    let mut created = Vec::new();
+    let probed = probe_folders(dirs, &mut created);
+    if probed.is_err() {
+        for dir in created.iter().rev() {
+            // `remove_dir` only removes an empty folder: never anything else.
+            let _ = std::fs::remove_dir(dir);
+        }
+    }
+    probed
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn probe_folders(dirs: &PortableDirs, created: &mut Vec<PathBuf>) -> std::io::Result<()> {
     for dir in [&dirs.roaming, &dirs.local] {
-        std::fs::create_dir_all(dir)?;
+        create_recording(dir, created)?;
         tempfile::tempfile_in(dir).map(drop)?;
     }
     Ok(())
+}
+
+/// `create_dir_all`, recording each folder this call created.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn create_recording(dir: &Path, created: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    let missing: Vec<&Path> = dir
+        .ancestors()
+        .take_while(|ancestor| std::fs::symlink_metadata(ancestor).is_err())
+        .collect();
+    for ancestor in missing.into_iter().rev() {
+        match std::fs::create_dir(ancestor) {
+            Ok(()) => created.push(ancestor.to_path_buf()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    if std::fs::metadata(dir)?.is_dir() {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("{} is not a folder", dir.display()),
+        ))
+    }
 }
 
 /// Decide the mode for `exe`.
@@ -514,6 +553,40 @@ mod tests {
         }
         assert!(matches!(decided, Mode::Unwritable(..)), "{decided:?}");
         assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
+    }
+
+    /// GH #719 r2: a refused probe leaves the folder as it found it. With a
+    /// file where `local` belongs and no `roaming`, the probe creates
+    /// `<id>` and `roaming`, then fails on `local`: it removes exactly those.
+    #[test]
+    fn a_refused_probe_removes_only_the_folders_it_created() {
+        let temp = tempfile::tempdir().unwrap();
+        let exe = temp.path().join("Tine.exe");
+        let folder = temp.path().join(PORTABLE_FOLDER);
+        let base = folder.join("example.App");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("local"), b"in the way").unwrap();
+        std::fs::write(folder.join("keep.txt"), b"mine").unwrap();
+        let facts = observe(&exe, Some(false)).unwrap();
+        let decided = decide(&exe, "example.App", facts, usable);
+        assert!(matches!(decided, Mode::Unwritable(..)), "{decided:?}");
+        assert!(
+            !base.join("roaming").exists(),
+            "the probe left roaming behind"
+        );
+        // What was already there stays: <id> existed, the file and keep.txt too.
+        assert!(base.is_dir());
+        assert_eq!(std::fs::read(base.join("local")).unwrap(), b"in the way");
+        assert_eq!(std::fs::read(folder.join("keep.txt")).unwrap(), b"mine");
+
+        // A roaming folder that was already there is kept.
+        std::fs::create_dir(base.join("roaming")).unwrap();
+        let decided = decide(&exe, "example.App", facts, usable);
+        assert!(matches!(decided, Mode::Unwritable(..)), "{decided:?}");
+        assert!(
+            base.join("roaming").is_dir(),
+            "an existing folder was removed"
+        );
     }
 
     #[test]
