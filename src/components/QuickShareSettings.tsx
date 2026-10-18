@@ -8,10 +8,12 @@ import {
   type QuickShareFound, type QuickShareListed, type QuickShareListing,
 } from "../quickShare/commands";
 import { QuickShareConnect } from "./QuickShareDialog";
+import { removeShareProperty, shareValue } from "../quickShare/definitions";
 
-/** Settings → Sharing (DESIGN §0, §3.6, §3.9): the connected GitHub account, this device's shares with Copy link,
- *  Check, Delete and Forget, and Find shares on GitHub. Every action is native; the webview never holds a link,
- *  a key or the token. */
+/** Settings → Sharing (DESIGN §0, §3.6, §3.9, §8): the connected GitHub account, Find shares on GitHub, and the
+ *  share keys this device holds, with Copy link, Check, Delete and Forget. What was shared is listed on the
+ *  Exports page (`tine.share::` definitions); Delete and Forget remove that property too (D-20261018-Q1). Every
+ *  GitHub action is native; the webview never holds a link, a key or the token. */
 export function QuickShareSettings(): JSX.Element {
   const scope = {};
   let alive = true;
@@ -55,6 +57,17 @@ export function QuickShareSettings(): JSX.Element {
     return answer.kind === "current" && answer.value;
   };
   const add = (set: ReadonlySet<string>, id: string) => new Set([...set, id]);
+  /** A share that is gone from this device's list is gone from the graph's listing too. Its failure is shown;
+   *  the share itself is already deleted or forgotten. */
+  const unlist = async (login: string, gistId: string | null) => {
+    if (!gistId) return;
+    try {
+      await removeShareProperty(shareValue(login, gistId));
+    } catch (failure) {
+      const args = { error: failure instanceof Error ? failure.message : String(failure) };
+      if (alive) setError(t("quick-share-settings-unlisted-failed", args)); else pushToast(msg("quick-share-settings-unlisted-failed", args), "error");
+    }
+  };
 
   const disconnect = () => void act("disconnect", () => backend().quickShareDisconnect(), () => { setFound(null); return refresh(); });
   const copy = (row: QuickShareListed) => void act(`copy:${row.shareId}`, () => backend().quickShareCopyLink(row.shareId),
@@ -65,15 +78,19 @@ export function QuickShareSettings(): JSX.Element {
   });
   const remove = async (row: QuickShareListed) => {
     if (busy() || !(await confirmed(t("quick-share-settings-delete-confirm")))) return;
-    void act(`delete:${row.shareId}`, () => backend().quickShareDelete({ shareId: row.shareId }), (outcome) => {
+    void act(`delete:${row.shareId}`, () => backend().quickShareDelete({ shareId: row.shareId }), async (outcome) => {
       if (outcome === "gone") { setGone((set) => add(set, row.shareId)); return; }
       pushToast(msg("quick-share-settings-deleted"), "success");
+      await unlist(row.login, row.gistId);
       return refresh();
     });
   };
   const forget = async (row: QuickShareListed) => {
     if (busy() || !(await confirmed(t("quick-share-settings-forget-confirm")))) return;
-    void act(`forget:${row.shareId}`, () => backend().quickShareForget(row.shareId), () => refresh());
+    void act(`forget:${row.shareId}`, () => backend().quickShareForget(row.shareId), async () => {
+      await unlist(row.login, row.gistId);
+      return refresh();
+    });
   };
   const find = async () => {
     if (busy()) return;
@@ -90,9 +107,12 @@ export function QuickShareSettings(): JSX.Element {
   };
   const removeFound = async (gist: QuickShareFound) => {
     if (busy() || !(await confirmed(t("quick-share-settings-delete-confirm")))) return;
-    void act(`delete:${gist.gistId}`, () => backend().quickShareDelete({ gistId: gist.gistId }), () => {
+    void act(`delete:${gist.gistId}`, () => backend().quickShareDelete({ gistId: gist.gistId }), async () => {
       setFound((list) => list?.filter((item) => item.gistId !== gist.gistId) ?? null);
       pushToast(msg("quick-share-settings-deleted"), "success");
+      // Find lists only the connected account's gists, so that account's login names it in the graph.
+      const login = listing()?.account?.login;
+      if (login) await unlist(login, gist.gistId);
     });
   };
   const openApplications = () => void readOwned(graphOwner(), backend().openExternal(GITHUB_APPLICATION_SETTINGS))
@@ -119,6 +139,7 @@ export function QuickShareSettings(): JSX.Element {
       </>}</Show>
 
       <div class="settings-section">{t("quick-share-settings-shares")}</div>
+      <p class="settings-hint quick-share-settings-shares-hint">{t("quick-share-settings-shares-hint")}</p>
       <Show when={listing()?.error}><div role="alert" class="query-export-refused">{listing()!.error}</div></Show>
       <Show when={listing() && !listing()!.error && listing()!.shares.length === 0}>
         <p class="settings-hint quick-share-settings-none">{t("quick-share-settings-none")}</p>

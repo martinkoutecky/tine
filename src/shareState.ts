@@ -2,6 +2,7 @@
 // hook a folder export runs once it has written its folder. Kept out of ui.ts (production files may not grow).
 import { graphScopedSignal } from "./binding";
 import type { QueryPublicationRequest } from "./types";
+import type { ShareDefinitionTarget } from "./quickShare/definitions";
 import { openQueryExport } from "./ui";
 
 /** What the share dialog shares: the current page, or an existing query block (`macro` is its `{{…}}` text;
@@ -26,7 +27,14 @@ export function openQueryExportThen(request: QueryPublicationRequest, after: Que
 }
 
 /** The quick share dialog (DESIGN §3.9): the reviewed request the share dialog's Link option hands over. Graph-bound
- *  like the share dialog; closing it discards the prepared payload. */
+ *  like the share dialog; closing it discards the prepared payload. A created share is recorded in the graph at
+ *  `definition` (the query block it started from, or the exports page). */
 export const [quickShareRequest, setQuickShareRequest] = graphScopedSignal<QueryPublicationRequest>();
-export function openQuickShare(request: QueryPublicationRequest): void { setQuickShareRequest(request); }
+// Where a created share's `tine.share::` goes (D-20261018-Q1), keyed by the request like the folder hook.
+const shareDefinitions = new WeakMap<QueryPublicationRequest, ShareDefinitionTarget>();
+export function quickShareDefinition(request: QueryPublicationRequest): ShareDefinitionTarget | undefined { return shareDefinitions.get(request); }
+export function openQuickShare(request: QueryPublicationRequest, definition?: ShareDefinitionTarget): void {
+  if (definition) shareDefinitions.set(request, definition);
+  setQuickShareRequest(request);
+}
 export function closeQuickShare(): void { setQuickShareRequest(null); }

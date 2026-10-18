@@ -1918,6 +1918,8 @@ export interface MessageArgs {
   "quick-share-create": {};
   "quick-share-created": {};
   "quick-share-creating": {};
+  "quick-share-definition-failed": { "error": string | number };
+  "quick-share-definition-saved": { "page": string | number };
   "quick-share-disclosure": {};
   "quick-share-done": {};
   "quick-share-error-disabled": {};
@@ -1963,6 +1965,8 @@ export interface MessageArgs {
   "quick-share-settings-revoke-link": {};
   "quick-share-settings-row": { "date": string | number; "login": string | number; "pages": number };
   "quick-share-settings-shares": {};
+  "quick-share-settings-shares-hint": {};
+  "quick-share-settings-unlisted-failed": { "error": string | number };
   "quick-share-size": { "size": string | number };
   "quick-share-size-bytes": { "bytes": string | number };
   "quick-share-size-kib": { "size": string | number };
@@ -2525,6 +2529,8 @@ export interface MessageArgs {
   "share-dialog-folder-note": {};
   "share-dialog-link": {};
   "share-dialog-link-note": {};
+  "share-dialog-link-saved-as-definition": {};
+  "share-dialog-link-saved-on-block": {};
   "share-dialog-link-soon": {};
   "share-dialog-neighbours": {};
   "share-dialog-neighbours-soon": {};

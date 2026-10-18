@@ -7,6 +7,7 @@ import { Settings } from "./Settings";
 import { closeSettings, openSettings } from "../ui";
 import { setToasts, toasts } from "../toasts";
 import type { QuickShareListed, QuickShareListing } from "../quickShare/commands";
+import * as definitions from "../quickShare/definitions";
 
 // Settings → Sharing (DESIGN §0, §3.6, §3.9) over a scripted native surface.
 
@@ -32,6 +33,8 @@ function spies() {
     disconnect: vi.spyOn(b, "quickShareDisconnect").mockResolvedValue(),
     confirm: vi.spyOn(b, "confirm").mockResolvedValue(true),
     open: vi.spyOn(b, "openExternal").mockResolvedValue(),
+    // The graph side (D-20261018-Q1), pinned on disk bytes in src/quickShare/definitions.test.ts.
+    unlist: vi.spyOn(definitions, "removeShareProperty").mockResolvedValue([]),
   };
 }
 beforeEach(() => {
@@ -148,4 +151,41 @@ it("Settings shows the Sharing tab only where quick share is on", async () => {
     expect(tabs.includes("Sharing"), `enabled=${enabled}`).toBe(enabled);
     done(); closeSettings(); document.body.innerHTML = "";
   }
+});
+
+// D-20261018-Q1: the Exports page lists shares by their `tine.share::` property; a share that is deleted or
+// forgotten here leaves that listing too. A share GitHub no longer has keeps it until Forget, like its key.
+it("Delete, Forget and a found share's Delete remove the share's tine.share:: property from the graph", async () => {
+  const root = await mount();
+  expect(root.textContent).toContain("The Exports page lists what you shared.");
+  share(root, "s1").querySelector<HTMLButtonElement>(".quick-share-row-delete")!.click();
+  await settle();
+  expect(api.unlist.mock.calls).toEqual([["octo/g1"]]);
+  api.remove.mockResolvedValueOnce("gone");
+  shares = [row({ shareId: "s4", gistId: "g4" })];
+  root.remove(); dispose!(); dispose = undefined;
+  const next = await mount();
+  share(next, "s4").querySelector<HTMLButtonElement>(".quick-share-row-delete")!.click();
+  await settle();
+  expect(api.unlist.mock.calls, "gone from GitHub: kept until Forget").toEqual([["octo/g1"]]);
+  share(next, "s4").querySelector<HTMLButtonElement>(".quick-share-row-forget")!.click();
+  await settle();
+  expect(api.unlist.mock.calls.at(-1)).toEqual(["octo/g4"]);
+  next.querySelector<HTMLButtonElement>(".quick-share-find")!.click();
+  await settle();
+  next.querySelector<HTMLButtonElement>('[data-gist-id="f1"] .quick-share-found-delete')!.click();
+  await settle();
+  expect(api.unlist.mock.calls.at(-1), "Find lists the connected account's gists").toEqual(["octo/f1"]);
+});
+
+it("forgetting a pending share touches no graph page, and a failed removal is shown, not hidden", async () => {
+  const root = await mount();
+  share(root, "s2").querySelector<HTMLButtonElement>(".quick-share-row-forget")!.click();
+  await settle();
+  expect(api.forget).toHaveBeenCalledWith("s2");
+  expect(api.unlist, "a pending share has no gist, so no property").not.toHaveBeenCalled();
+  api.unlist.mockRejectedValueOnce(new Error("couldn't remove tine.share:: octo/g1 from Notes"));
+  share(root, "s1").querySelector<HTMLButtonElement>(".quick-share-row-delete")!.click();
+  await settle();
+  expect(root.querySelector("[role=alert]")!.textContent).toBe("The share is gone, but removing its tine.share:: property failed: couldn't remove tine.share:: octo/g1 from Notes");
 });

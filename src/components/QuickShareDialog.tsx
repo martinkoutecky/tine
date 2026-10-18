@@ -4,7 +4,8 @@ import { backend } from "../backend";
 import { bindingOwner, graphOwner, latestOwner, readOwned, readOwnedResource, writeOwned } from "../owned";
 import { dbg } from "../debug";
 import { pushToast } from "../toasts";
-import { closeQuickShare } from "../shareState";
+import { closeQuickShare, quickShareDefinition } from "../shareState";
+import { saveShareDefinition, shareValue } from "../quickShare/definitions";
 import { registerTransientLayer } from "../transientLayers";
 import type { QueryPublicationRequest } from "../types";
 import {
@@ -124,7 +125,24 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const [pending, setPending] = createSignal<string | null>(null);
   const [checkNote, setCheckNote] = createSignal<string | null>(null);
   const [live, setLive] = createSignal<string | null>(null);
+  // The page the share's `tine.share::` definition landed on (D-20261018-Q1).
+  const [recorded, setRecorded] = createSignal<string | null>(null);
   let alive = true;
+
+  /** Record a live share in the graph where the share dialog said it would go. The share exists either way, so
+   *  this runs even when the dialog was closed meanwhile; a failure is then a toast. */
+  const record = async (login: string, gistId: string) => {
+    const definition = quickShareDefinition(props.request);
+    if (!definition) return;
+    try {
+      const page = await saveShareDefinition(definition, shareValue(login, gistId));
+      if (alive) setRecorded(page);
+      else pushToast(msg("quick-share-definition-saved", { page }), "success");
+    } catch (failure) {
+      const args = { error: failure instanceof Error ? failure.message : String(failure) };
+      if (alive) setError(t("quick-share-definition-failed", args)); else pushToast(msg("quick-share-definition-failed", args), "error");
+    }
+  };
 
   const discard = (id: string) => {
     void readOwned(graphOwner(), backend().quickShareDiscard(id))
@@ -184,6 +202,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
       setCreated(answer.value);
       setCopied(answer.value.copied);
       if (!answer.value.copied) setError(t("quick-share-copy-failed"));
+      await record(answer.value.login, answer.value.gistId);
     } catch (failure) {
       if (!alive) { pushToast(msg("quick-share-toast-failed", { error: quickShareErrorText(failure) }), "error"); return; }
       const kind = kindOf(failure);
@@ -202,8 +221,13 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     try {
       const answer = await writeOwned(bindingOwner(() => alive), backend().quickShareCheck(shareId));
       if (answer.kind === "stale") return;
-      if (answer.value === "live") { setPending(null); setLive(shareId); setCheckNote(t("quick-share-check-found")); }
-      else setCheckNote(t("quick-share-check-not-yet"));
+      if (answer.value === "live") {
+        setPending(null); setLive(shareId); setCheckNote(t("quick-share-check-found"));
+        // Check answers only the state; the gist it found is in the records.
+        const listed = await readOwned(graphOwner(), backend().quickShareList());
+        const row = listed.kind === "current" ? listed.value.shares.find((share) => share.shareId === shareId) : undefined;
+        if (row?.gistId) await record(row.login, row.gistId);
+      } else setCheckNote(t("quick-share-check-not-yet"));
     } catch (failure) {
       if (alive) setError(quickShareErrorText(failure));
       else pushToast(msg("quick-share-toast-failed", { error: quickShareErrorText(failure) }), "error");
@@ -283,6 +307,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
               <p class="settings-hint quick-share-link">{t("quick-share-link-masked", { login: share().login, gist: share().gistId })}</p>
               <p class="settings-hint">{t("quick-share-key-on-device")}</p>
             </div>}</Show>
+            <Show when={recorded()}>{(page) => <p class="settings-hint quick-share-recorded" role="status">{t("quick-share-definition-saved", { page: page() })}</p>}</Show>
             <Show when={checkNote()}><p class="settings-hint quick-share-check-note" role="status">{checkNote()}</p></Show>
             <Show when={error()}><div role="alert" class="query-export-refused quick-share-error">{error()}</div></Show>
           </div>

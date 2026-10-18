@@ -233,3 +233,38 @@ async function openWithTimers() {
   await vi.advanceTimersByTimeAsync(0);
   return root;
 }
+
+// D-20261018-Q1: a created share is recorded in the graph as `tine.share:: <login>/<gist_id>` (no key) where the share
+// dialog said, through the document layer's normal edit path (src/quickShare/definitions.ts, pinned there on disk bytes).
+it("records a created share in the graph as login/gist, never with the key, where the share dialog said", async () => {
+  const definitions = await import("../quickShare/definitions");
+  const save = vi.spyOn(definitions, "saveShareDefinition").mockResolvedValue("Exports");
+  const root = document.createElement("div"); document.body.append(root);
+  openQuickShare(REQUEST, { hostBlockId: "b7", macro: "{{tine-query @page and name = 'Project'}}" });
+  dispose = render(() => <QuickShareDialog request={quickShareRequest} />, root);
+  await settle();
+  button(root, "quick-share-create")!.click();
+  await settle();
+  expect(save).toHaveBeenCalledTimes(1);
+  expect(save).toHaveBeenCalledWith({ hostBlockId: "b7", macro: "{{tine-query @page and name = 'Project'}}" }, "octo/g1");
+  expect(text(root)).toContain("Listed on Exports (tine.share::, without the key).");
+});
+
+it("a share found by Check is recorded from its record's gist; a failed recording names the cause and keeps the share", async () => {
+  const definitions = await import("../quickShare/definitions");
+  const save = vi.spyOn(definitions, "saveShareDefinition").mockRejectedValue(new Error("couldn't write to Exports"));
+  api.create.mockRejectedValueOnce({ kind: "maybeUploaded", shareId: "s9" });
+  const root = document.createElement("div"); document.body.append(root);
+  openQuickShare(REQUEST, { hostBlockId: null, macro: "{{tine-query @page and name = 'Project'}}" });
+  dispose = render(() => <QuickShareDialog request={quickShareRequest} />, root);
+  await settle();
+  button(root, "quick-share-create")!.click();
+  await settle();
+  expect(save, "nothing is recorded while the upload is unconfirmed").not.toHaveBeenCalled();
+  api.list.mockResolvedValue(listing({ shares: [{ shareId: "s9", state: "live", login: "octo", gistId: "g9", createdAt: "2026-10-18T00:00:00Z", title: "Project", pages: 1, accountMatches: true }] }));
+  button(root, "quick-share-check")!.click();
+  await settle();
+  expect(save).toHaveBeenCalledWith({ hostBlockId: null, macro: "{{tine-query @page and name = 'Project'}}" }, "octo/g9");
+  expect(root.querySelector("[role=alert]")!.textContent).toContain("The share was created, but recording it in the graph failed: couldn't write to Exports");
+  expect(button(root, "quick-share-copy"), "the share itself stays usable").toBeTruthy();
+});

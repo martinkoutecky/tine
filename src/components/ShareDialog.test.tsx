@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { ShareDialog, SHARE_REVIEW_DEBOUNCE_MS } from "./ShareDialog";
 import { closeQueryExport, queryExportRequest } from "../ui";
-import { closeQuickShare, closeShareDialog, openShareDialog, queryExportAfter, quickShareRequest, shareTarget } from "../shareState";
+import { closeQuickShare, closeShareDialog, openShareDialog, queryExportAfter, quickShareDefinition, quickShareRequest, shareTarget } from "../shareState";
 import { clearTransientLayersForTest } from "../transientLayers";
 import { toasts, setToasts } from "../toasts";
 
@@ -189,7 +189,8 @@ it("closes on Escape through the transient layer and traps Tab inside the dialog
 });
 
 // Quick share (DESIGN §3.9): Link is offered only where quick share is on, and hands the reviewed request to the
-// quick share dialog. Nothing is written to the graph for a link (DESIGN §4).
+// quick share dialog. Nothing is written to the graph before the link exists: the quick share dialog records the
+// created share (`tine.share::`, D-20261018-Q1) where the share dialog tells it to.
 it("offers Link only where quick share is on, and hands the reviewed request to the quick share dialog", async () => {
   vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, account: null, shares: [], error: null });
   const root = await open({ page: "Project" });
@@ -203,6 +204,26 @@ it("offers Link only where quick share is on, and hands the reviewed request to 
   expect(shareTarget(), "the share dialog is gone").toBeNull();
   expect(quickShareRequest()).toMatchObject({ argument: "@page and name = 'Project'", dialect: "macro_tql", includeQueryText: true, properties: [] });
   expect(queryExportRequest(), "no folder export").toBeNull();
-  expect(doc.appended, "no definition is written for a link").toEqual([]);
+  expect(doc.appended, "no definition is written before the link exists").toEqual([]);
   expect(doc.set).toEqual([]);
+  expect(quickShareDefinition(quickShareRequest()!), "This page: a new definition on the exports page")
+    .toEqual({ hostBlockId: null, macro: "{{tine-query @page and name = 'Project'}}" });
+});
+
+it("from an unchanged query block, the created link is recorded on that block; an edited query is a new definition", async () => {
+  vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, account: null, shares: [], error: null });
+  let root = await open(blockTarget("{{tine-query @block and #todo}}"));
+  radios(root, "share-where").find((radio) => radio.value === "link")!.click(); await settle();
+  expect(root.textContent).toContain("Tine records it on this query block (tine.share:: property)");
+  exportButton(root).click(); await settle();
+  expect(quickShareDefinition(quickShareRequest()!)).toEqual({ hostBlockId: "block-1", macro: "{{tine-query @block and #todo}}" });
+  dispose!(); dispose = undefined; closeQuickShare(); document.body.innerHTML = "";
+
+  root = await open(blockTarget("{{tine-query @block and #todo}}"));
+  radios(root, "share-what")[0].click(); await settle(); // This page: not the block's own query any more
+  await new Promise((r) => setTimeout(r, SHARE_REVIEW_DEBOUNCE_MS + 50)); await settle();
+  radios(root, "share-where").find((radio) => radio.value === "link")!.click(); await settle();
+  expect(root.textContent).toContain("Tine lists it on the Exports page");
+  exportButton(root).click(); await settle();
+  expect(quickShareDefinition(quickShareRequest()!)).toEqual({ hostBlockId: null, macro: "{{tine-query @page and name = 'Notes'}}" });
 });

@@ -143,12 +143,13 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
     const base = request();
     const text = macro();
     if (!base || !text || !canExport()) return;
+    const asBlock = unchanged() && !!hostBlockId;
     if (where() === "link" && linkAvailable()) {
       closeShareDialog();
-      openQuickShare({ ...base, includeQueryText: includeQueryText() });
+      // The created share's `tine.share::` goes where a folder export's `export::` would (D-20261018-Q1).
+      openQuickShare({ ...base, includeQueryText: includeQueryText() }, { hostBlockId: asBlock ? hostBlockId : null, macro: text });
       return;
     }
-    const asBlock = unchanged() && !!hostBlockId;
     const binding = captureBinding();
     const saveDefinition = async ({ folder }: { folder: string }) => {
       if (!bindingCurrent(binding)) return;
@@ -268,6 +269,9 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
             </div>
             <Show when={where() === "folder"}>
               <p class="settings-hint share-save-note">{unchanged() && hostBlockId ? t("share-dialog-saved-on-block") : t("share-dialog-saved-as-definition")}</p>
+            </Show>
+            <Show when={where() === "link" && linkAvailable()}>
+              <p class="settings-hint share-save-note">{unchanged() && hostBlockId ? t("share-dialog-link-saved-on-block") : t("share-dialog-link-saved-as-definition")}</p>
             </Show>
             <Show when={where() === "folder" && unchanged() && existingFolder()}>
               <p class="settings-hint share-existing">{t("share-dialog-already-exported", { folder: existingFolder()! })}</p>

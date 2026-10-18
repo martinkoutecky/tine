@@ -184,8 +184,9 @@ available, so records made while it was on remain manageable.
 
 ### Device records
 
-App data (`app_data_dir`), never in a graph. Tine never writes the graph for
-sharing.
+App data (`app_data_dir`), never in a graph (ADR 0076; Rule 8 approval Martin
+2026-10-18, D-20261018-Q1 S1). The graph holds only where a share is, without
+its key (below, "In the graph").
 
 - `quick-share-account.json`: `{"v":1,"login","account_id","token","scopes","connected_at"}`.
 - `quick-shares.json`: `{"v":1,"shares":[{"share_id","state","account_id","login","gist_id"?,"created_at","title","pages","key"}]}`.
@@ -218,12 +219,45 @@ sharing.
 | A found gist without the marker, or owned by another user, is not deleted | malformed input from the gist listing | none needed |
 
 Unit cost (I-25), measured by `records_are_written_owner_only_through_an_atomic_rename`
-(`--nocapture` prints it): per graph edit nothing, no graph writes ever. Per
-share: two rewrites of `quick-shares.json` (pending, then live), 250 B per row
+(`--nocapture` prints it): per graph edit nothing. Per share (records; the graph
+side is under "In the graph"): two rewrites of `quick-shares.json` (pending, then live), 250 B per row
 (269 B for a one-row file; a 60-share file ≈ 15 KB, rewritten whole, so a
 create costs ≈ 2 × file size), 1 file; one gist create of the envelope (≈ 1.37 ×
 `P`) plus the fixed README. Connect: one 149 B file. Transport per graph edit:
 none (shares are made on request).
+
+### In the graph (D-20261017-QS3, D-20261018-Q1)
+
+A share is an export definition (`docs/contracts/export-definitions.md`): a
+query block carrying `tine.share:: <login>/<gist_id>`. Never the key. Written by
+the webview through the document layer's ordinary block edits and its guarded
+save (`src/quickShare/definitions.ts`; no new write path):
+
+- **Create** (201, or Check finding the gist): from an unchanged query block, the
+  property goes on that block (beside any `export::`); otherwise, or when that
+  block already names another share, a new definition (the dialog's selector or
+  query plus the property) is appended to the Exports page, created on first
+  use. Written only once the gist exists: a pending share has no gist id, so no
+  property.
+- **Delete** (204) and **Forget** remove the property from every block that
+  carries that exact value, loading pages that are not open. A share GitHub no
+  longer has (`gone`) keeps it until Forget, like its key. A gist deleted from
+  Find shares on GitHub removes `<connected login>/<gist_id>`.
+- The Exports page's overview query `(or (property export) (property
+  tine.share))` lists them; Settings → Sharing keeps the account, Find shares on
+  GitHub and this device's keys (Copy link, Check, Delete, Forget).
+- A failure to write or remove the property is shown; the share itself (created,
+  deleted or forgotten) stands.
+- A share confirmed by Check in Settings after a restart (the dialog that knew its
+  query is gone) is not added to the graph; its key row stays in Settings.
+
+Unit cost (I-25): per ordinary 1- or 60-block edit nothing. Per share: one
+property line, 57 B for an 8-character login and a 32-hex gist id, on the
+starting block, or a 101 B definition block on the Exports page (a page named
+"Project"), plus a 93 B Exports page on first use; computed from the exact
+strings written. One page file rewritten through the normal save (the whole
+file); with a synced graph, that one file is the transport. Delete/Forget: the
+same line removed from each page that carries it.
 
 ### Commands
 
