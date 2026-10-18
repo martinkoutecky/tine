@@ -19,7 +19,7 @@ export type QueryView = ViewKind;
 
 /** A page-anchored answer (K16): pages, not degenerate empty block groups.
  *  Table columns come off the rows' own page properties via `query_run`, never
- *  a name-only row. Search/List show titles and a one-click properties editor;
+ *  a name-only row. Search/List show titles, the page's properties as text and a pencil editor;
  *  columns only affect Table. Cost O(returned rows and displayed cells). */
 export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy?: string; columns?: string[] }): JSX.Element {
   const target = (row: PageRow) => ({ name: row.name, pageKind: row.kind, path: row.path });
@@ -57,8 +57,18 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
       {row.name}
     </button>
   );
-  // Search/List use master's title-only page rows; the existing pencil keeps
-  // the full properties one click away through the guarded page editor.
+  // GH #619 item 8 (D-20261018-Q619): Search/List page rows show the page's
+  // properties as plain selectable text under the title, as comment 3 promised;
+  // the pencil edits them through the guarded page editor.
+  const propertyStrip = (row: PageRow) => (
+    <Show when={row.properties.length > 0}>
+      <span class="query-page-props" data-selectable="text">
+        <For each={row.properties}>{([key, val]) => (
+          <span class="query-page-prop"><span class="query-page-prop-key">{key}:</span> {val}</span>
+        )}</For>
+      </span>
+    </Show>
+  );
   const propertyEditor = (row: PageRow) => (
     <button
       type="button"
@@ -76,7 +86,7 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
     <Switch
       fallback={
         <ul class="query-results-list" aria-label={t("query-query-result-parts-page-results")}>
-          <For each={props.rows}>{(row) => <li>{link(row)}{propertyEditor(row)}</li>}</For>
+          <For each={props.rows}>{(row) => <li>{link(row)}{propertyEditor(row)}{propertyStrip(row)}</li>}</For>
         </ul>
       }
     >

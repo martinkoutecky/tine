@@ -542,6 +542,60 @@ describe("QueryWorkspace", () => {
       expect(router.updateActiveQuery).toHaveBeenCalledWith({ source, sourceKind: "dsl" });
     } finally { dispose(); vi.restoreAllMocks(); }
   });
+  // GH #619 c6 (Q2, D-20261018-Q619): "Open in Search" carries the block's result kinds. A query-engine
+  // workspace shows the families its query asked for, not an always-present empty Pages section.
+  describe("result kinds of a query-engine workspace", () => {
+    const block = { id: "b1", raw: "TODO ship", marker: "TODO", collapsed: false, children: [], properties: [] };
+    const blockQuery: Query = { anchor: "block", filter: { kind: "true" }, diagnostics: [], source: { kind: "tql", original: "@block" } };
+    const pageQuery: Query = { ...blockQuery, anchor: "page" };
+    const ran = (anchor: "block" | "page") => anchor === "block"
+      ? { anchor, groups: [{ page: "Notes", kind: "page" as const, blocks: [block] }], diagnostics: [], total: 1, exceeded: false, report: { ran: [], ignored: [], supported: true } }
+      : { anchor, pages: [{ path: "pages/Alpha.md", name: "Alpha", kind: "page" as const, properties: [["status", "open"]] as [string, string][] }], diagnostics: [], total: 1, exceeded: false, report: { ran: [], ignored: [], supported: true } };
+    const mountDsl = async (anchor: "block" | "page", resultKinds?: "pages-and-blocks") => {
+      const route: QueryRoute = { kind: "query", id: `kinds-${anchor}-${resultKinds ?? "own"}`, sourceKind: "dsl", source: "{{tine-query @block}}", presentation: "list", ...(resultKinds ? { resultKinds } : {}) };
+      const deps = workspaceDeps();
+      vi.mocked(deps.parseQuery).mockResolvedValue({ query: anchor === "block" ? blockQuery : pageQuery, view: {} });
+      vi.mocked(deps.queryRun).mockResolvedValue(ran(anchor));
+      // the twin reading goes through the engine (print, parse, run), as the block's own twin does
+      vi.spyOn(backend(), "printQuery").mockResolvedValue(anchor === "block" ? "@page" : "@block");
+      vi.spyOn(backend(), "parseQuery").mockResolvedValue({ query: anchor === "block" ? pageQuery : blockQuery, view: {} });
+      vi.spyOn(backend(), "queryRun").mockResolvedValue(ran(anchor === "block" ? "page" : "block"));
+      const root = document.createElement("div"); document.body.append(root);
+      const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={deps} />, root);
+      await waitFor(() => expect(root.querySelector("[data-query-result-kind] .query-results-list, [data-query-result-kind] .query-results-search")).not.toBeNull());
+      const kinds = () => [...root.querySelectorAll("[data-query-result-kind]")].map((el) => el.getAttribute("data-query-result-kind"));
+      return { root, dispose, kinds };
+    };
+    it("shows only Blocks for a block query and only Pages for a page query", async () => {
+      for (const anchor of ["block", "page"] as const) {
+        const { root, dispose, kinds } = await mountDsl(anchor);
+        try {
+          expect(kinds()).toEqual([anchor]);
+          expect(root.textContent).not.toContain("No matching");
+        } finally { dispose(); vi.restoreAllMocks(); }
+      }
+    });
+    it("shows both families, Pages above Blocks, when the route carries Pages and blocks (either anchor)", async () => {
+      for (const anchor of ["block", "page"] as const) {
+        const { root, dispose, kinds } = await mountDsl(anchor, "pages-and-blocks");
+        try {
+          await waitFor(() => expect(kinds()).toEqual(["page", "block"]));
+          expect(root.querySelector("[data-query-result-kind=page]")?.textContent).toContain("Alpha");
+          expect(root.querySelector("[data-query-result-kind=block]")?.textContent).toContain("ship");
+          // the page row shows its properties as text under the title (a query answer carries them all)
+          expect(root.querySelector("[data-query-result-kind=page] .query-page-props")?.textContent?.replace(/\s+/g, " ").trim()).toBe("status: open");
+        } finally { dispose(); vi.restoreAllMocks(); }
+      }
+    });
+    it("saves the choice back as tine.result-kinds", async () => {
+      const deps = materializeDeps();
+      const result = await materializeQueryWorkspace({ title: "Kinds", sourceKind: "dsl", source: "(todo TODO)", presentation: "list", resultKinds: "pages-and-blocks", routeId: "kinds-save" }, deps);
+      expect(result.ok && result.page.blocks[0].raw).toContain("\ntine.result-kinds:: pages-and-blocks");
+      const plain = await materializeQueryWorkspace({ title: "Kinds Two", sourceKind: "dsl", source: "(todo TODO)", presentation: "list", routeId: "kinds-save-2" }, materializeDeps());
+      expect(plain.ok && plain.page.blocks[0].raw).not.toContain("result-kinds");
+    });
+  });
+
   it("GH #660: a saved revision refreshes routed query membership after editing finishes", async () => {
     const route: QueryRoute = { kind: "query", id: "membership", sourceKind: "search", source: "alpha", presentation: "search" };
     const deps = workspaceDeps();

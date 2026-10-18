@@ -15,9 +15,18 @@
 /* The always-reachable Share icon: the actions menu's hover reveal, a visible target on touch. */
 .qc-share { margin-left: auto; background: none; border: 0; padding: 2px 6px; cursor: pointer; color: var(--text-muted); opacity: 0; display: inline-flex; align-items: center; }
 .qc-share + .qc-actions { margin-left: 0; }
+/* GH #619 c6: Edit beside the menu, revealed like it (hover or focus; always on touch). */
+.qc-edit { background: none; border: 0; padding: 2px 6px; cursor: pointer; color: var(--text-muted); opacity: 0; display: inline-flex; align-items: center; font-size: 15px; line-height: 1; }
+.qc-share + .qc-edit, .qc-edit + .qc-actions { margin-left: 0; }
+.qc-edit:hover { color: var(--text-primary); }
+.query-block:hover .qc-edit, .query-block:focus-within .qc-edit, .qc-edit:focus-visible { opacity: 1; }
 .query-block:hover .qc-share, .query-block:focus-within .qc-share, .qc-share:focus-visible { opacity: 1; }
 .qc-share:hover { color: var(--text-primary); }
-@media (hover: none) { .qc-share { opacity: 1; } }
+@media (hover: none), (pointer: coarse) {
+  .qc-share, .qc-edit { opacity: 1; }
+  /* Finger-sized targets for the header controls (GH #619: the Edit button must be reachable on touch). */
+  .qc-share, .qc-edit, .qc-actions > summary { min-width: 32px; min-height: 32px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; }
+}
 .qc-actions > summary { cursor: pointer; list-style: none; padding: 2px 8px; opacity: 0; }
 .qc-actions > summary::-webkit-details-marker { display: none; }
 .query-block:hover .qc-actions > summary,
@@ -31,13 +40,14 @@
 }
 .qc-menu button { text-align: left; padding: 6px 10px; background: transparent; border: 0; color: var(--text-primary); }
 .qc-menu button:hover, .qc-menu button:focus-visible { background: var(--bg-secondary); }
-.qc-panel { position: relative; margin: 8px 0; padding-top: 28px; }
+.qc-panel { position: relative; margin: 8px 0; }
 .qc-panel .qs-sheet { position: static; width: 100%; max-height: none; box-shadow: none; }
-.qc-done { position: absolute; right: 0; top: 0; }
+/* GH #619 c6 (UI1): finishing sits at the trailing end, Cancel just left of the primary action. */
+.qc-panel-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .qc-panel .qd-panel { position: static; min-width: 0; max-width: 100%; max-height: none; overflow: visible; box-shadow: none; }
 .query-result-open { border: 0; background: none; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .query-block .sheet-board { max-width: 100%; overflow-x: auto; }
-@media (hover: none) { .qc-actions > summary { opacity: 1; } }
+@media (hover: none), (pointer: coarse) { .qc-actions > summary { opacity: 1; } }
 .all-pages-head, .all-pages-row { grid-template-columns: minmax(0, 1fr) 10.5em 6em 8em; }
 .all-pages-backlinks { text-align: right; }
 .query-copy-row { display: flex; gap: 8px; padding: 4px; }

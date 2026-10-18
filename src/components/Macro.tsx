@@ -968,7 +968,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
               <Show when={!props.builtIn && !isPublishedExport() && runnable()}>
                 <QueryMacroActions current={runnable} groups={groups} pages={() => pageRows() ?? []}
                   editable={!!props.blockId && blockWritable(props.blockId)} results={!!displayed() && total() > 0}
-                  edit={requestEdit}
+                  edit={requestEdit} both={bothKinds}
                   fold={blockFace() === "list" ? (collapsed) => {
                     void collapseQueryResults(groups(), collapsed).then(epochs => {
                       if (epochs) setBulkFold({ n: (bulkFold()?.n ?? 0) + 1, collapsed, epochs });
@@ -983,7 +983,6 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                 event.stopPropagation();
                 if (event.key === "Escape") { event.preventDefault(); closeDisplay(); }
               }}>
-                <button type="button" class="qc-done" onClick={closeDisplay}>{t("query-calm-done")}</button>
                 {/* Which clauses Tine ran is editing context, not resting content (GH #502). */}
                 <Show when={advInfo()?.supported}>
                   <div class="query-adv-note">
@@ -991,6 +990,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   </div>
                 </Show>
                 <QueryDisplay inline registry={advancedRegistry} view={displayView} apply={applyDisplay} defaultColumns={effectiveDefaultColumns} rowKind={() => reading()?.query.anchor ?? "block"} />
+                <div class="qc-panel-actions">
+                  <button type="button" class="qc-done" onClick={closeDisplay}>{t("query-calm-done")}</button>
+                </div>
               </div>
             </Show>
             {/* The builder edits a FILTER; an authored advanced query keeps its

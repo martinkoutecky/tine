@@ -74,16 +74,26 @@ describe("QueryPageRows", () => {
     }
   });
 
-  // QBV: current master's Search/List page rows show titles, not all properties.
-  it.each(["search", "list"] as const)("%s keeps page properties one click away even with table columns chosen", (view) => {
+  // GH #619 item 8 (D-20261018-Q619): commit 5e3c54582 had dropped the property text under the title;
+  // comment 3 promised it publicly, and Martin restored it. The pencil stays beside the title.
+  it.each(["search", "list"] as const)("%s shows the page's properties as text under its title, with the pencil, even with table columns chosen", (view) => {
     const { root, dispose } = mount(() => <QueryPageRows rows={[
       row("Alpha", "pages/Alpha.md", [["status", "open"], ["owner", "Ada"]]),
+      row("Beta", "pages/Beta.md"),
     ]} view={view} columns={["prop:status"]} />);
     try {
-      expect(names(root)).toEqual(["Alpha"]);
-      expect(root.querySelector(".query-page-props")).toBeNull();
-      expect(root.textContent).not.toContain("Ada");
-      expect(root.querySelector('[aria-label="Edit properties of Alpha"]')).not.toBeNull();
+      expect(names(root)).toEqual(["Alpha", "Beta"]);
+      const rows = root.querySelectorAll(".query-results-list > li");
+      const strip = rows[0].querySelector<HTMLElement>(".query-page-props")!;
+      expect(strip.dataset.selectable).toBe("text");
+      expect([...strip.querySelectorAll(".query-page-prop")].map((el) => el.textContent?.replace(/\s+/g, " ").trim()))
+        .toEqual(["status: open", "owner: Ada"]);
+      // under the title: the strip follows the link in the same row
+      const kids = [...rows[0].children];
+      expect(kids.indexOf(strip)).toBeGreaterThan(kids.indexOf(rows[0].querySelector(".query-page-link")!));
+      expect(rows[0].querySelector('[aria-label="Edit properties of Alpha"]')).not.toBeNull();
+      // a page with no properties has no empty strip
+      expect(rows[1].querySelector(".query-page-props")).toBeNull();
     } finally { dispose(); }
   });
 

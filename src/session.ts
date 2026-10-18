@@ -160,6 +160,7 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
     const optional: Partial<QueryRoute> = {};
     const scope = o.pageMatchScope === undefined ? null : normalizeFriendlyPageMatchScope(o.pageMatchScope);
     if (scope) optional.pageMatchScope = scope;
+    if (o.resultKinds === "pages-and-blocks") optional.resultKinds = o.resultKinds;
     for (const key of ["pagePresentation", "blockPresentation"] as const) {
       const value = o[key] === undefined ? null : normalizeQueryPresentation(o[key]);
       if (value) optional[key] = value;

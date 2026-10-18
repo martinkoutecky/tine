@@ -21,6 +21,7 @@ use tine_core::refs;
 mod eval;
 pub(crate) mod exec;
 pub(crate) mod index;
+pub(crate) mod link_graph;
 pub(crate) mod memo;
 pub(crate) mod page_properties;
 #[cfg(test)]
@@ -526,28 +527,48 @@ fn graph_equivalent_page_names(
     graph: &ReadSnapshot,
     target: &str,
 ) -> (String, Vec<String>, String) {
-    let mut resolved = equivalent_page_names(&real_page_names(graph), &graph.alias_edges(), target);
     let format = journal_format(graph.config());
+    graph_equivalent_page_names_with(
+        &real_page_names(graph),
+        &graph.alias_edges(),
+        &format,
+        target,
+        |day| {
+            // O(journals) name parses, only for a date-shaped target.
+            graph
+                .page_list_arc()
+                .iter()
+                .find(|entry| {
+                    entry.kind == PageKind::Journal && format.parse(&entry.name) == Some(day)
+                })
+                .map(|entry| entry.name.clone())
+        },
+    )
+}
+
+/// [`graph_equivalent_page_names`] with its graph reads supplied: the real
+/// page names, the alias relation, the journal format and the FIRST journal
+/// page (page-list order) of a day. The link table resolves every page through
+/// this one body with a precomputed day lookup, so the Linked References panel
+/// and `links` / `linked_by` cannot drift (I-12).
+pub(crate) fn graph_equivalent_page_names_with(
+    real_pages: &RealPageNames,
+    edges: &AliasEdges,
+    format: &JournalFormat,
+    target: &str,
+    journal_for_day: impl FnOnce(JournalDate) -> Option<String>,
+) -> (String, Vec<String>, String) {
+    let mut resolved = equivalent_page_names(real_pages, edges, target);
     let Some(target_day) = format.parse(target) else {
         return resolved;
     };
-    // O(journals) name parses, only for a date-shaped target.
-    let pages = graph.page_list_arc();
-    let Some(journal) = pages.iter().find(|entry| {
-        entry.kind == PageKind::Journal && format.parse(&entry.name) == Some(target_day)
-    }) else {
+    let Some(journal_name) = journal_for_day(target_day) else {
         // A date with no real page is an editable virtual journal. Keep real
         // ordinary pages and aliases intact; only fileless dates share spellings.
-        if real_page_names(graph)
-            .get(&refs::page_key(&resolved.0))
-            .is_none()
-        {
+        if real_pages.get(&refs::page_key(&resolved.0)).is_none() {
             let title = format.title(target_day);
-            let spellings = journal_spelling_keys(&format, target_day, &title);
-            if spellings
-                .iter()
-                .any(|name| real_page_names(graph).get(name).is_some())
-            {
+            let spellings = journal_spelling_keys(format, target_day, &title);
+            if spellings.iter().any(|name| real_pages.get(name).is_some()) {
                 return resolved;
             }
             resolved.1.extend(spellings);
@@ -560,11 +581,11 @@ fn graph_equivalent_page_names(
     };
     resolved
         .1
-        .extend(journal_spelling_keys(&format, target_day, &journal.name));
+        .extend(journal_spelling_keys(format, target_day, &journal_name));
     resolved.1.sort();
     resolved.1.dedup();
-    resolved.0 = journal.name.clone();
-    resolved.2 = journal.name.clone();
+    resolved.0 = journal_name.clone();
+    resolved.2 = journal_name;
     resolved
 }
 

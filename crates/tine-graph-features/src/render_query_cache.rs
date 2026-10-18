@@ -109,7 +109,11 @@ impl RenderGraph<'_> {
         block_properties: &[(String, String)],
         current_page: Option<&str>,
     ) -> Option<(tine_core::query::wire_parse::ParsedQuery, BoundedGroups)> {
-        let Ok(IrAnswer::Registry(registry)) = self.whole.query_ir(IrRequest::Registry) else {
+        let Ok(IrAnswer::Registry(registry)) = self
+            .whole
+            .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+            .map(|answer| answer.expect("never cancelled"))
+        else {
             return None;
         };
         // Only the block's `tine.*` properties reach the engine, as in the live macro.
@@ -129,11 +133,18 @@ impl RenderGraph<'_> {
         let context = ExecutionContext {
             current_page: current_page.map(str::to_owned),
         };
-        let Ok(IrAnswer::Result(answer)) = self.whole.query_ir(IrRequest::Run {
-            query: &parsed.query,
-            view: &view,
-            context: &context,
-        }) else {
+        let Ok(IrAnswer::Result(answer)) = self
+            .whole
+            .query_ir(
+                IrRequest::Run {
+                    query: &parsed.query,
+                    view: &view,
+                    context: &context,
+                },
+                &tine_store::Cancel::default(),
+            )
+            .map(|answer| answer.expect("never cancelled"))
+        else {
             return None;
         };
         let (groups, pages) = match answer.rows {

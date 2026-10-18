@@ -174,7 +174,8 @@ fn ir_registry(
     graph: &WholeGraph,
 ) -> io::Result<std::sync::Arc<tine_core::query::registry::Registry>> {
     match graph
-        .query_ir(IrRequest::Registry)
+        .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+        .map(|answer| answer.expect("never cancelled"))
         .map_err(|e| io::Error::other(e.to_string()))?
     {
         IrAnswer::Registry(registry) => Ok(registry),
@@ -200,11 +201,15 @@ fn parse_and_run(
     let anchor = parsed.query.anchor;
     let view = anchored_view(&parsed, anchor);
     let result = match graph
-        .query_ir(IrRequest::Run {
-            query: &parsed.query,
-            view: &view,
-            context,
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &parsed.query,
+                view: &view,
+                context,
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .map_err(|e| io::Error::other(e.to_string()))?
     {
         IrAnswer::Result(result) => *result,

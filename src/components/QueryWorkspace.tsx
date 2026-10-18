@@ -35,8 +35,9 @@ import type {
   QueryExplainNode,
   QueryHit,
   QueryPageScope,
+  RefGroup,
 } from "../types";
-import { VIEW_KINDS, type ParsedQuery, type Query, type QueryResult, type ViewSettings, type ExplainEmptyResult, type FriendlyPageMatchScope } from "../editor/queryIr";
+import { VIEW_KINDS, type PageRow, type ParsedQuery, type Query, type QueryResult, type ViewSettings, type ExplainEmptyResult, type FriendlyPageMatchScope } from "../editor/queryIr";
 import { queryDisplaySettings, type QueryDisplayDraft } from "../editor/queryDisplayDraft";
 import { displayPropertyPatch, queryScopedDisplayPropertyPatch } from "../editor/queryViewProperties";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
@@ -47,9 +48,12 @@ import { QueryResultsSelection } from "./QueryResultsSelection";
 import { SourceTaskCheckbox } from "./SourceTaskCheckbox";
 import { QUERY_MACRO_NAMES } from "../editor/queryMacroName";
 import { queryWorkspaceDsl } from "./queryWorkspaceDsl";
+import { PAGES_AND_BLOCKS, RESULT_KINDS_PROPERTY, type BothFamilies } from "./queryMacroSupport";
+import { bothFamilies } from "../queryTwin";
+import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { SearchResultRow } from "./SearchResultRow";
 import { QueryPageResults, type QueryPageHit } from "./QueryPageResults";
-import { QueryResultSections } from "./QueryResultSections";
+import { QueryResultSections, type ResultFamily } from "./QueryResultSections";
 import { registerTransientLayer } from "../transientLayers";
 import { bumpPageInventoryRev } from "../graphSession";
 import { blockDtoExternalId } from "../blockIdentity";
@@ -80,6 +84,8 @@ export interface MaterializeQueryInput {
   blockPresentation?: QueryPresentation;
   pageDisplay?: QueryDisplayDraft;
   blockDisplay?: QueryDisplayDraft;
+  /** "Pages and blocks" from the block this workspace was opened from; saved back as `tine.result-kinds`. */
+  resultKinds?: QueryRoute["resultKinds"];
   /** Stable workspace identity: also bounds the native validation cancellation lane. */
   routeId: string;
 }
@@ -122,12 +128,13 @@ export interface QueryWorkspaceProps {
 }
 
 /** The query block's text and its properties, in the order they have always been written. */
-async function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay">, deps: MaterializeQueryDependencies): Promise<{ query: string; properties: Array<[string, string]> }> {
+async function savedQuery(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation" | "pageMatchScope" | "pagePresentation" | "blockPresentation" | "pageDisplay" | "blockDisplay" | "resultKinds">, deps: MaterializeQueryDependencies): Promise<{ query: string; properties: Array<[string, string]> }> {
   const source = input.source.trim();
   const dsl = input.sourceKind === "search" ? friendlySearchToSavedDsl(source) : source;
   const properties: Array<[string, string]> = [];
   if (input.presentation !== "list") properties.push(["tine.view", input.presentation]);
   if (input.sourceKind === "search" && input.pageMatchScope) properties.push(["tine.page-match-scope", input.pageMatchScope]);
+  if (input.sourceKind === "dsl" && input.resultKinds) properties.push([RESULT_KINDS_PROPERTY, PAGES_AND_BLOCKS]);
   for (const kind of ["page", "block"] as const) {
     for (const [key, value] of queryScopedDisplayPropertyPatch({
       scope: kind,
@@ -309,17 +316,16 @@ function defaultDependencies(): QueryWorkspaceDependencies {
   };
 }
 
-function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult): QueryExecution {
-  const hits: QueryHit[] = result.anchor === "page"
-    ? result.pages.map((page) => ({
-      entity: "page" as const,
-      page: { name: page.name, kind: page.kind, path: page.path, date_key: null },
-      row: page,
-      display_text: page.name,
-      evidence: [],
-      score: 0,
-    }))
-    : result.groups.flatMap((group) => group.blocks.map((block) => ({
+function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult, twin?: { both: BothFamilies; blockGroups: RefGroup[] }): QueryExecution {
+  const pageHits = (pages: PageRow[]): QueryHit[] => pages.map((page) => ({
+    entity: "page" as const,
+    page: { name: page.name, kind: page.kind, path: page.path, date_key: null },
+    row: page,
+    display_text: page.name,
+    evidence: [],
+    score: 0,
+  }));
+  const blockHits = (groups: RefGroup[]): QueryHit[] => groups.flatMap((group) => group.blocks.map((block) => ({
     entity: "block" as const,
     page: group.page,
     kind: group.kind,
@@ -328,6 +334,9 @@ function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult): Q
     display_text: block.raw,
     evidence: [],
   })));
+  const hits: QueryHit[] = twin
+    ? [...pageHits(twin.both.pages), ...blockHits(twin.blockGroups)]
+    : result.anchor === "page" ? pageHits(result.pages) : blockHits(result.groups);
   const diagnostics: QueryDiagnostic[] = (result.diagnostics ?? [])
     .filter((item) => !item.disabled)
     .map((item) => ({ code: item.kind, message: item.message }));
@@ -336,6 +345,9 @@ function irToExecution(result: QueryResult, explanation?: ExplainEmptyResult): Q
   });
   return {
     hits,
+    families: twin ? ["page", "block"] : [result.anchor],
+    // Pages above blocks, each family's own truncation, exactly as the block reports it.
+    ...(twin ? { has_more: { pages: twin.both.pageMore, blocks: twin.both.blockMore } } : {}),
     diagnostics,
     cancelled: false,
     explanation: {
@@ -818,9 +830,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       pageMatchScope: pageMatchScope(),
       pageView: pageView(),
       blockView: blockView(),
+      resultKinds: props.route.resultKinds,
       transliteration: sourceKind() === "search" && pinyinMatchingEnabled(),
     }),
-    () => JSON.stringify([props.route.id, source().trim(), sourceKind(), explain(), pageMatchScope(), pageView(), blockView(), sourceKind() === "search" && pinyinMatchingEnabled()]),
+    () => JSON.stringify([props.route.id, source().trim(), sourceKind(), explain(), pageMatchScope(), pageView(), blockView(), props.route.resultKinds, sourceKind() === "search" && pinyinMatchingEnabled()]),
     async (request): Promise<QueryExecution> => {
       if (!request.source) {
         return { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false };
@@ -846,11 +859,20 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       setDslReading({ source: request.source, parsed: parsed.value });
       const result = await readOwned(owner, deps().queryRun(parsed.value.query, queryDisplaySettings(blockDisplay(), parsed.value.view, presentation())));
       if (result.kind === "stale" || !owner()) return cancelled;
+      // "Pages and blocks" (the block's `tine.result-kinds`): the engine re-reads the same conditions at the
+      // other anchor, exactly as the block and the sheet's live preview do (one answerer, queryTwin.ts).
+      const twin = request.resultKinds === PAGES_AND_BLOCKS
+        ? await bothFamilies(owner, {
+          scope: `${graphMeta()?.root ?? ""}\0${graphEpoch()}`, key: `workspace\0${request.id}\0${request.source}\0${dataRev()}`,
+          query: parsed.value.query, view: queryDisplaySettings(blockDisplay(), parsed.value.view, presentation()), own: result.value,
+        })
+        : undefined;
+      if (request.resultKinds === PAGES_AND_BLOCKS && (!twin || !owner())) return cancelled;
       const explanation = request.explain && result.value.total === 0 && !(result.value.diagnostics ?? []).some((item) => !item.disabled)
         ? await readOwned(owner, deps().queryExplainEmpty(parsed.value.query, parsed.value.view))
         : undefined;
       if (explanation?.kind === "stale" || !owner()) return cancelled;
-      return irToExecution(result.value, explanation?.value);
+      return irToExecution(result.value, explanation?.value, twin);
     },
     (value, id) => value.hits.some((hit) => hit.entity === "block" && hit.block.id === id),
     () => true,
@@ -1033,6 +1055,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       pagePresentation: pagePresentation(), blockPresentation: blockPresentation(),
       pageDisplay: pageDisplay(), blockDisplay: blockDisplay(),
       pageMatchScope: pageMatchScopeExplicit() ? pageMatchScope() : undefined,
+      resultKinds: props.route.resultKinds,
     },
   });
   type CapturedSave = ReturnType<typeof captureSave>;
@@ -1224,10 +1247,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       <QueryResultSections
         pending={execution.loading}
         failure={execution.error ? `Search failed: ${execution.error instanceof Error ? execution.error.message : String(execution.error)}` : null}
-        families={[
+        families={([
           { kind: "page", hits: pageHits().length, hasMore: !!executed()?.has_more?.pages,
             control: sectionControl("page"),
-            body: <QueryPageResults hits={pageHits()} presentation={pageView().view ?? "list"} view={pageView()} surfaceId={hitSurfaceId} onOpen={openHit} actions={resultActions} /> },
+            body: <QueryPageResults hits={pageHits()} presentation={pageView().view ?? "list"} view={pageView()} surfaceId={hitSurfaceId} onOpen={openHit} actions={resultActions} showProperties={sourceKind() === "dsl"} /> },
           { kind: "block", hits: blockHits().length, hasMore: !!executed()?.has_more?.blocks,
             control: sectionControl("block"),
             body: <Switch>
@@ -1296,7 +1319,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           </div>
         </Match>
       </Switch> },
-        ]}
+        ] as ResultFamily[]).filter((family) => !executed()?.families || executed()!.families!.includes(family.kind))}
       />
       </Show>
 

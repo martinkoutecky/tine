@@ -10,23 +10,32 @@ fn ir_store_refuses_large_answers_with_its_own_limits() {
     let store = Store::open(dir.path(), Default::default()).unwrap().0;
     let graph = store.whole_graph().unwrap();
     let query = Query::new(Anchor::Block, Filter::True, Source::Builder);
-    let answer = graph.query_ir(IrRequest::Run {
-        query: &query,
-        view: &ViewSettings::default(),
-        context: &ExecutionContext::none(),
-    });
+    let answer = graph
+        .query_ir(
+            IrRequest::Run {
+                query: &query,
+                view: &ViewSettings::default(),
+                context: &ExecutionContext::none(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"));
     let error = tine_core::query::ir::QueryResult::try_from(answer.unwrap())
         .expect_err("The store's wire conversion must refuse an exceeded IR result");
     assert_eq!(error, "result-too-large: 20001 matching rows; narrow the query or add a sample (construction limits: 20000 rows / 33554432 bytes)");
     let sampled = graph
-        .query_ir(IrRequest::Run {
-            query: &query,
-            view: &ViewSettings {
-                sample: Some(5),
-                ..Default::default()
+        .query_ir(
+            IrRequest::Run {
+                query: &query,
+                view: &ViewSettings {
+                    sample: Some(5),
+                    ..Default::default()
+                },
+                context: &ExecutionContext::none(),
             },
-            context: &ExecutionContext::none(),
-        })
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .unwrap();
     let sampled = tine_core::query::ir::QueryResult::try_from(sampled).unwrap();
     assert_eq!(sampled.total, 5);

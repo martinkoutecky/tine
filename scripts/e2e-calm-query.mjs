@@ -177,6 +177,19 @@ await session(1, async browser => {
   await action(browser, "Edit");
   await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .qc-panel .qs-sheet`) && !!document.querySelector(`${selector} .query-group`), active), { timeout: 15_000, timeoutMsg: "editor panel or results missing after rename" });
   await closeEditor(browser);
+  // GH #619 (D-20261018-Q619 Q1/Q3): the pencil beside the details menu opens the same editor, and
+  // Done sits at the trailing end under the conditions rather than over their top corner.
+  await browser.$(`${active} .qc-edit`).click();
+  await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .qc-panel .qs-sheet`), active),
+    { timeout: 15_000, timeoutMsg: "the Edit button did not open the inline editor" });
+  const donePlace = await browser.execute(selector => {
+    const panel = document.querySelector(`${selector} .qc-panel`).getBoundingClientRect();
+    const sheet = document.querySelector(`${selector} .qc-panel .qs-sheet`).getBoundingClientRect();
+    const done = document.querySelector(`${selector} .qc-panel .qc-done`).getBoundingClientRect();
+    return { belowSheet: done.top >= sheet.bottom - 1, trailing: panel.right - done.right < 40 };
+  }, active);
+  assert.deepEqual(donePlace, { belowSheet: true, trailing: true }, "Done sits bottom-right of the query editor");
+  await closeEditor(browser);
   await textEdit(browser, "@block and task = 'TODO' and priority = 'A'");
   await browser.waitUntil(() => browser.execute(() => {
     const query = [...document.querySelectorAll(".page-blocks .query-block")].find(block => block.querySelector(".query-title")?.textContent?.trim() === "Calm tasks");
@@ -264,11 +277,14 @@ await session(1, async browser => {
   await browser.execute(() => [...document.querySelectorAll(".export-foot button")].find(button => button.textContent === "Close")?.click());
   phase = "frozen Search selection skips a changed positional source";
   await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Select results")?.click());
-  const selectedLocator = await browser.$(".query-workspace .query-result-row").getAttribute("data-inpage-find-surface");
+  // Open in Search now carries the block's own view (List by default, GH #619 Q2), so the result surface is
+  // whichever view-owned element carries the locator (a List button, a Search row, a table row or a board card).
+  const surface = ".query-workspace [data-inpage-find-surface]";
+  const selectedLocator = await browser.$(surface).getAttribute("data-inpage-find-surface");
   const planningPath = `${graph}/pages/Planning.md`;
   fs.writeFileSync(planningPath, "- Unselected insertion\n" + fs.readFileSync(planningPath, "utf8"));
   await browser.waitUntil(() => browser.execute(previous => {
-    const row = document.querySelector(".query-workspace .query-result-row");
+    const row = document.querySelector(".query-workspace [data-inpage-find-surface]");
     return row?.textContent?.includes("Upcoming journey task") && row.getAttribute("data-inpage-find-surface") !== previous;
   }, selectedLocator), { timeout: 20_000 });
   await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Copy results")?.click());
