@@ -1,5 +1,5 @@
 import { msg, t } from "./i18n";
-/** Confirm, flush dirty pages, then restore backup.stamp; when is display text.
+/** Confirm, flush dirty pages, then restore backup.id; when is display text.
  * Native restore validates the snapshot, takes a safety snapshot, and may replace
  * graph pages, asset sidecars and config. A native failure may leave changed files
  * and recovery copies. A successful restore attempts a forced graph reload;
@@ -46,7 +46,7 @@ export async function restoreBackupFromSettings(
       return;
     }
     if (!owner()) return;
-    const restored = await writeOwned(owner, backend().restoreBackup(backup.stamp, "replace-page", consumedAnswer()));
+    const restored = await writeOwned(owner, backend().restoreBackup(backup.id, "replace-page", consumedAnswer()));
     if (restored.kind === "stale") return;
     const { error, reloaded } = restored.value;
     // A stop that could not save every page restores nothing (the host keeps running).

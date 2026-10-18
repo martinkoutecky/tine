@@ -17,9 +17,11 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
     (
         "crates/tine-store/src/model.rs",
         ".spawn(move ||",
-        1,
-        "parse_pages_parallel scope (on-demand build and background warm)",
-        "std::thread::scope joins its child before return",
+        // parse_pages_parallel, and SnapshotExplicitIndex::build (GJ5: the
+        // initial capture's explicit index, bounded by the loaded pages).
+        2,
+        "parse_pages_parallel scope (on-demand build and background warm); SnapshotExplicitIndex::build has no stop of its own and runs inside ReadSnapshot::capture like the index threads beside it",
+        "std::thread::scope joins every child before return (both sites); at most page_cache_worker_count() children",
     ),
     (
         "crates/tine-store/src/page_host/driver.rs",

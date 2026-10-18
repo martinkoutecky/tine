@@ -67,7 +67,7 @@ describe("Backups settings", () => {
     backupBackend.getBackupKeep.mockResolvedValue(12);
     backupBackend.listBackups
       .mockImplementationOnce(() => new Promise((_, reject) => { rejectList = reject; }))
-      .mockResolvedValueOnce([{ stamp: "2026-07-22_12-00-00", files: 1 }]);
+      .mockResolvedValueOnce([{ id: "zip:2026-07-22_12-00-00", stamp: "2026-07-22_12-00-00", files: 1, status: "ok" }]);
 
     const root = document.createElement("div");
     document.body.append(root);
@@ -100,6 +100,29 @@ describe("Backups settings", () => {
     expect(keep.disabled).toBe(false);
     const restore = [...root.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Restore") as HTMLButtonElement;
     expect(restore.disabled).toBe(false);
+    dispose();
+  });
+  it("labels damaged and unsupported backups and offers no restore for them", async () => {
+    backupBackend.getBackupKeep.mockResolvedValue(12);
+    backupBackend.listBackups.mockResolvedValue([
+      { id: "zip:2026-07-22_12-00-02", stamp: "2026-07-22_12-00-02", files: 3, status: "unsupported" },
+      { id: "zip:2026-07-22_12-00-01", stamp: "2026-07-22_12-00-01", files: 2, status: "damaged" },
+      { id: "dir:2026-07-22_12-00-00", stamp: "2026-07-22_12-00-00", files: 1, status: "ok" },
+    ]);
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    openSettings("backups");
+    await tick();
+    await tick();
+
+    const rows = [...root.querySelectorAll(".settings-backup-row")];
+    expect(rows.map((row) => row.querySelector(".settings-backup-files")?.textContent?.trim())).toEqual([
+      "3 files · Made by a newer Tine",
+      "2 files · Damaged",
+      "1 files",
+    ]);
+    expect(rows.map((row) => (row.querySelector("button") as HTMLButtonElement).disabled)).toEqual([true, true, false]);
     dispose();
   });
 });

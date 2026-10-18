@@ -227,6 +227,7 @@ export interface MessageArgs {
   "command-ui-open-settings": {};
   "command-ui-reset-zoom": {};
   "command-ui-toggle-brackets": {};
+  "command-ui-toggle-code-block-wrap": {};
   "command-ui-toggle-custom-css": {};
   "command-ui-toggle-devtools": {};
   "command-ui-toggle-dim-blocks": {};
@@ -1531,7 +1532,6 @@ export interface MessageArgs {
   "query-filter-does-not-reference": {};
   "query-filter-full-text-search": {};
   "query-filter-in-a-journal-page": {};
-  "query-filter-in-namespace": {};
   "query-filter-is": {};
   "query-filter-is-a-journal-page": {};
   "query-filter-is-any-of": {};
@@ -1543,8 +1543,7 @@ export interface MessageArgs {
   "query-filter-matches": {};
   "query-filter-not-between": {};
   "query-filter-not-in-namespace": {};
-  "query-filter-not-on-page": {};
-  "query-filter-on-page": {};
+  "query-filter-page": {};
   "query-filter-page-property": {};
   "query-filter-page-tag-reference": {};
   "query-filter-page-tags": {};
@@ -1560,7 +1559,6 @@ export interface MessageArgs {
   "query-og-bare-priority": { "syntax": string | number };
   "query-og-bare-task": { "syntax": string | number };
   "query-operator-in-namespace": {};
-  "query-operator-on-page": {};
   "query-options-map-warning": {};
   "query-page-props-is-no-longer-there-so-its-properties-cannot": { "name": string | number };
   "query-page-results-alias": { "alias": string | number };
@@ -1993,6 +1991,14 @@ export interface MessageArgs {
   "quick-switcher-searching": {};
   "quick-switcher-that-pane-is-no-longer-available-close-this": {};
   "quick-switcher-the-graph-changed-before-the-page-was-created": {};
+  "ref-occurrence-actions": {};
+  "ref-occurrence-changed": {};
+  "ref-occurrence-edit": {};
+  "ref-occurrence-edit-title": {};
+  "ref-occurrence-remove": {};
+  "ref-occurrence-remove-embed-title": {};
+  "ref-occurrence-remove-ref": {};
+  "ref-occurrence-remove-ref-title": {};
   "reference-evidence-jump-to-mention": { "index": string | number; "kind": string | number };
   "reference-evidence-mention-count": { "count": number };
   "reference-evidence-occurrence-label": { "index": string | number; "total": string | number };
@@ -2344,6 +2350,8 @@ export interface MessageArgs {
   "settings-ui-auto-enable-dim-inactive-blocks-t-b-when-entering": {};
   "settings-ui-auto-pair-brackets-quotes": {};
   "settings-ui-autodetect-failed": {};
+  "settings-ui-backup-damaged": {};
+  "settings-ui-backup-unsupported": {};
   "settings-ui-backups-recovery": {};
   "settings-ui-built": { "value1": string | number };
   "settings-ui-carry-last-n-days": {};
@@ -2381,6 +2389,7 @@ export interface MessageArgs {
   "settings-ui-file-format": {};
   "settings-ui-files": {};
   "settings-ui-files-2": { "files": string | number };
+  "settings-ui-files-backup-status": { "files": string | number; "status": string | number };
   "settings-ui-files-in-assets-that-no-block-links-to-deleting": {};
   "settings-ui-first-day-of-week": {};
   "settings-ui-format-for-new-pages-and-journals-markdown-or-org": {};

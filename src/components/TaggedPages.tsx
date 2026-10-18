@@ -9,9 +9,11 @@ import { PageRef } from "../render/inline";
 import { ResourceFailure } from "./ResourceFailure";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 
-/** OG page.cljs tagged-pages: list pages whose page tags contain this name.
- * The existing query door owns membership (including normalization and Org).
- * Cost: one page-tags query per graph revision, O(pages), plus O(matches log
+/** OG page.cljs tagged-pages: list pages whose page tags contain this name or,
+ * unlike OG (GH #715), any name in its alias group, the same group Linked
+ * References use; a page tagging itself so is listed too, as in OG. The backend owns membership
+ * (`tagged_pages`: normalization, Org, aliases); `(page-tags …)` queries stay
+ * literal. Cost: one page scan per graph revision, O(pages), plus O(matches log
  * matches) display sorting. Read failures render a retry; stale graph reads are
  * discarded. Published exports have no live query engine and omit the section. */
 export function TaggedPages(props: { name: string }): JSX.Element {
@@ -21,10 +23,7 @@ export function TaggedPages(props: { name: string }): JSX.Element {
     () => isPublishedExport() ? null : `${props.name}\0${dataRev()}`,
     async () => {
       const owner = latestOwner(owners, "tagged-pages", graphOwner());
-      const tag = JSON.stringify(props.name);
-      const parsed = await readOwned(owner, backend().parseQuery(`(page-tags ${tag})`, "macro_query"));
-      if (parsed.kind === "stale") return undefined;
-      const result = await readOwned(owner, backend().queryRun(parsed.value.query, parsed.value.view));
+      const result = await readOwned(owner, backend().taggedPages(props.name));
       if (result.kind === "stale") return undefined;
       const diagnostic = result.value.diagnostics?.find(item => !item.disabled);
       if (diagnostic) throw new Error(diagnostic.message);

@@ -66,3 +66,17 @@ it("GH #643: pins stay below menus, toolbars and modals at every depth", () => {
     expect(Number(root.querySelector<HTMLElement>('[data-sticky-block="top"]')!.style.zIndex)).toBeLessThan(20);
   } finally { dispose(); }
 });
+
+it("GH #619 c6: a query or embed host with children is not pinned, so its live macro is not mounted twice", () => {
+  for (const raw of ["{{query (task TODO)}}", '{{tine-query @block and task in (\'TODO\')}}', "{{embed [[Other]]}}"]) {
+    loadSingle({ name: "Hosts", title: "Hosts", kind: "page", pre_block: null,
+      blocks: [{ id: "host", raw, collapsed: false, children: [{ id: "c", raw: "child", collapsed: false, children: [] }] }] });
+    const root = document.createElement("div"); root.className = "main-content"; document.body.append(root);
+    const dispose = render(() => <Block id="host" />, root);
+    try {
+      expect(root.querySelector('[data-sticky-block="host"]'), raw).toBeNull();
+      expect(root.querySelector(".sticky-ancestor .query-block, .sticky-ancestor .embed-block"), raw).toBeNull();
+      expect(root.querySelector('[data-block-id="c"]'), raw).not.toBeNull();
+    } finally { dispose(); resetStore(); root.remove(); }
+  }
+});

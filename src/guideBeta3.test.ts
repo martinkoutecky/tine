@@ -3,6 +3,11 @@ import { expect, it } from "vitest";
 
 const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
 
+it("the Guide explains usable journals during graph loading and the later referenced-day merge", () => {
+  const journals = guide("journals-tasks-scheduling");
+  for (const detail of ["today's journal and nearby saved days appear while the graph is still loading", "Days mentioned only by other blocks join", "keeping your place and any open editor"]) expect(journals).toContain(detail);
+});
+
 it("the Guide explains the page and block copy submenu and reference click zoom", () => {
   const references = guide("pages-links-references-search");
   for (const detail of ["Page and block menus", "**Copy as ▸**", "**Click a block reference to zoom in**", "including on another page"]) expect(references).toContain(detail);

@@ -180,7 +180,7 @@ describe("O6 Backups restore owns busy while confirmation is open (master Settin
   it("disables Restore while the confirmation is pending", async () => {
     setGraphMeta({ root: "/graphs/A" } as never);
     vi.spyOn(backend(), "getBackupKeep").mockResolvedValue(12);
-    vi.spyOn(backend(), "listBackups").mockResolvedValue([{ stamp: "2026-07-22_12-00-00", files: 1 }] as never);
+    vi.spyOn(backend(), "listBackups").mockResolvedValue([{ id: "zip:2026-07-22_12-00-00", stamp: "2026-07-22_12-00-00", files: 1, status: "ok" }] as never);
     let answer!: (c: boolean) => void;
     const confirm = vi.spyOn(backend(), "confirm").mockImplementation(() => new Promise<boolean>((r) => { answer = r; }));
     const root = document.createElement("div"); document.body.append(root);

@@ -135,9 +135,23 @@ await session(1, async browser => {
   await openPageByName(browser, "Queries"); await markQuery(browser, "Open tasks");
   await browser.waitUntil(() => browser.execute(selector => document.querySelector(`${selector} .query-count`)?.textContent === "2", active), { timeout: 20_000 });
   assert.equal(await browser.execute(selector => !!document.querySelector(`${selector} .qs-sentence`), active), false);
+  phase = "folding the query bullet folds its results (GH #619 c6)";
+  const hostToggle = selector => document.querySelector(selector).closest(".ls-block").querySelector(":scope > .block-main .collapse-toggle")?.click();
+  await browser.execute(hostToggle, active);
+  await browser.waitUntil(() => browser.execute(selector => document.querySelector(`${selector} .query-group`) === null, active),
+    { timeout: 10_000, timeoutMsg: "folding the query's bullet left its results shown" });
+  await browser.waitUntil(() => /Open tasks"\}\}\}\n\s+collapsed:: true/.test(fs.readFileSync(queries, "utf8")), { timeout: 15_000, timeoutMsg: "the bullet fold was not saved as collapsed:: true" });
+  await browser.execute(hostToggle, active);
+  await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .query-group`), active),
+    { timeout: 15_000, timeoutMsg: "unfolding the query's bullet did not bring its results back" });
+  await browser.waitUntil(() => !/Open tasks"\}\}\}\n\s+collapsed:: true/.test(fs.readFileSync(queries, "utf8")), { timeout: 15_000, timeoutMsg: "the bullet unfold was not saved" });
+  phase = "rest, title rename, inline live results";
+  // One click on the title starts the rename with the caret in the field
+  // (GH #619 c6: WebView2 honoured `autofocus` once per document).
   await browser.$(`${active} .query-title`).click();
   await browser.$(`${active} .query-title-input`).waitForExist({ timeout: 10_000 });
-  await browser.$(`${active} .query-title-input`).click();
+  await browser.waitUntil(() => browser.execute(selector => document.activeElement === document.querySelector(`${selector} .query-title-input`), active),
+    { timeout: 5_000, timeoutMsg: "one click on the title did not put the caret in the rename field" });
   await browser.execute(selector => {
     const owner = document.querySelector(selector).closest(".ls-block");
     const samples = [];

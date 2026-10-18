@@ -1,4 +1,4 @@
-use std::fs::{self, File};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -36,13 +36,10 @@ fn graph(root: &Path, external_assets: Option<&Path>) -> Store {
 }
 
 fn input(path: &Path, area: Area, rel: &str) -> RestoreFile {
-    let source = File::open(path).unwrap();
-    let len = source.metadata().unwrap().len();
     RestoreFile {
         area,
         rel: rel.into(),
-        source,
-        len,
+        bytes: std::fs::read(path).unwrap(),
     }
 }
 

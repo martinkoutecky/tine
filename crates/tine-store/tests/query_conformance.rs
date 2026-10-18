@@ -673,6 +673,32 @@ fn the_page_anchor_returns_page_rows() {
     assert_eq!(page_names(&result).len(), 1, "{:?}", result.rows);
 }
 
+/// GH #619 c6: a `page` hop read from a page row is that row (the OG parser's
+/// `rebase_to_page`). The builder's page conditions (On page, In namespace,
+/// In a journal page) carry the hop at either anchor, and the Pages twin of a
+/// block query keeps it until printed, so the live run, the saved text and
+/// the printed twin must agree on the same pages.
+#[test]
+fn a_page_hop_from_a_page_row_is_the_row_itself() {
+    let _integration_guard = crate::integration_lock();
+    let fixture = truth_graph();
+    let (block, view) = parse_query_text(
+        "page.name like 'proj/%'",
+        QueryDialect::Tql,
+        JournalDate::today(),
+    );
+    assert!(!block.is_invalid(), "{:?}", block.diagnostics);
+    let at_page = Query {
+        anchor: Anchor::Page,
+        ..block
+    };
+    let live = run_ir(&fixture.graph, &at_page, &view, &ExecutionContext::none());
+    assert_eq!(page_names(&live), vec!["Proj/Sub"]);
+    let printed = tine_core::query::print::print_tql(&at_page);
+    let saved = run_text(&fixture.graph, &printed, QueryDialect::Tql);
+    assert_eq!(page_names(&saved), page_names(&live), "{printed}");
+}
+
 #[test]
 fn the_journal_page_attribute_is_a_page_row_leaf() {
     let _integration_guard = crate::integration_lock();

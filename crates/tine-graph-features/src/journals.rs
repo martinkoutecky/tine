@@ -24,6 +24,8 @@ pub struct FeedPage<T> {
     /// not be listed or read (one bad file never blocks the feed, I-22; the
     /// caller reports these, I-2). Empty in the common case.
     pub unreadable: Vec<String>,
+    /// File-backed days are usable; referenced-only days await the graph.
+    pub references_pending: bool,
 }
 
 /// What one feed row load found.
@@ -56,6 +58,7 @@ where
             done,
             as_of_day,
             unreadable: Vec::new(),
+            references_pending: false,
         });
     }
     let mut out = Vec::new();
@@ -84,6 +87,7 @@ where
         done,
         as_of_day,
         unreadable,
+        references_pending: false,
     })
 }
 
@@ -119,32 +123,69 @@ fn virtual_day(store: &Store, day: Day) -> FeedRead {
     }
 }
 
-/// Page the dated journal feed by day, including referenced fileless dates.
+/// Page file-backed journal days immediately, always leaving graph-wide
+/// additions pending for a separate completion request, even on a Ready graph.
 /// Unreadable files are skipped and named; store/index failures fail the read.
 /// Cost O((J + D) log(J + D) + R + returned page bytes), plus indexed alias
-/// lookups for date-shaped names. J is journal files, R indexed reference names,
+/// lookups for date-shaped names on completion. J is journal files, R indexed reference names,
 /// D referenced dates. No reference-content scan or graph file write.
 pub fn feed_page(
     store: &Store,
     limit: usize,
     before_day: Option<i64>,
 ) -> Result<FeedPage<FeedRead>, io::Error> {
+    feed_page_through(store, limit, before_day, None, false)
+}
+
+/// As [`feed_page`], extending the window through an already displayed day.
+/// Late referenced days can be inserted without dropping the visible suffix.
+/// `include_references` waits via the ordinary whole-graph read; false never
+/// consults the graph. Only returned journal bodies are read in either mode.
+pub fn feed_page_through(
+    store: &Store,
+    limit: usize,
+    before_day: Option<i64>,
+    through_day: Option<i64>,
+    include_references: bool,
+) -> Result<FeedPage<FeedRead>, io::Error> {
     let as_of_day = JournalDate::today().ordinal_key();
     let (entries, listing_unreadable) = feed_days_through(store, Day(as_of_day))?;
-    let referenced: std::collections::BTreeSet<_> = store
-        .whole_graph()
-        .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?
-        .inventory(tine_store::InventoryScope::ReferencedJournals)
-        .0
-        .iter()
-        .filter_map(|entry| entry.day)
-        .collect();
+    let graph = if include_references {
+        Some(
+            store
+                .whole_graph()
+                .map_err(|error| io::Error::other(format!("graph load failed: {error:?}")))?,
+        )
+    } else {
+        None
+    };
+    let referenced: std::collections::BTreeSet<_> = graph
+        .as_ref()
+        .map(|graph| {
+            graph
+                .inventory(tine_store::InventoryScope::ReferencedJournals)
+                .0
+                .iter()
+                .filter_map(|entry| entry.day)
+                .collect()
+        })
+        .unwrap_or_default();
     let mut days: BTreeMap<_, _> = entries.into_iter().collect();
     for day in referenced.iter().filter(|day| day.0 <= as_of_day) {
         days.entry(*day).or_insert_with(|| store.journal_id(*day));
     }
     let by_id: BTreeMap<_, _> = days.iter().map(|(day, id)| (id.clone(), *day)).collect();
-    let entries = days.into_iter().rev().collect();
+    let entries: Vec<_> = days.into_iter().rev().collect();
+    let limit = through_day.map_or(limit, |through| {
+        limit.max(
+            entries
+                .iter()
+                .filter(|(day, _)| {
+                    day.0 >= through && before_day.is_none_or(|before| day.0 < before)
+                })
+                .count(),
+        )
+    });
     let mut page = collect_feed_page(entries, limit, before_day, as_of_day, |id| {
         Ok(match store.page(id) {
             Ok(read) => Loaded::Page(feed_read(read)),
@@ -156,6 +197,7 @@ pub fn feed_page(
             Err(error) => Loaded::Unreadable(store_error(error).to_string()),
         })
     })?;
+    page.references_pending = graph.is_none();
     // The listing's own unreadable entries are reported with the first page
     // only, so a paged feed names each one once per load.
     if before_day.is_none() {
@@ -170,6 +212,10 @@ pub fn feed_page(
     }
     Ok(page)
 }
+
+#[cfg(test)]
+#[path = "journals_ready_tests.rs"]
+mod journals_ready_tests;
 
 #[cfg(test)]
 mod journal_feed_tests {

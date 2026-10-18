@@ -23,7 +23,9 @@ applyLiveResolution  # why: conflict dock applies a live-buffer resolution throu
 beginPageHeaderEdit
 bindHost  # why: graph open binds the page host client for the new working set; batch-og-s3b
 blockExternalId
+blockHasFoldableBody  # why: the bullet arrow, keyboard folds and setCollapsed share one answer to whether a block has a body to fold (children, a page embed, a query macro: OG collapsable?) (GH #619); batch-fix-gh619-query-oct18
 blockHasPageEmbed  # why: host disclosure and keyboard folds share parser-owned page-embed eligibility (GH #694); batch-embed-find
+blockHasQueryBody  # why: the bullet arrow folds a query host's results (OG custom-query* collapsable?) while margin comments stay out of the outline body, so Block asks for the query case apart from its outline children (GH #619); batch-og-gh619-query
 blockIsGridView
 blockPageReadOnly
 blockPositionRef  # why: a saved session names an ID-less zoomed block by position, so navigation never writes id:: (GH #623); batch-nav
