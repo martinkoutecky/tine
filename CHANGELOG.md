@@ -8,15 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
-### Fixed
-
-- A table, grid or board block that is the first block of a page and has its view set but no title yet is no longer rewritten as page properties when the page saves, so typing its title or adding rows no longer raises "Page-header properties must contain only valid key:: value lines" (often twice) or leaves the page unsaved. When that message is shown for a real page-properties block it now names the first line that is not a `key:: value` property (or says the block has child blocks), appears once however often you leave the editor, and is no longer shown for a block that is not the page's first block (GH #210). Choosing "Show children as: Outline" on such a block (which leaves its column-width settings behind) keeps it a block too, and setting an alias, icon or filter on that page no longer writes into the table block.
-- Repeatedly collapsing a block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) no longer stacks extra `collapsed:: true` lines or shows them as text; existing stacked lines are removed on the next collapse toggle (GH #721).
-
 ## [0.8.0-beta.5] - 2026-10-18
 
 ### Fixed
 
+- A table, grid or board block that is the first block of a page and has its view set but no title yet is no longer rewritten as page properties when the page saves, so typing its title or adding rows no longer raises "Page-header properties must contain only valid key:: value lines" (often twice) or leaves the page unsaved. When that message is shown for a real page-properties block it now names the first line that is not a `key:: value` property (or says the block has child blocks), appears once however often you leave the editor, and is no longer shown for a block that is not the page's first block (GH #210). Choosing "Show children as: Outline" on such a block (which leaves its column-width settings behind) keeps it a block too, and setting an alias, icon or filter on that page no longer writes into the table block.
+- Repeatedly collapsing a block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) no longer stacks extra `collapsed:: true` lines or shows them as text; existing stacked lines are removed on the next collapse toggle (GH #721).
 - Linux: middle-click pasting text selected in a block into a rich-text app (Tuta, Anki, ...) now pastes only the selection. Before, selecting the last line of a block (a one-line block, or Select All) also pasted the editor's own markup (`<div contenteditable="plaintext-only">`), the selection toolbar's button labels and the text of the blocks below (GH #530).
 - Queries: folding a query block's bullet now folds its results too, as in Logseq, also when the block has no children (GH #619).
 - Queries on Windows: one click on a query's title starts the rename with the caret in the field; before, every rename after the first needed a second click. The same fix applies to the other fields that open focused (query builder values, table and board cells, context menu search) (GH #619).
