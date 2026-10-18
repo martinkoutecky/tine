@@ -147,6 +147,14 @@ export function isPropertiesOnly(raw: string): boolean {
   return isPageHeaderPropertiesOnly(raw) && !pageHeaderKeys(raw).some((key) => BLOCK_SCOPED_PROPERTY_KEYS.includes(key));
 }
 
+/** Whether a first root renders as the page header. A marked root IS the preamble
+ * (`beginPageHeaderEdit`), so the draft rule decides, scoped keys included (`id::`,
+ * page-level `tine.table-widths::`); only an unmarked first bullet goes through
+ * `isPropertiesOnly`, which keeps block-scoped keys out of the header (GH #210 F4). */
+export function rendersAsPageHeader(raw: string, originatedFromPageHeader: boolean | undefined): boolean {
+  return originatedFromPageHeader ? isPageHeaderPropertiesOnly(raw.replace(/\n+$/, "")) : isPropertiesOnly(raw);
+}
+
 /** Whether the textarea caret is on a complete `key:: value` line. This is
  * deliberately line-local: an empty line after a run of page properties is the
  * double-Enter exit sentinel, not another property line. The line is lsdoc's accepted
