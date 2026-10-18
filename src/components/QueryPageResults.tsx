@@ -60,6 +60,10 @@ export function QueryPageResults(props: {
   onOpen: (hit: QueryPageHit) => void;
   /** Optional shared result gestures, supplied by the workspace owning navigation. */
   actions?: (hit: QueryPageHit) => JSX.ButtonHTMLAttributes<HTMLButtonElement>;
+  /** GH #619 item 8: list and search rows show the page's own properties as text under the
+   *  title. Only for rows the query engine answered, whose `row` carries every property; a
+   *  friendly-search row is hydrated for display columns only. */
+  showProperties?: boolean;
 }): JSX.Element {
   const link = (hit: QueryPageHit) => <button
     type="button"
@@ -67,6 +71,13 @@ export function QueryPageResults(props: {
     data-inpage-find-surface={props.surfaceId(hit)}
     {...(props.actions?.(hit) ?? { onClick: () => props.onOpen(hit) })}
   ><QueryPageResultContent hit={hit} /></button>;
+  const properties = (hit: QueryPageHit) => <Show when={props.showProperties && (hit.row?.properties.length ?? 0) > 0}>
+    <span class="query-page-props" data-selectable="text">
+      <For each={hit.row!.properties}>{([key, val]) => (
+        <span class="query-page-prop"><span class="query-page-prop-key">{key}:</span> {val}</span>
+      )}</For>
+    </span>
+  </Show>;
   // Group adjacent rows so authored sort order remains authoritative.
   const boardGroups = createMemo(() => {
     const field = props.view?.group_by;
@@ -103,12 +114,12 @@ export function QueryPageResults(props: {
     </Match>
     <Match when={props.presentation === "list"}>
       <ul class="query-results-list" aria-label={t("query-page-results-page-results")}>
-        <For each={props.hits}>{(hit) => <li data-page-key={pageHitKey(hit)}>{link(hit)}</li>}</For>
+        <For each={props.hits}>{(hit) => <li data-page-key={pageHitKey(hit)}>{link(hit)}{properties(hit)}</li>}</For>
       </ul>
     </Match>
     <Match when={props.presentation === "search"}>
       <div class="query-results-search" role="list" aria-label={t("query-page-results-page-results")}>
-        <For each={props.hits}>{(hit) => <div role="listitem" data-page-key={pageHitKey(hit)}>{link(hit)}</div>}</For>
+        <For each={props.hits}>{(hit) => <div role="listitem" data-page-key={pageHitKey(hit)}>{link(hit)}{properties(hit)}</div>}</For>
       </div>
     </Match>
   </Switch>;

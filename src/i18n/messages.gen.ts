@@ -1447,6 +1447,7 @@ export interface MessageArgs {
   "query-calm-all": {};
   "query-calm-apply": {};
   "query-calm-backlinks": {};
+  "query-calm-cancel": {};
   "query-calm-collapse": {};
   "query-calm-columns": {};
   "query-calm-condition": {};
@@ -1456,6 +1457,7 @@ export interface MessageArgs {
   "query-calm-date-comparison": {};
   "query-calm-done": {};
   "query-calm-edit": {};
+  "query-calm-edit-query": {};
   "query-calm-expand": {};
   "query-calm-export": {};
   "query-calm-fold-failed": {};

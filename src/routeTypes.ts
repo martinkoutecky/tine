@@ -24,6 +24,9 @@ export interface QueryRoute {
   blockDisplay?: QueryDisplayDraft;
   /** Omitted means the historical names/aliases-only page membership. */
   pageMatchScope?: FriendlyPageMatchScope;
+  /** A query opened from a block that asks for "Pages and blocks" shows both families; omitted
+   *  means the query's own anchor decides which one is shown (dsl workspaces only). */
+  resultKinds?: "pages-and-blocks";
 }
 
 /** One reader tab. viewId identifies the tab's view, while filename identifies

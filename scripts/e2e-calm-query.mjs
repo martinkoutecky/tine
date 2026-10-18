@@ -177,6 +177,19 @@ await session(1, async browser => {
   await action(browser, "Edit");
   await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .qc-panel .qs-sheet`) && !!document.querySelector(`${selector} .query-group`), active), { timeout: 15_000, timeoutMsg: "editor panel or results missing after rename" });
   await closeEditor(browser);
+  // GH #619 (D-20261018-Q619 Q1/Q3): the pencil beside the details menu opens the same editor, and
+  // Done sits at the trailing end under the conditions rather than over their top corner.
+  await browser.$(`${active} .qc-edit`).click();
+  await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .qc-panel .qs-sheet`), active),
+    { timeout: 15_000, timeoutMsg: "the Edit button did not open the inline editor" });
+  const donePlace = await browser.execute(selector => {
+    const panel = document.querySelector(`${selector} .qc-panel`).getBoundingClientRect();
+    const sheet = document.querySelector(`${selector} .qc-panel .qs-sheet`).getBoundingClientRect();
+    const done = document.querySelector(`${selector} .qc-panel .qc-done`).getBoundingClientRect();
+    return { belowSheet: done.top >= sheet.bottom - 1, trailing: panel.right - done.right < 40 };
+  }, active);
+  assert.deepEqual(donePlace, { belowSheet: true, trailing: true }, "Done sits bottom-right of the query editor");
+  await closeEditor(browser);
   await textEdit(browser, "@block and task = 'TODO' and priority = 'A'");
   await browser.waitUntil(() => browser.execute(() => {
     const query = [...document.querySelectorAll(".page-blocks .query-block")].find(block => block.querySelector(".query-title")?.textContent?.trim() === "Calm tasks");

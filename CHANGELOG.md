@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Edit button on query blocks**: a pencil beside the details menu opens the inline query editor. It shows on hover and focus, and is always visible, finger-sized, on touch screens. In the editor, **Done** sits at the bottom right, and the query-text pane ends with **Save query text** with **Cancel** (unsaved text) or **Done** just left of it (GH #619).
 - **Toggle code block wrap**: a bindable command switches the device-wide code wrapping preference and keeps your reading position in main, split and sidebar panes (GH #453).
 - **Share dialog**: a share icon in the top bar, beside a page title, in a page's menus and on every query block opens **Share**. Choose **This page** or a query built with the query builder, review the pages that will be shared (and the ones left out: `public:: false` pages and the Exports page), optionally include the query text, and export to a folder. The export is saved as a definition (a query block with `export:: <folder>`) on an **Exports** page that Tine creates on first use, or on the query block you started from, so it can be repeated. Links and "this page and its neighbours" are shown as coming next.
 - **Export definitions follow page renames**: a query block carrying `export::` or `tine.share::` that selects a page with `{{tine-query @page and name = 'Project'}}` keeps selecting it after the page is renamed (namespace pages included), so a new page with the old name is never exported in its place. The selector also exports a page with no blocks. Other query blocks keep Logseq's rename behaviour (`docs/contracts/export-definitions.md`).
@@ -20,12 +21,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- **Open in Search** keeps the query's view: a List, Table or Board with its display choices, and **Pages and blocks** (Pages above Blocks) reach the Search tab as they were in the block, and saving from there writes the choice back (GH #619).
+- Nested groups in the query builder stand out by a heavier rail and a divider, not deeper indentation, and a query whose top level is **Any of** shows that connective (GH #619).
 - **Pages tagged with** on a page now also lists pages tagged with any of its aliases, the same names Linked References treat as that page. The alias you wrote stays as written, and `{{query (page-tags …)}}` still matches names literally, as in Logseq (GH #715).
 - Launch backups are now one `.zip` per snapshot instead of a folder of about a thousand files, and a launch where nothing changed writes nothing (on a 1,075-page graph: 1 file and 4 syncs instead of 1,076 files and 1,083 syncs). Any archive tool opens a snapshot without Tine; Settings → **Backups & recovery** marks a damaged snapshot, or one from a newer Tine, and offers no restore for it. Older snapshot folders stay listed and restorable.
 - A launch that has to build the reference indexes from scratch (no launch checkpoint) is about twice as fast on large graphs, with no extra memory: on a generated 10,000-page graph 2.2 s → 1.0 s, and on a 1-million-block graph 5.2 s → 2.0 s (busy machine). Launching right after many files were written, such as after a sync or a bulk import, no longer does a check whose cost grew with the square of the number of files (GJ5).
 
 ### Fixed
 
+- Page results in Search and List show each page's properties as text under its title again, in query blocks and in the Search tab (they had been dropped by a declutter pass) (GH #619).
 - On iOS, a back swipe now slides the page fully off to the right before the previous page appears, like the native back gesture, instead of stopping partway (GH #501).
 - Journals shows today's body and nearby saved days while the graph loads, then merges referenced days without losing an open editor or your place (GF4).
 

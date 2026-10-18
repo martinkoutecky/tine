@@ -8819,6 +8819,23 @@ html.tine-embed-shading-accent .embed-block {
   border: 0;
   background: transparent;
 }
+/* GH #619 item 8: the page's properties, plain selectable text under its title. */
+.query-page-props {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  padding: 0 10px 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.query-page-prop-key {
+  color: var(--text-muted);
+}
 .query-grouping-clear {
   margin-left: 8px;
 }
