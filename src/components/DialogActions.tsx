@@ -7,7 +7,10 @@ import { Show, type JSX } from "solid-js";
  * then Cancel, then the primary action at the trailing end. A caller names which
  * slot a button belongs to; it cannot place it. DOM order equals visual order
  * (no `row-reverse` / `order`, which `dialogActions.guard.test.ts` enforces), so
- * a future per-platform flip is one rule in `.dialog-actions`.
+ * a future per-platform flip is one rule in `.dialog-actions`. Cancel and the
+ * primary action form one non-wrapping group (`.dialog-actions-main`): in a
+ * narrow dialog the auxiliary actions wrap above it, Cancel never drops onto a
+ * row of its own (`scripts/shot-action-placement-layout.mjs` asserts this).
  *
  * Unlike actions are never paired: a destructive or unrelated action does not
  * sit beside Cancel/primary; give it the `aux` slot (leading end) or a separate
@@ -28,8 +31,10 @@ export function DialogActions(props: {
       <Show when={props.aux}>
         <span class="dialog-actions-aux">{props.aux}</span>
       </Show>
-      {props.cancel}
-      {props.primary}
+      <span class="dialog-actions-main">
+        {props.cancel}
+        {props.primary}
+      </span>
     </div>
   );
 }

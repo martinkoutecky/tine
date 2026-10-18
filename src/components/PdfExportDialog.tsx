@@ -7,7 +7,7 @@ import { pdfExportPage, closePdfExport } from "../ui";
 import { exportPagePdf, DEFAULT_PRINT_OPTS } from "../print";
 import type { PrintOpts } from "../types";
 import { registerTransientLayer } from "../transientLayers";
-import { activeWindow, listen } from "../windowRealm";
+import { activeWindow, isElementNode, listen } from "../windowRealm";
 
 // Deferred catalog messages; property getters resolve in the consuming computation.
 const UI_MESSAGES = {
@@ -91,7 +91,9 @@ function Dialog(props: { name: string }): JSX.Element {
 
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Enter") {
+      // Enter on a focused button activates that button (Cancel must cancel); the
+      // shortcut only applies when focus is elsewhere in the dialog.
+      if (e.key === "Enter" && !(isElementNode(e.target) && e.target.closest("button"))) {
         e.preventDefault();
         doExport();
       }

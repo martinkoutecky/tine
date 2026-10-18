@@ -1774,6 +1774,14 @@ html[data-system-insets="native-viewport"] {
 .dialog-actions-aux:empty {
   display: none;
 }
+/* Cancel + the primary action never separate: when the row is too narrow for
+   everything, the auxiliary group wraps above this one (D-20261018-UI1). */
+.dialog-actions-main {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
 .export-btn-secondary,
 .export-btn-primary {
   padding: 5px 16px;
@@ -5202,9 +5210,11 @@ body.file-drop-active::after {
   gap: 6px;
   margin-top: 8px;
 }
-.dp-foot .dialog-actions-aux {
+.dp-foot .dialog-actions-aux,
+.dp-foot .dialog-actions-main {
   flex: 1;
   margin-right: 0;
+  gap: 6px;
 }
 .dp-btn {
   flex: 1;

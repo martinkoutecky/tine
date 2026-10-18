@@ -33,6 +33,17 @@ it("keeps a per-dialog class for sizing without taking over the order", () => {
   const host = mount(() => <DialogActions class="share-foot" cancel={<button>Cancel</button>} primary={<button>Export</button>} />);
   const row = host.querySelector(".dialog-actions")!;
   expect(row.classList.contains("share-foot")).toBe(true);
-  expect(row.lastElementChild!.textContent).toBe("Export");
-  expect(row.firstElementChild!.textContent).toBe("Cancel");
+  const main = row.querySelector(".dialog-actions-main")!;
+  expect(row.lastElementChild).toBe(main);
+  expect(main.lastElementChild!.textContent).toBe("Export");
+  expect(main.firstElementChild!.textContent).toBe("Cancel");
+});
+
+it("keeps Cancel and the primary action in one group, so they can never wrap apart", () => {
+  const host = mount(() => (
+    <DialogActions aux={<button>Reload</button>} cancel={<button>Cancel</button>} primary={<button>Save</button>} />
+  ));
+  const main = host.querySelector(".dialog-actions-main")!;
+  expect([...main.children].map((b) => b.textContent)).toEqual(["Cancel", "Save"]);
+  expect(main.previousElementSibling!.className).toBe("dialog-actions-aux");
 });

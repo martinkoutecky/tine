@@ -4,6 +4,7 @@ import { backend } from "../backend";
 import { CssEditor } from "./CssEditor";
 import { openCssEditor, closeCssEditor, setCssEditorText, flushCssEditor, cssEditorText, cssEditorProblem, checkCssEditorDisk, retireGraphCssEditor } from "../cssEditor";
 import { installBackgroundFlush } from "../backgroundFlush";
+import { dismissTopTransient } from "../transientLayers";
 
 afterEach(async () => {
   retireGraphCssEditor();
@@ -151,14 +152,34 @@ describe("CSS editor action placement (D-20261018-UI2b)", () => {
     dispose();
   });
 
-  it("confirmed Cancel discards the edits without saving and drops the recovery draft", async () => {
+  it("confirmed Cancel discards the edits without saving and drops a recovery draft that was really written", async () => {
     const { root, dispose, type, button, save, storage } = await mount();
     vi.spyOn(backend(), "confirm").mockResolvedValue(true);
     type("changed");
+    // A failed save leaves a dirty recovery capsule behind (this is what Cancel must clean up).
+    save.mockRejectedValueOnce(new Error("conflict"));
+    expect(await flushCssEditor()).toBe(false);
+    expect([...storage.values()].some((value) => value.includes("changed")), "the capsule is seeded").toBe(true);
     button("Cancel").click();
     await vi.waitFor(() => expect(root.querySelector(".modal-overlay")).toBeNull());
-    expect(save).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledTimes(1); // only the failed attempt; Cancel never writes the file
     expect([...storage.values()].some((value) => value.includes("changed"))).toBe(false);
+    dispose();
+  });
+
+  it("Esc behaves like Cancel: it asks when edits are unsaved, and closes a clean editor without asking", async () => {
+    const { root, dispose, type, save } = await mount();
+    const ask = vi.spyOn(backend(), "confirm").mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    type("changed");
+    expect(dismissTopTransient("escape")).toBe(true);
+    await vi.waitFor(() => expect(ask).toHaveBeenCalledOnce());
+    expect(ask.mock.calls[0][1]).toMatchObject({ okLabel: "Discard changes", cancelLabel: "Keep editing" });
+    await Promise.resolve();
+    expect(root.querySelector(".modal-overlay"), "declining keeps the editor open").not.toBeNull();
+    expect(dismissTopTransient("escape")).toBe(true);
+    await vi.waitFor(() => expect(root.querySelector(".modal-overlay")).toBeNull());
+    expect(ask).toHaveBeenCalledTimes(2);
+    expect(save).not.toHaveBeenCalled();
     dispose();
   });
 

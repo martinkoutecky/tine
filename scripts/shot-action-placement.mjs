@@ -4,7 +4,9 @@
 // ([Reload][Save] ... [Cancel][Save & close]) and the two disk-vs-mine bars
 // ([Keep mine][Use disk version]); desktop and phone width.
 // The bars are not reachable in the mock, so their markup is injected with the
-// components' own class names (DOM order is pinned by DiskOrMineChoice.test.tsx).
+// components' own class names (DOM order is pinned by DiskOrMineChoice.test.tsx;
+// the wrapping behaviour of the real DialogActions is asserted by
+// scripts/shot-action-placement-layout.mjs).
 // Usage: npm run build && node scripts/shot-action-placement.mjs   (needs scripts/env.sh for Chromium)
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
@@ -84,7 +86,7 @@ try {
           style="flex-direction:column;padding:20px;gap:12px"><h2 style="margin:0">logseq/custom.css</h2>
           <textarea style="width:100%;min-height:25vh;font-family:monospace;flex:1;box-sizing:border-box">:root { --x: 1 }</textarea>
           <div class="dialog-actions"><span class="dialog-actions-aux"><button class="settings-btn">Reload</button><button class="settings-btn">Save</button></span>
-            <button class="settings-btn">Cancel</button><button class="settings-btn settings-btn-primary">Save &amp; close</button></div></div></div>`);
+            <span class="dialog-actions-main"><button class="settings-btn">Cancel</button><button class="settings-btn settings-btn-primary">Save &amp; close</button></span></div></div></div>`);
     });
     await shotBox(page, '#shot-css .settings-modal', `${tag}-css-editor`, 6);
     await page.close();
