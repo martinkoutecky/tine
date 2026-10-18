@@ -312,6 +312,27 @@ fn trailing_builtin_rows_swallowed_by_a_final_quote_stay_owned() {
     assert!(r.id.is_some());
 }
 
+/// GH #721 review B1: the kernel must never claim an identity the parser (and
+/// therefore the backend uuid index, which reads the lsdoc Properties facet)
+/// does not see. lsdoc folds an uppercase `ID::` row after a final quote into
+/// the quote; were the kernel to claim it, Copy block ref would reuse that id
+/// without writing a parser-accepted row and the `((uuid))` would not resolve.
+#[test]
+fn a_swallowed_row_never_becomes_a_frontend_only_block_id() {
+    let uuid = "6a1b0000-0000-4000-8000-000000000001";
+    for raw in [
+        format!("Intro\n> quoted\nID:: {uuid}"),
+        format!("> quoted\nId:: {uuid}"),
+        format!("> quoted\ncollapsed:: true\nID:: {uuid}"),
+        format!("> quoted\nid:: {uuid}"),
+        format!("> quoted\ncollapsed:: true\nid:: {uuid}"),
+    ] {
+        let kernel = parse(&raw, false).id.map(|p| p.value);
+        let facet = tine_core::DocBlock::new(raw.clone()).property("id");
+        assert_eq!(kernel, facet, "{raw:?}");
+    }
+}
+
 #[test]
 fn swallowed_rows_leave_the_render_ast_but_not_quoted_text() {
     use lsdoc::ast::{Block, Inline};

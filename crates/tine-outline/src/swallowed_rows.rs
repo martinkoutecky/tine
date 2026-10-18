@@ -10,8 +10,8 @@ use lsdoc::ast::{Block, Inline};
 /// "quote text" and no property node. OG nevertheless hides, replaces and
 /// removes such a line by text (`property/remove-built-in-properties`,
 /// `remove-property`), so the kernel must own it too, or every collapse toggle
-/// appends another row and the rows render as text. Only the hidden built-ins
-/// (`id`, `collapsed`, `logseq.order-list-type`) qualify, only as the trailing
+/// appends another row and the rows render as text. Only [`SWALLOWED_KEYS`]
+/// qualify, only as the trailing
 /// unquoted rows of the block's last quote (a `>` line stops the scan, so quoted
 /// content is never touched), and only when nothing but accepted property nodes
 /// follows the quote. O(bytes of those trailing rows).
@@ -28,6 +28,15 @@ pub(crate) fn add_regions(raw: &str, blocks: &[Block], out: &mut BlockRegions) {
     out.properties.extend(found);
     out.properties.sort_by_key(|p| p.line.0);
 }
+
+/// The hidden built-ins the kernel claims after a final quote. Not `id`
+/// (GH #721 review B1): mldoc ends a quote at any `id:: ` row
+/// case-insensitively, lsdoc only at lowercase, so a swallowed `ID::` row is
+/// one lsdoc's Properties facet (the backend uuid index) does not see;
+/// claiming it would give the block a frontend-only identity, and Copy block
+/// ref would hand out an unresolvable `((uuid))`. A lowercase `id::` row is a
+/// Properties node already and needs no claim.
+const SWALLOWED_KEYS: [&str; 2] = ["collapsed", "logseq.order-list-type"];
 
 /// The swallowed rows of [`add_regions`], in source order
 /// (`region` unset).
@@ -58,9 +67,7 @@ fn rows(raw: &str, blocks: &[Block]) -> Vec<Property> {
         }
         let row = s.split_once("::").filter(|(key, value)| {
             (value.is_empty() || value.starts_with(' '))
-                && crate::editor_text::BUILTIN_HIDDEN
-                    .iter()
-                    .any(|k| k.eq_ignore_ascii_case(key))
+                && SWALLOWED_KEYS.iter().any(|k| k.eq_ignore_ascii_case(key))
         });
         let Some((key, value)) = row else {
             // The first ordinary row above the swallowed ones ends the run.
@@ -113,7 +120,7 @@ pub fn strip_swallowed_rows(raw: &str, blocks: &mut [Block]) {
     };
     let is_row = |i: &Inline| match i {
         Inline::Plain { text, .. } => text.split_once("::").is_some_and(|(key, _)| {
-            crate::editor_text::BUILTIN_HIDDEN
+            SWALLOWED_KEYS
                 .iter()
                 .any(|k| k.eq_ignore_ascii_case(key.trim()))
         }),
@@ -127,5 +134,27 @@ pub fn strip_swallowed_rows(raw: &str, blocks: &mut [Block]) {
             .all(|pair| is_row(&pair[0]) && matches!(pair.get(1), Some(Inline::Break { .. })));
     if shaped {
         inline.truncate(at);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// GH #721 review B1: an uppercase `ID::` row lsdoc folds into a quote is
+    /// never claimed (lsdoc's facets do not see it as an id).
+    #[test]
+    fn a_swallowed_id_row_is_not_claimed() {
+        for raw in [
+            "> a\nID:: x",
+            "> a\nId:: x",
+            "> a\ncollapsed:: true\nID:: x",
+        ] {
+            let blocks = crate::render::parse_block(raw, false);
+            assert!(rows(raw, &blocks).is_empty(), "{raw:?}");
+        }
+        let raw = "> a\ncollapsed:: true";
+        let blocks = crate::render::parse_block(raw, false);
+        assert_eq!(rows(raw, &blocks).len(), 1);
     }
 }
