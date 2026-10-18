@@ -47,7 +47,7 @@ Tine 是一款大纲笔记软件，外观和操作体验与 [Logseq](https://log
 
 - **Linux** —— **AppImage** 无需安装，可在任何发行版上运行：先执行 `chmod +x Tine_*.AppImage`，然后启动它。也可使用 **`.deb`**（Debian/Ubuntu）或 **`.rpm`**（Fedora/openSUSE）。
 - **macOS** —— 打开 **`.dmg`**；首次启动时 macOS 会提示“*身份不明的开发者*”，请**右键点按应用 → 打开**（仅需一次），之后即可正常打开。若 Tine 随后**每次启动都反复请求访问“文稿”文件夹**，请参阅下方的[解决办法](#macos-repeated-documents-permission-prompt)。
-- **Windows** —— 运行 **`.exe`** 安装程序；如果出现 SmartScreen 提示，请点击**更多信息 → 仍要运行**。若不想安装，也可以下载便携版 **`Tine_*_x64-portable.zip`**，解压后直接运行 `Tine.exe`。Tine 需要 WebView2 运行时，而 Windows 10/11 已预装该运行时。
+- **Windows** —— 运行 **`.exe`** 安装程序；如果出现 SmartScreen 提示，请点击**更多信息 → 仍要运行**。若不想安装，也可以下载便携版 **`Tine_*_x64-portable.zip`**，解压后直接运行 `Tine.exe`。Tine 需要 WebView2 运行时，而 Windows 10/11 已预装该运行时。便携版把设置和 WebView2 数据保存在 `Tine.exe` 旁边的 `tine-data` 文件夹中，而不是 AppData，因此可以从 U 盘运行；更新时请退出 Tine，再把新版本解压到同一文件夹。
 
 （想参与 Tine 开发？请从源码构建——参见[构建与运行](#build--run)。）
 

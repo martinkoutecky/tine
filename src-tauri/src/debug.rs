@@ -21,10 +21,18 @@ pub(crate) fn debug_enabled() -> bool {
         || std::env::args().any(|a| a == "--debug")
 }
 
+/// `TINE_DEBUG_LOG`, else `tine-debug.log` in the portable logs folder
+/// (GH #719: nothing on the host) or the temp folder.
 fn debug_log_path() -> PathBuf {
-    std::env::var_os("TINE_DEBUG_LOG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("tine-debug.log"))
+    if let Some(path) = std::env::var_os("TINE_DEBUG_LOG") {
+        return PathBuf::from(path);
+    }
+    if let Some(portable) = crate::portable::dirs() {
+        let logs = portable.logs();
+        let _ = std::fs::create_dir_all(&logs);
+        return logs.join("tine-debug.log");
+    }
+    std::env::temp_dir().join("tine-debug.log")
 }
 
 /// Open (truncating) the debug log once, so each run is a clean trace. No-op when

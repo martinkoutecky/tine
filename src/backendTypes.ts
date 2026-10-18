@@ -59,6 +59,10 @@ export interface GpuEnv {
    *  updater offers a manual download there. */
   flatpak: boolean;
   packaged: boolean | null;
+  /** A portable Windows instance (`tine-data` beside the exe, GH #719): the
+   *  updater's installer would add a second, installed copy, so it updates by
+   *  download. Absent from an older backend. */
+  portable?: boolean;
 }
 
 export interface BackupInfo {

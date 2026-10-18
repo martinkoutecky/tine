@@ -42,7 +42,10 @@ async function loadUpdate(opts: {
   const appArchitectureMock = vi.fn(async () => opts.architecture ?? "x86_64");
   const gpuEnvMock = vi.fn(async () => {
     if (opts.packagingReject) throw new Error("package probe unavailable");
-    return { software_forced: false, appimage: false, flatpak: opts.packaging === "flatpak", packaged: opts.packaging === "msix" };
+    return {
+      software_forced: false, appimage: false, flatpak: opts.packaging === "flatpak", packaged: opts.packaging === "msix",
+      portable: opts.packaging === "portable",
+    };
   });
   const getVersionMock = vi.fn(async () => opts.version ?? "0.5.3");
   const updaterCheckMock = opts.updaterReject
@@ -530,6 +533,28 @@ describe("update checks", () => {
     // Only the version check ran: nothing downloaded, installed or relaunched, nothing failed.
     expect(updaterCheckMock).toHaveBeenCalledOnce();
     expect(toastCalls(pushToastMock).some(([, kind]) => kind === "error")).toBe(false);
+    expect(diagnosticFrontendEventMock).not.toHaveBeenCalledWith("updater_failure", expect.anything());
+  });
+
+  it("a portable Windows build never runs the installer: it offers the new ZIP, not Install update (GH #719)", async () => {
+    mockLatest("v0.6.0-beta.1");
+    const { update, pushToastMock, updaterCheckMock, openExternalMock, relaunchMock, diagnosticFrontendEventMock } =
+      await loadUpdate({ platform: "desktop", packaging: "portable", version: "0.5.3" });
+
+    await expect(update.checkForUpdateNow()).resolves.toMatchObject({ kind: "available", manual: true });
+    const offer = toastCalls(pushToastMock).find(([message]) => message.includes("0.6.0-beta.1 is available"));
+    expect(offer?.[0]).toContain("portable ZIP");
+    expect(offer?.[2]).toMatchObject({ sticky: true, action: { label: "Download manually" } });
+    expect(toastCalls(pushToastMock).some(([, , options]) => options?.action?.label === "Install update")).toBe(false);
+
+    offer?.[2]?.action?.run();
+    expect(openExternalMock).toHaveBeenCalledExactlyOnceWith("https://github.com/martinkoutecky/tine/releases/tag/v0.6.0-beta.1");
+    // A stale Install update action refuses too: the installer would add an
+    // installed copy under the host's per-user folders.
+    await update.installUpdateForTest("0.6.0-beta.1");
+    expect(updaterCheckMock, "only the version check ran").toHaveBeenCalledOnce();
+    expect(relaunchMock).not.toHaveBeenCalled();
+    expect(openExternalMock).toHaveBeenCalledTimes(2);
     expect(diagnosticFrontendEventMock).not.toHaveBeenCalledWith("updater_failure", expect.anything());
   });
 

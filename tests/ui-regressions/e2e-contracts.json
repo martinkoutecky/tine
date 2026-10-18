@@ -672,6 +672,12 @@
       "nonRequirements": ["Exact titlebar palette, DPI-scaled geometry, or startup animation."],
       "stability":"burn-in"
     },
+    "scripts/e2e-windows-portable.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "A portable Windows Tine (tine-data beside the exe) keeps its settings, diagnostics and WebView2 data in that folder and creates or changes nothing under the host's %APPDATA% or %LOCALAPPDATA% folder for its identity (GH #719).", "blocking": false, "authority": "GH #719 (portable apps leave no data on the host); src-tauri/src/portable.rs layout and docs/app-identity.md." }],
+      "acceptableVariations": ["Which files appear inside tine-data, and WebView2 startup timing."],
+      "nonRequirements": ["Writes Windows itself makes (Prefetch, shell MRU and notification-area registry, Defender caches), and %TEMP%."],
+      "stability":"burn-in"
+    },
     "scripts/probe-formula-builder.mjs": {
       "contracts": [{ "class": "stateful-ux", "userOutcome": "Formula value pickers dismiss an active child before their editor without changing the formula draft.", "blocking": true }],
       "acceptableVariations": ["Picker layout and formula-editor presentation may evolve while dismissal ownership remains correct."],

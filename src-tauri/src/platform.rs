@@ -798,6 +798,9 @@ pub(crate) struct GpuEnv {
     appimage: bool,
     flatpak: bool,
     packaged: Option<bool>,
+    /// A portable Windows instance (GH #719): it updates by download, since the
+    /// updater's installer would install a second, per-user copy.
+    portable: bool,
 }
 
 /// Package identity is a runtime property, shared by Store and sideloaded MSIX.
@@ -847,6 +850,7 @@ pub(crate) fn gpu_env() -> GpuEnv {
             set("FLATPAK_ID"),
             std::path::Path::new("/.flatpak-info").exists(),
         ),
+        portable: crate::portable::active(),
     }
 }
 

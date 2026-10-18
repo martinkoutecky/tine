@@ -54,6 +54,7 @@ mod page_commands;
 mod pdf_crop_rollback;
 mod platform;
 mod plugins;
+mod portable;
 #[path = "commands/query_export.rs"]
 mod query_export;
 #[path = "commands/query_ir.rs"]
@@ -704,6 +705,9 @@ pub fn run() {
     let native_frame_active = settings::init_native_frame_active();
     let force_mobile_drawers = force_mobile_drawers_e2e();
     let mut context = tauri::generate_context!();
+    // GH #719: a portable Windows instance keeps every app directory, and so
+    // the WebView2 user data, in `tine-data` beside the exe (portable.rs).
+    portable::apply(context.config_mut());
     #[cfg(target_os = "windows")]
     {
         let automation_enabled = std::env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() == Ok("true");

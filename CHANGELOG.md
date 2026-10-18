@@ -10,6 +10,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Windows portable: the portable ZIP now keeps Tine's settings, sessions, backups, plugins, diagnostics and WebView2 data in a `tine-data` folder next to `Tine.exe` instead of in `%APPDATA%` and `%LOCALAPPDATA%`, so Tine runs from a USB drive without leaving app data on the computer (GH #719). It is the `tine-data` folder in the ZIP that makes Tine portable; the installer and the Microsoft Store app are unchanged. A portable Tine offers new versions as a download instead of running the installer, which would have added an installed copy. Earlier portable runs left their settings in AppData; Tine does not move or delete them, and `tine-data\README.txt` says how to copy them over. If the `tine-data` folder cannot be written, Tine uses AppData for that session and says so.
+
 - Queries: folding a query block's bullet now folds its results too, as in Logseq, also when the block has no children (GH #619).
 - Queries on Windows: one click on a query's title starts the rename with the caret in the field; before, every rename after the first needed a second click. The same fix applies to the other fields that open focused (query builder values, table and board cells, context menu search) (GH #619).
 - Queries: the options in **Find blocks ▾** and the other builder menus stay on one line instead of wrapping word by word, and a menu opened in one query is no longer drawn under the query below it (GH #619).

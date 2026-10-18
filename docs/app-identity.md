@@ -179,6 +179,29 @@ opens a page and toggles the theme. It then checks three things:
 
 On the pre-change og build the first check fails (Welcome, default theme).
 
+## Portable Windows (GH #719)
+
+A Windows exe with a `tine-data` folder beside it is portable
+(`src-tauri/src/portable.rs`); the portable ZIP ships that folder, the NSIS
+installer and MSIX never do. Its state is keyed by the identifier like an
+installed build's, one level down, so a stable and a Beta exe in one folder
+stay separate:
+
+| Installed | Portable |
+| --- | --- |
+| `%APPDATA%\<identifier>` (config, data) | `tine-data\<identifier>\roaming` |
+| `%LOCALAPPDATA%\<identifier>` (local data, cache, WebView2 `EBWebView`) | `tine-data\<identifier>\local` |
+| `%LOCALAPPDATA%\<identifier>\logs` | `tine-data\<identifier>\local\logs` (also the default `--debug` log) |
+
+The layout goes to Tauri's `app > appDirectoriesOverride` before the Builder,
+so every `app.path().app_*_dir()` and the WebView2 user-data folder follow it;
+`app_identity::current_app_data_dir()` asks `portable::dirs()` first. The
+identifier migration and the Beta config seed do nothing when portable (they
+read or write the host's per-user folders). A portable build updates by
+download (`gpu_env().portable`), because the updater's NSIS installer would add
+an installed copy. `host_folder_lookups_go_through_the_portable_owner` pins
+every other host-folder lookup in `src-tauri/src`.
+
 ## Open items
 
 - **Concord ledger namespace.** og and master share `concord-ledger/<root>/`

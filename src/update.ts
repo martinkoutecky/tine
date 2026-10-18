@@ -102,20 +102,24 @@ async function updateMode(installer = false): Promise<UpdateMode> {
   }
   if (resolvePackagedUpdateMode(await isMsixPackaged(), installer) === "unavailable") return "unavailable";
   // A Flatpak's /app is read-only: the in-place install can only fail, so it
-  // updates by downloading the new bundle.
-  return (await isFlatpak()) ? "manual" : "self";
+  // updates by downloading the new bundle. A portable Windows instance would
+  // get a second, installed copy from the installer (GH #719).
+  return (await updatePackaging()) === "in-place" ? "self" : "manual";
 }
 
-/** Whether this binary runs inside a Flatpak sandbox (decided in Rust:
- * `gpu_env().flatpak`). An unanswerable probe counts as "no": a browser/mock
- * boundary keeps the established offer. */
-async function isFlatpak(): Promise<boolean> {
+/** How this desktop build updates (decided in Rust: `gpu_env().flatpak`,
+ * `gpu_env().portable`): by download for a Flatpak or a portable Windows
+ * instance, else in place. An unanswerable probe counts as "in place": a
+ * browser/mock boundary keeps the established offer. */
+async function updatePackaging(): Promise<"flatpak" | "portable" | "in-place"> {
   try {
     const env = await readOwned(ownedWhen(), backend().gpuEnv());
-    return env.kind === "current" && env.value.flatpak === true;
+    if (env.kind !== "current") return "in-place";
+    if (env.value.flatpak === true) return "flatpak";
+    return env.value.portable === true ? "portable" : "in-place";
   } catch (error) {
     dbg(`update packaging probe failed: ${String(error)}`);
-    return false;
+    return "in-place";
   }
 }
 
@@ -251,6 +255,16 @@ function offerManualOnly(version: string): number {
 function offerFlatpakManual(version: string): number {
   return pushToast(
     msg("update-is-available-the-flatpak-cannot-update", { product: APP_PRODUCT_NAME, version: version }),
+    "info",
+    { sticky: true, action: { label: msg("update-download-manually"), run: () => openReleases(version) } },
+  );
+}
+
+/** The portable build's offer (GH #719): a policy, not a failure, so no
+ * diagnostic. The new ZIP is extracted over the old one, keeping `tine-data`. */
+function offerPortableManual(version: string): number {
+  return pushToast(
+    msg("update-is-available-the-portable-build-cannot-update", { product: APP_PRODUCT_NAME, version: version }),
     "info",
     { sticky: true, action: { label: msg("update-download-manually"), run: () => openReleases(version) } },
   );
@@ -395,16 +409,20 @@ let offerGeneration = 0;
 export async function offerUpdate(version: string, current: string, live: () => boolean = () => true): Promise<{ manual: boolean }> {
   const generation = ++offerGeneration;
   const manualOnly = await isManualOnlyBuild();
-  const flatpak = manualOnly ? false : await isFlatpak();
-  const manual = manualOnly || flatpak;
+  const packaging = manualOnly ? "in-place" : await updatePackaging();
+  const manual = manualOnly || packaging !== "in-place";
   if (generation !== offerGeneration || !live()) return { manual };
   if (offeredUpdateToastId !== null) dismissToast(offeredUpdateToastId);
   if (manualOnly) {
     offeredUpdateToastId = offerManualOnly(version);
     return { manual };
   }
-  if (flatpak) {
+  if (packaging === "flatpak") {
     offeredUpdateToastId = offerFlatpakManual(version);
+    return { manual };
+  }
+  if (packaging === "portable") {
+    offeredUpdateToastId = offerPortableManual(version);
     return { manual };
   }
   offeredUpdateToastId = pushToast(
