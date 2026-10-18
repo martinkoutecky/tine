@@ -5,7 +5,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { initParser } from "../../render/parse";
 import { clearSeededFacets } from "../../render/facets";
-import { finishPageHeaderEdit, flushPage, insertEmptyChildBlock, markDirty, resetStore, setRaw, splitBlock } from "..";
+import { beginPageHeaderEdit, finishPageHeaderEdit, flushPage, insertEmptyChildBlock, markDirty, readPageProperties, resetStore, setBlockProperty, setPageProperty, setRaw, splitBlock } from "..";
 import { doc } from "../model";
 import { loadSingle } from "../workingSet";
 import { pageToDto } from "../convert";
@@ -59,7 +59,10 @@ describe("GH #210: a block that is not the page header never raises the header t
     expect(writes.at(-1)!.blocks[0].children).toHaveLength(1);
   });
 
-  it("a block the header was pushed below is no longer the header: no toast, and its text saves", async () => {
+  // The in-memory host here has no storage firewall. In the app the store refuses
+  // to save such a page ("refusing to move page-header property into outline
+  // content", GH #163): that refusal is a separate follow-up (F1), not this toast.
+  it("a block the header was pushed below is no longer the header: leaving it raises no header toast", async () => {
     const { writes } = await openJournal([block("h1", "alias:: book")]);
     expect(await flushPage(NAME)).toBe(true);
     expect(writes[0].pre_block).toBe("alias:: book"); // the fold adopted h1 as the live header
@@ -71,6 +74,110 @@ describe("GH #210: a block that is not the page header never raises the header t
     setRaw("h1", "alias:: book\nmore text");
     finishPageHeaderEdit("h1");
     expect(headerToasts()).toEqual([]);
+  });
+});
+
+const TABLE = "tine.view:: table\ntine.table-widths:: prop%3Atest=171";
+
+describe("GH #210 B1: one predicate decides whether a first bullet is the page header", () => {
+  for (const [key, value] of [["alias", "novel"], ["icon", "📚"], ["filters", "{}"]] as const) {
+    it(`setting page property ${key} on a title-less table page never writes into the table block`, async () => {
+      const { writes } = await openJournal([block("b1", TABLE)]);
+      expect(readPageProperties(NAME)).toEqual([]);
+      setPageProperty(NAME, key, value);
+      expect(doc.byId.b1.raw).toBe(TABLE);
+      expect(doc.pages[0].preBlock).toContain(`${key}:: ${value}`);
+      expect(readPageProperties(NAME).map(([k]) => k)).toEqual([key]);
+      expect(await flushPage(NAME)).toBe(true);
+      expect(writes.at(-1)!.pre_block).toContain(`${key}:: ${value}`);
+      expect(writes.at(-1)!.blocks[0].raw).toBe(TABLE);
+    });
+  }
+
+  it("beginPageHeaderEdit does not take a table block for the page header", async () => {
+    await openJournal([block("b1", TABLE)]);
+    expect(beginPageHeaderEdit(NAME)).toBeNull();
+    expect(doc.pages[0].roots).toEqual(["b1"]);
+  });
+
+  it("a plain properties-only first bullet is still the page header (control)", async () => {
+    await openJournal([block("b1", "alias:: novel")]);
+    expect(readPageProperties(NAME)).toEqual([["alias", "novel"]]);
+    expect(beginPageHeaderEdit(NAME)).toBe("b1");
+  });
+});
+
+describe("GH #210 R1: leaving a table view keeps the block a block", () => {
+  it("Show children as: Outline removes tine.view but the leftover widths do not turn the block into the header", async () => {
+    const { writes } = await openJournal([block("b1", TABLE)]);
+    setBlockProperty("b1", "tine.view", null); // ContextMenu "Outline"
+    expect(doc.byId.b1.raw).toBe("tine.table-widths:: prop%3Atest=171");
+    expect(readPageProperties(NAME)).toEqual([]);
+    expect(await flushPage(NAME)).toBe(true);
+    expect(writes.at(-1)!.pre_block ?? null).toBeNull();
+    expect(writes.at(-1)!.blocks.map((b) => b.raw)).toEqual(["tine.table-widths:: prop%3Atest=171"]);
+    // Then a title and a child, as the reporter did: still saves, no toast.
+    setRaw("b1", "test table\ntine.table-widths:: prop%3Atest=171");
+    expect(insertEmptyChildBlock("b1", 0)).not.toBeNull();
+    finishPageHeaderEdit("b1");
+    expect(headerToasts()).toEqual([]);
+    expect(pageToDto(NAME)).not.toBeNull();
+    expect(await flushPage(NAME)).toBe(true);
+  });
+
+  it("the page-level schema keys stay a page header (tine.fields is also written as a page property)", async () => {
+    await openJournal([block("b1", "tine.fields:: a;b")]);
+    expect(readPageProperties(NAME)).toEqual([["tine.fields", "a;b"]]);
+  });
+});
+
+describe("GH #210 R2: at most one header toast per page", () => {
+  async function marked() {
+    await openJournal([block("h1", "alias:: book"), block("o1", "other")]);
+    expect(await flushPage(NAME)).toBe(true);
+    expect(doc.byId.h1.originatedFromPageHeader).toBe(true);
+    setToasts([]);
+  }
+
+  it("a changing problem replaces the toast instead of stacking sticky red ones", async () => {
+    await marked();
+    setRaw("h1", "alias:: book\nfirst prose");
+    finishPageHeaderEdit("h1");
+    setRaw("h1", "alias:: book\nsecond prose");
+    finishPageHeaderEdit("h1");
+    insertEmptyChildBlock("h1", 0);
+    finishPageHeaderEdit("h1");
+    expect(toasts()).toHaveLength(1);
+    expect(toasts()[0].message).toContain("child blocks");
+  });
+
+  it("fixing the header dismisses its toast", async () => {
+    await marked();
+    setRaw("h1", "alias:: book\nprose");
+    finishPageHeaderEdit("h1");
+    expect(toasts()).toHaveLength(1);
+    setRaw("h1", "alias:: book");
+    finishPageHeaderEdit("h1");
+    expect(toasts()).toEqual([]);
+  });
+
+  it("a dismissed toast comes back when the same problem is left again", async () => {
+    await marked();
+    setRaw("h1", "alias:: book\nprose");
+    finishPageHeaderEdit("h1");
+    setToasts([]); // the user closed it
+    finishPageHeaderEdit("h1");
+    expect(toasts()).toHaveLength(1);
+  });
+
+  it("a header pushed below another block dismisses its stale toast", async () => {
+    await marked();
+    setRaw("h1", "alias:: book\nprose");
+    finishPageHeaderEdit("h1");
+    expect(toasts()).toHaveLength(1);
+    splitBlock("h1", 0);
+    finishPageHeaderEdit("h1");
+    expect(toasts()).toEqual([]);
   });
 });
 

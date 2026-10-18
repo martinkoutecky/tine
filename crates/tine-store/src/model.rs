@@ -4357,20 +4357,40 @@ pub(crate) const BLOCK_SCOPED_PROPERTY_KEYS: &[&str] = &[
     "background-color",
     "logseq.order-list-type",
     "tine.view",
+    "tine.header",
+    "tine.col-widths",
+    "tine.col-aggregates",
+    "tine.group-by",
+    "tine.group-field",
+    "tine.table-widths",
+    "tine.columns",
+    "tine.block-columns",
+    "tine.filter",
+    "tine.sort",
+    "tine.sample",
+    "tine.result-kinds",
 ];
+
+/// The ONE predicate for "this first root's raw is a page header" (TS twin:
+/// `isPropertiesOnly`, `src/editor/properties.ts`): canonical page-header
+/// properties (the parser's `page_header_only`, I-12) and no block-scoped key.
+/// Save-time promotion and alias reading both call it, so a block cannot be
+/// promoted/read as the header in one place and kept an outline block in another.
+pub(crate) fn is_page_header_candidate(raw: &str) -> bool {
+    tine_core::block_regions::page_header_only(raw).is_some_and(|header| {
+        !header.entries.iter().any(|entry| {
+            BLOCK_SCOPED_PROPERTY_KEYS
+                .iter()
+                .any(|scoped| entry.key.eq_ignore_ascii_case(scoped))
+        })
+    })
+}
 
 fn first_root_is_promotable_page_header(doc: &Document) -> bool {
     let Some(first) = doc.roots.first() else {
         return false;
     };
-    first.children.is_empty()
-        && tine_core::block_regions::page_header_only(first.raw()).is_some_and(|header| {
-            !header.entries.iter().any(|entry| {
-                BLOCK_SCOPED_PROPERTY_KEYS
-                    .iter()
-                    .any(|scoped| entry.key.eq_ignore_ascii_case(scoped))
-            })
-        })
+    first.children.is_empty() && is_page_header_candidate(first.raw())
 }
 
 fn promote_first_root_page_header(doc: &mut Document) {

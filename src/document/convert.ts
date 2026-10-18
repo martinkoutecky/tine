@@ -2,7 +2,7 @@ import { type BlockDto, type Format, type PageDto, type RefGroup } from "../type
 import { Node, FeedPage, DocState, doc, freshId } from "./model";
 import { seedFacets, facetsFromDto } from "../render/facets";
 import { trimBlockTrailingSpace } from "../editor/format";
-import { isPageHeaderPropertiesOnly, pageHeaderKeys } from "../editor/properties";
+import { BLOCK_SCOPED_PROPERTY_KEYS, isPropertiesOnly } from "../editor/properties";
 import { journalTitle, appNow } from "../journal";
 import { pageHeaderDraftProblem, rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
@@ -200,23 +200,8 @@ function toDto(id: string): BlockDto {
   return { id: n.id, raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }
 
-/** Properties that describe the block they sit on, never a page: a first
- *  bullet carrying one stays an outline block. An empty numbered-list item is
- *  exactly `logseq.order-list-type:: number`, and folding it into the page
- *  header turned the list into page properties and jammed every later save
- *  (GH #540). `tine.view` is the same case for a table/grid/board block with no
- *  title yet: its rows are its children and its title is typed next, so folding
- *  it into the preamble made every later edit an invalid page header (GH #210).
- *  Mirror of Rust `BLOCK_SCOPED_PROPERTY_KEYS` (tine-store model.rs), which
- *  carries the OG provenance. */
-export const BLOCK_SCOPED_PROPERTY_KEYS: readonly string[] = [
-  "id",
-  "heading",
-  "collapsed",
-  "background-color",
-  "logseq.order-list-type",
-  "tine.view",
-];
+/** Re-exported from `editor/properties` (the shared predicate's home). */
+export { BLOCK_SCOPED_PROPERTY_KEYS };
 
 /** Mirror of Rust `first_root_is_promotable_page_header` (model.rs): a childless
  *  first root whose raw is exactly canonical page-header properties and carries
@@ -225,11 +210,7 @@ export const BLOCK_SCOPED_PROPERTY_KEYS: readonly string[] = [
  *  leave them as bullets). */
 function isPromotablePageHeaderRoot(node: Node): boolean {
   const canonicalRaw = node.raw.replace(/\n+$/, "");
-  return (
-    node.children.length === 0 &&
-    isPageHeaderPropertiesOnly(canonicalRaw) &&
-    !pageHeaderKeys(canonicalRaw).some((key) => BLOCK_SCOPED_PROPERTY_KEYS.includes(key))
-  );
+  return node.children.length === 0 && isPropertiesOnly(canonicalRaw);
 }
 
 /** Page `p`'s pre-block and outline roots as its file holds them: a marked

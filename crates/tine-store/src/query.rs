@@ -354,9 +354,10 @@ fn collect_bounded(
 
 /// True when a block's raw text is only page-header properties (OG treats such
 /// a FIRST block as the page-properties (pre-)block). One answerer: the parser's
-/// page header (`tine_core::block_regions::page_header_only`, I-12).
+/// page header, minus the block-scoped exemption (GH #210/#540): the shared
+/// `model::is_page_header_candidate`, the same answerer save-time promotion uses.
 fn is_properties_only(raw: &str) -> bool {
-    tine_core::block_regions::page_header_only(raw.trim_end_matches(['\n', '\r'])).is_some()
+    crate::model::is_page_header_candidate(raw.trim_end_matches(['\n', '\r']))
 }
 
 /// Map of `alias::` → canonical page name (original case). The alias key is
@@ -2281,6 +2282,45 @@ mod tests {
         let graph = test_snapshot(&dir);
         let result = run_advanced_query(&graph, "[:find ?b :where (");
         assert!(!result.supported);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// GH #210 B1: a properties-only first bullet is the page header (so its
+    /// `alias::` registers, GH #62) UNLESS it carries a block-scoped key; a table
+    /// block's `alias::` line is block text, the same answer save-time promotion gives.
+    #[test]
+    fn a_table_first_bullet_contributes_no_page_alias() {
+        let dir = std::env::temp_dir().join(format!("tine-gh210-alias-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        std::fs::write(dir.join("pages/Header.md"), "- alias:: Plain\n").unwrap();
+        std::fs::write(
+            dir.join("pages/Tabled.md"),
+            "- alias:: Blocky\n  tine.view:: table\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("pages/Leftover.md"),
+            "- alias:: Left\n  tine.table-widths:: prop%3Atest=171\n",
+        )
+        .unwrap();
+        let (store, _, _) =
+            crate::store::Store::open(&dir, crate::store::OpenOptions::default()).unwrap();
+        let graph = store.whole_graph().unwrap();
+        assert!(matches!(
+            graph.resolve("Plain", false),
+            crate::Resolved::Alias { .. }
+        ));
+        assert!(!matches!(
+            graph.resolve("Blocky", false),
+            crate::Resolved::Alias { .. }
+        ));
+        assert!(!matches!(
+            graph.resolve("Left", false),
+            crate::Resolved::Alias { .. }
+        ));
+        drop(graph);
+        store.close();
         let _ = std::fs::remove_dir_all(dir);
     }
 

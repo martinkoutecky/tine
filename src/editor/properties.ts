@@ -100,11 +100,51 @@ export function pageHeaderBadLine(raw: string): { line: number; text: string } |
   return null;
 }
 
-/** Keep the canonical page-header predicate shared by display and edit paths so
- * a candidate cannot be hidden in one place but edited as ordinary text in
- * another. */
+/** Properties that describe the block they sit on, never a page: a first
+ *  bullet carrying one stays an outline block. An empty numbered-list item is
+ *  exactly `logseq.order-list-type:: number`, and folding it into the page
+ *  header turned the list into page properties and jammed every later save
+ *  (GH #540). The `tine.*` keys below are the table/grid/board/query block's
+ *  own view configuration (GH #210): such a block has rows as children and its
+ *  title is typed after its view is chosen, so folding it into the preamble made
+ *  every later edit an invalid page header. After "Show children as: Outline"
+ *  removes `tine.view` the leftover config keys must not turn the block into a
+ *  page header either, so the whole family is scoped. `tine.fields`, `tine.type`
+ *  and `tine.tag-table` are NOT here: they are also page-level schema keys
+ *  (SheetTable / key pages write them as page properties), so a first bullet
+ *  holding only those is a legitimate page header. Intentional difference from
+ *  OG: OG never authors `tine.*` (Martin, D-20261018-H210). Mirror of Rust
+ *  `BLOCK_SCOPED_PROPERTY_KEYS` (tine-store model.rs, which carries the OG
+ *  provenance for the rest); `src/i12PageHeader.test.ts` keeps them equal. */
+export const BLOCK_SCOPED_PROPERTY_KEYS: readonly string[] = [
+  "id",
+  "heading",
+  "collapsed",
+  "background-color",
+  "logseq.order-list-type",
+  "tine.view",
+  "tine.header",
+  "tine.col-widths",
+  "tine.col-aggregates",
+  "tine.group-by",
+  "tine.group-field",
+  "tine.table-widths",
+  "tine.columns",
+  "tine.block-columns",
+  "tine.filter",
+  "tine.sort",
+  "tine.sample",
+  "tine.result-kinds",
+];
+
+/** The ONE predicate for "this first root's raw is a page header" (Rust twin:
+ * `is_page_header_candidate`, model.rs). Display (`firstPropertiesId`, Block),
+ * edit (`pagePropertyParts`, `beginPageHeaderEdit`, `setRaw` title intent) and
+ * save-time promotion (`isPromotablePageHeaderRoot`) all call it, so a block
+ * cannot be hidden as the header in one place and edited as ordinary text in
+ * another: canonical page-header properties and no block-scoped key. */
 export function isPropertiesOnly(raw: string): boolean {
-  return isPageHeaderPropertiesOnly(raw);
+  return isPageHeaderPropertiesOnly(raw) && !pageHeaderKeys(raw).some((key) => BLOCK_SCOPED_PROPERTY_KEYS.includes(key));
 }
 
 /** Whether the textarea caret is on a complete `key:: value` line. This is

@@ -13,7 +13,8 @@ import { isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHe
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
-import { pushToast, pushToastUnique } from "../../toasts";
+import { dismissToast, pushToast, toasts } from "../../toasts";
+import { clearOnBindingInvalidated } from "../../binding";
 
 /** Pure Markdown property rewrite for one compound store mutation. It scans only
  * the canonical head (title — or, when the first line is itself a property, no
@@ -241,21 +242,47 @@ export function pageHeaderDraftProblem(node: Node): PageHeaderDraftProblem | nul
 
 const BAD_LINE_SHOWN = 60;
 
-/** Report a still-invalid header when its editor closes: one toast per distinct
- * complaint (an identical one already on screen is not stacked into a x2 badge),
- * only while the node really is the page's header, i.e. its first root. A marked
- * node moved below another block is saved as the ordinary block it now is, so
- * the "before they can be saved" warning would be false (GH #210). */
+/** The header toast each page currently shows: its text (as a key) and toast id. */
+const headerToasts = new Map<string, { said: string; id: number }>();
+clearOnBindingInvalidated(() => headerToasts.clear());
+
+/** Report a still-invalid header when its editor closes: ONE toast per page
+ * (cf. `wiring.ts` `reportProblems`). Leaving the same invalid header again
+ * leaves the toast on screen untouched (no x2 badge); a header whose problem
+ * changed replaces the old toast instead of stacking a second sticky red one;
+ * a header that is valid again, or no longer the page's first root, dismisses
+ * it. A marked node moved below another block is not the header any more: the
+ * store refuses to write its property lines into the outline (GH #163 firewall,
+ * "refusing to move page-header property into outline content"), so "before
+ * they can be saved" would name the wrong cause (GH #210; the refusal itself is
+ * the F1 follow-up). */
 export function reportInvalidPageHeaderOnExit(id: string): void {
   const node = doc.byId[id];
-  if (!node?.originatedFromPageHeader || pageByName(node.page)?.roots[0] !== id) return;
-  const problem = pageHeaderDraftProblem(node);
-  if (!problem) return;
-  if (problem.kind === "children") pushToastUnique(msg("properties-page-header-has-child-blocks"), "error");
-  else if (problem.kind === "line") {
-    const text = problem.text.length > BAD_LINE_SHOWN ? `${problem.text.slice(0, BAD_LINE_SHOWN)}…` : problem.text;
-    pushToastUnique(msg("properties-page-header-bad-line", { line: problem.line, text }), "error");
-  } else pushToastUnique(msg("properties-page-header-properties-must-contain-only-valid-key"), "error");
+  if (!node?.originatedFromPageHeader) return;
+  const problem = pageByName(node.page)?.roots[0] === id ? pageHeaderDraftProblem(node) : null;
+  const shown = headerToasts.get(node.page);
+  if (!problem) {
+    if (shown) dismissToast(shown.id);
+    headerToasts.delete(node.page);
+    return;
+  }
+  // The toast calls stay literal `pushToast(msg(...))` sites (the i18n ratchet).
+  let said: string;
+  let show: () => number;
+  if (problem.kind === "children") {
+    said = "children";
+    show = () => pushToast(msg("properties-page-header-has-child-blocks"), "error");
+  } else if (problem.kind === "line") {
+    const line = problem.text.length > BAD_LINE_SHOWN ? `${problem.text.slice(0, BAD_LINE_SHOWN)}…` : problem.text;
+    said = `line ${problem.line} ${line}`;
+    show = () => pushToast(msg("properties-page-header-bad-line", { line: problem.line, text: line }), "error");
+  } else {
+    said = "invalid";
+    show = () => pushToast(msg("properties-page-header-properties-must-contain-only-valid-key"), "error");
+  }
+  if (shown?.said === said && toasts().some((t) => t.id === shown.id)) return;
+  if (shown) dismissToast(shown.id);
+  headerToasts.set(node.page, { said, id: show() });
 }
 
 /** A successful save folded the first root into the file's preamble. Keep the

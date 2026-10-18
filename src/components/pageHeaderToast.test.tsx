@@ -51,8 +51,9 @@ it("typing the title of a table block that is a page's first bullet toasts nothi
   const { root, dispose } = mount(() => <PageView />);
   try {
     await tick(); await tick();
-    // The first bullet shows as a row; clicking it opens its editor.
-    (root.querySelector(".page-properties .prop-row") as HTMLElement).click();
+    // The title-less table block is an ordinary block now (not a page-properties row); clicking it opens its editor.
+    expect(root.querySelector(".page-properties")).toBeNull();
+    root.querySelector('[data-block-id="t1"] .block-content')!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
     await tick();
     type(root.querySelector<HTMLTextAreaElement>('[data-block-id="t1"] textarea')!, config);
     endEdit("blur"); await tick(); await tick();
