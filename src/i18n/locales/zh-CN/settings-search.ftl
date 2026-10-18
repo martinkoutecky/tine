@@ -213,3 +213,4 @@ settings-search-about = 关于
 settings-search-version-licenses-updates = 版本 许可证 更新
 settings-search-your-name = 你的名字
 settings-search-comment-author-name-margin-reply = 批注 作者 名字 页边 回复 身份
+settings-search-phone-tablet-top-bar-bottom-row-back-forward-search-sidebar = 手机 平板 安卓 顶栏 底部 单手 后退 前进 搜索 侧边栏

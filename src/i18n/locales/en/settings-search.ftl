@@ -109,3 +109,4 @@ settings-search-about = About
 settings-search-version-licenses-updates = version licenses updates
 settings-search-your-name = Your name
 settings-search-comment-author-name-margin-reply = comment author name margin reply identity
+settings-search-phone-tablet-top-bar-bottom-row-back-forward-search-sidebar = phone tablet android ios top bar bottom row thumb reach back forward search sidebar

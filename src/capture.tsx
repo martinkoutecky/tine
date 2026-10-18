@@ -48,11 +48,13 @@ import "./lsShimInstall";
 import "./styles/inter.css";
 import "@fontsource-variable/noto-emoji/wght.css";
 import { installEditableEmojiPlatform } from "./editableEmoji";
+import { installTextareaPrimarySelectionGuard } from "./textareaPrimarySelection";
 import "./styles/editableEmoji.css";
 import "./styles/app.css";
 import "./styles/capture.css";
 
 installEditableEmojiPlatform();
+installTextareaPrimarySelectionGuard();
 
 const SCRATCH = CAPTURE_SCRATCH_NAME;
 
