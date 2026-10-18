@@ -1,7 +1,7 @@
 # 0074. Launch backups are one verified zip per snapshot
 
-- **Status:** Proposed. Outcome decided by Martin on 2026-10-11 ("for now do full zips"). The schema-5
-  persisted format in this ADR needs his acceptance (§12).
+- **Status:** Accepted (Martin, 2026-10-18, D-20261018-A14), including the schema-5 persisted format. Outcome
+  decided by Martin on 2026-10-11 ("for now do full zips").
 - **Date:** 2026-10-11
 - **Unit cost:** 0 bytes, 0 files and 0 transport bytes per edit on a 1-block or a 60-block page. Snapshots
   are taken at launch and before a rewrite the user asked for, never per edit. Per launch on a copy of the

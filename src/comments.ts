@@ -98,9 +98,10 @@ export function occurrences(haystack: string, needle: string): number[] {
 
 /** The selector for a text selection [start, end) of `editorText`, the editor's
  * view of the parent whose current raw text is `parentRaw`. The quote is the
- * normalised selection. Prefix and suffix (≤32 chars, normalised, trimmed) are
- * written only when the quote occurs more than once in the parent, to say which
- * occurrence was meant. An empty selection quotes the whole block (`quote === ""`).
+ * normalised selection. Prefix and suffix (≤32 chars, normalised, trimmed at a
+ * word boundary) are always written when the quote occurs in the parent, so a
+ * later second occurrence of the quoted words cannot re-anchor the comment
+ * (ADR 0075, D-20261018-MC2). An empty selection quotes the whole block (`quote === ""`).
  * Cost O(parent length × occurrences). */
 export function quoteSelectorFor(editorText: string, start: number, end: number, parentRaw: string): QuoteSelector {
   const lo = Math.max(0, Math.min(start, end, editorText.length));
@@ -114,12 +115,30 @@ export function quoteSelectorFor(editorText: string, start: number, end: number,
   const ordinal = occurrences(editor.text, quote).filter((at) => at < selectedAt).length;
   const parent = normalizeWithMap(parentRaw);
   const found = occurrences(parent.text, quote);
-  if (found.length <= 1) return { quote, prefix: null, suffix: null };
+  if (found.length === 0) return { quote, prefix: null, suffix: null };
   const at = found[Math.min(ordinal, found.length - 1)];
-  const prefix = wholeCodePoints(parent.text.slice(Math.max(0, at - QUOTE_CONTEXT_MAX), at)).trim();
+  const from = Math.max(0, at - QUOTE_CONTEXT_MAX);
+  const prefix = wordBoundaryStart(parent.text, from, wholeCodePoints(parent.text.slice(from, at))).trim();
   const after = at + quote.length;
-  const suffix = wholeCodePoints(parent.text.slice(after, after + QUOTE_CONTEXT_MAX)).trim();
+  const to = Math.min(parent.text.length, after + QUOTE_CONTEXT_MAX);
+  const suffix = wordBoundaryEnd(parent.text, to, wholeCodePoints(parent.text.slice(after, to))).trim();
   return { quote, prefix: prefix || null, suffix: suffix || null };
+}
+
+/** `cut` starts at `from` in `text`; drop a word the cut split, unless that word is all of it. */
+function wordBoundaryStart(text: string, from: number, cut: string): string {
+  if (from === 0 || /\s/.test(text[from - 1]) || /^\s/.test(cut)) return cut;
+  const space = cut.search(/\s/);
+  const kept = space === -1 ? "" : cut.slice(space);
+  return kept.trim() ? kept : cut;
+}
+
+/** `cut` ends at `to` in `text`; drop a word the cut split, unless that word is all of it. */
+function wordBoundaryEnd(text: string, to: number, cut: string): string {
+  if (to >= text.length || /\s/.test(text[to]) || /\s$/.test(cut)) return cut;
+  const m = /\s\S*$/.exec(cut);
+  const kept = m ? cut.slice(0, m.index) : "";
+  return kept.trim() ? kept : cut;
 }
 
 function commonSuffixLength(a: string, b: string): number {
