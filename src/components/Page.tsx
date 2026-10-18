@@ -588,10 +588,21 @@ export function PageView(): JSX.Element {
     const generation = feedGeneration;
     const requestOwner: Owner = graphOwner(() => generation === feedGeneration && ownerIsLive(owner));
     const asOfDay = journalAsOfDay;
-    const cursor = nextBeforeDay;
+    let cursor = nextBeforeDay;
+    const includeReferences = !feedReferencesPending;
     loadingGeneration = generation;
     try {
-      const result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, cursor, !feedReferencesPending));
+      let result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, cursor, includeReferences));
+      if (result.kind === "stale") return;
+      // Completion now owns a reference-inclusive window/cursor. A file-only
+      // read begun before it cannot advance that cursor or declare it done.
+      // Reissue from the authoritative cursor, retaining this pagination lock
+      // and route owner; completion may already have covered the whole range.
+      if (!includeReferences && !feedReferencesPending) {
+        if (feedDone || nextBeforeDay === null) return;
+        cursor = nextBeforeDay;
+        result = await readOwned(requestOwner, backend().journalFeedPage(FEED_PAGE, cursor, true));
+      }
       if (result.kind === "stale") return;
       const response = result.value;
       reportUnreadableJournals(response);

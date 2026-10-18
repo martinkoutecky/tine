@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { PageView } from "./Page";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { resetStore, flushAll, appendFeed, pageByName } from "../document";
+import { resetStore, flushAll, appendFeed, pageByName, extendFeedForScroll, feedNames } from "../document";
 import { openPage, resetTabsToJournals } from "../router";
 import { currentDayKey, journalTitle } from "../journal";
 import { resetReferenceSectionState } from "../referenceSectionState";
@@ -134,6 +134,96 @@ it("GF4: a remaining Journals surface owns the merge when the surface that start
     finish({ pages: [current, late], as_of_day: currentDayKey(), done: true, next_before_day: null });
     await vi.waitFor(() => expect(first.textContent).toContain(late.name));
   } finally { disposeFirst(); disposeSecond(); }
+});
+
+it.each(["before pagination", "after pagination", "between pagination pages"])("GF4: completion %s leaves every referenced day reachable", async order => {
+  vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const date = (day: number) => journalTitle(new Date(2000, 0, day));
+  const today = journalTitle(new Date());
+  const response = (names: string[], cursor: number | null, pending = false): JournalFeedPage => ({
+    pages: names.map(name => ({ id: `journals/${name}.md`, name, title: name, kind: "journal", pre_block: null, blocks: [] })),
+    references_pending: pending, as_of_day: currentDayKey(), next_before_day: cursor, done: cursor === null,
+  });
+  const completions: ((value: JournalFeedPage) => void)[] = [];
+  const appends: ((value: JournalFeedPage) => void)[] = [];
+  const read = vi.spyOn(backend(), "journalFeedPage")
+    .mockResolvedValueOnce(response([today, date(29), date(20)], 20000120, true))
+    .mockImplementation((_limit, before, references) => {
+      if (before === null) return new Promise(resolve => completions.push(resolve));
+      if (!references) return new Promise(resolve => appends.push(resolve));
+      if (before === 20000120) return Promise.resolve(response([date(18), date(15), date(12)], 20000112));
+      if (before === 20000112) return Promise.resolve(response([date(10), date(8), date(5)], null));
+      if (before === 20000105) return Promise.resolve(response([date(3), date(1)], null));
+      throw new Error(`Unexpected cursor ${before}`);
+    });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <PageView />, host);
+  try {
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    const first = extendFeedForScroll();
+    await vi.waitFor(() => expect(appends).toHaveLength(1));
+    expect(read.mock.calls[2]).toEqual([3, 20000120, false]);
+    if (order === "before pagination") {
+      completions[0](response([today, date(29), date(25), date(20)], 20000120));
+      await vi.waitFor(() => expect(feedNames()).toContain(date(25)));
+      appends[0](response([date(15), date(10), date(5)], null, true));
+      await first;
+      await extendFeedForScroll();
+      expect(feedNames()).toContain(date(18));
+      expect(read.mock.calls).toContainEqual([3, 20000120, true]);
+    } else {
+      appends[0](response([date(15), date(10), date(5)], 20000105, true));
+      await first;
+      completions[0](response([today, date(29), date(25), date(20)], 20000120));
+      await vi.waitFor(() => expect(completions).toHaveLength(2));
+      expect(read.mock.calls.at(-1)).toEqual([3, null, true, 20000105]);
+      let second: Promise<boolean> | undefined;
+      if (order === "between pagination pages") {
+        second = extendFeedForScroll();
+        await vi.waitFor(() => expect(appends).toHaveLength(2));
+      }
+      completions[1](response([today, ...[29, 25, 20, 18, 15, 12, 10, 8, 5].map(date)], 20000105));
+      await vi.waitFor(() => expect(feedNames()).toContain(date(18)));
+      if (second) {
+        appends[1](response([], null, true));
+        await second;
+      } else await extendFeedForScroll();
+      expect(feedNames().slice(-2)).toEqual([date(3), date(1)]);
+      expect(read.mock.calls).toContainEqual([3, 20000105, true]);
+    }
+    expect(feedNames().slice(0, 10)).toEqual([today, ...[29, 25, 20, 18, 15, 12, 10, 8, 5].map(date)]);
+    expect([...host.querySelectorAll("h1.journal-title")].map(el => el.textContent?.trim())).toEqual(feedNames());
+  } finally { dispose(); }
+});
+
+it.each([true, false])("GF4: navigation retires pending completion and pagination (completion first: %s)", async completionFirst => {
+  vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const day = (name: string): PageRead => ({ id: `journals/${name}.md`, name, title: name, kind: "journal", pre_block: null, blocks: [] });
+  const today = day(journalTitle(new Date()));
+  const old = day("Jan 20th, 2000");
+  const late = day("Jan 18th, 2000");
+  const pending: ((value: JournalFeedPage) => void)[] = [];
+  const read = vi.spyOn(backend(), "journalFeedPage")
+    .mockResolvedValueOnce({ pages: [today, old], references_pending: true, as_of_day: currentDayKey(), next_before_day: 20000120, done: false })
+    .mockImplementation(() => new Promise(resolve => pending.push(resolve)));
+  vi.spyOn(backend(), "getPage").mockResolvedValue({ ...day("Elsewhere"), kind: "page", id: "pages/Elsewhere.md" });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <PageView />, host);
+  try {
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    const more = extendFeedForScroll();
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    openPage("Elsewhere", "page");
+    await vi.waitFor(() => expect(host.querySelector("h1.page-title")?.textContent).toContain("Elsewhere"));
+    for (const index of completionFirst ? [0, 1] : [1, 0]) {
+      pending[index]({ pages: [late], as_of_day: currentDayKey(), done: true, next_before_day: null });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    await more;
+    expect(pageByName(late.name)).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(host.querySelector("h1.page-title")?.textContent).toContain("Elsewhere");
+  } finally { dispose(); }
 });
 afterEach(() => {
   endEdit("blur");
