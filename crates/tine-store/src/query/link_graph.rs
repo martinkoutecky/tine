@@ -191,7 +191,7 @@ impl LinkGraph {
                 let mut visited = 0usize;
                 while let Some(block) = stack.pop() {
                     visited += 1;
-                    if visited % CHECK_EVERY == 0 && cancelled() {
+                    if visited.is_multiple_of(CHECK_EVERY) && cancelled() {
                         return false;
                     }
                     collect(block);
@@ -206,7 +206,7 @@ impl LinkGraph {
         // A target no node answers to is a page without a file: one node per
         // panel, registered under every name that panel answers to.
         for (at, (_, target)) in pending.iter().enumerate() {
-            if at % CHECK_EVERY == 0 && cancelled() {
+            if at.is_multiple_of(CHECK_EVERY) && cancelled() {
                 return None;
             }
             let (missing, spelling) = match target {
@@ -233,7 +233,7 @@ impl LinkGraph {
         table.inn = vec![Vec::new(); count];
         let empty = Vec::new();
         for (at, (source, target)) in pending.iter().enumerate() {
-            if at % CHECK_EVERY == 0 && cancelled() {
+            if at.is_multiple_of(CHECK_EVERY) && cancelled() {
                 return None;
             }
             let targets = match target {
@@ -273,12 +273,14 @@ impl LinkGraph {
         self.out.len()
     }
 
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn edge_count(&self) -> usize {
         self.out.iter().map(Vec::len).sum()
     }
 
     /// Heap bytes held (allocated capacity; hash-map slots estimated at their
-    /// key, value and one control byte).
+    /// key, value and one control byte). A test probe.
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn estimated_bytes(&self) -> usize {
         let adjacency = |lists: &Vec<Vec<u32>>| {
             lists.capacity() * std::mem::size_of::<Vec<u32>>()
@@ -351,7 +353,7 @@ impl LinkGraph {
                 let mut next = Vec::new();
                 for &node in &frontier {
                     expanded += 1;
-                    if expanded % CHECK_EVERY == 0 && cancelled() {
+                    if expanded.is_multiple_of(CHECK_EVERY) && cancelled() {
                         return None;
                     }
                     let expands = seeds[node as usize]

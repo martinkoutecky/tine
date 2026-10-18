@@ -3100,11 +3100,15 @@ impl WholeGraph {
         crate::query::exec::query_ir(&self.graph, request)
     }
 
-    /// [`Self::query_ir`], stopping cooperatively once `cancel` is set, the
-    /// same flag interactive search takes. `Ok(None)`: cancelled, no partial
-    /// answer, nothing memoized. The link work behind `links`, `linked_by` and
-    /// `near` (table build, element and seed conditions, the searches) checks
-    /// it at least once per page and once per 1024 references or nodes.
+    /// Test oracle: [`Self::query_ir`], stopping cooperatively once `cancel`
+    /// is set, the same flag interactive search takes. `Ok(None)`: cancelled,
+    /// no partial answer, nothing memoized. The link work behind `links`,
+    /// `linked_by` and `near` (table build, element and seed conditions, the
+    /// searches) checks it at least once per page and once per 1024
+    /// references or nodes. Not production surface yet: SURFACE.txt rule 3
+    /// wants a parameter on `query_ir`, not a sibling; that choice is the
+    /// integrator's (RECEIPT-tql-near.md, review r1).
+    #[cfg(any(test, feature = "test-faults"))]
     pub fn query_ir_cancellable(
         &self,
         request: IrRequest<'_>,

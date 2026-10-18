@@ -138,6 +138,7 @@ impl QueryMemo {
     /// once per query): the answer is filed under that day, so an evaluation
     /// that straddles midnight never lands in the next day's memo. `compute`
     /// runs with no lock held.
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn answer(
         &self,
         key: String,

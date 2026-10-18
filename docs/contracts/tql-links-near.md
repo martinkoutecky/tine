@@ -132,8 +132,9 @@ its text, as in OG.
   per query execution.
 - **Cancellation.** The table build, every element, seed and `through`
   condition and every `near` search check the caller's cancellation flag
-  cooperatively (`WholeGraph::query_ir_cancellable`, the `Cancel` flag
-  interactive search takes): at least once per page and once per 1,024
+  cooperatively (the `Cancel` flag interactive search takes; in this prototype
+  it is reached through the test-oracle `WholeGraph::query_ir_cancellable`,
+  and no app caller sets one yet): at least once per page and once per 1,024
   references or reached pages. A cancelled run answers nothing, memoizes
   nothing and keeps no partial table.
 - **Bounds.** A link query is bounded like every page query (20,000 rows /

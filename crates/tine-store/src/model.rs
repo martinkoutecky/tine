@@ -974,6 +974,9 @@ impl ReadSnapshot {
         }
     }
 
+    /// The scoped query memo's answer for `key` (the test-oracle bridges;
+    /// production `query_ir` goes through [`Self::query_answer_cancellable`]).
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn query_answer(
         &self,
         key: String,

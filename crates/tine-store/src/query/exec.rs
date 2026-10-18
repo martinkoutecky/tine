@@ -333,7 +333,7 @@ impl Plan {
             );
         }
         for (at, node) in table.virtuals().iter().enumerate() {
-            if at % super::link_graph::CHECK_EVERY == 0 && cancelled() {
+            if at.is_multiple_of(super::link_graph::CHECK_EVERY) && cancelled() {
                 return None;
             }
             let id = (table.physical() + at) as u32;
@@ -1211,7 +1211,9 @@ pub(crate) fn query_ir(
 }
 
 /// [`query_ir`] with cooperative cancellation (`Ok(None)`: stopped, no partial
-/// answer, nothing memoized).
+/// answer, nothing memoized). Production calls `query_ir` until a caller owns
+/// a cancel flag (RECEIPT-tql-near.md, review r1).
+#[cfg(any(test, feature = "test-faults"))]
 pub(crate) fn query_ir_cancellable(
     graph: &crate::model::ReadSnapshot,
     request: crate::IrRequest<'_>,
