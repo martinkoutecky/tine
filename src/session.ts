@@ -413,8 +413,11 @@ function parseWindows(raw: unknown, claimed: Set<string>, seenViewIds: Set<strin
  * a narrow or touch start never shrinks what the next session writes: the
  * presentation is temporary, the saved layout is not (D-20261018-W1, review
  * r1). The presented pane's live tabs replace its saved ones on each write.
- * The retained layout is used only while the main pane tree is untouched
- * since the restore (`epoch`): any split, close, restore or reset retires it. */
+ * The retained layout is released only by the USER acting on the main pane
+ * tree since the restore (`epoch`, see panes.ts mainLayoutEpoch): a split, a
+ * close, a dock, a restore or a reset. Panes the app itself adds (a PDF
+ * companion) do not release it: the live tree then replaces the presented
+ * leaf, so the kept panes are written around it (review r2). */
 type RetainedLayout = {
   layout: LayoutNode;
   snapshots: Map<string, PaneSnapshot>;
@@ -440,8 +443,39 @@ function serializeParsedLayout(node: LayoutNode, snapshots: Map<string, PaneSnap
 function retainedForWrite(): RetainedLayout | null {
   if (!retained) return null;
   const ids = layoutPaneIds(layoutRoot(MAIN_WINDOW_ID));
-  if (retained.epoch !== mainLayoutEpoch() || ids.length !== 1 || ids[0] !== "main") { retained = null; return null; }
+  if (retained.epoch !== mainLayoutEpoch() || !ids.includes("main")) { retained = null; return null; }
   return retained;
+}
+
+/** The retained layout with the live main tree standing where the presented
+ * pane was. Live pane ids are kept unless they collide with a kept pane; the
+ * presented pane keeps its saved id. */
+function serializeRetained(keep: RetainedLayout): PersistedLayoutNode {
+  const live = layoutRoot(MAIN_WINDOW_ID);
+  if (live.kind === "pane") {
+    return serializeParsedLayout(keep.layout, keep.snapshots, { id: keep.presentedId, snapshot: mainRouter().snapshot() });
+  }
+  const taken = new Set(layoutPaneIds(keep.layout));
+  const rename = new Map<string, string>([["main", keep.presentedId]]);
+  let n = 0;
+  for (const id of layoutPaneIds(live)) {
+    if (rename.has(id)) continue;
+    let next = id;
+    while (taken.has(next)) next = `pane-r${n++}`;
+    taken.add(next);
+    rename.set(id, next);
+  }
+  const liveTree = (node: LayoutNode): PersistedLayoutNode =>
+    node.kind === "pane"
+      ? { kind: "pane", paneId: rename.get(node.paneId) ?? node.paneId, ...persistedSnapshot(paneRouter(node.paneId).snapshot()) }
+      : { kind: "split", dir: node.dir, ratio: node.ratio, children: [liveTree(node.children[0]), liveTree(node.children[1])] };
+  const walk = (node: LayoutNode): PersistedLayoutNode =>
+    node.kind === "pane"
+      ? node.paneId === keep.presentedId
+        ? liveTree(live)
+        : serializeParsedLayout(node, keep.snapshots)
+      : { kind: "split", dir: node.dir, ratio: node.ratio, children: [walk(node.children[0]), walk(node.children[1])] };
+  return walk(keep.layout);
 }
 
 export function buildPersistedSession(): PersistedSession {
@@ -465,7 +499,7 @@ export function buildPersistedSession(): PersistedSession {
     favoritesSectionExpanded: favoritesSectionExpanded(),
     recentSectionExpanded: recentSectionExpanded(),
     layout: keep
-      ? serializeParsedLayout(keep.layout, keep.snapshots, { id: keep.presentedId, snapshot: mainRouter().snapshot() })
+      ? serializeRetained(keep)
       : serializeLayout(layoutRoot(MAIN_WINDOW_ID)),
     focusedPaneId: keep ? keep.focusedPaneId : focused,
     recentPages: recentPages(),

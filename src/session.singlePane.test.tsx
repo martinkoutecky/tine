@@ -16,7 +16,7 @@ const leaf = (paneId: string, name: string) => ({
 });
 const split = (a: unknown, b: unknown) => ({ kind: "split", dir: "row", ratio: 0.5, children: [a, b] });
 const names = (node: any): string[] => node.kind === "pane"
-  ? node.tabs.map((t: any) => t.history[t.pos].name)
+  ? node.tabs.map((t: any) => (t.history[t.pos].name ?? t.history[t.pos].filename))
   : node.children.flatMap(names);
 
 async function start(coarse: boolean, width: number, height: number) {
@@ -78,5 +78,67 @@ describe("single-pane start retains the saved layout", () => {
     };
     applyParsedSession(parsePersistedSession(JSON.stringify(saved))!);
     expect(buildPersistedSession().windows?.map((w) => names(w.layout))).toEqual([["Elsewhere"]]);
+  });
+
+  // Review r2 (blocker): only the USER acting on the pane tree releases the kept
+  // panes. A PDF companion the app creates itself must not.
+  const widen = () => {
+    vi.stubGlobal("innerWidth", 1280);
+    vi.stubGlobal("innerHeight", 900);
+    window.dispatchEvent(new Event("resize"));
+  };
+  const savedTwoPanes = { layout: split(leaf("main", "Alpha"), leaf("second", "Beta")), focusedPaneId: "second" };
+
+  it("widening and opening a PDF keeps the hidden pane, now and on the next launch", async () => {
+    const { parsePersistedSession, applyParsedSession, buildPersistedSession } = await start(true, 480, 600);
+    const panes = await import("./panes");
+    applyParsedSession(parsePersistedSession(JSON.stringify(savedTwoPanes))!);
+    widen();
+    expect(panes.openPdf("sample.pdf", "sample")).not.toBeNull();
+    expect(panes.layoutPaneIds(panes.layoutRoot("main")).length).toBe(2); // the companion exists
+    const written = buildPersistedSession();
+    expect(names(written.layout).sort()).toEqual(["Alpha", "Beta", "sample.pdf"]);
+    expect(written.focusedPaneId).toBe("second");
+    const ids: string[] = [];
+    const collect = (n: any) => (n.kind === "pane" ? ids.push(n.paneId) : n.children.forEach(collect));
+    collect(written.layout);
+    expect(new Set(ids).size).toBe(ids.length);
+    applyParsedSession(parsePersistedSession(JSON.stringify(written))!);
+    expect(names(buildPersistedSession().layout).sort()).toEqual(["Alpha", "Beta", "sample.pdf"]);
+  });
+
+  it("an app-made 'open in other pane' split keeps the hidden pane too", async () => {
+    const { parsePersistedSession, applyParsedSession, buildPersistedSession } = await start(true, 480, 600);
+    const panes = await import("./panes");
+    applyParsedSession(parsePersistedSession(JSON.stringify(savedTwoPanes))!);
+    widen();
+    expect(panes.openRouteInOtherPane({ kind: "page", name: "Gamma", pageKind: "page" }, "main")).not.toBeNull();
+    expect(names(buildPersistedSession().layout).sort()).toEqual(["Alpha", "Beta", "Gamma"]);
+  });
+
+  it("a divider drag on the companion keeps the hidden pane", async () => {
+    const { parsePersistedSession, applyParsedSession, buildPersistedSession } = await start(true, 480, 600);
+    const panes = await import("./panes");
+    applyParsedSession(parsePersistedSession(JSON.stringify(savedTwoPanes))!);
+    widen();
+    panes.openPdf("sample.pdf", "sample");
+    panes.setSplitRatio([], 0.7, "main");
+    expect(names(buildPersistedSession().layout).sort()).toEqual(["Alpha", "Beta", "sample.pdf"]);
+  });
+
+  it("a user split, a close or a graph reset after the companion releases the kept panes", async () => {
+    for (const act of ["split", "close", "reset"] as const) {
+      const { parsePersistedSession, applyParsedSession, buildPersistedSession } = await start(true, 480, 600);
+      const panes = await import("./panes");
+      applyParsedSession(parsePersistedSession(JSON.stringify(savedTwoPanes))!);
+      widen();
+      const pdfPane = panes.openPdf("sample.pdf", "sample") && panes.layoutPaneIds(panes.layoutRoot("main")).find((id) => id !== "main")!;
+      if (act === "split") panes.splitPane("main", "col");
+      else if (act === "close") panes.closePane(pdfPane as string);
+      else panes.resetPaneLayoutToSingle();
+      const got = names(buildPersistedSession().layout);
+      expect(got, act).not.toContain("Beta");
+      expect(got, act).toContain("Alpha");
+    }
   });
 });
