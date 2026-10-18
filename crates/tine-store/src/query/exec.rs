@@ -375,11 +375,8 @@ impl Plan {
                             out.push(leaf);
                         }
                     }
-                    Leaf::Near { seeds, through, .. } => {
+                    Leaf::Near { seeds, .. } => {
                         post_order(seeds, out);
-                        if let Some(through) = through {
-                            post_order(through, out);
-                        }
                         out.push(leaf);
                     }
                     Leaf::Attr { .. } => {}
@@ -396,22 +393,11 @@ impl Plan {
                 Leaf::Rel { pred, .. } => {
                     self.node_set(pred, &table, candidates, config, atoms, &answers, cancelled)?
                 }
-                Leaf::Near {
-                    seeds,
-                    k,
-                    dir,
-                    through,
-                } => {
+                Leaf::Near { seeds, k, dir } => {
                     let seeds = self.node_set(
                         seeds, &table, candidates, config, atoms, &answers, cancelled,
                     )?;
-                    let through = match through.as_deref() {
-                        Some(through) => Some(self.node_set(
-                            through, &table, candidates, config, atoms, &answers, cancelled,
-                        )?),
-                        None => None,
-                    };
-                    table.ball(&seeds, *k, *dir, through.as_deref(), cancelled)?
+                    table.ball(&seeds, *k, *dir, cancelled)?
                 }
                 Leaf::Attr { .. } => continue,
             };
@@ -869,8 +855,10 @@ pub(crate) fn execute(
 }
 
 /// [`execute`], stopping cooperatively once `cancelled` reports true: `Ok(None)`
-/// carries no partial result. The link work (`links`, `linked_by`, `near`:
-/// table build, element and seed conditions, searches) checks it.
+/// carries no partial result. The row scan checks it once per candidate page,
+/// and the link work (`links`, `linked_by`, `near`: table build, element and
+/// seed conditions, searches) at least once per page and per 1024 references
+/// or nodes.
 pub(crate) fn execute_cancellable(
     graph: &ReadSnapshot,
     plan: &Plan,
@@ -929,6 +917,10 @@ pub(crate) fn execute_cancellable(
             Anchor::Block => {
                 let mut groups: Vec<(&PageEntry, Arc<PageFacts>, Vec<Hit>)> = Vec::new();
                 for (entry, doc) in candidates.pages() {
+                    if cancelled() {
+                        stopped = true;
+                        return Ok(());
+                    }
                     let facts = candidates.facts(entry, doc);
                     if plan.skips(entry, &facts) {
                         continue;
@@ -1047,6 +1039,10 @@ pub(crate) fn execute_cancellable(
             Anchor::Page => {
                 let mut matches: Vec<(&PageEntry, Arc<PageFacts>)> = Vec::new();
                 for (entry, doc) in candidates.pages() {
+                    if cancelled() {
+                        stopped = true;
+                        return Ok(());
+                    }
                     let facts = candidates.facts(entry, doc);
                     if eval::eval_page(
                         &plan.filter,
@@ -1166,6 +1162,9 @@ fn count(graph: &ReadSnapshot, plan: &Plan, cancelled: &dyn Fn() -> bool) -> Opt
         let mut count = 0usize;
         let mut hits = Vec::new();
         for (entry, doc) in candidates.pages() {
+            if cancelled() {
+                return None;
+            }
             let facts = candidates.facts(entry, doc);
             if plan.skips(entry, &facts) {
                 continue;
@@ -1202,19 +1201,10 @@ pub(crate) fn plan(
     )
 }
 
-/// [`crate::WholeGraph::query_ir`]'s body: the one IR front door over a snapshot.
+/// [`crate::WholeGraph::query_ir`]'s body: the one IR front door over a
+/// snapshot, stopping cooperatively once `cancelled` reports true (`Ok(None)`:
+/// no partial answer, nothing served from or stored into the memo).
 pub(crate) fn query_ir(
-    graph: &crate::model::ReadSnapshot,
-    request: crate::IrRequest<'_>,
-) -> Result<crate::IrAnswer, StatisticsResourceLimit> {
-    query_ir_on_day(graph, request, tine_core::date::JournalDate::today())
-}
-
-/// [`query_ir`] with cooperative cancellation (`Ok(None)`: stopped, no partial
-/// answer, nothing memoized). Production calls `query_ir` until a caller owns
-/// a cancel flag (RECEIPT-tql-near.md, review r1).
-#[cfg(any(test, feature = "test-faults"))]
-pub(crate) fn query_ir_cancellable(
     graph: &crate::model::ReadSnapshot,
     request: crate::IrRequest<'_>,
     cancelled: &dyn Fn() -> bool,
@@ -1228,6 +1218,7 @@ pub(crate) fn query_ir_cancellable(
 }
 
 /// Same production entry body, with the sampled day explicit for conformance.
+#[cfg(any(test, feature = "test-faults"))]
 pub(crate) fn query_ir_on_day(
     graph: &crate::model::ReadSnapshot,
     request: crate::IrRequest<'_>,
@@ -1275,7 +1266,7 @@ fn query_ir_on_day_cancellable(
         serde_json::to_string(&(resolved.query(), resolved.report())).unwrap_or_default(),
         serde_json::to_string(view).unwrap_or_default(),
     );
-    let Some(answer) = graph.query_answer_cancellable(key, today, || {
+    let Some(answer) = graph.query_answer_cancellable(key, today, cancelled, || {
         let bounds = tine_core::query::ir::Bounds {
             max_rows: crate::store::RESULT_BRIDGE_MAX_ROWS,
             max_bytes: crate::store::RESULT_BRIDGE_MAX_BYTES,

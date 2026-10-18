@@ -146,19 +146,26 @@ impl QueryMemo {
         parse_config: &ParseConfig,
         compute: impl FnOnce() -> (Answer, Option<Arc<Plan>>),
     ) -> Answer {
-        self.answer_cancellable(key, today, parse_config, || Some(compute()))
+        self.answer_cancellable(key, today, parse_config, &|| false, || Some(compute()))
             .expect("never cancelled")
     }
 
-    /// [`Self::answer`] whose computation may stop: `None` from `compute` is
-    /// returned as `None` and nothing is retained.
+    /// [`Self::answer`] whose run may be cancelled. A run whose `cancelled`
+    /// already reports true is answered `None` before the memo is read, so a
+    /// cancelled run is never served from it; `None` from `compute`, or a
+    /// cancellation observed once `compute` returns, is answered `None` and
+    /// nothing is retained, so a cancelled run never stores into it.
     pub(crate) fn answer_cancellable(
         &self,
         key: String,
         today: JournalDate,
         parse_config: &ParseConfig,
+        cancelled: &dyn Fn() -> bool,
         compute: impl FnOnce() -> Option<(Answer, Option<Arc<Plan>>)>,
     ) -> Option<Answer> {
+        if cancelled() {
+            return None;
+        }
         let today = today.ordinal_key();
         {
             let mut memo = self.inner.write().unwrap();
@@ -173,6 +180,9 @@ impl QueryMemo {
             }
         }
         let (answer, plan) = compute()?;
+        if cancelled() {
+            return None;
+        }
         // The memo is per day; an answer that read the instant (`now`) is
         // stale within minutes, so it is returned but never retained.
         if plan.as_ref().is_some_and(|plan| plan.reads_clock()) {
@@ -343,7 +353,7 @@ mod tests {
             ))
         };
         let name = Filter::attr(Attr::Name, CmpOp::Eq, Value::text("a"));
-        let near = plan_of(Filter::near(name.clone(), 2, NearDir::Both, None));
+        let near = plan_of(Filter::near(name.clone(), 2, NearDir::Both));
         let links = plan_of(Filter::rel(Rel::LinkedBy, Quant::None, Filter::True));
         let plain = plan_of(name);
         assert!(near.reads_links() && links.reads_links() && !plain.reads_links());
@@ -605,5 +615,34 @@ mod tests {
             2,
             "a straggler for yesterday dropped today's memo"
         );
+    }
+
+    #[test]
+    fn a_cancelled_run_is_never_served_from_nor_stored_into_the_memo() {
+        let memo = QueryMemo::default();
+        let config = ParseConfig::default();
+        let today = JournalDate::today();
+        // Cancelled before it starts: not served, even with an entry present.
+        memo.answer("k".into(), today, &config, || (groups(1), None));
+        let computed = std::cell::Cell::new(false);
+        let served = memo.answer_cancellable("k".into(), today, &config, &|| true, || {
+            computed.set(true);
+            Some((groups(9), None))
+        });
+        assert!(served.is_none(), "a cancelled run was served from the memo");
+        assert!(!computed.get(), "a cancelled run started computing");
+        // Cancelled once its computation finished: answered nothing, stored
+        // nothing (the next run computes its own answer).
+        let cancel = std::cell::Cell::new(false);
+        let late = memo.answer_cancellable("late".into(), today, &config, &|| cancel.get(), || {
+            cancel.set(true);
+            Some((groups(2), None))
+        });
+        assert!(late.is_none(), "a run cancelled as it completed answered");
+        let next = memo.answer("late".into(), today, &config, || (groups(3), None));
+        assert_eq!(total(&next), 3, "a cancelled run's answer was stored");
+        // The first entry is untouched.
+        let first = memo.answer("k".into(), today, &config, || (groups(4), None));
+        assert_eq!(total(&first), 1);
     }
 }

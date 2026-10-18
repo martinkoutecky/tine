@@ -89,7 +89,7 @@ export type Leaf =
   /** A quantifier over ONE relation of the current row. */
   | { kind: "rel"; rel: Rel; quant: Quant; pred: Filter }
   /** The seed pages and every page within `k` link steps (page rows only). */
-  | { kind: "near"; seeds: Filter; k: number; dir?: NearDir; through?: Filter };
+  | { kind: "near"; seeds: Filter; k: number; dir?: NearDir };
 
 /** The boolean tree. */
 export type Filter =
@@ -392,7 +392,6 @@ function forEachLeafFilter(leaf: Leaf, visit: (node: Filter) => void): void {
     case "near":
       if (leaf.dir !== undefined && !NEAR_DIRS.includes(leaf.dir)) throw new UnknownIrVariantError("NearDir", leaf.dir);
       forEachFilter(leaf.seeds, visit);
-      if (leaf.through) forEachFilter(leaf.through, visit);
       return;
     default:
       throw new UnknownIrVariantError("Leaf", leaf);

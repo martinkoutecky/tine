@@ -322,16 +322,13 @@ impl LinkGraph {
     }
 
     /// `near`: the seeds and every node within `k` steps, one breadth-first
-    /// search per direction (each path keeps its direction). A node failing
-    /// `through` is selected when reached but not expanded; seeds always are.
-    /// Cost O(nodes + edges followed); no recursion. `None` once `cancelled`
+    /// search per direction (each path keeps its direction). Cost O(nodes + edges followed); no recursion. `None` once `cancelled`
     /// reports true (checked once per [`CHECK_EVERY`] expanded nodes).
     pub(crate) fn ball(
         &self,
         seeds: &[bool],
         k: u32,
         dir: NearDir,
-        through: Option<&[bool]>,
         cancelled: &dyn Fn() -> bool,
     ) -> Option<Vec<bool>> {
         let mut ball = seeds.to_vec();
@@ -355,11 +352,6 @@ impl LinkGraph {
                     expanded += 1;
                     if expanded.is_multiple_of(CHECK_EVERY) && cancelled() {
                         return None;
-                    }
-                    let expands = seeds[node as usize]
-                        || through.is_none_or(|through| through[node as usize]);
-                    if !expands {
-                        continue;
                     }
                     for &neighbour in &adjacency[node as usize] {
                         if !seen[neighbour as usize] {
@@ -524,18 +516,12 @@ mod cancellation_tests {
         let mut seeds = vec![false; table.node_count()];
         seeds[table.node("p0").unwrap() as usize] = true;
         let whole = table
-            .ball(&seeds, CHAIN as u32, NearDir::Out, None, &|| false)
+            .ball(&seeds, CHAIN as u32, NearDir::Out, &|| false)
             .unwrap();
         assert_eq!(whole.iter().filter(|&&hit| hit).count(), CHAIN + 1);
         let calls = Cell::new(0);
         assert!(table
-            .ball(
-                &seeds,
-                CHAIN as u32,
-                NearDir::Out,
-                None,
-                &stop_after(1, &calls)
-            )
+            .ball(&seeds, CHAIN as u32, NearDir::Out, &stop_after(1, &calls))
             .is_none());
         // One check per CHECK_EVERY expanded nodes: stopped after the first
         // CHECK_EVERY of the CHAIN nodes.
@@ -563,13 +549,9 @@ mod cancellation_tests {
         let total = {
             let (_dir, graph) = chain();
             let calls = Cell::new(0);
-            crate::query::exec::query_ir_cancellable(
-                &graph,
-                request(),
-                &stop_after(usize::MAX, &calls),
-            )
-            .unwrap()
-            .unwrap();
+            crate::query::exec::query_ir(&graph, request(), &stop_after(usize::MAX, &calls))
+                .unwrap()
+                .unwrap();
             calls.get()
         };
         // The build checks once per page twice, the seed condition and the
@@ -580,26 +562,20 @@ mod cancellation_tests {
         for after in [3, total / 4, total / 2, 3 * total / 4, total - 1] {
             let (_dir, graph) = chain();
             let calls = Cell::new(0);
-            let answer = crate::query::exec::query_ir_cancellable(
-                &graph,
-                request(),
-                &stop_after(after, &calls),
-            )
-            .unwrap();
+            let answer =
+                crate::query::exec::query_ir(&graph, request(), &stop_after(after, &calls))
+                    .unwrap();
             assert!(answer.is_none(), "stopped after {after} of {total} checks");
             assert_eq!(calls.get(), after, "no check after the first true one");
         }
         // Nothing of a stopped run is memoized: stop one, then run it whole.
         let (_dir, graph) = chain();
-        let stopped = crate::query::exec::query_ir_cancellable(
-            &graph,
-            request(),
-            &stop_after(total / 2, &Cell::new(0)),
-        )
-        .unwrap();
+        let stopped =
+            crate::query::exec::query_ir(&graph, request(), &stop_after(total / 2, &Cell::new(0)))
+                .unwrap();
         assert!(stopped.is_none());
         let crate::IrAnswer::Result(result) =
-            crate::query::exec::query_ir_cancellable(&graph, request(), &|| false)
+            crate::query::exec::query_ir(&graph, request(), &|| false)
                 .unwrap()
                 .unwrap()
         else {
@@ -610,5 +586,124 @@ mod cancellation_tests {
         };
         // p1..p{CHAIN-1} (p0 has no referrer; the fileless end is no row).
         assert_eq!(pages.len(), CHAIN - 1);
+    }
+
+    /// One whole run on `graph` of `tql`, counting its checks.
+    fn checks_of_a_whole_run(graph: &crate::model::ReadSnapshot, tql: &str) -> usize {
+        let (query, view) = parse_query_input(
+            tql,
+            QueryInput::Tql,
+            tine_core::date::JournalDate::today(),
+            Registry::none(),
+        );
+        assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+        let context = ExecutionContext::default();
+        let calls = Cell::new(0);
+        crate::query::exec::query_ir(
+            graph,
+            crate::IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &context,
+            },
+            &stop_after(usize::MAX, &calls),
+        )
+        .unwrap()
+        .expect("never cancelled");
+        calls.get()
+    }
+
+    fn run_with(
+        graph: &crate::model::ReadSnapshot,
+        tql: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<crate::IrAnswer> {
+        let (query, view) = parse_query_input(
+            tql,
+            QueryInput::Tql,
+            tine_core::date::JournalDate::today(),
+            Registry::none(),
+        );
+        let context = ExecutionContext::default();
+        crate::query::exec::query_ir(
+            graph,
+            crate::IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &context,
+            },
+            cancelled,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_cancelled_run_is_never_served_from_the_memo() {
+        let (_dir, graph) = chain();
+        for tql in [
+            "@page and near(name = 'p0', 2, 'out')",
+            "@page and not name = 'p5'",
+        ] {
+            // A whole run is memoized ...
+            assert!(run_with(&graph, tql, &|| false).is_some());
+            // ... and a cancelled run is answered nothing before the memo is
+            // read: one check, no served answer.
+            let calls = Cell::new(0);
+            assert!(
+                run_with(&graph, tql, &stop_after(1, &calls)).is_none(),
+                "{tql}"
+            );
+            assert_eq!(calls.get(), 1, "{tql}");
+            // The memo itself is untouched: an uncancelled run is served.
+            let calls = Cell::new(0);
+            assert!(run_with(&graph, tql, &stop_after(usize::MAX, &calls)).is_some());
+            assert_eq!(
+                calls.get(),
+                1,
+                "{tql}: a memo hit makes only the entry check"
+            );
+        }
+    }
+
+    #[test]
+    fn a_run_cancelled_as_it_completes_stores_nothing_in_the_memo() {
+        for tql in [
+            "@page and near(name = 'p0', 2, 'out')",
+            "@page and not name = 'p5'",
+        ] {
+            let total = {
+                let (_dir, graph) = chain();
+                checks_of_a_whole_run(&graph, tql)
+            };
+            let (_dir, graph) = chain();
+            // The last check comes after the computation finished: the run is
+            // cancelled then, so its complete answer is not stored either.
+            let calls = Cell::new(0);
+            assert!(
+                run_with(&graph, tql, &stop_after(total, &calls)).is_none(),
+                "{tql}"
+            );
+            assert_eq!(calls.get(), total, "{tql}");
+            // Nothing was stored: the next run computes (many checks), it is
+            // not a memo hit (one check).
+            assert!(checks_of_a_whole_run(&graph, tql) > 1, "{tql}");
+        }
+    }
+
+    #[test]
+    fn a_query_without_link_conditions_stops_in_its_page_scan() {
+        let (_dir, graph) = chain();
+        let tql = "@page and not name = 'p5'";
+        let total = checks_of_a_whole_run(&chain().1, tql);
+        // The entry check, one per candidate page, the completion check.
+        assert!(total >= CHAIN, "checks in a whole run: {total}");
+        for after in [2, total / 2, total - 1] {
+            let calls = Cell::new(0);
+            assert!(
+                run_with(&graph, tql, &stop_after(after, &calls)).is_none(),
+                "stopped after {after} of {total} checks"
+            );
+            assert_eq!(calls.get(), after, "no check after the first true one");
+        }
     }
 }

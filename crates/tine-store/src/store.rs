@@ -2796,7 +2796,9 @@ mod bridge_matching_blocks_tests {
 }
 
 /// Caller-owned cancellation flag, checked by `search` and `find_blocks`
-/// before each search page and block. Other graph queries do not take it.
+/// before each search page and block, and by `query_ir` once per candidate
+/// page and within its link work. Other graph queries do not take it.
+#[derive(Default)]
 pub struct Cancel(pub Arc<AtomicBool>);
 
 /// Facet answer policy. The two variants use different inputs and budgets;
@@ -3101,14 +3103,23 @@ impl WholeGraph {
     /// without constructing any (N19); `Registry` is the observed property
     /// registry (§6.1). Only a statistics fold over its memory budget fails.
     ///
+    ///
+    /// `cancel` is the caller's flag (the one `search` takes): `Run` and
+    /// `ExplainEmpty` check it cooperatively, once per candidate page and, for
+    /// `links`/`linked_by`/`near`, once per 1024 references or reached pages
+    /// (docs/contracts/tql-links-near.md). `Ok(None)` means cancelled: no
+    /// partial answer, and a cancelled run is never served from the memo nor
+    /// stored into it. A flag that is never set always answers `Some`.
+    ///
     /// Cost: graph-wide `Run`/`ExplainEmpty` is O(P + B) per plan/probe, memoized.
     /// Exact page-name scopes visit their owners unless global coercions/tag
     /// facts are needed. Registry build is O(P + B) once per generation, then shared.
     pub fn query_ir(
         &self,
         request: IrRequest<'_>,
-    ) -> Result<IrAnswer, tine_core::query::statistics::StatisticsResourceLimit> {
-        crate::query::exec::query_ir(&self.graph, request)
+        cancel: &Cancel,
+    ) -> Result<Option<IrAnswer>, tine_core::query::statistics::StatisticsResourceLimit> {
+        crate::query::exec::query_ir(&self.graph, request, &|| cancel.0.load(Ordering::Acquire))
     }
 
     /// Graph search, with an optional syntactically checked file scope and

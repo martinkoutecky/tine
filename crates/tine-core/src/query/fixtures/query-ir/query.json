@@ -425,19 +425,7 @@
             }
           },
           "k": 2,
-          "dir": "out",
-          "through": {
-            "kind": "leaf",
-            "leaf": {
-              "kind": "attr",
-              "attr": "journal",
-              "op": "eq",
-              "value": {
-                "kind": "bool",
-                "bool": false
-              }
-            }
-          }
+          "dir": "out"
         }
       },
       {

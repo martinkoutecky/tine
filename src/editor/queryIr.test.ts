@@ -147,11 +147,10 @@ describe("the TypeScript mirror of the Rust query IR", () => {
     expect([...ops].sort()).toEqual([...CMP_OPS].sort());
     expect([...rels].sort()).toEqual([...RELS].sort());
     expect([...quants].sort()).toEqual([...QUANTS].sort());
-    // `near` (docs/contracts/tql-links-near.md): the walk visits its seeds and
-    // `through`, and the corpus spells a direction and the default.
+    // `near` (docs/contracts/tql-links-near.md): the walk visits its seeds,
+    // and the corpus spells a direction and the default.
     const near = leaves.flatMap((l) => (l.kind === "near" ? [l] : []));
     expect(near.map((l) => l.dir).sort()).toEqual(["both", "out"]);
-    expect(near.some((l) => l.through !== undefined)).toBe(true);
     expect(NEAR_DIRS).toEqual(["out", "in", "both"]);
   });
 

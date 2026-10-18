@@ -29,11 +29,15 @@ fn rows(graph: &WholeGraph, q: &str) -> Vec<(String, BlockDto)> {
         Registry::none(),
     );
     let IrAnswer::Result(result) = graph
-        .query_ir(IrRequest::Run {
-            query: &query,
-            view: &view,
-            context: &ExecutionContext::default(),
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &ExecutionContext::default(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .unwrap()
     else {
         panic!("query_ir(Run) returns a result");
@@ -126,11 +130,15 @@ fn gh699_space_and_comma_property_tokens_agree_in_queries_and_backlinks() {
             Registry::none(),
         );
         let IrAnswer::Result(result) = graph
-            .query_ir(IrRequest::Run {
-                query: &query,
-                view: &view,
-                context: &ExecutionContext::default(),
-            })
+            .query_ir(
+                IrRequest::Run {
+                    query: &query,
+                    view: &view,
+                    context: &ExecutionContext::default(),
+                },
+                &tine_store::Cancel::default(),
+            )
+            .map(|answer| answer.expect("never cancelled"))
             .unwrap()
         else {
             panic!("result");

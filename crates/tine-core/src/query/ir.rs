@@ -266,10 +266,6 @@ pub enum Leaf {
         /// Which way a path follows links.
         #[serde(default)]
         dir: NearDir,
-        /// Pages a path may continue through; a page failing it is selected
-        /// when reached but not expanded. `None` lets every page through.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        through: Option<Box<Filter>>,
     },
 }
 
@@ -408,12 +404,11 @@ impl Filter {
             pred: Box::new(pred),
         })
     }
-    pub fn near(seeds: Filter, k: u32, dir: NearDir, through: Option<Filter>) -> Filter {
+    pub fn near(seeds: Filter, k: u32, dir: NearDir) -> Filter {
         Filter::leaf(Leaf::Near {
             seeds: Box::new(seeds),
             k,
             dir,
-            through: through.map(Box::new),
         })
     }
 
@@ -473,8 +468,8 @@ impl Filter {
                 leaf: Leaf::Rel { pred, .. },
             } => pred.has_off(),
             Filter::Leaf {
-                leaf: Leaf::Near { seeds, through, .. },
-            } => seeds.has_off() || through.as_deref().is_some_and(Filter::has_off),
+                leaf: Leaf::Near { seeds, .. },
+            } => seeds.has_off(),
             _ => false,
         }
     }
@@ -534,25 +529,12 @@ impl Filter {
                 .omitting(off, og_dropped)
                 .map(|pred| Filter::rel(*rel, *quant, pred)),
             // Seeds entirely removed remove the leaf, as a relation's predicate
-            // does; a removed `through` lets every page through.
+            // does.
             Filter::Leaf {
-                leaf:
-                    Leaf::Near {
-                        seeds,
-                        k,
-                        dir,
-                        through,
-                    },
-            } => seeds.omitting(off, og_dropped).map(|seeds| {
-                Filter::near(
-                    seeds,
-                    *k,
-                    *dir,
-                    through
-                        .as_deref()
-                        .and_then(|through| through.omitting(off, og_dropped)),
-                )
-            }),
+                leaf: Leaf::Near { seeds, k, dir },
+            } => seeds
+                .omitting(off, og_dropped)
+                .map(|seeds| Filter::near(seeds, *k, *dir)),
             other => Some(other.clone()),
         }
     }
@@ -594,12 +576,7 @@ impl Filter {
                 visit(leaf)?;
                 match leaf {
                     Leaf::Rel { pred, .. } => pred.visit_leaves(visit)?,
-                    Leaf::Near { seeds, through, .. } => {
-                        seeds.visit_leaves(visit)?;
-                        if let Some(through) = through {
-                            through.visit_leaves(visit)?;
-                        }
-                    }
+                    Leaf::Near { seeds, .. } => seeds.visit_leaves(visit)?,
                     Leaf::Attr { .. } => {}
                 }
             }
@@ -781,19 +758,8 @@ impl Filter {
                 leaf: Leaf::Rel { rel, quant, pred },
             } => Filter::rel(*rel, *quant, pred.normalize_tree()),
             Filter::Leaf {
-                leaf:
-                    Leaf::Near {
-                        seeds,
-                        k,
-                        dir,
-                        through,
-                    },
-            } => Filter::near(
-                seeds.normalize_tree(),
-                *k,
-                *dir,
-                through.as_deref().map(Filter::normalize_tree),
-            ),
+                leaf: Leaf::Near { seeds, k, dir },
+            } => Filter::near(seeds.normalize_tree(), *k, *dir),
             // The payload and its kind are the preserved value; only the span is
             // presentation metadata (§4.3.2).
             Filter::Raw { text, kind, .. } => Filter::Raw {

@@ -1003,12 +1003,14 @@ impl ReadSnapshot {
         self.memos.query.answer(key, today, &parse_config, compute)
     }
 
-    /// [`Self::query_answer`] whose computation may stop (`None`): nothing is
-    /// memoized for a stopped computation.
+    /// [`Self::query_answer`] for a run that may be cancelled (`None`): a
+    /// cancelled run is never served from the memo and never stored into it
+    /// (`QueryMemo::answer_cancellable`).
     pub(crate) fn query_answer_cancellable(
         &self,
         key: String,
         today: tine_core::date::JournalDate,
+        cancelled: &dyn Fn() -> bool,
         compute: impl FnOnce() -> Option<(
             crate::query::memo::Answer,
             Option<Arc<crate::query::exec::Plan>>,
@@ -1017,7 +1019,7 @@ impl ReadSnapshot {
         let parse_config = tine_core::query::atom::ParseConfig::from_config(&self.config);
         self.memos
             .query
-            .answer_cancellable(key, today, &parse_config, compute)
+            .answer_cancellable(key, today, &parse_config, cancelled, compute)
     }
 
     pub(crate) fn backlinks_bounded(

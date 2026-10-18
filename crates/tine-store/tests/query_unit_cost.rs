@@ -98,7 +98,10 @@ const QUERIES: &[&str] = &[
 ];
 
 fn warm(graph: &WholeGraph, memo: bool) {
-    match graph.query_ir(IrRequest::Registry) {
+    match graph
+        .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+        .map(|answer| answer.expect("never cancelled"))
+    {
         Ok(IrAnswer::Registry(_)) => {}
         _ => panic!("registry"),
     }
@@ -116,7 +119,10 @@ fn warm(graph: &WholeGraph, memo: bool) {
 /// registry) and warmed queries whose answers are page-sized, so the bytes
 /// measured are the edit's, not a graph-sized answer's copy to the caller.
 fn after_edit(graph: &WholeGraph) {
-    match graph.query_ir(IrRequest::Registry) {
+    match graph
+        .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+        .map(|answer| answer.expect("never cancelled"))
+    {
         Ok(IrAnswer::Registry(_)) => {}
         _ => panic!("registry"),
     }
@@ -128,11 +134,17 @@ fn after_edit(graph: &WholeGraph) {
 }
 
 fn run(graph: &WholeGraph, query: &tine_core::query::ir::Query, view: &ViewSettings) {
-    match graph.query_ir(IrRequest::Run {
-        query,
-        view,
-        context: &ExecutionContext::none(),
-    }) {
+    match graph
+        .query_ir(
+            IrRequest::Run {
+                query,
+                view,
+                context: &ExecutionContext::none(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
+    {
         Ok(IrAnswer::Result(_)) => {}
         other => panic!("{other:?}"),
     }
@@ -200,7 +212,10 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
         let ((), query_bytes, query) = measure(|| after_edit(&graph));
         let watcher_bytes = save_watcher_bytes + WATCHER_ALLOCATED.load(Ordering::Relaxed);
         if text == edits[1] {
-            let rare_row = match graph.query_ir(IrRequest::Registry) {
+            let rare_row = match graph
+                .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+                .map(|answer| answer.expect("never cancelled"))
+            {
                 Ok(IrAnswer::Registry(registry)) => registry.row("rare").is_some(),
                 _ => panic!("registry"),
             };

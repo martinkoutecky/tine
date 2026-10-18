@@ -1106,31 +1106,26 @@ fn links_near_every_spelling_and_its_canonical_print() {
     let cases: &[(&str, Filter, &str)] = &[
         (
             "@page and near(name = 'A', 1)",
-            Filter::near(name_is("A"), 1, NearDir::Both, None),
+            Filter::near(name_is("A"), 1, NearDir::Both),
             "@page and near(name = 'A', 1)",
         ),
         (
             "@page and near(name = 'A', 2, 'both')",
-            Filter::near(name_is("A"), 2, NearDir::Both, None),
+            Filter::near(name_is("A"), 2, NearDir::Both),
             "@page and near(name = 'A', 2)",
         ),
         (
             "@page and near(name = 'A', 0, 'out')",
-            Filter::near(name_is("A"), 0, NearDir::Out, None),
+            Filter::near(name_is("A"), 0, NearDir::Out),
             "@page and near(name = 'A', 0, 'out')",
         ),
         (
             "@page and near(name = 'A', 3, 'IN')",
-            Filter::near(name_is("A"), 3, NearDir::In, None),
+            Filter::near(name_is("A"), 3, NearDir::In),
             "@page and near(name = 'A', 3, 'in')",
         ),
         (
-            "@page and near(name = 'A', 2, through => journal = false)",
-            Filter::near(name_is("A"), 2, NearDir::Both, Some(journal_is(false))),
-            "@page and near(name = 'A', 2, through => journal = false)",
-        ),
-        (
-            "@page and near(name in ('A', 'B'), 2, 'out', through => journal = false or name = 'C')",
+            "@page and near(name in ('A', 'B'), 2, 'out')",
             Filter::near(
                 Filter::attr(
                     Attr::Name,
@@ -1141,9 +1136,8 @@ fn links_near_every_spelling_and_its_canonical_print() {
                 ),
                 2,
                 NearDir::Out,
-                Some(Filter::or(vec![journal_is(false), name_is("C")])),
             ),
-            "@page and near(name in ('A', 'B'), 2, 'out', through => journal = false or name = 'C')",
+            "@page and near(name in ('A', 'B'), 2, 'out')",
         ),
         (
             "@page and near(name = 'A' or name = 'B', 1) and not name = 'C'",
@@ -1152,7 +1146,6 @@ fn links_near_every_spelling_and_its_canonical_print() {
                     Filter::or(vec![name_is("A"), name_is("B")]),
                     1,
                     NearDir::Both,
-                    None,
                 ),
                 Filter::not(name_is("C")),
             ]),
@@ -1190,6 +1183,25 @@ fn links_near_malformed_calls_are_diagnostics_not_other_searches() {
         let diagnostics = rejected(source);
         assert!(!diagnostics.is_empty(), "{source}");
     }
+    // Hub control is deferred (D-20261018-T1): a fourth argument, and any
+    // named argument such as the prototype's `through => …`, is refused with a
+    // message that says the slot is reserved, never read as another search.
+    for source in [
+        "@page and near(name = 'A', 2, 'out', 'in')",
+        "@page and near(name = 'A', 2, 'out', journal = false)",
+        "@page and near(name = 'A', 2, through => journal = false)",
+        "@page and near(name = 'A', 2, 'both', through => journal = false)",
+        "@page and near(name = 'A', through => journal = false, 2)",
+        "@page and near(name = 'A', 2, via => journal = false)",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.kind == DiagnosticKind::Syntax && d.message.contains("reserved")),
+            "{source}: {diagnostics:?}"
+        );
+    }
     // At @block, `near` is a page condition: kept, reported, never false.
     let block = parse("near(name = 'A', 1)");
     assert!(block.is_invalid());
@@ -1202,7 +1214,7 @@ fn links_near_malformed_calls_are_diagnostics_not_other_searches() {
 
 #[test]
 fn links_near_seed_names_are_the_rename_literals() {
-    let source = "@page and near(name in ('Alpha', 'Beta'), 2, through => not name = 'Gamma') and any(links, name = 'Delta')";
+    let source = "@page and near(name in ('Alpha', 'Beta'), 2, 'out') and not name = 'Gamma' and any(links, name = 'Delta')";
     let found: Vec<String> = page_name_literals(source)
         .into_iter()
         .map(|(range, name)| {
@@ -1222,12 +1234,18 @@ fn links_near_seed_names_are_the_rename_literals() {
 #[test]
 fn links_near_inside_off_and_omission() {
     use crate::query::ir::NearDir;
-    let query = parse("@page and near(name = 'A', 1, through => off(journal = false))");
+    let query = parse("@page and near(name = 'A' or off(journal = false), 1)");
     assert!(!query.is_invalid(), "{:?}", query.diagnostics);
-    // A disabled `through` lets every page through; disabled seeds remove the leaf.
+    // A disabled seed alternative is left out; disabled seeds remove the leaf.
     assert_eq!(
         query.evaluable_filter(),
-        Filter::near(name_is("A"), 1, NearDir::Both, None)
+        Filter::near(
+            Filter::Or {
+                items: vec![name_is("A")]
+            },
+            1,
+            NearDir::Both
+        )
     );
     let query = parse("@page and journal = false and near(off(name = 'A'), 1)");
     assert_eq!(

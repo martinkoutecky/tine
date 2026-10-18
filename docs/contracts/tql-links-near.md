@@ -1,8 +1,9 @@
 # TQL link conditions: `links`, `linked_by`, `near`
 
-Status: **prototype for review** (M3, vision §4.3 revision, D-20261004-V2d). The
-spelling below is persisted in users' pages, so it is the one-way door; the rest
-can move.
+Status: **decided syntax, Beta** (M3, vision §4.3 revision, D-20261004-V2d;
+syntax decided by Martin 2026-10-18, D-20261018-T1). The spelling below is
+persisted in users' pages, so it is the one-way door; the rest can move. On og
+(Beta) only; stable takes it after conceptual model v0 defines links on nodes.
 
 TQL is Tine's own query text (`{{tine-query …}}`). These conditions are
 Tine-only: OG's `{{query}}` language is unchanged, and a query that uses one is
@@ -18,9 +19,7 @@ any(links, <page condition>)        every(links, …)       none(links, …)
 any(linked_by, <page condition>)    every(linked_by, …)   none(linked_by, …)
 
 near(<seed condition>, <k>)
-near(<seed condition>, <k>, '<dir>')
-near(<seed condition>, <k>, through => <page condition>)
-near(<seed condition>, <k>, '<dir>', through => <page condition>)
+near(<seed condition>, <k>, '<dir>')        <dir> is 'out', 'in' or 'both'
 ```
 
 - `links` — the pages this page links to. `linked_by` — the pages that link to
@@ -34,22 +33,33 @@ near(<seed condition>, <k>, '<dir>', through => <page condition>)
   - `<k>` is a whole number literal, `0` or more. `0` selects the seeds alone.
   - `<dir>` is a quoted string: `'out'` follows links forward (pages the seeds
     link to, then pages those link to, …); `'in'` follows them backwards (pages
-    that link to the seeds, …); `'both'` is the union of the two, **each path
-    keeping one direction** (k steps out plus k steps in, OG's graph-view
-    meaning). It is **not** the undirected ball: with `'both'`, a page that
-    links to a page the seed links to is not reached at k = 2. `'both'` is the
-    default and is not printed.
-  - `through => <page condition>`: a path may continue only through pages that
-    satisfy the condition. A page that fails it **is still selected when a path
-    reaches it, but no path continues from it** (include-but-stop, Neo4j APOC
-    `subgraphNodes` termination filter). Seeds are always selected and always
-    expanded, whatever `through` says. To leave pages out entirely, combine:
-    `near(…, through => journal = false) and journal = false`.
+    that link to the seeds, …). `'both'`, the default, is not printed.
 
-The canonical printed form omits `'both'` and an absent `through`; a `through`
-argument is always named. Every other spelling (a named `k`, `dir` without
-quotes, `through` before `dir`, a `through` given twice) is a syntax error,
-never a silently different query.
+### `'both'` is not the undirected ball
+
+`'both'` is the **out-neighbourhood at distance k together with the
+in-neighbourhood at distance k**: one search forward, one search backward, and
+**each path keeps one direction**. It is *not* the undirected ball (every page
+within k steps when a path may switch direction at every step), which is what
+an undirected or "both" step means in Cypher (`-[*1..k]-`), Gremlin
+(`both()`) and SPARQL property paths (`(p|^p)`). With `'both'`, a page that links to a page the seed links to is not
+reached at k = 2 (seed → x ← z: z is reached only by switching direction).
+Martin, 2026-10-18 (D-20261018-T1): a page linking to a page you link to may be
+unrelated. The undirected shape is not expressible in one `near` today.
+
+### Hub control is reserved
+
+There is no hub control (no way to stop a path at a page such as a busy
+journal day). `near` takes **at most three positional arguments**; a fourth
+argument, and any named argument (`… => …`), is a syntax error whose message
+says the slot is reserved for a later version. The prototype's
+`through => <condition>` is such an argument and is refused the same way. A
+conjunct removes rows but never stops a path: `near(name = 'Project', 2) and
+journal = false` still reaches the pages a journal day links to.
+
+The canonical printed form omits `'both'`. Every other spelling (a named `k`,
+`dir` without quotes, a fourth argument) is a syntax error, never a silently
+different query.
 
 ### Examples
 
@@ -59,9 +69,9 @@ never a silently different query.
     (= name = 'Project' or any(links, name = 'Project')
        or any(linked_by, name = 'Project')).
 
-{{tine-query @page and near(name in ('Lemma 4', 'Draft'), 2, through => journal = false)}}
-    Two steps out and two steps in from either seed; a journal day that links
-    to a seed is selected but does not drag in everything else it mentions.
+{{tine-query @page and near(name in ('Lemma 4', 'Draft'), 2) and journal = false}}
+    Two steps out and two steps in from either seed, journal days left out of
+    the rows (paths still go through them).
 
 {{tine-query @page and near(name = 'Paper', 3, 'out')}}
     Everything Paper links to, up to three steps away.
@@ -125,18 +135,25 @@ its text, as in OG.
   later snapshot builds its own.
 - **`near`** is breadth-first search over that table, one search per
   direction, never recursion: O(seeds + pages reached + links followed). The seed
-  condition and `through` are each evaluated once per page.
+  condition is evaluated once per page.
 - **`links` / `linked_by`** evaluate their element condition once per page, then
   each row reads its own adjacency: O(P + E) per condition.
 - Nested link conditions are evaluated innermost first; each is computed once
   per query execution.
-- **Cancellation.** The table build, every element, seed and `through`
-  condition and every `near` search check the caller's cancellation flag
-  cooperatively (the `Cancel` flag interactive search takes; in this prototype
-  it is reached through the test-oracle `WholeGraph::query_ir_cancellable`,
-  and no app caller sets one yet): at least once per page and once per 1,024
-  references or reached pages. A cancelled run answers nothing, memoizes
-  nothing and keeps no partial table.
+- **Cancellation.** `WholeGraph::query_ir(request, &Cancel)` takes the caller's
+  flag (the `Cancel` flag interactive search takes). The row scan checks it
+  once per candidate page; the table build, every element and seed condition
+  and every `near` search check it at least once per page and once per 1,024
+  references or reached pages. A cancelled run answers `Ok(None)`: no partial
+  answer, no partial table, and a cancelled run is never served from the memo
+  (the flag is read before the memo) nor stored into it (the flag is read
+  again after the computation, before the store). In the app every
+  `query_run`, `query_explain_empty`, `tagged_pages` and owner `query` request
+  owns a fresh flag, registered on its window's graph binding until it
+  returns; revoking the binding (graph switch, window close) sets all of them,
+  and the command answers `query-cancelled: …`. A newer run of the same query
+  block does not cancel an older one yet (the frontend shares in-flight runs
+  between blocks by key; follow-up).
 - **Bounds.** A link query is bounded like every page query (20,000 rows /
   32 MiB). A k = 2 search through hub pages can select most of a graph; that is
   the correct answer, not an error. `k` larger than the graph's depth selects
@@ -157,6 +174,9 @@ on the query, like any TQL error.
 Tests: `crates/tine-core/src/query/tql_tests.rs` (`links_near_*`: spelling,
 round trip, diagnostics, rename literals),
 `crates/tine-store/tests/link_graph.rs` (direction cases on a hand graph —
-cycle, 2-cycle, hub, journal hub with `through` — fileless seeds, rename of a
-seed inside a definition, and parity with the Linked References panel on the
-kitchen-sink, `tine-test` and anonymized-graph copies).
+cycle, 2-cycle, hub, journal hub, `'both'` versus the undirected ball —
+fileless seeds, rename of a seed inside a definition, and parity with the
+Linked References panel on the kitchen-sink, `tine-test` and anonymized-graph
+copies), `crates/tine-store/src/query/link_graph.rs` `cancellation_tests` and
+`query/memo.rs` (cancellation and the memo guard), `src-tauri/src/state.rs`
+(`revoking_a_binding_cancels_its_running_queries_and_every_later_one`).

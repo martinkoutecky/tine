@@ -1034,12 +1034,12 @@ impl Lower<'_> {
         }
     }
 
-    /// `near(<seeds>, <k> [, '<dir>'] [, through => <page condition>])`
-    /// (`docs/contracts/tql-links-near.md`). Positional arguments first, the one
-    /// named argument last; any other shape is a syntax diagnostic, never a
-    /// silently different search.
+    /// `near(<seeds>, <k> [, '<dir>'])` (`docs/contracts/tql-links-near.md`).
+    /// Positional arguments only; any other shape is a syntax diagnostic,
+    /// never a silently different search. A fourth argument, and any named
+    /// argument (the prototype's `through => …`), is reserved for hub control
+    /// (D-20261018-T1) and refused with a message that says so.
     fn near(&mut self, function: &sqlparser::ast::Function, scope: Scope) -> Filter {
-        use sqlparser::ast::FunctionArgOperator;
         match scope {
             Scope::Page => {}
             Scope::Block => {
@@ -1054,27 +1054,28 @@ impl Lower<'_> {
             }
         }
         const USAGE: &str =
-            "`near` takes seeds, a number of steps, an optional 'out', 'in' or 'both', and an optional `through => …`";
+            "`near` takes seeds, a number of steps, and an optional 'out', 'in' or 'both'";
+        const RESERVED: &str = "`near` takes at most three arguments: seeds, a number of steps, and 'out', 'in' or 'both'; a fourth argument is reserved for a later version";
         let FunctionArguments::List(list) = &function.args else {
             return self.reject(DiagnosticKind::Syntax, USAGE);
         };
         if list.duplicate_treatment.is_some() || !list.clauses.is_empty() {
             return self.reject(DiagnosticKind::Syntax, USAGE);
         }
+        if list.args.len() > 3
+            || list.args.iter().any(|arg| {
+                matches!(
+                    arg,
+                    FunctionArg::Named { .. } | FunctionArg::ExprNamed { .. }
+                )
+            })
+        {
+            return self.reject(DiagnosticKind::Syntax, RESERVED);
+        }
         let mut positional = Vec::new();
-        let mut through = None;
         for arg in &list.args {
             match arg {
-                FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) if through.is_none() => {
-                    positional.push(expr)
-                }
-                FunctionArg::Named {
-                    name,
-                    arg: FunctionArgExpr::Expr(expr),
-                    operator: FunctionArgOperator::RightArrow,
-                } if name.value.eq_ignore_ascii_case("through") && through.is_none() => {
-                    through = Some(expr)
-                }
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => positional.push(expr),
                 _ => return self.reject(DiagnosticKind::Syntax, USAGE),
             }
         }
@@ -1116,8 +1117,7 @@ impl Lower<'_> {
             Some(_) => return self.reject(DiagnosticKind::Syntax, USAGE),
         };
         let seeds = self.filter(positional[0], Scope::Page);
-        let through = through.map(|expr| self.filter(expr, Scope::Page));
-        Filter::near(seeds, k, dir, through)
+        Filter::near(seeds, k, dir)
     }
 
     fn quantified(&mut self, quant: Quant, over: &Expr, pred: &Expr, scope: Scope) -> Filter {

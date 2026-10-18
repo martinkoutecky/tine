@@ -420,20 +420,12 @@ fn tql_leaf(leaf: &Leaf, through_page: bool) -> String {
             tql_comparison(&name, *op, value)
         }
         Leaf::Rel { rel, quant, pred } => tql_rel(*rel, *quant, pred, through_page),
-        Leaf::Near {
-            seeds,
-            k,
-            dir,
-            through,
-        } => {
+        Leaf::Near { seeds, k, dir } => {
             // The canonical form (docs/contracts/tql-links-near.md): the
-            // default direction and an absent `through` are not printed.
+            // default direction is not printed.
             let mut text = format!("near({}, {k}", tql_expr(seeds, Prec::Or));
             if *dir != crate::query::ir::NearDir::Both {
                 text.push_str(&format!(", {}", sql_string(dir.tql_name())));
-            }
-            if let Some(through) = through {
-                text.push_str(&format!(", through => {}", tql_expr(through, Prec::Or)));
             }
             text.push(')');
             text

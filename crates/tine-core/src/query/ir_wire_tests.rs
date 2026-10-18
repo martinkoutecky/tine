@@ -146,17 +146,11 @@ fn every_filter_variant() -> Filter {
             Filter::attr(Attr::Name, CmpOp::Eq, Value::text("seed")),
             2,
             crate::query::ir::NearDir::Out,
-            Some(Filter::attr(
-                Attr::Journal,
-                CmpOp::Eq,
-                Value::Bool { value: false },
-            )),
         ),
         Filter::near(
             Filter::attr(Attr::Name, CmpOp::Eq, Value::text("seed")),
             1,
             crate::query::ir::NearDir::Both,
-            None,
         ),
         Filter::attr(
             Attr::CreatedAt,

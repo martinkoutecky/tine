@@ -25,6 +25,12 @@ pub(crate) struct GraphSlot {
     pub(crate) store: Arc<Store>,
     /// Latest `((` request per transport lane for this window binding.
     pub(crate) block_search_lanes: tine_graph_features::search::SearchLanes,
+    /// One cancellation flag per in-flight IR query run (`query_run`,
+    /// `query_explain_empty`, the owner's `query` verb). Revoking the binding
+    /// sets every one, so a graph switch or close stops a running query
+    /// (`WholeGraph::query_ir`'s cooperative checks) instead of letting it
+    /// finish against a graph nobody shows.
+    pub(crate) query_runs: QueryRuns,
     pub(crate) root_key: PathBuf,
     /// Unique lease for this exact window→graph binding. Frontend mutations carry
     /// it so an IPC queued before an in-place graph switch cannot execute against
@@ -66,6 +72,64 @@ pub(crate) struct GraphSlot {
     pub(crate) window: std::sync::OnceLock<crate::owner::window::WindowLink>,
 }
 
+/// The in-flight IR query runs of one binding, each with its own flag
+/// (`GraphSlot::begin_query_run`). O(1) per run; `cancel_all` is O(runs).
+#[derive(Default)]
+pub(crate) struct QueryRuns {
+    next: AtomicU64,
+    runs: Mutex<HashMap<u64, Arc<AtomicBool>>>,
+}
+
+impl QueryRuns {
+    fn begin<'a>(&'a self, revoked: &AtomicBool) -> QueryRun<'a> {
+        use std::sync::atomic::Ordering;
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let flag = Arc::new(AtomicBool::new(false));
+        self.runs.lock().unwrap().insert(id, Arc::clone(&flag));
+        // `cancel_background` stores `revoked` before it takes the map, so a
+        // run registered after that sweep sees `revoked` here.
+        if revoked.load(Ordering::Acquire) {
+            flag.store(true, Ordering::Release);
+        }
+        QueryRun {
+            runs: self,
+            id,
+            cancel: tine_store::Cancel(flag),
+        }
+    }
+
+    fn cancel_all(&self) {
+        for flag in self.runs.lock().unwrap().values() {
+            flag.store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.runs.lock().unwrap().len()
+    }
+}
+
+/// One IR query run's flag, deregistered when dropped (also on error or
+/// unwinding).
+pub(crate) struct QueryRun<'a> {
+    runs: &'a QueryRuns,
+    id: u64,
+    cancel: tine_store::Cancel,
+}
+
+impl QueryRun<'_> {
+    pub(crate) fn cancel(&self) -> &tine_store::Cancel {
+        &self.cancel
+    }
+}
+
+impl Drop for QueryRun<'_> {
+    fn drop(&mut self) {
+        self.runs.runs.lock().unwrap().remove(&self.id);
+    }
+}
+
 /// Where the binding's page host stands. `Off` before the open starts it,
 /// and after a restore whose fresh host could not start (writers then run
 /// as with no host).
@@ -103,6 +167,7 @@ impl GraphSlot {
         Self {
             store: store.into(),
             block_search_lanes: tine_graph_features::search::SearchLanes::default(),
+            query_runs: QueryRuns::default(),
             root_key,
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             startup_idle: Mutex::new(None),
@@ -164,7 +229,15 @@ impl GraphSlot {
         let _idle = self.startup_idle.lock().unwrap();
         self.background_cancelled
             .store(true, std::sync::atomic::Ordering::Release);
+        self.query_runs.cancel_all();
         self.startup_changed.notify_all();
+    }
+
+    /// A fresh cancellation flag for one IR query run on this binding,
+    /// registered until the returned guard drops. Already set when the
+    /// binding is revoked, including a revocation racing this call.
+    pub(crate) fn begin_query_run(&self) -> QueryRun<'_> {
+        self.query_runs.begin(&self.background_cancelled)
     }
 
     /// Wait off the UI thread for this binding's warm completion plus quiet,
@@ -874,6 +947,40 @@ mod tests {
             .load(std::sync::atomic::Ordering::Acquire));
         assert!(registry.owner(&b).is_none());
         assert_eq!(registry.len(), 0);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn revoking_a_binding_cancels_its_running_queries_and_every_later_one() {
+        use std::sync::atomic::Ordering;
+        let base =
+            std::env::temp_dir().join(format!("tine-registry-query-runs-{}", std::process::id()));
+        let a = base.join("a");
+        let b = base.join("b");
+        let mut registry = GraphRegistry::default();
+        let old = graph(&a);
+        registry.bind("main".into(), old.clone()).unwrap();
+        {
+            let first = old.begin_query_run();
+            let second = old.begin_query_run();
+            assert_eq!(old.query_runs.len(), 2);
+            assert!(!first.cancel().0.load(Ordering::Acquire));
+            // A graph switch revokes the old binding: both running queries stop.
+            registry.bind("main".into(), graph(&b)).unwrap();
+            assert!(first.cancel().0.load(Ordering::Acquire));
+            assert!(second.cancel().0.load(Ordering::Acquire));
+            // A run that begins on the revoked binding starts cancelled.
+            let late = old.begin_query_run();
+            assert!(late.cancel().0.load(Ordering::Acquire));
+        }
+        assert_eq!(
+            old.query_runs.len(),
+            0,
+            "a finished run leaves no flag behind"
+        );
+        // The replacement binding's runs are unaffected.
+        let current = registry.slot("main").unwrap();
+        assert!(!current.begin_query_run().cancel().0.load(Ordering::Acquire));
         let _ = std::fs::remove_dir_all(base);
     }
 

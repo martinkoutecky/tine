@@ -27,12 +27,16 @@ fn pages(graph: &WholeGraph, tql: &str) -> BTreeSet<String> {
     );
     assert!(!query.is_invalid(), "{tql}: {:?}", query.diagnostics);
     let IrAnswer::Result(result) = graph
-        .query_ir(IrRequest::Run {
-            query: &query,
-            view: &view,
-            context: &ExecutionContext::default(),
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &ExecutionContext::default(),
+            },
+            &Cancel::default(),
+        )
         .unwrap()
+        .expect("never cancelled")
     else {
         panic!("query_ir(Run) returns a result");
     };
@@ -145,33 +149,21 @@ fn links_near_directions_on_a_hand_graph() {
         q("@page and near(name = 'hub', 1, 'in')"),
         set(&["hub", "p1", "p2", "p3"])
     );
-    // Journal hub: the day is selected but, through `journal = false`, does not
-    // drag in what it mentions (include-but-stop).
+    // Journal hub: a path through the day reaches what the day mentions. There
+    // is no hub control (D-20261018-T1, a fourth argument is reserved); a
+    // conjunct removes rows but never stops a path.
     let day = "oct 1st, 2026";
     assert_eq!(
         q("@page and near(name = 'seed', 2, 'out')"),
         set(&["seed", day, "q1", "q2"])
     );
     assert_eq!(
-        q("@page and near(name = 'seed', 2, 'out', through => journal = false)"),
-        set(&["seed", day])
-    );
-    assert_eq!(
         q("@page and near(name = 'seed', 2, 'in')"),
         set(&["seed", day, "r"])
     );
     assert_eq!(
-        q("@page and near(name = 'seed', 2, 'in', through => journal = false)"),
-        set(&["seed", day])
-    );
-    // Seeds always expand, whatever `through` says; exclusion is a conjunct.
-    assert_eq!(
-        q("@page and near(name = 'seed', 1, through => false)"),
-        set(&["seed", day])
-    );
-    assert_eq!(
-        q("@page and near(name = 'seed', 2, through => journal = false) and journal = false"),
-        set(&["seed"])
+        q("@page and near(name = 'seed', 2, 'out') and journal = false"),
+        set(&["seed", "q1", "q2"])
     );
     // Several seeds.
     assert_eq!(
@@ -478,10 +470,6 @@ fn links_near_k2_on_the_realistic_graph() {
                 format!("@page and near(name = {seed}, 2)"),
             ),
             (
-                format!("{label} k=2 both through journal = false"),
-                format!("@page and near(name = {seed}, 2, through => journal = false)"),
-            ),
-            (
                 format!("{label} k=2 out"),
                 format!("@page and near(name = {seed}, 2, 'out')"),
             ),
@@ -537,7 +525,7 @@ fn links_near_a_set_cancel_flag_answers_nothing() {
     let context = ExecutionContext::default();
     let run = |cancelled: bool| {
         graph
-            .query_ir_cancellable(
+            .query_ir(
                 IrRequest::Run {
                     query: &query,
                     view: &view,
