@@ -1,3 +1,5 @@
+import { PageIcon } from "./PageIcon";
+import { pageIcon } from "../pageIconBatch";
 import { Rich } from "../i18n/Rich";
 import { BlockList } from "./BlockList";
 import { t, msg } from "../i18n";
@@ -1137,9 +1139,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
               </svg>
             </Show>
             <Show
-              when={headerProperties()
-                .find(([k]) => k.toLowerCase() === "icon")?.[1]
-                ?.trim()}
+              when={pageIcon(props.page.name)}
             >
               {(icon) => (
                 <span
@@ -1150,7 +1150,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
                     editPageHeader();
                   }}
                 >
-                  <EmojiText text={icon()} />
+                  <PageIcon value={icon()} name={props.page.name} />
                 </span>
               )}
             </Show>

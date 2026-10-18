@@ -6,6 +6,7 @@ import {
 } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { linkable_property_names } from "../render/wasm/lsdoc_wasm.js";
+import { PAGE_ICON_PROPERTIES } from "../pageIconImage";
 
 /** OG's linkable properties display their parsed reference set. Tokenization
  * and plain-member extraction are shared with native property atomization;
@@ -24,7 +25,7 @@ export function PagePropertyValue(props: {
   );
   return (
     <Show when={names().length > 0}
-      fallback={<Show when={!isQuotedPagePropertyValue(props.value)} fallback={props.value}>
+      fallback={<Show when={!PAGE_ICON_PROPERTIES.includes(props.propertyKey.toLowerCase()) && !isQuotedPagePropertyValue(props.value)} fallback={props.value}>
         <InlineText text={props.value} format={props.format} blockId={props.blockId} macroExpansion={props.macroExpansion} />
       </Show>}>
       <For each={names()}>

@@ -3,11 +3,28 @@
 // raise an error toast for the backend's no-graph refusal.
 import { afterEach, expect, it, vi } from "vitest";
 import { backend } from "./backend";
-import { pageIcon } from "./pageIconBatch";
+import { pageIcon, pageIconOwnerPath } from "./pageIconBatch";
+import { refreshPageIndex, resetPageIndex } from "./pageIndex";
 import { setToasts, toasts } from "./toasts";
 import { bumpDataRev } from "./graphSession";
 
 afterEach(() => { vi.restoreAllMocks(); setToasts([]); });
+
+it("an alias resolves relative links from the claimant supplying its icon", async () => {
+  vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);
+  bumpDataRev();
+  const image = "![](../../assets/logo.png)";
+  vi.spyOn(backend(), "pageIcons").mockResolvedValue({ Owner: image });
+  vi.spyOn(backend(), "pageInventory").mockResolvedValue({ rev: "1", entries: [
+    { key: "plain", name: "Plain", is_journal: false, day: null, target: { kind: "existing", id: "pages/Plain.md", others: [] } },
+    { key: "owner", name: "Owner", is_journal: false, day: null, target: { kind: "existing", id: "pages/nested/Owner.md", others: [] } },
+    { key: "alias", name: "Alias", is_journal: false, day: null, target: { kind: "alias", owners: ["pages/Plain.md", "pages/nested/Owner.md"] } },
+  ] });
+  await refreshPageIndex();
+  try {
+    await vi.waitFor(() => expect(pageIconOwnerPath("Alias", image)).toBe("pages/nested/Owner.md"));
+  } finally { resetPageIndex(); }
+});
 
 it("coalesces visible names and ignores a response from an older publication", async () => {
   vi.spyOn(backend(), "graphBindingGeneration").mockReturnValue(1);

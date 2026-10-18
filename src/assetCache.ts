@@ -6,6 +6,7 @@ import { graphOwner } from "./owned";
 import { clearOnBindingInvalidated } from "./binding";
 import { reportUiFailure } from "./uiFailure";
 import { mime_from_path } from "./render/wasm/lsdoc_wasm";
+import { isStaticIconImage } from "./staticImage";
 
 // Cache of graph-asset blob URLs keyed by path relative to `assets/`. Without it
 // every <img> mount (re-render, scroll back into view, or a second reference to
@@ -17,13 +18,14 @@ import { mime_from_path } from "./render/wasm/lsdoc_wasm";
 // same asset share one read. Bound both count and retained backing bytes: Blob
 // URLs keep their Blob alive even after every image unmounts.
 interface CacheEntry {
+  staticIcon?: boolean;
   failure?: ErrorFamily;
   promise: Promise<string>;
   bytes: number;
   leases: number;
   evicted: boolean;
 }
-export interface BlobLease { url: string; release: () => void; failure?: ErrorFamily }
+export interface BlobLease { url: string; release: () => void; failure?: ErrorFamily; staticIcon?: boolean }
 const cache = new Map<string, CacheEntry>();
 // Entries evicted from the retained LRU while still displayed remain keyed here
 // (but do not count toward the idle cache cap), so a repeated reference shares
@@ -133,6 +135,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
       // not start an IPC allocation for a URL nobody is waiting to cache.
       if (cache.get(key) !== entry) return "";
       const bytes = await read();
+      entry.staticIcon = isStaticIconImage(bytes);
       if (!bytes.length) {
         entry.failure = "unknown";
         return "";
@@ -172,7 +175,7 @@ async function acquire(entry: CacheEntry): Promise<BlobLease> {
   };
   const url = await entry.promise;
   if (!url) release();
-  return { url, release, ...(entry.failure ? { failure: entry.failure } : {}) };
+  return { url, release, staticIcon: entry.staticIcon, ...(entry.failure ? { failure: entry.failure } : {}) };
 }
 
 /** A blob URL for the asset at `rel` (relative to `assets/`), reading it over IPC
@@ -215,6 +218,7 @@ export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
     return url;
   }
   const entry: CacheEntry = {
+    staticIcon: isStaticIconImage(bytes),
     promise: Promise.resolve(url),
     bytes: bytes.byteLength,
     leases: 0,

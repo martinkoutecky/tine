@@ -147,8 +147,14 @@ impl ReadSnapshot {
 /// O(preblock bytes + AST nodes); no graph scan or I/O.
 pub(super) fn pre_block_icon(entry: &PageEntry, doc: &Document) -> Option<String> {
     let org = Format::from_path(&entry.path) == Format::Org;
-    crate::query::page_properties::page_property_lines(doc.pre_block.as_deref()?, org)
-        .into_iter()
-        .find(|(key, value)| key.eq_ignore_ascii_case("icon") && !value.trim().is_empty())
-        .map(|(_, value)| value)
+    let properties =
+        crate::query::page_properties::page_property_lines(doc.pre_block.as_deref()?, org);
+    include_str!("../../../tine-core/src/page_icon_property.txt")
+        .split_whitespace()
+        .find_map(|property| {
+            properties
+                .iter()
+                .find(|(key, value)| key.eq_ignore_ascii_case(property) && !value.trim().is_empty())
+                .map(|(_, value)| value.clone())
+        })
 }

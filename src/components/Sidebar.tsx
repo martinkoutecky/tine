@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
-import { pageIconPrefix } from "../pageIconBatch";
+import { pageIcon } from "../pageIconBatch";
 import { msg, t } from "../i18n";
 import { JournalsIcon } from "./JournalsIcon";
 import { openAllPages, openConflicts, openJournals, openPage, openPageInNewTab, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
@@ -182,7 +182,7 @@ export function Sidebar(props: {
                           openPageContextMenu(e.clientX, e.clientY, target());
                         }}
                       >
-                        <SidebarTitle text={pageIconPrefix(r.name) + (r.name.startsWith("hls__") ? r.name.slice(5) : r.name)} fullTitle={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
+                        <SidebarTitle icon={pageIcon(r.name)} pageName={r.name} text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} fullTitle={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
                       </div>
                     );
                   }}

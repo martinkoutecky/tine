@@ -1,3 +1,4 @@
+import { PageIcon } from "./PageIcon";
 import { t } from "../i18n";
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { pageIdentityKey } from "../pageIdentity";
@@ -180,7 +181,7 @@ function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string,
         <span class="ns-bullet" />
         <Show when={props.icons[props.node.full]}>
           <span class="page-icon">
-            <EmojiText text={props.icons[props.node.full]} />
+            <PageIcon value={props.icons[props.node.full]} name={props.node.full} />
           </span>
         </Show>
         <a class="page-ref" {...nsLink(props.node.full, undefined, true)}>
@@ -227,7 +228,7 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
               <span class="ns-macro-label">{t("namespace-macro-label")}</span>
               <Show when={iconOf(root.full)}>
                 <span class="page-icon">
-                  <EmojiText text={iconOf(root.full)!} />
+                  <PageIcon value={iconOf(root.full)!} name={root.full} />
                 </span>
               </Show>
               <a class="page-ref" {...nsLink(root.full, undefined, true)}>

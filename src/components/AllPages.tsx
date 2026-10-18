@@ -9,6 +9,7 @@ import { installPageIndex } from "../pageIndex";
 import { openPageContextMenu, openPageInSidebar } from "../ui";
 import { openRouteInOtherPane } from "../panes";
 import { pageIcon } from "../pageIconBatch";
+import { PageIcon } from "./PageIcon";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { newResizeObserver } from "../windowRealm";
 import {
@@ -214,7 +215,7 @@ export function AllPages(props: { router: PaneRouter }): JSX.Element {
                         internalLinkAuxClick(event, () => props.router.openPageTargetInNewTab({ name: row.entry.name, pageKind: row.entry.kind, path: row.entry.path }))}
                     >
                       {/* OG all-pages table: `icon::` before the name (page.cljs :td.name). */}
-                      <Show when={pageIcon(row.entry.name)}>{(icon) => <span class="all-pages-icon">{icon()} </span>}</Show>
+                      <Show when={pageIcon(row.entry.name)}>{(icon) => <span class="all-pages-icon"><PageIcon value={icon()} name={row.entry.name} /> </span>}</Show>
                       {row.label}
                     </button>
                     <span class="all-pages-updated" role="cell">{formatUpdated(row.modified)}</span>

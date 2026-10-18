@@ -5,6 +5,8 @@ import { graphOwner, readOwned } from "./owned";
 import { dataRev, graphEpoch } from "./graphSession";
 import { pageByName, readPageProperty } from "./document";
 import { pushToast } from "./toasts";
+import { PAGE_ICON_PROPERTIES } from "./pageIconImage";
+import { pageNameForPath, resolvedTarget } from "./pageIndex";
 
 // Inline page-icon lookups, made cheap for icon-heavy pages. Every `icon::`
 // requested in the same microtask tick is coalesced into ONE page_icons IPC, each
@@ -77,7 +79,7 @@ function flush() {
 /** Reactive: the referenced page's `icon::` (emoji/character) or "". Reading it
  *  lazily enqueues a batched fetch; the value fills in once the batch resolves. */
 export function pageIcon(name: string): string {
-  if (pageByName(name)) return readPageProperty(name, "icon")?.trim() ?? "";
+  if (pageByName(name)) return readPageIconProperty(name);
   ensureRev();
   if (!requested.has(name)) {
     requested.add(name);
@@ -88,6 +90,32 @@ export function pageIcon(name: string): string {
     }
   }
   return iconMap()[name] ?? "";
+}
+
+/** Loaded-page lookup, with the shared policy's property precedence. */
+export function readPageIconProperty(name: string): string {
+  for (const property of PAGE_ICON_PROPERTIES) {
+    const value = readPageProperty(name, property)?.trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+/** Relative image links belong to the page supplying the icon. Alias claimants
+ * can be in different directories; navigation's first owner need not supply an
+ * icon. Reuse the same batched lookup to identify that owner, without a scan. */
+export function pageIconOwnerPath(name: string, value: string): string {
+  const loaded = pageByName(name)?.id;
+  if (loaded) return loaded;
+  const target = resolvedTarget(name);
+  if (target?.kind === "existing") return target.id;
+  if (target?.kind === "alias") {
+    for (const path of target.owners) {
+      const owner = pageNameForPath(path);
+      if (owner && pageIcon(owner) === value) return path;
+    }
+  }
+  return "";
 }
 
 /** `pageIcon(name)` as a label prefix ("🏁 "), or "" when the page has no `icon::`.
