@@ -59,7 +59,7 @@ try {
     console.log(`${theme}: reading range, double-click word, dragged phrase, select-all; ${JSON.stringify(colors)}`);
     await page.close();
   }
-  const mobile = await browser.newPage({ viewport: { width: 420, height: 600 } });
+  const mobile = await browser.newPage({ viewport: { width: 420, height: 600 }, hasTouch: true });
   await mobile.addInitScript(() => { globalThis.__TINE_PLATFORM__ = "android"; });
   await mobile.goto(url);
   await mobile.locator(".block-content").click();

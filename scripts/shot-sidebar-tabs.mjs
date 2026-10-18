@@ -8,7 +8,7 @@ import { mkdirSync } from "node:fs";
 import assert from "node:assert/strict";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const PORT = 5227;
+const PORT = 5237;
 const OUT = "screenshots/sidebar-tabs";
 const PAGES = ["kitchen-sink", "org-sink", "Sheets demo"];
 const CASES = [
