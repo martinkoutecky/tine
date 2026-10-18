@@ -14,9 +14,12 @@ it("the Guide describes the phone navigation row, its Appearance setting and how
   ]) expect(mobile).toContain(detail);
 });
 
-it("the Guide says phones and tablets have no Open in new tab (GH #705)", () => {
-  expect(guide("pages-links-references-search")).toContain("Phones and tablets have no tab strip");
-  expect(guide("tips")).toContain("phones and tablets have no tab strip and offer **Open in sidebar** instead");
+// GH #705 said phones and tablets had no tab strip; D-20261018-W1 gates it on width instead, so the Guide
+// now says where a new tab goes on a narrow window.
+it("the Guide says where Open in new tab goes on a narrow window (GH #705, D-20261018-W1)", () => {
+  expect(guide("pages-links-references-search")).toContain("it is listed under **Tabs** in the left sidebar");
+  expect(guide("tips")).toContain("on a narrow window the tab is listed under **Tabs** in the left sidebar");
+  expect(guide("platforms-and-mobile")).toContain("The **tab strip** appears whenever the window is 640 px or wider, on every platform");
 });
 
 it("the Guide says folding a query block folds its results and that Unlinked References mark every mention (GH #619, #200)", () => {
