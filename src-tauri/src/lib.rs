@@ -596,6 +596,12 @@ mod multi_window_tests {
     }
 }
 
+/// GH #719: stop a portable instance whose `tine-data` folder cannot be
+/// written, before the CLI or the app writes anything (`portable.rs`).
+pub fn portable_preflight() {
+    portable::preflight();
+}
+
 /// Dispatch a desktop command before GUI initialization. A returned exit code
 /// means the command already printed its outcome and no app should start.
 #[cfg(desktop)]
@@ -607,6 +613,8 @@ pub fn cli_dispatch() -> Option<i32> {
 pub fn run() {
     #[cfg(target_os = "linux")]
     init_xlib_threads();
+    // GH #719: refuse an unwritable portable folder before anything writes.
+    portable::preflight();
 
     // Bring up debug logging FIRST (TINE_DEBUG=1 / --debug), so every later
     // milestone — and any panic — is captured to the log file from the very start.

@@ -16,7 +16,9 @@ To update, quit Tine and extract the new portable ZIP into this same folder.
 Keep this tine-data folder.
 
 If Tine cannot write to this folder (for example a write-protected drive),
-it uses the usual AppData location for that session and says so.
+it does not start: it says so and names the folder. Move the whole Tine
+folder somewhere you can write to and start it again. It never falls back to
+AppData, so your settings are never split between two places.
 
 To move settings from an earlier run of portable Tine on this computer, quit
 Tine and copy %APPDATA%\<app id> to tine-data\<app id>\roaming and
@@ -24,3 +26,6 @@ Tine and copy %APPDATA%\<app id> to tine-data\<app id>\roaming and
 deletes those folders itself.
 
 Without a tine-data folder beside it, Tine uses the usual AppData location.
+A tine-data folder inside an installed Tine's folder (the one with
+uninstall.exe) has no effect, and neither does a shortcut, link or junction
+named tine-data: it must be a real folder.

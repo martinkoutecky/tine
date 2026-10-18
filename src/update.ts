@@ -80,19 +80,36 @@ export function resolvePackagedUpdateMode(packaged: boolean | "unknown", install
   return packaged === true || (installer && packaged === "unknown") ? "unavailable" : "self";
 }
 
-export async function isMsixPackaged(): Promise<boolean | "unknown"> {
+/** How this desktop build is packaged, from ONE `gpu_env()` read (decided in
+ * Rust: `packaged`, `flatpak`, `portable`). "in-place" needs an affirmative
+ * `false` from every probe; anything else unanswered is "unknown", which may
+ * still notify but never installs (GH #719 r1: a second probe could disagree
+ * with the first, so each decision reads once). */
+export type UpdatePackaging = "msix" | "flatpak" | "portable" | "in-place" | "unknown";
+
+export function resolveUpdatePackaging(env: { packaged?: unknown; flatpak?: unknown; portable?: unknown }): UpdatePackaging {
+  if (env.packaged === true) return "msix";
+  if (env.flatpak === true) return "flatpak";
+  if (env.portable === true) return "portable";
+  return env.packaged === false && env.flatpak === false && env.portable === false ? "in-place" : "unknown";
+}
+
+async function updatePackaging(): Promise<UpdatePackaging> {
   try {
     const env = await readOwned(ownedWhen(), backend().gpuEnv());
-    return env.kind === "current" && typeof env.value.packaged === "boolean" ? env.value.packaged : "unknown";
+    return env.kind === "current" ? resolveUpdatePackaging(env.value) : "unknown";
   } catch (error) {
-    dbg(`update package identity probe failed: ${String(error)}`);
+    dbg(`update packaging probe failed: ${String(error)}`);
     return "unknown";
   }
 }
 
-/** Resolve update behavior conservatively. Mobile builds update through their
- * distribution channel; a platform-detection failure must therefore fail closed
- * instead of accidentally exposing the desktop updater. */
+/** Resolve update behavior conservatively, from one packaging read. Mobile
+ * builds update through their distribution channel; a platform-detection
+ * failure must therefore fail closed instead of exposing the desktop updater.
+ * MSIX: the Store updates it. Flatpak (read-only /app) and portable Windows
+ * (the installer would add a second, installed copy; GH #719) update by
+ * download. The installer runs only on an affirmative "in-place". */
 async function updateMode(installer = false): Promise<UpdateMode> {
   if (!isTauri()) return "unavailable";
   try {
@@ -100,26 +117,20 @@ async function updateMode(installer = false): Promise<UpdateMode> {
   } catch {
     return "unavailable";
   }
-  if (resolvePackagedUpdateMode(await isMsixPackaged(), installer) === "unavailable") return "unavailable";
-  // A Flatpak's /app is read-only: the in-place install can only fail, so it
-  // updates by downloading the new bundle. A portable Windows instance would
-  // get a second, installed copy from the installer (GH #719).
-  return (await updatePackaging()) === "in-place" ? "self" : "manual";
+  const packaging = await updatePackaging();
+  const packaged = packaging === "msix" ? true : packaging === "unknown" ? "unknown" : false;
+  if (resolvePackagedUpdateMode(packaged, installer) === "unavailable") return "unavailable";
+  return packaging === "flatpak" || packaging === "portable" ? "manual" : "self";
 }
 
-/** How this desktop build updates (decided in Rust: `gpu_env().flatpak`,
- * `gpu_env().portable`): by download for a Flatpak or a portable Windows
- * instance, else in place. An unanswerable probe counts as "in place": a
- * browser/mock boundary keeps the established offer. */
-async function updatePackaging(): Promise<"flatpak" | "portable" | "in-place"> {
+/** Whether this build has MSIX package identity (the About tab). */
+export async function isMsixPackaged(): Promise<boolean | "unknown"> {
   try {
     const env = await readOwned(ownedWhen(), backend().gpuEnv());
-    if (env.kind !== "current") return "in-place";
-    if (env.value.flatpak === true) return "flatpak";
-    return env.value.portable === true ? "portable" : "in-place";
+    return env.kind === "current" && typeof env.value.packaged === "boolean" ? env.value.packaged : "unknown";
   } catch (error) {
-    dbg(`update packaging probe failed: ${String(error)}`);
-    return "in-place";
+    dbg(`update package identity probe failed: ${String(error)}`);
+    return "unknown";
   }
 }
 
@@ -410,7 +421,9 @@ export async function offerUpdate(version: string, current: string, live: () => 
   const generation = ++offerGeneration;
   const manualOnly = await isManualOnlyBuild();
   const packaging = manualOnly ? "in-place" : await updatePackaging();
-  const manual = manualOnly || packaging !== "in-place";
+  // "unknown" keeps the established Install offer: installing re-reads once
+  // and runs only on an affirmative "in-place".
+  const manual = manualOnly || packaging === "flatpak" || packaging === "portable";
   if (generation !== offerGeneration || !live()) return { manual };
   if (offeredUpdateToastId !== null) dismissToast(offeredUpdateToastId);
   if (manualOnly) {

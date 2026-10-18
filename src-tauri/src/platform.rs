@@ -806,7 +806,7 @@ pub(crate) struct GpuEnv {
 /// Package identity is a runtime property, shared by Store and sideloaded MSIX.
 /// None preserves a failed probe so only the installer can fail closed.
 #[cfg(target_os = "windows")]
-fn packaged() -> Option<bool> {
+pub(crate) fn packaged() -> Option<bool> {
     use windows_sys::Win32::Foundation::{APPMODEL_ERROR_NO_PACKAGE, ERROR_INSUFFICIENT_BUFFER};
     use windows_sys::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
     let mut length = 0;
@@ -825,7 +825,7 @@ fn packaged() -> Option<bool> {
     target_os = "ios",
     target_os = "android"
 ))]
-fn packaged() -> Option<bool> {
+pub(crate) fn packaged() -> Option<bool> {
     Some(false)
 }
 

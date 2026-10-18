@@ -129,15 +129,6 @@ fn fatal_no_data_home_message(kind: std::io::ErrorKind) -> String {
 #[cfg(not(all(desktop, target_os = "linux")))]
 pub(crate) fn ensure_usable(_identifier: &str) {}
 
-/// Record a relocation decided elsewhere (an unwritable portable folder,
-/// `portable.rs`), so the same one-shot notice names where state went.
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-pub(crate) fn record_relocation(directory: String) {
-    *RELOCATED_TO
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner()) = Some(directory);
-}
-
 /// Command: the fallback data home ONCE if this launch relocated, then `None`
 /// (so a webview reload does not re-toast). `None` on every ordinary launch.
 #[tauri::command]

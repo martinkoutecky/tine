@@ -23,6 +23,8 @@ async function loadUpdate(opts: {
   architecture?: string;
   packaging?: string;
   packagingReject?: boolean;
+  /** Successive gpu_env() answers (an Error rejects); the last one repeats. */
+  packagingProbes?: Array<object | Error>;
   updaterReject?: Error;
   updaterUpdate?: object;
   channel?: "stable" | "beta";
@@ -40,8 +42,14 @@ async function loadUpdate(opts: {
   const openSettingsMock = vi.fn();
   const diagnosticFrontendEventMock = vi.fn(async () => {});
   const appArchitectureMock = vi.fn(async () => opts.architecture ?? "x86_64");
+  let probe = 0;
   const gpuEnvMock = vi.fn(async () => {
     if (opts.packagingReject) throw new Error("package probe unavailable");
+    if (opts.packagingProbes) {
+      const answer = opts.packagingProbes[Math.min(probe++, opts.packagingProbes.length - 1)];
+      if (answer instanceof Error) throw answer;
+      return answer;
+    }
     return {
       software_forced: false, appimage: false, flatpak: opts.packaging === "flatpak", packaged: opts.packaging === "msix",
       portable: opts.packaging === "portable",
@@ -136,6 +144,42 @@ describe("MSIX update policy", () => {
     expect(updaterCheckMock).toHaveBeenCalledTimes(checks);
     expect(download).not.toHaveBeenCalled();
     expect(openExternalMock).not.toHaveBeenCalled();
+  });
+  it("installs only on an affirmative in-place answer from one packaging probe (GH #719 r1)", async () => {
+    const env = (fields: object) => ({ software_forced: false, appimage: false, ...fields });
+    const portable = env({ packaged: false, flatpak: false, portable: true });
+    const installed = env({ packaged: false, flatpak: false, portable: false });
+    const cases: Array<[string, Array<object | Error>, boolean]> = [
+      // The reviewer's case: the first read says portable, a second read rejects.
+      ["portable, then the second probe rejects", [portable, new Error("probe unavailable")], false],
+      ["the probe rejects", [new Error("probe unavailable")], false],
+      ["portable is not answered", [env({ packaged: false, flatpak: false })], false],
+      ["package identity is not answered", [env({ packaged: null, flatpak: false, portable: false })], false],
+      ["affirmatively installed in place", [installed], true],
+    ];
+    for (const [name, probes, installs] of cases) {
+      const download = vi.fn(async () => {});
+      const install = vi.fn(async () => {});
+      const { update, relaunchMock } = await loadUpdate({
+        packagingProbes: probes, version: "0.5.3",
+        updaterUpdate: { version: "0.6.0-beta.1", close: vi.fn(async () => {}), download, install },
+      });
+      update.setUpdateExitGuard({ prepare: async () => "accepted", reset: () => {} });
+      await update.installUpdateForTest("0.6.0-beta.1");
+      expect(install, name).toHaveBeenCalledTimes(installs ? 1 : 0);
+      expect(download, name).toHaveBeenCalledTimes(installs ? 1 : 0);
+      if (!installs) expect(relaunchMock, name).not.toHaveBeenCalled();
+      update.setUpdateExitGuard(null);
+    }
+  });
+  it("resolves packaging from one answer, in-place only when every probe says false", async () => {
+    const { update } = await loadUpdate({});
+    expect(update.resolveUpdatePackaging({ packaged: false, flatpak: false, portable: false })).toBe("in-place");
+    expect(update.resolveUpdatePackaging({ packaged: true, flatpak: false, portable: false })).toBe("msix");
+    expect(update.resolveUpdatePackaging({ packaged: false, flatpak: true, portable: false })).toBe("flatpak");
+    expect(update.resolveUpdatePackaging({ packaged: false, flatpak: false, portable: true })).toBe("portable");
+    expect(update.resolveUpdatePackaging({ packaged: null, flatpak: false, portable: false })).toBe("unknown");
+    expect(update.resolveUpdatePackaging({ packaged: false, flatpak: false })).toBe("unknown");
   });
 });
 const triple = (v: string) => (/(\d+)\.(\d+)\.(\d+)/.exec(v) ?? []).slice(1).map(Number);
