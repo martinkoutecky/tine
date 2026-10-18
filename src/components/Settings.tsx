@@ -1153,7 +1153,8 @@ function JournalConflictsPanel(): JSX.Element {
   const trashFile = async (name: string) => {
     const owner = bindingOwner();
     const confirmed = await readOwned(owner, backend().confirm(
-        t("settings-ui-move-the-journal-file-to-the-trash-it-s", { name: name })
+        t("settings-ui-move-the-journal-file-to-the-trash-it-s", { name: name }),
+        { okLabel: t("confirm-move-to-trash"), cancelLabel: t("confirm-cancel") },
       ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     await writeOwned(owner, reconcile(() => backend().trashJournalFile(name, "delete-page"), msg("settings-ui-moved-to-trash", { name })));
@@ -1441,7 +1442,8 @@ function AssetsTab(): JSX.Element {
     const info = trashInfo();
     if (!info.count) return;
     const confirmed = await readOwned(owner, backend().confirm(
-        t("settings-asset-trash-confirmation", { count: info.count, size: fmtSize(info.bytes) })
+        t("settings-asset-trash-confirmation", { count: info.count, size: fmtSize(info.bytes) }),
+        { okLabel: t("confirm-empty-trash"), cancelLabel: t("confirm-cancel") },
       ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {

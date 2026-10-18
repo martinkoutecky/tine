@@ -69,6 +69,7 @@ import { focusableElements } from "./focusableElements";
 import type { QueryTextDialect } from "../editor/queryIr";
 import { QueryOgHint } from "./QueryResultParts";
 import { t, msg, render } from "../i18n";
+import { DialogActions } from "./DialogActions";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -722,10 +723,10 @@ function AdvancedModal(props: {
         <Show when={error()}>
           <p class="query-advanced-error" role="alert">{error()}</p>
         </Show>
-        <footer class="query-advanced-actions">
-          <button type="button" onClick={props.onClose}>{t("query-query-sheet-parts-cancel")}</button>
-          <button type="button" class="primary" disabled={printing()} onClick={apply}>{t("query-query-sheet-parts-apply")}</button>
-        </footer>
+        <DialogActions
+          class="query-advanced-actions"
+          cancel={<button type="button" onClick={props.onClose}>{t("query-query-sheet-parts-cancel")}</button>}
+          primary={<button type="button" class="primary" disabled={printing()} onClick={apply}>{t("query-query-sheet-parts-apply")}</button>} />
       </div>
     </div>
   );

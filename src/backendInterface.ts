@@ -49,6 +49,15 @@ import type { NativeTineLinks } from "./nativeTineLinks";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
 import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./document";
 
+/** What a native confirmation shows: the action it offers and the way back. */
+export interface ConfirmOptions {
+  title?: string;
+  /** Names the action ("Move to trash"), never "Yes"/"OK". */
+  okLabel: string;
+  /** The way back ("Cancel", "Go back", "Keep editing"). */
+  cancelLabel: string;
+}
+
 export interface Backend {
   graphBindingGeneration(): number;
   inspectGraphAccess(path: string): Promise<GraphAccessInspection>;
@@ -458,11 +467,12 @@ export interface Backend {
   /** Read a dropped UTF-8 text file by absolute path. Used only for explicit
    *  local file drops such as CSV/TSV import. */
   readTextFile(path: string): Promise<string>;
-  /** Native yes/no confirmation dialog. Returns true if the user confirms.
+  /** Native confirmation dialog. Returns true if the user takes the action.
    *  Uses the GTK dialog plugin, NOT window.confirm — the latter silently
    *  returns true without showing anything in this WebKitGTK build, which would
-   *  bypass destructive-action and close-tab prompts. */
-  confirm(message: string, title?: string): Promise<boolean>;
+   *  bypass destructive-action and close-tab prompts. The labels are required
+   *  (D-20261018-UI2c): every prompt names its action, none says Yes/No. */
+  confirm(message: string, options: ConfirmOptions): Promise<boolean>;
   /** Native folder picker (graph open). Null if cancelled / unsupported.
    *  `title` overrides the dialog title (e.g. for "create new graph"). */
   pickFolder(title?: string, defaultPath?: string): Promise<string | null>;

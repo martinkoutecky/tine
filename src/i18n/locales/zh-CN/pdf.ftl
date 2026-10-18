@@ -74,10 +74,6 @@ pdf-close-pdf = 关闭 PDF
 
 pdf-highlight-conflict-resolve-it-before-editing-more-highlights = 高亮冲突。请先解决，再编辑更多高亮。
 
-pdf-keep-mine = 保留我的版本
-
-pdf-use-disk-version = 使用磁盘版本
-
 pdf-discard-my-changes = 丢弃我的更改
 
 pdf-area-image-cleanup-is-pending-retry-before-closing-or-switching-graphs = 有区域图片待清理。关闭或切换图谱前请重试。

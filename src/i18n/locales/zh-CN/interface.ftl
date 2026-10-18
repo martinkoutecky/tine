@@ -44,10 +44,6 @@ editor-autocomplete-no-matched-blocks = 没有匹配的块
 
 external-change-bar-this-page-changed-on-disk-you-asked-to = 磁盘上的页面发生了更改。你选择了接收通知而非自动更新，因此 Tine 仍显示你正在阅读的版本。
 
-external-change-bar-reload-from-disk = 从磁盘重新加载
-
-external-change-bar-keep-mine = 保留我的版本
-
 failure-boundary-copy-details = 复制详情
 
 failure-boundary-retry = 重试

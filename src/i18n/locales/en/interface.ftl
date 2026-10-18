@@ -46,10 +46,6 @@ editor-autocomplete-no-matched-blocks = No matched blocks
 
 external-change-bar-this-page-changed-on-disk-you-asked-to = This page changed on disk. You asked to be told rather than shown, so Tine is still displaying the version you were reading.
 
-external-change-bar-reload-from-disk = Reload from disk
-
-external-change-bar-keep-mine = Keep mine
-
 failure-boundary-copy-details = Copy details
 
 failure-boundary-retry = Retry

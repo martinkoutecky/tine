@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { DiskOrMineChoice } from "./DiskOrMineChoice";
 import { For, Show, type Accessor, type JSX, type Setter } from "solid-js";
 import { isMac } from "../nativeChrome";
 import { openPage } from "../router";
@@ -222,8 +223,8 @@ export function PdfViewerView(view: PdfViewerViewModel): JSX.Element {
         <div class="conflict-banner pdf-highlight-conflict" role="alert">
           <span class="conflict-msg">{t("pdf-highlight-conflict-resolve-it-before-editing-more-highlights")}</span>
           <div class="conflict-actions">
-            <button class="conflict-btn keep" disabled={highlightDecisionBusy()} onClick={() => void keepMineHighlights()}>{t("pdf-keep-mine")}</button>
-            <button class="conflict-btn" disabled={highlightDecisionBusy()} onClick={() => void useDiskHighlights()}>{t("pdf-use-disk-version")}</button>
+            <DiskOrMineChoice buttonClass="conflict-btn" disabled={highlightDecisionBusy()}
+              onKeepMine={() => void keepMineHighlights()} onUseDisk={() => void useDiskHighlights()} />
             <button class="conflict-btn" disabled={highlightDecisionBusy()} onClick={() => void discardMineHighlights()}>{t("pdf-discard-my-changes")}</button>
           </div>
         </div>

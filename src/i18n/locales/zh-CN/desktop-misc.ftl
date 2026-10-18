@@ -28,7 +28,11 @@ css-safe-hint = 本次会话的安全模式：禁用全局 CSS、图谱 custom.c
 
 css-save = 保存
 
-css-reload = 从磁盘重新加载
+css-reload = 重新加载
+
+css-reload-title = 从磁盘重新加载
+
+css-cancel = 取消
 
 css-save-close = 保存并关闭
 
@@ -39,6 +43,8 @@ css-save-failed = CSS 无法保存。文本仍保留在编辑器中，请在重�
 css-external-conflict = 此文件在编辑器外发生了更改。重新加载前请复制你的文本；保存操作会拒绝覆盖已更改的文件。
 
 css-reload-confirm = 丢弃 CSS 编辑并从磁盘重新加载文件吗？
+
+css-discard-confirm = 丢弃未保存的 CSS 编辑并关闭编辑器吗？
 
 command-appearance-edit-custom-css = 编辑 custom.css
 

@@ -239,7 +239,7 @@ export function createPdfHighlightState(options: {
     try {
       const answer = await readOwned(graphCurrent, backend().confirm(
         t("pdf-discard-your-local-pdf-highlight-changes-the-sidecar-will-be-left-untouched-any-unreferenced-local-crop-may-remain-on-disk"),
-        "Discard my changes"
+        { title: t("confirm-discard-my-changes"), okLabel: t("confirm-discard-my-changes"), cancelLabel: t("confirm-cancel") },
       ));
       if (answer.kind === "stale" || !answer.value) return;
       pendingCrops.clear();

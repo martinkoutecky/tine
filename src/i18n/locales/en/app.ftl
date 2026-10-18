@@ -1,7 +1,11 @@
 
 # Interface text; variables carry untranslated names, paths or diagnostic details.
-app-choose-no-to-review-retry-saving = { app-close-explanation }{ "\u000A" }{ "\u000A" }{ app-close-inventory }{ "\u000A" }{ "\u000A" }Choose No to review, retry saving, or copy your drafts. Close this window anyway and lose them?
-app-unsaved-changes = Unsaved changes
+app-quit-without-saving-body = { app-close-explanation }{ "\u000A" }{ "\u000A" }{ app-close-inventory }{ "\u000A" }{ "\u000A" }Go back to review, retry saving, or copy your drafts. Or discard them and quit.
+app-quit-without-saving-title = { $count ->
+    [0] Quit without saving?
+    [one] Quit without saving { NUMBER($count, useGrouping: 0) } page?
+   *[other] Quit without saving { NUMBER($count, useGrouping: 0) } pages?
+    }
 app-couldn-t-save-pending-pdf-changes-the-graph = Couldn't save pending PDF changes. The graph remains open.
 app-still-saving-your-changes-closing-in = Still saving your changes — closing in a moment.
 app-couldn-t-confirm-closing-the-window-your-unsaved = Couldn't confirm closing the window. Your unsaved changes are still open.

@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { DialogActions } from "./DialogActions";
 import { Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { graphOwner, readOwned } from "../owned";
@@ -106,8 +107,9 @@ export function ConflictFileRow(props: {
               else if (e.key === "Escape") setRenaming(false);
             }}
           />
-          <button class="settings-btn" onClick={submitRename}>{t("journal-conflict-file-row-save")}</button>
-          <button class="settings-btn" onClick={() => setRenaming(false)}>{t("journal-conflict-file-row-cancel")}</button>
+          <DialogActions
+            cancel={<button class="settings-btn" onClick={() => setRenaming(false)}>{t("journal-conflict-file-row-cancel")}</button>}
+            primary={<button class="settings-btn" onClick={submitRename}>{t("journal-conflict-file-row-save")}</button>} />
         </div>
       </Show>
       <Show when={open()}>

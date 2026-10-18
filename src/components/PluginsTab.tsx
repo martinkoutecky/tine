@@ -230,7 +230,7 @@ function PluginsTabContent(): JSX.Element {
     try {
       const result = await readOwned(ownedWhen(() => alive), backend().confirm(
         t("plugins-uninstall-this-removes-the-plugin-from", { name: name, version: version }),
-        t("plugins-uninstall-plugin")
+        { title: t("plugins-uninstall-plugin"), okLabel: t("confirm-uninstall"), cancelLabel: t("confirm-cancel") },
       ));
       if (result.kind === "stale" || !result.value) return;
       await pluginManager.uninstall(id, version);

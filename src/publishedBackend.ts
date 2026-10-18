@@ -13,6 +13,7 @@
  *  Classification of every method is pinned by `publishedBackend.guard.test.ts`.
  */
 import type { Backend, LoadGraphResult } from "./backend";
+import type { ConfirmOptions } from "./backendInterface";
 import type { ExecutionContext, ParsedQuery, Query, QueryResult, QueryTextDialect, ViewSettings } from "./editor/queryIr";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, MatchEvidence, PageDto, PageEntry, PageRead, QueryExecution, QueryHit, QueryPageScope, RefGroup } from "./types";
 import { previewDtoSubtree } from "./previewProjection";
@@ -667,7 +668,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const { writeClipboardTextStrict } = await import("./clipboard");
       await writeClipboardTextStrict(text);
     },
-    async confirm(message: string) {
+    async confirm(message: string, _options: ConfirmOptions) {
       return window.confirm(message);
     },
   };

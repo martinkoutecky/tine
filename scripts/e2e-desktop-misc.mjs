@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { remote } from "webdriverio";
 import { APP_ID } from "./lib/app-identity.mjs";
 import { ensurePrivateSessionBus } from "./lib/e2e-session-bus.mjs";
+import { answerNativeDialog } from "./lib/e2e-native-dialog.mjs";
 ensurePrivateSessionBus();
 const testedCommit = execFileSync("rtk", ["git", "rev-parse", "HEAD"], { encoding: "utf8" }).trim() + " plus working diff";
 if (!process.env.DISPLAY) throw new Error("Run under xvfb-run");
@@ -49,7 +50,7 @@ async function click(label) {
   await button.waitForDisplayed({ timeout: 10000 });
   await button.waitForEnabled({ timeout: 10000 });
   await button.click();
-  if (label === "Save and close") {
+  if (label === "Save & close") {
     await browser.$('[role="dialog"][aria-label="CSS editor"]').waitForExist({ timeout: 10000, reverse: true });
   }
 }
@@ -70,7 +71,7 @@ try {
   await browser.$('textarea[aria-label="CSS editor"]').setValue(globalText);
   await click("Save");
   await styleSaved(path.join(xdg, "config", APP_ID, "global.css"), globalText);
-  await click("Save and close");
+  await click("Save & close");
   await command("custom.css", "Edit custom.css");
   const graphText = ":root { --tine-bullet-color: rgb(30, 40, 50); }";
   await browser.$('textarea[aria-label="CSS editor"]').setValue(graphText);
@@ -82,7 +83,7 @@ try {
     return global?.textContent.includes("7, 8, 9") && graph?.textContent.includes("30, 40, 50") && Boolean(global.compareDocumentPosition(graph) & Node.DOCUMENT_POSITION_FOLLOWING);
   }), { timeout: 10000, timeoutMsg: "global-before-graph cascade did not apply" });
   try { await browser.saveScreenshot(path.join(fixture, "css-editor-saved.png")); } catch {}
-  await click("Save and close");
+  await click("Save & close");
   await command("safe mode", "Toggle custom CSS");
   assert.equal(await browser.execute(() => document.querySelector("#tine-global-css")?.textContent + document.querySelector("#tine-custom-css")?.textContent), "");
   await command("safe mode", "Toggle custom CSS");
@@ -92,7 +93,7 @@ try {
   await browser.$('textarea[aria-label="CSS editor"]').setValue(backgroundText);
   await browser.execute(() => window.dispatchEvent(new Event("pagehide")));
   await styleSaved(graphCss, backgroundText);
-  await click("Save and close");
+  await click("Save & close");
   journey = "desktop CSS editing";
   if (process.env.E2E_PROBE_EXPORT === "1") {
     journey = "native HTML export";
@@ -140,6 +141,28 @@ try {
   await click("Save");
   await browser.$('[role="alert"]').waitForExist({ timeout: 10000 });
   assert.ok(fs.readFileSync(graphCss, "utf8").includes("green"), "recovered draft must retain its original revision");
+  journey = "CSS editor Cancel and outside click (D-20261018-UI2b)";
+  // The conflicting buffer is still unsaved: an outside click must neither save nor close.
+  const labels = await browser.execute(() => [...document.querySelectorAll('[aria-label="CSS editor"] .dialog-actions button')].map(b => b.textContent.trim()));
+  assert.deepEqual(labels.slice(-2), ["Cancel", "Save & close"], "Cancel sits left of the primary action");
+  assert.equal(labels[0], "Reload");
+  // The sticky error toasts sit over the footer buttons; dismiss them as a user would.
+  await browser.execute(() => { for (const close of document.querySelectorAll(".toast .toast-close")) close.click(); });
+  await browser.execute(() => document.querySelector(".modal-overlay").click());
+  await delay(500);
+  assert.equal(await browser.$('textarea[aria-label="CSS editor"]').getValue(), mine, "an outside click with unsaved edits does nothing");
+  await click("Cancel");
+  await answerNativeDialog("no");
+  assert.equal(await browser.$('textarea[aria-label="CSS editor"]').getValue(), mine, "Keep editing keeps the buffer");
+  await click("Cancel");
+  await answerNativeDialog("yes");
+  await browser.$('[role="dialog"][aria-label="CSS editor"]').waitForExist({ timeout: 10000, reverse: true });
+  assert.ok(fs.readFileSync(graphCss, "utf8").includes("green"), "Cancel must not write the file");
+  await command("custom.css", "Edit custom.css");
+  assert.ok((await browser.$('textarea[aria-label="CSS editor"]').getValue()).includes("green"), "a discarded draft is not recovered");
+  await browser.execute(() => document.querySelector(".modal-overlay").click());
+  await browser.$('[role="dialog"][aria-label="CSS editor"]').waitForExist({ timeout: 10000, reverse: true });
+  console.log("PASS: CSS editor Cancel asks before discarding, an outside click closes only a clean editor");
   console.log("PASS: background pagehide persists CSS and WebView reload recovers a conflicting draft without rebasing");
   console.log("PASS: native CSS quick-switcher entry, guarded graph/global saves, cascade, safe mode, and external conflict retention");
 } catch (error) {

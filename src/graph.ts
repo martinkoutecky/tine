@@ -132,7 +132,7 @@ export async function authorizeGraphAccess(path: string): Promise<boolean> {
   if (!external || access.approved) return true;
   const confirmation = await readOwned(owner, backend().confirm(
     t("graph-this-graph-s-assets-folder-points-outside-the", { assetsDirectory: displayExternal ?? external }),
-    t("graph-allow-external-assets-directory")
+    { title: t("graph-allow-external-assets-directory"), okLabel: t("confirm-allow-and-open"), cancelLabel: t("confirm-dont-allow") },
   ));
   if (confirmation.kind === "stale") return false;
   if (!confirmation.value) {
@@ -484,7 +484,7 @@ export async function renameOrMergePage(
     if (source !== reached[0]) into = reached[0];
   }
   if (into) {
-    const confirmed = await readOwned(owner, backend().confirm(t("graph-page-already-exists-merge-into", { to: to, from: from })));
+    const confirmed = await readOwned(owner, backend().confirm(t("graph-page-already-exists-merge-into", { to: to, from: from }), { okLabel: t("confirm-merge-pages"), cancelLabel: t("confirm-cancel") }));
     if (confirmed.kind === "stale" || !confirmed.value) return "cancelled";
   }
   const done = await renamePageOnDisk(from, to, target, into, onRefreshed);

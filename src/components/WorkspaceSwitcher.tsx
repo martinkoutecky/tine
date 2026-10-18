@@ -87,7 +87,7 @@ export function WorkspaceSwitcher(props: { compact?: boolean } = {}): JSX.Elemen
   const remove = async (workspace: Workspace) => {
     const owner = bindingOwner();
     const name = workspaceDisplayName(workspace);
-    const confirmed = await readOwned(owner, backend().confirm(t("workspace-switcher-delete-workspace", { name: String(name) }), "Delete workspace"));
+    const confirmed = await readOwned(owner, backend().confirm(t("workspace-switcher-delete-workspace", { name: String(name) }), { title: t("confirm-delete-workspace"), okLabel: t("confirm-delete-workspace"), cancelLabel: t("confirm-cancel") }));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {
       await writeOwned(owner, deleteWorkspace(workspace.id));

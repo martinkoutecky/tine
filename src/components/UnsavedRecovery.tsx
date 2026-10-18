@@ -1,4 +1,5 @@
 import { t } from "../i18n";
+import { DialogActions } from "./DialogActions";
 // The unsaved-changes recovery panel (GH #540, master dc3f2104b). Opened when the
 // user declines to discard at close, or from a failed-save toast. It lists every
 // page whose edits are not on disk and offers the ways out that never lose text:
@@ -79,8 +80,9 @@ function RecoveryPanel(): JSX.Element {
     <div ref={root} tabIndex={-1} class="unsaved-recovery-panel" role="dialog" aria-modal="true" aria-label={t("unsaved-recovery-unsaved-changes")}>
       <h2>{t("unsaved-recovery-unsaved-changes")}</h2>
       <p>{t("unsaved-recovery-summary", { count: pages().length })}</p>
-      <button class="settings-btn" type="button" disabled={busy()} onClick={() => void retry()}>{busy() ? t("unsaved-recovery-saving") : t("unsaved-recovery-retry-saving")}</button>
-      <button class="settings-btn" type="button" onClick={closeUnsavedRecovery}>{t("unsaved-recovery-keep-working")}</button>
+      <DialogActions
+        cancel={<button class="settings-btn" type="button" onClick={closeUnsavedRecovery}>{t("unsaved-recovery-keep-working")}</button>}
+        primary={<button class="settings-btn" type="button" disabled={busy()} onClick={() => void retry()}>{busy() ? t("unsaved-recovery-saving") : t("unsaved-recovery-retry-saving")}</button>} />
       <p role="status">{message()}</p>
       <Show when={pages().length === 0}><p>{t("unsaved-recovery-no-pending-page-drafts-if-closing-still-fails")}</p></Show>
       <For each={pages()}>{(entry) => <section class="unsaved-recovery-entry">

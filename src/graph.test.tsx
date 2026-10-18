@@ -798,7 +798,7 @@ describe("external assets trust", () => {
 
     expect(api.confirm).toHaveBeenCalledWith(
       expect.stringContaining("/mnt/media/tine-assets"),
-      "Allow external assets directory?"
+      { title: "Allow external assets directory?", okLabel: "Allow and open", cancelLabel: "Don't allow" }
     );
     expect(api.approveExternalAssets).toHaveBeenCalledWith(
       META.root,

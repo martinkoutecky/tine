@@ -205,7 +205,7 @@ await session(1, async browser => {
   assert.ok(copy.includes("Tasks") && copy.includes("Child detail kept in copy"), copy);
   assert.ok(!copy.includes("Second journey task"), copy);
   fs.writeFileSync(`${out}/copy-preview.txt`, copy);
-  await browser.execute(() => [...document.querySelectorAll(".export-foot button")].find(button => button.textContent === "Close")?.click());
+  await browser.execute(() => [...document.querySelectorAll(".dialog-actions button")].find(button => button.textContent === "Close")?.click());
   await action(browser, "Collapse all");
   await browser.waitUntil(() => fs.readFileSync(`${graph}/pages/Tasks.md`, "utf8").includes("collapsed:: true"), { timeout: 15_000 });
   await action(browser, "Expand all");
@@ -274,7 +274,7 @@ await session(1, async browser => {
   await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Copy results")?.click());
   await browser.$(".export-preview").waitForExist({ timeout: 15_000 });
   assert.ok((await browser.$(".export-preview").getValue()).includes("Upcoming journey task"));
-  await browser.execute(() => [...document.querySelectorAll(".export-foot button")].find(button => button.textContent === "Close")?.click());
+  await browser.execute(() => [...document.querySelectorAll(".dialog-actions button")].find(button => button.textContent === "Close")?.click());
   phase = "frozen Search selection skips a changed positional source";
   await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Select results")?.click());
   // Open in Search now carries the block's own view (List by default, GH #619 Q2), so the result surface is

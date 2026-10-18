@@ -117,10 +117,17 @@ describe("date picker draft commits (GH #30 / #485)", () => {
     const date = new Date(); date.setDate(date.getDate() + (label === "Tomorrow" ? 1 : -1));
     expect(node("task").raw.trimEnd()).toBe(`TODO Task [[${journalTitle(date)}]]`);
   });
-  it("Today selects a draft and Done applies it without losing time", async () => {
-    await slash("Scheduled", "\nSCHEDULED: <2026-10-12 Mon>");
+  it("there is no Today button; today's marked cell selects a draft and Done applies it without losing time (D-20261018-UI1)", async () => {
+    // Seed a day in the current month (other than today) so today's cell is in view.
+    const now = new Date();
+    const other = new Date(now.getFullYear(), now.getMonth(), now.getDate() === 1 ? 2 : 1);
+    const iso = `${other.getFullYear()}-${String(other.getMonth() + 1).padStart(2, "0")}-${String(other.getDate()).padStart(2, "0")}`;
+    await slash("Scheduled", `\nSCHEDULED: <${iso} ${other.toLocaleDateString("en-US", { weekday: "short" })}>`);
     addTime();
-    [...document.querySelectorAll<HTMLButtonElement>(".dp-btn")].find(button => button.textContent === "Today")!.click();
+    expect([...document.querySelectorAll<HTMLButtonElement>(".dp-btn")].map(button => button.textContent)).not.toContain("Today");
+    const marked = document.querySelector<HTMLButtonElement>(".dp-cell.today")!;
+    expect(marked.getAttribute("aria-current")).toBe("date");
+    marked.click();
     expect(datePicker()).not.toBeNull(); done();
     const today = new Date();
     expect(readSchedule("task", "scheduled")).toMatchObject({ y: today.getFullYear(), m: today.getMonth(), d: today.getDate(), time: "10:00", repeater: "+1w" });

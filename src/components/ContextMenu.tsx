@@ -855,7 +855,7 @@ function PageMenu(props: {
     // delete the page with no prompt.
     // A conflicted page is deleted through its conflict (master parity): the
     // prompt says the unsaved changes go too.
-    const confirmed = await readOwned(owner, backend().confirm(t("context-menu-ui-delete-the-file-moves-to-the-graph-s-tine", { name, unsaved: isConflicted(name) ? "discard" : "none" })));
+    const confirmed = await readOwned(owner, backend().confirm(t("context-menu-ui-delete-the-file-moves-to-the-graph-s-tine", { name, unsaved: isConflicted(name) ? "discard" : "none" }), { okLabel: t("confirm-delete"), cancelLabel: t("confirm-cancel") }));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     if (!captured.path && (pageByName(name) !== openedPage || pageByName(name)?.id !== path)) {
       pushToast(msg("context-menu-ui-this-page-target-changed-reopen-the-page-actions-menu"), "error");

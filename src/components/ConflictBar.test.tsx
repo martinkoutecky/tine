@@ -15,7 +15,7 @@ let dispose: (() => void) | undefined;
 beforeEach(() => { resetStore(); host = document.createElement("div"); document.body.append(host); });
 afterEach(() => { dispose?.(); host.remove(); vi.restoreAllMocks(); });
 
-it("22a: a live-draft conflict routes to the in-page review and never offers Keep mine (overwrite)", async () => {
+it("22a: a live-draft conflict routes to the in-page review and never offers Keep mine", async () => {
   loadFeed([{ id: "pages/Live.md", name: "Live", title: "Live", kind: "page", pre_block: null, rev: "r1",
     blocks: [{ id: "live-1", raw: "mine", collapsed: false, children: [] }] }]);
   const test = await bindTestHost();
@@ -38,7 +38,7 @@ it("22a: a pathless draft's conflict keeps both choices on the bar", async () =>
   await conflictedInHost(test, "Nowhere", "pages/Nowhere.md");
   dispose = render(() => <ConflictBar />, host);
   expect([...host.querySelectorAll("button")].map((button) => button.textContent?.trim())).toEqual([
-    "Use disk version", "Keep mine (overwrite)",
+    "Keep mine", "Use disk version",
   ]);
 });
 
@@ -59,9 +59,9 @@ it("GH #541: a conflict whose file was deleted on disk offers the whole-page cho
   const buttons = [...host.querySelectorAll("button")];
   // A review against "the file on disk now" has no file to open (the page
   // route fails on the missing path): both whole-page choices stay here.
-  expect(buttons.map((button) => button.textContent?.trim())).toEqual(["Use disk version", "Keep mine (overwrite)"]);
+  expect(buttons.map((button) => button.textContent?.trim())).toEqual(["Keep mine", "Use disk version"]);
   expect(host.textContent).toContain("was deleted on disk");
-  buttons[0].click();
+  buttons[1].click();
   await vi.waitFor(() => expect(conflicts()).toEqual([]));
   expect(discard).toHaveBeenCalledOnce();
   // The page is what a missing file shows: no file, none of the dropped text,

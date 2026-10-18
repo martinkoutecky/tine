@@ -824,9 +824,10 @@ describe("B5: the save path chooses the name and answers NotApplicable", () => {
       // one dismiss per panel: the pane carries it, the generic Done row is not drawn
       expect(panel.querySelectorAll(".qc-done")).toHaveLength(1);
       expect(panel.querySelector(".qc-panel-actions")).toBeNull();
-      const row = root.querySelector<HTMLElement>(".query-text-pane-actions")!;
+      const row = root.querySelector<HTMLElement>(".query-text-pane-actions .dialog-actions-main")!;
       expect([...row.children].map((el) => el.textContent)).toEqual(["Done", "Save query text"]);
       expect(row.nextElementSibling).toBeNull();
+      expect(row.parentElement!.lastElementChild).toBe(row);
       vi.spyOn(backend(), "parseQuery").mockImplementation(async source => parsedAs(source));
       type(input, "-- task DONE");
       expect([...row.children].map((el) => el.textContent)).toEqual(["Cancel", "Save query text"]);
