@@ -137,6 +137,9 @@ mod launch_one_read;
 #[path = "lifecycle.rs"]
 mod lifecycle;
 
+#[path = "link_graph.rs"]
+mod link_graph;
+
 #[path = "linkable_page_property_refs.rs"]
 mod linkable_page_property_refs;
 

@@ -3166,6 +3166,18 @@ impl WholeGraph {
         self.rev
     }
 
+    /// Test probe: this view's TQL link table (`links`, `linked_by`, `near`)
+    /// as (nodes, links, estimated heap bytes), building it if needed.
+    #[cfg(any(test, feature = "test-faults"))]
+    pub fn link_table_stats(&self) -> (usize, usize, usize) {
+        let table = self.graph.link_graph();
+        (
+            table.node_count(),
+            table.edge_count(),
+            table.estimated_bytes(),
+        )
+    }
+
     /// Backlinks to a decoded page or journal title or alias, compared by
     /// normalized name without a separate namespace parameter. Matching is by
     /// name, not journal date: old-title links after a format change count only

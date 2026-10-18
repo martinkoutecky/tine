@@ -25,6 +25,7 @@ import {
   ATTRS,
   CMP_OPS,
   DIAGNOSTIC_KINDS,
+  NEAR_DIRS,
   QUANTS,
   RELS,
   UnknownIrVariantError,
@@ -146,6 +147,12 @@ describe("the TypeScript mirror of the Rust query IR", () => {
     expect([...ops].sort()).toEqual([...CMP_OPS].sort());
     expect([...rels].sort()).toEqual([...RELS].sort());
     expect([...quants].sort()).toEqual([...QUANTS].sort());
+    // `near` (docs/contracts/tql-links-near.md): the walk visits its seeds and
+    // `through`, and the corpus spells a direction and the default.
+    const near = leaves.flatMap((l) => (l.kind === "near" ? [l] : []));
+    expect(near.map((l) => l.dir).sort()).toEqual(["both", "out"]);
+    expect(near.some((l) => l.through !== undefined)).toBe(true);
+    expect(NEAR_DIRS).toEqual(["out", "in", "both"]);
   });
 
   it("REJECTS a variant it does not know, loudly", () => {
@@ -170,6 +177,16 @@ describe("the TypeScript mirror of the Rust query IR", () => {
       leaf: { kind: "attr", attr: "vibes", op: "eq", value: { kind: "none" } },
     } as unknown as Filter;
     expect(() => assertMirrorsIr({ ...query, filter: alienAttr })).toThrow(/Attr/);
+    const alienDir = {
+      kind: "leaf",
+      leaf: { kind: "near", seeds: { kind: "true" }, k: 1, dir: "sideways" },
+    } as unknown as Filter;
+    expect(() => assertMirrorsIr({ ...query, filter: alienDir })).toThrow(/NearDir/);
+    const alienSeed = {
+      kind: "leaf",
+      leaf: { kind: "near", seeds: { kind: "quantum" }, k: 1 },
+    } as unknown as Filter;
+    expect(() => assertMirrorsIr({ ...query, filter: alienSeed })).toThrow(UnknownIrVariantError);
     expect(() => assertMirrorsIr({ ...query, anchor: "sentence" as never })).toThrow(/Anchor/);
     expect(() => assertMirrorsIr({ ...query, source: { kind: "psychic" } as never }))
       .toThrow(/Source/);

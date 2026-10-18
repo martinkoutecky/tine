@@ -447,6 +447,10 @@ pub(crate) struct ReadSnapshot {
     aliases: std::sync::OnceLock<Arc<Vec<(String, String, String)>>>,
     /// The alias relation indexed for component walks; derived from `aliases`.
     alias_edges: std::sync::OnceLock<Arc<crate::query::AliasEdges>>,
+    /// TQL's link table (`links`, `linked_by`, `near`), built on the first
+    /// query that reads it; in memory only, never carried across a generation
+    /// (an edit anywhere can move any link).
+    link_graph: std::sync::OnceLock<Arc<crate::query::link_graph::LinkGraph>>,
     /// Alias owner paths keyed by `page_key(alias)`, in `aliases` order.
     alias_owner_paths_by_key: std::sync::OnceLock<Arc<HashMap<String, Vec<String>>>>,
     referenced_names: std::sync::OnceLock<Vec<String>>,
@@ -726,6 +730,7 @@ impl ReadSnapshot {
             real_page_names,
             aliases: std::sync::OnceLock::new(),
             alias_edges: std::sync::OnceLock::new(),
+            link_graph: std::sync::OnceLock::new(),
             alias_owner_paths_by_key: std::sync::OnceLock::new(),
             referenced_names: std::sync::OnceLock::new(),
             block_ref_counts: std::sync::OnceLock::new(),
@@ -1167,6 +1172,12 @@ impl ReadSnapshot {
         Arc::clone(
             self.alias_edges
                 .get_or_init(|| Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))),
+        )
+    }
+    pub(crate) fn link_graph(&self) -> Arc<crate::query::link_graph::LinkGraph> {
+        Arc::clone(
+            self.link_graph
+                .get_or_init(|| Arc::new(crate::query::link_graph::LinkGraph::build(self))),
         )
     }
     pub(crate) fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {

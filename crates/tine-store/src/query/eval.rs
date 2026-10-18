@@ -268,6 +268,9 @@ pub(crate) struct EvalCtx<'a> {
     /// Every page key some page's `tags::` names: the graph-wide answer behind
     /// `used_as_tag` (OG `(all-page-tags)`). Empty unless the plan reads it.
     pub(crate) tag_targets: &'a HashSet<String>,
+    /// This execution's `links` / `linked_by` / `near` answers (graph-wide,
+    /// computed before any row; empty unless the plan reads links).
+    pub(crate) links: &'a super::link_graph::LinkAnswers,
     pub(crate) cache: &'a EvalCache,
 }
 
@@ -285,6 +288,7 @@ impl<'a> EvalCtx<'a> {
         config: &'a ParseConfig,
         registry: &'a Registry,
         tag_targets: &'a HashSet<String>,
+        links: &'a super::link_graph::LinkAnswers,
         cache: &'a EvalCache,
     ) -> Self {
         EvalCtx {
@@ -303,6 +307,7 @@ impl<'a> EvalCtx<'a> {
             config,
             registry,
             tag_targets,
+            links,
             cache,
         }
     }
@@ -446,9 +451,11 @@ fn eval_block_leaf(
                     Quant::None => !hit,
                 }
             }
-            // `blocks` is a page-row relation; a block-anchored walk never sees it.
-            Rel::Blocks => false,
+            // Page-row relations; a block-anchored walk never sees them.
+            Rel::Blocks | Rel::Links | Rel::LinkedBy => false,
         },
+        // A page condition: reached from a block row only through `page(…)`.
+        Leaf::Near { .. } => false,
     }
 }
 
@@ -502,9 +509,11 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                 }
                 _ => false,
             },
+            Leaf::Near { .. } => ctx.links.near(leaf, &ctx.page_key),
             Leaf::Rel { rel, quant, pred } => match rel {
                 Rel::Props => eval_props(*quant, pred, ctx.page_props, ctx),
                 Rel::Blocks => eval_page_blocks(*quant, pred, ctx),
+                Rel::Links | Rel::LinkedBy => ctx.links.related(leaf, *rel, *quant, &ctx.page_key),
                 // No accepted page-row syntax reads a page's own refs or tags.
                 _ => false,
             },

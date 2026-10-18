@@ -45,6 +45,7 @@ use tine_core::refs;
 
 use super::eval::{self, CompiledLeaves, EvalCache, EvalCtx};
 use super::index::{atom_format, PageFacts, QueryIndex};
+use super::link_graph::{LinkAnswers, LinkGraph, VirtualNode};
 use super::{result_dto, shallow_dto_estimated_bytes, BoundedGroups, ConstructionBudget};
 
 #[path = "exec_candidates.rs"]
@@ -121,7 +122,7 @@ impl Plan {
         }
         self.filter.any_leaf(&mut |leaf| match leaf {
             Leaf::Attr { value, .. } => is_now(value),
-            Leaf::Rel { .. } => false,
+            Leaf::Rel { .. } | Leaf::Near { .. } => false,
         })
     }
 
@@ -231,6 +232,13 @@ impl Plan {
         self.tag_targets.is_some()
     }
 
+    /// Whether the answer reads the link table (`links`, `linked_by`,
+    /// `near`): it then depends on every page's references, so ANY edit can
+    /// change a page it never touched, and the memo drops it on every edit.
+    pub(crate) fn reads_links(&self) -> bool {
+        self.filter.reads_links()
+    }
+
     pub(crate) fn registry(&self) -> Option<&Arc<Registry>> {
         self.registry.as_ref()
     }
@@ -242,6 +250,7 @@ impl Plan {
         facts: &'a PageFacts,
         config: &'a ParseConfig,
         atoms: &'a EvalCache,
+        links: &'a LinkAnswers,
     ) -> EvalCtx<'a> {
         EvalCtx::new(
             &entry.name,
@@ -255,8 +264,134 @@ impl Plan {
             config,
             self.registry.as_deref().unwrap_or(Registry::none()),
             self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
+            links,
             atoms,
         )
+    }
+
+    /// The row of a linked-to page without a file (contract: name, journal
+    /// day when the name is a date, no properties, no blocks).
+    fn virtual_ctx<'a>(
+        &'a self,
+        node: &'a VirtualNode,
+        config: &'a ParseConfig,
+        atoms: &'a EvalCache,
+        links: &'a LinkAnswers,
+    ) -> EvalCtx<'a> {
+        EvalCtx::new(
+            &node.name,
+            if node.journal_day.is_some() {
+                PageKind::Journal
+            } else {
+                PageKind::Page
+            },
+            node.journal_day,
+            &[],
+            &[],
+            tine_core::query::atom::AtomFormat::Markdown,
+            self.today,
+            &self.compiled,
+            config,
+            self.registry.as_deref().unwrap_or(Registry::none()),
+            self.tag_targets.as_deref().unwrap_or(empty_tag_targets()),
+            links,
+            atoms,
+        )
+    }
+
+    /// One bit per link-table node: whether `pred` holds of that page. A
+    /// physical node holds when any file of its name does.
+    fn node_set(
+        &self,
+        pred: &Filter,
+        table: &LinkGraph,
+        candidates: &candidates::Candidates<'_>,
+        config: &ParseConfig,
+        atoms: &EvalCache,
+        links: &LinkAnswers,
+    ) -> Vec<bool> {
+        let mut set = vec![false; table.node_count()];
+        for (entry, doc) in candidates.all_pages() {
+            let Some(node) = table.node(&refs::normalize(&entry.name)) else {
+                continue;
+            };
+            if set[node as usize] {
+                continue;
+            }
+            let facts = candidates.facts(entry, doc);
+            set[node as usize] =
+                eval::eval_page(pred, &self.ctx(entry, doc, &facts, config, atoms, links));
+        }
+        for (at, node) in table.virtuals().iter().enumerate() {
+            set[table.physical() + at] =
+                eval::eval_page(pred, &self.virtual_ctx(node, config, atoms, links));
+        }
+        set
+    }
+
+    /// Every link leaf's answer, innermost first (an element or seed condition
+    /// may itself read links). Empty, and free, for a plan that reads none.
+    fn link_answers(
+        &self,
+        graph: &ReadSnapshot,
+        candidates: &candidates::Candidates<'_>,
+        config: &ParseConfig,
+        atoms: &EvalCache,
+    ) -> LinkAnswers {
+        if !self.reads_links() {
+            return LinkAnswers::default();
+        }
+        fn post_order<'f>(filter: &'f Filter, out: &mut Vec<&'f Leaf>) {
+            match filter {
+                Filter::And { items } | Filter::Or { items } => {
+                    items.iter().for_each(|item| post_order(item, out))
+                }
+                Filter::Not { inner } | Filter::Off { inner } => post_order(inner, out),
+                Filter::Leaf { leaf } => match leaf {
+                    Leaf::Rel { rel, pred, .. } => {
+                        post_order(pred, out);
+                        if matches!(rel, Rel::Links | Rel::LinkedBy) {
+                            out.push(leaf);
+                        }
+                    }
+                    Leaf::Near { seeds, through, .. } => {
+                        post_order(seeds, out);
+                        if let Some(through) = through {
+                            post_order(through, out);
+                        }
+                        out.push(leaf);
+                    }
+                    Leaf::Attr { .. } => {}
+                },
+                Filter::True | Filter::False | Filter::Raw { .. } => {}
+            }
+        }
+        let table = graph.link_graph();
+        let mut answers = LinkAnswers::new(Arc::clone(&table));
+        let mut leaves = Vec::new();
+        post_order(&self.filter, &mut leaves);
+        for leaf in leaves {
+            let set = match leaf {
+                Leaf::Rel { pred, .. } => {
+                    self.node_set(pred, &table, candidates, config, atoms, &answers)
+                }
+                Leaf::Near {
+                    seeds,
+                    k,
+                    dir,
+                    through,
+                } => {
+                    let seeds = self.node_set(seeds, &table, candidates, config, atoms, &answers);
+                    let through = through.as_deref().map(|through| {
+                        self.node_set(through, &table, candidates, config, atoms, &answers)
+                    });
+                    table.ball(&seeds, *k, *dir, through.as_deref())
+                }
+                Leaf::Attr { .. } => continue,
+            };
+            answers.insert(leaf, set);
+        }
+        answers
     }
 
     /// The block rows of one page: every matching block whose immediate parent
@@ -333,7 +468,7 @@ impl Plan {
             count(&doc.roots);
         }
         let atoms = EvalCache::default();
-        let ctx = self.ctx(entry, doc, facts, config, &atoms);
+        let ctx = self.ctx(entry, doc, facts, config, &atoms, LinkAnswers::none());
         match self.anchor {
             Anchor::Page => eval::eval_page(&self.filter, &ctx),
             Anchor::Block => {
@@ -447,7 +582,10 @@ fn cost(filter: &Filter) -> u8 {
                 ..
             } => 4,
             Leaf::Attr { .. } => 0,
+            // Read from the precomputed table: O(own links) per row.
+            Leaf::Near { .. } => 1,
             Leaf::Rel { rel, .. } => match rel {
+                Rel::Links | Rel::LinkedBy => 2,
                 Rel::Refs | Rel::DirectRefs | Rel::Tags => 1,
                 Rel::Page => 2,
                 Rel::Props => 3,
@@ -741,6 +879,7 @@ pub(crate) fn execute(
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
+        let links = plan.link_answers(graph, &candidates, config, &atoms);
         match plan.anchor {
             Anchor::Block => {
                 let mut groups: Vec<(&PageEntry, Arc<PageFacts>, Vec<Hit>)> = Vec::new();
@@ -751,7 +890,7 @@ pub(crate) fn execute(
                     }
                     let mut hits = Vec::new();
                     plan.block_hits(
-                        &plan.ctx(entry, doc, &facts, config, &atoms),
+                        &plan.ctx(entry, doc, &facts, config, &atoms, &links),
                         doc,
                         &facts,
                         &mut hits,
@@ -864,8 +1003,10 @@ pub(crate) fn execute(
                 let mut matches: Vec<(&PageEntry, Arc<PageFacts>)> = Vec::new();
                 for (entry, doc) in candidates.pages() {
                     let facts = candidates.facts(entry, doc);
-                    if eval::eval_page(&plan.filter, &plan.ctx(entry, doc, &facts, config, &atoms))
-                    {
+                    if eval::eval_page(
+                        &plan.filter,
+                        &plan.ctx(entry, doc, &facts, config, &atoms, &links),
+                    ) {
                         matches.push((entry, facts));
                     }
                 }
@@ -972,6 +1113,7 @@ fn count(graph: &ReadSnapshot, plan: &Plan) -> usize {
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
+        let links = plan.link_answers(graph, &candidates, config, &atoms);
         let mut count = 0usize;
         let mut hits = Vec::new();
         for (entry, doc) in candidates.pages() {
@@ -979,7 +1121,7 @@ fn count(graph: &ReadSnapshot, plan: &Plan) -> usize {
             if plan.skips(entry, &facts) {
                 continue;
             }
-            let ctx = plan.ctx(entry, doc, &facts, config, &atoms);
+            let ctx = plan.ctx(entry, doc, &facts, config, &atoms, &links);
             match plan.anchor {
                 Anchor::Page => count += usize::from(eval::eval_page(&plan.filter, &ctx)),
                 Anchor::Block => {

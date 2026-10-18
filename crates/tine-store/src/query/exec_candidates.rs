@@ -71,8 +71,13 @@ impl<'a> Candidates<'a> {
         });
         // Global property coercions and used-as-tag predicates still need their
         // graph-wide facts. Other named-page queries derive only selected facts.
-        let index = (selected.is_none() || plan.registry.is_some() || plan.tag_targets.is_some())
-            .then(|| graph.query_index());
+        // Link conditions evaluate their element and seed conditions over
+        // every page, so they read every page's facts too.
+        let index = (selected.is_none()
+            || plan.registry.is_some()
+            || plan.tag_targets.is_some()
+            || plan.reads_links())
+        .then(|| graph.query_index());
         Self {
             pages,
             selected,
@@ -96,6 +101,12 @@ impl<'a> Candidates<'a> {
             .iter()
             .flat_map(|slots| slots.iter().filter_map(|&slot| self.pages.get(slot)));
         all.chain(selected)
+    }
+
+    /// Every page of the generation, whatever the narrowing (link conditions
+    /// quantify over pages the row filter never visits).
+    pub(super) fn all_pages(&self) -> impl Iterator<Item = &'a (PageEntry, Arc<Document>)> + '_ {
+        self.pages.iter()
     }
 
     pub(super) fn facts(&self, entry: &PageEntry, doc: &Document) -> Arc<PageFacts> {

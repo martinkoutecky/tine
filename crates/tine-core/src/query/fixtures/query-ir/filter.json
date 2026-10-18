@@ -378,6 +378,89 @@
     {
       "kind": "leaf",
       "leaf": {
+        "kind": "rel",
+        "rel": "links",
+        "quant": "any",
+        "pred": {
+          "kind": "leaf",
+          "leaf": {
+            "kind": "attr",
+            "attr": "name",
+            "op": "eq",
+            "value": {
+              "kind": "text",
+              "text": "alpha"
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "leaf",
+      "leaf": {
+        "kind": "rel",
+        "rel": "linked_by",
+        "quant": "none",
+        "pred": {
+          "kind": "true"
+        }
+      }
+    },
+    {
+      "kind": "leaf",
+      "leaf": {
+        "kind": "near",
+        "seeds": {
+          "kind": "leaf",
+          "leaf": {
+            "kind": "attr",
+            "attr": "name",
+            "op": "eq",
+            "value": {
+              "kind": "text",
+              "text": "seed"
+            }
+          }
+        },
+        "k": 2,
+        "dir": "out",
+        "through": {
+          "kind": "leaf",
+          "leaf": {
+            "kind": "attr",
+            "attr": "journal",
+            "op": "eq",
+            "value": {
+              "kind": "bool",
+              "bool": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "leaf",
+      "leaf": {
+        "kind": "near",
+        "seeds": {
+          "kind": "leaf",
+          "leaf": {
+            "kind": "attr",
+            "attr": "name",
+            "op": "eq",
+            "value": {
+              "kind": "text",
+              "text": "seed"
+            }
+          }
+        },
+        "k": 1,
+        "dir": "both"
+      }
+    },
+    {
+      "kind": "leaf",
+      "leaf": {
         "kind": "attr",
         "attr": "created_at",
         "op": "between",

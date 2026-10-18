@@ -35,8 +35,12 @@ export const ATTRS: readonly Attr[] = [
 ];
 
 /** One relation of the anchor row. */
-export type Rel = "refs" | "direct_refs" | "tags" | "props" | "children" | "parent" | "ancestors" | "descendants" | "blocks" | "page";
-export const RELS: readonly Rel[] = ["refs", "direct_refs", "tags", "props", "children", "parent", "ancestors", "descendants", "blocks", "page"];
+export type Rel = "refs" | "direct_refs" | "tags" | "props" | "children" | "parent" | "ancestors" | "descendants" | "blocks" | "page" | "links" | "linked_by";
+export const RELS: readonly Rel[] = ["refs", "direct_refs", "tags", "props", "children", "parent", "ancestors", "descendants", "blocks", "page", "links", "linked_by"];
+
+/** `near`'s direction (docs/contracts/tql-links-near.md); `both` is the default. */
+export type NearDir = "out" | "in" | "both";
+export const NEAR_DIRS: readonly NearDir[] = ["out", "in", "both"];
 
 /** OData §5.1.1.13 quantifiers: `any` is false and `every` true on an empty collection (Q5). */
 export type Quant = "any" | "none" | "every";
@@ -83,7 +87,9 @@ export type Leaf =
   /** A comparison on one of the current row's own attributes. */
   | { kind: "attr"; attr: Attr; op: CmpOp; value: Value }
   /** A quantifier over ONE relation of the current row. */
-  | { kind: "rel"; rel: Rel; quant: Quant; pred: Filter };
+  | { kind: "rel"; rel: Rel; quant: Quant; pred: Filter }
+  /** The seed pages and every page within `k` link steps (page rows only). */
+  | { kind: "near"; seeds: Filter; k: number; dir?: NearDir; through?: Filter };
 
 /** The boolean tree. */
 export type Filter =
@@ -383,6 +389,11 @@ function forEachLeafFilter(leaf: Leaf, visit: (node: Filter) => void): void {
     case "rel":
       forEachFilter(leaf.pred, visit);
       return;
+    case "near":
+      if (leaf.dir !== undefined && !NEAR_DIRS.includes(leaf.dir)) throw new UnknownIrVariantError("NearDir", leaf.dir);
+      forEachFilter(leaf.seeds, visit);
+      if (leaf.through) forEachFilter(leaf.through, visit);
+      return;
     default:
       throw new UnknownIrVariantError("Leaf", leaf);
   }
@@ -431,6 +442,7 @@ export function assertMirrorsIr(query: Query): void {
       if (!CMP_OPS.includes(leaf.op)) throw new UnknownIrVariantError("CmpOp", leaf.op);
       return;
     }
+    if (leaf.kind === "near") return;
     if (!RELS.includes(leaf.rel)) throw new UnknownIrVariantError("Rel", leaf.rel);
     if (!QUANTS.includes(leaf.quant)) throw new UnknownIrVariantError("Quant", leaf.quant);
   });

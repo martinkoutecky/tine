@@ -1212,9 +1212,11 @@ fn links_near_seed_names_are_the_rename_literals() {
         .collect();
     assert_eq!(found, ["Alpha", "Beta", "Gamma", "Delta"]);
     // A disabled row is not active, so it is not rewritten.
-    assert!(page_name_literals("@page and near(name = 'A', 1)\n-- and near(name = 'B', 1)")
-        .iter()
-        .all(|(_, name)| name == "A"));
+    assert!(
+        page_name_literals("@page and near(name = 'A', 1)\n-- and near(name = 'B', 1)")
+            .iter()
+            .all(|(_, name)| name == "A")
+    );
 }
 
 #[test]

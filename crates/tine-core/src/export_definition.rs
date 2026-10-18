@@ -315,6 +315,17 @@ mod tests {
     }
 
     #[test]
+    fn a_rename_rewrites_near_seeds_and_link_elements_of_a_definition() {
+        // docs/contracts/tql-links-near.md "Renames": seeds and element
+        // conditions are ordinary `name` comparisons.
+        let text = "- {{tine-query @page and near(name in ('Project', 'Notes'), 2, through => not name = 'Project') or any(links, name = 'project')}}\n  export:: project-site\n";
+        assert_eq!(
+            rename(text, false, "Project", "Project archive"),
+            "- {{tine-query @page and near(name in ('Project archive', 'Notes'), 2, through => not name = 'Project archive') or any(links, name = 'Project archive')}}\n  export:: project-site\n"
+        );
+    }
+
+    #[test]
     fn a_rename_rewrites_the_selector_of_an_org_definition() {
         let text = "* Share\n** {{tine-query @page name = 'Project'}}\n:PROPERTIES:\n\
                     :tine.share: someone/abc\n:END:\n* {{tine-query @page name = 'Project'}}\n";

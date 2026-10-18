@@ -236,6 +236,7 @@ impl QueryMemo {
                     return true;
                 };
                 !(cached.contains(entry)
+                    || plan.reads_links()
                     || rows_moved && plan.registry().is_some()
                     || plan.reads_tag_targets() && old_facts.tags() != new_facts.tags()
                     || plan.touches(entry, before, &old_facts, parse_config)
@@ -298,6 +299,53 @@ mod tests {
             Answer::Groups(groups) => groups.total,
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn a_link_reading_answer_is_kept_in_memory_but_left_out_of_the_checkpoint() {
+        // docs/contracts/tql-links-near.md "Memo": the answer depends on every
+        // page, so it never outlives an edit, and the launch checkpoint leaves
+        // it out (a build without `near` must still read the checkpoint).
+        use tine_core::query::ir::*;
+        let memo = QueryMemo::default();
+        let config = ParseConfig::default();
+        let plan_of = |filter: Filter| {
+            let query = Query {
+                anchor: Anchor::Page,
+                filter,
+                diagnostics: Vec::new(),
+                source: Source::Tql {
+                    original: String::new(),
+                    og_options: String::new(),
+                },
+            };
+            Arc::new(Plan::new(
+                &query,
+                JournalDate::today(),
+                false,
+                false,
+                || unreachable!(),
+                || unreachable!(),
+            ))
+        };
+        let name = Filter::attr(Attr::Name, CmpOp::Eq, Value::text("a"));
+        let near = plan_of(Filter::near(name.clone(), 2, NearDir::Both, None));
+        let links = plan_of(Filter::rel(Rel::LinkedBy, Quant::None, Filter::True));
+        let plain = plan_of(name);
+        assert!(near.reads_links() && links.reads_links() && !plain.reads_links());
+        for (key, plan) in [("near", near), ("links", links), ("plain", plain)] {
+            memo.answer(key.into(), JournalDate::today(), &config, || {
+                (groups(1), Some(plan))
+            });
+        }
+        assert_eq!(memo.len(), 3);
+        let state = memo.checkpoint_capture().expect("a memo");
+        let restored: checkpoint::MemoState =
+            serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+        let restored = QueryMemo::from_checkpoint(Some(restored));
+        assert_eq!(restored.len(), 1);
+        assert!(restored.cached("plain").is_some());
+        assert!(restored.cached("near").is_none() && restored.cached("links").is_none());
     }
 
     #[test]
