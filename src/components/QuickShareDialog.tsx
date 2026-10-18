@@ -1,11 +1,11 @@
 import { For, Show, createSignal, onCleanup, onMount, type Accessor, type JSX } from "solid-js";
 import { msg, t } from "../i18n";
 import { backend } from "../backend";
-import { bindingOwner, graphOwner, latestOwner, readOwned, readOwnedResource, writeOwned } from "../owned";
+import { bindingOwner, graphOwner, latestOwner, readOwned, readOwnedResource, writeOwned, type WriteOwner } from "../owned";
 import { dbg } from "../debug";
 import { pushToast } from "../toasts";
 import { closeQuickShare, quickShareDefinition } from "../shareState";
-import { saveShareDefinition, shareValue } from "../quickShare/definitions";
+import { saveShareDefinition, shareValue, type ShareDefinitionTarget } from "../quickShare/definitions";
 import { registerTransientLayer } from "../transientLayers";
 import type { QueryPublicationRequest } from "../types";
 import {
@@ -130,12 +130,13 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   let alive = true;
 
   /** Record a live share in the graph where the share dialog said it would go. The share exists either way, so
-   *  this runs even when the dialog was closed meanwhile; a failure is then a toast. */
-  const record = async (login: string, gistId: string) => {
-    const definition = quickShareDefinition(props.request);
+   *  this runs even when the dialog was closed meanwhile (a failure is then a toast), but only in the graph the
+   *  action started on: `owner` is that graph binding, never the dialog's lifetime. The caller reads `definition`
+   *  before its first await (the request is gone from a closed dialog). */
+  const record = async (login: string, gistId: string, owner: WriteOwner, definition: ShareDefinitionTarget | undefined) => {
     if (!definition) return;
     try {
-      const page = await saveShareDefinition(definition, shareValue(login, gistId));
+      const page = await saveShareDefinition(definition, shareValue(login, gistId), owner);
       if (alive) setRecorded(page);
       else pushToast(msg("quick-share-definition-saved", { page }), "success");
     } catch (failure) {
@@ -196,13 +197,19 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     if (!id || busy()) return;
     // Create consumes the payload whatever happens: a retry needs a fresh preview (never an automatic re-upload).
     setPrepareId(null); setError(null); setBusy("create");
+    // The graph bookkeeping belongs to the graph Create started on, not to this view: closing the dialog keeps
+    // it, a graph switch cancels it (R4 / I-20).
+    const owner = bindingOwner();
+    const definition = quickShareDefinition(props.request);
     try {
-      const answer = await writeOwned(bindingOwner(() => alive), backend().quickShareCreate(id));
+      const answer = await writeOwned(owner, backend().quickShareCreate(id));
       if (answer.kind === "stale") return;
-      setCreated(answer.value);
-      setCopied(answer.value.copied);
-      if (!answer.value.copied) setError(t("quick-share-copy-failed"));
-      await record(answer.value.login, answer.value.gistId);
+      if (alive) {
+        setCreated(answer.value);
+        setCopied(answer.value.copied);
+        if (!answer.value.copied) setError(t("quick-share-copy-failed"));
+      }
+      await record(answer.value.login, answer.value.gistId, owner, definition);
     } catch (failure) {
       if (!alive) { pushToast(msg("quick-share-toast-failed", { error: quickShareErrorText(failure) }), "error"); return; }
       const kind = kindOf(failure);
@@ -218,16 +225,18 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     const shareId = pending();
     if (!shareId || busy()) return;
     setError(null); setCheckNote(null); setBusy("check");
+    const owner = bindingOwner();
+    const definition = quickShareDefinition(props.request);
     try {
-      const answer = await writeOwned(bindingOwner(() => alive), backend().quickShareCheck(shareId));
+      const answer = await writeOwned(owner, backend().quickShareCheck(shareId));
       if (answer.kind === "stale") return;
       if (answer.value === "live") {
-        setPending(null); setLive(shareId); setCheckNote(t("quick-share-check-found"));
+        if (alive) { setPending(null); setLive(shareId); setCheckNote(t("quick-share-check-found")); }
         // Check answers only the state; the gist it found is in the records.
-        const listed = await readOwned(graphOwner(), backend().quickShareList());
+        const listed = await readOwned(owner, backend().quickShareList());
         const row = listed.kind === "current" ? listed.value.shares.find((share) => share.shareId === shareId) : undefined;
-        if (row?.gistId) await record(row.login, row.gistId);
-      } else setCheckNote(t("quick-share-check-not-yet"));
+        if (row?.gistId) await record(row.login, row.gistId, owner, definition);
+      } else if (alive) setCheckNote(t("quick-share-check-not-yet"));
     } catch (failure) {
       if (alive) setError(quickShareErrorText(failure));
       else pushToast(msg("quick-share-toast-failed", { error: quickShareErrorText(failure) }), "error");

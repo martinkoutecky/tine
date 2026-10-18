@@ -246,7 +246,7 @@ it("records a created share in the graph as login/gist, never with the key, wher
   button(root, "quick-share-create")!.click();
   await settle();
   expect(save).toHaveBeenCalledTimes(1);
-  expect(save).toHaveBeenCalledWith({ hostBlockId: "b7", macro: "{{tine-query @page and name = 'Project'}}" }, "octo/g1");
+  expect(save).toHaveBeenCalledWith({ hostBlockId: "b7", macro: "{{tine-query @page and name = 'Project'}}" }, "octo/g1", expect.any(Function));
   expect(text(root)).toContain("Listed on Exports (tine.share::, without the key).");
 });
 
@@ -264,7 +264,35 @@ it("a share found by Check is recorded from its record's gist; a failed recordin
   api.list.mockResolvedValue(listing({ shares: [{ shareId: "s9", state: "live", login: "octo", gistId: "g9", createdAt: "2026-10-18T00:00:00Z", title: "Project", pages: 1, accountMatches: true }] }));
   button(root, "quick-share-check")!.click();
   await settle();
-  expect(save).toHaveBeenCalledWith({ hostBlockId: null, macro: "{{tine-query @page and name = 'Project'}}" }, "octo/g9");
+  expect(save).toHaveBeenCalledWith({ hostBlockId: null, macro: "{{tine-query @page and name = 'Project'}}" }, "octo/g9", expect.any(Function));
   expect(root.querySelector("[role=alert]")!.textContent).toContain("The share was created, but recording it in the graph failed: couldn't write to Exports");
   expect(button(root, "quick-share-copy"), "the share itself stays usable").toBeTruthy();
+});
+
+// Review r1 #2: the share exists once Create answers, so its graph record survives closing the dialog meanwhile; it
+// stays bound to the graph Create started on, so a graph switch cancels it.
+it("closing the dialog while Create uploads still records the share; a graph switch cancels the record", async () => {
+  const definitions = await import("../quickShare/definitions");
+  const { invalidateBinding } = await import("../binding");
+  const save = vi.spyOn(definitions, "saveShareDefinition").mockResolvedValue("Exports");
+  for (const leave of ["close", "switch"] as const) {
+    save.mockClear();
+    let finish!: (value: { shareId: string; gistId: string; login: string; copied: boolean }) => void;
+    api.create.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    const root = document.createElement("div"); document.body.append(root);
+    openQuickShare(REQUEST, { hostBlockId: null, macro: "{{tine-query @page and name = 'Project'}}" });
+    dispose = render(() => <QuickShareDialog request={quickShareRequest} />, root);
+    await settle();
+    button(root, "quick-share-create")!.click();
+    await settle();
+    if (leave === "close") closeQuickShare(); else invalidateBinding();
+    await settle();
+    finish({ shareId: "s1", gistId: "g1", login: "octo", copied: true });
+    await settle();
+    if (leave === "close") {
+      expect(save, leave).toHaveBeenCalledWith({ hostBlockId: null, macro: "{{tine-query @page and name = 'Project'}}" }, "octo/g1", expect.any(Function));
+      expect((save.mock.calls[0][2] as () => boolean)(), "bound to the graph Create started on").toBe(true);
+    } else expect(save, leave).not.toHaveBeenCalled();
+    dispose(); dispose = undefined; root.remove(); closeQuickShare();
+  }
 });

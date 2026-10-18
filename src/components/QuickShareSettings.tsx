@@ -1,14 +1,14 @@
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { msg, t } from "../i18n";
 import { backend } from "../backend";
-import { bindingOwner, graphOwner, latestOwner, readOwned, writeOwned } from "../owned";
+import { bindingOwner, graphOwner, latestOwner, ownedWhen, readOwned, writeOwned, type WriteOwner } from "../owned";
 import { pushToast } from "../toasts";
 import {
   GITHUB_APPLICATION_SETTINGS, quickShareErrorText,
   type QuickShareFound, type QuickShareListed, type QuickShareListing,
 } from "../quickShare/commands";
 import { QuickShareConnect } from "./QuickShareDialog";
-import { removeShareProperty, shareValue } from "../quickShare/definitions";
+import { removeShareProperty } from "../quickShare/definitions";
 
 /** Settings → Sharing (DESIGN §0, §3.6, §3.9, §8): the connected GitHub account, Find shares on GitHub, and the
  *  share keys this device holds, with Copy link, Check, Delete and Forget. What was shared is listed on the
@@ -38,12 +38,14 @@ export function QuickShareSettings(): JSX.Element {
   };
   onMount(() => void refresh());
 
-  /** Run one action; its failure is shown in the tab and kept there (never a silent loss). */
-  const act = async <T,>(key: string, work: () => Promise<T>, then: (value: T) => void | Promise<void>) => {
-    if (busy()) return;
+  /** Run one action; its failure is shown in the tab and kept there (never a silent loss). Its outcome and graph
+   *  bookkeeping belong to the graph the action started on (`owner`, captured before any confirmation), not to
+   *  this view: closing Settings keeps them, a graph switch cancels them (R4 / I-20). */
+  const act = async <T,>(key: string, owner: WriteOwner, work: () => Promise<T>, then: (value: T) => void | Promise<void>) => {
+    if (busy() || !owner()) return;
     setBusy(key); setError(null);
     try {
-      const answer = await writeOwned(bindingOwner(() => alive), work());
+      const answer = await writeOwned(owner, work());
       if (answer.kind === "current") await then(answer.value);
     } catch (failure) {
       if (alive) setError(quickShareErrorText(failure));
@@ -52,43 +54,46 @@ export function QuickShareSettings(): JSX.Element {
       if (alive) setBusy(null);
     }
   };
-  const confirmed = async (message: string) => {
-    const answer = await readOwned(bindingOwner(() => alive), backend().confirm(message));
+  const confirmed = async (message: string, owner: WriteOwner) => {
+    const answer = await readOwned(ownedWhen(() => alive, owner), backend().confirm(message));
     return answer.kind === "current" && answer.value;
   };
   const add = (set: ReadonlySet<string>, id: string) => new Set([...set, id]);
-  /** A share that is gone from this device's list is gone from the graph's listing too. Its failure is shown;
-   *  the share itself is already deleted or forgotten. */
-  const unlist = async (login: string, gistId: string | null) => {
+  /** A share that is gone from this device's list is gone from the graph's listing too: every `tine.share::`
+   *  naming its gist, whatever login prefix it carries (an account rename). Its failure is shown; the share
+   *  itself is already deleted or forgotten. */
+  const unlist = async (gistId: string | null, owner: WriteOwner) => {
     if (!gistId) return;
     try {
-      await removeShareProperty(shareValue(login, gistId));
+      await removeShareProperty(gistId, owner);
     } catch (failure) {
       const args = { error: failure instanceof Error ? failure.message : String(failure) };
       if (alive) setError(t("quick-share-settings-unlisted-failed", args)); else pushToast(msg("quick-share-settings-unlisted-failed", args), "error");
     }
   };
 
-  const disconnect = () => void act("disconnect", () => backend().quickShareDisconnect(), () => { setFound(null); return refresh(); });
-  const copy = (row: QuickShareListed) => void act(`copy:${row.shareId}`, () => backend().quickShareCopyLink(row.shareId),
-    (copied) => { if (copied) pushToast(msg("quick-share-settings-copied"), "success"); else setError(t("quick-share-copy-failed")); });
-  const check = (row: QuickShareListed) => void act(`check:${row.shareId}`, () => backend().quickShareCheck(row.shareId), (outcome) => {
+  const disconnect = () => void act("disconnect", bindingOwner(), () => backend().quickShareDisconnect(), () => { setFound(null); return refresh(); });
+  const copy = (row: QuickShareListed) => void act(`copy:${row.shareId}`, bindingOwner(), () => backend().quickShareCopyLink(row.shareId),
+    (copied) => { if (copied) pushToast(msg("quick-share-settings-copied"), "success"); else if (alive) setError(t("quick-share-copy-failed")); });
+  const check = (row: QuickShareListed) => void act(`check:${row.shareId}`, bindingOwner(), () => backend().quickShareCheck(row.shareId), (outcome) => {
     if (outcome === "live") return refresh();
     setNotYet((set) => add(set, row.shareId));
   });
   const remove = async (row: QuickShareListed) => {
-    if (busy() || !(await confirmed(t("quick-share-settings-delete-confirm")))) return;
-    void act(`delete:${row.shareId}`, () => backend().quickShareDelete({ shareId: row.shareId }), async (outcome) => {
+    const owner = bindingOwner();
+    if (busy() || !(await confirmed(t("quick-share-settings-delete-confirm"), owner))) return;
+    void act(`delete:${row.shareId}`, owner, () => backend().quickShareDelete({ shareId: row.shareId }), async (outcome) => {
       if (outcome === "gone") { setGone((set) => add(set, row.shareId)); return; }
       pushToast(msg("quick-share-settings-deleted"), "success");
-      await unlist(row.login, row.gistId);
+      await unlist(row.gistId, owner);
       return refresh();
     });
   };
   const forget = async (row: QuickShareListed) => {
-    if (busy() || !(await confirmed(t("quick-share-settings-forget-confirm")))) return;
-    void act(`forget:${row.shareId}`, () => backend().quickShareForget(row.shareId), async () => {
-      await unlist(row.login, row.gistId);
+    const owner = bindingOwner();
+    if (busy() || !(await confirmed(t("quick-share-settings-forget-confirm"), owner))) return;
+    void act(`forget:${row.shareId}`, owner, () => backend().quickShareForget(row.shareId), async () => {
+      await unlist(row.gistId, owner);
       return refresh();
     });
   };
@@ -106,13 +111,13 @@ export function QuickShareSettings(): JSX.Element {
     }
   };
   const removeFound = async (gist: QuickShareFound) => {
-    if (busy() || !(await confirmed(t("quick-share-settings-delete-confirm")))) return;
-    void act(`delete:${gist.gistId}`, () => backend().quickShareDelete({ gistId: gist.gistId }), async () => {
+    const owner = bindingOwner();
+    if (busy() || !(await confirmed(t("quick-share-settings-delete-confirm"), owner))) return;
+    void act(`delete:${gist.gistId}`, owner, () => backend().quickShareDelete({ gistId: gist.gistId }), async () => {
       setFound((list) => list?.filter((item) => item.gistId !== gist.gistId) ?? null);
       pushToast(msg("quick-share-settings-deleted"), "success");
-      // Find lists only the connected account's gists, so that account's login names it in the graph.
-      const login = listing()?.account?.login;
-      if (login) await unlist(login, gist.gistId);
+      // By gist identity: a reference written before an account rename carries the old login.
+      await unlist(gist.gistId, owner);
     });
   };
   const openApplications = () => void readOwned(graphOwner(), backend().openExternal(GITHUB_APPLICATION_SETTINGS))

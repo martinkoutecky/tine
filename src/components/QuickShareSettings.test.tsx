@@ -160,22 +160,61 @@ it("Delete, Forget and a found share's Delete remove the share's tine.share:: pr
   expect(root.textContent).toContain("The Exports page lists what you shared.");
   share(root, "s1").querySelector<HTMLButtonElement>(".quick-share-row-delete")!.click();
   await settle();
-  expect(api.unlist.mock.calls).toEqual([["octo/g1"]]);
+  expect(api.unlist.mock.calls.map(([gist]) => gist)).toEqual(["g1"]);
   api.remove.mockResolvedValueOnce("gone");
   shares = [row({ shareId: "s4", gistId: "g4" })];
   root.remove(); dispose!(); dispose = undefined;
   const next = await mount();
   share(next, "s4").querySelector<HTMLButtonElement>(".quick-share-row-delete")!.click();
   await settle();
-  expect(api.unlist.mock.calls, "gone from GitHub: kept until Forget").toEqual([["octo/g1"]]);
+  expect(api.unlist.mock.calls.map(([gist]) => gist), "gone from GitHub: kept until Forget").toEqual(["g1"]);
   share(next, "s4").querySelector<HTMLButtonElement>(".quick-share-row-forget")!.click();
   await settle();
-  expect(api.unlist.mock.calls.at(-1)).toEqual(["octo/g4"]);
+  expect(api.unlist.mock.calls.at(-1)?.[0]).toBe("g4");
   next.querySelector<HTMLButtonElement>(".quick-share-find")!.click();
   await settle();
   next.querySelector<HTMLButtonElement>('[data-gist-id="f1"] .quick-share-found-delete')!.click();
   await settle();
-  expect(api.unlist.mock.calls.at(-1), "Find lists the connected account's gists").toEqual(["octo/f1"]);
+  expect(api.unlist.mock.calls.at(-1)?.[0], "by gist identity, whatever login the graph's reference carries").toBe("f1");
+});
+
+// Review r1 #2: the graph bookkeeping of Delete / Forget / Find → Delete belongs to the graph the action started on,
+// not to the Settings view: closing Settings while GitHub answers keeps it; a graph switch cancels it.
+it("closing Settings while Delete, Forget or a found share's Delete runs still removes the graph property", async () => {
+  const pending = <T,>() => { let finish!: (value: T) => void; const promise = new Promise<T>((r) => { finish = r; }); return { promise, finish }; };
+  for (const [action, gist] of [["delete", "g1"], ["forget", "g4"], ["found", "f1"]] as const) {
+    api.unlist.mockClear();
+    shares = [row({}), row({ shareId: "s4", state: "pending", gistId: "g4" })];
+    const root = await mount();
+    let finish: (value?: unknown) => void;
+    if (action === "delete") { const gate = pending<"deleted">(); api.remove.mockReturnValueOnce(gate.promise); finish = () => gate.finish("deleted"); }
+    else if (action === "forget") { const gate = pending<void>(); api.forget.mockReturnValueOnce(gate.promise); finish = () => gate.finish(); }
+    else {
+      root.querySelector<HTMLButtonElement>(".quick-share-find")!.click(); await settle();
+      const gate = pending<"deleted">(); api.remove.mockReturnValueOnce(gate.promise); finish = () => gate.finish("deleted");
+    }
+    const selector = action === "delete" ? '[data-share-id="s1"] .quick-share-row-delete'
+      : action === "forget" ? '[data-share-id="s4"] .quick-share-row-forget' : '[data-gist-id="f1"] .quick-share-found-delete';
+    root.querySelector<HTMLButtonElement>(selector)!.click();
+    await settle();
+    root.remove(); dispose!(); dispose = undefined;
+    finish();
+    await settle();
+    expect(api.unlist.mock.calls.map(([id]) => id), action).toEqual([gist]);
+  }
+});
+
+it("a graph switch while Delete runs cancels the graph bookkeeping", async () => {
+  const { invalidateBinding } = await import("../binding");
+  let finish!: (value: "deleted") => void;
+  api.remove.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+  const root = await mount();
+  share(root, "s1").querySelector<HTMLButtonElement>(".quick-share-row-delete")!.click();
+  await settle();
+  invalidateBinding();
+  finish("deleted");
+  await settle();
+  expect(api.unlist).not.toHaveBeenCalled();
 });
 
 it("forgetting a pending share touches no graph page, and a failed removal is shown, not hidden", async () => {

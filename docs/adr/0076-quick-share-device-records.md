@@ -79,7 +79,7 @@ and `src/exportsPage.ts` write.
   planned opt-in "Keep share links in this graph" (DESIGN §8) would be a separate decision.
 - Losing app data loses the keys: the shares stay on GitHub, findable and deletable, but no longer openable from
   Tine. Backups (ADR 0074) cover the graph, not app data.
-- Two more entries in the persisted-format census (33) and three approved writer sites (two in
+- Two more entries in the persisted-format census (33) and five approved writer sites (two in
   `atomic_file.rs`, three scratch/in-memory sites in `tine-graph-features/src/quick_share.rs`).
 - Changing either layout means a new `v`; an older Tine then refuses to overwrite the newer file instead of
   losing keys.

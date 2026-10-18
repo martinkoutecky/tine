@@ -235,14 +235,20 @@ save (`src/quickShare/definitions.ts`; no new write path):
 
 - **Create** (201, or Check finding the gist): from an unchanged query block, the
   property goes on that block (beside any `export::`); otherwise, or when that
-  block already names another share, a new definition (the dialog's selector or
-  query plus the property) is appended to the Exports page, created on first
-  use. Written only once the gist exists: a pending share has no gist id, so no
-  property.
-- **Delete** (204) and **Forget** remove the property from every block that
-  carries that exact value, loading pages that are not open. A share GitHub no
-  longer has (`gone`) keeps it until Forget, like its key. A gist deleted from
-  Find shares on GitHub removes `<connected login>/<gist_id>`.
+  block already names another share, no longer exists, or no longer carries the
+  query the share was made from (edited during the upload), a new definition
+  (the dialog's selector or query plus the property) is appended to the Exports
+  page, created on first use. Written only once the gist exists: a pending share
+  has no gist id, so no property.
+- **Delete** (204) and **Forget** remove the property from every block whose
+  value names that gist, whatever login prefix it carries (an account rename
+  keeps the gist id; gist ids are unique on GitHub), loading pages that are not
+  open. A share GitHub no longer has (`gone`) keeps it until Forget, like its
+  key. A gist deleted from Find shares on GitHub is removed the same way.
+- This bookkeeping belongs to the graph the action started on, not to the view:
+  closing the dialog or Settings while GitHub answers still writes it; a graph
+  switch cancels it. The graph binding is rechecked before every edit and after
+  every await, so it never edits a replacement graph.
 - The Exports page's overview query `(or (property export) (property
   tine.share))` lists them; Settings → Sharing keeps the account, Find shares on
   GitHub and this device's keys (Copy link, Check, Delete, Forget).

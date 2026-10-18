@@ -5,7 +5,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { initParser } from "../render/parse";
 import { clearSeededFacets } from "../render/facets";
 import { backend } from "../backend";
+import * as documentLayer from "../document";
 import { flushAll, resetStore } from "../document";
+import { invalidateBinding } from "../binding";
 import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import { bindTestHost } from "../document/host/wiring.test.support";
@@ -111,6 +113,31 @@ describe("saveShareDefinition", () => {
     expect(disk.raws("pages/Exports.md")[1]).toBe("{{query (task TODO)}}\ntine.share:: octo/new");
   });
 
+  // Review r1 #3: the upload takes a while; a query edited meanwhile is a different query, so the share must not
+  // claim it. As for a deleted starting block, the share's own query goes to the exports page.
+  it("a starting block whose query changed during the upload keeps its query; the share goes to the exports page", async () => {
+    const notes = page("Notes", [blk("{{query (task DONE)}}")]);
+    const disk = await bindDisk([notes, EXPORTS()]);
+    load(notes);
+    load(EXPORTS());
+    const host = idOf("Notes", "{{query (task DONE)}}");
+    expect(await saveShareDefinition({ hostBlockId: host, macro: "{{query (task TODO)}}" }, "octo/abc123")).toBe("Exports");
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Notes.md")).toEqual(["{{query (task DONE)}}"]);
+    expect(disk.raws("pages/Exports.md")[1]).toBe("{{query (task TODO)}}\ntine.share:: octo/abc123");
+  });
+
+  it("writes nothing once the graph the share started on is no longer bound", async () => {
+    const notes = page("Notes", [blk("{{query (task TODO)}}")]);
+    const disk = await bindDisk([notes, EXPORTS()]);
+    load(notes);
+    const host = idOf("Notes", "{{query (task TODO)}}");
+    await expect(saveShareDefinition({ hostBlockId: host, macro: "{{query (task TODO)}}" }, "octo/abc123", () => false)).rejects.toThrow("graph-changed");
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Notes.md")).toEqual(["{{query (task TODO)}}"]);
+    expect(disk.raws("pages/Exports.md")).toHaveLength(1);
+  });
+
   it("spells the property for an Org exports page", async () => {
     const org = page("Exports", [blk("{{query (or (property export) (property tine.share))}}")], "org", "#+tine/exports: true\n#+public: false");
     const disk = await bindDisk([org]);
@@ -135,7 +162,7 @@ describe("removeShareProperty", () => {
     answerShareQuery(disk, ["Exports", "Notes"]);
     // Neither page is open: both are loaded into the working set first.
     expect(doc.pages).toHaveLength(0);
-    expect((await removeShareProperty("octo/abc")).sort()).toEqual(["Exports", "Notes"]);
+    expect((await removeShareProperty("abc")).sort()).toEqual(["Exports", "Notes"]);
     expect(await flushAll()).toBe(true);
     expect(disk.raws("pages/Exports.md")).toEqual([
       "{{query (or (property export) (property tine.share))}}",
@@ -148,7 +175,38 @@ describe("removeShareProperty", () => {
   it("a share no block names changes nothing", async () => {
     const disk = await bindDisk([EXPORTS()]);
     answerShareQuery(disk, []);
-    expect(await removeShareProperty("octo/none")).toEqual([]);
+    expect(await removeShareProperty("none")).toEqual([]);
     expect(disk.files.get("pages/Exports.md")!.rev).toBe("r0");
+  });
+
+  // Review r1 #4: Find → Delete names only the gist; a reference written before an account rename carries the old login.
+  it("removes every reference to the gist whatever login prefix it carries, and no other gist", async () => {
+    const notes = page("Notes", [blk("{{query (task TODO)}}\ntine.share:: old-octo/g1"), blk("{{query (task DONE)}}\ntine.share:: new-octo/g1"),
+      blk("{{query (task NOW)}}\ntine.share:: old-octo/g10")]);
+    const disk = await bindDisk([notes]);
+    answerShareQuery(disk, ["Notes"]);
+    expect(await removeShareProperty("g1")).toEqual(["Notes"]);
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Notes.md")).toEqual(["{{query (task TODO)}}", "{{query (task DONE)}}", "{{query (task NOW)}}\ntine.share:: old-octo/g10"]);
+  });
+
+  // Review r1 #1: the loop awaits a page save; a graph switch meanwhile must not let it edit the replacement graph.
+  it("a graph switch while a page saves stops the removal before it edits the replacement graph", async () => {
+    const a = page("A", [blk("{{query (task TODO)}}\ntine.share:: octo/g1")]);
+    const b = page("B", [blk("{{query (task DONE)}}\ntine.share:: octo/g1")]);
+    const disk = await bindDisk([a, b]);
+    answerShareQuery(disk, ["A", "B"]);
+    load(a); load(b);
+    let entered!: () => void, release!: (saved: boolean) => void;
+    const atFlush = new Promise<void>((r) => { entered = r; });
+    vi.spyOn(documentLayer, "flushPage").mockImplementationOnce(() => { entered(); return new Promise((r) => { release = r; }); });
+    const removal = removeShareProperty("g1");
+    await atFlush;
+    invalidateBinding();
+    resetStore();
+    load(page("B", [blk("replacement graph\ntine.share:: octo/g1")]));
+    release(true);
+    await removal;
+    expect(Object.values(doc.byId).find((n) => n.page === "B")!.raw).toBe("replacement graph\ntine.share:: octo/g1");
   });
 });
