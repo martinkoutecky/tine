@@ -2544,6 +2544,15 @@ pub enum IrRequest<'a> {
         /// The page it renders on, if any.
         context: &'a tine_core::query::ir::ExecutionContext,
     },
+    /// The "Pages tagged with" rows of a decoded page or journal title or
+    /// alias (`tagged_pages`, GH #715): a page-anchored `Run` over pages
+    /// tagged with any name in its alias group (the Linked References group),
+    /// the page itself included when it tags itself so. `(page-tags …)` in a
+    /// `Run` stays literal.
+    TaggedPages {
+        /// The page or alias name the section renders for.
+        name: &'a str,
+    },
     /// The observed property registry (`query_registry`).
     Registry,
 }
@@ -4124,8 +4133,7 @@ mod rev5_tests {
                     vec![crate::RestoreFile {
                         area: Area::Pages,
                         rel: "C.md".into(),
-                        source: File::open(&source).unwrap(),
-                        len: fs::metadata(&source).unwrap().len(),
+                        bytes: fs::read(&source).unwrap(),
                     }],
                     None,
                 )

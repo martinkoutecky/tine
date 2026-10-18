@@ -92,8 +92,10 @@ export const PERSISTED_FORMATS = Object.freeze([
   "graph-link-identity",
   // Martin 2026-10-10 (Rule 8 new persisted format: share-inbox); docs/adr/0073.
   "share-inbox",
+  // ADR 0074 (Martin 2026-10-11, "for now do full zips"; ADR acceptance pending).
+  "backup-zip-snapshot",
 ]);
-export const PINNED_FORMAT_COUNT = 30;
+export const PINNED_FORMAT_COUNT = 31;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({

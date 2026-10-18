@@ -1244,7 +1244,14 @@ fn query_ir_on_day_cancellable(
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<crate::IrAnswer>, StatisticsResourceLimit> {
     use crate::query::memo::Answer;
+    let tagged_pages;
+    let default_view = ViewSettings::default();
+    let no_context = tine_core::query::ir::ExecutionContext::none();
     let (query, view, context) = match request {
+        crate::IrRequest::TaggedPages { name } => {
+            tagged_pages = crate::query::tagged_pages_query(graph, name);
+            (&tagged_pages, &default_view, &no_context)
+        }
         crate::IrRequest::Registry => {
             let index = graph.query_index();
             let registry = graph.with_pages(|pages| index.registry(pages));

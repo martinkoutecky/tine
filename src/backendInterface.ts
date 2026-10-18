@@ -105,7 +105,7 @@ export interface Backend {
    *  opens: times the store already holds (no stat, nothing persisted). */
   pageModified(): Promise<import("./types").PageModified>;
   pageBacklinkCounts(): Promise<[string, number][]>;
-  journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
+  journalFeedPage(limit: number, beforeDay: number | null, waitForReferences?: boolean, throughDay?: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<import("./types").PageRead | null>;
@@ -216,6 +216,12 @@ export interface Backend {
    *  or 32 MiB, or over the statistics budget, rejects; no truncated answer is
    *  returned. Context binds only advanced `:current-page`; OG/TQL ignore it. */
   queryRun(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<QueryResult>;
+  /** GH #715: the "Pages tagged with" rows (page anchor) of a page or alias
+   *  name: pages tagged with any name in its alias group (the Linked References
+   *  group), itself included when it tags itself so. Unlike `(page-tags …)`,
+   *  which stays literal. Same
+   *  cost, memoization and bounds as `queryRun`. */
+  taggedPages(name: string): Promise<QueryResult>;
   /** On-demand empty explanation: roughly two full evaluations per conjunct,
    *  O(conjuncts × (pages + blocks)), without result rows or memoization. Ignores
    *  view; no `result-too-large` refusal. Waits for graph load. */
@@ -579,7 +585,7 @@ export interface Backend {
    *  host relaunched after the restore, on success and on a partial failure
    *  alike (the window rebinds either way, S8); null when the stop refused (the
    *  host keeps running) or without a host. `error` says why it failed. */
-  restoreBackup(stamp: string, kind: "replace-page", consumedLastId: number):
+  restoreBackup(id: string, kind: "replace-page", consumedLastId: number):
     Promise<{ error: string | null; reloaded: { session: number; nextId: number } | null }>;
   /** Load the persisted UI session JSON (open tabs / active tab / zoom), or null.
    *  Stored atomically in a backend file so structured session state is independent

@@ -25,12 +25,14 @@ import { startEditing } from "../editorController";
 import { editorOffsetFromRenderedRange } from "../render/spans";
 import { BUILTIN_HIDE, HIDE_ALL, splitProps } from "../editor/properties";
 import { CalGlyph, ClockBadge, toggleBlockMarkerLabel, toggleBlockCheckbox } from "./blockParts";
+import { OccurrenceHostContext } from "../refOccurrence";
+import type { Span } from "../render/ast";
 
 // The rendered (non-editing) body of one block: header facets, body, chips and
 // properties. Extracted from Block.tsx (og-F) with no behaviour change.
 
 // Detect a block whose entire body is a single {{query}}/{{tine-query}}/{{embed}} macro.
-export function detectMacro(raw: string, format: "md" | "org" = "md"): { kind: "query" | "embed"; inner: string; sourceExtent?: MacroExtent } | null {
+export function detectMacro(raw: string, format: "md" | "org" = "md"): { kind: "query" | "embed"; inner: string; sourceExtent?: MacroExtent; span?: Span } | null {
   if (!parserReady() || !raw.includes("{{") || isQuarantined(parseBlock(raw, format === "org"))) return null;
   // lsdoc's inline macro stops at the first `}}` (inside an options map),
   // leaving a phantom closing brace and denying the standalone host. Use the
@@ -46,7 +48,7 @@ export function detectMacro(raw: string, format: "md" | "org" = "md"): { kind: "
     const sourceExtent = queryMacroExtent(raw) ?? undefined;
     return sourceExtent ? { kind: "query", inner: `${sourceExtent.name} ${sourceExtent.argument}`, sourceExtent } : null;
   }
-  return macro.name === "embed" ? {kind:"embed", inner:`${macro.name} ${macro.args.join(", ")}`} : null;
+  return macro.name === "embed" ? { kind: "embed", inner: `${macro.name} ${macro.args.join(", ")}`, span: macro.span } : null;
 }
 
 // `Block` already keeps the node, page format, header facets, heading level and
@@ -165,6 +167,7 @@ export function Rendered(props: {
   );
 
   return (
+    <OccurrenceHostContext.Provider value={props.owner ? { id: props.id, owner: props.owner } : null}>
     <Show
       when={!macro()}
       fallback={
@@ -175,7 +178,7 @@ export function Rendered(props: {
                 <QueryMacro body={macro()!.inner} blockId={props.id} sourceExtent={macro()!.sourceExtent} sourceRaw={macro()!.sourceExtent && node().raw.slice(macro()!.sourceExtent!.start, macro()!.sourceExtent!.end)} />
               </Match>
               <Match when={macro()!.kind === "embed"}>
-                <EmbedMacro body={macro()!.inner} blockId={props.id} />
+                <EmbedMacro body={macro()!.inner} blockId={props.id} span={macro()!.span} />
               </Match>
             </Switch>
           </DeferredStandaloneMacro>
@@ -269,5 +272,6 @@ export function Rendered(props: {
       </Show>
     </div>
     </Show>
+    </OccurrenceHostContext.Provider>
   );
 }

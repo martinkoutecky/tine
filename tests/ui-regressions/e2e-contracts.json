@@ -1,6 +1,21 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-code-wrap-toggle.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "The palette and bound code wrap command preserve the reading position in every mounted main, split and sidebar scroller in both directions without changing note source.", "blocking": true }],
+      "acceptableVariations": ["Reading offsets may vary by a few pixels from layout rounding."],
+      "nonRequirements": ["Exact pane width, code colors or DOM structure; default shortcut; per-block setting."],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-journals-today.mjs": {
+      "contracts": [
+        {"class":"core-operation","userOutcome":"On a cold graph launch, today's file-backed journal body is usable before graph loading finishes.","blocking":true,"authority":"GF4"},
+        {"class":"stateful-ux","userOutcome":"When graph loading completes, referenced fileless days join the displayed date range in descending order while the focused editor, its text and the viewport position survive; browsing writes no journal files.","blocking":true,"authority":"GF4"}
+      ],
+      "acceptableVariations":["First-body latency varies with machine load; no fixed latency budget. Minor subpixel layout differences are acceptable while the same content remains at the viewport."],
+      "nonRequirements":["Exact pixels, DOM nesting, and native platform certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-cli-writes.mjs": {
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit made while the user types flushes input before resolving its handle: an obsolete handle refuses stale, the user's typed text survives, and an edit to another block succeeds with the editor open.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
@@ -77,6 +92,12 @@
       "nonRequirements":["Exact pixels, incidental DOM structure or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh715-tagged-via-alias.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A page's Pages tagged with section lists pages tagged with its alias as well as its name, opened directly, through the alias, or in the right sidebar; a (page-tags) query keeps the literal match, and browsing preserves all source files.","blocking":true}],
+      "acceptableVariations":["Link styling, layout and load latency may vary while the tagged rows agree."],
+      "nonRequirements":["Exact pixels, incidental DOM structure or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-image-copy.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Inline JPEG and PNG copy and lightbox copy show progress and publish an image on the Linux system clipboard; decoded clipboard dimensions match the source.","blocking":true}],
       "acceptableVariations":["Copy duration, PNG compression, styling and clipboard target ordering may vary while image data and progress remain available."],
@@ -87,6 +108,12 @@
       "contracts": [{"class":"stateful-ux","userOutcome":"Page embeds fold to their page-name line, share the host children fold, survive navigation and save only the host; nested keyboard folds affect the occurrence and preserve both embedded source files; the existing Find key seeds editor and rendered selections with the first match active.","blocking":true}],
       "acceptableVariations":["Disclosure styling and save latency may vary while the host state, source bytes and selected query remain correct."],
       "nonRequirements":["Exact pixels, graph-wide search seeding or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-ref-embed-actions.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Hovering a block embed shows Edit link, Open source and Remove in the main pane, a split pane and the right sidebar; Edit link opens only that surface's editor for the containing block with the embed selected; Remove and a block reference's Remove reference change only the containing page's file and Undo restores it byte for byte; the referenced page's file never changes; Open source goes to the source page; a keyboard-focused toolbar button keeps the toolbar visible without hover and Tab moves to the next action.","blocking":true}],
+      "acceptableVariations":["Toolbar styling and placement, menu order and save latency may vary while the saved bytes, the selected text and the routed page agree. Hover screenshots are best-effort evidence (WebKitWebDriver screenshot GETs can stall) and never decide the verdict."],
+      "nonRequirements":["Touch (focus-within) visibility and nested-embed precedence, which scripts/shot-embed-actions.mjs and component tests cover; Org graphs (E2E_FORMAT=org runs the same journey); native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-one-level-fold.mjs": {
@@ -102,7 +129,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-calm-query.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Query controls rename and edit inline while real Rust answers update; copy preserves page/date titles and hierarchy, task and fold changes save normally, Search opens the same query, and backlinks sort in All pages. Saved state survives restart and board drag does not navigate.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Query controls rename (one click on the title puts the caret in the field) and edit inline while real Rust answers update; folding a query block's bullet hides its results and saves the fold; copy preserves page/date titles and hierarchy, task and fold changes save normally, Search opens the same query, and backlinks sort in All pages. Saved state survives restart and board drag does not navigate.","blocking":true}],
       "acceptableVariations":["Menu placement, styling, result order and save latency may vary while controls are reachable and semantic outcomes remain correct."],
       "nonRequirements":["Exact pixels, incidental DOM structure, or native certification outside Linux WebKitGTK.","Creating groups by dropping onto a condition or merging All pages, Search and Query."],
       "stability":"burn-in"
@@ -405,7 +432,7 @@
         { "class": "stateful-ux", "userOutcome": "Opening the app on a graph shows no journal-feed failure when nothing failed: a feed read the window makes before its graph is bound is not reported as an error.", "blocking": true, "authority": "og 12e P2 (false startup toast; master shows none)" }
       ],
       "acceptableVariations": ["Locale rendering and feed layout may vary while configured dates remain discoverable."],
-      "nonRequirements": ["Exact locale punctuation or date-label spacing.", "Panel wording, list layout, or snapshot directory naming beyond the pre-journal-rename tag."],
+      "nonRequirements": ["Exact locale punctuation or date-label spacing.", "Panel wording, list layout, or snapshot naming beyond the pre-journal-rename tag; the snapshot is read as a zip (ADR 0074)."],
       "stability": "stable"
     },
     "scripts/e2e-journal-future-feed.mjs": {

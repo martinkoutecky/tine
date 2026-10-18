@@ -62,9 +62,15 @@ export interface GpuEnv {
 }
 
 export interface BackupInfo {
-  /** `YYYY-MM-DD_HH-MM-SS` (UTC). */
+  /** What `restoreBackup` takes: `zip:<name>` or `dir:<name>` (a zip and a
+   *  legacy snapshot directory with the same name are distinct backups). */
+  id: string;
+  /** The snapshot name: `YYYY-MM-DD_HH-MM-SS` (UTC), optionally followed by a
+   *  suffix such as `-pre-restore` and a same-second counter. */
   stamp: string;
   files: number;
+  /** `damaged` and `unsupported` (made by a newer Tine) cannot be restored. */
+  status: "ok" | "damaged" | "unsupported";
 }
 
 export interface GraphChange {

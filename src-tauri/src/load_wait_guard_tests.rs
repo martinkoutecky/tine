@@ -257,7 +257,7 @@ const WRITER_OR_FSYNC: &[&str] = &[
     "atomic_update(",
     "atomic_write_session(",
     "flush_now(",
-    "prune_backups(",
+    "prune_now(",
     "sync_all(",
     "sync_directory_entry(",
     "_blocking(",

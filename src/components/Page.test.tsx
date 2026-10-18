@@ -697,7 +697,7 @@ describe("Journals feed generation lifecycle", () => {
       resolveRestart(feedResponse([journalDto("restart-winner")], { next_before_day: null, done: true }));
       await restart;
       expect(api).toHaveBeenCalledTimes(3);
-      expect(api.mock.calls).toEqual([[3, null], [3, 20300714], [3, null]]);
+      expect(api.mock.calls).toEqual([[3, null], [3, 20300714, true], [3, null]]);
       expect(doc.feed).toContain("restart-winner");
       expect(doc.feed).not.toContain("stale-append");
     } finally {

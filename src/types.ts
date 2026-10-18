@@ -180,6 +180,8 @@ export interface PageModified {
 /** One authoritative Journals-feed transaction.  Cursor fields are ordinal
  * journal days, never counts of returned DTOs (a selected file may vanish). */
 export interface JournalFeedPage {
+  /** Bodies are available; request the referenced-day merge after publication. */
+  references_pending?: boolean;
   pages: PageRead[];
   /** Referenced future days, nearest first; returned on the first page only. */
   upcoming?: PageRead[];

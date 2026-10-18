@@ -1,4 +1,5 @@
 import { shortcutKey } from "./shortcutKey";
+import { changeCodeWrapping, codeWrapping } from "./codeDisplay";
 import { openWorkspaceCreation } from "./workspaceCreation";
 import { adjustSidebarWidth } from "./sidebarSizing";
 import { openCssEditor } from "./cssEditor";
@@ -285,6 +286,7 @@ function openSwitcherKeepingSelection(opts: Parameters<typeof openSwitcher>[0]):
 
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
+  { id: "ui/toggle-code-block-wrap", binding: "", label: msg("command-ui-toggle-code-block-wrap"), scope: "global", run: () => changeCodeWrapping(!codeWrapping()), global: true },
   { id: "editor/edit-selected-block", binding: "", label: msg("command-editor-edit-selected-block"), scope: "global", run: () => { editSelectedBlock(); }, global: true },
   { id: "go/search", binding: "mod+k", label: msg("command-go-search"), scope: "global", run: () => openSwitcherKeepingSelection({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   { id: "go/search-pages", binding: "", label: msg("command-go-search-pages"), scope: "global", run: () => openSwitcher({ mode: "pages" }), global: true },

@@ -529,6 +529,16 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                     ctx.links
                         .related(leaf, *rel, *quant, ctx.link_node, &ctx.page_key)
                 }
+                // A `page` hop from a page row is the row itself (og.rs
+                // `rebase_to_page`; the TQL printer collapses it the same way).
+                // The builder's page conditions carry it at `@page` (GH #619 c6).
+                Rel::Page => {
+                    let hit = eval_page(pred, ctx);
+                    match quant {
+                        Quant::Any | Quant::Every => hit,
+                        Quant::None => !hit,
+                    }
+                }
                 // No accepted page-row syntax reads a page's own refs or tags.
                 _ => false,
             },

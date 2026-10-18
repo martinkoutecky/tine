@@ -1315,3 +1315,43 @@ fn a_dropped_bare_clause_round_trips_in_og_and_is_left_out_of_tql() {
         "Tine's dialect reads it literally"
     );
 }
+
+/// GH #619 c6: Pages and blocks reads the other family by printing the block
+/// query under `@page`. A `page.` hop from a block row is the page row itself
+/// there (`og::rebase_to_page`), so it prints as the bare page attribute:
+/// `@page` accepts `name`, never `page.name` (SPEC §5 attribute table).
+#[test]
+fn a_page_hop_prints_as_the_page_row_itself_at_page() {
+    for (block, page) in [
+        (
+            "prop('task') is not null and page.name = 'QueriesPagesAndBlock'",
+            "@page and prop('task') is not null and name = 'QueriesPagesAndBlock'",
+        ),
+        (
+            "page.name like 'proj/%' or page.journal = true",
+            "@page and name like 'proj/%' or journal = true",
+        ),
+        (
+            "page_prop('type') = 'book'",
+            "@page and prop('type') = 'book'",
+        ),
+    ] {
+        let mut query = tql(block);
+        assert!(!query.is_invalid(), "{block}: {:?}", query.diagnostics);
+        query.anchor = Anchor::Page;
+        let printed = print_tql(&query);
+        assert_eq!(printed, page, "{block}");
+        let again = tql(&printed);
+        assert!(!again.is_invalid(), "{printed}: {:?}", again.diagnostics);
+        let mut macro_form = query.clone();
+        macro_form.source = Source::Builder;
+        let saved = query_print(
+            &macro_form,
+            &ViewSettings::default(),
+            PrintDialect::TqlMacro,
+            false,
+        )
+        .unwrap();
+        assert!(saved.contains(page), "{block} (macro): {saved}");
+    }
+}

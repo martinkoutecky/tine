@@ -398,13 +398,21 @@ fn walk_list_item(
     }
 }
 
-fn property_key_eligible(key: &str) -> bool {
-    let key = crate::doc::property_key_norm(key);
-    !key.is_empty()
-        && !OG_EDITABLE_BUILT_IN_PROPERTIES
-            .iter()
-            .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
-            .any(|built_in| crate::doc::property_key_norm(built_in) == key)
+/// Whether a normalized property key names a page (OG: every key but the
+/// built-in ones). The built-ins are normalized once per process, not once
+/// per property of every block (GJ5 S2).
+fn property_key_eligible(norm: &str) -> bool {
+    static BUILT_IN: OnceLock<std::collections::HashSet<String>> = OnceLock::new();
+    !norm.is_empty()
+        && !BUILT_IN
+            .get_or_init(|| {
+                OG_EDITABLE_BUILT_IN_PROPERTIES
+                    .iter()
+                    .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
+                    .map(|built_in| crate::doc::property_key_norm(built_in))
+                    .collect()
+            })
+            .contains(norm)
 }
 
 fn project_property_key(
@@ -413,10 +421,11 @@ fn project_property_key(
     key_range: Range<usize>,
     raw_len: usize,
 ) {
-    if property_key_eligible(key) {
+    let norm = crate::doc::property_key_norm(key);
+    if property_key_eligible(&norm) {
         push_explicit_range(
             projection,
-            crate::doc::property_key_norm(key),
+            norm,
             key_range,
             raw_len,
             "explicit_property_key",
@@ -672,15 +681,19 @@ pub fn project(raw: &str, is_org: bool, blocks: &[Block]) -> ReferenceSourceProj
         raw,
         is_org,
         blocks,
+        &crate::block_regions::from_blocks(raw, is_org, blocks),
         crate::query::atom::ParseConfig::default_ref(),
     )
 }
 
 /// Shared evidence projection using the graph's linkable-property policy.
+/// `regions` is `block_regions::from_blocks(raw, is_org, blocks)`, which the
+/// caller has already computed for the same block (GJ5 S3: not twice).
 pub fn project_with_config(
     raw: &str,
     is_org: bool,
     blocks: &[Block],
+    regions: &crate::block_regions::BlockRegions,
     config: &crate::query::atom::ParseConfig,
 ) -> ReferenceSourceProjection {
     let mut projection = ReferenceSourceProjection::default();
@@ -716,7 +729,6 @@ pub fn project_with_config(
             }
         }
     }
-    let regions = crate::block_regions::from_blocks(raw, is_org, blocks);
     for property in regions.properties.iter().filter(|p| p.applicable) {
         let key = &property.key;
         let key_range = property.key_range.0..property.key_range.1;
@@ -1242,6 +1254,59 @@ mod tests {
                     .all(|reference| reference.rule != "explicit_property_key"),
                 "built-in key projected: {built_in}: {:?}",
                 projected.explicit
+            );
+        }
+    }
+
+    #[test]
+    fn property_key_eligibility_matches_normalizing_every_built_in_per_call() {
+        // GJ5 S2: the once-normalized built-in set answers exactly what the
+        // former per-call normalization of every built-in answered.
+        let reference = |key: &str| {
+            let key = crate::doc::property_key_norm(key);
+            !key.is_empty()
+                && !OG_EDITABLE_BUILT_IN_PROPERTIES
+                    .iter()
+                    .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
+                    .any(|built_in| crate::doc::property_key_norm(built_in) == key)
+        };
+        let mut keys: Vec<String> = [
+            "",
+            " ",
+            "status",
+            "Status",
+            "done_at",
+            "TITLE",
+            " Template_Including_Parent ",
+            "background color",
+            "Background_Color",
+            "logseq.table.version",
+            "card_last_score",
+            "custom",
+            "ÜBER",
+            "a b_c",
+            "id",
+            "ID",
+            "created_at",
+            "heading ",
+        ]
+        .iter()
+        .map(|key| key.to_string())
+        .collect();
+        for built_in in OG_EDITABLE_BUILT_IN_PROPERTIES
+            .iter()
+            .chain(OG_HIDDEN_BUILT_IN_PROPERTIES)
+        {
+            keys.push(built_in.to_string());
+            keys.push(built_in.to_uppercase());
+            keys.push(built_in.replace('-', "_"));
+            keys.push(format!("{built_in}x"));
+        }
+        for key in keys {
+            assert_eq!(
+                property_key_eligible(&crate::doc::property_key_norm(&key)),
+                reference(&key),
+                "{key:?}"
             );
         }
     }

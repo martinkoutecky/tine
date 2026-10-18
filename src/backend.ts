@@ -285,8 +285,8 @@ class TauriBackend implements Backend {
   pageBacklinkCounts() {
     return this.call<[string, number][]>("page_backlink_counts");
   }
-  journalFeedPage(limit: number, beforeDay: number | null) {
-    return this.call<import("./types").JournalFeedPage>("journal_feed_page", { limit, beforeDay });
+  journalFeedPage(limit: number, beforeDay: number | null, waitForReferences = false, throughDay: number | null = null) {
+    return this.call<import("./types").JournalFeedPage>("journal_feed_page", { limit, beforeDay, waitForReferences, throughDay });
   }
   journalContentDays() {
     return this.call<number[]>("journal_content_days");
@@ -420,6 +420,9 @@ class TauriBackend implements Backend {
   }
   queryRun(query: Query, view: ViewSettings, context?: ExecutionContext) {
     return this.call<QueryResult>("query_run", { query, view, context });
+  }
+  taggedPages(name: string) {
+    return this.call<QueryResult>("tagged_pages", { name });
   }
   queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext) {
     return this.call<ExplainEmptyResult>("query_explain_empty", { query, view, context });
@@ -814,9 +817,9 @@ class TauriBackend implements Backend {
   listBackups() {
     return this.call<BackupInfo[]>("list_backups");
   }
-  restoreBackup(stamp: string, _kind: "replace-page", consumedLastId: number) {
+  restoreBackup(id: string, _kind: "replace-page", consumedLastId: number) {
     return this.call<{ error: string | null; reloaded: { session: number; nextId: number } | null }>(
-      "restore_backup", { stamp, consumedLastId });
+      "restore_backup", { id, consumedLastId });
   }
   loadSession() {
     return this.call<string | null>("load_session");

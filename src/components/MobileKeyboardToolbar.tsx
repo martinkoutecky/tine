@@ -44,6 +44,9 @@ const ACTIONS: ToolbarAction[] = [
 ];
 
 const KEYBOARD_GAP_THRESHOLD = 48;
+/** Dispatched on window by Android's MainActivity with `detail: true|false`
+ *  whenever the soft keyboard's visibility changes (GH #716). */
+export const NATIVE_IME_EVENT = "tine-ime";
 const EDITOR_TOOLBAR_MARGIN = 8;
 
 function activeEditorHasFocus(): boolean {
@@ -116,12 +119,25 @@ export function MobileKeyboardToolbar(): JSX.Element {
   const [keyboardVisible, setKeyboardVisible] = createSignal(false);
   const [focusedFallback, setFocusedFallback] = createSignal(false);
   let revealFrame = 0;
+  // Android pads the WebView itself above the IME (MainActivity), so there the
+  // keyboard looks exactly like a window resize. MainActivity reports the real
+  // IME state as a `tine-ime` event; until one arrives (iOS, a browser, or an
+  // Android page that has not seen a change yet) the visual viewport decides.
+  let nativeIme: boolean | undefined;
+  // A focused editor with no keyboard keeps the dock (hardware keyboard) only
+  // until a keyboard has been seen: once Back or the IME's hide key closes it,
+  // the editor stays focused but the dock yields to the navigation row, like
+  // OG's keyboardWillHide (show-toolbar? false, show-tabbar? true) (GH #716).
+  let keyboardSeen = false;
 
   const updateDock = () => {
     const top = viewportKeyboardTop();
+    const keyboardUp = nativeIme ?? window.innerHeight - top > KEYBOARD_GAP_THRESHOLD;
+    const focused = activeEditorHasFocus();
+    keyboardSeen = focused && (keyboardSeen || keyboardUp);
     setDockTop(top);
-    setKeyboardVisible(window.innerHeight - top > KEYBOARD_GAP_THRESHOLD);
-    setFocusedFallback(activeEditorHasFocus());
+    setKeyboardVisible(keyboardUp);
+    setFocusedFallback(focused && !keyboardSeen);
   };
 
   onMount(() => {
@@ -146,7 +162,12 @@ export function MobileKeyboardToolbar(): JSX.Element {
         scheduleEditorReveal();
       }
     };
+    const updateFromNativeIme = (event: Event) => {
+      nativeIme = (event as CustomEvent<unknown>).detail === true;
+      updateViewport();
+    };
     updateDock();
+    window.addEventListener(NATIVE_IME_EVENT, updateFromNativeIme);
     vv?.addEventListener("resize", updateViewport);
     vv?.addEventListener("scroll", updateViewport);
     window.addEventListener("resize", updateViewport);
@@ -154,6 +175,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
     window.addEventListener("focusout", updateAfterFocusChange);
     document.addEventListener("input", revealAfterEditorInput, true);
     onCleanup(() => {
+      window.removeEventListener(NATIVE_IME_EVENT, updateFromNativeIme);
       vv?.removeEventListener("resize", updateViewport);
       vv?.removeEventListener("scroll", updateViewport);
       window.removeEventListener("resize", updateViewport);
@@ -206,7 +228,9 @@ export function MobileKeyboardToolbar(): JSX.Element {
       return;
     }
     requestAnimationFrame(() => {
-      if (!toolbarRef) return;
+      // The dock may have hidden since (the keyboard closed in the same
+      // resize); measuring it now would publish a lift from a 0 top (GH #716).
+      if (!toolbarRef || !visible()) return;
       const top = toolbarRef.getBoundingClientRect().top;
       const lift = Math.max(0, window.innerHeight - top) + 8;
       root.style.setProperty("--mobile-kb-toolbar-lift", `${lift}px`);
@@ -224,7 +248,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
     // The viewport grows while the keyboard closes. Keep the button under the
     // active pointer until its trailing click is consumed; otherwise a mounted
     // toolbar can still move away and expose the note before pointer-up.
-    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop())}px - env(safe-area-inset-bottom))`,
+    top: `calc(${Math.max(0, hideGestureDockTop() ?? dockTop())}px - var(--system-inset-bottom))`,
   });
   const keepEditorFocus = (e: Event) => e.preventDefault();
 

@@ -68,8 +68,12 @@ pub(crate) fn mark_watcher_thread() {
     WATCHER.with(|watcher| watcher.set(true));
 }
 
-fn on_watcher() -> bool {
-    WATCHER.with(|watcher| watcher.get())
+/// Whether the current thread is the watcher's. Safe inside a global
+/// allocator (no allocation; false while thread-locals are torn down), so a
+/// cost test can bill the watcher's settlement of a write apart from the
+/// operation that wrote it (K5), as the read counters do.
+pub fn on_watcher() -> bool {
+    WATCHER.try_with(|watcher| watcher.get()).unwrap_or(false)
 }
 
 /// Count a file read on the watcher thread; false elsewhere.

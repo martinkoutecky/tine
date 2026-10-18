@@ -214,13 +214,23 @@ fn print_tql_macro(query: &Query) -> String {
         Anchor::Block => "@block",
         Anchor::Page => "@page",
     };
-    if tql_root_is_true(&query.filter) {
+    let filter = tql_filter(query);
+    if tql_root_is_true(&filter) {
         return anchor.to_string();
     }
-    macro_text::guard_page_ref_arguments(&format!(
-        "{anchor} and {}",
-        tql_expr(&query.filter, Prec::Or)
-    ))
+    macro_text::guard_page_ref_arguments(&format!("{anchor} and {}", tql_expr(&filter, Prec::Or)))
+}
+
+/// The filter as TQL spells it under the query's anchor. A `page` hop from a
+/// block row is the row itself at `@page` ([`super::og::rebase_to_page`]),
+/// and `@page` accepts only the bare page attribute (`name`, not
+/// `page.name`): Pages and blocks prints a block query under `@page` to read
+/// its page family, as does the builder's Find switch (GH #619 c6).
+fn tql_filter(query: &Query) -> std::borrow::Cow<'_, Filter> {
+    match query.anchor {
+        Anchor::Block => std::borrow::Cow::Borrowed(&query.filter),
+        Anchor::Page => std::borrow::Cow::Owned(super::og::rebase_to_page(query.filter.clone())),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -244,17 +254,18 @@ pub fn print_tql(query: &Query) -> String {
         Anchor::Block => "",
         Anchor::Page => "@page",
     };
-    if tql_root_is_true(&query.filter) {
+    let filter = tql_filter(query);
+    if tql_root_is_true(&filter) {
         return if anchor.is_empty() {
             "@block".to_string()
         } else {
             anchor.to_string()
         };
     }
-    let body = if root_operands(&query.filter).iter().any(contains_off) {
-        print_tql_layered(&query.filter)
+    let body = if root_operands(&filter).iter().any(contains_off) {
+        print_tql_layered(&filter)
     } else {
-        tql_expr(&query.filter, Prec::Or)
+        tql_expr(&filter, Prec::Or)
     };
     if anchor.is_empty() {
         body

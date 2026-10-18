@@ -20,7 +20,7 @@ import { clearSeededFacets } from "../render/facets";
 import { notifyModeReset } from "../modeHooks";
 import { deferExternalReload, replayDeferredExternalReloads, whenPageReplaceable } from "./deferredReload";
 import { isBlockMoving } from "./edits/moves";
-import { journalTitle, appNow } from "../journal";
+import { journalTitle, appNow, parseJournalTitle } from "../journal";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { pushToastUnique } from "../toasts";
 import { renderEnglish } from "../i18n";
@@ -583,7 +583,8 @@ export function loadSingle(dto: PageDto & { id?: string }, opts: { endEdit?: boo
 
 /** Load the journals feed as the main view. Normal refresh replaces safe pages;
  * a calendar rollover can add the returned days while retaining every existing
- * feed page and its mounted editor. An optional owner check refuses stale
+ * feed page and its mounted editor. `mergeByDay` orders that retained union
+ * by journal date when referenced-only days arrive. An optional owner check refuses stale
  * publication. Publication FOLLOWS installation (master 7bd793bd0): when another
  * file holding a day's name has unsaved input, the old feed stays and the
  * refusal is returned, so the feed never shows that file as the requested day
@@ -592,7 +593,7 @@ export function loadSingle(dto: PageDto & { id?: string }, opts: { endEdit?: boo
  * none is falsy, so a caller must compare, never test truthiness. Cost is O(returned
  * page blocks + loaded pages + feed days + any pages evicted at the working-set
  * cap); no disk write or failure is exposed here. */
-export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: boolean; preserveExisting?: boolean; isRequestLive?: () => boolean } = {}): "published" | "stale" | PageLoadRefusal {
+export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: boolean; preserveExisting?: boolean; mergeByDay?: boolean; isRequestLive?: () => boolean } = {}): "published" | "stale" | PageLoadRefusal {
   if (opts.isRequestLive?.() === false) return "stale";
   for (const d of dtos) {
     // A calendar rollover adds the new day while keeping every mounted older
@@ -603,9 +604,11 @@ export function loadFeed(dtos: (PageDto & { id?: string })[], opts: { endEdit?: 
   }
   if (opts.isRequestLive?.() === false) return "stale";
   const incoming = dtos.map((d) => d.name);
-  setDoc("feed", opts.preserveExisting
+  const names = opts.preserveExisting
     ? [...incoming, ...doc.feed.filter((name) => !incoming.includes(name))]
-    : incoming);
+    : incoming;
+  if (opts.mergeByDay) names.sort((a, b) => (parseJournalTitle(b)?.getTime() ?? 0) - (parseJournalTitle(a)?.getTime() ?? 0));
+  setDoc("feed", names);
   setDoc("loaded", true);
   if (opts.endEdit !== false) endEdit("page-navigation");
   evictIfNeeded();

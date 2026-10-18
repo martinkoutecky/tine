@@ -214,8 +214,28 @@ await withApp(0, "ios", async (browser) => {
   assert(after.title === "Swipe target", "a short Back swipe left the page", after);
   assert(after.transform === "" || after.transform === "translateX(0px)", "the page did not snap back", after);
   await expectNoDrawerFor(browser, 100, "a Back-mode edge swipe");
+  // GH #501: a committed Back slides the page fully off to the right before the
+  // page changes, like the native iOS back swipe. Record every transform the
+  // page container takes, with the title at that moment (no timing guess).
+  await browser.execute(() => {
+    const el = document.querySelector(".app-container > .main-container");
+    const w = window;
+    w.__slideLog = [];
+    w.__slideObs = new MutationObserver(() => w.__slideLog.push({
+      transform: el.style.transform,
+      title: document.querySelector("h1.page-title")?.textContent?.trim() ?? null,
+    }));
+    w.__slideObs.observe(el, { attributes: true, attributeFilter: ["style"] });
+  });
   await swipe(browser, { x: 10, y: Y, path: steps(220) });
   await browser.waitUntil(async () => (await currentPageTitle(browser)) !== "Swipe target", { timeout: 8_000, timeoutMsg: "a long edge swipe did not go back" });
+  const slide = await browser.execute(() => {
+    window.__slideObs.disconnect();
+    return { width: innerWidth, log: window.__slideLog };
+  });
+  const fullOff = slide.log.find((r) => r.transform === `translateX(${slide.width}px)`);
+  assert(fullOff && fullOff.title === "Swipe target", "a committed Back did not slide the page fully off before going back (GH #501)", slide);
+  await browser.waitUntil(async () => (await browser.execute(() => document.querySelector(".app-container > .main-container")?.style.transform ?? "")) === "", { timeout: 4_000, timeoutMsg: "the page kept its slide-off transform after Back" });
   note("iOS edge swipe goes back through router history; a short one snaps back");
 
   // Item 1. Block swipes on the routed page.

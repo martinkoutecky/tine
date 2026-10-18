@@ -1525,6 +1525,88 @@ fn page_aliases_resolve_and_collect_backlinks() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+fn page_row_names(answer: tine_store::IrAnswer) -> Vec<String> {
+    let tine_store::IrAnswer::Result(answer) = answer else {
+        panic!("query result");
+    };
+    let tine_core::query::ir::QueryRows::Page { pages } = answer.rows else {
+        panic!("page result");
+    };
+    let mut names: Vec<String> = pages.into_iter().map(|page| page.name).collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn gh715_tagged_pages_count_tags_through_any_alias_while_page_tags_stays_literal() {
+    let root = std::env::temp_dir().join(format!("tine-gh715-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let pages = [
+        ("Page A", "alias:: My Important Page\n\n- canonical\n"),
+        // The reporter's case: tagged with the alias, in another case.
+        ("X", "tags:: my important page\n\n- x\n"),
+        ("Y", "tags:: [[Page A]]\n\n- y\n"),
+        (
+            "W",
+            "tags:: Page A, My Important Page\n\n- both, listed once\n",
+        ),
+        ("Z", "tags:: Other\n\n- unrelated\n"),
+        // A page tagging itself is listed on itself, as in OG, whether its
+        // tag is its own name or one of its aliases.
+        ("Lit", "tags:: Lit\n\n- literal self\n"),
+        ("Self", "alias:: Me\ntags:: Me\n\n- self via alias\n"),
+    ];
+    for (name, text) in pages {
+        std::fs::write(root.join("pages").join(format!("{name}.md")), text).unwrap();
+    }
+    let store = store_at(&root);
+    let graph = store.whole_graph().unwrap();
+    let tagged = |name: &str| {
+        page_row_names(
+            graph
+                .query_ir(tine_store::IrRequest::TaggedPages { name })
+                .unwrap(),
+        )
+    };
+    // Viewing the canonical page or its alias lists the same pages.
+    assert_eq!(tagged("Page A"), ["W", "X", "Y"]);
+    assert_eq!(tagged("My Important Page"), ["W", "X", "Y"]);
+    assert_eq!(tagged("page a"), ["W", "X", "Y"]);
+    assert_eq!(tagged("Lit"), ["Lit"]);
+    assert_eq!(tagged("Self"), ["Self"]);
+    assert_eq!(tagged("Me"), ["Self"]);
+    // The section agrees with Linked References, which already merge aliases.
+    let linked: Vec<String> = graph
+        .backlinks("Page A")
+        .unwrap()
+        .iter()
+        .map(|group| group.page.clone())
+        .collect();
+    for page in tagged("Page A") {
+        assert!(linked.contains(&page), "{page} missing from {linked:?}");
+    }
+    // `(page-tags …)` query macros keep OG's literal match.
+    let page_tags = |source: &str| {
+        let (query, view) = tine_core::query::parse_query_text(
+            source,
+            tine_core::query::QueryDialect::Og,
+            tine_core::date::JournalDate::today(),
+        );
+        page_row_names(
+            graph
+                .query_ir(tine_store::IrRequest::Run {
+                    query: &query,
+                    view: &view,
+                    context: &tine_core::query::ir::ExecutionContext::none(),
+                })
+                .unwrap(),
+        )
+    };
+    assert_eq!(page_tags("(page-tags \"Page A\")"), ["W", "Y"]);
+    assert_eq!(page_tags("(page-tags \"My Important Page\")"), ["W", "X"]);
+    std::fs::remove_dir_all(&root).ok();
+}
+
 #[test]
 fn set_favorites_round_trips_in_config_edn() {
     let root = std::env::temp_dir().join(format!("tine-fav-test-{}", std::process::id()));

@@ -113,6 +113,18 @@ describe("Android system-bar theme synchronization", () => {
     expect(activity.indexOf("setOnApplyWindowInsetsListener")).toBeGreaterThan(activity.indexOf("super.onCreate"));
   });
 
+  // GH #716. The padded WebView sees the IME only as a smaller window, so the
+  // keyboard dock needs MainActivity's own IME signal to tell it from a resize.
+  it("reports soft-keyboard visibility to the page under the event the dock listens for", async () => {
+    const root = path.resolve(import.meta.dirname, "..");
+    const activity = fs.readFileSync(path.join(root,
+      "src-tauri/gen/android/app/src/main/java/page/tine/app/MainActivity.kt"), "utf8");
+    const { NATIVE_IME_EVENT } = await import("./components/MobileKeyboardToolbar");
+    expect(activity).toContain("publishIme(insets.isVisible(WindowInsetsCompat.Type.ime()))");
+    expect(activity).toContain(`window.dispatchEvent(new CustomEvent('${NATIVE_IME_EVENT}',{detail:$visible}))`);
+    expect(activity).toContain("override fun onWebViewCreate(webView: WebView)");
+  });
+
   // GH #467. Once the insets pad the content root, the WINDOW paints the strip
   // behind the status bar while the bar ICONS follow Tine's theme. The strip
   // colour is set from the same `dark` flag, through resources that carry no

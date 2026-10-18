@@ -588,6 +588,12 @@ settings-ui-no-snapshots-yet = 尚无快照。
 
 settings-ui-files-2 = { $files } 个文件
 
+settings-ui-files-backup-status = { $files } 个文件 · { $status }
+
+settings-ui-backup-damaged = 已损坏
+
+settings-ui-backup-unsupported = 由较新版本的 Tine 创建
+
 settings-ui-restore = 恢复
 
 settings-ui-couldn-t-do-that = 无法执行：{ $value1 }

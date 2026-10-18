@@ -74,3 +74,19 @@ references-expand-group = 展开来自 { $page } 的引用
 references-collapse-group = 折叠来自 { $page } 的引用
 
 media-youtube-timestamp-seek = 跳转到匹配或上次播放的 YouTube 视频时间点
+
+ref-occurrence-actions = 嵌入操作
+
+ref-occurrence-edit = 编辑链接
+
+ref-occurrence-edit-title = 在包含此链接的块中编辑它
+
+ref-occurrence-remove = 移除
+
+ref-occurrence-remove-embed-title = 从此块中移除这个嵌入。被嵌入的页面或块不会改变。
+
+ref-occurrence-remove-ref-title = 从此块中移除这个引用。被引用的块不会改变。
+
+ref-occurrence-remove-ref = 移除引用
+
+ref-occurrence-changed = 此块在显示后已更改，因此未做任何编辑。请重试。
