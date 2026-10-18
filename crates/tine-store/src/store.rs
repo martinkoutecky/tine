@@ -350,6 +350,8 @@ mod diagnostics;
 #[cfg(test)]
 mod fold_save_tests;
 mod inventory;
+#[cfg(any(test, feature = "test-faults"))]
+mod link_oracle;
 mod name_search;
 #[cfg(test)]
 mod page_open_tests;
@@ -3100,25 +3102,6 @@ impl WholeGraph {
         crate::query::exec::query_ir(&self.graph, request)
     }
 
-    /// Test oracle: [`Self::query_ir`], stopping cooperatively once `cancel`
-    /// is set, the same flag interactive search takes. `Ok(None)`: cancelled,
-    /// no partial answer, nothing memoized. The link work behind `links`,
-    /// `linked_by` and `near` (table build, element and seed conditions, the
-    /// searches) checks it at least once per page and once per 1024
-    /// references or nodes. Not production surface yet: SURFACE.txt rule 3
-    /// wants a parameter on `query_ir`, not a sibling; that choice is the
-    /// integrator's (RECEIPT-tql-near.md, review r1).
-    #[cfg(any(test, feature = "test-faults"))]
-    pub fn query_ir_cancellable(
-        &self,
-        request: IrRequest<'_>,
-        cancel: &Cancel,
-    ) -> Result<Option<IrAnswer>, tine_core::query::statistics::StatisticsResourceLimit> {
-        crate::query::exec::query_ir_cancellable(&self.graph, request, &|| {
-            cancel.0.load(Ordering::Acquire)
-        })
-    }
-
     /// Graph search, with an optional syntactically checked file scope and
     /// caller cancellation. An absent scoped file yields an empty answer;
     /// check existence separately when it matters.
@@ -3183,18 +3166,6 @@ impl WholeGraph {
     /// this view remain at the same revision.
     pub fn rev(&self) -> GraphRev {
         self.rev
-    }
-
-    /// Test probe: this view's TQL link table (`links`, `linked_by`, `near`)
-    /// as (nodes, links, estimated heap bytes), building it if needed.
-    #[cfg(any(test, feature = "test-faults"))]
-    pub fn link_table_stats(&self) -> (usize, usize, usize) {
-        let table = self.graph.link_graph(&|| false).expect("never cancelled");
-        (
-            table.node_count(),
-            table.edge_count(),
-            table.estimated_bytes(),
-        )
     }
 
     /// Backlinks to a decoded page or journal title or alias, compared by
