@@ -250,3 +250,104 @@ fn header_tokens_door_equals_the_regions_header() {
         );
     }
 }
+
+/// GH #721: OG writes `collapsed:: true` after a block's last line, which mldoc
+/// folds into a final quote's lazy continuation. The kernel still owns the row:
+/// toggling replaces it in place (never appends), removes every copy, and
+/// quoted content is never touched.
+#[test]
+fn trailing_builtin_rows_swallowed_by_a_final_quote_stay_owned() {
+    let raw = "Outside\n> Something\ncollapsed:: true";
+    let r = parse(raw, false);
+    let p = r.property("collapsed").expect("owned");
+    assert!(p.primary);
+    assert_eq!(p.value, "true");
+    let set = |raw: &str, value: Option<&str>| {
+        parse(raw, false)
+            .apply(
+                raw,
+                false,
+                Edit::Property {
+                    key: "collapsed".into(),
+                    value: value.map(str::to_string),
+                },
+            )
+            .unwrap()
+    };
+    assert_eq!(set(raw, Some("true")), raw);
+    assert_eq!(set(raw, None), "Outside\n> Something");
+    // Already-stacked rows (as in the report) collapse to one on the next write
+    // and all disappear on expand.
+    let stacked = "Outside\n> Something\ncollapsed:: true\ncollapsed:: true\ncollapsed:: true";
+    assert_eq!(parse(stacked, false).properties.len(), 3);
+    assert_eq!(set(stacked, Some("true")), raw);
+    assert_eq!(set(stacked, None), "Outside\n> Something");
+    // Visible text drops the rows.
+    assert_eq!(
+        parse(stacked, false)
+            .apply(stacked, false, Edit::Visible)
+            .unwrap(),
+        "Outside\n> Something"
+    );
+    // Quoted rows, ordinary `key::` rows and non-built-in keys stay content.
+    for plain in [
+        "> collapsed:: true",
+        "Outside\n> a\n> collapsed:: true",
+        "Outside\n> a\nfoo:: bar",
+        "> a\ncollapsed::true",
+    ] {
+        assert!(
+            parse(plain, false).property("collapsed").is_none(),
+            "{plain}"
+        );
+    }
+    // A hidden row followed by an ordinary lazy line is not trailing metadata.
+    assert!(parse("> a\ncollapsed:: true\nmore", false)
+        .property("collapsed")
+        .is_none());
+    // A trailing accepted property node (id) after the swallowed row is kept.
+    let both = "> a\ncollapsed:: true\nid:: 11111111-1111-4111-8111-111111111111";
+    let r = parse(both, false);
+    assert!(r.property("collapsed").is_some());
+    assert!(r.id.is_some());
+}
+
+#[test]
+fn swallowed_rows_leave_the_render_ast_but_not_quoted_text() {
+    use lsdoc::ast::{Block, Inline};
+    fn quote_text(blocks: &[Block]) -> String {
+        let mut out = String::new();
+        for b in blocks {
+            if let Block::Quote { children, .. } = b {
+                for c in children {
+                    if let Block::Paragraph { inline, .. } = c {
+                        for i in inline {
+                            match i {
+                                Inline::Plain { text, .. } => out.push_str(text),
+                                Inline::Break { .. } => out.push('|'),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+    for (raw, expected) in [
+        ("Outside\n> Something\ncollapsed:: true", "Something|"),
+        (
+            "Outside\n> Something\ncollapsed:: true\ncollapsed:: true\ncollapsed:: true",
+            "Something|",
+        ),
+        ("> a\n> b\ncollapsed:: true", "a|b|"),
+        ("> a\nmore\ncollapsed:: true", "a|more|"),
+        // Not metadata: kept as text.
+        ("> a\nfoo:: bar", "a|foo:: bar|"),
+        ("> a\n> collapsed:: true", "a|collapsed:: true|"),
+    ] {
+        let mut blocks = tine_core::render::parse_block(raw, false);
+        tine_core::block_regions::strip_swallowed_rows(raw, &mut blocks);
+        assert_eq!(quote_text(&blocks), expected, "{raw:?}");
+    }
+}

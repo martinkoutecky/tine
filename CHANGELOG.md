@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Repeatedly collapsing a block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) no longer stacks extra `collapsed:: true` lines or shows them as text; existing stacked lines are removed on the next collapse toggle (GH #721).
+
 ## [0.8.0-beta.5] - 2026-10-18
 
 ### Fixed
