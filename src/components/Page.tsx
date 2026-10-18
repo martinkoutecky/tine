@@ -42,7 +42,7 @@ import { editingId, endEditForSurface, startEditing } from "../editorController"
 import type { JournalFeedPage, PageRead, RefGroup } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
-import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
+import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
 import { PageConflictResolution } from "./ConflictResolution";
@@ -996,7 +996,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     // must stay in the outline so its children can be selected/deleted/outdented;
     // pageToDto still refuses to serialize a marked header until it is repaired.
     const first = docNode(id);
-    return id && editingId() !== id && first && first.children.length === 0 && isPropertiesOnly(first.raw) ? id : null;
+    return id && editingId() !== id && first && first.children.length === 0
+      && rendersAsPageHeader(first.raw, first.originatedFromPageHeader) ? id : null;
   };
   // The page header shows the same answerer the properties panel lists; a first
   // root rendered as an ordinary block (being edited, or not a header) is excluded.

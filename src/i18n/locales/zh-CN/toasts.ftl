@@ -193,6 +193,10 @@ paste-pasted-as-a-copy-references-to-these-blocks = 已粘贴为副本；指向�
 
 properties-page-header-properties-must-contain-only-valid-key = 页面头部属性只能包含有效的 key:: value 行，才能保存。
 
+properties-page-header-bad-line = 页面属性暂时无法保存：属性块的第 { $line } 行“{ $text }”不是 key:: value 属性。请修改或删除该行。
+
+properties-page-header-has-child-blocks = 页面属性暂时无法保存：属性块下有子块。请将其取消缩进或删除。
+
 selection-outline-is-too-deep-to-indent = 大纲层级过深，无法缩进
 
 graph-rewrite-rename-failed = 重命名失败：{ $error }
