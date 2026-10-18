@@ -36,8 +36,24 @@ const SCENARIOS = {
 /** One traced call: `{ kind: "fsync" | "rename" | "unlink", path, to?, ok }`. */
 export function parseTrace(text) {
   const events = [];
+  // Under `-f`, another thread's call or exit can split a call into
+  // `name(args <unfinished ...>` and a later `<... name resumed>rest` on the
+  // same pid; rejoin them so the call is seen once, whole.
+  const unfinished = new Map();
   for (const raw of text.split("\n")) {
-    const line = raw.replace(/^(\[pid\s+)?\d+\]?\s+/, "");
+    const pid = raw.match(/^(?:\[pid\s+)?(\d+)\]?\s+/)?.[1];
+    let line = raw.replace(/^(\[pid\s+)?\d+\]?\s+/, "");
+    const cut = line.match(/^(.*?)\s*<unfinished \.\.\.>\s*$/);
+    if (cut) {
+      unfinished.set(pid, cut[1]);
+      continue;
+    }
+    const resumed = line.match(/^<\.\.\. \w+ resumed>\s?(.*)$/);
+    if (resumed) {
+      if (!unfinished.has(pid)) continue;
+      line = unfinished.get(pid) + resumed[1];
+      unfinished.delete(pid);
+    }
     const ok = /\)\s+=\s+0\s*$/.test(line);
     let match;
     if ((match = line.match(/^f(?:data)?sync\(\d+<([^>]*)>\)/))) {

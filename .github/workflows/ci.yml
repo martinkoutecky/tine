@@ -247,9 +247,33 @@ jobs:
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
       # Independent of the core step: a core-test failure still reports these.
+      # tauri links its Common Controls v6 manifest into bins only, so the lib
+      # test exe fails to load (0xc0000139, TaskDialogIndirect). A side-by-side
+      # `<exe>.manifest` supplies it to the test exe alone; the shipped binary
+      # is untouched.
       - name: Windows backup and file-lock tests (Expand-Archive opens a backup)
         if: ${{ !cancelled() }}
-        run: "cargo test --no-fail-fast -p tine --lib -- backup:: file_lock::"
+        run: |
+          $exe = cargo test -p tine --lib --no-run --message-format=json |
+            ForEach-Object { $_ | ConvertFrom-Json } |
+            Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'tine_lib' -and $_.profile.test -and $_.executable } |
+            Select-Object -Last 1 -ExpandProperty executable
+          if (-not $exe) { throw 'no tine lib test executable' }
+          Set-Content -Encoding utf8 -Path "$exe.manifest" -Value @'
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          '@
+          Push-Location src-tauri
+          & $exe backup:: file_lock::
+          $code = $LASTEXITCODE
+          Pop-Location
+          exit $code
 
   # Launch backups on macOS (not part of `full`): the backup and file-lock
   # tests on the runner's APFS, including `ditto -x -k` opening a backup, the

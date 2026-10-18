@@ -2,7 +2,7 @@
 // REVIEW-backup-zip-2 R4/E4) against hand-built traces: a keeper witness
 // counts only in the victim's own `<id>.zips/` and only while it is present.
 import { describe, expect, it } from "vitest";
-import { check, type TraceEvent } from "../scripts/check-backup-syscalls.mjs";
+import { check, parseTrace, type TraceEvent } from "../scripts/check-backup-syscalls.mjs";
 
 const Z = "/t/app/backups/g.zips";
 const up = (p: string) => p.slice(0, p.lastIndexOf("/"));
@@ -56,6 +56,27 @@ describe("backup syscall gate checker", () => {
     );
     expect(problems).toEqual([
       "settings-prune: c.zip unlinked without a settled keeper still present in its own namespace",
+    ]);
+  });
+
+  // Hosted CI 39083439899: another thread exited during the partial's fsync,
+  // strace split the call, and the gate reported a missing fsync.
+  it("rejoins a call that strace split around another thread's event", () => {
+    const P = `${Z}/.partial-a.zip`;
+    const events = parseTrace(
+      [
+        `100 fsync(6<${P}> <unfinished ...>`,
+        "101 +++ exited with 0 +++",
+        "100 <... fsync resumed>) = 0",
+        `100 renameat2(AT_FDCWD</w>, "${P}", AT_FDCWD</w>, "${Z}/a.zip", RENAME_NOREPLACE <unfinished ...>`,
+        `102 unlink("/elsewhere") = 0`,
+        "100 <... renameat2 resumed>) = 0",
+      ].join("\n"),
+    );
+    expect(events).toEqual([
+      { kind: "fsync", path: P, ok: true },
+      { kind: "unlink", path: "/elsewhere", ok: true },
+      { kind: "rename", path: P, to: `${Z}/a.zip`, ok: true },
     ]);
   });
 });
