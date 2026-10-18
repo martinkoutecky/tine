@@ -203,6 +203,24 @@ pub(crate) async fn query_run(
     on_graph(&state, move |graph| run(graph, &query, &view, &context)).await
 }
 
+/// GH #715: the "Pages tagged with" rows of a page or alias name: pages
+/// tagged with any name in its alias group, itself excluded
+/// (`IrRequest::TaggedPages`). `(page-tags …)` through `query_run` stays
+/// literal. Same bounds as `query_run`; waits for the initial graph load.
+#[tauri::command]
+pub(crate) async fn tagged_pages(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<QueryResult, String> {
+    on_graph(&state, move |graph| {
+        match graph.query_ir(IrRequest::TaggedPages { name: &name }) {
+            Ok(answer) => QueryResult::try_from(answer),
+            Err(error) => Err(error.to_string()),
+        }
+    })
+    .await
+}
+
 /// SPEC §7.1 `query_explain_empty` (N19): why the query returned nothing — one
 /// row per root conjunct with its count alone and without it (one row, with no
 /// `without` count, for a non-`And` root; none for a non-executable query).

@@ -21,9 +21,10 @@ it("routed tag page lists tagged pages before references, navigates, and refresh
   vi.spyOn(backend(), "getPage").mockImplementation(async name => ({ ...dto, name, title: name, id: `pages/${name}.md` }));
   vi.spyOn(backend(), "getPageByPath").mockImplementation(async path => ({ ...dto, name: path.includes("Updated") ? "Updated" : "Research", id: path }));
   loadSingle(dto);
-  vi.spyOn(backend(), "parseQuery").mockImplementation(async (text) => ({ query: { anchor: text.startsWith("(page-tags") ? "page" : "block", filter: { kind: "and", items: [] }, source: { kind: "builder" } }, view: {} }));
+  vi.spyOn(backend(), "parseQuery").mockImplementation(async () => ({ query: { anchor: "block", filter: { kind: "and", items: [] }, source: { kind: "builder" } }, view: {} }));
+  vi.spyOn(backend(), "queryRun").mockImplementation(async () => ({ anchor: "block", groups: [], total: 0, exceeded: false, report: { supported: true, ran: [], ignored: [] } }));
   let names = ["Zulu", "Alpha"];
-  const run = vi.spyOn(backend(), "queryRun").mockImplementation(async query => query.anchor === "page" ? result(names) : { anchor: "block", groups: [], total: 0, exceeded: false, report: { supported: true, ran: [], ignored: [] } });
+  const run = vi.spyOn(backend(), "taggedPages").mockImplementation(async () => result(names));
   mainPaneRouter.openPage(dto.name, "page");
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <PageView />, host);
@@ -37,7 +38,7 @@ it("routed tag page lists tagged pages before references, navigates, and refresh
     expect(section.textContent).not.toContain("Alpha");
     (section.querySelector("a.page-ref") as HTMLElement).click();
     expect(route()).toMatchObject({ kind: "page", name: "Updated" });
-    expect(run).toHaveBeenCalled();
+    expect(run).toHaveBeenCalledWith("Research");
   } finally { dispose(); }
 });
 
@@ -45,8 +46,7 @@ it("sidebar page uses the same tagged-page section, folds, and omits an empty re
   const dto = { id: "pages/Research.md", name: "Research", kind: "page" as const, title: "Research", pre_block: null, blocks: [] };
   loadSingle(dto);
   vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
-  vi.spyOn(backend(), "parseQuery").mockResolvedValue({ query: { anchor: "page", filter: { kind: "and", items: [] }, source: { kind: "builder" } }, view: {} });
-  const run = vi.spyOn(backend(), "queryRun").mockResolvedValue(result(["Tagged page"]));
+  const run = vi.spyOn(backend(), "taggedPages").mockResolvedValue(result(["Tagged page"]));
   applySidebarSession({ right: true, items: [{ kind: "page", name: "Research", pageKind: "page" }] });
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <RightSidebar />, host);
@@ -61,14 +61,24 @@ it("sidebar page uses the same tagged-page section, folds, and omits an empty re
   } finally { dispose(); }
 });
 it("a failed tag query displays a retry instead of claiming no tagged pages", async () => {
-  vi.spyOn(backend(), "parseQuery").mockRejectedValueOnce(new Error("read failed"))
-    .mockResolvedValue({ query: { anchor: "page", filter: { kind: "and", items: [] }, source: { kind: "builder" } }, view: {} });
-  vi.spyOn(backend(), "queryRun").mockResolvedValue(result(["Recovered page"]));
+  vi.spyOn(backend(), "taggedPages").mockRejectedValueOnce(new Error("read failed"))
+    .mockResolvedValue(result(["Recovered page"]));
   const host = document.createElement("div"); document.body.append(host);
   const dispose = render(() => <TaggedPages name="Research" />, host);
   try {
     await vi.waitFor(() => expect(host.textContent).toContain("Couldn’t load tagged pages."));
     host.querySelector<HTMLButtonElement>(".resource-failure-retry")!.click();
     await vi.waitFor(() => expect(host.querySelector(".tagged-pages li")?.textContent).toBe("Recovered page"));
+  } finally { dispose(); }
+});
+it("GH #715: the section shows the alias-group rows tagged_pages answers, not the literal (page-tags) query", async () => {
+  const parse = vi.spyOn(backend(), "parseQuery");
+  const tagged = vi.spyOn(backend(), "taggedPages").mockImplementation(async name => result(name === "My Important Page" ? ["page_X", "page_Y"] : []));
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <TaggedPages name="My Important Page" />, host);
+  try {
+    await vi.waitFor(() => expect([...host.querySelectorAll(".tagged-pages li")].map(row => row.textContent)).toEqual(["page_X", "page_Y"]));
+    expect(tagged).toHaveBeenCalledWith("My Important Page");
+    expect(parse).not.toHaveBeenCalled();
   } finally { dispose(); }
 });

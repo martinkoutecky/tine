@@ -118,6 +118,7 @@ use plugins::{
 use query_export::{publish_live, publish_query, publish_query_plan, sheet_export_inputs};
 use query_ir::{
     query_explain_empty, query_og_expressible, query_parse, query_print, query_registry, query_run,
+    tagged_pages,
 };
 use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
@@ -1074,6 +1075,7 @@ pub fn run() {
             query_registry,
             query_run,
             query_explain_empty,
+            tagged_pages,
             page_icons,
             set_favorites,
             set_default_home,

@@ -56,6 +56,9 @@ export const mockQueryCommands = {
   async queryRun(query: Query): Promise<QueryResult> {
     return { anchor: "block", groups: [], diagnostics: query.diagnostics ?? [], report: { ran: [], ignored: [], supported: false }, total: 0, exceeded: false };
   },
+  async taggedPages(): Promise<QueryResult> {
+    return { anchor: "page", pages: [], diagnostics: [], report: { ran: [], ignored: [], supported: false }, total: 0, exceeded: false };
+  },
   async queryExplainEmpty(query: Query): Promise<ExplainEmptyResult> {
     return { rows: [], diagnostics: query.diagnostics ?? [], report: { ran: [], ignored: [], supported: false } };
   },

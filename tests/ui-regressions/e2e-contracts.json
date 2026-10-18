@@ -92,6 +92,12 @@
       "nonRequirements":["Exact pixels, incidental DOM structure or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh715-tagged-via-alias.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A page's Pages tagged with section lists pages tagged with its alias as well as its name, opened directly, through the alias, or in the right sidebar; a (page-tags) query keeps the literal match, and browsing preserves all source files.","blocking":true}],
+      "acceptableVariations":["Link styling, layout and load latency may vary while the tagged rows agree."],
+      "nonRequirements":["Exact pixels, incidental DOM structure or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-image-copy.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Inline JPEG and PNG copy and lightbox copy show progress and publish an image on the Linux system clipboard; decoded clipboard dimensions match the source.","blocking":true}],
       "acceptableVariations":["Copy duration, PNG compression, styling and clipboard target ordering may vary while image data and progress remain available."],

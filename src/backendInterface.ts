@@ -216,6 +216,11 @@ export interface Backend {
    *  or 32 MiB, or over the statistics budget, rejects; no truncated answer is
    *  returned. Context binds only advanced `:current-page`; OG/TQL ignore it. */
   queryRun(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<QueryResult>;
+  /** GH #715: the "Pages tagged with" rows (page anchor) of a page or alias
+   *  name: pages tagged with any name in its alias group (the Linked References
+   *  group), itself excluded. Unlike `(page-tags …)`, which stays literal. Same
+   *  cost, memoization and bounds as `queryRun`. */
+  taggedPages(name: string): Promise<QueryResult>;
   /** On-demand empty explanation: roughly two full evaluations per conjunct,
    *  O(conjuncts × (pages + blocks)), without result rows or memoization. Ignores
    *  view; no `result-too-large` refusal. Waits for graph load. */
