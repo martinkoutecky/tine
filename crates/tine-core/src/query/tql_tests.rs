@@ -1057,3 +1057,181 @@ fn hierarchy_relations_bind_block_predicates_and_refuse_page_scope() {
         }
     }
 }
+
+// -- links, linked_by, near (docs/contracts/tql-links-near.md) -------------
+
+fn name_is(name: &str) -> Filter {
+    Filter::attr(Attr::Name, CmpOp::Eq, Value::text(name))
+}
+
+fn journal_is(value: bool) -> Filter {
+    Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value })
+}
+
+#[test]
+fn links_near_relations_bind_page_predicates() {
+    for (relation, rel) in [("links", Rel::Links), ("linked_by", Rel::LinkedBy)] {
+        for (word, quant) in [
+            ("any", Quant::Any),
+            ("none", Quant::None),
+            ("every", Quant::Every),
+        ] {
+            assert_eq!(
+                ok(&format!("@page and {word}({relation}, name = 'A')")),
+                Filter::rel(rel, quant, name_is("A"))
+            );
+        }
+        // At @block the relation exists on the other row: kept and reported.
+        let block = parse(&format!("any({relation}, name = 'A')"));
+        assert!(block.is_invalid());
+        assert!(block
+            .diagnostics
+            .iter()
+            .any(|d| d.kind == DiagnosticKind::NotApplicable));
+    }
+    // The element is a page row, so a page relation nests inside it.
+    assert_eq!(
+        ok("@page and any(links, any(linked_by, journal = true))"),
+        Filter::rel(
+            Rel::Links,
+            Quant::Any,
+            Filter::rel(Rel::LinkedBy, Quant::Any, journal_is(true))
+        )
+    );
+}
+
+#[test]
+fn links_near_every_spelling_and_its_canonical_print() {
+    use crate::query::ir::NearDir;
+    let cases: &[(&str, Filter, &str)] = &[
+        (
+            "@page and near(name = 'A', 1)",
+            Filter::near(name_is("A"), 1, NearDir::Both, None),
+            "@page and near(name = 'A', 1)",
+        ),
+        (
+            "@page and near(name = 'A', 2, 'both')",
+            Filter::near(name_is("A"), 2, NearDir::Both, None),
+            "@page and near(name = 'A', 2)",
+        ),
+        (
+            "@page and near(name = 'A', 0, 'out')",
+            Filter::near(name_is("A"), 0, NearDir::Out, None),
+            "@page and near(name = 'A', 0, 'out')",
+        ),
+        (
+            "@page and near(name = 'A', 3, 'IN')",
+            Filter::near(name_is("A"), 3, NearDir::In, None),
+            "@page and near(name = 'A', 3, 'in')",
+        ),
+        (
+            "@page and near(name = 'A', 2, through => journal = false)",
+            Filter::near(name_is("A"), 2, NearDir::Both, Some(journal_is(false))),
+            "@page and near(name = 'A', 2, through => journal = false)",
+        ),
+        (
+            "@page and near(name in ('A', 'B'), 2, 'out', through => journal = false or name = 'C')",
+            Filter::near(
+                Filter::attr(
+                    Attr::Name,
+                    CmpOp::In,
+                    Value::List {
+                        items: vec![Value::text("A"), Value::text("B")],
+                    },
+                ),
+                2,
+                NearDir::Out,
+                Some(Filter::or(vec![journal_is(false), name_is("C")])),
+            ),
+            "@page and near(name in ('A', 'B'), 2, 'out', through => journal = false or name = 'C')",
+        ),
+        (
+            "@page and near(name = 'A' or name = 'B', 1) and not name = 'C'",
+            Filter::and(vec![
+                Filter::near(
+                    Filter::or(vec![name_is("A"), name_is("B")]),
+                    1,
+                    NearDir::Both,
+                    None,
+                ),
+                Filter::not(name_is("C")),
+            ]),
+            "@page and near(name = 'A' or name = 'B', 1) and not name = 'C'",
+        ),
+    ];
+    for (source, filter, printed) in cases {
+        let query = parse(source);
+        assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);
+        assert_eq!(&query.filter, filter, "{source}");
+        let text = crate::query::print::print_tql(&query);
+        assert_eq!(text, *printed, "{source}");
+        // The printed form reads back as the same query.
+        assert_eq!(&parse(&text).filter, filter, "{text}");
+    }
+}
+
+#[test]
+fn links_near_malformed_calls_are_diagnostics_not_other_searches() {
+    for source in [
+        "@page and near(name = 'A')",
+        "@page and near(name = 'A', -1)",
+        "@page and near(name = 'A', 1.5)",
+        "@page and near(name = 'A', '2')",
+        "@page and near(name = 'A', 2, 'sideways')",
+        "@page and near(name = 'A', 2, out)",
+        "@page and near(name = 'A', 2, 'out', 'in')",
+        "@page and near(name = 'A', through => journal = false, 2)",
+        "@page and near(name = 'A', 2, via => journal = false)",
+        "@page and near(name = 'A', 2, through => journal = false, through => journal = true)",
+        "@page and near(name = 'A', k => 2)",
+        "@page and near(task = 'TODO', 1)",
+        "@page and near(name = 'A', 1, through => task = 'TODO')",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(!diagnostics.is_empty(), "{source}");
+    }
+    // At @block, `near` is a page condition: kept, reported, never false.
+    let block = parse("near(name = 'A', 1)");
+    assert!(block.is_invalid());
+    assert!(block
+        .diagnostics
+        .iter()
+        .any(|d| d.kind == DiagnosticKind::NotApplicable));
+    assert!(matches!(block.filter, Filter::Raw { .. }));
+}
+
+#[test]
+fn links_near_seed_names_are_the_rename_literals() {
+    let source = "@page and near(name in ('Alpha', 'Beta'), 2, through => not name = 'Gamma') and any(links, name = 'Delta')";
+    let found: Vec<String> = page_name_literals(source)
+        .into_iter()
+        .map(|(range, name)| {
+            assert_eq!(&source[range.clone()], format!("'{name}'"));
+            name
+        })
+        .collect();
+    assert_eq!(found, ["Alpha", "Beta", "Gamma", "Delta"]);
+    // A disabled row is not active, so it is not rewritten.
+    assert!(page_name_literals("@page and near(name = 'A', 1)\n-- and near(name = 'B', 1)")
+        .iter()
+        .all(|(_, name)| name == "A"));
+}
+
+#[test]
+fn links_near_inside_off_and_omission() {
+    use crate::query::ir::NearDir;
+    let query = parse("@page and near(name = 'A', 1, through => off(journal = false))");
+    assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+    // A disabled `through` lets every page through; disabled seeds remove the leaf.
+    assert_eq!(
+        query.evaluable_filter(),
+        Filter::near(name_is("A"), 1, NearDir::Both, None)
+    );
+    let query = parse("@page and journal = false and near(off(name = 'A'), 1)");
+    assert_eq!(
+        query.evaluable_filter(),
+        Filter::And {
+            items: vec![journal_is(false)]
+        }
+    );
+}

@@ -944,6 +944,9 @@ impl Lower<'_> {
 
     fn function(&mut self, function: &sqlparser::ast::Function, scope: Scope) -> Filter {
         let name = function_name(function);
+        if name == "near" {
+            return self.near(function, scope);
+        }
         let args = function_args(function);
         match (name.as_str(), args.len()) {
             ("ref", 1) => match self.string_arg(args[0]) {
@@ -1031,6 +1034,92 @@ impl Lower<'_> {
         }
     }
 
+    /// `near(<seeds>, <k> [, '<dir>'] [, through => <page condition>])`
+    /// (`docs/contracts/tql-links-near.md`). Positional arguments first, the one
+    /// named argument last; any other shape is a syntax diagnostic, never a
+    /// silently different search.
+    fn near(&mut self, function: &sqlparser::ast::Function, scope: Scope) -> Filter {
+        use sqlparser::ast::FunctionArgOperator;
+        match scope {
+            Scope::Page => {}
+            Scope::Block => {
+                self.park_not_applicable("near", scope, Vec::new());
+                return Filter::False;
+            }
+            Scope::Atom => {
+                return self.reject(
+                    DiagnosticKind::Syntax,
+                    "`near` is a page condition, not a property value test",
+                )
+            }
+        }
+        const USAGE: &str =
+            "`near` takes seeds, a number of steps, an optional 'out', 'in' or 'both', and an optional `through => …`";
+        let FunctionArguments::List(list) = &function.args else {
+            return self.reject(DiagnosticKind::Syntax, USAGE);
+        };
+        if list.duplicate_treatment.is_some() || !list.clauses.is_empty() {
+            return self.reject(DiagnosticKind::Syntax, USAGE);
+        }
+        let mut positional = Vec::new();
+        let mut through = None;
+        for arg in &list.args {
+            match arg {
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) if through.is_none() => {
+                    positional.push(expr)
+                }
+                FunctionArg::Named {
+                    name,
+                    arg: FunctionArgExpr::Expr(expr),
+                    operator: FunctionArgOperator::RightArrow,
+                } if name.value.eq_ignore_ascii_case("through") && through.is_none() => {
+                    through = Some(expr)
+                }
+                _ => return self.reject(DiagnosticKind::Syntax, USAGE),
+            }
+        }
+        if !(2..=3).contains(&positional.len()) {
+            return self.reject(DiagnosticKind::Syntax, USAGE);
+        }
+        let k = match positional[1] {
+            Expr::Value(value) => match &value.value {
+                SqlValue::Number(text, _) => text.parse::<u32>().ok(),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(k) = k else {
+            return self.reject(
+                DiagnosticKind::Syntax,
+                format!(
+                    "`near` takes a whole number of steps, not `{}`",
+                    positional[1]
+                ),
+            );
+        };
+        let dir = match positional.get(2) {
+            None => crate::query::ir::NearDir::Both,
+            Some(Expr::Value(value)) => match &value.value {
+                SqlValue::SingleQuotedString(text) => {
+                    match crate::query::ir::NearDir::from_tql_name(text) {
+                        Some(dir) => dir,
+                        None => {
+                            return self.reject(
+                                DiagnosticKind::Syntax,
+                                format!("`near` goes 'out', 'in' or 'both', not '{text}'"),
+                            )
+                        }
+                    }
+                }
+                _ => return self.reject(DiagnosticKind::Syntax, USAGE),
+            },
+            Some(_) => return self.reject(DiagnosticKind::Syntax, USAGE),
+        };
+        let seeds = self.filter(positional[0], Scope::Page);
+        let through = through.map(|expr| self.filter(expr, Scope::Page));
+        Filter::near(seeds, k, dir, through)
+    }
+
     fn quantified(&mut self, quant: Quant, over: &Expr, pred: &Expr, scope: Scope) -> Filter {
         // `every(prop('k'), value op v)`: the collection is the atoms of one key
         // and the predicate is the atom test, conjoined with the key equality
@@ -1082,9 +1171,23 @@ impl Lower<'_> {
                 let pred = self.filter(pred, Scope::Block);
                 Filter::rel(Rel::Blocks, quant, pred)
             }
+            // The link table's two directions (docs/contracts/tql-links-near.md):
+            // the element is a page row.
+            (name @ ("links" | "linked_by"), Scope::Page) => {
+                let pred = self.filter(pred, Scope::Page);
+                Filter::rel(
+                    if name == "links" {
+                        Rel::Links
+                    } else {
+                        Rel::LinkedBy
+                    },
+                    quant,
+                    pred,
+                )
+            }
             // The relation exists — on the other row (§7.4).
             (name @ ("children" | "parent" | "ancestors" | "descendants"), Scope::Page)
-            | (name @ "blocks", Scope::Block) => {
+            | (name @ ("blocks" | "links" | "linked_by"), Scope::Block) => {
                 self.park_not_applicable(name, scope, Vec::new());
                 Filter::False
             }

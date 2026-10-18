@@ -27,6 +27,11 @@ pub enum Rel {
     Blocks,
     /// The owning page of a block (to-one).
     Page,
+    /// The pages this page links to: every page whose Linked References panel
+    /// lists this page (`@page`; Tine-only, `docs/contracts/tql-links-near.md`).
+    Links,
+    /// The pages that link to this page: this page's Linked References panel.
+    LinkedBy,
 }
 
 impl Rel {
@@ -42,6 +47,8 @@ impl Rel {
             Rel::Descendants => "descendants",
             Rel::Blocks => "blocks",
             Rel::Page => "page",
+            Rel::Links => "links",
+            Rel::LinkedBy => "linked_by",
         }
     }
 }

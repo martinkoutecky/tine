@@ -254,6 +254,56 @@ pub enum Leaf {
         quant: Quant,
         pred: Box<Filter>,
     },
+    /// A page row within `k` link steps of a page `seeds` selects
+    /// (Tine-only, `docs/contracts/tql-links-near.md`). Graph-wide: the
+    /// executor answers it by breadth-first search over the link table, so it
+    /// is never page-local.
+    Near {
+        /// The seed pages, a page-row condition.
+        seeds: Box<Filter>,
+        /// The step bound; `0` selects the seeds alone.
+        k: u32,
+        /// Which way a path follows links.
+        #[serde(default)]
+        dir: NearDir,
+        /// Pages a path may continue through; a page failing it is selected
+        /// when reached but not expanded. `None` lets every page through.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        through: Option<Box<Filter>>,
+    },
+}
+
+/// The direction of a `near` search. `Both` is two searches, one per
+/// direction, each path keeping its direction (OG graph-view meaning), never
+/// the undirected ball.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NearDir {
+    /// Follow links forward: the pages a page links to.
+    Out,
+    /// Follow links backwards: the pages that link to a page.
+    In,
+    /// `Out` and `In`, united.
+    #[default]
+    Both,
+}
+
+impl NearDir {
+    /// The TQL spelling (`'out'`, `'in'`, `'both'`), without quotes.
+    pub fn tql_name(self) -> &'static str {
+        match self {
+            NearDir::Out => "out",
+            NearDir::In => "in",
+            NearDir::Both => "both",
+        }
+    }
+
+    /// The direction a TQL spelling names, ASCII case-insensitively.
+    pub fn from_tql_name(name: &str) -> Option<NearDir> {
+        [NearDir::Out, NearDir::In, NearDir::Both]
+            .into_iter()
+            .find(|dir| dir.tql_name().eq_ignore_ascii_case(name))
+    }
 }
 
 impl Leaf {
@@ -358,6 +408,29 @@ impl Filter {
             pred: Box::new(pred),
         })
     }
+    pub fn near(seeds: Filter, k: u32, dir: NearDir, through: Option<Filter>) -> Filter {
+        Filter::leaf(Leaf::Near {
+            seeds: Box::new(seeds),
+            k,
+            dir,
+            through: through.map(Box::new),
+        })
+    }
+
+    /// Whether the tree reads the graph-wide link table: a `near` leaf or a
+    /// `links` / `linked_by` relation anywhere, including inside `Off`.
+    pub fn reads_links(&self) -> bool {
+        self.any_leaf(&mut |leaf| {
+            matches!(
+                leaf,
+                Leaf::Near { .. }
+                    | Leaf::Rel {
+                        rel: Rel::Links | Rel::LinkedBy,
+                        ..
+                    }
+            )
+        })
+    }
 
     /// The `Rel refs Any(name = x)` leaf both `[[x]]` and `#x` mean (Q2).
     pub fn page_ref(name: impl Into<String>) -> Filter {
@@ -399,6 +472,9 @@ impl Filter {
             Filter::Leaf {
                 leaf: Leaf::Rel { pred, .. },
             } => pred.has_off(),
+            Filter::Leaf {
+                leaf: Leaf::Near { seeds, through, .. },
+            } => seeds.has_off() || through.as_deref().is_some_and(Filter::has_off),
             _ => false,
         }
     }
@@ -457,6 +533,26 @@ impl Filter {
             } => pred
                 .omitting(off, og_dropped)
                 .map(|pred| Filter::rel(*rel, *quant, pred)),
+            // Seeds entirely removed remove the leaf, as a relation's predicate
+            // does; a removed `through` lets every page through.
+            Filter::Leaf {
+                leaf:
+                    Leaf::Near {
+                        seeds,
+                        k,
+                        dir,
+                        through,
+                    },
+            } => seeds.omitting(off, og_dropped).map(|seeds| {
+                Filter::near(
+                    seeds,
+                    *k,
+                    *dir,
+                    through
+                        .as_deref()
+                        .and_then(|through| through.omitting(off, og_dropped)),
+                )
+            }),
             other => Some(other.clone()),
         }
     }
@@ -496,8 +592,15 @@ impl Filter {
         match self {
             Filter::Leaf { leaf } => {
                 visit(leaf)?;
-                if let Leaf::Rel { pred, .. } = leaf {
-                    pred.visit_leaves(visit)?;
+                match leaf {
+                    Leaf::Rel { pred, .. } => pred.visit_leaves(visit)?,
+                    Leaf::Near { seeds, through, .. } => {
+                        seeds.visit_leaves(visit)?;
+                        if let Some(through) = through {
+                            through.visit_leaves(visit)?;
+                        }
+                    }
+                    Leaf::Attr { .. } => {}
                 }
             }
             Filter::And { items } | Filter::Or { items } => {
@@ -677,6 +780,20 @@ impl Filter {
             Filter::Leaf {
                 leaf: Leaf::Rel { rel, quant, pred },
             } => Filter::rel(*rel, *quant, pred.normalize_tree()),
+            Filter::Leaf {
+                leaf:
+                    Leaf::Near {
+                        seeds,
+                        k,
+                        dir,
+                        through,
+                    },
+            } => Filter::near(
+                seeds.normalize_tree(),
+                *k,
+                *dir,
+                through.as_deref().map(Filter::normalize_tree),
+            ),
             // The payload and its kind are the preserved value; only the span is
             // presentation metadata (§4.3.2).
             Filter::Raw { text, kind, .. } => Filter::Raw {
