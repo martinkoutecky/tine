@@ -351,6 +351,12 @@ impl Service {
             log("device code: refused");
             QsError::from(error)
         })?;
+        // The code's lifetime is elapsed time from its arrival, network waits
+        // included: nothing polls or stores a token past it.
+        let deadline = tokio::time::Instant::now()
+            + self
+                .poll_unit
+                .saturating_mul(u32::try_from(code.expires_in).unwrap_or(u32::MAX));
         let user_code_ok = (1..=32).contains(&code.user_code.len())
             && code
                 .user_code
@@ -379,17 +385,17 @@ impl Service {
         log("device code: issued");
         let service = Arc::clone(self);
         let device_code = Token::new(code.device_code);
-        let (interval, expires_in) = (code.interval.max(1), code.expires_in);
+        let interval = code.interval.max(1);
         tauri::async_runtime::spawn(async move {
             service
-                .poll(generation, device_code, interval, expires_in)
+                .poll(generation, device_code, interval, deadline)
                 .await;
         });
         Ok(ConnectStart {
             attempt_id: id,
             user_code: code.user_code,
             verification_uri: code.verification_uri,
-            expires_in,
+            expires_in: code.expires_in,
         })
     }
 
@@ -410,8 +416,19 @@ impl Service {
         self.flow().generation == generation
     }
 
-    async fn poll(&self, generation: u64, device_code: Token, mut interval: u64, expires_in: u64) {
-        let mut waited = 0u64;
+    /// The code ran out: the attempt ends Expired.
+    fn expire(&self, generation: u64) {
+        self.settle(generation, ConnectStatus::Expired);
+        log("device flow: expired");
+    }
+
+    async fn poll(
+        &self,
+        generation: u64,
+        device_code: Token,
+        mut interval: u64,
+        deadline: tokio::time::Instant,
+    ) {
         loop {
             #[cfg(test)]
             {
@@ -421,18 +438,24 @@ impl Service {
                     attempt.waits.push(interval);
                 }
             }
-            tokio::time::sleep(self.poll_unit * interval as u32).await;
-            waited += interval;
+            let wake = tokio::time::Instant::now() + self.poll_unit.saturating_mul(interval as u32);
+            tokio::time::sleep_until(wake.min(deadline)).await;
             if !self.current(generation) {
                 log("device flow: stopped (superseded)");
                 return;
             }
-            if waited > expires_in {
-                self.settle(generation, ConnectStatus::Expired);
-                log("device flow: expired");
+            if tokio::time::Instant::now() >= deadline {
+                self.expire(generation);
                 return;
             }
-            let token = match self.github.poll_token(device_code.expose()).await {
+            let answer =
+                tokio::time::timeout_at(deadline, self.github.poll_token(device_code.expose()))
+                    .await;
+            let Ok(answer) = answer else {
+                self.expire(generation);
+                return;
+            };
+            let token = match answer {
                 Ok(TokenPoll::Pending) => continue,
                 Ok(TokenPoll::SlowDown) | Err(GhError::RateLimited { .. }) => {
                     interval += 5;
@@ -442,8 +465,7 @@ impl Service {
                 // code expires.
                 Err(GhError::NotSent | GhError::Unknown | GhError::Server(_)) => continue,
                 Ok(TokenPoll::Expired) => {
-                    self.settle(generation, ConnectStatus::Expired);
-                    log("device flow: expired");
+                    self.expire(generation);
                     return;
                 }
                 Ok(TokenPoll::Denied) => {
@@ -463,18 +485,23 @@ impl Service {
                 }
                 Ok(TokenPoll::Token(token)) => token,
             };
-            self.finish_connect(generation, token).await;
+            self.finish_connect(generation, token, deadline).await;
             return;
         }
     }
 
-    /// A token arrived: check it, then store it only for a current attempt.
-    async fn finish_connect(&self, generation: u64, token: Token) {
+    /// A token arrived: check it, then store it only for a current attempt
+    /// whose code has not expired.
+    async fn finish_connect(&self, generation: u64, token: Token, deadline: tokio::time::Instant) {
         if !self.current(generation) {
             log("device flow: token for an invalidated attempt dropped");
             return;
         }
-        let user = match self.github.user(&token).await {
+        let Ok(user) = tokio::time::timeout_at(deadline, self.github.user(&token)).await else {
+            self.expire(generation);
+            return;
+        };
+        let user = match user {
             Ok(user) => user,
             Err(_) => {
                 self.settle(
@@ -508,6 +535,11 @@ impl Service {
         // attempt is still current and the account is stored, or it is not
         // and the token is dropped here.
         let mut flow = self.flow();
+        if tokio::time::Instant::now() >= deadline {
+            drop(flow);
+            self.expire(generation);
+            return;
+        }
         let current = flow.generation == generation
             && flow
                 .attempt

@@ -40,6 +40,7 @@ impl Req {
     }
 }
 
+#[derive(Clone)]
 struct Resp {
     status: u16,
     headers: Vec<(String, String)>,
@@ -191,15 +192,13 @@ struct Fixture {
 }
 
 fn fixture(endpoints: Endpoints) -> Fixture {
+    fixture_with_unit(endpoints, Duration::from_millis(1))
+}
+
+/// A fixture whose device-flow second lasts `poll_unit` (real time).
+fn fixture_with_unit(endpoints: Endpoints, poll_unit: Duration) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
-    let service = Arc::new(
-        Service::new(
-            endpoints,
-            Records::new(dir.path()),
-            Duration::from_millis(1),
-        )
-        .unwrap(),
-    );
+    let service = Arc::new(Service::new(endpoints, Records::new(dir.path()), poll_unit).unwrap());
     Fixture { service, dir }
 }
 
@@ -377,13 +376,81 @@ fn device_flow_stops_on_expired_denied_and_its_own_expiry() {
         ),
         _ => json(200, serde_json::json!({ "error": "authorization_pending" })),
     });
-    let f = fixture(mock.endpoints());
+    // A 10 ms "second": the code's 120 ms lifetime holds polls at 50 and
+    // 100 ms with room for the local round trips.
+    let f = fixture_with_unit(mock.endpoints(), Duration::from_millis(10));
     let start = block_on(f.service.connect_start()).unwrap();
     assert_eq!(
         f.wait_status(&start.attempt_id, |s| *s != ConnectStatus::Pending),
         ConnectStatus::Expired
     );
     assert_eq!(mock.count("POST", "/login/oauth/access_token"), 2);
+}
+
+/// A device code that lives `expires_in` 10 ms "seconds" (1 ms each), polled
+/// every 1, against `access` and `user` answers.
+fn short_lived_code(access: Resp, user: Option<Duration>) -> Mock {
+    Mock::start(move |req| match req.path.as_str() {
+        "/login/device/code" => json(
+            200,
+            serde_json::json!({ "device_code": "dc", "user_code": "AB-CD", "verification_uri": "https://github.com/login/device", "expires_in": 10, "interval": 1 }),
+        ),
+        "/login/oauth/access_token" => access.clone(),
+        "/user" => user_ok(req).delayed(user.unwrap_or_default()),
+        _ => resp(404, "{}"),
+    })
+}
+
+/// REVIEW-P2 2: the code's lifetime is elapsed time, network waits
+/// included. A slow pending answer that outlives the code ends the attempt:
+/// no further poll is sent.
+#[test]
+fn a_slow_answer_that_outlives_the_code_expires_the_attempt_and_polls_no_more() {
+    let pending = json(200, serde_json::json!({ "error": "authorization_pending" }))
+        .delayed(Duration::from_millis(40));
+    let mock = short_lived_code(pending, None);
+    let f = fixture(mock.endpoints());
+    let start = block_on(f.service.connect_start()).unwrap();
+    assert_eq!(
+        f.wait_status(&start.attempt_id, |s| *s != ConnectStatus::Pending),
+        ConnectStatus::Expired
+    );
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(
+        mock.count("POST", "/login/oauth/access_token"),
+        1,
+        "no poll after the code expired"
+    );
+}
+
+/// REVIEW-P2 2: a token whose answer (or account lookup) completes after
+/// the code expired is dropped, never stored.
+#[test]
+fn a_token_completing_after_the_code_expired_is_not_stored() {
+    let token = || {
+        json(
+            200,
+            serde_json::json!({ "access_token": TOKEN, "token_type": "bearer", "scope": "gist" }),
+        )
+    };
+    for (access, user) in [
+        (token().delayed(Duration::from_millis(40)), None),
+        (token(), Some(Duration::from_millis(40))),
+    ] {
+        let mock = short_lived_code(access, user);
+        let f = fixture(mock.endpoints());
+        let start = block_on(f.service.connect_start()).unwrap();
+        assert_eq!(
+            f.wait_status(&start.attempt_id, |s| *s != ConnectStatus::Pending),
+            ConnectStatus::Expired
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            f.service.records.account().is_none(),
+            "an expired code's token is not stored"
+        );
+        assert!(!f.dir.path().join(ACCOUNT_FILE).exists());
+    }
 }
 
 #[test]

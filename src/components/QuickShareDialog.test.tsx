@@ -6,7 +6,7 @@ import { closeQuickShare, openQuickShare, quickShareRequest } from "../shareStat
 import { clearTransientLayersForTest } from "../transientLayers";
 import { setToasts } from "../toasts";
 import type { QueryPublicationRequest } from "../types";
-import type { QuickShareListing, QuickSharePrepared } from "../quickShare/commands";
+import type { QuickShareConnectStart, QuickShareListing, QuickSharePrepared } from "../quickShare/commands";
 
 // The quick share dialog (DESIGN §3.2, §3.5, §3.9) over a scripted native surface: what it shows, which commands it
 // calls and how often. The native side (mocked GitHub, records, redaction) is pinned in src-tauri/src/quick_share/tests.rs.
@@ -191,6 +191,22 @@ it("a missing gist permission fails the connection with GitHub's reason, and clo
   const polls = api.status.mock.calls.length;
   await vi.advanceTimersByTimeAsync(QUICK_SHARE_STATUS_POLL_MS * 3);
   expect(api.status.mock.calls.length, "polling stops with the dialog").toBe(polls);
+});
+
+it("closing the dialog while GitHub's device code is still on its way cancels that attempt when it arrives", async () => {
+  api.list.mockResolvedValue(listing({ account: null }));
+  let arrive!: (value: QuickShareConnectStart) => void;
+  api.start.mockImplementation(() => new Promise((resolve) => { arrive = resolve; }));
+  const root = await open();
+  button(root, "quick-share-connect-start")!.click();
+  expect(api.start).toHaveBeenCalledTimes(1);
+  closeQuickShare();
+  await settle();
+  arrive({ attemptId: "late", userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", expiresIn: 900 });
+  await settle();
+  expect(api.cancel, "Rust would otherwise keep polling GitHub for a closed view").toHaveBeenCalledWith("late");
+  expect(api.open, "a closed dialog opens no browser").not.toHaveBeenCalled();
+  expect(api.status).not.toHaveBeenCalled();
 });
 
 it("a revoked token sends the user back to Connect GitHub", async () => {

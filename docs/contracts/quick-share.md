@@ -213,6 +213,7 @@ sharing.
 | `quick-shares.json` that does not parse, or has a newer `v`, is never overwritten; every share change refuses and the list reports it | disk error or torn write from another tool, an external editor, a newer Tine on the same app data | the file is left for repair or a newer Tine; it holds keys that exist nowhere else |
 | An unreadable `quick-share-account.json` reads as not connected | disk error, external editor | Connect writes a fresh file; the token is re-obtainable |
 | A token for a superseded, cancelled or disconnected sign-in is dropped, never stored | concurrent honest instances (two windows), a late answer from GitHub | the newest attempt connects |
+| No poll after the device code's `expires_in` (elapsed time from its arrival, network waits included); a token or account lookup completing past it is dropped, never stored | a slow or stalled network, a late answer from GitHub | Connect again (a fresh code) |
 | Check and Delete for another `account_id` | multi-device divergence (records made with another account) | connect that account |
 | A found gist without the marker, or owned by another user, is not deleted | malformed input from the gist listing | none needed |
 

@@ -61,7 +61,9 @@ export function QuickShareConnect(props: { onConnected: (login: string) => void 
     if (previous && status()?.state === "pending") cancel(previous.attemptId);
     setAttempt(null); setStatus(null); setError(null); setStarting(true);
     try {
-      const started = await writeOwned(bindingOwner(() => alive), backend().quickShareConnectStart());
+      // A start that lands after the view closed has already set Rust polling GitHub: cancel it (DESIGN §3.4).
+      const started = await readOwnedResource(bindingOwner(() => alive), backend().quickShareConnectStart(),
+        (late) => cancel(late.attemptId));
       if (started.kind === "stale") return;
       setAttempt(started.value);
       setStatus({ state: "pending" });
