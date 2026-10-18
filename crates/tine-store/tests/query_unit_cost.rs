@@ -16,17 +16,31 @@ use tine_store::{
     IrAnswer, IrRequest, PageId, QueryDialect, SaveBase, SaveOutcome, Store, WholeGraph,
 };
 
-/// Counts bytes allocated while `COUNTING` is set (process-wide).
+/// Counts bytes allocated while `COUNTING` is set, process-wide except the
+/// watcher thread: its settlement of an earlier write lands in a measured
+/// window whenever that window opens about 200 ms after the write (its
+/// debounce), as on a loaded host. That is the watcher's cost, billed apart
+/// from the edit (K5, as `watcher_reads`), and it made the bounds below
+/// flaky (GH #715 lane: 82-101 kB in one measured save on a 10k graph).
 struct Counting;
 static COUNTING: AtomicBool = AtomicBool::new(false);
 static ALLOCATED: AtomicU64 = AtomicU64::new(0);
+static WATCHER_ALLOCATED: AtomicU64 = AtomicU64::new(0);
+
+fn note(bytes: u64) {
+    if cost_counters::on_watcher() {
+        WATCHER_ALLOCATED.fetch_add(bytes, Ordering::Relaxed);
+    } else {
+        ALLOCATED.fetch_add(bytes, Ordering::Relaxed);
+        note_own(bytes);
+    }
+}
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         super::og_p10_journal_scan_cost::count();
         if COUNTING.load(Ordering::Relaxed) {
-            ALLOCATED.fetch_add(layout.size() as u64, Ordering::Relaxed);
-            note_own(layout.size() as u64);
+            note(layout.size() as u64);
         }
         unsafe { System.alloc(layout) }
     }
@@ -36,11 +50,7 @@ unsafe impl GlobalAlloc for Counting {
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         super::og_p10_journal_scan_cost::count();
         if COUNTING.load(Ordering::Relaxed) {
-            ALLOCATED.fetch_add(
-                new_size.saturating_sub(layout.size()) as u64,
-                Ordering::Relaxed,
-            );
-            note_own(new_size.saturating_sub(layout.size()) as u64);
+            note(new_size.saturating_sub(layout.size()) as u64);
         }
         unsafe { System.realloc(ptr, layout, new_size) }
     }
@@ -68,6 +78,7 @@ static CASE_LOCK: Mutex<()> = Mutex::new(());
 fn measure<T>(f: impl FnOnce() -> T) -> (T, u64, Counts) {
     cost_counters::reset();
     ALLOCATED.store(0, Ordering::Relaxed);
+    WATCHER_ALLOCATED.store(0, Ordering::Relaxed);
     COUNTING.store(true, Ordering::Relaxed);
     let out = f();
     COUNTING.store(false, Ordering::Relaxed);
@@ -134,6 +145,8 @@ struct Probe {
     save: Counts,
     query_bytes: u64,
     query: Counts,
+    /// Watcher-thread bytes in both windows (reported, not bounded).
+    watcher_bytes: u64,
 }
 
 fn probe(pages: usize, blocks: usize, memo: bool) -> Probe {
@@ -181,9 +194,11 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
                 &doc,
             )
         });
+        let save_watcher_bytes = WATCHER_ALLOCATED.load(Ordering::Relaxed);
         assert!(matches!(outcome, SaveOutcome::Saved(_)), "{outcome:?}");
         let graph = store.whole_graph().unwrap();
         let ((), query_bytes, query) = measure(|| after_edit(&graph));
+        let watcher_bytes = save_watcher_bytes + WATCHER_ALLOCATED.load(Ordering::Relaxed);
         if text == edits[1] {
             let rare_row = match graph.query_ir(IrRequest::Registry) {
                 Ok(IrAnswer::Registry(registry)) => registry.row("rare").is_some(),
@@ -197,6 +212,7 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
                 save,
                 query_bytes,
                 query,
+                watcher_bytes,
             };
         }
     }
@@ -224,10 +240,11 @@ fn a_query_side_edit_cost_does_not_grow_with_the_graph() {
         ] {
             eprintln!(
                 "I-25 query unit cost: blocks={blocks} pages={pages} memo={memo} save_bytes={} \
-                 query_bytes={} facts_copies={} facts_derived={} carry_block_probes={} \
-                 memo_page_probes={}",
+                 query_bytes={} watcher_bytes={} facts_copies={} facts_derived={} \
+                 carry_block_probes={} memo_page_probes={}",
                 p.save_bytes,
                 p.query_bytes,
+                p.watcher_bytes,
                 p.save.query_facts_copies + p.query.query_facts_copies,
                 p.save.query_facts_derived + p.query.query_facts_derived,
                 p.save.query_carry_block_probes + p.query.query_carry_block_probes,
