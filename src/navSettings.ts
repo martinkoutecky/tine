@@ -12,8 +12,27 @@ const KEY_REUSE_TABS = "nav_reuse_tabs";
 
 const KEY_QUERY_TEXT_OPEN = "query_text_open";
 
+const KEY_MOBILE_NAV_BOTTOM = "mobile_navigation_at_bottom";
+
 const [reuseTabs, setReuseTabsSig] = createSignal(true);
 const [queryTextOpenSig, setQueryTextOpenSig] = createSignal(false);
+const [mobileNavBottom, setMobileNavBottomSig] = createSignal(false);
+
+/** Reactive: on a phone or tablet app, Sidebar / Search / Back / Forward sit in a
+ *  bottom row (GH #598) instead of the top bar (GH #716). Default off, device-local,
+ *  survives a restart; desktop ignores it. */
+export const mobileNavigationAtBottom = mobileNavBottom;
+
+/** Apply now and queue a device-local write; failure rolls back and toasts. O(1) plus backend write. */
+export function setMobileNavigationAtBottom(on: boolean): void {
+  writePreference(mobileNavBottom, setMobileNavBottomSig, on, (next) => backend().setAppBool(KEY_MOBILE_NAV_BOTTOM, next), "navigation buttons preference");
+}
+
+/** Test seam: set the placement without persisting. */
+export function resetMobileNavigationAtBottomForTests(on = false): void {
+  setMobileNavBottomSig(on);
+  seedPreference(mobileNavBottom);
+}
 
 /** Reactive: the query sheet's "Edit as text" pane is remembered open (GH #619
  *  item 4; default closed, device-local, survives a restart). */
@@ -43,6 +62,7 @@ export function setNavReuseTabs(on: boolean): void {
 /** Load the device preference at startup (default ON); read failure toasts and resolves. */
 export async function initNavSettings(): Promise<void> {
   loadPreference(queryTextOpenSig, setQueryTextOpenSig, () => backend().getAppBool(KEY_QUERY_TEXT_OPEN, false), (v) => v, "query text preference");
+  loadPreference(mobileNavBottom, setMobileNavBottomSig, () => backend().getAppBool(KEY_MOBILE_NAV_BOTTOM, false), (v) => v, "navigation buttons preference");
   const revision = preferenceRevision(reuseTabs);
   try {
     const value = await backend().getAppBool(KEY_REUSE_TABS, true);

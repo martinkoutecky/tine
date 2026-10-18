@@ -107,3 +107,4 @@ settings-search-keyboard-shortcuts = Keyboard shortcuts
 settings-search-key-bindings-commands-remap = key bindings commands remap
 settings-search-about = About
 settings-search-version-licenses-updates = version licenses updates
+settings-search-phone-tablet-top-bar-bottom-row-back-forward-search-sidebar = phone tablet android ios top bar bottom row thumb reach back forward search sidebar
