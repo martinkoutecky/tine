@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Linux: middle-click pasting text selected in a block into a rich-text app (Tuta, Anki, ...) now pastes only the selection. Before, selecting the last line of a block (a one-line block, or Select All) also pasted the editor's own markup (`<div contenteditable="plaintext-only">`), the selection toolbar's button labels and the text of the blocks below (GH #530).
 - Queries: folding a query block's bullet now folds its results too, as in Logseq, also when the block has no children (GH #619).
 - Queries on Windows: one click on a query's title starts the rename with the caret in the field; before, every rename after the first needed a second click. The same fix applies to the other fields that open focused (query builder values, table and board cells, context menu search) (GH #619).
 - Queries: the options in **Find blocks ▾** and the other builder menus stay on one line instead of wrapping word by word, and a menu opened in one query is no longer drawn under the query below it (GH #619).

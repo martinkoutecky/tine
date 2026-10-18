@@ -100,6 +100,28 @@ try {
   proof.dragSelection = { expected: dragged, ...dragSelection };
   if (dragSelection.text !== dragged || (dragSelection.html && (dragSelection.html.includes("unrelated marker") || dragSelection.html.includes("helpful")))) throw new Error("Drag PRIMARY contains text outside the selected passage");
   proof.observations.push("Mouse-drag PRIMARY plain/HTML contain only the selected passage");
+  // GH #530: a selection that ends in the LAST text node of the editor (every
+  // single-line block, any select-all) made WebKitGTK serialize text/html from the
+  // textarea to the end of the document: editing markup, toolbar buttons, later blocks.
+  const primaryFor = async (startsWith, label, forbidden) => {
+    await browser.keys(["Escape"]);
+    await browser.waitUntil(async () => (await browser.$$("textarea.block-editor")).length === 0, { timeout: 5000 });
+    await browser.execute((prefix) => [...document.querySelectorAll(".main-content .block-content")].find(el => el.textContent.startsWith(prefix)).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })), startsWith);
+    await browser.$("textarea.block-editor").waitForExist({ timeout: 10000 });
+    await browser.keys(["Control", "a"]);
+    const expected = await browser.execute(() => { const e = document.querySelector("textarea.block-editor"); return e.value.slice(e.selectionStart, e.selectionEnd); });
+    await browser.$(".sel-toolbar").waitForExist({ timeout: 5000 });
+    const got = JSON.parse(execFileSync("python3", ["scripts/read-primary-selection.py"], { env, encoding: "utf8" }));
+    proof[label] = { expected, ...got, html: got.html && got.html.slice(0, 400) };
+    if (got.text !== expected) throw new Error(`${label}: PRIMARY text differs from the selection`);
+    for (const bad of ["<textarea", "contenteditable", "data-selection-action", ...forbidden]) {
+      if (got.html && got.html.includes(bad)) throw new Error(`${label}: PRIMARY text/html carries ${bad}`);
+    }
+    proof.observations.push(`${label}: select-all PRIMARY plain/HTML carry only the block text`);
+  };
+  await primaryFor("unrelated marker", "singleLineSelectAll", []);
+  await primaryFor("Tasks", "multiLineSelectAll", ["unrelated marker"]);
+  await browser.keys(["Escape"]);
   }
   console.log(`PASS ${JSON.stringify(proof)}`);
 } catch (error) {

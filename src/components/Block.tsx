@@ -160,6 +160,7 @@ import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, rendered
 import { clipboardSizeAllowed } from "../clipboardImage";
 import { noticeMoveOutOfView } from "../moveNotice";
 import { captureEditorScrollAnchor } from "../editor/scrollAnchor";
+import { PRIMARY_SELECTION_GUARD_PLACEHOLDER } from "../textareaPrimarySelection";
 import { blockFirstLine, formatForBlockId, listLineAt, nearestScrollableY, resizeBlockEditor, timeStamp } from "./blockParts";
 import { documentHasFocus, documentOf, isElementTag, listen, newResizeObserver, nextFrame, onEachWindow, requestFrame, viewportOf, windowOf } from "../windowRealm";
 type SheetSlashView = "grid" | "table" | "board";
@@ -3317,7 +3318,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         // no input at all, so nothing typed is shown and then dropped (Q-TS2).
         readOnly={!blockWritable(props.id)}
         value={textareaValue()}
-        placeholder={cap?.bulletHint?.()}
+        placeholder={cap?.bulletHint?.() || PRIMARY_SELECTION_GUARD_PLACEHOLDER}
         onInput={onInput}
         onCompositionStart={onCompositionStart}
         onCompositionEnd={onCompositionEnd}
