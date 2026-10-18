@@ -54,9 +54,13 @@ const deletion = "alias:: Delete Me\ncustom/key:: transient\n\n- Body survives\n
 fs.writeFileSync(`${GRAPH}/pages/Property detailed.md`, detailed);
 fs.writeFileSync(`${GRAPH}/pages/Property simple.md`, simple);
 fs.writeFileSync(`${GRAPH}/pages/Property deletion.md`, deletion);
+// GH #210: a table block whose view is set before its title is typed, first on a
+// page with no page properties.
+const tableConfig = "tine.view:: table\n  tine.table-widths:: prop%3Atest=171";
+fs.writeFileSync(`${GRAPH}/pages/Property table.md`, `- ${tableConfig}\n- Other block\n`);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n- [[Property deletion]]\n");
+fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n- [[Property deletion]]\n- [[Property table]]\n");
 
 const env = {
   ...process.env,
@@ -523,6 +527,58 @@ try {
   if ((await browser.$$(".page-properties .prop-row")).length !== 0) {
     throw new Error("deleted page-header properties reappeared after real-app reopen");
   }
+  // GH #210: the table block stays a block through a save, and its title (typed
+  // next) neither raises the page-header toast nor stops the page saving.
+  await openPage("Property table");
+  // The title-less table block is an ordinary block (no page-properties row).
+  const openTableBlock = () => browser.execute(() => {
+    const content = document.querySelector(".page-blocks .ls-block .block-content");
+    if (!content) return false;
+    content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  if ((await browser.$$(".page-properties .prop-row")).length !== 0) {
+    throw new Error("the table block was shown as page properties");
+  }
+  if (!await openTableBlock()) throw new Error("missing rendered first-bullet table block");
+  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  await headerEditor.waitForExist({ timeout: 5_000 });
+  const tableHeader = await headerEditor.getValue();
+  const widthAt = tableHeader.indexOf("171");
+  await replaceHeaderLikeUser(headerEditor, "200", { start: widthAt, end: widthAt + 3 });
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  const tableSaved = await waitForFile(
+    `${GRAPH}/pages/Property table.md`,
+    (text) => text.includes("prop%3Atest=200"),
+    "table block width edit",
+  );
+  if (!tableSaved.startsWith("- tine.view:: table") || !tableSaved.includes("- Other block")) {
+    throw new Error(`the table block was rewritten as page properties: ${JSON.stringify(tableSaved)}`);
+  }
+  if (!await openTableBlock()) throw new Error("missing table block for the title edit");
+  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  await headerEditor.waitForExist({ timeout: 5_000 });
+  // The reporter typed the title on its own line above the config: text at
+  // offset 0, then Shift+Enter (a newline inside the block, not a new block).
+  // (browser.keys goes to the focused editor without moving its caret, unlike
+  // addValue, which jumps a collapsed caret to the end.)
+  await headerEditor.click();
+  await browser.keys(["Control", "Home"]);
+  await browser.keys("test table");
+  await browser.keys(["Shift", "Enter"]);
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  const titled = await waitForFile(
+    `${GRAPH}/pages/Property table.md`,
+    (text) => text.startsWith("- test table\n  tine.view:: table"),
+    "table block title",
+  );
+  if (!titled.includes("- Other block")) throw new Error(`the table page lost its other block: ${JSON.stringify(titled)}`);
+  const tableToasts = await browser.execute(() => [...document.querySelectorAll(".toast-error .toast-msg")].map((node) => node.textContent ?? ""));
+  if (tableToasts.length) throw new Error(`typing a table block's title raised an error toast: ${JSON.stringify(tableToasts)}`);
+  await browser.$(".page-blocks .sheet-table").waitForExist({
+    timeout: 5_000,
+    timeoutMsg: "the titled table block no longer renders as a table",
+  });
   console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, and real-app reopen are canonical`);
 } finally {
   try { await browser?.deleteSession(); } catch {}

@@ -2066,7 +2066,7 @@ describe("Markdown preamble content", () => {
       await tick(); await tick();
       expect(pageToDto(dto.name)).toBeNull();
       finishPageHeaderEdit(header);
-      expect(toasts().some((toast) => toast.message.includes("Page-header properties must contain only valid key:: value lines"))).toBe(true);
+      expect(toasts().map((toast) => toast.message)).toEqual(["Page properties can't be saved yet: the properties block has child blocks. Outdent or delete them."]);
       const face = root.querySelector<HTMLElement>(`[data-block-id="${child}"] .block-content-wrapper`);
       expect(face).not.toBeNull();
       face!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true }));

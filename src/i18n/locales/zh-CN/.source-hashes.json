@@ -1428,6 +1428,8 @@
   "print-pdf-export-stopped-because-some-page-edits-could": "e0393e1036d2b033",
   "print-print-failed": "1ca6d3f2243d523f",
   "print-query-limit": "bb480cb307be9fae",
+  "properties-page-header-bad-line": "15f7991164920a84",
+  "properties-page-header-has-child-blocks": "fb6632ffd5d8645c",
   "properties-page-header-properties-must-contain-only-valid-key": "cce2ca0f5a5bae73",
   "property-type-could-not-save-property-type": "9be190911cd3942d",
   "property-type-declare-type": "1b42a2094d99113e",
