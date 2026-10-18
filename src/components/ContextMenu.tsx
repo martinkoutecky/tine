@@ -1,3 +1,4 @@
+import { focusOnMount } from "../focusOnMount";
 import { Rich } from "../i18n/Rich";
 import { boardGroupField as groupFieldForToken, formulaReferenceName } from "../sheet/boardColumns";
 import { openRouteInNewWindow, workspaceWindowsSupported } from "../workspaceWindows";
@@ -744,9 +745,8 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
       <div class="ctx-template-form">
         <input
           class="ctx-template-name"
-          ref={(el) => el.addEventListener("tine-dismiss-inline", () => setEditing(false), { once: true })}
+          ref={(el) => { el.addEventListener("tine-dismiss-inline", () => setEditing(false), { once: true }); focusOnMount(el); }}
           placeholder={t("context-menu-ui-template-name")}
-          autofocus
           value={name()}
           onInput={(e) => setName(e.currentTarget.value)}
           onKeyDown={(e) => {

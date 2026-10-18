@@ -22,7 +22,8 @@ import { blockExternalId, existingBlockId, isBlockRefUuid } from "./identity";
 import { captureReferenceChangeCount, pushReferenceChangeNotice, pushToast } from "../../toasts";
 import { graphEpoch } from "../../graphSession";
 import { blockRefsInText } from "../../render/pageRefs";
-import { blockRegions, soleBlockMacro } from "../../render/parse";
+import { blockRegions, parserReady, soleBlockMacro } from "../../render/parse";
+import { queryMacroExtent } from "../../editor/queryMacro";
 
 let referenceEditSeq = 0;
 /** Capture the edit's targets before mutation, then publish against its existing
@@ -483,9 +484,20 @@ export function blockHasPageEmbed(id: string): boolean {
   return macro?.name === "embed" && target.startsWith("[[") && target.endsWith("]]");
 }
 
+/** A block whose body folds with its outline bullet even without children: a
+ *  page embed, or a block holding a query (OG editor.cljs `collapsable?`: a
+ *  block with a query macro is collapsable, and query.cljs `custom-query*`
+ *  hides the results of a collapsed block; GH #619 c6). */
+export function blockHasFoldableBody(id: string): boolean {
+  const n = doc.byId[id];
+  if (!n) return false;
+  return n.children.length > 0 || blockHasPageEmbed(id)
+    || (parserReady() && n.raw.includes("{{") && queryMacroExtent(n.raw) !== null);
+}
+
 export function toggleCollapse(id: string) {
   const n = doc.byId[id];
-  if (!n || !blockWritable(id) || (n.children.length === 0 && !blockHasPageEmbed(id))) return;
+  if (!n || !blockWritable(id) || !blockHasFoldableBody(id)) return;
   pushUndo("collapse", [n.page]);
   writeCollapsed(id, !n.collapsed, blockHasPageEmbed(id));
   markDirty(n.page, "save-block");
@@ -495,7 +507,7 @@ export function toggleCollapse(id: string) {
  *  already in the requested state). */
 export function setCollapsed(id: string, collapsed: boolean) {
   const n = doc.byId[id];
-  if (!n || !blockWritable(id) || (n.children.length === 0 && !blockHasPageEmbed(id)) || n.collapsed === collapsed) return;
+  if (!n || !blockWritable(id) || !blockHasFoldableBody(id) || n.collapsed === collapsed) return;
   pushUndo("collapse", [n.page]);
   writeCollapsed(id, collapsed, blockHasPageEmbed(id));
   markDirty(n.page, "save-block");

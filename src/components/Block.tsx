@@ -97,7 +97,7 @@ import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
 import { Rendered, detectMacro } from "./Rendered";
-import { blockHasPageEmbed } from "../document";
+import { blockHasFoldableBody } from "../document";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
@@ -259,7 +259,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
     return !surfaceKey.startsWith("ref:") && !surfaceKey.startsWith("embed:");
   };
   const hasChildren = () => node().children.length > 0;
-  const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id);
+  const hasFoldableBody = () => blockHasFoldableBody(props.id);
   const collapsed = () => collapseSurface?.collapsed(props.id, node().collapsed) ?? node().collapsed;
   const fmt = createMemo(() => pageByName(node().page)?.format ?? "md");
   const blockFacets = createMemo<Facets>(() => {
@@ -311,6 +311,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // (they own collapse/zoom/sidebar behavior) and suppress only the macro host.
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
+  // A standalone query or embed host is never pinned: its first line IS the live
+  // macro, and the 30 px pin would mount a second copy of it (GH #619 c6).
+  const stickyParent = () => stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !macro();
 
   return (
     <div
@@ -327,10 +330,10 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         };
       })()}
       data-block-id={props.id}
-      data-sticky-parent={stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !blockEmbedHost() ? "" : undefined}
+      data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
-      <Show when={stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !blockEmbedHost()}>
+      <Show when={stickyParent()}>
         <StickyAncestor id={props.id} raw={node().raw} />
       </Show>
       <div
@@ -604,7 +607,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const setOccurrenceCollapsed = (value: boolean) => {
     if (!collapseSurface) { setCollapsed(props.id, value); return; }
     const n = docNode(props.id);
-    if (!n || (n.children.length === 0 && !blockHasPageEmbed(props.id))) return;
+    if (!n || !blockHasFoldableBody(props.id)) return;
     const current = collapseSurface.collapsed(props.id, n.collapsed);
     if (current !== value) collapseSurface.toggle(props.id, current);
   };

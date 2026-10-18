@@ -1,3 +1,4 @@
+import { focusOnMount } from "../focusOnMount";
 import { t, msg, render, type Msg } from "../i18n";
 import { Rich } from "../i18n/Rich";
 import { isLeafLike } from "../editor/queryIr";
@@ -283,8 +284,9 @@ export const FIELD_LABELS: Record<BuilderLeafKind, import("../i18n").Msg> = {
   journal: msg("query-filter-in-a-journal-page"),
   between: msg("query-filter-between-dates"),
   content: msg("query-filter-full-text-search"),
-  onPage: msg("query-filter-on-page"),
-  namespace: msg("query-filter-in-namespace"),
+  // GH #619 c6: the row reads "Page is X", never "On page on page X".
+  onPage: msg("query-filter-page"),
+  namespace: msg("query-filter-page"),
   pageProperty: msg("query-filter-page-property"),
   pageTags: msg("query-filter-page-tags"),
   search: msg("query-filter-full-text-search"),
@@ -301,7 +303,7 @@ export const KIND_PHRASE: Record<BuilderLeafKind, { positive: import("../i18n").
   journal: { positive: msg("query-filter-is-a-journal-page"), negative: msg("query-filter-is-not-a-journal-page") },
   between: { positive: msg("query-filter-between"), negative: msg("query-filter-not-between") },
   content: { positive: msg("query-filter-contains"), negative: msg("query-filter-does-not-contain") },
-  onPage: { positive: msg("query-operator-on-page"), negative: msg("query-filter-not-on-page") },
+  onPage: { positive: msg("query-filter-is"), negative: msg("query-filter-is-not") },
   namespace: { positive: msg("query-operator-in-namespace"), negative: msg("query-filter-not-in-namespace") },
   pageProperty: { positive: msg("query-filter-is"), negative: msg("query-filter-is-not") },
   pageTags: { positive: msg("query-filter-is-any-of"), negative: msg("query-filter-is-none-of") },
@@ -657,7 +659,7 @@ export function TextInput(props: {
     <div class="qs-value-editor">
       <input
         class="qs-input"
-        autofocus
+        ref={(input) => focusOnMount(input)}
         placeholder={props.placeholder}
         value={v()}
         onInput={(e) => setV(e.currentTarget.value)}
@@ -691,7 +693,7 @@ export function PageInput(props: {
     <div class="qs-value-editor">
       <input
         class="qs-input"
-        autofocus
+        ref={(input) => focusOnMount(input)}
         placeholder={props.placeholder}
         value={q()}
         onInput={(e) => setQ(e.currentTarget.value)}
@@ -752,14 +754,14 @@ export function DateBoundInput(props: {
   value: string;
   onInput: (v: string) => void;
   onEnter: () => void;
-  autofocus?: boolean;
+  focused?: boolean;
 }): JSX.Element {
   const preview = createMemo(() => previewDate(props.value));
   return (
     <div class="qs-bound">
       <input
         class="qs-input"
-        autofocus={props.autofocus}
+        ref={(input) => { if (props.focused) focusOnMount(input); }}
         placeholder={props.placeholder}
         value={props.value}
         onInput={(e) => props.onInput(e.currentTarget.value)}
@@ -830,7 +832,7 @@ export function BetweenPick(props: {
         value={start()}
         onInput={setStart}
         onEnter={submit}
-        autofocus
+        focused
       />
       <DateBoundInput
         placeholder={t("query-query-sheet-parts-end-today-7d-2026-06-30-or-a-page")}
@@ -1369,7 +1371,7 @@ export function AddCondition(props: {
                       <Show when={propertyOperatorArity(propertyId()) > 0}>
                         <input
                           class="qs-input"
-                          autofocus
+                          ref={(input) => focusOnMount(input)}
                           aria-label={propertyOperatorArity(propertyId()) === 2 ? t("query-query-sheet-parts-from") : t("query-query-sheet-parts-value")}
                           placeholder={propertyOperatorArity(propertyId()) === 2 ? t("query-query-sheet-parts-from") : t("query-query-sheet-parts-value")}
                           disabled={registryUnavailable()}

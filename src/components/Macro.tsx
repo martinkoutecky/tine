@@ -1,3 +1,4 @@
+import { focusOnMount } from "../focusOnMount";
 import { FailureBoundary } from "./FailureBoundary";
 import { msg, t, rawText, render as renderMessage, type UiText } from "../i18n";
 import { Rich } from "../i18n/Rich";
@@ -14,6 +15,7 @@ import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { createMembershipResource, groupsContainEdit } from "../resultMembership";
 import { bindingOwner, advanceRevision, graphOwner, latestOwner, readOwned, revisionOwner, writeOwned, type Owned } from "../owned";
 import { blockProperty, blockWritable, formatForBlock, graphRewriteFrozen, setBlockProperty, setRaw, undo, undoTopTag, withUndoUnit, node as docNode } from "../document";
+import { createQueryFold } from "./macroFold";
 export { EmbedMacro } from "./EmbedMacro";
 import { QueryGroups } from "./QueryGroup";
 import { QueryDisplay } from "./QueryDisplay";
@@ -314,13 +316,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
 
   const currentPage = () => props.currentPage ?? (props.blockId ? docNode(props.blockId)?.page : undefined);
   const collapseKey = () => JSON.stringify([graphMeta()?.root ?? "", props.blockId ?? currentPage() ?? "global", arg()]);
-  const [collapseOverride, setCollapseOverride] = createSignal(loadCollapsed(collapseKey()));
-  const collapsed = () => collapseOverride() ?? (optionValues()?.collapsed ?? false);
-  const toggleCollapsed = () => {
-    const v = !collapsed();
-    setCollapseOverride(v);
-    saveCollapsed(collapseKey(), v);
-  };
+  const { collapsed, toggle: toggleCollapsed } = createQueryFold(loadCollapsed(collapseKey()), () => optionValues()?.collapsed ?? false,
+    () => props.blockId, (v) => saveCollapsed(collapseKey(), v));
 
   // A save anywhere in the graph bumps dataRev after 700 ms of quiet. Each
   // distinct expanded request costs one whole-graph evaluation per revision;
@@ -939,8 +936,8 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   let canceled = false;
                   return (
                     <input
+                      ref={(input) => focusOnMount(input, true)}
                       class="query-title-input"
-                      autofocus
                       value={titleOption() ?? ""}
                       placeholder={t("macro-macro-query-title")}
                       onClick={(e) => e.stopPropagation()}
