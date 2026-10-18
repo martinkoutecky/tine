@@ -27,6 +27,8 @@ setting-sticky-parents = Sticky parent bullets
 setting-sticky-parents-hint = Keep offscreen ancestors at the top of scrolling outlines. Click one to return to it. On by default; saved on this device.
 sticky-parents-load-error = Could not load sticky parent bullets
 sticky-parents-save-error = Could not remember sticky parent bullets
+settings-mobile-navigation-label = Navigation buttons at the bottom
+settings-mobile-navigation-hint = Phones and tablets: put Sidebar, Search, Back and Forward in a row at the bottom of the screen, within thumb reach, instead of the top bar. The row gives way to the editing toolbar while the keyboard is up. Off by default; saved on this device.
 settings-embed-breadcrumbs = Block embed breadcrumbs
 settings-embed-breadcrumbs-hint = Show the source page and parent trail above embedded blocks. Off by default.
 

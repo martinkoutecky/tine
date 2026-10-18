@@ -2094,6 +2094,8 @@ export interface MessageArgs {
   "settings-links": {};
   "settings-links-to-pages-that-do-not-exist": {};
   "settings-links-to-the-web-or-a-file": {};
+  "settings-mobile-navigation-hint": {};
+  "settings-mobile-navigation-label": {};
   "settings-most-recent-first-journal-pages-by": {};
   "settings-newest-first": {};
   "settings-no-underline": {};
@@ -2204,6 +2206,7 @@ export interface MessageArgs {
   "settings-search-page-block-autocomplete-spacing": {};
   "settings-search-page-references-config-shortcut": {};
   "settings-search-paste-drag-media-names": {};
+  "settings-search-phone-tablet-top-bar-bottom-row-back-forward-search-sidebar": {};
   "settings-search-quick-capture-enter-key": {};
   "settings-search-reading-column-pixels-cap-reset": {};
   "settings-search-reading-width": {};
