@@ -148,7 +148,9 @@ export class HostClient {
   editClock = 0;
   /** The last host answer this client consumed (a restore's watermark, S8). */
   consumed = 0;
-  /** Told after every change a view shows (an edit, an admission, an answer, a push, a drop). */
+  /** Told after every change a view shows (an edit, a request sent, an admission, an answer, a push, a
+   * drop). Every change of `busy`, `owes`, `conflicted`, `isOpen` or `holdsContent` must be told: the
+   * query results gate (wiring.ts) reads them only when this moves its revision. */
   onChange: () => void = () => {};
 
   constructor(
@@ -382,6 +384,7 @@ export class HostClient {
       }
       for (const page of [a, b]) this.admitted(page, id, refusal);
     });
+    this.onChange();
     return answers.then(([x, y]) => ({ took: x.took && y.took, refusal: x.refusal ?? y.refusal }));
   }
 
@@ -685,6 +688,7 @@ export class HostClient {
       page.stash.unshift(...mine);
       this.admitted(page, id, null);
     });
+    this.onChange();
   }
 
   /** The baseline rule (D-b; R5, S5): input typed before the Open's answer is
@@ -765,6 +769,9 @@ export class HostClient {
       if (refusal) for (const kind of kinds) if (!page.kinds.includes(kind)) page.kinds.push(kind);
       this.admitted(page, id, refusal);
     });
+    // A clean page (a close, a discard) turns busy here: say so, or the
+    // results gate closes unseen and its reopening reruns nothing.
+    this.onChange();
     return answered;
   }
 
