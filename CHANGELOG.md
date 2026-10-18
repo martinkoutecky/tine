@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.0-beta.5] - 2026-10-18
+
 ### Fixed
 
 - Linux: middle-click pasting text selected in a block into a rich-text app (Tuta, Anki, ...) now pastes only the selection. Before, selecting the last line of a block (a one-line block, or Select All) also pasted the editor's own markup (`<div contenteditable="plaintext-only">`), the selection toolbar's button labels and the text of the blocks below (GH #530).
