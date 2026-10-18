@@ -145,6 +145,20 @@ await session(1, async browser => {
   await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .query-group`), active),
     { timeout: 15_000, timeoutMsg: "unfolding the query's bullet did not bring its results back" });
   await browser.waitUntil(() => !/Open tasks"\}\}\}\n\s+collapsed:: true/.test(fs.readFileSync(queries, "utf8")), { timeout: 15_000, timeoutMsg: "the bullet unfold was not saved" });
+  phase = "the query's own arrow is the same fold as the bullet (GH #619 Q8)";
+  const arrowToggle = selector => document.querySelector(`${selector} .query-collapse`)?.click();
+  const arrowFolded = selector => document.querySelector(`${selector} .query-collapse`)?.classList.contains("collapsed") ?? null;
+  const bulletFolded = selector => !!document.querySelector(selector).closest(".ls-block").querySelector(":scope > .block-main .bullet-closed");
+  await browser.execute(arrowToggle, active);
+  await browser.waitUntil(() => browser.execute(selector => document.querySelector(`${selector} .query-group`) === null, active),
+    { timeout: 10_000, timeoutMsg: "the query's arrow left its results shown" });
+  await browser.waitUntil(() => /Open tasks"\}\}\}\n\s+collapsed:: true/.test(fs.readFileSync(queries, "utf8")), { timeout: 15_000, timeoutMsg: "the arrow fold was not saved as the bullet's collapsed:: true" });
+  assert.equal(await browser.execute(bulletFolded, active), true, "the bullet shows the fold the arrow made");
+  await browser.execute(hostToggle, active);
+  await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .query-group`), active),
+    { timeout: 15_000, timeoutMsg: "unfolding the bullet did not bring the results back" });
+  assert.equal(await browser.execute(arrowFolded, active), false, "the arrow shows the unfold the bullet made");
+  await browser.waitUntil(() => !/Open tasks"\}\}\}\n\s+collapsed:: true/.test(fs.readFileSync(queries, "utf8")), { timeout: 15_000, timeoutMsg: "the unfold was not saved" });
   phase = "rest, title rename, inline live results";
   // One click on the title starts the rename with the caret in the field
   // (GH #619 c6: WebView2 honoured `autofocus` once per document).
