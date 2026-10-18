@@ -271,6 +271,34 @@ describe("occurrence guard", () => {
     } finally { dispose(); }
   });
 
+  // Review r2 (677b47917): the toolbar must act on the host text it was SHOWN
+  // with. Focus a button, hold Space, a sync replaces the embed's target, release
+  // Space: the press must not land on the replacement embed.
+  for (const action of ["remove", "edit"] as const) {
+    it(`a focused embed ${action} button cannot act after a sync replaced the embed's target`, async () => {
+      const U = "41700000-0000-4000-8000-000000000002";
+      const { root, dispose } = mountHost(`{{embed ((${T}))}}`);
+      try {
+        await tick();
+        const button = root.querySelector<HTMLButtonElement>(`.embed-action-${action}`)!;
+        button.focus();
+        expect(document.activeElement).toBe(button);
+        const changed = `{{embed ((${U}))}}`;
+        setRaw("host", changed);
+        await tick();
+        // The Space release activates whatever still holds the focus.
+        if (document.activeElement instanceof HTMLButtonElement) document.activeElement.click();
+        expect(doc.byId.host.raw).toBe(changed);
+        expect(editingId()).toBeNull();
+        // The redrawn toolbar acts on what it now shows.
+        root.querySelector<HTMLButtonElement>(`.embed-action-${action}`)!.click();
+        await tick();
+        if (action === "remove") expect(doc.byId.host.raw).toBe("");
+        else expect(editingId()).toBe("host");
+      } finally { dispose(); }
+    });
+  }
+
   it("an open menu's Edit link refuses after the block changed, opening no editor", async () => {
     const { root, dispose } = mountHost(`left ((${T})) middle ((${T})) right`);
     try {

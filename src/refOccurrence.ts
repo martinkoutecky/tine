@@ -8,7 +8,7 @@
 // "Remove" deletes the occurrence's text from the host only (OG
 // `delete-current-ref!`), never the referenced block or page, as one undo step
 // through the ordinary block save path.
-import { createContext, useContext } from "solid-js";
+import { createContext, createMemo, useContext, type Accessor } from "solid-js";
 import { msg } from "./i18n";
 import { blockWritable, setRaw, withUndoUnit, node as docNode } from "./document";
 import { startEditing } from "./editorController";
@@ -31,12 +31,21 @@ export interface RefOccurrence {
   raw: string;
 }
 
-/** Snapshot one rendered occurrence: its span together with the host text that
- *  span addresses (Solid renders synchronously, so the rendered span and the
- *  host's current text agree at the moment of the gesture). */
-export function takeOccurrence(host: string | undefined, span: Span | undefined, kind: RefOccurrence["kind"], target: string): RefOccurrence | undefined {
-  const raw = host && span ? docNode(host)?.raw : undefined;
-  return raw === undefined ? undefined : { host: host!, span: span!, kind, target, raw };
+/** The occurrence as it is SHOWN: its rendered span with the host text that
+ *  span addresses, taken when the view renders and re-taken (a new object) on
+ *  every change of that text. Actions bind the object they were rendered with
+ *  (a keyed `<Show>`), so a host change replaces the buttons, dropping any focus
+ *  or half-done press on them, and an action that still holds an older object
+ *  (an open menu) refuses in `rawRange`. Never take the snapshot at click time:
+ *  the text read then may already differ from what the user was shown. */
+export function createShownOccurrence(
+  at: () => { host: string | undefined; span: Span | undefined; kind: RefOccurrence["kind"]; target: string } | undefined,
+): Accessor<RefOccurrence | undefined> {
+  return createMemo(() => {
+    const a = at();
+    const raw = a?.host && a.span ? docNode(a.host)?.raw : undefined;
+    return raw === undefined ? undefined : { host: a!.host!, span: a!.span!, kind: a!.kind, target: a!.target, raw };
+  });
 }
 
 /** An occurrence with the rendered host instance (see `useOccurrenceOwner`) that

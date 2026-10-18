@@ -13,7 +13,7 @@ import { assetRelPath, extOf, mediaKind } from "../media";
 import { openPage, openPageInNewTab, openInNewTab } from "../router";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openRefTarget } from "../blockRefActions";
-import { editOccurrence, occurrenceEditable, removeOccurrence, takeOccurrence, useOccurrenceOwner, type RefOccurrence } from "../refOccurrence";
+import { editOccurrence, occurrenceEditable, removeOccurrence, createShownOccurrence, useOccurrenceOwner } from "../refOccurrence";
 import { isJournalTitle } from "../journal";
 import { openPageInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
@@ -1303,8 +1303,8 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // GH #417: this reference occurrence in its host block, for Edit link / Remove
   // (the preview's title row and the right-click / long-press menu).
   const owner = useOccurrenceOwner(() => props.blockId);
-  const occurrence = (): RefOccurrence | undefined =>
-    insidePeek ? undefined : takeOccurrence(props.blockId, props.span, "ref", props.id);
+  const occurrence = createShownOccurrence(() =>
+    insidePeek ? undefined : { host: props.blockId, span: props.span, kind: "ref", target: props.id });
   // A loaded target shares the editor's reactive node, so references update on
   // the keystroke without re-resolving every visible uuid after every save. The
   // backend snapshot remains the fallback for targets outside the working set;
@@ -1461,11 +1461,13 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           pageKind={preview()!.group.kind}
           blockId={props.id}
           truncatedCount={previewTruncated}
-          actions={<Show when={occurrenceEditable(occurrence())}>
-            <button type="button" class="peek-ref-edit" title={t("ref-occurrence-edit-title")}
-              onClick={() => { const o = occurrence()!; peek.dismiss(); editOccurrence(o, owner()); }}>{t("ref-occurrence-edit")}</button>
-            <button type="button" class="peek-ref-remove" title={t("ref-occurrence-remove-ref-title")}
-              onClick={() => { const o = occurrence()!; peek.dismiss(); removeOccurrence(o); }}>{t("ref-occurrence-remove")}</button>
+          actions={<Show when={occurrenceEditable(occurrence()) ? occurrence() : undefined} keyed>
+            {(o) => <>
+              <button type="button" class="peek-ref-edit" title={t("ref-occurrence-edit-title")}
+                onClick={() => { peek.dismiss(); editOccurrence(o, owner()); }}>{t("ref-occurrence-edit")}</button>
+              <button type="button" class="peek-ref-remove" title={t("ref-occurrence-remove-ref-title")}
+                onClick={() => { peek.dismiss(); removeOccurrence(o); }}>{t("ref-occurrence-remove")}</button>
+            </>}
           </Show>}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
