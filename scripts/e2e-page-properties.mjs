@@ -547,10 +547,10 @@ try {
   const widthAt = tableHeader.indexOf("171");
   await replaceHeaderLikeUser(headerEditor, "200", { start: widthAt, end: widthAt + 3 });
   await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
-  const tableSaved = await waitForFile(
+  const tableSaved = await waitForFileText(
     `${GRAPH}/pages/Property table.md`,
     (text) => text.includes("prop%3Atest=200"),
-    "table block width edit",
+    { timeoutMs: 10_000 },
   );
   if (!tableSaved.startsWith("- tine.view:: table") || !tableSaved.includes("- Other block")) {
     throw new Error(`the table block was rewritten as page properties: ${JSON.stringify(tableSaved)}`);
@@ -567,10 +567,10 @@ try {
   await browser.keys("test table");
   await browser.keys(["Shift", "Enter"]);
   await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
-  const titled = await waitForFile(
+  const titled = await waitForFileText(
     `${GRAPH}/pages/Property table.md`,
     (text) => text.startsWith("- test table\n  tine.view:: table"),
-    "table block title",
+    { timeoutMs: 10_000 },
   );
   if (!titled.includes("- Other block")) throw new Error(`the table page lost its other block: ${JSON.stringify(titled)}`);
   const tableToasts = await browser.execute(() => [...document.querySelectorAll(".toast-error .toast-msg")].map((node) => node.textContent ?? ""));
