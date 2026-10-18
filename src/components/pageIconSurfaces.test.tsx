@@ -67,31 +67,41 @@ describe("left sidebar rows carry the page icon", () => {
     document.body.append(root);
     const dispose = render(() => <><Sidebar /><PageView /></>, root);
     const images = () => [...root.querySelectorAll<HTMLImageElement>('.page-title-icon img[data-page-image-icon], #sidebar-favorites-list img[data-page-image-icon]')];
+    const noIcon = () => {
+      expect(images()).toHaveLength(0);
+      expect(root.querySelector(".page-title-icon")?.textContent ?? "").toBe("");
+      expect(labels(root, "#sidebar-favorites-list .nav-page-label")).toEqual(["Image"]);
+    };
     try {
       await vi.waitFor(() => expect(images().map(img => img.getAttribute("src"))).toEqual(["blob:icon-1", "blob:icon-1"]));
       expect(read).toHaveBeenCalledTimes(1);
       refreshAsset("a.png");
       await vi.waitFor(() => expect(images().map(img => img.getAttribute("src"))).toEqual(["blob:icon-2", "blob:icon-2"]));
       expect(read).toHaveBeenCalledTimes(2);
+      images()[0].dispatchEvent(new Event("error"));
+      expect(root.querySelector(".page-title-icon")?.textContent ?? "").toBe("");
       setPageProperty("Image", "icon", "![](../assets/b.png)");
       await vi.waitFor(() => expect(images().map(img => img.getAttribute("src"))).toEqual(["blob:icon-3", "blob:icon-3"]));
       read.mockRejectedValue(new Error("not-found"));
       setPageProperty("Image", "icon", "![](../assets/missing.png)");
       await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(4));
       await settle();
-      expect(images()).toHaveLength(0);
+      noIcon();
       read.mockRejectedValue(new Error("permission-denied"));
       setPageProperty("Image", "icon", "![](../assets/unreadable.png)");
       await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(5));
       await settle();
-      expect(images()).toHaveLength(0);
-      setPageProperty("Image", "icon", "![](https://example.com/assets/icon.png)");
-      await settle();
+      noIcon();
+      for (const value of ["![](https://example.com/assets/icon.png)", "![](data:image/png;base64,AAAA)", "![](../images/a.png)", "![](../assets/a.gif)", "![](../../assets/a.png)"]) {
+        setPageProperty("Image", "icon", value);
+        await settle();
+        noIcon();
+      }
       expect(root.querySelector('img[src^="https://example.com"]')).toBeNull();
-      expect(images()).toHaveLength(0);
       expect(read).toHaveBeenCalledTimes(5);
       setPageProperty("Image", "icon", "AB");
       expect(root.querySelector(".page-title-icon")?.textContent).toBe("AB");
+      expect(labels(root, "#sidebar-favorites-list .nav-page-label")).toEqual(["AB Image"]);
     } finally { dispose(); }
   });
   it("renders a local image icon in Favorites without using its link sizing", async () => {

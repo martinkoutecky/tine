@@ -32,7 +32,7 @@ const log = fs.openSync(path.join(out, "driver.log"), "w");
 const driver = spawn(process.env.TAURI_DRIVER || "tauri-driver", ["--port", String(port), "--native-port", String(port + 1), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
 let browser;
 let journey = "open local image page";
-const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(), delta: "round 3 working diff", steps: [] };
+const proof = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(), delta: "round 4 working diff", steps: [] };
 const selectors = [".page-title-icon img[data-page-image-icon]", "#sidebar-favorites-list img[data-page-image-icon]"];
 async function rendered(name = "Image") {
   for (const selector of selectors) await browser.waitUntil(() => browser.execute((selector, name) => {
@@ -77,12 +77,18 @@ try {
   await openPageByName(browser, "Org");
   await rendered("Org");
   proof.steps.push(journey);
-  journey = "remote icon never renders or requests a remote image, including its visible property";
+  journey = "remote icon shows no image or raw-text icon in title and Favorites, preserves its property and makes no requests";
   await openPageByName(browser, "Remote");
   await browser.waitUntil(() => browser.execute(() => !document.querySelector(".page-title-icon img[data-page-image-icon]")), { timeout: 10000 });
   const remoteImages = await browser.execute(url => [...document.images].filter(img => img.src === url).length, remoteUrl);
+  const refused = await browser.execute(url => ({
+    titleIcon: document.querySelector(".page-title-icon")?.textContent?.trim() ?? "",
+    favorite: [...document.querySelectorAll("#sidebar-favorites-list .nav-page-label")].find(label => label.textContent.includes("Remote"))?.textContent.trim(),
+    propertyVisible: [...document.querySelectorAll(".page-properties .prop-value")].some(value => value.textContent.includes(url)),
+  }), remoteUrl);
+  if (refused.titleIcon || refused.favorite !== "Remote" || !refused.propertyVisible) throw new Error(`refused icon: ${JSON.stringify(refused)}`);
   if (remoteImages || requests) throw new Error(`remote icon: ${remoteImages} images, ${requests} network requests`);
-  proof.steps.push({ journey, remoteImages, requests });
+  proof.steps.push({ journey, remoteImages, requests, ...refused });
   // The assertions above are the contract; a successful-run screenshot is
   // supplementary evidence and WebKit can refuse it independently of the DOM.
   try { await browser.saveScreenshot(path.join(out, "page-image-icons.png")); } catch (error) {

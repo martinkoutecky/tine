@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "scenarios": {
     "scripts/e2e-page-image-icons.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"A local static PNG image link in icon:: decodes in the page title and Favorites, follows replacement without navigation and a menu property edit saves through the guarded path; Org image links also render.","blocking":true,"authority":"GH #346"},{"class":"exact-safety-interoperability","userOutcome":"A remote image icon produces no remote image and no network request, including in its visible page property.","blocking":true,"authority":"GH #346"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"A local static PNG image link in icon:: decodes in the page title and Favorites, follows replacement without navigation and a menu property edit saves through the guarded path; Org image links also render.","blocking":true,"authority":"GH #346"},{"class":"exact-safety-interoperability","userOutcome":"A remote image icon shows no image or raw link text in the title and Favorites, preserves its value in the visible property row and produces no network request.","blocking":true,"authority":"GH #346"}],
       "acceptableVariations":["Image proportions, navigation and watcher latency may vary within the existing emoji-sized box."],
       "nonRequirements":["Exact pixels, link width attributes, animation, remote images, copied/resized files, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"

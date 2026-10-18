@@ -18,8 +18,10 @@ identities and `validate_read_name` refuses traversal. Store containment still
 checks symlinks; this feature does not widen that boundary.
 
 Other graph folders, escapes, schemes (except Org's local `file:` link syntax),
-other formats, animated PNGs, missing and unreadable files retain the existing
-text/emoji fallback. No remote image request is made. No files are downloaded,
+other formats, animated PNGs, missing, unreadable and undecodable files show no
+icon: refused image links never appear as raw text on icon surfaces. Ordinary
+text and emoji icons keep their existing behavior. The property row still shows
+the value as written. No remote image request is made. No files are downloaded,
 copied, cached persistently, resized or written. The existing bounded in-memory
 asset transport is shared with block images.
 

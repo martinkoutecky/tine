@@ -1,10 +1,23 @@
 import { beforeAll, expect, it } from "vitest";
 import { initParser } from "./render/parse";
-import { pageIconAsset, PAGE_ICON_PROPERTY } from "./pageIconImage";
+import { pageIconAsset, pageIconImageLink, PAGE_ICON_PROPERTY } from "./pageIconImage";
 import { isStaticIconImage } from "./staticImage";
 
 beforeAll(initParser);
 it("uses the shared property policy", () => expect(PAGE_ICON_PROPERTY).toBe("icon"));
+it.each([
+  ["![](https://example.com/a.png)", "pages/A.md", true],
+  ["![](../images/a.gif)", "pages/A.md", true],
+  ["![](../assets/a.png)", "", true],
+  ["[[file:https://example.com/a.png]]", "pages/A.org", true],
+  ["[[../images/a.gif]]", "pages/A.org", true],
+  ["[[Page]]", "pages/A.org", false],
+  ["[label](../assets/a.png)", "pages/A.md", false],
+  ["🚩", "pages/A.md", false],
+  ["AB", "pages/A.md", false],
+])("classifies %s independently of asset eligibility", (value, owner, image) => {
+  expect(!!pageIconImageLink(value, owner)).toBe(image);
+});
 it.each([
   ["![](../assets/logo.png)", "pages/A.md", "logo.png"],
   ['![](../assets/logo.JPG){:width "90%" :height "9999"}', "pages/A.md", "logo.JPG"],

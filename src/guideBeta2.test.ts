@@ -5,7 +5,7 @@ const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${p
 
 it("the Guide explains local image icon syntax, containment and sizing", () => {
   const text = guide("pages-links-references-search");
-  for (const detail of ["icon:: ![](../assets/quick-capture.png)", "#+icon: [[file:../assets/quick-capture.png]]", "inside the graph's `assets/`", "width/height attributes are ignored", "no remote image is requested", "without reloading"]) expect(text).toContain(detail);
+  for (const detail of ["icon:: ![](../assets/quick-capture.png)", "#+icon: [[file:../assets/quick-capture.png]]", "inside the graph's `assets/`", "width/height attributes are ignored", "no remote image is requested", "show no icon or raw link text", "property row still shows the value as written", "without reloading"]) expect(text).toContain(detail);
 });
 
 it("the Guide teaches Chinese IME reference and command input with ASCII storage", () => {
