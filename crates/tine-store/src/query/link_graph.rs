@@ -301,10 +301,22 @@ impl LinkGraph {
         if cancelled() {
             return None;
         }
-        let mut edges = 0usize;
-        for (source, targets) in table.out.iter_mut().enumerate() {
-            edges += targets.len();
-            if edges / CHECK_EVERY > (edges - targets.len()) / CHECK_EVERY && cancelled() {
+        table.index_links(cancelled)?;
+        Some(table)
+    }
+
+    /// Sorts and dedups each out-list and fills the reverse lists from them.
+    /// A list's sort counts its length once and indexing counts each edge,
+    /// so even one hub page's million links meet a check every CHECK_EVERY.
+    fn index_links(&mut self, cancelled: &dyn Fn() -> bool) -> Option<()> {
+        let mut work = 0usize;
+        let mut due = |n: usize| {
+            let before = work / CHECK_EVERY;
+            work += n;
+            work / CHECK_EVERY > before
+        };
+        for (source, targets) in self.out.iter_mut().enumerate() {
+            if due(targets.len()) && cancelled() {
                 return None;
             }
             targets.sort_unstable();
@@ -313,13 +325,16 @@ impl LinkGraph {
             // occurrence until here; hold only the distinct links.
             targets.shrink_to_fit();
             for &target in targets.iter() {
-                table.inn[target as usize].push(source as u32);
+                if due(1) && cancelled() {
+                    return None;
+                }
+                self.inn[target as usize].push(source as u32);
             }
         }
-        for sources in &mut table.inn {
+        for sources in &mut self.inn {
             sources.shrink_to_fit();
         }
-        Some(table)
+        Some(())
     }
 
     pub(crate) fn node_count(&self) -> usize {
@@ -791,6 +806,33 @@ mod cancellation_tests {
             .unwrap();
         assert!(ball.iter().all(|&hit| hit));
         assert_eq!(calls.get(), SPOKES / CHECK_EVERY);
+    }
+
+    /// Review r2: the final pass checks inside one hub's edges too. A hub
+    /// with a million out-links, cancelled at its second check, stops
+    /// within the first CHECK_EVERY edges it indexes.
+    #[test]
+    fn a_cancelled_reverse_index_stops_inside_one_hubs_edges() {
+        const SPOKES: usize = 1 << 20;
+        let hub = || {
+            let mut table = LinkGraph::default();
+            table.out = vec![Vec::new(); SPOKES + 1];
+            table.out[0] = (1..=SPOKES as u32).collect();
+            table.inn = vec![Vec::new(); SPOKES + 1];
+            table
+        };
+        let mut table = hub();
+        let calls = Cell::new(0);
+        assert!(table.index_links(&stop_after(2, &calls)).is_none());
+        assert_eq!(calls.get(), 2, "stopped at the second check");
+        let indexed = table.inn.iter().filter(|list| !list.is_empty()).count();
+        assert!(indexed <= CHECK_EVERY, "{indexed} edges indexed");
+        // Uncancelled: one check for the sort, then one per CHECK_EVERY edges.
+        let mut table = hub();
+        let calls = Cell::new(0);
+        assert!(table.index_links(&stop_after(usize::MAX, &calls)).is_some());
+        assert!(table.inn[1..].iter().all(|list| list == &[0]));
+        assert_eq!(calls.get(), 1 + SPOKES / CHECK_EVERY);
     }
 
     /// Review r1: the build checks per link expanded, not per reference.
