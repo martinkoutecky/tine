@@ -7279,6 +7279,13 @@ img.emoji {
   position: relative;
   z-index: 1;
 }
+/* Every query box sits at z-index 1, so the NEXT one paints over a menu that
+   overhangs this one's bottom edge (GH #619 c6). The box holding an open menu
+   or panel goes one step up, still below the sticky pins (9+) and the app's
+   overlays. */
+.query-block:has(.qs-menu, .qc-actions[open], .qd-panel, .qb-prop-type-menu) {
+  z-index: 2;
+}
 .query-block.query-sheet-block {
   border: 0;
   border-radius: 0;

@@ -129,7 +129,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-calm-query.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"Query controls rename and edit inline while real Rust answers update; copy preserves page/date titles and hierarchy, task and fold changes save normally, Search opens the same query, and backlinks sort in All pages. Saved state survives restart and board drag does not navigate.","blocking":true}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"Query controls rename (one click on the title puts the caret in the field) and edit inline while real Rust answers update; folding a query block's bullet hides its results and saves the fold; copy preserves page/date titles and hierarchy, task and fold changes save normally, Search opens the same query, and backlinks sort in All pages. Saved state survives restart and board drag does not navigate.","blocking":true}],
       "acceptableVariations":["Menu placement, styling, result order and save latency may vary while controls are reachable and semantic outcomes remain correct."],
       "nonRequirements":["Exact pixels, incidental DOM structure, or native certification outside Linux WebKitGTK.","Creating groups by dropping onto a condition or merging All pages, Search and Query."],
       "stability":"burn-in"

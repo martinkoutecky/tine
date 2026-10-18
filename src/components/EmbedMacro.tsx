@@ -8,6 +8,7 @@ import { blockHasPageEmbed, formatForBlock, pageByName, resolveGuidePageDto, nod
 import { nearestAncestors } from "../render/blockTrail";
 import { visibleBody } from "../render/block";
 import { CollapseSurfaceContext } from "./Block";
+import { hostFolded } from "./macroFold";
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { PageEmbedHeader } from "./PageEmbedHeader";
@@ -74,8 +75,7 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
   const embedded = () => readOr(data, undefined, "embed");
   const foldedPageBody = () => {
     if (!pageTarget() || !props.blockId || !blockHasPageEmbed(props.blockId)) return false;
-    const stored = docNode(props.blockId)?.collapsed ?? false;
-    return collapseSurface?.collapsed(props.blockId, stored) ?? stored;
+    return hostFolded(collapseSurface, props.blockId);
   };
   // GH #417: actions on this occurrence, in a toolbar above the embed's top-right
   // corner (desktop hover; on touch while a block inside the embed is edited).

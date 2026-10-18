@@ -97,7 +97,7 @@ import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
 import { Rendered, detectMacro } from "./Rendered";
-import { blockHasPageEmbed } from "../document";
+import { blockHasFoldableBody, blockHasPageEmbed, blockHasQueryBody } from "../document";
 import { CollapseAllBorder, NO_THREAD_LINES, rowDecorationClasses, rowDecorationStyle, threadLineSettings, type ThreadLineDecoration } from "./block/rowChrome";
 import { dbg } from "../debug";
 import { workflow, zoomInto, openContextMenu, openDatePicker, setQueryBuilderAutoOpen, openPageProps, autoPairing, typographyMode, blockReferencesRequest, documentMode, docModeEnterForNewBlock, searchRemoveAccents } from "../ui";
@@ -270,7 +270,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // Margin dialogue (vision §3.7): comments leave the main outline for the margin.
   const { outlineChildren, marginComments } = marginOutline(node, surfaceKey, fmt);
   const hasChildren = () => outlineChildren().length > 0;
-  const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id);
+  // A query host folds its results like OG (GH #619 c6); margin comments are not a body.
+  const hasFoldableBody = () => hasChildren() || blockHasPageEmbed(props.id) || blockHasQueryBody(props.id);
   // The children-source sheet this block owns (a query block's table/board is the macro's).
   const sheet = createMemo(() => childrenSheetConfig(blockFacets().properties, node().raw));
   // `thread-lines` only decorates the ordinary outline container below this row,
@@ -317,6 +318,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const macro = createMemo(() => detectMacro(node().raw, fmt())); // shared with `Rendered`
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt);
+  // A standalone query or embed host is never pinned: its first line IS the live
+  // macro, and the 30 px pin would mount a second copy of it (GH #619 c6).
+  const stickyParent = () => stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !macro();
 
   return (
     <div
@@ -334,10 +338,10 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         };
       })()}
       data-block-id={props.id}
-      data-sticky-parent={stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !blockEmbedHost() ? "" : undefined}
+      data-sticky-parent={stickyParent() ? "" : undefined}
       data-block-ref={parserReady() ? blockExternalId(props.id, propertySession.identity(node().raw, fmt())) ?? props.id : undefined}
     >
-      <Show when={stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !blockEmbedHost()}>
+      <Show when={stickyParent()}>
         <StickyAncestor id={props.id} raw={node().raw} />
       </Show>
       <CommentQuoteHeader parentId={node().parent} selector={commentSelector()} />
@@ -603,7 +607,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   const setOccurrenceCollapsed = (value: boolean) => {
     if (!collapseSurface) { setCollapsed(props.id, value); return; }
     const n = docNode(props.id);
-    if (!n || (n.children.length === 0 && !blockHasPageEmbed(props.id))) return;
+    if (!n || !blockHasFoldableBody(props.id)) return;
     const current = collapseSurface.collapsed(props.id, n.collapsed);
     if (current !== value) collapseSurface.toggle(props.id, current);
   };

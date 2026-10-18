@@ -1,3 +1,4 @@
+import { focusOnMount } from "../focusOnMount";
 import { shortcutKey } from "../shortcutKey";
 import { t } from "../i18n";
 import { For, Show, createEffect, createMemo, createSignal, type JSX } from "solid-js";
@@ -158,9 +159,8 @@ export function Listbox(props: {
     >
       <Show when={props.filterable}>
         <input
-          ref={(element) => props.inputRef?.(element)}
+          ref={(element) => { props.inputRef?.(element); focusOnMount(element); }}
           class="qs-menu-filter"
-          autofocus
           role="combobox"
           aria-expanded="true"
           aria-controls={props.id}
@@ -211,7 +211,7 @@ function PlainList(props: { context: ListboxBody }): JSX.Element {
               onMouseEnter={() => context.setActiveKey(option.key)}
               onClick={() => context.pick(option.key)}
             >
-              {option.label}
+              <span class="qs-option-label">{option.label}</span>
               <Show when={option.hint}>
                 <span class="qs-option-hint">{option.hint}</span>
               </Show>

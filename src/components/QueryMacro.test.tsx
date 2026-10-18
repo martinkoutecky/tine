@@ -327,6 +327,53 @@ describe("QueryMacro sheet integration", () => {
       if (index === 1) expect(root.querySelector(".query-title")?.textContent).toBe("Tasks");
     } finally { finish?.(); dispose(); }
   });
+  it.each([false, true])("folding the query's bullet folds its results (child block: %s, GH #619 c6)", async (withChild) => {
+    // OG query.cljs custom-query* hides the results of a collapsed block, and
+    // editor.cljs collapsable? lets a query block fold without children.
+    loadQueryDoc("{{query (task TODO)}}");
+    if (withChild) {
+      setDoc("byId", "hi", node("hi", "Hi", "query"));
+      setDoc("byId", "query", "children", ["hi"]);
+    }
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      const row = () => root.querySelector<HTMLElement>(":scope > .ls-block > .block-main")!;
+      expect(row().querySelector(".query-group")).not.toBeNull();
+      const arrow = row().querySelector<HTMLElement>(".collapse-toggle")!;
+      expect(arrow.classList.contains("has-children")).toBe(true);
+      arrow.click();
+      await settleQuery();
+      expect(doc.byId.query.raw).toContain("collapsed:: true");
+      expect(row().querySelector(".query-group")).toBeNull();
+      expect(row().textContent).not.toContain("From query");
+      // The query's own arrow expands it again, and with it the bullet.
+      row().querySelector<HTMLElement>(".query-collapse")!.click();
+      await settleQuery();
+      expect(doc.byId.query.collapsed).toBe(false);
+      expect(doc.byId.query.raw).not.toContain("collapsed::");
+      expect(row().querySelector(".query-group")).not.toBeNull();
+    } finally { dispose(); }
+  });
+  it("starts a rename with the caret in the title field after one click (GH #619 c6)", async () => {
+    // Chromium/WebView2 honours `autofocus` once per document and jsdom never does:
+    // only an explicit focus puts the caret in the field on every rename.
+    loadQueryDoc('{{query (task TODO) {:title "Tasks"}}}');
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      for (const _round of [1, 2]) {
+        root.querySelector<HTMLElement>(".query-title")!.click();
+        await Promise.resolve();
+        const input = root.querySelector<HTMLInputElement>(".query-title-input")!;
+        expect(document.activeElement).toBe(input);
+        expect([input.selectionStart, input.selectionEnd]).toEqual([0, "Tasks".length]);
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await settleQuery();
+        expect(root.querySelector(".query-title-input")).toBeNull();
+      }
+    } finally { dispose(); }
+  });
   it("keeps focus in View when saving removes the focused display control", async () => {
     const original = '(and (task TODO) (sort-by owner asc)) {:title "Tasks"}';
     loadQueryDoc(`{{query ${original}}}`);

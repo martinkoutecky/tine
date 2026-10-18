@@ -449,8 +449,9 @@ fn through_page(filter: Filter) -> Filter {
 
 /// `@page` anchor: the page row IS the current row, so every `page` hop the
 /// parser inserted collapses away. OG's DSL has no `children`/`blocks`
-/// relation, so this only ever meets boolean nodes and page hops.
-fn rebase_to_page(filter: Filter) -> Filter {
+/// relation, so this only ever meets boolean nodes and page hops. The TQL
+/// printer applies the same collapse to a block filter shown under `@page`.
+pub(crate) fn rebase_to_page(filter: Filter) -> Filter {
     match filter {
         Filter::Leaf {
             leaf:

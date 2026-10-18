@@ -629,9 +629,7 @@ query-filter-between-dates = 日期范围
 
 query-filter-full-text-search = 全文搜索
 
-query-filter-on-page = 所在页面
-
-query-filter-in-namespace = 所在命名空间
+query-filter-page = 页面
 
 query-filter-page-property = 页面属性
 
@@ -664,10 +662,6 @@ query-filter-not-between = 不介于
 query-filter-contains = 包含
 
 query-filter-does-not-contain = 不包含
-
-query-operator-on-page = 位于页面
-
-query-filter-not-on-page = 不在页面
 
 query-operator-in-namespace = 位于命名空间
 

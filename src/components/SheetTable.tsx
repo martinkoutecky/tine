@@ -1,3 +1,4 @@
+import { focusOnMount } from "../focusOnMount";
 import { t, msg, render } from "../i18n";
 import { sheetSourceRows } from "../sheet/sheetRows";
 import { QueryResultTask, openQueryResult } from "./QueryResultTask";
@@ -912,7 +913,7 @@ export function SheetTable(props: {
               >
                 <input
                   class="sheet-prop-input sheet-header-rename-input"
-                  autofocus
+                  ref={(input) => focusOnMount(input)}
                   value={renamingField()?.value ?? ""}
                   aria-label={t("sheet-sheet-table-rename-field-3", { value1: fieldLabel(field) })}
                   onClick={(e) => e.stopPropagation()}
@@ -958,7 +959,7 @@ export function SheetTable(props: {
             >
               <input
                 class="sheet-prop-input sheet-add-field-input"
-                autofocus
+                ref={(input) => focusOnMount(input)}
                 placeholder={t("sheet-sheet-table-property")}
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => {
@@ -1421,7 +1422,6 @@ function FieldCell(props: {
         <input
           class="sheet-prop-input"
           classList={{ "sheet-input-invalid": inputInvalid() }}
-          autofocus
           ref={(el) => {
             // Dynamically inserted autofocus inputs are not focused reliably by
             // WebKit. Without an explicit handoff, type-to-overtype displays

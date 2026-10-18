@@ -1532,7 +1532,6 @@ export interface MessageArgs {
   "query-filter-does-not-reference": {};
   "query-filter-full-text-search": {};
   "query-filter-in-a-journal-page": {};
-  "query-filter-in-namespace": {};
   "query-filter-is": {};
   "query-filter-is-a-journal-page": {};
   "query-filter-is-any-of": {};
@@ -1544,8 +1543,7 @@ export interface MessageArgs {
   "query-filter-matches": {};
   "query-filter-not-between": {};
   "query-filter-not-in-namespace": {};
-  "query-filter-not-on-page": {};
-  "query-filter-on-page": {};
+  "query-filter-page": {};
   "query-filter-page-property": {};
   "query-filter-page-tag-reference": {};
   "query-filter-page-tags": {};
@@ -1561,7 +1559,6 @@ export interface MessageArgs {
   "query-og-bare-priority": { "syntax": string | number };
   "query-og-bare-task": { "syntax": string | number };
   "query-operator-in-namespace": {};
-  "query-operator-on-page": {};
   "query-options-map-warning": {};
   "query-page-props-is-no-longer-there-so-its-properties-cannot": { "name": string | number };
   "query-page-results-alias": { "alias": string | number };

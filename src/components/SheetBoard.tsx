@@ -1,3 +1,4 @@
+import { focusOnMount } from "../focusOnMount";
 import { t, msg } from "../i18n";
 import { sheetSourceRows } from "../sheet/sheetRows";
 import { QueryResultTask, openQueryResult } from "./QueryResultTask";
@@ -522,7 +523,7 @@ export function SheetBoard(props: {
                 <input
                   class="sheet-board-add-tag-input"
                   classList={{ "sheet-input-invalid": tagInputInvalid() }}
-                  autofocus
+                  ref={(input) => focusOnMount(input)}
                   placeholder={t("sheet-sheet-board-new-tag-2")}
                   onPointerDown={(e) => e.stopPropagation()}
                   onMouseDown={(e) => e.stopPropagation()}
