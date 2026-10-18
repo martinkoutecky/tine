@@ -11,14 +11,14 @@ import { setGraphMeta, bumpDataRev } from "../graphSession";
 import { startEditing, endEdit } from "../editorController";
 import { resetNearObserverForTests } from "../lazyObserve";
 import type { GraphMeta, PageRead, JournalFeedPage } from "../types";
-import * as viewportAnchor from "./journalViewportAnchor";
+import * as viewportAnchor from "./readingViewportAnchor";
 
 beforeAll(initParser);
 
 it("GF4: immediate completion merges before first paint without viewport anchor work", async () => {
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
-  const capture = vi.spyOn(viewportAnchor, "captureJournalViewport");
+  const capture = vi.spyOn(viewportAnchor, "captureReadingViewport");
   const day = (name: string): PageRead => ({ id: `journals/${name}.md`, name, title: name, kind: "journal", pre_block: null, blocks: [] });
   const current = day(journalTitle(new Date()));
   const old = day("Jan 1st, 2000");

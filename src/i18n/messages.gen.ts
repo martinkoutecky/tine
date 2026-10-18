@@ -227,6 +227,7 @@ export interface MessageArgs {
   "command-ui-open-settings": {};
   "command-ui-reset-zoom": {};
   "command-ui-toggle-brackets": {};
+  "command-ui-toggle-code-block-wrap": {};
   "command-ui-toggle-custom-css": {};
   "command-ui-toggle-devtools": {};
   "command-ui-toggle-dim-blocks": {};

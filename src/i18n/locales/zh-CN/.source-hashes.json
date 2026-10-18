@@ -234,6 +234,7 @@
   "command-ui-toggle-right-sidebar": "d2a71c56b502aab2",
   "command-ui-toggle-theme": "c9e3034e7a2ef638",
   "command-ui-toggle-wide-mode": "d04a47a429a3400c",
+  "command-ui-toggle-code-block-wrap": "11d301bd363b97d2",
   "command-window-open-in-new-window": "e4d47cbe737f70bc",
   "command-workspace-new": "f5bac38e3695aa9e",
   "commands-at-the-start-of-a-block-merges": "40c657eb78f9ad72",

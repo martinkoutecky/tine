@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-code-wrap-toggle.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "The palette and bound code wrap command preserve the reading position in every mounted main, split and sidebar scroller in both directions without changing note source.", "blocking": true }],
+      "acceptableVariations": ["Reading offsets may vary by a few pixels from layout rounding."],
+      "nonRequirements": ["Exact pane width, code colors or DOM structure; default shortcut; per-block setting."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-journals-today.mjs": {
       "contracts": [
         {"class":"core-operation","userOutcome":"On a cold graph launch, today's file-backed journal body is usable before graph loading finishes.","blocking":true,"authority":"GF4"},

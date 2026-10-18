@@ -51,7 +51,7 @@ import { pageIdentityKey } from "../pageIdentity";
 import { liveConflictForPage } from "../liveConflicts";
 import { ExternalChangeBar } from "./ExternalChangeBar";
 import { isElementNode, newIntersectionObserver, onAppReturn, requestFrame, useOwnerWindow, useWindowId } from "../windowRealm";
-import { captureJournalViewport } from "./journalViewportAnchor";
+import { captureReadingViewport } from "./readingViewportAnchor";
 import { createMarginSurface } from "./MarginColumn";
 import { MarginContext } from "./marginContext";
 
@@ -398,7 +398,7 @@ export function PageView(): JSX.Element {
   const captureFeedViewport = () => {
     releaseFeedAnchor?.();
     if (currentRoute().kind !== "journals" || !feedRoot?.isConnected) return;
-    const anchor = captureJournalViewport(feedRoot);
+    const anchor = captureReadingViewport(feedRoot);
     releaseFeedAnchor = anchor?.release;
     return anchor?.restore;
   };
