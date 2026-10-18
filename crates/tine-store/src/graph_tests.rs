@@ -1564,7 +1564,11 @@ fn gh715_tagged_pages_count_tags_through_any_alias_while_page_tags_stays_literal
     let tagged = |name: &str| {
         page_row_names(
             graph
-                .query_ir(tine_store::IrRequest::TaggedPages { name })
+                .query_ir(
+                    tine_store::IrRequest::TaggedPages { name },
+                    &tine_store::Cancel::default(),
+                )
+                .map(|answer| answer.expect("never cancelled"))
                 .unwrap(),
         )
     };
@@ -1594,11 +1598,15 @@ fn gh715_tagged_pages_count_tags_through_any_alias_while_page_tags_stays_literal
         );
         page_row_names(
             graph
-                .query_ir(tine_store::IrRequest::Run {
-                    query: &query,
-                    view: &view,
-                    context: &tine_core::query::ir::ExecutionContext::none(),
-                })
+                .query_ir(
+                    tine_store::IrRequest::Run {
+                        query: &query,
+                        view: &view,
+                        context: &tine_core::query::ir::ExecutionContext::none(),
+                    },
+                    &tine_store::Cancel::default(),
+                )
+                .map(|answer| answer.expect("never cancelled"))
                 .unwrap(),
         )
     };
@@ -2298,11 +2306,15 @@ fn agenda_query_excludes_finished_tasks() {
     let tine_store::IrAnswer::Result(answer) = store
         .whole_graph()
         .unwrap()
-        .query_ir(tine_store::IrRequest::Run {
-            query: &query,
-            view: &view,
-            context: &tine_core::query::ir::ExecutionContext::none(),
-        })
+        .query_ir(
+            tine_store::IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &tine_core::query::ir::ExecutionContext::none(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .unwrap()
     else {
         panic!("query result");

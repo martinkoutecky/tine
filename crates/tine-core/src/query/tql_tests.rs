@@ -1057,3 +1057,273 @@ fn hierarchy_relations_bind_block_predicates_and_refuse_page_scope() {
         }
     }
 }
+
+// -- links, linked_by, near (docs/contracts/tql-links-near.md) -------------
+
+fn name_is(name: &str) -> Filter {
+    Filter::attr(Attr::Name, CmpOp::Eq, Value::text(name))
+}
+
+fn journal_is(value: bool) -> Filter {
+    Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value })
+}
+
+#[test]
+fn links_near_relations_bind_page_predicates() {
+    for (relation, rel) in [("links", Rel::Links), ("linked_by", Rel::LinkedBy)] {
+        for (word, quant) in [
+            ("any", Quant::Any),
+            ("none", Quant::None),
+            ("every", Quant::Every),
+        ] {
+            assert_eq!(
+                ok(&format!("@page and {word}({relation}, name = 'A')")),
+                Filter::rel(rel, quant, name_is("A"))
+            );
+        }
+        // At @block the relation exists on the other row: kept and reported.
+        let block = parse(&format!("any({relation}, name = 'A')"));
+        assert!(block.is_invalid());
+        assert!(block
+            .diagnostics
+            .iter()
+            .any(|d| d.kind == DiagnosticKind::NotApplicable));
+    }
+    // The element is a page row, so a page relation nests inside it.
+    assert_eq!(
+        ok("@page and any(links, any(linked_by, journal = true))"),
+        Filter::rel(
+            Rel::Links,
+            Quant::Any,
+            Filter::rel(Rel::LinkedBy, Quant::Any, journal_is(true))
+        )
+    );
+}
+
+#[test]
+fn links_near_every_spelling_and_its_canonical_print() {
+    use crate::query::ir::NearDir;
+    let cases: &[(&str, Filter, &str)] = &[
+        (
+            "@page and near(name = 'A', 1)",
+            Filter::near(name_is("A"), 1, NearDir::Both),
+            "@page and near(name = 'A', 1)",
+        ),
+        (
+            "@page and near(name = 'A', 2, 'both')",
+            Filter::near(name_is("A"), 2, NearDir::Both),
+            "@page and near(name = 'A', 2)",
+        ),
+        (
+            "@page and near(name = 'A', 0, 'out')",
+            Filter::near(name_is("A"), 0, NearDir::Out),
+            "@page and near(name = 'A', 0, 'out')",
+        ),
+        (
+            "@page and near(name = 'A', 3, 'IN')",
+            Filter::near(name_is("A"), 3, NearDir::In),
+            "@page and near(name = 'A', 3, 'in')",
+        ),
+        (
+            "@page and near(name in ('A', 'B'), 2, 'out')",
+            Filter::near(
+                Filter::attr(
+                    Attr::Name,
+                    CmpOp::In,
+                    Value::List {
+                        items: vec![Value::text("A"), Value::text("B")],
+                    },
+                ),
+                2,
+                NearDir::Out,
+            ),
+            "@page and near(name in ('A', 'B'), 2, 'out')",
+        ),
+        (
+            "@page and near(name = 'A' or name = 'B', 1) and not name = 'C'",
+            Filter::and(vec![
+                Filter::near(
+                    Filter::or(vec![name_is("A"), name_is("B")]),
+                    1,
+                    NearDir::Both,
+                ),
+                Filter::not(name_is("C")),
+            ]),
+            "@page and near(name = 'A' or name = 'B', 1) and not name = 'C'",
+        ),
+    ];
+    for (source, filter, printed) in cases {
+        let query = parse(source);
+        assert!(!query.is_invalid(), "{source}: {:?}", query.diagnostics);
+        assert_eq!(&query.filter, filter, "{source}");
+        let text = crate::query::print::print_tql(&query);
+        assert_eq!(text, *printed, "{source}");
+        // The printed form reads back as the same query.
+        assert_eq!(&parse(&text).filter, filter, "{text}");
+    }
+}
+
+#[test]
+fn links_near_malformed_calls_are_diagnostics_not_other_searches() {
+    for source in [
+        "@page and near(name = 'A')",
+        "@page and near(name = 'A', -1)",
+        "@page and near(name = 'A', 1.5)",
+        "@page and near(name = 'A', '2')",
+        "@page and near(name = 'A', 2, 'sideways')",
+        "@page and near(name = 'A', 2, out)",
+        "@page and near(name = 'A', 2, 'out', 'in')",
+        "@page and near(name = 'A', through => journal = false, 2)",
+        "@page and near(name = 'A', 2, via => journal = false)",
+        "@page and near(name = 'A', 2, through => journal = false, through => journal = true)",
+        "@page and near(name = 'A', k => 2)",
+        "@page and near(task = 'TODO', 1)",
+        "@page and near(name = 'A', 1, through => task = 'TODO')",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(!diagnostics.is_empty(), "{source}");
+    }
+    // Hub control is deferred (D-20261018-T1): a fourth argument, and any
+    // named argument such as the prototype's `through => …`, is refused with a
+    // message that says the slot is reserved, never read as another search.
+    for source in [
+        "@page and near(name = 'A', 2, 'out', 'in')",
+        "@page and near(name = 'A', 2, 'out', journal = false)",
+        "@page and near(name = 'A', 2, through => journal = false)",
+        "@page and near(name = 'A', 2, 'both', through => journal = false)",
+        "@page and near(name = 'A', through => journal = false, 2)",
+        "@page and near(name = 'A', 2, via => journal = false)",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.kind == DiagnosticKind::Syntax && d.message.contains("reserved")),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // At @block, `near` is a page condition: kept, reported, never false.
+    let block = parse("near(name = 'A', 1)");
+    assert!(block.is_invalid());
+    assert!(block
+        .diagnostics
+        .iter()
+        .any(|d| d.kind == DiagnosticKind::NotApplicable));
+    assert!(matches!(block.filter, Filter::Raw { .. }));
+}
+
+#[test]
+fn links_near_seed_names_are_the_rename_literals() {
+    let source = "@page and near(name in ('Alpha', 'Beta'), 2, 'out') and not name = 'Gamma' and any(links, name = 'Delta')";
+    let found: Vec<String> = page_name_literals(source)
+        .into_iter()
+        .map(|(range, name)| {
+            assert_eq!(&source[range.clone()], format!("'{name}'"));
+            name
+        })
+        .collect();
+    assert_eq!(found, ["Alpha", "Beta", "Gamma", "Delta"]);
+    // A disabled row is not active, so it is not rewritten.
+    assert!(
+        page_name_literals("@page and near(name = 'A', 1)\n-- and near(name = 'B', 1)")
+            .iter()
+            .all(|(_, name)| name == "A")
+    );
+}
+
+#[test]
+fn links_near_inside_off_and_omission() {
+    use crate::query::ir::NearDir;
+    let query = parse("@page and near(name = 'A' or off(journal = false), 1)");
+    assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+    // A disabled seed alternative is left out; disabled seeds remove the leaf.
+    assert_eq!(
+        query.evaluable_filter(),
+        Filter::near(
+            Filter::Or {
+                items: vec![name_is("A")]
+            },
+            1,
+            NearDir::Both
+        )
+    );
+    let query = parse("@page and journal = false and near(off(name = 'A'), 1)");
+    assert_eq!(
+        query.evaluable_filter(),
+        Filter::And {
+            items: vec![journal_is(false)]
+        }
+    );
+}
+
+/// Review r1: the SQL grammar accepts `FILTER`, `OVER`, `WITHIN GROUP` and
+/// the other function modifiers on any call. The query language gives them no
+/// meaning, so every function refuses them as a syntax error instead of
+/// dropping them and running the bare call.
+#[test]
+fn every_function_refuses_sql_function_modifiers() {
+    let calls = [
+        "near(name = 'a', 2)",
+        "near(name = 'a', 2, 'both')",
+        "any(links, name = 'b')",
+        "every(linked_by, journal = false)",
+        "none(blocks, task = 'TODO')",
+        "ref('a')",
+        "page_tag('a')",
+        "off(name = 'a')",
+        "any(prop('k'), value = 'v')",
+    ];
+    for call in calls {
+        for modifier in [
+            " FILTER (WHERE false)",
+            " FILTER (WHERE name = 'x')",
+            " OVER ()",
+            " OVER (PARTITION BY name)",
+            " WITHIN GROUP (ORDER BY name)",
+        ] {
+            let source = format!("@page and {call}{modifier}");
+            let diagnostics = rejected(&source);
+            assert!(
+                diagnostics.iter().any(|d| d.kind == DiagnosticKind::Syntax
+                    && d.message.contains("no SQL function modifiers")),
+                "{source}: {diagnostics:?}"
+            );
+        }
+    }
+    // Modifiers inside the argument list, and a function in a comparison
+    // target or a quantifier's range, are refused the same way.
+    for source in [
+        "@page and ref(DISTINCT 'a')",
+        "@page and ref(ALL 'a')",
+        "@page and any(links, name = 'b' ORDER BY name)",
+        "@page and near(name = 'a', 2 LIMIT 1)",
+        "@page and prop('k') FILTER (WHERE false) = 'v'",
+        "@page and prop('k') OVER () = 'v'",
+        "@page and any(prop('k') FILTER (WHERE false), value = 'v')",
+        "@page and any(prop('k') OVER (), value = 'v')",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(
+            diagnostics.iter().any(|d| d.kind == DiagnosticKind::Syntax),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // Named and wildcard arguments: `near` reserves its slot (above); every
+    // other function takes positional arguments only.
+    for source in [
+        "@page and ref(page => 'a')",
+        "@page and any(links, name = 'b', through => journal = false)",
+        "@page and prop(key => 'k') = 'v'",
+        "@page and ref(*)",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(
+            diagnostics.iter().any(|d| d.kind == DiagnosticKind::Syntax),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // The bare calls still parse.
+    for call in calls {
+        ok(&format!("@page and {call}"));
+    }
+}

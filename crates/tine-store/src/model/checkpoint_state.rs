@@ -287,6 +287,7 @@ impl Graph {
             real_page_names: state.real_page_names,
             aliases: cell(derived.aliases.map(Arc::new)),
             alias_edges: std::sync::OnceLock::new(),
+            link_graph: std::sync::OnceLock::new(),
             alias_owner_paths_by_key: cell(
                 derived
                     .alias_owner_paths_by_key

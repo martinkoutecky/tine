@@ -32,7 +32,9 @@ use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Token, Tokenizer};
 
 mod boolean;
+mod calls;
 mod prepass;
+use calls::*;
 use prepass::*;
 
 use crate::query::ir::{
@@ -742,6 +744,12 @@ impl Lower<'_> {
             }
             Expr::Function(function) => {
                 let name = function_name(function);
+                if let Some(message) = function_modifier(function, &name)
+                    .or_else(|| non_positional_argument(function, &name))
+                {
+                    self.reject(DiagnosticKind::Syntax, message);
+                    return None;
+                }
                 let args = function_args(function);
                 match (name.as_str(), args.len()) {
                     ("prop", 1) => self.string_arg(args[0]).map(|key| Target::Prop {
@@ -944,6 +952,15 @@ impl Lower<'_> {
 
     fn function(&mut self, function: &sqlparser::ast::Function, scope: Scope) -> Filter {
         let name = function_name(function);
+        if let Some(message) = function_modifier(function, &name) {
+            return self.reject(DiagnosticKind::Syntax, message);
+        }
+        if name == "near" {
+            return self.near(function, scope);
+        }
+        if let Some(message) = non_positional_argument(function, &name) {
+            return self.reject(DiagnosticKind::Syntax, message);
+        }
         let args = function_args(function);
         match (name.as_str(), args.len()) {
             ("ref", 1) => match self.string_arg(args[0]) {
@@ -1031,12 +1048,103 @@ impl Lower<'_> {
         }
     }
 
+    /// `near(<seeds>, <k> [, '<dir>'])` (`docs/contracts/tql-links-near.md`).
+    /// Positional arguments only; any other shape is a syntax diagnostic,
+    /// never a silently different search. A fourth argument, and any named
+    /// argument (the prototype's `through => …`), is reserved for hub control
+    /// (D-20261018-T1) and refused with a message that says so.
+    fn near(&mut self, function: &sqlparser::ast::Function, scope: Scope) -> Filter {
+        match scope {
+            Scope::Page => {}
+            Scope::Block => {
+                self.park_not_applicable("near", scope, Vec::new());
+                return Filter::False;
+            }
+            Scope::Atom => {
+                return self.reject(
+                    DiagnosticKind::Syntax,
+                    "`near` is a page condition, not a property value test",
+                )
+            }
+        }
+        const USAGE: &str =
+            "`near` takes seeds, a number of steps, and an optional 'out', 'in' or 'both'";
+        const RESERVED: &str = "`near` takes at most three arguments: seeds, a number of steps, and 'out', 'in' or 'both'; a fourth argument is reserved for a later version";
+        let FunctionArguments::List(list) = &function.args else {
+            return self.reject(DiagnosticKind::Syntax, USAGE);
+        };
+        if list.duplicate_treatment.is_some() || !list.clauses.is_empty() {
+            return self.reject(DiagnosticKind::Syntax, USAGE);
+        }
+        if list.args.len() > 3
+            || list.args.iter().any(|arg| {
+                matches!(
+                    arg,
+                    FunctionArg::Named { .. } | FunctionArg::ExprNamed { .. }
+                )
+            })
+        {
+            return self.reject(DiagnosticKind::Syntax, RESERVED);
+        }
+        let mut positional = Vec::new();
+        for arg in &list.args {
+            match arg {
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => positional.push(expr),
+                _ => return self.reject(DiagnosticKind::Syntax, USAGE),
+            }
+        }
+        if !(2..=3).contains(&positional.len()) {
+            return self.reject(DiagnosticKind::Syntax, USAGE);
+        }
+        let k = match positional[1] {
+            Expr::Value(value) => match &value.value {
+                SqlValue::Number(text, _) => text.parse::<u32>().ok(),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(k) = k else {
+            return self.reject(
+                DiagnosticKind::Syntax,
+                format!(
+                    "`near` takes a whole number of steps, not `{}`",
+                    positional[1]
+                ),
+            );
+        };
+        let dir = match positional.get(2) {
+            None => crate::query::ir::NearDir::Both,
+            Some(Expr::Value(value)) => match &value.value {
+                SqlValue::SingleQuotedString(text) => {
+                    match crate::query::ir::NearDir::from_tql_name(text) {
+                        Some(dir) => dir,
+                        None => {
+                            return self.reject(
+                                DiagnosticKind::Syntax,
+                                format!("`near` goes 'out', 'in' or 'both', not '{text}'"),
+                            )
+                        }
+                    }
+                }
+                _ => return self.reject(DiagnosticKind::Syntax, USAGE),
+            },
+            Some(_) => return self.reject(DiagnosticKind::Syntax, USAGE),
+        };
+        let seeds = self.filter(positional[0], Scope::Page);
+        Filter::near(seeds, k, dir)
+    }
+
     fn quantified(&mut self, quant: Quant, over: &Expr, pred: &Expr, scope: Scope) -> Filter {
         // `every(prop('k'), value op v)`: the collection is the atoms of one key
         // and the predicate is the atom test, conjoined with the key equality
         // that scopes it (§3.3).
         if let Expr::Function(function) = over {
             let name = function_name(function);
+            if let Some(message) = function_modifier(function, &name)
+                .or_else(|| non_positional_argument(function, &name))
+            {
+                return self.reject(DiagnosticKind::Syntax, message);
+            }
             let args = function_args(function);
             if matches!(name.as_str(), "prop" | "page_prop") && args.len() == 1 {
                 let Some(key) = self.string_arg(args[0]) else {
@@ -1082,9 +1190,23 @@ impl Lower<'_> {
                 let pred = self.filter(pred, Scope::Block);
                 Filter::rel(Rel::Blocks, quant, pred)
             }
+            // The link table's two directions (docs/contracts/tql-links-near.md):
+            // the element is a page row.
+            (name @ ("links" | "linked_by"), Scope::Page) => {
+                let pred = self.filter(pred, Scope::Page);
+                Filter::rel(
+                    if name == "links" {
+                        Rel::Links
+                    } else {
+                        Rel::LinkedBy
+                    },
+                    quant,
+                    pred,
+                )
+            }
             // The relation exists — on the other row (§7.4).
             (name @ ("children" | "parent" | "ancestors" | "descendants"), Scope::Page)
-            | (name @ "blocks", Scope::Block) => {
+            | (name @ ("blocks" | "links" | "linked_by"), Scope::Block) => {
                 self.park_not_applicable(name, scope, Vec::new());
                 Filter::False
             }
@@ -1353,30 +1475,6 @@ fn is_date_literal(text: &str) -> bool {
         Some(DateToken::Stem(_)) => text.len() == 10 && text.as_bytes()[4] == b'-',
         _ => false,
     }
-}
-
-fn function_name(function: &sqlparser::ast::Function) -> String {
-    function
-        .name
-        .0
-        .iter()
-        .filter_map(|part| part.as_ident())
-        .map(|ident| ident.value.to_ascii_lowercase())
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
-fn function_args(function: &sqlparser::ast::Function) -> Vec<&Expr> {
-    let FunctionArguments::List(list) = &function.args else {
-        return Vec::new();
-    };
-    list.args
-        .iter()
-        .filter_map(|arg| match arg {
-            FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => Some(expr),
-            _ => None,
-        })
-        .collect()
 }
 
 #[cfg(test)]

@@ -853,22 +853,47 @@ pub fn occurrence_constructions() -> usize {
     OCCURRENCE_CONSTRUCTIONS.with(std::cell::Cell::get)
 }
 
+/// What an explicit reference reaches: page keys (its own and its namespace
+/// prefixes), or, for an enabled property-key page, every page one of whose
+/// names folds to the same property key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceTarget<'a> {
+    /// A normalized page key (`refs::page_key`).
+    PageKey(&'a str),
+    /// A property-key fold (`doc::property_key_norm`) of a page name.
+    PropertyKey(&'a str),
+}
+
+/// Visit every target `reference` reaches until `visit` returns true; returns
+/// whether it did. The ONE rule behind the Linked References panel's match
+/// test and the `links` / `linked_by` link table (I-12).
+pub fn visit_reference_targets(
+    reference: &ProjectedPageRef,
+    config: &crate::config::Config,
+    mut visit: impl FnMut(ReferenceTarget<'_>) -> bool,
+) -> bool {
+    if reference.rule == "explicit_property_key" {
+        return config.property_page_key_enabled(&reference.name)
+            && visit(ReferenceTarget::PropertyKey(
+                &crate::doc::property_key_norm(&reference.name),
+            ));
+    }
+    let key = refs::page_key(&reference.name);
+    let found = refs::namespace_refs(&key).any(|key| visit(ReferenceTarget::PageKey(key)));
+    found
+}
+
 fn projected_reference_matches(
     reference: &ProjectedPageRef,
     names_norm: &[String],
     config: &crate::config::Config,
 ) -> bool {
-    if reference.rule == "explicit_property_key" {
-        return config.property_page_key_enabled(&reference.name)
-            && names_norm.iter().any(|name| {
-                crate::doc::property_key_norm(name)
-                    == crate::doc::property_key_norm(&reference.name)
-            });
-    }
-    let key = refs::page_key(&reference.name);
-    let matched =
-        refs::namespace_refs(&key).any(|reference| names_norm.iter().any(|name| name == reference));
-    matched
+    visit_reference_targets(reference, config, |target| match target {
+        ReferenceTarget::PropertyKey(folded) => names_norm
+            .iter()
+            .any(|name| crate::doc::property_key_norm(name) == folded),
+        ReferenceTarget::PageKey(key) => names_norm.iter().any(|name| name == key),
+    })
 }
 
 /// The page names of one query, with the plain-text matcher's per-name folding

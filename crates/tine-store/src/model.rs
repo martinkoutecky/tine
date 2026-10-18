@@ -449,6 +449,10 @@ pub(crate) struct ReadSnapshot {
     aliases: std::sync::OnceLock<Arc<Vec<(String, String, String)>>>,
     /// The alias relation indexed for component walks; derived from `aliases`.
     alias_edges: std::sync::OnceLock<Arc<crate::query::AliasEdges>>,
+    /// TQL's link table (`links`, `linked_by`, `near`), built on the first
+    /// query that reads it; in memory only, never carried across a generation
+    /// (an edit anywhere can move any link).
+    link_graph: std::sync::OnceLock<Arc<crate::query::link_graph::LinkGraph>>,
     /// Alias owner paths keyed by `page_key(alias)`, in `aliases` order.
     alias_owner_paths_by_key: std::sync::OnceLock<Arc<HashMap<String, Vec<String>>>>,
     referenced_names: std::sync::OnceLock<Vec<String>>,
@@ -739,6 +743,7 @@ impl ReadSnapshot {
             real_page_names,
             aliases: std::sync::OnceLock::new(),
             alias_edges: std::sync::OnceLock::new(),
+            link_graph: std::sync::OnceLock::new(),
             alias_owner_paths_by_key: std::sync::OnceLock::new(),
             referenced_names: std::sync::OnceLock::new(),
             block_ref_counts: std::sync::OnceLock::new(),
@@ -982,6 +987,9 @@ impl ReadSnapshot {
         }
     }
 
+    /// The scoped query memo's answer for `key` (the test-oracle bridges;
+    /// production `query_ir` goes through [`Self::query_answer_cancellable`]).
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn query_answer(
         &self,
         key: String,
@@ -993,6 +1001,25 @@ impl ReadSnapshot {
     ) -> crate::query::memo::Answer {
         let parse_config = tine_core::query::atom::ParseConfig::from_config(&self.config);
         self.memos.query.answer(key, today, &parse_config, compute)
+    }
+
+    /// [`Self::query_answer`] for a run that may be cancelled (`None`): a
+    /// cancelled run is never served from the memo and never stored into it
+    /// (`QueryMemo::answer_cancellable`).
+    pub(crate) fn query_answer_cancellable(
+        &self,
+        key: String,
+        today: tine_core::date::JournalDate,
+        cancelled: &dyn Fn() -> bool,
+        compute: impl FnOnce() -> Option<(
+            crate::query::memo::Answer,
+            Option<Arc<crate::query::exec::Plan>>,
+        )>,
+    ) -> Option<crate::query::memo::Answer> {
+        let parse_config = tine_core::query::atom::ParseConfig::from_config(&self.config);
+        self.memos
+            .query
+            .answer_cancellable(key, today, &parse_config, cancelled, compute)
     }
 
     pub(crate) fn backlinks_bounded(
@@ -1181,6 +1208,19 @@ impl ReadSnapshot {
             self.alias_edges
                 .get_or_init(|| Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))),
         )
+    }
+    /// The snapshot's link table, built on first use; `None` when `cancelled`
+    /// stopped the build (nothing is kept, the next caller builds afresh).
+    /// Two concurrent first callers may both build; the first stored wins.
+    pub(crate) fn link_graph(
+        &self,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<Arc<crate::query::link_graph::LinkGraph>> {
+        if let Some(table) = self.link_graph.get() {
+            return Some(Arc::clone(table));
+        }
+        let table = Arc::new(crate::query::link_graph::LinkGraph::build(self, cancelled)?);
+        Some(Arc::clone(self.link_graph.get_or_init(|| table)))
     }
     pub(crate) fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         self.aliases

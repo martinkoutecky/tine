@@ -135,6 +135,23 @@ fn every_filter_variant() -> Filter {
             Quant::Every,
             Filter::attr(Attr::Content, CmpOp::Eq, Value::text("x")),
         ),
+        // TQL link conditions (docs/contracts/tql-links-near.md).
+        Filter::rel(
+            Rel::Links,
+            Quant::Any,
+            Filter::attr(Attr::Name, CmpOp::Eq, Value::text("alpha")),
+        ),
+        Filter::rel(Rel::LinkedBy, Quant::None, Filter::True),
+        Filter::near(
+            Filter::attr(Attr::Name, CmpOp::Eq, Value::text("seed")),
+            2,
+            crate::query::ir::NearDir::Out,
+        ),
+        Filter::near(
+            Filter::attr(Attr::Name, CmpOp::Eq, Value::text("seed")),
+            1,
+            crate::query::ir::NearDir::Both,
+        ),
         Filter::attr(
             Attr::CreatedAt,
             CmpOp::Between,

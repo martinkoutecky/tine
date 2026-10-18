@@ -57,11 +57,15 @@ fn rows(graph: &WholeGraph, q: &str, props: &[(&str, &str)]) -> Vec<String> {
         .collect();
     let parsed = parse_query_pair(q, QueryTextDialect::MacroQuery, &props, Registry::none());
     let IrAnswer::Result(result) = graph
-        .query_ir(IrRequest::Run {
-            query: &parsed.query,
-            view: &parsed.view,
-            context: &ExecutionContext::default(),
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &parsed.query,
+                view: &parsed.view,
+                context: &ExecutionContext::default(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .unwrap()
     else {
         panic!("query_ir(Run) returns a result");
