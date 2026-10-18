@@ -1593,7 +1593,7 @@ mod customize_look_guide_tests {
             "logseq/custom.css",
             "**Edit global CSS**",
             "per-user config directory",
-            "**Reload from disk**",
+            "**Reload**",
             "**Ctrl+K**",
             "Settings",
             "**Edit custom.css**",
@@ -1918,7 +1918,7 @@ mod og_20d_guide_tests {
         let files = include_str!("templates/files-external-edits-backups.md");
         for control in [
             "**Always ask before applying an external change**",
-            "**Reload from disk** / **Keep mine**",
+            "**Keep mine** / **Use disk version**",
             "Returning to Tine asks the watcher for a fresh pass",
             "grouped into one external revision",
             "`.git/`",
