@@ -14,9 +14,9 @@
 //! `TINE_QUICK_SHARE=1` environment variable at launch.
 
 pub(crate) mod github;
-pub(crate) mod records;
 #[cfg(test)]
-mod tests;
+mod quick_share_tests;
+pub(crate) mod records;
 
 use github::{Endpoints, GhError, GitHub, ListedGist, TokenPoll};
 use records::{Account, Records, ShareRow, ShareState};
@@ -72,7 +72,10 @@ impl std::fmt::Display for Token {
 /// Fixed, secret-free log lines: an operation and an outcome.
 fn log(line: impl AsRef<str>) {
     #[cfg(test)]
-    tests::LOG.lock().unwrap().push(line.as_ref().to_owned());
+    quick_share_tests::LOG
+        .lock()
+        .unwrap()
+        .push(line.as_ref().to_owned());
     crate::debug::diag_private("quick-share", line);
 }
 
@@ -128,8 +131,8 @@ impl From<GhError> for QsError {
             GhError::RateLimited { minutes } => QsError::RateLimited { minutes },
             GhError::Forbidden(message) => QsError::GitHub { message },
             GhError::NotFound => QsError::NotFound,
-            GhError::Refused(status) => QsError::GitHub {
-                message: format!("GitHub refused the request ({status})"),
+            GhError::Refused(code) => QsError::GitHub {
+                message: format!("GitHub refused the request ({code})"),
             },
             GhError::Unknown | GhError::Server(_) | GhError::BadAnswer => QsError::Unavailable,
         }
@@ -460,13 +463,13 @@ impl Service {
                 }
                 Ok(TokenPoll::Token(token)) => token,
             };
-            self.finish(generation, token).await;
+            self.finish_connect(generation, token).await;
             return;
         }
     }
 
     /// A token arrived: check it, then store it only for a current attempt.
-    async fn finish(&self, generation: u64, token: Token) {
+    async fn finish_connect(&self, generation: u64, token: Token) {
         if !self.current(generation) {
             log("device flow: token for an invalidated attempt dropped");
             return;
@@ -571,7 +574,7 @@ impl Service {
 
     // ---- prepare / create (DESIGN §3.2, §3.5) ----
 
-    pub(crate) fn prepare(
+    pub(crate) fn prepare_share(
         &self,
         store: &tine_store::Store,
         request: &QueryExportRequest,
@@ -604,26 +607,28 @@ impl Service {
     }
 
     /// Take a prepared payload out, so it can be used at most once.
-    fn consume(&self, prepare_id: &str) -> Option<Prepared> {
+    fn take_prepared(&self, prepare_id: &str) -> Option<Prepared> {
         let mut all = self.prepared.lock().unwrap_or_else(|p| p.into_inner());
         let index = all.iter().position(|p| p.id == prepare_id)?;
         let prepared = all.remove(index);
         (prepared.expires > Instant::now()).then_some(prepared)
     }
 
-    pub(crate) fn discard(&self, prepare_id: &str) {
-        drop(self.consume(prepare_id));
+    pub(crate) fn discard_prepared(&self, prepare_id: &str) {
+        drop(self.take_prepared(prepare_id));
     }
 
     /// Encrypt and upload exactly the prepared bytes, once. `copy` receives
     /// the link (the clipboard in the app).
-    pub(crate) async fn create(
+    pub(crate) async fn create_share(
         &self,
         prepare_id: &str,
         copy: impl FnOnce(&str) -> bool,
     ) -> Result<Created, QsError> {
         // Consumed before anything else: a second call with this id fails.
-        let prepared = self.consume(prepare_id).ok_or(QsError::PreviewExpired)?;
+        let prepared = self
+            .take_prepared(prepare_id)
+            .ok_or(QsError::PreviewExpired)?;
         let account = self.connected()?;
         let sealed = share::seal_fresh(&prepared.payload).map_err(|_| QsError::Refused {
             message: "the system random source failed".into(),
@@ -699,7 +704,7 @@ impl Service {
 
     // ---- records, check, find, delete, forget (DESIGN §3.6) ----
 
-    pub(crate) fn list(&self) -> Listing {
+    pub(crate) fn listing(&self) -> Listing {
         let account = self.records.account();
         let (shares, error) = match self.records.shares() {
             Ok(rows) => (rows, None),
@@ -750,7 +755,7 @@ impl Service {
         Ok((account, row))
     }
 
-    pub(crate) async fn check(&self, share_id: &str) -> Result<CheckOutcome, QsError> {
+    pub(crate) async fn check_share(&self, share_id: &str) -> Result<CheckOutcome, QsError> {
         let (account, row) = self.owned_row(share_id)?;
         if row.state == ShareState::Live {
             return Ok(CheckOutcome::Live);
@@ -780,7 +785,7 @@ impl Service {
                 else {
                     continue;
                 };
-                let envelope = match self.github.raw(raw_url).await {
+                let envelope = match self.github.raw_envelope(raw_url).await {
                     Ok(text) => text,
                     Err(GhError::NotFound) => continue,
                     Err(error) => return Err(error.into()),
@@ -814,7 +819,7 @@ impl Service {
         Ok(CheckOutcome::NotFoundYet)
     }
 
-    pub(crate) async fn find(&self) -> Result<Vec<FoundShare>, QsError> {
+    pub(crate) async fn find_shares(&self) -> Result<Vec<FoundShare>, QsError> {
         let account = self.connected()?;
         let known: std::collections::BTreeSet<String> = self
             .records
@@ -976,7 +981,7 @@ pub(crate) async fn quick_share_prepare(
     tauri::async_runtime::spawn_blocking(move || {
         std::fs::create_dir_all(&scratch)
             .map_err(|_| records_error("Tine could not create its cache folder".into()))?;
-        service.prepare(&slot.store, &request, &scratch)
+        service.prepare_share(&slot.store, &request, &scratch)
     })
     .await
     .map_err(|_| QsError::Unavailable)?
@@ -989,10 +994,10 @@ pub(crate) async fn quick_share_create(
 ) -> Result<Created, QsError> {
     let service = service(&app)?;
     if !enabled() {
-        service.discard(&prepare_id);
+        service.discard_prepared(&prepare_id);
         return Err(QsError::Disabled);
     }
-    service.create(&prepare_id, clipboard(&app)).await
+    service.create_share(&prepare_id, clipboard(&app)).await
 }
 
 #[tauri::command]
@@ -1000,14 +1005,14 @@ pub(crate) fn quick_share_discard(
     prepare_id: String,
     app: tauri::AppHandle,
 ) -> Result<(), QsError> {
-    service(&app)?.discard(&prepare_id);
+    service(&app)?.discard_prepared(&prepare_id);
     Ok(())
 }
 
 #[tauri::command]
 pub(crate) async fn quick_share_list(app: tauri::AppHandle) -> Result<Listing, QsError> {
     let service = service(&app)?;
-    tauri::async_runtime::spawn_blocking(move || service.list())
+    tauri::async_runtime::spawn_blocking(move || service.listing())
         .await
         .map_err(|_| QsError::Unavailable)
 }
@@ -1018,13 +1023,13 @@ pub(crate) async fn quick_share_check(
     app: tauri::AppHandle,
 ) -> Result<CheckOutcome, QsError> {
     gate()?;
-    service(&app)?.check(&share_id).await
+    service(&app)?.check_share(&share_id).await
 }
 
 #[tauri::command]
 pub(crate) async fn quick_share_find(app: tauri::AppHandle) -> Result<Vec<FoundShare>, QsError> {
     gate()?;
-    service(&app)?.find().await
+    service(&app)?.find_shares().await
 }
 
 #[tauri::command]

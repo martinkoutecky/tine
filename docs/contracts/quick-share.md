@@ -147,7 +147,7 @@ journal, a Unicode name, an empty page, a private page left out) and `one-page`.
 ## Writer side: GitHub, device records, commands (phase 2)
 
 Code: `src-tauri/src/quick_share/` (`github.rs` transport, `records.rs`,
-`mod.rs` service and commands, `tests.rs` against a local mock GitHub). UI:
+`mod.rs` service and commands, `quick_share_tests.rs` against a local mock GitHub). UI:
 `src/components/QuickShareDialog.tsx`, `src/components/QuickShareSettings.tsx`
 (Settings → Sharing), types in `src/quickShare/commands.ts`.
 

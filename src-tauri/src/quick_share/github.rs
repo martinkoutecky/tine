@@ -342,7 +342,11 @@ impl GitHub {
         Ok(Self { endpoints, client })
     }
 
-    async fn send(&self, request: reqwest::RequestBuilder, max: usize) -> Result<Answer, GhError> {
+    async fn exchange(
+        &self,
+        request: reqwest::RequestBuilder,
+        max: usize,
+    ) -> Result<Answer, GhError> {
         let response = request
             .send()
             .await
@@ -414,7 +418,7 @@ impl GitHub {
     /// `POST /login/device/code` with the gist scope.
     pub(crate) async fn device_code(&self) -> Result<DeviceCode, GhError> {
         let answer = self
-            .send(
+            .exchange(
                 self.oauth(
                     "/login/device/code",
                     &[("client_id", CLIENT_ID), ("scope", "gist")],
@@ -438,7 +442,7 @@ impl GitHub {
             error: Option<String>,
         }
         let answer = self
-            .send(
+            .exchange(
                 self.oauth(
                     "/login/oauth/access_token",
                     &[
@@ -476,7 +480,7 @@ impl GitHub {
             id: u64,
         }
         let answer = Self::check(
-            self.send(
+            self.exchange(
                 self.api(reqwest::Method::GET, "/user", token),
                 MAX_API_BYTES,
             )
@@ -531,7 +535,7 @@ impl GitHub {
             .api(reqwest::Method::POST, "/gists", token)
             .header("Content-Type", "application/json")
             .body(serde_json::to_vec(&body).map_err(|_| GhError::NotSent)?);
-        let answer = Self::check(self.send(request, MAX_API_BYTES).await?, &[201], token)?;
+        let answer = Self::check(self.exchange(request, MAX_API_BYTES).await?, &[201], token)?;
         #[derive(Deserialize)]
         struct Created {
             id: String,
@@ -558,7 +562,7 @@ impl GitHub {
             return Err(GhError::BadAnswer);
         }
         let answer = Self::check(
-            self.send(
+            self.exchange(
                 self.api_url(reqwest::Method::GET, url, token),
                 MAX_API_BYTES,
             )
@@ -580,7 +584,7 @@ impl GitHub {
             return Err(GhError::NotFound);
         }
         let answer = Self::check(
-            self.send(
+            self.exchange(
                 self.api(reqwest::Method::GET, &format!("/gists/{id}"), token),
                 MAX_API_BYTES,
             )
@@ -594,11 +598,11 @@ impl GitHub {
 
     /// A bounded read of a raw gist file, only from the raw origin and without
     /// credentials (raw files of a secret gist are readable by URL).
-    pub(crate) async fn raw(&self, url: &str) -> Result<String, GhError> {
+    pub(crate) async fn raw_envelope(&self, url: &str) -> Result<String, GhError> {
         if !url.starts_with(&format!("{}/", self.endpoints.raw)) {
             return Err(GhError::BadAnswer);
         }
-        let answer = self.send(self.client.get(url), MAX_RAW_BYTES).await?;
+        let answer = self.exchange(self.client.get(url), MAX_RAW_BYTES).await?;
         match answer.status {
             200 => String::from_utf8(answer.body).map_err(|_| GhError::BadAnswer),
             404 => Err(GhError::NotFound),
@@ -614,7 +618,7 @@ impl GitHub {
             return Err(GhError::NotFound);
         }
         Self::check(
-            self.send(
+            self.exchange(
                 self.api(reqwest::Method::DELETE, &format!("/gists/{id}"), token),
                 MAX_API_BYTES,
             )

@@ -340,7 +340,7 @@ fn device_flow_connects_and_slow_down_adds_five_seconds() {
     );
     assert_eq!(account.token.expose(), TOKEN);
     assert_no_secret(&format!("{account:?}"));
-    assert_no_secret(&serde_json::to_string(&f.service.list()).unwrap());
+    assert_no_secret(&serde_json::to_string(&f.service.listing()).unwrap());
     assert_no_secret(&serde_json::to_string(&status).unwrap());
     assert_log_clean();
 }
@@ -511,7 +511,7 @@ fn disconnect_invalidates_a_sign_in_and_removes_the_account() {
             reason: "superseded".into()
         }
     );
-    assert!(f.service.list().account.is_none());
+    assert!(f.service.listing().account.is_none());
 }
 
 #[test]
@@ -664,7 +664,7 @@ fn create_uploads_the_prepared_bytes_once_and_the_row_goes_pending_then_live() {
     let bytes = payload();
     let id = f.prepared(&bytes);
     let mut link = String::new();
-    let created = block_on(f.service.create(&id, |l| {
+    let created = block_on(f.service.create_share(&id, |l| {
         link = l.to_owned();
         true
     }))
@@ -706,7 +706,7 @@ fn create_uploads_the_prepared_bytes_once_and_the_row_goes_pending_then_live() {
     );
     // At most once: the prepared id is consumed.
     assert_eq!(
-        block_on(f.service.create(&id, |_| true)).unwrap_err(),
+        block_on(f.service.create_share(&id, |_| true)).unwrap_err(),
         QsError::PreviewExpired
     );
     assert_eq!(mock.count("POST", "/gists"), 1);
@@ -719,7 +719,7 @@ fn create_uploads_the_prepared_bytes_once_and_the_row_goes_pending_then_live() {
         })
         .unwrap();
     assert_eq!(again, link);
-    let listing = serde_json::to_string(&f.service.list()).unwrap();
+    let listing = serde_json::to_string(&f.service.listing()).unwrap();
     assert!(!listing.contains(&share::b64u(&key)));
     assert_no_secret(&listing);
     assert!(LOG
@@ -750,7 +750,7 @@ fn create_failures_known_before_sending_remove_the_row() {
     f.connect();
     let id = f.prepared(&payload());
     assert_eq!(
-        block_on(f.service.create(&id, |_| true)).unwrap_err(),
+        block_on(f.service.create_share(&id, |_| true)).unwrap_err(),
         QsError::Network
     );
     assert!(f.rows().is_empty());
@@ -775,7 +775,7 @@ fn create_failures_after_sending_keep_the_row_pending_and_never_retry() {
         let id = f.prepared(&payload());
         let error = block_on(
             f.service
-                .create(&id, |_| panic!("no link for an unknown outcome")),
+                .create_share(&id, |_| panic!("no link for an unknown outcome")),
         )
         .unwrap_err();
         let rows = f.rows();
@@ -813,7 +813,7 @@ fn create_refusals_from_github_remove_the_row_with_the_mapped_error() {
         let f = fixture(mock.endpoints());
         f.connect();
         let id = f.prepared(&payload());
-        let error = block_on(f.service.create(&id, |_| true)).unwrap_err();
+        let error = block_on(f.service.create_share(&id, |_| true)).unwrap_err();
         assert_eq!(error, want);
         assert_no_secret(&serde_json::to_string(&error).unwrap());
         assert!(f.rows().is_empty(), "{want:?}");
@@ -833,7 +833,7 @@ fn create_needs_a_connected_account_and_readable_records() {
     let f = fixture(mock.endpoints());
     let id = f.prepared(&payload());
     assert_eq!(
-        block_on(f.service.create(&id, |_| true)).unwrap_err(),
+        block_on(f.service.create_share(&id, |_| true)).unwrap_err(),
         QsError::NotConnected
     );
     f.connect();
@@ -842,7 +842,7 @@ fn create_needs_a_connected_account_and_readable_records() {
     std::fs::write(f.dir.path().join(SHARES_FILE), b"{\"v\":1,\"shares\":[{tor").unwrap();
     let id = f.prepared(&payload());
     assert!(matches!(
-        block_on(f.service.create(&id, |_| true)).unwrap_err(),
+        block_on(f.service.create_share(&id, |_| true)).unwrap_err(),
         QsError::Records { .. }
     ));
     assert_eq!(
@@ -852,7 +852,7 @@ fn create_needs_a_connected_account_and_readable_records() {
     assert_eq!(mock.count("POST", "/gists"), 0);
     // A newer format is left alone too.
     std::fs::write(f.dir.path().join(SHARES_FILE), b"{\"v\":2,\"shares\":[]}").unwrap();
-    assert!(f.service.list().error.is_some());
+    assert!(f.service.listing().error.is_some());
     assert!(f.service.forget("x").is_err());
 }
 
@@ -862,15 +862,15 @@ fn an_expired_or_discarded_preview_does_not_upload() {
     let f = fixture(mock.endpoints());
     f.connect();
     let id = f.prepared(&payload());
-    f.service.discard(&id);
+    f.service.discard_prepared(&id);
     assert_eq!(
-        block_on(f.service.create(&id, |_| true)).unwrap_err(),
+        block_on(f.service.create_share(&id, |_| true)).unwrap_err(),
         QsError::PreviewExpired
     );
     let id = f.prepared(&payload());
     f.service.prepared.lock().unwrap()[0].expires = Instant::now() - Duration::from_secs(1);
     assert_eq!(
-        block_on(f.service.create(&id, |_| true)).unwrap_err(),
+        block_on(f.service.create_share(&id, |_| true)).unwrap_err(),
         QsError::PreviewExpired
     );
     assert_eq!(mock.count("POST", "/gists"), 0);
@@ -903,13 +903,13 @@ fn prepare_then_create_uploads_the_previewed_text_not_a_later_edit() {
         asset_budget_bytes: None,
         include_query_text: false,
     };
-    let prepared = f.service.prepare(&store, &request, &scratch).unwrap();
+    let prepared = f.service.prepare_share(&store, &request, &scratch).unwrap();
     assert_eq!(prepared.preview.pages.len(), 1);
     assert_eq!(std::fs::read_dir(&scratch).unwrap().count(), 0);
     // An edit after the preview is not in the share.
     std::fs::write(graph.join("pages/Project.md"), "- EDITED-LATER text\n").unwrap();
     let mut link = String::new();
-    let created = block_on(f.service.create(&prepared.prepare_id, |l| {
+    let created = block_on(f.service.create_share(&prepared.prepare_id, |l| {
         link = l.to_owned();
         true
     }))
@@ -944,7 +944,7 @@ fn pending_share(gists: &Arc<Mutex<Vec<serde_json::Value>>>) -> (Mock, Fixture, 
     f.connect();
     let id = f.prepared(&payload());
     let QsError::MaybeUploaded { share_id } =
-        block_on(f.service.create(&id, |_| true)).unwrap_err()
+        block_on(f.service.create_share(&id, |_| true)).unwrap_err()
     else {
         panic!("expected an unknown outcome");
     };
@@ -980,7 +980,7 @@ fn check_confirms_a_pending_share_by_share_id_and_key() {
     );
     let real = gists.lock().unwrap()[2]["id"].as_str().unwrap().to_owned();
     assert_eq!(
-        block_on(f.service.check(&share_id)).unwrap(),
+        block_on(f.service.check_share(&share_id)).unwrap(),
         CheckOutcome::Live
     );
     let rows = f.rows();
@@ -1035,7 +1035,7 @@ fn check_follows_pages_stops_a_day_before_and_leaves_absence_pending() {
         dir: tempfile::tempdir().unwrap(),
     };
     assert_eq!(
-        block_on(f2.service.check(&share_id)).unwrap(),
+        block_on(f2.service.check_share(&share_id)).unwrap(),
         CheckOutcome::Live
     );
     // Absence is not proof: an empty listing leaves the row pending.
@@ -1043,7 +1043,7 @@ fn check_follows_pages_stops_a_day_before_and_leaves_absence_pending() {
     let (mock, f, share_id) = pending_share(&gists);
     gists.lock().unwrap().clear();
     assert_eq!(
-        block_on(f.service.check(&share_id)).unwrap(),
+        block_on(f.service.check_share(&share_id)).unwrap(),
         CheckOutcome::NotFoundYet
     );
     assert_eq!(f.rows()[0].state, ShareState::Pending);
@@ -1069,7 +1069,7 @@ fn check_follows_pages_stops_a_day_before_and_leaves_absence_pending() {
         dir: tempfile::tempdir().unwrap(),
     };
     assert_eq!(
-        block_on(f3.service.check(&share_id)).unwrap(),
+        block_on(f3.service.check_share(&share_id)).unwrap(),
         CheckOutcome::NotFoundYet
     );
     assert_eq!(stop.requests().len(), 1);
@@ -1096,7 +1096,10 @@ fn check_and_delete_run_only_for_the_rows_account() {
     let wrong = QsError::WrongAccount {
         login: LOGIN.into(),
     };
-    assert_eq!(block_on(f.service.check(&share_id)).unwrap_err(), wrong);
+    assert_eq!(
+        block_on(f.service.check_share(&share_id)).unwrap_err(),
+        wrong
+    );
     assert_eq!(
         block_on(f.service.delete(Some(&share_id), None)).unwrap_err(),
         wrong
@@ -1106,7 +1109,7 @@ fn check_and_delete_run_only_for_the_rows_account() {
         before,
         "nothing was sent for another account's share"
     );
-    assert!(!f.service.list().shares[0].account_matches);
+    assert!(!f.service.listing().shares[0].account_matches);
 }
 
 #[test]
@@ -1115,8 +1118,8 @@ fn delete_removes_a_live_share_and_a_404_marks_it_gone() {
     let mock = gist_mock(Arc::clone(&gists), |_| resp(201, ""));
     let f = fixture(mock.endpoints());
     f.connect();
-    let created = block_on(f.service.create(&f.prepared(&payload()), |_| true)).unwrap();
-    let second = block_on(f.service.create(&f.prepared(&payload()), |_| true)).unwrap();
+    let created = block_on(f.service.create_share(&f.prepared(&payload()), |_| true)).unwrap();
+    let second = block_on(f.service.create_share(&f.prepared(&payload()), |_| true)).unwrap();
     assert_eq!(
         block_on(f.service.delete(Some(&created.share_id), None)).unwrap(),
         DeleteOutcome::Deleted
@@ -1143,7 +1146,7 @@ fn find_lists_unknown_tine_shares_and_deletes_only_marked_gists_of_this_account(
     let mock = gist_mock(Arc::clone(&gists), |_| resp(201, ""));
     let f = fixture(mock.endpoints());
     f.connect();
-    let known = block_on(f.service.create(&f.prepared(&payload()), |_| true)).unwrap();
+    let known = block_on(f.service.create_share(&f.prepared(&payload()), |_| true)).unwrap();
     let env = share::seal_fresh(b"x").unwrap().envelope;
     let base = mock.base.clone();
     let elsewhere = "1".repeat(32);
@@ -1162,7 +1165,7 @@ fn find_lists_unknown_tine_shares_and_deletes_only_marked_gists_of_this_account(
         described,
         foreign,
     ]);
-    let found: Vec<String> = block_on(f.service.find())
+    let found: Vec<String> = block_on(f.service.find_shares())
         .unwrap()
         .into_iter()
         .map(|s| s.gist_id)
@@ -1228,7 +1231,7 @@ fn rest_errors_map_to_their_sentences() {
         });
         let f = fixture(mock.endpoints());
         f.connect();
-        assert_eq!(block_on(f.service.find()).unwrap_err(), want);
+        assert_eq!(block_on(f.service.find_shares()).unwrap_err(), want);
     }
 }
 
@@ -1288,7 +1291,7 @@ fn records_are_written_owner_only_through_an_atomic_rename() {
         std::fs::Permissions::from_mode(0o644),
     )
     .unwrap();
-    block_on(f.service.create(&f.prepared(&payload()), |_| true)).unwrap();
+    block_on(f.service.create_share(&f.prepared(&payload()), |_| true)).unwrap();
     for name in [ACCOUNT_FILE, SHARES_FILE] {
         let mode = std::fs::metadata(f.dir.path().join(name))
             .unwrap()
