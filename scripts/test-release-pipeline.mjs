@@ -51,6 +51,7 @@ const printSecurity = fs.readFileSync(path.join(process.cwd(), "scripts/e2e-prin
 const referenceParity = fs.readFileSync(path.join(process.cwd(), "scripts/e2e-og-parity-references.mjs"), "utf8");
 const windowsScenarios = [
   "e2e-windows-smoke.mjs",
+  "e2e-windows-portable.mjs",
   "e2e-og-parity-references.mjs",
   "e2e-page-properties.mjs",
   "e2e-page-trailing-block.mjs",
@@ -307,6 +308,11 @@ assert.match(
   "candidate assembly accidentally waits for advisory Windows scenarios"
 );
 assert.match(releaseWorkflow, /name: Upload Windows E2E evidence[\s\S]*?if: always\(\)/);
+assert.match(
+  releaseWorkflow,
+  /name: Package portable Windows zip[\s\S]*?New-Item -ItemType Directory -Path \(Join-Path \$stage "tine-data"\)[\s\S]*?Copy-Item \$exe \$stage[\s\S]*?Compress-Archive -Path \(Join-Path \$stage "\*"\)/,
+  "GH #719: the portable ZIP must ship the tine-data folder beside the exe, which is what makes it portable",
+);
 
 // GH #650: Beta macOS builds were unsigned and Gatekeeper refused to open them.
 // The macOS lane is fail-closed Developer ID signing plus notarization, with the

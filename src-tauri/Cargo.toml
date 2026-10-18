@@ -90,7 +90,7 @@ signal-hook-registry = "=1.4.8"
 
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4.1"
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx", "Win32_UI_WindowsAndMessaging"] }
 # Windows uses Schannel through native-tls: the default rustls transport does
 # not inherit every Windows network/certificate policy and failed before
 # fetching latest.json on an otherwise-online Windows 11 system (GH #241).
