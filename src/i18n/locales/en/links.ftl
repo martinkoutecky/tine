@@ -38,3 +38,12 @@ references-expand-all = Expand all
 references-expand-group = Expand references from { $page }
 references-collapse-group = Collapse references from { $page }
 media-youtube-timestamp-seek = Seek the matching or last played YouTube video
+## GH #417: actions on one block reference or embed occurrence in its block
+ref-occurrence-actions = Embed actions
+ref-occurrence-edit = Edit link
+ref-occurrence-edit-title = Edit this link in the block that contains it
+ref-occurrence-remove = Remove
+ref-occurrence-remove-embed-title = Remove this embed from this block. The embedded page or block is not changed.
+ref-occurrence-remove-ref-title = Remove this reference from this block. The referenced block is not changed.
+ref-occurrence-remove-ref = Remove reference
+ref-occurrence-changed = This block changed after it was shown, so nothing was edited. Try again.

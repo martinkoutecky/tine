@@ -6864,6 +6864,7 @@ img.emoji {
 .peek-popup-title { display: flex; align-items: center; gap: 12px; }
 .peek-source-title { color: inherit; font: inherit; text-align: left; }
 .peek-open-source { margin-left: auto; color: var(--link-color); white-space: nowrap; }
+.peek-ref-edit, .peek-ref-remove { color: var(--link-color); white-space: nowrap; }
 .peek-page-actions { flex-shrink: 0; min-width: 36px; min-height: 36px; border-radius: 4px; }
 .peek-page-actions:hover, .peek-page-actions:focus-visible { background: var(--bg-tertiary); }
 .peek-page-properties { padding: 8px 16px; color: var(--text-secondary); }
@@ -7652,11 +7653,60 @@ img.emoji {
 }
 
 .embed-block {
+  position: relative;
   background: var(--tine-embed-bg, var(--bg-secondary));
   border-radius: 4px;
   border-left: 3px solid var(--border-color);
   padding-left: 12px;
   margin: 2px 0;
+}
+
+/* GH #417: Edit link / Open source / Remove for one embed, above its top-right
+   corner so the controls do not cover the embedded content (the reporter's ask;
+   the right sidebar is the exception below). Desktop: on hover
+   (a nested embed shows only its own). Touch has no hover: while a block inside
+   the embed is being edited. */
+.embed-actions {
+  display: none;
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  z-index: 3;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.embed-actions button {
+  padding: 1px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.embed-actions button:hover,
+.embed-actions button:focus-visible {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+/* In the right sidebar a card's header (with its ⋯ and ✕) sits directly above
+   the first block, so above-the-corner would cover ✕: sit inside the corner. */
+.right-sidebar .embed-actions { bottom: auto; top: 2px; right: 2px; }
+@media (hover: hover) {
+  .embed-block:hover > .embed-actions { display: flex; }
+  .embed-block:has(.embed-block:hover) > .embed-actions { display: none; }
+}
+@media (hover: none) {
+  .embed-block:focus-within > .embed-actions { display: flex; }
+  .embed-block:has(.embed-block:focus-within) > .embed-actions { display: none; }
+  .embed-actions button { padding: 6px 12px; }
 }
 
 /* Style knob "Embedded blocks" = accent line and dot only (src/styleKnobs.ts,

@@ -104,6 +104,12 @@
       "nonRequirements":["Exact pixels, graph-wide search seeding or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-ref-embed-actions.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"Hovering a block embed shows Edit link, Open source and Remove in the main pane, a split pane and the right sidebar; Edit link opens only that surface's editor for the containing block with the embed selected; Remove and a block reference's Remove reference change only the containing page's file and Undo restores it byte for byte; the referenced page's file never changes; Open source goes to the source page.","blocking":true}],
+      "acceptableVariations":["Toolbar styling and placement, menu order and save latency may vary while the saved bytes, the selected text and the routed page agree. Hover screenshots are best-effort evidence (WebKitWebDriver screenshot GETs can stall) and never decide the verdict."],
+      "nonRequirements":["Touch (focus-within) visibility and nested-embed precedence, which scripts/shot-embed-actions.mjs and component tests cover; Org graphs (E2E_FORMAT=org runs the same journey); native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-one-level-fold.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"Bound Collapse (one level) on a block whose children are all folded folds the block itself and saves it; bound Expand (one level) then opens only that block, leaving its folded child folded on disk.","blocking":true}],
       "acceptableVariations":["Selection styling, animation and save latency may vary while the saved collapsed properties and visible rows agree."],

@@ -77,6 +77,8 @@ export function PeekPopup(props: {
   properties?: [string, string][];
   format?: "md" | "org";
   truncatedCount?: () => number;
+  /** Extra title-row buttons, after Open source (GH #417: a reference's Edit link / Remove). */
+  actions?: JSX.Element;
   onPointerEnter: () => void;
   onPointerLeave: () => void;
   onDismiss: () => void;
@@ -183,6 +185,7 @@ export function PeekPopup(props: {
             <button type="button" class="peek-source-title" onClick={() => openSource()}>{props.title}</button>
             <Show when={props.page}>
               <button type="button" class="peek-open-source" aria-label={t("preview-open-source")} onClick={() => openSource(props.blockId)}>{t("preview-open-source")}</button>
+              {props.actions}
               <button type="button" class="peek-page-actions" aria-label={t("preview-page-actions")} aria-haspopup="menu"
                 onClick={(event) => {
                   const rect = event.currentTarget.getBoundingClientRect();

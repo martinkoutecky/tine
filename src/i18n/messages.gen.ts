@@ -1917,6 +1917,14 @@ export interface MessageArgs {
   "quick-switcher-searching": {};
   "quick-switcher-that-pane-is-no-longer-available-close-this": {};
   "quick-switcher-the-graph-changed-before-the-page-was-created": {};
+  "ref-occurrence-actions": {};
+  "ref-occurrence-changed": {};
+  "ref-occurrence-edit": {};
+  "ref-occurrence-edit-title": {};
+  "ref-occurrence-remove": {};
+  "ref-occurrence-remove-embed-title": {};
+  "ref-occurrence-remove-ref": {};
+  "ref-occurrence-remove-ref-title": {};
   "reference-evidence-jump-to-mention": { "index": string | number; "kind": string | number };
   "reference-evidence-mention-count": { "count": number };
   "reference-evidence-occurrence-label": { "index": string | number; "total": string | number };

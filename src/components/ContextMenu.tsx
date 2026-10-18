@@ -22,6 +22,7 @@ import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
 import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
+import { editOccurrence, removeOccurrence, type OwnedOccurrence } from "../refOccurrence";
 import { commentOnRenderedSelection, renderedSelectionIn } from "../commentActions";
 import { favoriteBlock } from "../favorites";
 import { t, msg, render as renderUiText, type UiText, type Msg } from "../i18n";
@@ -184,6 +185,7 @@ export function ContextMenu(): JSX.Element {
                   page={(m() as { page: string }).page}
                   pageKind={(m() as { pageKind: "journal" | "page" }).pageKind}
                   path={(m() as { path?: string }).path}
+                  occurrence={(m() as { occurrence?: OwnedOccurrence }).occurrence}
                   close={close}
                 />
               </Match>
@@ -653,17 +655,20 @@ function SheetMenu(props: {
 
 
 
-// Right-click menu for an INLINE block ref `((uuid))` — acts on the referenced
-// (target) block: open it in the sidebar, jump to it, or copy a ref/embed. (OG's
-// menu also has delete/replace, which edit the containing block's text — those are
-// just a normal edit of the block here, so they're left off this menu.)
+// Right-click (touch: long-press) menu for an INLINE block ref `((uuid))`. Most
+// items act on the referenced (target) block: open it in the sidebar, jump to it,
+// or copy a ref/embed. Edit link and Remove reference act on this one occurrence
+// in the containing block (GH #417; OG `delete-current-ref!`). OG's "Replace with
+// text / embed" are not offered.
 function BlockRefMenu(props: {
   uuid: string;
   page: string;
   pageKind: "journal" | "page";
   path?: string;
+  occurrence?: OwnedOccurrence;
   close: () => void;
 }): JSX.Element {
+  const o = props.occurrence;
   const items = [
     {
       label: msg("context-menu-ui-open-in-sidebar"),
@@ -679,6 +684,10 @@ function BlockRefMenu(props: {
       label: msg("context-menu-ui-copy-block-embed"),
       run: () => reportCopy(writeClipboardText(`{{embed ((${props.uuid}))}}`), msg("context-menu-ui-copied-block-embed")),
     },
+    ...(o ? [
+      { label: msg("ref-occurrence-edit"), run: () => void editOccurrence(o, o.owner) },
+      { label: msg("ref-occurrence-remove-ref"), run: () => void removeOccurrence(o) },
+    ] : []),
   ];
   return (
     <For each={items}>

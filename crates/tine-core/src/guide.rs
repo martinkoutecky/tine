@@ -378,6 +378,11 @@ mod journal_guide_tests {
             "keeps your current tab active and confirms **Opened in a new tab**",
             "Phones and tablets have no tab strip, so their menus omit **Open in new tab**",
             "Block embed breadcrumbs",
+            // GH #417/#418: per-occurrence actions on references and embeds.
+            "**Edit link** and **Remove reference**",
+            "Hover an embed to show **Edit link**, **Open source** and **Remove**",
+            "never the embedded page or block, and **Undo** brings it back",
+            "the same buttons appear while you edit a block inside the embed",
         ] {
             assert!(
                 previews.contains(detail),
