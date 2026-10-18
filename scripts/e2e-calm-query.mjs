@@ -277,11 +277,14 @@ await session(1, async browser => {
   await browser.execute(() => [...document.querySelectorAll(".export-foot button")].find(button => button.textContent === "Close")?.click());
   phase = "frozen Search selection skips a changed positional source";
   await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Select results")?.click());
-  const selectedLocator = await browser.$(".query-workspace .query-result-row").getAttribute("data-inpage-find-surface");
+  // Open in Search now carries the block's own view (List by default, GH #619 Q2), so the result surface is
+  // whichever view-owned element carries the locator (a List button, a Search row, a table row or a board card).
+  const surface = ".query-workspace [data-inpage-find-surface]";
+  const selectedLocator = await browser.$(surface).getAttribute("data-inpage-find-surface");
   const planningPath = `${graph}/pages/Planning.md`;
   fs.writeFileSync(planningPath, "- Unselected insertion\n" + fs.readFileSync(planningPath, "utf8"));
   await browser.waitUntil(() => browser.execute(previous => {
-    const row = document.querySelector(".query-workspace .query-result-row");
+    const row = document.querySelector(".query-workspace [data-inpage-find-surface]");
     return row?.textContent?.includes("Upcoming journey task") && row.getAttribute("data-inpage-find-surface") !== previous;
   }, selectedLocator), { timeout: 20_000 });
   await browser.execute(() => [...document.querySelectorAll(".query-results-selection button")].find(button => button.textContent === "Copy results")?.click());
