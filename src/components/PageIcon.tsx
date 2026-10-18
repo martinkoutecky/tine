@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
-import { acquireAssetBlob, assetVersion } from "../assetCache";
+import { acquireIconAssetBlob, iconAssetVersion } from "../assetCache";
 import { pageIconOwnerPath } from "../pageIconBatch";
 import { pageIconAsset, pageIconImageLink } from "../pageIconImage";
 import { EmojiText } from "../render/emoji";
@@ -18,13 +18,14 @@ export function PageIcon(props: { value: string; name: string }) {
     const path = image().rel;
     setSrc("");
     if (!path) return;
-    assetVersion(path);
+    iconAssetVersion();
     let active = true;
     let release: (() => void) | undefined;
-    void acquireAssetBlob(path).then(lease => {
+    void acquireIconAssetBlob(path).then(lease => {
       if (!active) { lease.release(); return; }
       release = lease.release;
       if (lease.staticIcon) setSrc(lease.url);
+      else lease.release();
     });
     onCleanup(() => { active = false; release?.(); });
   });

@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
-- Local static PNG/JPG page icons from the graph's `assets/` folder: use an image link in `icon::`; titles, references and lists share the emoji-sized box and follow file replacement, with no downloads or copied/resized files (GH #346).
+- Local static PNG/JPG page icons up to 1 MiB from the graph's `assets/` folder: use an image link in `icon::`; titles, references and lists share the emoji-sized box and follow file replacement, with no downloads or copied/resized files (GH #346).
 - **Share dialog**: a share icon in the top bar, beside a page title, in a page's menus and on every query block opens **Share**. Choose **This page** or a query built with the query builder, review the pages that will be shared (and the ones left out: `public:: false` pages and the Exports page), optionally include the query text, and export to a folder. The export is saved as a definition (a query block with `export:: <folder>`) on an **Exports** page that Tine creates on first use, or on the query block you started from, so it can be repeated. Links and "this page and its neighbours" are shown as coming next.
 - **Export definitions follow page renames**: a query block carrying `export::` or `tine.share::` that selects a page with `{{tine-query @page and name = 'Project'}}` keeps selecting it after the page is renamed (namespace pages included), so a new page with the old name is never exported in its place. The selector also exports a page with no blocks. Other query blocks keep Logseq's rename behaviour (`docs/contracts/export-definitions.md`).
 - **The command line can write** (Linux and macOS): `tine add`, `tine edit`, `tine prop set|remove`, `tine move` and `tine delete` change blocks through the graph's owner and the same guarded save the app uses, for scripts and AI agents working beside you. Blocks are named by the handle a read prints (`Page/2.1~k7f2ab`) or by `id::`; a block that changed since the read is refused as `stale`, never guessed. Every block `tine add` creates carries `author::`. With the app open, your typed text is saved first and the window shows the change at once. `--json` replies and exit codes are in `docs/contracts/cli-output.md`; the Guide's **Command line** page explains the commands.
@@ -22,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Namespace page icons now follow property edits, and image icons refresh after symlink-target or filename-case asset events; files larger than 1 MiB show no icon (GH #346).
 - Journals shows today's body and nearby saved days while the graph loads, then merges referenced days without losing an open editor or your place (GF4).
 
 - The `((` block picker matches like Logseq: a block is listed when each space-separated piece of what you typed occurs in its text, in that order, ignoring case and accents. Before, any block containing your letters in order matched, however far apart (`fdr` found "foo draft"), which made results feel scattered. Search (Ctrl+K), the page switcher and `[[` are unchanged (UI-BLOCK-PICKER-OG-FRAGMENTS).

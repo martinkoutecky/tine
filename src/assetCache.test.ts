@@ -4,7 +4,7 @@ import { setToasts, toasts } from "./toasts";
 const backendMock = vi.hoisted(() => ({ readAsset: vi.fn() } as { readAsset: ReturnType<typeof vi.fn>; graphBindingGeneration?: () => number }));
 vi.mock("./backend", () => ({ backend: () => backendMock }));
 
-import { __assetCacheStatsForTests, acquireAssetBlob, assetVersion, refreshAsset, clearAssetBlobCache, seedAssetBlob } from "./assetCache";
+import { __assetCacheStatsForTests, acquireAssetBlob, acquireIconAssetBlob, assetVersion, refreshAsset, clearAssetBlobCache, seedAssetBlob } from "./assetCache";
 
 afterEach(() => {
   clearAssetBlobCache();
@@ -12,6 +12,32 @@ afterEach(() => {
 });
 
 describe("asset blob cache bounds", () => {
+  it("shares a mounted icon's blob even after block images evict it from the idle cache", async () => {
+    vi.stubGlobal("URL", { createObjectURL: vi.fn(() => `blob:icon-held`), revokeObjectURL: vi.fn() });
+    backendMock.readAsset.mockResolvedValue(new Uint8Array([1]));
+    const first = await acquireIconAssetBlob("icon-held.png");
+    for (let i = 0; i < 128; i++) seedAssetBlob(`block-${i}.png`, new Uint8Array([1]));
+    const second = await acquireIconAssetBlob("icon-held.png");
+    expect(second.url).toBe(first.url);
+    expect(backendMock.readAsset.mock.calls.filter(([path]) => path === "icon-held.png")).toHaveLength(1);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    first.release(); second.release();
+  });
+
+  it("refuses an oversized pending block read as an icon without duplicating its blob", async () => {
+    vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:large-block"), revokeObjectURL: vi.fn() });
+    let finish!: (bytes: Uint8Array) => void;
+    backendMock.readAsset.mockImplementationOnce(() => new Promise<Uint8Array>(resolve => { finish = resolve; }));
+    const block = acquireAssetBlob("pending.png");
+    const icon = acquireIconAssetBlob("pending.png");
+    finish(new Uint8Array(1024 * 1024 + 1));
+    const blockLease = await block;
+    expect((await icon).url).toBe("");
+    expect(blockLease.url).toBe("blob:large-block");
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    blockLease.release();
+  });
+
   it("evicts least-recently-used image blobs beyond the entry cap", () => {
     let next = 0;
     vi.stubGlobal("URL", {

@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { backend } from "./backend";
 import { dbg } from "./debug";
@@ -18,6 +19,7 @@ import { isStaticIconImage } from "./staticImage";
 // same asset share one read. Bound both count and retained backing bytes: Blob
 // URLs keep their Blob alive even after every image unmounts.
 interface CacheEntry {
+  icon?: boolean;
   staticIcon?: boolean;
   failure?: ErrorFamily;
   promise: Promise<string>;
@@ -41,6 +43,9 @@ export function assetNameForBlobUrl(url: string): string | undefined {
 const MAX_CACHE_ENTRIES = 128;
 const MAX_CACHE_BYTES = 128 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
+const MAX_ICON_BYTES = 1024 * 1024;
+const [iconVersion, setIconVersion] = createSignal(0);
+export const iconAssetVersion = iconVersion;
 let cacheBytes = 0;
 const MAX_ACTIVE_READS = 2;
 let activeReads = 0;
@@ -115,7 +120,7 @@ function prune(protectedKey: string) {
  * that the placeholder already shows, so they are logged only. */
 type ReadKind = "graph" | "device";
 
-function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: string, kind: ReadKind): CacheEntry {
+function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: string, kind: ReadKind, maxBytes = MAX_IMAGE_BYTES): CacheEntry {
   const hit = cache.get(key);
   if (hit) {
     touch(key, hit);
@@ -136,6 +141,10 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
       if (cache.get(key) !== entry) return "";
       const bytes = await read();
       entry.staticIcon = isStaticIconImage(bytes);
+      if (bytes.byteLength > maxBytes) {
+        entry.failure = "asset-too-large";
+        return "";
+      }
       if (!bytes.length) {
         entry.failure = "unknown";
         return "";
@@ -151,7 +160,7 @@ function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: stri
     } catch (error) {
       entry.failure = errorFamily(error);
       if (cache.get(key) === entry) cache.delete(key);
-      if (kind === "graph" && errorFamily(error) !== "not-found" && owner()) reportUiFailure("asset-read", error);
+      if (kind === "graph" && errorFamily(error) !== "not-found" && !(maxBytes === MAX_ICON_BYTES && errorFamily(error) === "asset-too-large") && owner()) reportUiFailure("asset-read", error);
       else dbg(`asset read failed (${kind}) ${key}: ${String(error)}`);
       return "";
     }
@@ -182,6 +191,28 @@ async function acquire(entry: CacheEntry): Promise<BlobLease> {
  *  at most once per open graph. Resolves to "" if the asset is missing/unreadable. */
 export function acquireAssetBlob(rel: string): Promise<BlobLease> {
   return acquire(cachedBlob(rel, () => backend().readAsset(rel, MAX_IMAGE_BYTES), rel, "graph"));
+}
+
+/** Icons share the exact same entry/Blob as block images. Enforce the smaller
+ * budget both at IPC (before allocation) and on pre-existing/pending entries. */
+export async function acquireIconAssetBlob(rel: string): Promise<BlobLease> {
+  const entry = cachedBlob(rel, () => backend().readAsset(rel, MAX_ICON_BYTES), rel, "graph", MAX_ICON_BYTES);
+  entry.icon = true;
+  const lease = await acquire(entry);
+  if (entry.bytes > MAX_ICON_BYTES) {
+    lease.release();
+    return { url: "", release: () => {}, failure: "asset-too-large" };
+  }
+  return lease;
+}
+
+/** Asset identities can have symlink/case aliases. There are few icon images:
+ * invalidate all of them on any assets event, then share their next reads. */
+export function refreshIconAssets(): void {
+  for (const [key, entry] of [...cache, ...liveEntries]) {
+    if (entry.icon) invalidateAsset(key);
+  }
+  setIconVersion(version => version + 1);
 }
 
 /** A blob URL for an image at an ABSOLUTE local `path` outside the graph, read over
@@ -270,5 +301,6 @@ export function invalidateAsset(rel: string): void {
  *  from disk. Use after an external editor overwrote the asset. */
 export function refreshAsset(rel: string): void {
   invalidateAsset(rel);
+  refreshIconAssets();
   setVersions(rel, (versions[rel] ?? 0) + 1);
 }
