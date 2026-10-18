@@ -271,6 +271,11 @@ pub(crate) struct EvalCtx<'a> {
     /// This execution's `links` / `linked_by` / `near` answers (graph-wide,
     /// computed before any row; empty unless the plan reads links).
     pub(crate) links: &'a super::link_graph::LinkAnswers,
+    /// This row's link-table node when the caller already knows it (every
+    /// row evaluated while building a link answer, and the only way to reach
+    /// a page without a file, which has no key in the table's page index).
+    /// `None`: look the node up by `page_key`.
+    pub(crate) link_node: Option<u32>,
     pub(crate) cache: &'a EvalCache,
 }
 
@@ -308,8 +313,15 @@ impl<'a> EvalCtx<'a> {
             registry,
             tag_targets,
             links,
+            link_node: None,
             cache,
         }
+    }
+
+    /// The same row, known to be link-table node `node`.
+    pub(crate) fn with_link_node(mut self, node: u32) -> Self {
+        self.link_node = Some(node);
+        self
     }
 }
 
@@ -509,11 +521,14 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                 }
                 _ => false,
             },
-            Leaf::Near { .. } => ctx.links.near(leaf, &ctx.page_key),
+            Leaf::Near { .. } => ctx.links.near(leaf, ctx.link_node, &ctx.page_key),
             Leaf::Rel { rel, quant, pred } => match rel {
                 Rel::Props => eval_props(*quant, pred, ctx.page_props, ctx),
                 Rel::Blocks => eval_page_blocks(*quant, pred, ctx),
-                Rel::Links | Rel::LinkedBy => ctx.links.related(leaf, *rel, *quant, &ctx.page_key),
+                Rel::Links | Rel::LinkedBy => {
+                    ctx.links
+                        .related(leaf, *rel, *quant, ctx.link_node, &ctx.page_key)
+                }
                 // No accepted page-row syntax reads a page's own refs or tags.
                 _ => false,
             },

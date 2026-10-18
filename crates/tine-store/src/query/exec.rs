@@ -319,12 +319,21 @@ impl Plan {
                 continue;
             }
             let facts = candidates.facts(entry, doc);
-            set[node as usize] =
-                eval::eval_page(pred, &self.ctx(entry, doc, &facts, config, atoms, links));
+            set[node as usize] = eval::eval_page(
+                pred,
+                &self
+                    .ctx(entry, doc, &facts, config, atoms, links)
+                    .with_link_node(node),
+            );
         }
         for (at, node) in table.virtuals().iter().enumerate() {
-            set[table.physical() + at] =
-                eval::eval_page(pred, &self.virtual_ctx(node, config, atoms, links));
+            let id = (table.physical() + at) as u32;
+            set[id as usize] = eval::eval_page(
+                pred,
+                &self
+                    .virtual_ctx(node, config, atoms, links)
+                    .with_link_node(id),
+            );
         }
         set
     }

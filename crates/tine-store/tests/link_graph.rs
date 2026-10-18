@@ -246,6 +246,34 @@ fn links_near_pages_without_a_file_are_seeds_and_elements() {
     );
 }
 
+/// Review r1 blocker: a nested link condition evaluated ON a page without a
+/// file (as an element of an outer `links`) must see that page's own links.
+#[test]
+fn links_near_nested_conditions_see_a_page_without_a_file() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    hand_graph(dir.path());
+    let (_store, graph) = open(dir.path());
+    let q = |tql: &str| pages(&graph, tql);
+    assert_eq!(
+        q("@page and any(links, near(name = 'idea', 0))"),
+        set(&["a", "w"])
+    );
+    assert_eq!(
+        q("@page and any(links, any(linked_by, name = 'a')) and name in ('a', 'w')"),
+        set(&["a", "w"])
+    );
+    assert_eq!(
+        q("@page and any(links, name = 'idea' and any(linked_by, name = 'w'))"),
+        set(&["a", "w"])
+    );
+    // The fileless journal day too.
+    assert_eq!(
+        q("@page and any(links, journal = true and none(links, true) and any(linked_by, name = 'w'))"),
+        set(&["w"])
+    );
+}
+
 #[test]
 fn links_near_an_edit_anywhere_moves_a_link_answer() {
     let _integration_guard = crate::integration_lock();

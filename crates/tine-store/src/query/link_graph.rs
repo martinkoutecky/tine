@@ -356,23 +356,33 @@ impl LinkAnswers {
         Some((table, set.as_slice()))
     }
 
-    /// `near` for the page row whose key is `page_key`.
-    pub(crate) fn near(&self, leaf: &Leaf, page_key: &str) -> bool {
+    /// `near` for the page row that is link-table node `node` when known,
+    /// else the physical page whose key is `page_key`.
+    pub(crate) fn near(&self, leaf: &Leaf, node: Option<u32>, page_key: &str) -> bool {
         self.set(leaf).is_some_and(|(table, ball)| {
-            table.node(page_key).is_some_and(|node| ball[node as usize])
+            node.or_else(|| table.node(page_key))
+                .is_some_and(|node| ball[node as usize])
         })
     }
 
-    /// `quant(links | linked_by, …)` for the page row whose key is `page_key`.
+    /// `quant(links | linked_by, …)` for the page row that is node `node` when
+    /// known, else the physical page whose key is `page_key`.
     /// A row with no computed answer (a memo probe, which never carries a link
     /// answer) has no links.
-    pub(crate) fn related(&self, leaf: &Leaf, rel: Rel, quant: Quant, page_key: &str) -> bool {
+    pub(crate) fn related(
+        &self,
+        leaf: &Leaf,
+        rel: Rel,
+        quant: Quant,
+        node: Option<u32>,
+        page_key: &str,
+    ) -> bool {
         let elements: &[u32];
         let set: &[bool];
         match self.set(leaf) {
             Some((table, bits)) => {
                 set = bits;
-                elements = match table.node(page_key) {
+                elements = match node.or_else(|| table.node(page_key)) {
                     Some(node) if rel == Rel::Links => table.links(node),
                     Some(node) => table.linked_by(node),
                     None => &[],
