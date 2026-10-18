@@ -85,3 +85,5 @@ see the project `CLAUDE.md`.
 | [0071](0071-open-only-tine-links.md) | External tine:// links use lazy graph UUIDs and open existing graph, page or block targets | Accepted |
 | [0072](0072-window-large-outlines.md) | Window large outline shells with measured re-entry geometry (GH #623) | Accepted |
 | [0073](0073-share-inbox.md) | Share inbox for native capture (GH #608) | Accepted |
+| [0074](0074-launch-backups-are-one-zip-per-snapshot.md) | Launch backups are one verified zip per snapshot (schema 5; an unchanged launch writes nothing; supersedes 0062 as the write format) | Proposed |
+| [0075](0075-margin-dialogue-comments.md) | Margin dialogue: a comment is an ordinary child block with `quote::`; the anchor is re-derived, never stored | Proposed |

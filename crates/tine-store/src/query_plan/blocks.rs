@@ -188,6 +188,25 @@ pub(super) fn text_predicate_relevance(
                 occurrences,
             )
         }
+        TextMatchMode::Fragments => {
+            let first = fragments_first_offset(lower, &pred.value)?;
+            let match_class = if lower.split_whitespace().eq(pred.value.split_whitespace()) {
+                ObjectiveMatchClass::Exact
+            } else if first == 0 {
+                ObjectiveMatchClass::Prefix
+            } else {
+                ObjectiveMatchClass::Substring
+            };
+            // The picker's ranking before this mode (Fuzzy) counted one
+            // occurrence; keep that so equal-quality blocks keep their order.
+            let occurrences = 1;
+            (
+                match_class,
+                starts_at_word_boundary(lower, first),
+                lower[..first].encode_utf16().count(),
+                occurrences,
+            )
+        }
         TextMatchMode::Fuzzy => {
             let (_, match_class) = fuzzy_name_score(lower, &pred.value)?;
             let first = lower.find(&pred.value).unwrap_or(0);

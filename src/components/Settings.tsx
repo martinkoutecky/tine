@@ -61,6 +61,7 @@ import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { LanguageSetting } from "./LanguageSetting";
+import { CommentNameSetting } from "./CommentNameSetting";
 import { GraphFolderSetting } from "./GraphFolderSetting";
 import { msg, render, renderEnglish, t, type Msg } from "../i18n";
 import { SETTING_SEARCH, rankedSettingMatches, settingHighlight, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
@@ -686,6 +687,7 @@ function EditorTab(props: { search: string }): JSX.Element {
   });
   return (
     <>
+      <CommentNameSetting />
       <Field
         label={t("settings-ui-file-format")}
         hint={
@@ -1048,7 +1050,7 @@ function BackupsTab(): JSX.Element {
   };
 
   const restore = (b: BackupInfo) => {
-    if (!ready() || busy()) return;
+    if (!ready() || busy() || b.status !== "ok") return;
     void restoreBackupFromSettings(b, fmtStamp(b.stamp), setBusy, () => { void refresh(); });
   };
 
@@ -1102,8 +1104,12 @@ function BackupsTab(): JSX.Element {
             {(b) => (
               <div class="settings-backup-row">
                 <span class="settings-backup-when">{fmtStamp(b.stamp)}</span>
-                <span class="settings-backup-files mono">{t("settings-ui-files-2", { files: b.files })}</span>
-                <button class="settings-btn" disabled={!ready() || busy()} onClick={() => void restore(b)}>{t("settings-ui-restore")}</button>
+                <span class="settings-backup-files mono">
+                  {b.status === "ok"
+                    ? t("settings-ui-files-2", { files: b.files })
+                    : t("settings-ui-files-backup-status", { files: b.files, status: t(BACKUP_STATUS_KEY[b.status]) })}
+                </span>
+                <button class="settings-btn" disabled={!ready() || busy() || b.status !== "ok"} onClick={() => void restore(b)}>{t("settings-ui-restore")}</button>
               </div>
             )}
           </For>
@@ -1494,6 +1500,12 @@ function buildStamp(): string {
     return __BUILD_TIME__;
   }
 }
+
+/** Why a listed backup cannot be restored (the native restore refuses it too). */
+const BACKUP_STATUS_KEY = {
+  damaged: "settings-ui-backup-damaged",
+  unsupported: "settings-ui-backup-unsupported",
+} as const satisfies Record<Exclude<BackupInfo["status"], "ok">, string>;
 
 // "2026-06-17_14-30-05" (UTC) → a readable local timestamp.
 function fmtStamp(s: string): string {

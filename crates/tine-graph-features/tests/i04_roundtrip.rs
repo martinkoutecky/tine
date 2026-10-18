@@ -101,15 +101,13 @@ fn save_and_restore_emit_parseable_page_trees() {
 
     let snapshot = root.join("snapshot.md");
     fs::write(&snapshot, b"title:: Restored\n- restored body [[Saved]]\n").unwrap();
-    let source = fs::File::open(&snapshot).unwrap();
     store
         .restore(
             tine_store::EditKind::ReplacePage,
             vec![RestoreFile {
                 area: Area::Pages,
                 rel: "Restored.md".into(),
-                len: source.metadata().unwrap().len(),
-                source,
+                bytes: fs::read(&snapshot).unwrap(),
             }],
             None,
         )

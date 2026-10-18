@@ -888,6 +888,10 @@ fn public_paths_are_only_inputs_and_handoffs() {
             "app-data directory outside any graph (settings, backup) handed to the OS for sync",
         ),
         (
+            "directory_durability::sync_directory_witness",
+            "app-data backup directory outside any graph handed to the OS for sync; the weak/strong answer gates backup pruning",
+        ),
+        (
             "store::Store::create_graph",
             "user-chosen parent input; created root to user",
         ),

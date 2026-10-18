@@ -29,6 +29,7 @@ on:
           - android
           - performance
           - multiwindow
+          - macos
 
 permissions:
   contents: read
@@ -186,12 +187,17 @@ jobs:
       - name: App crate native dependencies
         run: |
           sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
-          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev build-essential libssl-dev
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev build-essential libssl-dev strace
 
       - name: App crate tests
         run: |
           npm run build
           cargo test --no-fail-fast -p tine --lib
+
+      # The real fsync/rename/unlink order of launch backups (D7); the in-process
+      # op record cannot see a removed sync. Fails, never skips, under CI.
+      - name: Launch-backup syscall gate (strace)
+        run: node scripts/check-backup-syscalls.mjs
 
       # packaged_csp_tests compile only with custom-protocol (the production
       # context); without this step nothing ever ran them (discussion #564).
@@ -240,6 +246,63 @@ jobs:
           cargo test --release -p tine-graph-features --test integration rename_cost::probe_rename_wall_time -- --ignored --exact --nocapture
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
+      # Independent of the core step: a core-test failure still reports these.
+      # tauri links its Common Controls v6 manifest into bins only, so the lib
+      # test exe fails to load (0xc0000139, TaskDialogIndirect). A side-by-side
+      # `<exe>.manifest` supplies it to the test exe alone; the shipped binary
+      # is untouched.
+      - name: Windows backup and file-lock tests (Expand-Archive opens a backup)
+        if: ${{ !cancelled() }}
+        run: |
+          $exe = cargo test -p tine --lib --no-run --message-format=json |
+            ForEach-Object { $_ | ConvertFrom-Json } |
+            Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'tine_lib' -and $_.profile.test -and $_.executable } |
+            Select-Object -Last 1 -ExpandProperty executable
+          if (-not $exe) { throw 'no tine lib test executable' }
+          Set-Content -Encoding utf8 -Path "$exe.manifest" -Value @'
+          <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+          <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+            <dependency>
+              <dependentAssembly>
+                <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*" />
+              </dependentAssembly>
+            </dependency>
+          </assembly>
+          '@
+          Push-Location src-tauri
+          & $exe backup:: file_lock::
+          $code = $LASTEXITCODE
+          Pop-Location
+          exit $code
+
+  # Launch backups on macOS (not part of `full`): the backup and file-lock
+  # tests on the runner's APFS, including `ditto -x -k` opening a backup, the
+  # destination fold probe, and a directory sync (F_FULLFSYNC) witness probe.
+  macos-backup:
+    name: Focused / macOS backup tests
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'macos'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm run build
+      # custom-protocol: without it every `generate_context!` in the crate
+      # embeds Info.plist on macOS and the lib test fails to link
+      # (`_EMBED_INFO_PLIST` already defined).
+      - name: macOS backup and file-lock tests
+        run: "cargo test --no-fail-fast -p tine --lib --features custom-protocol -- backup:: file_lock:: --nocapture"
+      - name: macOS restore destination-identity tests (Store owns case and Unicode folding)
+        if: ${{ !cancelled() }}
+        run: "cargo test --no-fail-fast -p tine-store --lib -- restore:: --nocapture"
 
   android-core-compile:
     name: Full CI / Android core compile

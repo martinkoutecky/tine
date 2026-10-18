@@ -9,6 +9,9 @@ use std::path::Path;
 #[allow(dead_code)]
 #[path = "../../crates/tine-store/src/no_replace.rs"]
 mod no_replace;
+/// Lets the backup tests force the no-replace fallback (flag-refusing storage).
+#[cfg(test)]
+pub(crate) use no_replace::REFUSE_NOREPLACE_FLAG;
 
 // The app uses only the atomic writers of this shared source.
 #[allow(dead_code)]

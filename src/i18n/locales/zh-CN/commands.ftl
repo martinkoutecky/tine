@@ -115,6 +115,7 @@ command-ui-open-settings = 打开设置
 command-page-export-pdf = 将当前页面导出为 PDF…
 
 command-ui-toggle-wide-mode = 切换宽屏模式
+command-ui-toggle-code-block-wrap = 切换代码块自动换行
 
 command-ui-toggle-document-mode = 切换文档模式
 
@@ -165,6 +166,7 @@ command-editor-strike-through = 删除线
 command-editor-highlight = 高亮
 
 command-editor-insert-link = 插入链接
+command-editor-comment = 评论所选文字
 
 command-editor-copy-embed = 未选中文字时复制块嵌入
 
@@ -187,6 +189,7 @@ command-pane-focus-n = 聚焦窗格 { $index }
 command-plugin = 插件：{ $title }
 
 command-go-search-selection = 搜索选中的文本
+command-comment-on-selection = 评论所选内容
 
 command-select-copy-block-ref = 复制所选块的块引用
 

@@ -41,6 +41,7 @@ import "./styles/query.css";
 import "./styles/query-calm.css";
 import "./styles/conflicts.css";
 import "./styles/allPages.css";
+import "./styles/comments.css";
 import "./styles/region-failure.css";
 import "./styles/published.css";
 

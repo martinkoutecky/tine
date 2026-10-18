@@ -1,4 +1,5 @@
 import { shortcutKey } from "./shortcutKey";
+import { changeCodeWrapping, codeWrapping } from "./codeDisplay";
 import { openWorkspaceCreation } from "./workspaceCreation";
 import { adjustSidebarWidth } from "./sidebarSizing";
 import { openCssEditor } from "./cssEditor";
@@ -42,6 +43,7 @@ import { cutBlocks } from "./cut";
 import { deleteRenderedTextSelection } from "./editor/renderedSelectionDelete";
 import { followLinkUnderCaret, openLinkUnderCaretInSidebar } from "./followLink";
 import { openInPageFind } from "./inpageFind";
+import { commentOnPaletteSelection, rememberEditorSelectionForPalette } from "./commentActions";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
 import {
@@ -277,13 +279,19 @@ export function handlePaneSelectKey(e: KeyboardEvent): boolean {
   }
 }
 
+function openSwitcherKeepingSelection(opts: Parameters<typeof openSwitcher>[0]): void {
+  rememberEditorSelectionForPalette();
+  openSwitcher(opts);
+}
+
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
+  { id: "ui/toggle-code-block-wrap", binding: "", label: msg("command-ui-toggle-code-block-wrap"), scope: "global", run: () => changeCodeWrapping(!codeWrapping()), global: true },
   { id: "editor/edit-selected-block", binding: "", label: msg("command-editor-edit-selected-block"), scope: "global", run: () => { editSelectedBlock(); }, global: true },
-  { id: "go/search", binding: "mod+k", label: msg("command-go-search"), scope: "global", run: () => openSwitcher({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  { id: "go/search", binding: "mod+k", label: msg("command-go-search"), scope: "global", run: () => openSwitcherKeepingSelection({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   { id: "go/search-pages", binding: "", label: msg("command-go-search-pages"), scope: "global", run: () => openSwitcher({ mode: "pages" }), global: true },
   { id: "go/search-content", binding: "", label: msg("command-go-search-content"), scope: "global", run: () => openSwitcher({ mode: "content" }), global: true },
-  { id: "go/search-current-page", binding: "mod+shift+k", label: msg("command-go-search-current-page"), scope: "global", run: () => openSwitcher({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
+  { id: "go/search-current-page", binding: "mod+shift+k", label: msg("command-go-search-current-page"), scope: "global", run: () => openSwitcherKeepingSelection({ mode: "current-page", pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   // GH #633: search for the selected text. Unbound: mod+shift+f is OG's
   // :command/toggle-favorite (config.cljs:493), so the chord is left to the user.
   { id: "go/search-selection", binding: "", label: msg("command-go-search-selection"), scope: "global", run: searchSelectedText, global: true },
@@ -295,7 +303,10 @@ const COMMANDS: CommandDef[] = [
   // textarea itself and is a no-op when nothing is being edited.
   { id: "editor/follow-link", binding: "mod+o", label: msg("command-editor-follow-link"), scope: "global", run: () => { followLinkUnderCaret(); }, global: true },
   { id: "editor/open-link-in-sidebar", binding: "mod+shift+o", label: msg("command-editor-open-link-in-sidebar"), scope: "global", run: () => { openLinkUnderCaretInSidebar(); }, global: true },
-  { id: "command-palette/toggle", binding: "mod+shift+p", label: msg("command-command-palette-toggle"), scope: "global", run: () => openCommandPalette(pluginFocusedBlock() ?? null), global: true },
+  { id: "command-palette/toggle", binding: "mod+shift+p", label: msg("command-command-palette-toggle"), scope: "global", run: () => { rememberEditorSelectionForPalette(); openCommandPalette(pluginFocusedBlock() ?? null); }, global: true },
+  // Margin dialogue (vision §3.7): the palette form of Ctrl/Cmd+R. Opening the
+  // palette blurs the editor, so the selection is remembered as it opens.
+  { id: "comment/on-selection", binding: "", label: msg("command-comment-on-selection"), scope: "global", run: commentOnPaletteSelection, global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
   // Ctrl+Shift+I / F12 / Ctrl+Shift+C are all swallowed by WebKitGTK itself (its
   // built-in inspector keys, handled in the web process below where the app can
@@ -468,6 +479,9 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/strike-through", binding: "mod+shift+s", label: msg("command-editor-strike-through"), scope: "editor" },
   { id: "editor/highlight", binding: "mod+shift+h", label: msg("command-editor-highlight"), scope: "editor" },
   { id: "editor/insert-link", binding: "mod+l", label: msg("command-editor-insert-link"), scope: "editor" },
+  // Margin dialogue (vision §3.7): a child comment quoting the selected text.
+  // Consumed in the editor, so it never reaches the webview's reload.
+  { id: "editor/comment", binding: "mod+r", label: msg("command-editor-comment"), scope: "editor" },
   // GH #279: the embed counterpart of builtin Mod+C (copy block ref) — with a
   // text selection the handler declines so the platform's ordinary copy runs.
   { id: "editor/copy-embed", binding: "mod+shift+c", label: msg("command-editor-copy-embed"), scope: "editor" },

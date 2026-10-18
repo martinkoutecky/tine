@@ -180,6 +180,8 @@ export interface PageModified {
 /** One authoritative Journals-feed transaction.  Cursor fields are ordinal
  * journal days, never counts of returned DTOs (a selected file may vanish). */
 export interface JournalFeedPage {
+  /** Bodies are available; request the referenced-day merge after publication. */
+  references_pending?: boolean;
   pages: PageRead[];
   /** Referenced future days, nearest first; returned on the first page only. */
   upcoming?: PageRead[];
@@ -453,7 +455,7 @@ export interface MatchSpan {
 export interface MatchEvidence {
   clause_id: number;
   field: "page_name" | "visible_content";
-  mode: "contains" | "phrase" | "regex" | "fuzzy";
+  mode: "contains" | "phrase" | "regex" | "fuzzy" | "fragments";
   spans: MatchSpan[];
   score?: number;
 }

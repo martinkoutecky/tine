@@ -1,6 +1,21 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-code-wrap-toggle.mjs": {
+      "contracts": [{ "class": "stateful-ux", "userOutcome": "The palette and bound code wrap command preserve the reading position in every mounted main, split and sidebar scroller in both directions without changing note source.", "blocking": true }],
+      "acceptableVariations": ["Reading offsets may vary by a few pixels from layout rounding."],
+      "nonRequirements": ["Exact pane width, code colors or DOM structure; default shortcut; per-block setting."],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-journals-today.mjs": {
+      "contracts": [
+        {"class":"core-operation","userOutcome":"On a cold graph launch, today's file-backed journal body is usable before graph loading finishes.","blocking":true,"authority":"GF4"},
+        {"class":"stateful-ux","userOutcome":"When graph loading completes, referenced fileless days join the displayed date range in descending order while the focused editor, its text and the viewport position survive; browsing writes no journal files.","blocking":true,"authority":"GF4"}
+      ],
+      "acceptableVariations":["First-body latency varies with machine load; no fixed latency budget. Minor subpixel layout differences are acceptable while the same content remains at the viewport."],
+      "nonRequirements":["Exact pixels, DOM nesting, and native platform certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-cli-writes.mjs": {
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit made while the user types flushes input before resolving its handle: an obsolete handle refuses stale, the user's typed text survives, and an edit to another block succeeds with the editor open.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
@@ -304,6 +319,18 @@
       "nonRequirements": ["An end-user journey by itself."],
       "stability": "stable"
     },
+    "scripts/e2e-margin-comment.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "On a routed named page in a window too narrow for the margin column, with a name set in Settings > Editor > Your name, selecting words in a block, pressing Ctrl+R and typing a reply saves the reply as a child bullet carrying quote:: with the selected words and author:: with that name, Enter in it adds a nested reply that also carries the name, leaves the commented block unchanged on disk, does not reload the app, and renders the reply as a comment card with the passage marked.", "blocking": true }],
+      "acceptableVariations": ["How the selection is made (mouse, Shift+arrows or a programmatic textarea selection) as long as the editor holds it when Ctrl+R is pressed.", "Card colours, chip and header layout, and save latency, which is awaited by polling the page file."],
+      "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved child bullet, only that it is a child of the commented block.", "Certification outside Linux WebKitGTK."],
+      "stability": "burn-in"
+    },
+    "scripts/e2e-margin-column.mjs": {
+      "contracts": [{ "class": "core-operation", "userOutcome": "On a wide window, Ctrl+R on selected words draws the new comment in the right-hand margin column beside its passage (not in the outline) with a count on the commented block; clicking the comment edits it in place, Enter adds a reply in its thread, and the page file holds the reply nested under the comment (which keeps quote::) under the unchanged commented block.", "blocking": true }],
+      "acceptableVariations": ["How the selection is made and where the click lands inside the comment text; the caret is placed at the end of the comment text before Enter.", "Column width, card styling and the exact pixel offset of the thread beside its passage (within 2 px of the passage's top)."],
+      "nonRequirements": ["Exact pixels, DOM nesting or card styling.", "Indentation characters of the saved bullets, only their nesting.", "Certification outside Linux WebKitGTK."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-alias.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "First-block aliases and page properties remain editable, persist, and resolve their page.", "blocking": true }],
       "acceptableVariations": ["Autocomplete ranking and editor layout may evolve while the saved alias still resolves the page."],
@@ -393,7 +420,7 @@
         { "class": "stateful-ux", "userOutcome": "Opening the app on a graph shows no journal-feed failure when nothing failed: a feed read the window makes before its graph is bound is not reported as an error.", "blocking": true, "authority": "og 12e P2 (false startup toast; master shows none)" }
       ],
       "acceptableVariations": ["Locale rendering and feed layout may vary while configured dates remain discoverable."],
-      "nonRequirements": ["Exact locale punctuation or date-label spacing.", "Panel wording, list layout, or snapshot directory naming beyond the pre-journal-rename tag."],
+      "nonRequirements": ["Exact locale punctuation or date-label spacing.", "Panel wording, list layout, or snapshot naming beyond the pre-journal-rename tag; the snapshot is read as a zip (ADR 0074)."],
       "stability": "stable"
     },
     "scripts/e2e-journal-future-feed.mjs": {
@@ -486,12 +513,12 @@
     "scripts/e2e-page-properties.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal.", "blocking": true }],
       "acceptableVariations": ["Panel layout and native form-control styling may evolve.", "Custom property and add-property controls may participate in native Tab traversal before Done; Done can be activated by keyboard."],
-      "nonRequirements": ["Exact section spacing, control dimensions, or debounce timing.", "A fixed five-preset-only Tab sequence."],
+      "nonRequirements": ["Exact section spacing, control dimensions, or debounce timing.", "A fixed five-preset-only Tab sequence.", "Sidebar navigation or a fixed post-paint delay before opening a fixture page."],
       "stability": "stable"
     },
     "scripts/e2e-page-trailing-block.mjs": {
       "contracts": [{ "class": "core-operation", "userOutcome": "The quiet target below page content always adds a new writable trailing block, even when the page already ends in an empty (possibly indented) bullet.", "blocking": true }],
-      "acceptableVariations": ["Target affordance styling and scroll position may evolve."],
+      "acceptableVariations": ["Target affordance styling and scroll position may evolve.", "Fixture pages may be reached through the shared Quick Switcher navigation helper."],
       "nonRequirements": ["Exact target height, cursor blink timing, or focus-ring style."],
       "stability": "stable"
     },

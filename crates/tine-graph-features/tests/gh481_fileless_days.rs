@@ -1,6 +1,66 @@
 use tine_graph_features::journals;
 use tine_store::{Depth, Store};
 
+fn completed_feed(
+    store: &Store,
+    limit: usize,
+    before: Option<i64>,
+) -> std::io::Result<journals::FeedPage<journals::FeedRead>> {
+    journals::feed_page_through(store, limit, before, None, true)
+}
+
+#[test]
+fn gf4_feed_returns_before_ready() {
+    let _integration_guard = crate::integration_lock();
+    let root = tempfile::tempdir().unwrap();
+    for directory in ["pages", "journals"] {
+        std::fs::create_dir(root.path().join(directory)).unwrap();
+    }
+    std::fs::write(root.path().join("journals/2000_01_01.md"), "- early body\n").unwrap();
+    std::fs::write(
+        root.path().join("pages/Plan.md"),
+        "- [[2000-01-03]] [[2099-01-01]]\n",
+    )
+    .unwrap();
+    let pause = root.path().join(".tine-test-pause-load");
+    std::fs::write(&pause, "").unwrap();
+    let store = std::sync::Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
+    assert!(matches!(store.is_graph_ready(), Ok(false)));
+    let (send, receive) = std::sync::mpsc::channel();
+    let reader = std::sync::Arc::clone(&store);
+    let worker =
+        std::thread::spawn(move || send.send(journals::feed_page(&reader, 3, None)).unwrap());
+    let early = receive.recv_timeout(std::time::Duration::from_secs(1));
+    // Always release the worker, including against the pre-fix implementation.
+    std::fs::remove_file(pause).unwrap();
+    worker.join().unwrap();
+    store.whole_graph().unwrap();
+    let early = early.expect("journal body waited for graph Ready").unwrap();
+    assert!(early.references_pending);
+    assert_eq!(early.pages.len(), 1);
+    assert!(early.pages[0].doc.blocks[0].raw.contains("early body"));
+    let complete = completed_feed(&store, 3, None).unwrap();
+    assert!(!complete.references_pending);
+    assert_eq!(
+        complete
+            .pages
+            .iter()
+            .map(|p| p.doc.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Jan 3rd, 2000", "Jan 1st, 2000"]
+    );
+    assert_eq!(complete.upcoming[0].doc.name, "Jan 1st, 2099");
+    assert!(complete.pages[0].doc.rev.is_none());
+    assert!(complete.pages[1].doc.rev.is_some());
+    assert_eq!(
+        std::fs::read_dir(root.path().join("journals"))
+            .unwrap()
+            .count(),
+        1
+    );
+    store.close();
+}
+
 #[test]
 fn referenced_fileless_past_days_are_paged_without_writing_files() {
     let _integration_guard = crate::integration_lock();
@@ -13,7 +73,8 @@ fn referenced_fileless_past_days_are_paged_without_writing_files() {
     )
     .unwrap();
     let store = Store::open(root.path(), Default::default()).unwrap().0;
-    let first = journals::feed_page(&store, 1, None).unwrap();
+    store.whole_graph().unwrap(); // This case asserts the final referenced-day inventory.
+    let first = completed_feed(&store, 1, None).unwrap();
     assert_eq!(
         first.pages.len(),
         1,
@@ -22,7 +83,7 @@ fn referenced_fileless_past_days_are_paged_without_writing_files() {
     assert_eq!(first.pages[0].doc.name, "Jan 3rd, 2000");
     assert!(first.pages[0].doc.blocks.is_empty());
     assert!(first.pages[0].doc.rev.is_none());
-    let rest = journals::feed_page(&store, 5, first.next_before_day).unwrap();
+    let rest = completed_feed(&store, 5, first.next_before_day).unwrap();
     assert_eq!(
         rest.pages
             .iter()
@@ -49,10 +110,7 @@ fn referenced_fileless_past_days_are_paged_without_writing_files() {
     // Removing the last references removes the virtual rows in a fresh publication.
     std::fs::write(root.path().join("pages/Plan.md"), "- no dates\n").unwrap();
     store.refresh(Depth::Stamps).unwrap();
-    assert!(journals::feed_page(&store, 5, None)
-        .unwrap()
-        .pages
-        .is_empty());
+    assert!(completed_feed(&store, 5, None).unwrap().pages.is_empty());
     store.close();
 }
 
@@ -80,7 +138,8 @@ fn future_references_are_upcoming_and_deleting_a_referenced_file_keeps_the_day()
     )
     .unwrap();
     let store = Store::open(root.path(), Default::default()).unwrap().0;
-    let first = journals::feed_page(&store, 1, None).unwrap();
+    store.whole_graph().unwrap(); // Upcoming is a graph-wide referenced-day answer.
+    let first = completed_feed(&store, 1, None).unwrap();
     assert_eq!(first.pages[0].doc.name, "Jan 1st, 2000");
     assert_eq!(
         first
@@ -90,12 +149,12 @@ fn future_references_are_upcoming_and_deleting_a_referenced_file_keeps_the_day()
             .collect::<Vec<_>>(),
         ["Jan 1st, 2099", "Jan 3rd, 2099"]
     );
-    assert!(journals::feed_page(&store, 5, Some(20000101))
+    assert!(completed_feed(&store, 5, Some(20000101))
         .unwrap()
         .upcoming
         .is_empty());
     journals::trash_journal_file(&store, None, "2000_01_01.md").unwrap();
-    let after = journals::feed_page(&store, 5, None).unwrap();
+    let after = completed_feed(&store, 5, None).unwrap();
     assert_eq!(after.pages.len(), 1);
     assert!(after.pages[0].doc.rev.is_none());
     assert!(after.pages[0].doc.blocks.is_empty());
@@ -137,10 +196,7 @@ fn ordinary_date_pages_and_query_only_dates_do_not_become_journal_rows() {
     )
     .unwrap();
     let store = Store::open(root.path(), Default::default()).unwrap().0;
-    assert!(journals::feed_page(&store, 5, None)
-        .unwrap()
-        .pages
-        .is_empty());
+    assert!(completed_feed(&store, 5, None).unwrap().pages.is_empty());
     assert!(store
         .whole_graph()
         .unwrap()

@@ -105,7 +105,7 @@ export interface Backend {
    *  opens: times the store already holds (no stat, nothing persisted). */
   pageModified(): Promise<import("./types").PageModified>;
   pageBacklinkCounts(): Promise<[string, number][]>;
-  journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
+  journalFeedPage(limit: number, beforeDay: number | null, waitForReferences?: boolean, throughDay?: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<import("./types").PageRead | null>;
@@ -579,7 +579,7 @@ export interface Backend {
    *  host relaunched after the restore, on success and on a partial failure
    *  alike (the window rebinds either way, S8); null when the stop refused (the
    *  host keeps running) or without a host. `error` says why it failed. */
-  restoreBackup(stamp: string, kind: "replace-page", consumedLastId: number):
+  restoreBackup(id: string, kind: "replace-page", consumedLastId: number):
     Promise<{ error: string | null; reloaded: { session: number; nextId: number } | null }>;
   /** Load the persisted UI session JSON (open tabs / active tab / zoom), or null.
    *  Stored atomically in a backend file so structured session state is independent

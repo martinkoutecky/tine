@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { PageView } from "./Page";
 import { backend } from "../backend";
 import { initParser } from "../render/parse";
-import { resetStore, flushAll } from "../document";
+import { resetStore, flushAll, appendFeed, pageByName, extendFeedForScroll, feedNames } from "../document";
 import { openPage, resetTabsToJournals } from "../router";
 import { currentDayKey, journalTitle } from "../journal";
 import { resetReferenceSectionState } from "../referenceSectionState";
@@ -11,8 +11,220 @@ import { setGraphMeta, bumpDataRev } from "../graphSession";
 import { startEditing, endEdit } from "../editorController";
 import { resetNearObserverForTests } from "../lazyObserve";
 import type { GraphMeta, PageRead, JournalFeedPage } from "../types";
+import * as viewportAnchor from "./readingViewportAnchor";
 
 beforeAll(initParser);
+
+it("GF4: immediate completion merges before first paint without viewport anchor work", async () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+  const capture = vi.spyOn(viewportAnchor, "captureReadingViewport");
+  const day = (name: string): PageRead => ({ id: `journals/${name}.md`, name, title: name, kind: "journal", pre_block: null, blocks: [] });
+  const current = day(journalTitle(new Date()));
+  const old = day("Jan 1st, 2000");
+  const late = day("Jan 2nd, 2000");
+  const response = (pages: PageRead[], pending = false): JournalFeedPage => ({ pages, references_pending: pending, as_of_day: currentDayKey(), done: true, next_before_day: null });
+  const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValueOnce(response([current, old], true)).mockResolvedValue(response([current, late, old]));
+  const host = document.createElement("div"); host.className = "main-content"; document.body.append(host);
+  const dispose = render(() => <PageView />, host);
+  try {
+    await vi.waitFor(() => expect(host.querySelectorAll("h1.journal-title")).toHaveLength(3));
+    expect(feed).toHaveBeenCalledTimes(2);
+    expect(frames.length).toBeGreaterThan(0);
+    expect(capture).not.toHaveBeenCalled();
+    for (const callback of frames.splice(0)) callback(performance.now());
+    expect([...host.querySelectorAll("h1.journal-title")].map(el => el.textContent?.trim())).toEqual([current.name, late.name, old.name]);
+    expect(host.scrollTop).toBe(0);
+  } finally { dispose(); }
+});
+
+it("GF4: bodies render while references load, then late days preserve the focused editor and scroll anchor", async () => {
+  const resizeCallbacks = new Map<Element, ResizeObserverCallback>();
+  vi.stubGlobal("ResizeObserver", class {
+    targets = new Set<Element>();
+    constructor(private callback: ResizeObserverCallback) {}
+    observe(target: Element) { this.targets.add(target); resizeCallbacks.set(target, this.callback); }
+    unobserve(target: Element) { this.targets.delete(target); resizeCallbacks.delete(target); }
+    disconnect() { for (const target of this.targets) resizeCallbacks.delete(target); this.targets.clear(); }
+  });
+  const today = journalTitle(new Date());
+  const day = (name: string, id: string): PageRead => ({ id: `journals/${id}.md`, name, title: name, kind: "journal", pre_block: null,
+    blocks: [{ id, raw: `Body ${id}`, children: [], collapsed: false }] });
+  const old = day("Jan 1st, 2000", "gf4-old");
+  const current = day(today, "gf4-today");
+  const late = { ...day("Jan 3rd, 2000", "gf4-late"), blocks: [], rev: null };
+  let finish!: (value: JournalFeedPage) => void;
+  const feed = vi.spyOn(backend(), "journalFeedPage").mockResolvedValueOnce({ pages: [current, old], as_of_day: currentDayKey(), done: true, next_before_day: null, references_pending: true } as JournalFeedPage)
+    .mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const host = document.createElement("div"); host.className = "main-content"; document.body.append(host);
+  const dispose = render(() => <PageView />, host);
+  try {
+    await vi.waitFor(() => expect(host.textContent).toContain("Body gf4-today"));
+    await vi.waitFor(() => expect(feed).toHaveBeenCalledTimes(2));
+    startEditing("gf4-old");
+    await vi.waitFor(() => expect(host.querySelector("textarea.block-editor")).not.toBeNull());
+    const editor = host.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+    editor.focus();
+    host.scrollTop = 100;
+    // jsdom has no layout: model the displacement caused by a day inserted
+    // above the viewport and require the scroller to compensate for it.
+    let lateHeight = 0;
+    vi.spyOn(editor, "getBoundingClientRect").mockImplementation(() => ({ top: 30 + (host.querySelectorAll(".page-section").length === 2 ? 0 : 140 + lateHeight) - (host.scrollTop - 100) } as DOMRect));
+    const value = editor.value;
+    finish({ pages: [current, late, old], as_of_day: currentDayKey(), done: true, next_before_day: null });
+    await vi.waitFor(() => expect(host.querySelectorAll(".page-section")).toHaveLength(3));
+    expect([...host.querySelectorAll("h1.journal-title")].map(el => el.textContent?.trim())).toEqual([today, late.name, old.name]);
+    expect(host.querySelector("textarea.block-editor")).toBe(editor);
+    expect(document.activeElement).toBe(editor);
+    expect(editor.value).toBe(value);
+    expect(host.scrollTop).toBe(240);
+    const resize = resizeCallbacks.get(host.querySelector(".page")!)!;
+    lateHeight = 40; // The inserted day's linked references finish later.
+    resize([], {} as ResizeObserver);
+    expect(host.scrollTop).toBe(280);
+    host.dispatchEvent(new Event("wheel"));
+    lateHeight = 80;
+    resize([], {} as ResizeObserver);
+    expect(host.scrollTop).toBe(280);
+  } finally { dispose(); }
+});
+
+it("GF4: completion covers days appended during loading, then retires with its route", async () => {
+  const makeDay = (name: string): PageRead => ({ id: `journals/${name}.md`, name, title: name, kind: "journal", pre_block: null, blocks: [] });
+  const current = makeDay(journalTitle(new Date()));
+  const old = makeDay("Jan 3rd, 2000");
+  const older = makeDay("Jan 1st, 2000");
+  const late = makeDay("Jan 2nd, 2000");
+  const response = (pages: PageRead[], pending = false): JournalFeedPage => ({ pages, references_pending: pending, as_of_day: currentDayKey(), done: true, next_before_day: null });
+  const completions: ((value: JournalFeedPage) => void)[] = [];
+  const read = vi.spyOn(backend(), "journalFeedPage").mockResolvedValueOnce(response([current, old], true))
+    .mockImplementation(() => new Promise(resolve => completions.push(resolve)));
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <PageView />, host);
+  try {
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    appendFeed([older]);
+    completions[0](response([current, old]));
+    await vi.waitFor(() => expect(completions).toHaveLength(2));
+    expect(read.mock.calls.at(-1)).toEqual([3, null, true, 20000101]);
+    vi.spyOn(backend(), "getPage").mockResolvedValue({ ...makeDay("Elsewhere"), kind: "page", id: "pages/Elsewhere.md" });
+    openPage("Elsewhere", "page");
+    await vi.waitFor(() => expect(host.querySelector("h1.page-title")?.textContent).toContain("Elsewhere"));
+    completions[1](response([current, old, late, older]));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(pageByName(late.name)).toBeUndefined();
+    expect(host.querySelector("h1.page-title")?.textContent).toContain("Elsewhere");
+  } finally { dispose(); }
+});
+
+it("GF4: a remaining Journals surface owns the merge when the surface that started it closes", async () => {
+  const day = (name: string): PageRead => ({ id: `journals/${name}.md`, name, title: name, kind: "journal", pre_block: null, blocks: [] });
+  const current = day(journalTitle(new Date()));
+  const late = day("Jan 2nd, 2000");
+  let finish!: (value: JournalFeedPage) => void;
+  vi.spyOn(backend(), "journalFeedPage").mockImplementation((_limit, _before, wait) => wait
+    ? new Promise(resolve => { finish = resolve; })
+    : Promise.resolve({ pages: [current], references_pending: true, as_of_day: currentDayKey(), done: true, next_before_day: null }));
+  const first = document.createElement("div"); const second = document.createElement("div"); document.body.append(first, second);
+  const disposeFirst = render(() => <PageView />, first);
+  const disposeSecond = render(() => <PageView />, second);
+  try {
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    disposeSecond();
+    finish({ pages: [current, late], as_of_day: currentDayKey(), done: true, next_before_day: null });
+    await vi.waitFor(() => expect(first.textContent).toContain(late.name));
+  } finally { disposeFirst(); disposeSecond(); }
+});
+
+it.each(["before pagination", "after pagination", "between pagination pages"])("GF4: completion %s leaves every referenced day reachable", async order => {
+  vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const date = (day: number) => journalTitle(new Date(2000, 0, day));
+  const today = journalTitle(new Date());
+  const response = (names: string[], cursor: number | null, pending = false): JournalFeedPage => ({
+    pages: names.map(name => ({ id: `journals/${name}.md`, name, title: name, kind: "journal", pre_block: null, blocks: [] })),
+    references_pending: pending, as_of_day: currentDayKey(), next_before_day: cursor, done: cursor === null,
+  });
+  const completions: ((value: JournalFeedPage) => void)[] = [];
+  const appends: ((value: JournalFeedPage) => void)[] = [];
+  const read = vi.spyOn(backend(), "journalFeedPage")
+    .mockResolvedValueOnce(response([today, date(29), date(20)], 20000120, true))
+    .mockImplementation((_limit, before, references) => {
+      if (before === null) return new Promise(resolve => completions.push(resolve));
+      if (!references) return new Promise(resolve => appends.push(resolve));
+      if (before === 20000120) return Promise.resolve(response([date(18), date(15), date(12)], 20000112));
+      if (before === 20000112) return Promise.resolve(response([date(10), date(8), date(5)], null));
+      if (before === 20000105) return Promise.resolve(response([date(3), date(1)], null));
+      throw new Error(`Unexpected cursor ${before}`);
+    });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <PageView />, host);
+  try {
+    await vi.waitFor(() => expect(completions).toHaveLength(1));
+    const first = extendFeedForScroll();
+    await vi.waitFor(() => expect(appends).toHaveLength(1));
+    expect(read.mock.calls[2]).toEqual([3, 20000120, false]);
+    if (order === "before pagination") {
+      completions[0](response([today, date(29), date(25), date(20)], 20000120));
+      await vi.waitFor(() => expect(feedNames()).toContain(date(25)));
+      appends[0](response([date(15), date(10), date(5)], null, true));
+      await first;
+      await extendFeedForScroll();
+      expect(feedNames()).toContain(date(18));
+      expect(read.mock.calls).toContainEqual([3, 20000120, true]);
+    } else {
+      appends[0](response([date(15), date(10), date(5)], 20000105, true));
+      await first;
+      completions[0](response([today, date(29), date(25), date(20)], 20000120));
+      await vi.waitFor(() => expect(completions).toHaveLength(2));
+      expect(read.mock.calls.at(-1)).toEqual([3, null, true, 20000105]);
+      let second: Promise<boolean> | undefined;
+      if (order === "between pagination pages") {
+        second = extendFeedForScroll();
+        await vi.waitFor(() => expect(appends).toHaveLength(2));
+      }
+      completions[1](response([today, ...[29, 25, 20, 18, 15, 12, 10, 8, 5].map(date)], 20000105));
+      await vi.waitFor(() => expect(feedNames()).toContain(date(18)));
+      if (second) {
+        appends[1](response([], null, true));
+        await second;
+      } else await extendFeedForScroll();
+      expect(feedNames().slice(-2)).toEqual([date(3), date(1)]);
+      expect(read.mock.calls).toContainEqual([3, 20000105, true]);
+    }
+    expect(feedNames().slice(0, 10)).toEqual([today, ...[29, 25, 20, 18, 15, 12, 10, 8, 5].map(date)]);
+    expect([...host.querySelectorAll("h1.journal-title")].map(el => el.textContent?.trim())).toEqual(feedNames());
+  } finally { dispose(); }
+});
+
+it.each([true, false])("GF4: navigation retires pending completion and pagination (completion first: %s)", async completionFirst => {
+  vi.stubGlobal("IntersectionObserver", class { observe() {} unobserve() {} disconnect() {} });
+  const day = (name: string): PageRead => ({ id: `journals/${name}.md`, name, title: name, kind: "journal", pre_block: null, blocks: [] });
+  const today = day(journalTitle(new Date()));
+  const old = day("Jan 20th, 2000");
+  const late = day("Jan 18th, 2000");
+  const pending: ((value: JournalFeedPage) => void)[] = [];
+  const read = vi.spyOn(backend(), "journalFeedPage")
+    .mockResolvedValueOnce({ pages: [today, old], references_pending: true, as_of_day: currentDayKey(), next_before_day: 20000120, done: false })
+    .mockImplementation(() => new Promise(resolve => pending.push(resolve)));
+  vi.spyOn(backend(), "getPage").mockResolvedValue({ ...day("Elsewhere"), kind: "page", id: "pages/Elsewhere.md" });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <PageView />, host);
+  try {
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    const more = extendFeedForScroll();
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    openPage("Elsewhere", "page");
+    await vi.waitFor(() => expect(host.querySelector("h1.page-title")?.textContent).toContain("Elsewhere"));
+    for (const index of completionFirst ? [0, 1] : [1, 0]) {
+      pending[index]({ pages: [late], as_of_day: currentDayKey(), done: true, next_before_day: null });
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    await more;
+    expect(pageByName(late.name)).toBeUndefined();
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(host.querySelector("h1.page-title")?.textContent).toContain("Elsewhere");
+  } finally { dispose(); }
+});
 afterEach(() => {
   endEdit("blur");
   resetStore(); resetTabsToJournals(); setGraphMeta(null); resetReferenceSectionState();

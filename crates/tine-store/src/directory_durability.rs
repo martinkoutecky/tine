@@ -72,15 +72,18 @@ pub fn sync_directory_entry(dir: &Path) -> io::Result<()> {
     sync_directory(dir, false).map(|_| ())
 }
 
+/// What a directory sync proved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DirectoryWitness {
+pub enum DirectoryWitness {
+    /// The platform synced the directory (or, on Windows, needs no flush).
     Durable,
+    /// The filesystem does not offer directory sync: no platform witness.
     Unsupported,
 }
 
 /// Graph publication retains exactly Beta's tolerated error set, but reports
 /// a weak witness distinctly so the host cannot claim strong durability.
-pub(crate) fn sync_directory_witness(dir: &Path) -> io::Result<DirectoryWitness> {
+pub fn sync_directory_witness(dir: &Path) -> io::Result<DirectoryWitness> {
     sync_directory(dir, false)
 }
 

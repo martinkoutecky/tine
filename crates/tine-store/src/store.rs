@@ -4122,8 +4122,7 @@ mod rev5_tests {
                     vec![crate::RestoreFile {
                         area: Area::Pages,
                         rel: "C.md".into(),
-                        source: File::open(&source).unwrap(),
-                        len: fs::metadata(&source).unwrap().len(),
+                        bytes: fs::read(&source).unwrap(),
                     }],
                     None,
                 )

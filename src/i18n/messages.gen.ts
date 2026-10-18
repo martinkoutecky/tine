@@ -137,12 +137,14 @@ export interface MessageArgs {
   "command-builtin-sheet-range": {};
   "command-builtin-sheet-select-cell": {};
   "command-command-palette-toggle": {};
+  "command-comment-on-selection": {};
   "command-editor-backward-kill-word": {};
   "command-editor-backward-word": {};
   "command-editor-bold": {};
   "command-editor-clear-block": {};
   "command-editor-collapse": {};
   "command-editor-collapse-children": {};
+  "command-editor-comment": {};
   "command-editor-copy-embed": {};
   "command-editor-cycle-todo": {};
   "command-editor-duplicate-block": {};
@@ -225,6 +227,7 @@ export interface MessageArgs {
   "command-ui-open-settings": {};
   "command-ui-reset-zoom": {};
   "command-ui-toggle-brackets": {};
+  "command-ui-toggle-code-block-wrap": {};
   "command-ui-toggle-custom-css": {};
   "command-ui-toggle-devtools": {};
   "command-ui-toggle-dim-blocks": {};
@@ -250,6 +253,20 @@ export interface MessageArgs {
   "commands-plugin-command-failed": { "error": string | number };
   "commands-select-text-in-a-block-then-use": {};
   "commands-undo-redo-mode": { "mode": string | number };
+  "comment-author-you": {};
+  "comment-block-cannot-take": {};
+  "comment-block-changed": {};
+  "comment-margin-count": { "count": number };
+  "comment-margin-label": {};
+  "comment-name-hint": {};
+  "comment-name-label": {};
+  "comment-name-placeholder": {};
+  "comment-on-whole-block": {};
+  "comment-quote-changed": {};
+  "comment-select-first": {};
+  "comment-stale-write-what": {};
+  "comment-written-by": { "author": string | number };
+  "comment-written-by-you": {};
   "config-query-details": {};
   "config-query-title": {};
   "config-query-unsupported": {};
@@ -2125,6 +2142,7 @@ export interface MessageArgs {
   "settings-search-closers-selections-backspace": {};
   "settings-search-code-blocks-line-wrapping-long-lines": {};
   "settings-search-color-scheme": {};
+  "settings-search-comment-author-name-margin-reply": {};
   "settings-search-copy-a-parent-block-s-sub-blocks": {};
   "settings-search-default-journal-template": {};
   "settings-search-default-nord-solarized-gruvbox-soft-medium-light": {};
@@ -2213,6 +2231,7 @@ export interface MessageArgs {
   "settings-search-wide-mode": {};
   "settings-search-wide-page-width": {};
   "settings-search-wrap-code-lines": {};
+  "settings-search-your-name": {};
   "settings-search-zoom-scale-ctrl-scroll": {};
   "settings-sections-open": {};
   "settings-sections-page": { "page": string | number };
@@ -2246,6 +2265,8 @@ export interface MessageArgs {
   "settings-ui-auto-enable-dim-inactive-blocks-t-b-when-entering": {};
   "settings-ui-auto-pair-brackets-quotes": {};
   "settings-ui-autodetect-failed": {};
+  "settings-ui-backup-damaged": {};
+  "settings-ui-backup-unsupported": {};
   "settings-ui-backups-recovery": {};
   "settings-ui-built": { "value1": string | number };
   "settings-ui-carry-last-n-days": {};
@@ -2283,6 +2304,7 @@ export interface MessageArgs {
   "settings-ui-file-format": {};
   "settings-ui-files": {};
   "settings-ui-files-2": { "files": string | number };
+  "settings-ui-files-backup-status": { "files": string | number; "status": string | number };
   "settings-ui-files-in-assets-that-no-block-links-to-deleting": {};
   "settings-ui-first-day-of-week": {};
   "settings-ui-format-for-new-pages-and-journals-markdown-or-org": {};
