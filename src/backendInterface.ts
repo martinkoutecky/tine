@@ -105,7 +105,7 @@ export interface Backend {
    *  opens: times the store already holds (no stat, nothing persisted). */
   pageModified(): Promise<import("./types").PageModified>;
   pageBacklinkCounts(): Promise<[string, number][]>;
-  journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
+  journalFeedPage(limit: number, beforeDay: number | null, waitForReferences?: boolean, throughDay?: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<import("./types").PageRead | null>;

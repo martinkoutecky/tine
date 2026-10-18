@@ -21,6 +21,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Journals shows today's body and nearby saved days while the graph loads, then merges referenced days without losing an open editor or your place (GF4).
+
 - The `((` block picker matches like Logseq: a block is listed when each space-separated piece of what you typed occurs in its text, in that order, ignoring case and accents. Before, any block containing your letters in order matched, however far apart (`fdr` found "foo draft"), which made results feel scattered. Search (Ctrl+K), the page switcher and `[[` are unchanged (UI-BLOCK-PICKER-OG-FRAGMENTS).
 - On phones and tablets, which have no tab strip, **Open in new tab** is no longer offered in page, block and preview menus, and Ctrl/Cmd-click, middle-click and Ctrl/Cmd+Enter in Search open the link in place instead of in a background tab you cannot reach; use **Open in sidebar** there. Desktop is unchanged (GH #705).
 - All pages: the header no longer shows a lone "JOURNAL DATE" line under PAGE, and a "—" no longer strikes through the first letter of the next row (the journal-date cell had no grid column). The journal-date column now appears only while "Show journals" is on, and its checkbox is drawn from the theme instead of a white native box on dark surfaces (UI-ALL-PAGES-GRID-001).

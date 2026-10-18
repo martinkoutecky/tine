@@ -1,6 +1,15 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-journals-today.mjs": {
+      "contracts": [
+        {"class":"core-operation","userOutcome":"On a cold graph launch, today's file-backed journal body is usable before graph loading finishes.","blocking":true,"authority":"GF4"},
+        {"class":"stateful-ux","userOutcome":"When graph loading completes, referenced fileless days join the displayed date range in descending order while the focused editor, its text and the viewport position survive; browsing writes no journal files.","blocking":true,"authority":"GF4"}
+      ],
+      "acceptableVariations":["First-body latency varies with machine load; no fixed latency budget. Minor subpixel layout differences are acceptable while the same content remains at the viewport."],
+      "nonRequirements":["Exact pixels, DOM nesting, and native platform certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-cli-writes.mjs": {
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "A CLI edit made while the user types flushes input before resolving its handle: an obsolete handle refuses stale, the user's typed text survives, and an edit to another block succeeds with the editor open.", "blocking": true, "authority": "Tine CLI v0 Spec §3" },
