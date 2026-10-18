@@ -46,6 +46,18 @@ assert.match(
   "the iOS lane must refuse a Beta-identity checkout before it touches signing material"
 );
 
+// D-20261018-I1 option A: a Beta checkout reaches TestFlight only through the
+// explicit beta_as_release input (default false), which refuses anything but an
+// X.Y.Z-beta.N Beta tree, flips it to the release identity and strips the
+// prerelease suffix, all before the stable-identity guard above runs.
+assert.match(iosTestFlightWorkflow, /beta_as_release:[\s\S]*?default: false[\s\S]*?type: boolean/,
+  "beta_as_release must be an explicit opt-in boolean, off by default");
+assert.match(
+  iosTestFlightWorkflow,
+  /name: Beta as stable identity \(option A\)\s+if: \$\{\{ inputs\.beta_as_release \}\}[\s\S]*?s\.ship !== 'experiment'[\s\S]*?-beta[\s\S]*?process\.exit\(1\)[\s\S]*?set-app-identity\.mjs release[\s\S]*?name: Require the stable app identity/,
+  "the Beta-as-stable step must be gated, refuse non-Beta trees, and run before the identity guard"
+);
+
 assert.doesNotMatch(iosTestFlightWorkflow, /\n\s+push:/, "TestFlight workflow must never run on push");
 assert.match(iosTestFlightWorkflow, /workflow_dispatch:[\s\S]*?default: build-only[\s\S]*?- validate[\s\S]*?- upload/);
 assert.match(iosTestFlightWorkflow, /permissions:\n\s+contents: read/);

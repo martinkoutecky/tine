@@ -18,6 +18,14 @@ on:
           - build-only
           - validate
           - upload
+      beta_as_release:
+        description: >-
+          Build a Beta tag (X.Y.Z-beta.N) under the stable identity page.tine.Tine,
+          marketing version X.Y.Z (D-20261018-I1 option A; until the separate
+          TestFlight-only Tine Beta app exists). Name the Beta in "What to Test".
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -40,6 +48,26 @@ jobs:
       # only the stable identity whose App Store record, provisioning profile
       # and iCloud container are page.tine.Tine; a Beta-identity checkout must
       # not reach signing.
+      # D-20261018-I1 (A): a Beta checkout carries the Beta identity and an
+      # X.Y.Z-beta.N version. iOS has no Beta app yet, so this build ships under
+      # the stable identity with marketing version X.Y.Z; the build number keeps
+      # it distinct, and "What to Test" names the Beta. Never on a stable tag.
+      - name: Beta as stable identity (option A)
+        if: ${{ inputs.beta_as_release }}
+        run: |
+          set -euo pipefail
+          node -e "const s = require('./src-tauri/app-identity.json');
+          const c = require('./src-tauri/tauri.conf.json');
+          if (s.ship !== 'experiment' || !/^\d+\.\d+\.\d+-beta\.\d+$/.test(c.version)) {
+          console.error('::error::beta_as_release needs a Beta checkout (ship=' + s.ship + ', version=' + c.version + ')');
+          process.exit(1); }"
+          node scripts/set-app-identity.mjs release
+          node -e "const fs = require('fs'); const p = './src-tauri/tauri.conf.json';
+          const c = JSON.parse(fs.readFileSync(p, 'utf8')); const v = c.version.replace(/-beta\.\d+$/, '');
+          fs.writeFileSync(p, fs.readFileSync(p, 'utf8').replace('\"version\": \"' + c.version + '\"', '\"version\": \"' + v + '\"'));
+          if (JSON.parse(fs.readFileSync(p, 'utf8')).version !== v) { console.error('::error::version rewrite failed'); process.exit(1); }
+          console.log('Beta ' + c.version + ' builds as page.tine.Tine ' + v);"
+
       - name: Require the stable app identity
         run: >-
           node -e "const s = require('./src-tauri/app-identity.json');
