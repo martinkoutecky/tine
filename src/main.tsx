@@ -29,6 +29,7 @@ import "./lsShimInstall";
 import { installSystemInsetOwner } from "./systemInsets";
 import { installPlatformAttribute } from "./nativeChrome";
 import { installEditableEmojiPlatform } from "./editableEmoji";
+import { installTextareaPrimarySelectionGuard } from "./textareaPrimarySelection";
 import "./styles/editableEmoji.css";
 import "./styles/app.css";
 import "./styles/touchGestures.css"; // after app.css: its .sel-toolbar-mobile overrides .sel-toolbar
@@ -54,6 +55,7 @@ installPlatformAttribute();
 if (isTauri()) installBackendClock(() => backend().localClock());
 installSystemInsetOwner();
 installEditableEmojiPlatform();
+installTextareaPrimarySelectionGuard();
 applyTheme();
 applyAccent();
 // Workspace windows (desktop): wired before the session restore reopens them.

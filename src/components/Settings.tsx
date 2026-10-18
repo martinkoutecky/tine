@@ -18,7 +18,7 @@ import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
-import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
+import { isMac, isMobilePlatform, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
 import {
   copyIncludeSubtree,
   setCopyIncludeSubtree,
@@ -27,7 +27,7 @@ import {
   refClickZoom,
   setRefClickZoom,
 } from "../copySettings";
-import { navReuseTabs, setNavReuseTabs } from "../navSettings";
+import { mobileNavigationAtBottom, navReuseTabs, setMobileNavigationAtBottom, setNavReuseTabs } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
@@ -121,7 +121,7 @@ export function Settings(): JSX.Element {
   const availableTabs = createMemo(() => pluginsAvailable() ? TABS : TABS.filter((entry) => entry.id !== "plugins"));
   const matches = createMemo(() => {
     const query = settingsQuery();
-    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab)), query) : [];
+    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && (isMobilePlatform || !entry.mobileOnly)), query) : [];
   });
   // A setting whose field mounts after an async load (Developer tools waits for
   // the platform probe) is not in the DOM when the tab opens, so the lookup is
@@ -482,6 +482,14 @@ function AppearanceTab(props: { search: string }): JSX.Element {
           </Show>
         </div>
       </Field>
+
+      {/* GH #716: the phone/tablet app keeps Sidebar, Search, Back and Forward in
+          the top bar; this opt-in restores the GH #598 bottom row. */}
+      <Show when={isMobilePlatform}>
+        <Field label={render(msg("settings-mobile-navigation-label"))} hint={render(msg("settings-mobile-navigation-hint"))}>
+          <Toggle on={mobileNavigationAtBottom()} onClick={() => setMobileNavigationAtBottom(!mobileNavigationAtBottom())} />
+        </Field>
+      </Show>
 
       <Field label={t("settings-ui-wide-mode")} hint={t("settings-ui-drops-the-reading-width-cap")}>
         <Toggle on={wideMode()} onClick={toggleWideMode} />

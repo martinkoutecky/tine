@@ -1,4 +1,4 @@
-// GH #683/#684 durable native journeys; GH #530 independent X11 paste target.
+// GH #683/#684/#721 durable native journeys; GH #530 independent X11 paste target.
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -22,6 +22,10 @@ const original = ["- Tasks", "  * [ ] first", "  * [ ] second", "- > [!TIP]", " 
 const file = path.join(GRAPH, "pages/Operations.md");
 fs.writeFileSync(file, original);
 fs.writeFileSync(path.join(GRAPH, "pages/Other.md"), "- other page\n");
+// GH #721: Logseq Android writes `collapsed:: true` after a block's last line, which the
+// parser folds into a final quote. Repeated collapse must neither stack rows nor show them.
+const androidFile = path.join(GRAPH, "pages/Android.md");
+fs.writeFileSync(androidFile, ["- Outside", "  > Something", "  collapsed:: true", "\t- Inside", ""].join(newline));
 const env = { ...process.env, TINE_GRAPH: GRAPH,
   XDG_DATA_HOME: path.join(TMP, "data"), XDG_CONFIG_HOME: path.join(TMP, "config"), XDG_CACHE_HOME: path.join(TMP, "cache"),
   WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
@@ -64,6 +68,25 @@ try {
   await browser.$(`[data-block-id="${reopenedQuoteId}"] .collapse-toggle`).click();
   await saved(checked);
   proof.observations.push("Collapse/expand and route reopen preserve every unrelated file byte");
+  // GH #721: five collapse/expand taps on a block whose trailing `collapsed::` row sits in its quote.
+  await openPageByName(browser, "Android");
+  const androidRows = () => fs.readFileSync(androidFile, "utf8").split(/\r?\n/).filter(l => /^\s*collapsed::/i.test(l)).length;
+  const outsideToggle = async () => {
+    const id = await browser.execute(() => [...document.querySelectorAll(".main-content .block-content")].find(el => el.textContent.startsWith("Outside")).closest(".ls-block").getAttribute("data-block-id"));
+    return browser.$(`[data-block-id="${id}"] .collapse-toggle`);
+  };
+  for (let tap = 1; tap <= 5; tap++) {
+    await (await outsideToggle()).click();
+    const expected = tap % 2; // taps 1, 3, 5 collapse (row present); 2, 4 expand (row removed)
+    await browser.waitUntil(() => androidRows() === expected, { timeout: 15000, timeoutMsg: `tap ${tap}: expected ${expected} collapsed:: row(s), file has ${androidRows()}` });
+    await browser.pause(700); // a stacking save would land here
+    if (androidRows() !== expected) throw new Error(`tap ${tap}: collapsed:: rows stacked to ${androidRows()}`);
+    if (await browser.execute(() => document.querySelector(".main-content").textContent.includes("collapsed::"))) throw new Error(`tap ${tap}: collapsed:: shown as text`);
+  }
+  const androidBytes = fs.readFileSync(androidFile, "utf8");
+  if (!androidBytes.includes("Something") || !androidBytes.includes("Inside")) throw new Error("Quote or child lost");
+  proof.observations.push("Five taps on a block whose collapsed:: row trails its quote keep at most one row and never show it");
+  await openPageByName(browser, "Operations");
   await browser.$(".main-content .block-checkbox").click(); // restore first item afterward
   await saved(checked.replace("* [ ] first", "* [x] first"));
   await browser.$(".main-content .block-checkbox").click();
@@ -100,6 +123,28 @@ try {
   proof.dragSelection = { expected: dragged, ...dragSelection };
   if (dragSelection.text !== dragged || (dragSelection.html && (dragSelection.html.includes("unrelated marker") || dragSelection.html.includes("helpful")))) throw new Error("Drag PRIMARY contains text outside the selected passage");
   proof.observations.push("Mouse-drag PRIMARY plain/HTML contain only the selected passage");
+  // GH #530: a selection that ends in the LAST text node of the editor (every
+  // single-line block, any select-all) made WebKitGTK serialize text/html from the
+  // textarea to the end of the document: editing markup, toolbar buttons, later blocks.
+  const primaryFor = async (startsWith, label, forbidden) => {
+    await browser.keys(["Escape"]);
+    await browser.waitUntil(async () => (await browser.$$("textarea.block-editor")).length === 0, { timeout: 5000 });
+    await browser.execute((prefix) => [...document.querySelectorAll(".main-content .block-content")].find(el => el.textContent.startsWith(prefix)).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 })), startsWith);
+    await browser.$("textarea.block-editor").waitForExist({ timeout: 10000 });
+    await browser.keys(["Control", "a"]);
+    const expected = await browser.execute(() => { const e = document.querySelector("textarea.block-editor"); return e.value.slice(e.selectionStart, e.selectionEnd); });
+    await browser.$(".sel-toolbar").waitForExist({ timeout: 5000 });
+    const got = JSON.parse(execFileSync("python3", ["scripts/read-primary-selection.py"], { env, encoding: "utf8" }));
+    proof[label] = { expected, ...got, html: got.html && got.html.slice(0, 400) };
+    if (got.text !== expected) throw new Error(`${label}: PRIMARY text differs from the selection`);
+    for (const bad of ["<textarea", "contenteditable", "data-selection-action", ...forbidden]) {
+      if (got.html && got.html.includes(bad)) throw new Error(`${label}: PRIMARY text/html carries ${bad}`);
+    }
+    proof.observations.push(`${label}: select-all PRIMARY plain/HTML carry only the block text`);
+  };
+  await primaryFor("unrelated marker", "singleLineSelectAll", []);
+  await primaryFor("Tasks", "multiLineSelectAll", ["unrelated marker"]);
+  await browser.keys(["Escape"]);
   }
   console.log(`PASS ${JSON.stringify(proof)}`);
 } catch (error) {
