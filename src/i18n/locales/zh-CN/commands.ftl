@@ -115,6 +115,7 @@ command-ui-open-settings = 打开设置
 command-page-export-pdf = 将当前页面导出为 PDF…
 
 command-ui-toggle-wide-mode = 切换宽屏模式
+command-ui-toggle-code-block-wrap = 切换代码块自动换行
 
 command-ui-toggle-document-mode = 切换文档模式
 

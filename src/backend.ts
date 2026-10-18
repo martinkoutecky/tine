@@ -421,6 +421,9 @@ class TauriBackend implements Backend {
   queryRun(query: Query, view: ViewSettings, context?: ExecutionContext) {
     return this.call<QueryResult>("query_run", { query, view, context });
   }
+  taggedPages(name: string) {
+    return this.call<QueryResult>("tagged_pages", { name });
+  }
   queryExplainEmpty(query: Query, view: ViewSettings, context?: ExecutionContext) {
     return this.call<ExplainEmptyResult>("query_explain_empty", { query, view, context });
   }

@@ -365,6 +365,7 @@ impl DocBlock {
                 &self.raw,
                 self.is_org,
                 &proj.blocks,
+                &regions,
                 self.property_ref_config
                     .as_deref()
                     .unwrap_or_else(|| crate::query::atom::ParseConfig::default_ref()),

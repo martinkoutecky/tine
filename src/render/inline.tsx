@@ -10,11 +10,12 @@ import { leadingMarker, matchLeadingMarker } from "../markers";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { assetRelPath, extOf, mediaKind } from "../media";
-import { openPage, openPageInNewTab, openPageAtBlock, openInNewTab, zoomToBlock } from "../router";
+import { openPage, openPageInNewTab, openInNewTab } from "../router";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
-import { refClickZoom } from "../copySettings";
+import { openRefTarget } from "../blockRefActions";
+import { editOccurrence, occurrenceEditable, removeOccurrence, createShownOccurrence, useOccurrenceOwner } from "../refOccurrence";
 import { isJournalTitle } from "../journal";
-import { openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
+import { openPageInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
 import { pushToast } from "../toasts";
 import { openOutboundLink, reportLinkOpenFailure } from "../components/ExternalLink";
@@ -81,13 +82,13 @@ import { windowOf } from "../windowRealm";
 // The query arm prefers the RAW source slice (`rawMacro`): mldoc splits macro
 // arguments on commas and stops before the first `}`, so the AST body loses an
 // options map's closing brace and a literal comma.
-function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], rawMacro?: MacroExtent): JSX.Element {
+function renderMacroBody(raw: string, blockId?: string, userArgs?: string[], rawMacro?: MacroExtent, span?: Span): JSX.Element {
   const body = raw.trimStart();
   // A preview must not mount a live query editor through an inline macro.
   if (useContext(PeekContext) && (rawMacro || isQueryMacroName(body.split(" ", 1)[0]))) return <code>{`{{${raw}}}`}</code>;
   if (rawMacro) return <QueryMacro body={`${rawMacro.name} ${rawMacro.argument}`} blockId={blockId} sourceExtent={rawMacro} sourceRaw={blockId ? docNode(blockId)?.raw.slice(rawMacro.start, rawMacro.end) : undefined} />;
   if (isQueryMacroName(/^\S*/.exec(body)![0].replace(/}+$/, ""))) return <QueryMacro body={body} blockId={blockId} />;
-  if (/^embed\b/i.test(body)) return <EmbedMacro body={body} blockId={blockId} />;
+  if (/^embed\b/i.test(body)) return <EmbedMacro body={body} blockId={blockId} span={span} />;
   if (/^youtube-timestamp\b/i.test(body)) return <YoutubeTimestamp body={body} />;
   if (/^(video|youtube|vimeo|bilibili)\b/i.test(body)) return <VideoMacro body={body} />;
   if (/^(tweet|twitter)\b/i.test(body)) return <TweetMacro body={body} />;
@@ -190,7 +191,7 @@ function renderInline(s: Inline, blockId?: string, spanMode = true, macroExpansi
     case "tag":
       return <PageRef name={astText(s.children)} blockId={blockId} tag spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "macro":
-      return renderMacroBody(macroBody(s), blockId, s.args, rawQueryMacro(s, blockId));
+      return renderMacroBody(macroBody(s), blockId, s.args, rawQueryMacro(s, blockId), hostSpan(s, spanMode, macroExpansion));
     case "latex":
       return <MathView tex={s.body} display={s.mode === "Displayed"} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "timestamp":
@@ -233,6 +234,12 @@ export function astText(inlines: Inline[]): string {
     }
   }
   return out;
+}
+
+/** The token's source span in its host block's raw (GH #417 occurrence actions):
+ *  none for text that is not the host's own source (a macro expansion, a label). */
+function hostSpan(s: Inline, spanMode: boolean, macroExpansion: boolean): Span | undefined {
+  return spanMode && !macroExpansion ? s.span : undefined;
 }
 
 function macroBody(s: MacroInline): string {
@@ -479,7 +486,7 @@ function renderLink(
   }
   if (url.type === "block_ref") {
     const label = s.label && s.label.length ? astText(s.label) : undefined;
-    return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} />;
+    return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} blockId={blockId} span={hostSpan(s, spanMode, macroExpansion)} />;
   }
   const dest = urlDest(url);
   const fileTarget = assetLinkRel(dest) === null ? fileLinkTarget(dest) : null;
@@ -1269,7 +1276,7 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
 // navigate to the source page on click and show a hover preview of the full
 // referenced block (mirrors OG); a missing target, or an id that is not a
 // UUID, shows its source `((id))` in full, as OG does (GH #589).
-function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs; blockId?: string }): JSX.Element {
+function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs; blockId?: string; span?: Span }): JSX.Element {
   const linkDepth = useContext(LinkDepthContext);
   if (linkDepth >= MAX_DEPTH_OF_LINKS) {
     return <span class="link-depth-warning">{t("render-reference-depth-is-too-deep")}</span>;
@@ -1290,6 +1297,15 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // keeps a loaded reactive node winning and otherwise shows the short id.
   const grp = () => readOr(grpResource, undefined, "block reference target");
   const peek = createPeekBridge(() => insidePeek);
+  // GH #231's deliberate hold opens this reference's menu on touch, where it is
+  // the route to Edit link / Remove reference (GH #417).
+  const longPress = createLongPress(() => anchorEl);
+  onCleanup(longPress.dispose);
+  // GH #417: this reference occurrence in its host block, for Edit link / Remove
+  // (the preview's title row and the right-click / long-press menu).
+  const owner = useOccurrenceOwner(() => props.blockId);
+  const occurrence = createShownOccurrence(() =>
+    insidePeek ? undefined : { host: props.blockId, span: props.span, kind: "ref", target: props.id });
   // A loaded target shares the editor's reactive node, so references update on
   // the keystroke without re-resolving every visible uuid after every save. The
   // backend snapshot remains the fallback for targets outside the working set;
@@ -1366,17 +1382,24 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         }}
         onPointerEnter={peek.anchorEnter}
         onPointerLeave={peek.anchorLeave}
+        onPointerDown={longPress.onPointerDown}
+        onPointerMove={longPress.onPointerMove}
+        onPointerUp={longPress.onPointerUp}
+        onPointerCancel={longPress.onPointerCancel}
         onContextMenu={(e) => {
           const g = grp();
           if (!g) return; // missing target → let the default menu through
           const ref = blockRefTarget(props.id, g);
-          if (!shouldOpenTextContextMenu(e.target)) return;
+          if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
-          openBlockRefContextMenu(e.clientX, e.clientY, ref.uuid, ref.page, ref.pageKind, ref.path);
+          const o = occurrence();
+          openBlockRefContextMenu(e.clientX, e.clientY, ref.uuid, ref.page, ref.pageKind, ref.path,
+            occurrenceEditable(o) ? { ...o, owner: owner() } : undefined);
         }}
         onClick={(e) => {
           e.stopPropagation();
+          if (longPress.consumeClick(e)) { e.preventDefault(); return; }
           const g = grp();
           if (!g) return;
           const ref = blockRefTarget(props.id, g);
@@ -1402,16 +1425,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           // Plain click: Tine scrolls + flashes the block in context (default); the
           // OG behavior — zoom into the block as its own page — is opt-in
           // (Settings → ref-click-zoom).
-          if (dest === "sidebar") openBlockInSidebar(ref);
-          else if (dest === "background")
-            openInNewTab({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
-          else if (dest === "pane")
-            openRouteInOtherPane(
-              { kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) },
-              pane?.paneId ?? focusedPaneId()
-            );
-          else if (refClickZoom()) zoomToBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
-          else openPageAtBlock({ name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) });
+          openRefTarget(ref, dest, pane?.paneId ?? focusedPaneId());
         }}
       >
         <Show when={lines() !== undefined} fallback={<>(({props.id}))</>}>
@@ -1448,6 +1462,14 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           pageKind={preview()!.group.kind}
           blockId={props.id}
           truncatedCount={previewTruncated}
+          actions={<Show when={occurrenceEditable(occurrence()) ? occurrence() : undefined} keyed>
+            {(o) => <>
+              <button type="button" class="peek-ref-edit" title={t("ref-occurrence-edit-title")}
+                onClick={() => { peek.dismiss(); editOccurrence(o, owner()); }}>{t("ref-occurrence-edit")}</button>
+              <button type="button" class="peek-ref-remove" title={t("ref-occurrence-remove-ref-title")}
+                onClick={() => { peek.dismiss(); removeOccurrence(o); }}>{t("ref-occurrence-remove")}</button>
+            </>}
+          </Show>}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
           onDismiss={peek.dismiss}

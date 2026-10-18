@@ -449,8 +449,9 @@ fn through_page(filter: Filter) -> Filter {
 
 /// `@page` anchor: the page row IS the current row, so every `page` hop the
 /// parser inserted collapses away. OG's DSL has no `children`/`blocks`
-/// relation, so this only ever meets boolean nodes and page hops.
-fn rebase_to_page(filter: Filter) -> Filter {
+/// relation, so this only ever meets boolean nodes and page hops. The TQL
+/// printer applies the same collapse to a block filter shown under `@page`.
+pub(crate) fn rebase_to_page(filter: Filter) -> Filter {
     match filter {
         Filter::Leaf {
             leaf:
@@ -747,17 +748,7 @@ impl<'a> OgParse<'a> {
                 let value = self.opt_property_value();
                 property_leaf(key, value)
             }),
-            "page-tags" | "tags" => {
-                let tags = self.vector_or_names();
-                through_page(Filter::rel(
-                    Rel::Props,
-                    Quant::Any,
-                    Filter::and(vec![
-                        Filter::attr(Attr::Key, CmpOp::Eq, Value::text("tags")),
-                        Filter::attr(Attr::Value, CmpOp::In, text_list(tags)),
-                    ]),
-                ))
-            }
+            "page-tags" | "tags" => through_page(page_tags_filter(self.vector_or_names())),
             // OG `build-all-page-tags` (`:322-325`) + `rules.cljc:96-98`
             // `[_ :block/tags ?p]`: every page that some page uses as a tag.
             // The relation is INCOMING (the page is named by another page's
@@ -1043,6 +1034,20 @@ fn bounded(attr: Attr, low: Option<&str>, high: Option<&str>) -> Filter {
         (None, Some(high)) => Filter::attr(attr, CmpOp::Le, Value::date(high)),
         (None, None) => Filter::attr(attr, CmpOp::IsSet, Value::None),
     }
+}
+
+/// OG `(page-tags …)` on a page row (`rules.cljc:90-94`): the page's own
+/// `tags::` names one of `tags`, compared literally (no alias resolution). The
+/// one definition, shared with the Tagged Pages section (GH #715).
+pub fn page_tags_filter(tags: Vec<String>) -> Filter {
+    Filter::rel(
+        Rel::Props,
+        Quant::Any,
+        Filter::and(vec![
+            Filter::attr(Attr::Key, CmpOp::Eq, Value::text("tags")),
+            Filter::attr(Attr::Value, CmpOp::In, text_list(tags)),
+        ]),
+    )
 }
 
 fn text_list(values: Vec<String>) -> Value {

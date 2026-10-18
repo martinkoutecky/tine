@@ -9,6 +9,7 @@ import { isMobilePlatform } from "./nativeChrome";
 import { createEffect, createRoot, createSignal, useContext } from "solid-js";
 import type { JournalConflict, PageKind } from "./types";
 import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
+import type { OwnedOccurrence } from "./refOccurrence";
 import { backend } from "./backend";
 import { setFocusFullscreen } from "./focusFullscreen";
 import { captureBinding, clearOnBindingInvalidated, graphScopedSignal } from "./binding";
@@ -1305,7 +1306,7 @@ export type CtxTarget =
       /** Exact title-row owner for focus restoration after menu dismissal. */
       focusOwner?: HTMLElement;
     }
-  | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page"; path?: string }
+  | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page"; path?: string; occurrence?: OwnedOccurrence }
   | { kind: "sheet-cell"; blockId: string; remove?: SheetCellRemoveCtx }
   | {
       kind: "sheet";
@@ -1367,14 +1368,10 @@ export function openPageContextMenu(
   setContextMenu({ x, y, kind: "page", ...target, fileActions, focusOwner: owner });
 }
 export function openBlockRefContextMenu(
-  x: number,
-  y: number,
-  uuid: string,
-  page: string,
-  pageKind: "journal" | "page" = "page",
-  path?: string,
+  x: number, y: number, uuid: string, page: string,
+  pageKind: "journal" | "page" = "page", path?: string, occurrence?: OwnedOccurrence,
 ) {
-  setContextMenu({ x, y, kind: "blockref", uuid, page, pageKind, path });
+  setContextMenu({ x, y, kind: "blockref", uuid, page, pageKind, path, occurrence });
 }
 export function openSheetCellContextMenu(x: number, y: number, blockId: string, remove?: SheetCellRemoveCtx) {
   setContextMenu({ x, y, kind: "sheet-cell", blockId, remove });

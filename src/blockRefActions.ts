@@ -18,9 +18,11 @@ import {
   withUndoUnit,
   node as docNode,
 } from "./document";
-import { openInNewTab } from "./router";
-import { openBlockInSidebar, openSwitcher } from "./ui";
+import { openInNewTab, openPage, openPageAtBlock, zoomToBlock } from "./router";
+import { openBlockInSidebar, openPageInSidebar, openSwitcher } from "./ui";
 import { focusedPaneId, openRouteInOtherPane, paneRouter } from "./panes";
+import { refClickZoom } from "./copySettings";
+import type { InternalLinkDest } from "./linkGesture";
 import { editingId, editingSurface, startEditing } from "./editorController";
 import { graphMeta } from "./graphSession";
 import { pushToast } from "./toasts";
@@ -37,6 +39,30 @@ export function openDurableBlock(id: string, destination: "sidebar" | "tab" | "p
     const route = { kind: "page" as const, name: ref.page, pageKind: ref.pageKind, block: ref.uuid, ...(ref.path ? { path: ref.path } : {}) };
     if (destination === "pane") openRouteInOtherPane(route);
     else openInNewTab(route);
+  }
+}
+
+/** Open what a reference or embed points at (a block, or a whole page when
+ *  `uuid` is absent) at the shared link destination (linkGesture.ts): sidebar,
+ *  background tab, the other pane, or here. Here, a block opens in place in its
+ *  page, or zoomed in with Settings → ref-click-zoom (OG). Synchronous: no save. */
+export function openRefTarget(
+  target: { page: string; pageKind: "journal" | "page"; uuid?: string; path?: string },
+  dest: InternalLinkDest,
+  fromPane: string,
+): void {
+  const at = target.path ? { path: target.path } : {};
+  const route = { kind: "page" as const, name: target.page, pageKind: target.pageKind, ...(target.uuid ? { block: target.uuid } : {}), ...at };
+  if (dest === "background") openInNewTab(route);
+  else if (dest === "pane") openRouteInOtherPane(route, fromPane);
+  else if (!target.uuid) {
+    if (dest === "sidebar") openPageInSidebar(target.page, target.pageKind, target.path);
+    else openPage(target.page, target.pageKind);
+  } else {
+    const block = { name: target.page, pageKind: target.pageKind, block: target.uuid, ...at };
+    if (dest === "sidebar") openBlockInSidebar({ uuid: target.uuid, page: target.page, pageKind: target.pageKind, ...at });
+    else if (refClickZoom()) zoomToBlock(block);
+    else openPageAtBlock(block);
   }
 }
 

@@ -13,6 +13,8 @@ pub(crate) use held_index::Source;
 mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
+#[cfg(test)]
+mod index_oracle_tests;
 mod line_endings;
 mod page_icons;
 mod page_identity;
@@ -478,12 +480,22 @@ impl ReadSnapshot {
                 return Arc::clone(&old.transliteration_names);
             }
         }
+        // GJ5 S6: referenced names are tested for eligibility (a non-ASCII
+        // check first) before anything is copied, so a graph without Han
+        // names allocates nothing per block here. Eligibility is the same for
+        // every spelling of one page key, so this is the set the former
+        // collect-then-filter produced.
         let names = |page: &PageEntry, doc: &Document| -> std::collections::BTreeSet<String> {
-            std::iter::once(page.name.clone())
+            let mut names: std::collections::BTreeSet<String> = std::iter::once(page.name.clone())
                 .chain(crate::query::document_alias_spellings(doc))
-                .chain(collect_document_referenced_names(doc))
                 .filter_map(|name| crate::transliteration::cache_identity(&name))
-                .collect()
+                .collect();
+            visit_document_referenced_names(doc, None, &mut |name| {
+                if let Some(key) = crate::transliteration::cache_identity(name) {
+                    names.insert(key);
+                }
+            });
+            names
         };
         let mut delta: std::collections::BTreeMap<String, isize> = Default::default();
         if let Some(old) = old {
@@ -591,9 +603,10 @@ impl ReadSnapshot {
         // Build the indexes PRE warmed before ready. Block hints and referenced
         // names were first-use work there, so their OnceLocks remain cold.
         let initial = old.is_none().then(|| {
+            // First, on the page-parse workers: it builds every block
+            // projection the other three indexes read (GJ5 S1).
+            let explicit = SnapshotExplicitIndex::capture(None, &pages, &[], None, &config);
             std::thread::scope(|scope| {
-                let explicit = scope
-                    .spawn(|| SnapshotExplicitIndex::capture(None, &pages, &[], None, &config));
                 let signatures = scope.spawn(|| {
                     SnapshotReferenceCandidateIndex::capture(None, &pages, &[], cache_generation)
                 });
@@ -617,7 +630,7 @@ impl ReadSnapshot {
                     )
                 });
                 (
-                    explicit.join().expect("explicit index worker"),
+                    explicit,
                     signatures.join().expect("signature index worker"),
                     counts.join().expect("block count worker"),
                     aliases.join().expect("alias index worker"),
@@ -1313,21 +1326,35 @@ fn collect_document_referenced_names_with_baseline(
     doc: &Document,
     baseline: Option<(&str, &str)>,
 ) -> Vec<String> {
-    fn add(seen: &mut HashMap<String, String>, name: String) {
+    let mut seen = HashMap::new();
+    visit_document_referenced_names(doc, baseline, &mut |name| {
         if !name.is_empty() {
-            seen.entry(tine_core::refs::page_key(&name)).or_insert(name);
+            seen.entry(tine_core::refs::page_key(name))
+                .or_insert_with(|| name.to_owned());
         }
-    }
-    fn property_refs(seen: &mut HashMap<String, String>, block: &DocBlock) {
+    });
+    seen.into_values().collect()
+}
+
+/// Every page name `doc` references, repeats included and nothing allocated:
+/// the page-property block's linkable values, then each block's page refs and
+/// linkable property values in pre-order. `baseline` (block id, raw) reads
+/// that block as if its body were `raw`.
+fn visit_document_referenced_names(
+    doc: &Document,
+    baseline: Option<(&str, &str)>,
+    f: &mut dyn FnMut(&str),
+) {
+    fn property_refs(f: &mut dyn FnMut(&str), block: &DocBlock) {
         let projection = block.projection();
         for name in tine_core::reference_evidence::linkable_property_names(
             projection.reference_source(),
             &projection.regions,
         ) {
-            add(seen, name.to_owned());
+            f(name);
         }
     }
-    fn visit(block: &DocBlock, seen: &mut HashMap<String, String>, baseline: Option<(&str, &str)>) {
+    fn visit(block: &DocBlock, f: &mut dyn FnMut(&str), baseline: Option<(&str, &str)>) {
         let replacement = baseline
             .filter(|(id, _)| *id == block.uuid)
             .map(|(_, raw)| {
@@ -1337,23 +1364,21 @@ fn collect_document_referenced_names_with_baseline(
             });
         let reference_block = replacement.as_ref().unwrap_or(block);
         for name in reference_block.projection().refs_page() {
-            add(seen, name.clone());
+            f(name);
         }
-        property_refs(seen, reference_block);
+        property_refs(f, reference_block);
         for child in &block.children {
-            visit(child, seen, baseline);
+            visit(child, f, baseline);
         }
     }
-    let mut seen = HashMap::new();
     if let Some(pre) = &doc.pre_block {
         let mut block = DocBlock::new(pre);
         block.set_org(crate::query::page_properties::page_document_is_org(doc));
-        property_refs(&mut seen, &block);
+        property_refs(f, &block);
     }
     for block in &doc.roots {
-        visit(block, &mut seen, baseline);
+        visit(block, f, baseline);
     }
-    seen.into_values().collect()
 }
 
 pub(crate) enum Withdrawal {
@@ -1673,14 +1698,6 @@ struct SnapshotExplicitIndex {
 impl SnapshotExplicitIndex {
     const SHARDS: usize = 64;
 
-    fn empty() -> Self {
-        Self {
-            shards: (0..Self::SHARDS)
-                .map(|_| Arc::new(SharedMap::new()))
-                .collect(),
-        }
-    }
-
     fn shard(name: &str) -> usize {
         snapshot_index_shard(name.as_bytes())
     }
@@ -1749,12 +1766,55 @@ impl SnapshotExplicitIndex {
             }
             index
         } else {
-            let mut index = Self::empty();
-            for (entry, doc) in pages.iter() {
-                let names = crate::query::document_explicit_reference_names(entry, doc, config);
-                index.update(&entry.path, &[], &names);
+            Self::build(pages, config)
+        }
+    }
+
+    /// The whole index from `pages`: each page's names on up to
+    /// `page_cache_worker_count()` workers, inserted under the name's shard
+    /// lock (64 shards, so the workers rarely meet). The same index as
+    /// `update` of each page in turn, with no transient copy: per-worker
+    /// posting lists measured +14 MB peak RSS on a 1M-block graph. Computing
+    /// the names builds every block projection, so this is also the initial
+    /// capture's parallel projection pass (GJ5 S1: the capture's index
+    /// threads used to wait on the same lazily built projections in page
+    /// order, so one core did them all; S4: this index was serial).
+    fn build(pages: &Pages, config: &Config) -> Self {
+        type Shard = SharedMap<String, Arc<SharedMap<PathBuf, ()>>>;
+        let shards: Vec<std::sync::Mutex<Shard>> = (0..Self::SHARDS)
+            .map(|_| std::sync::Mutex::new(SharedMap::new()))
+            .collect();
+        let insert = |chunk: &[&(PageEntry, Arc<Document>)]| {
+            for (entry, doc) in chunk {
+                for name in crate::query::document_explicit_reference_names(entry, doc, config) {
+                    let mut shard = shards[Self::shard(&name)].lock().unwrap();
+                    if let Some(paths) = shard.get_mut(&name) {
+                        Arc::make_mut(paths).insert(entry.path.clone(), ());
+                    } else {
+                        let mut paths = SharedMap::new();
+                        paths.insert(entry.path.clone(), ());
+                        shard.insert(name, Arc::new(paths));
+                    }
+                }
             }
-            index
+        };
+        let rows: Vec<&(PageEntry, Arc<Document>)> = pages.iter().collect();
+        let workers = page_cache_worker_count();
+        if workers <= 1 || rows.len() < 64 {
+            insert(&rows);
+        } else {
+            let insert = &insert;
+            std::thread::scope(|scope| {
+                for chunk in rows.chunks(rows.len().div_ceil(workers)) {
+                    scope.spawn(move || insert(chunk));
+                }
+            });
+        }
+        Self {
+            shards: shards
+                .into_iter()
+                .map(|shard| Arc::new(shard.into_inner().unwrap()))
+                .collect(),
         }
     }
 }

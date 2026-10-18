@@ -3,8 +3,9 @@
 //!        <cold|write|warm> <graph copy> <checkpoint file>
 //! `cold` opens with no checkpoint; `write` opens, reaches Ready and writes the
 //! checkpoint; `warm` opens from it. Prints one JSON line: open → first page
-//! read (`page()` returns) and open → Ready in ms, checkpoint diagnostics and
-//! VmRSS after Ready, then the first Ctrl-K search (`search`, the Quick
+//! read (`page()` returns) and open → Ready in ms, checkpoint diagnostics,
+//! the peak resident set through Ready (VmHWM, read before anything after
+//! Ready runs) and VmRSS after Ready, then the first Ctrl-K search (`search`, the Quick
 //! Switcher's `run_graph_search` call), the first `((` block search
 //! (`find_blocks`) and the first backlinks of two pages after Ready.
 //! `write` runs the searches and the first page's backlinks before writing, so
@@ -71,13 +72,14 @@ fn timed_reads(view: &WholeGraph, first: &str, second: &str) -> serde_json::Valu
     })
 }
 
-fn rss_kib() -> u64 {
+/// A `/proc/self/status` field in KiB (`VmRSS:` now, `VmHWM:` peak so far).
+fn status_kib(field: &str) -> u64 {
     std::fs::read_to_string("/proc/self/status")
         .ok()
         .and_then(|status| {
             status
                 .lines()
-                .find(|line| line.starts_with("VmRSS:"))
+                .find(|line| line.starts_with(field))
                 .and_then(|line| line.split_whitespace().nth(1)?.parse().ok())
         })
         .unwrap_or(0)
@@ -150,8 +152,9 @@ fn main() {
     }
     let view = store.whole_graph().expect("ready");
     let ready_ms = began.elapsed().as_secs_f64() * 1e3;
+    let peak_at_ready = status_kib("VmHWM:");
     let pages = view.corpus().pages.len();
-    let rss = rss_kib();
+    let rss = status_kib("VmRSS:");
     let reads = (mode != "write").then(|| timed_reads(&view, &first, &second));
     let write = (mode == "write").then(|| {
         timed_reads(&view, &first, &first);
@@ -167,6 +170,7 @@ fn main() {
             "firstPageMs": first_page_ms,
             "readyMs": ready_ms,
             "rssKiB": rss,
+            "peakAtReadyKiB": peak_at_ready,
             "reads": reads,
             "write": write,
             "checkpoint": diag["checkpoint"],

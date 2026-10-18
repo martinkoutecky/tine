@@ -91,9 +91,9 @@ try {
   });
   await browser.waitUntil(()=>browser.execute(()=>document.querySelector(".main-content").scrollTop<1200),{timeout:10000});
   stage = "setting toggle";
-  await browser.keys(["Control","Shift","p","NULL"]);
-  await browser.$(".switcher-input").setValue("Settings");
-  await browser.keys(["Enter"]);
+  // The toolbar button, not the command palette: Enter could land before the
+  // palette listed "Settings" on a loaded host (2 of 3 gate runs, 2026-10-18).
+  await browser.$('button[title^="Settings"]').click();
   await browser.$(".settings-modal").waitForDisplayed({timeout:10000});
   const setting=await browser.$('[data-setting-label="Sticky parent bullets"] [role="switch"]');
   await setting.waitForDisplayed({timeout:10000});
