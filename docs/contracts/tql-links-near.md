@@ -61,6 +61,13 @@ The canonical printed form omits `'both'`. Every other spelling (a named `k`,
 `dir` without quotes, a fourth argument) is a syntax error, never a silently
 different query.
 
+No TQL function (`near`, `any`/`every`/`none`, `ref`, `prop`, `off`, …) takes
+the SQL function modifiers the grammar would accept: `FILTER (WHERE …)`,
+`OVER …`, `WITHIN GROUP (…)`, `IGNORE/RESPECT NULLS`, `DISTINCT`/`ALL`, an
+`ORDER BY`/`LIMIT` inside the arguments, a subquery argument, or named and
+wildcard arguments outside `near`'s reserved slot. Each is a syntax error,
+never dropped.
+
 ### Examples
 
 ```
@@ -129,8 +136,12 @@ its text, as in OG.
   and R explicit references. Retained memory is O(P + E) for E distinct links:
   two `u32` adjacency entries per link (each list is deduplicated and shrunk to
   its length, so a page naming one target many times holds one entry), one key
-  per physical page and one name per page without a file. During the build a
-  transient list of every reference occurrence is held, O(R). Measured on the
+  per physical page and one name per page without a file. During the build the
+  transient memory is O(R + E): one pending entry per distinct target of each
+  page, and adjacency lists that receive each link once per source before the
+  final sort, never R times an alias's owner count (200 owners of one alias
+  named 50,000 times peak at about 1 MB above the start of the build for a
+  338 KB table; before review r1 the occurrences were expanded first, +72 MB). Measured on the
   realistic 10k graph: 13,904 nodes, 94,121 links, about 2.3 MiB retained. A
   later snapshot builds its own.
 - **`near`** is breadth-first search over that table, one search per
@@ -143,8 +154,10 @@ its text, as in OG.
 - **Cancellation.** `WholeGraph::query_ir(request, &Cancel)` takes the caller's
   flag (the `Cancel` flag interactive search takes). The row scan checks it
   once per candidate page; the table build, every element and seed condition
-  and every `near` search check it at least once per page and once per 1,024
-  references or reached pages. A cancelled run answers `Ok(None)`: no partial
+  check it at least once per page; the table build also once per 1,024
+  references read and per 1,024 links expanded or indexed, and every `near`
+  search once per 1,024 edges scanned (a hub with a million links is not one
+  step). A cancelled run answers `Ok(None)`: no partial
   answer, no partial table, and a cancelled run is never served from the memo
   (the flag is read before the memo) nor stored into it (the flag is read
   again after the computation, before the store). In the app every
@@ -178,5 +191,9 @@ cycle, 2-cycle, hub, journal hub, `'both'` versus the undirected ball —
 fileless seeds, rename of a seed inside a definition, and parity with the
 Linked References panel on the kitchen-sink, `tine-test` and anonymized-graph
 copies), `crates/tine-store/src/query/link_graph.rs` `cancellation_tests` and
-`query/memo.rs` (cancellation and the memo guard), `src-tauri/src/state.rs`
+`query/memo.rs` (cancellation, the hub and alias fan-out checkpoints, and the
+memo guard), `crates/tine-store/tests/link_graph.rs`
+`links_table_build_memory_follows_references_plus_links_not_their_product`
+(peak build memory), `tql_tests.rs`
+`every_function_refuses_sql_function_modifiers`, `src-tauri/src/state.rs`
 (`revoking_a_binding_cancels_its_running_queries_and_every_later_one`).

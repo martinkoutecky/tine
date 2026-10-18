@@ -20,15 +20,17 @@
 //! reference list, O(P + B + R); memory O(P + E) once built (the adjacency
 //! lists are shrunk after deduplication, so a page that names one target many
 //! times holds one entry, not one per occurrence; the transient pending list
-//! during the build is O(R)).
+//! holds one entry per distinct target of each page, and the adjacency lists
+//! one per link, so the build's peak is O(R + E), not R times the alias
+//! fan-out).
 //!
 //! Every pass is cooperatively cancellable through the caller's `cancelled`
 //! check (the `Fn() -> bool` shape interactive search uses behind
 //! `store::Cancel`): the build checks it once per page and once per
-//! [`CHECK_EVERY`] references, a `near` search once per [`CHECK_EVERY`]
-//! nodes. A cancelled pass returns `None` and leaves nothing behind.
+//! [`CHECK_EVERY`] references and links expanded, a `near` search once per
+//! [`CHECK_EVERY`] edges scanned. A cancelled pass returns `None` and leaves nothing behind.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tine_core::doc::{property_key_norm, DocBlock};
@@ -64,8 +66,8 @@ pub(crate) struct LinkGraph {
     inn: Vec<Vec<u32>>,
 }
 
-/// How many references or nodes a pass handles between two cancellation
-/// checks.
+/// How many references, links or edges a pass handles between two
+/// cancellation checks.
 pub(crate) const CHECK_EVERY: usize = 1024;
 
 enum PendingTarget {
@@ -125,6 +127,10 @@ impl LinkGraph {
             }
         };
         let mut pending: Vec<(u32, PendingTarget)> = Vec::new();
+        // References read so far, across pages: the collection checks the
+        // caller once per CHECK_EVERY of them, so one block naming many
+        // targets is not one unbounded step.
+        let mut references = 0usize;
         let finished = graph.with_pages(|pages| {
             for (entry, _) in pages.iter() {
                 if cancelled() {
@@ -153,9 +159,31 @@ impl LinkGraph {
                 {
                     continue;
                 }
-                let mut collect = |block: &DocBlock| {
+                // One pending entry per distinct target of this page: a page
+                // naming one target R times holds one entry, not R (review r1:
+                // the occurrences were expanded before deduplication).
+                let mut seen_keys: HashSet<String> = HashSet::new();
+                let mut seen_folds: HashSet<String> = HashSet::new();
+                // False once the caller cancelled.
+                let mut collect = |block: &DocBlock| -> bool {
                     for reference in block.projection().reference_source().explicit {
+                        references += 1;
+                        if references.is_multiple_of(CHECK_EVERY) && cancelled() {
+                            return false;
+                        }
                         visit_reference_targets(reference, config, |target| {
+                            let fresh = match target {
+                                ReferenceTarget::PageKey(key) => {
+                                    !seen_keys.contains(key) && seen_keys.insert(key.to_owned())
+                                }
+                                ReferenceTarget::PropertyKey(folded) => {
+                                    !seen_folds.contains(folded)
+                                        && seen_folds.insert(folded.to_owned())
+                                }
+                            };
+                            if !fresh {
+                                return false;
+                            }
                             pending.push((
                                 source,
                                 match target {
@@ -178,13 +206,16 @@ impl LinkGraph {
                             false
                         });
                     }
+                    true
                 };
                 if let Some(block) = doc
                     .pre_block
                     .as_deref()
                     .and_then(|pre| page_property_block_with_config(entry, pre, &parse_config))
                 {
-                    collect(&block);
+                    if !collect(&block) {
+                        return false;
+                    }
                 }
                 // Explicit stack: an outline's depth never recurses here.
                 let mut stack: Vec<&DocBlock> = doc.roots.iter().rev().collect();
@@ -194,7 +225,9 @@ impl LinkGraph {
                     if visited.is_multiple_of(CHECK_EVERY) && cancelled() {
                         return false;
                     }
-                    collect(block);
+                    if !collect(block) {
+                        return false;
+                    }
                     stack.extend(block.children.iter().rev());
                 }
             }
@@ -232,28 +265,48 @@ impl LinkGraph {
         table.out = vec![Vec::new(); count];
         table.inn = vec![Vec::new(); count];
         let empty = Vec::new();
-        for (at, (source, target)) in pending.iter().enumerate() {
-            if at.is_multiple_of(CHECK_EVERY) && cancelled() {
-                return None;
-            }
+        // `added[target]` is the last source that linked to `target`: within
+        // one source's run of entries a link is pushed once, so the lists
+        // hold O(links) before the final sort and dedup (duplicate files of
+        // one name, whose entries are not adjacent, add at most one copy per
+        // file).
+        let mut added: Vec<u32> = vec![u32::MAX; count];
+        let mut work = 0usize;
+        for (source, target) in pending.iter() {
             let targets = match target {
                 PendingTarget::Page { key, .. } => by_name.get(key),
                 PendingTarget::PropertyKey { folded, .. } => by_property_key.get(folded),
             }
             .unwrap_or(&empty);
             for &target in targets {
+                // Checked per target scanned, not per entry: one entry may
+                // fan out to every owner of an alias.
+                work += 1;
+                if work.is_multiple_of(CHECK_EVERY) && cancelled() {
+                    return None;
+                }
+                if added[target as usize] == *source {
+                    continue;
+                }
                 // `ReferenceSourceExclusions`: T's panel never lists T itself.
                 if node_keys[*source as usize] == self_keys[target as usize] {
                     continue;
                 }
+                added[target as usize] = *source;
                 table.out[*source as usize].push(target);
             }
         }
+        drop(added);
         drop(pending);
         if cancelled() {
             return None;
         }
+        let mut edges = 0usize;
         for (source, targets) in table.out.iter_mut().enumerate() {
+            edges += targets.len();
+            if edges / CHECK_EVERY > (edges - targets.len()) / CHECK_EVERY && cancelled() {
+                return None;
+            }
             targets.sort_unstable();
             targets.dedup();
             // A page naming one target many times kept one slot per
@@ -323,7 +376,7 @@ impl LinkGraph {
 
     /// `near`: the seeds and every node within `k` steps, one breadth-first
     /// search per direction (each path keeps its direction). Cost O(nodes + edges followed); no recursion. `None` once `cancelled`
-    /// reports true (checked once per [`CHECK_EVERY`] expanded nodes).
+    /// reports true (checked once per [`CHECK_EVERY`] edges scanned).
     pub(crate) fn ball(
         &self,
         seeds: &[bool],
@@ -344,16 +397,18 @@ impl LinkGraph {
             let mut seen = seeds.to_vec();
             let mut frontier = start.clone();
             let mut step = 0u32;
-            let mut expanded = 0usize;
+            // Edges scanned in this direction: checked per CHECK_EVERY of
+            // them, so one hub's adjacency list is not one unbounded step.
+            let mut scanned = 0usize;
             while step < k && !frontier.is_empty() {
                 step += 1;
                 let mut next = Vec::new();
                 for &node in &frontier {
-                    expanded += 1;
-                    if expanded.is_multiple_of(CHECK_EVERY) && cancelled() {
-                        return None;
-                    }
                     for &neighbour in &adjacency[node as usize] {
+                        scanned += 1;
+                        if scanned.is_multiple_of(CHECK_EVERY) && cancelled() {
+                            return None;
+                        }
                         if !seen[neighbour as usize] {
                             seen[neighbour as usize] = true;
                             ball[neighbour as usize] = true;
@@ -523,8 +578,8 @@ mod cancellation_tests {
         assert!(table
             .ball(&seeds, CHAIN as u32, NearDir::Out, &stop_after(1, &calls))
             .is_none());
-        // One check per CHECK_EVERY expanded nodes: stopped after the first
-        // CHECK_EVERY of the CHAIN nodes.
+        // One check per CHECK_EVERY edges scanned (one per chain node here):
+        // stopped after the first CHECK_EVERY of the CHAIN edges.
         assert_eq!(calls.get(), 1);
     }
 
@@ -705,5 +760,70 @@ mod cancellation_tests {
             );
             assert_eq!(calls.get(), after, "no check after the first true one");
         }
+    }
+
+    /// Review r1: a hub's adjacency list is one node but many edges. A
+    /// search at k = 1 from a hub with a million out-edges, cancelled from
+    /// its first check, stops within the first CHECK_EVERY edges.
+    #[test]
+    fn a_cancelled_near_search_stops_inside_one_hubs_edges() {
+        const SPOKES: usize = 1 << 20;
+        let mut table = LinkGraph::default();
+        table.physical = SPOKES + 1;
+        table.out = vec![Vec::new(); SPOKES + 1];
+        table.out[0] = (1..=SPOKES as u32).collect();
+        table.inn = vec![Vec::new(); SPOKES + 1];
+        for spoke in 1..=SPOKES {
+            table.inn[spoke].push(0);
+        }
+        let mut seeds = vec![false; SPOKES + 1];
+        seeds[0] = true;
+        let calls = Cell::new(0);
+        assert!(table
+            .ball(&seeds, 1, NearDir::Out, &stop_after(1, &calls))
+            .is_none());
+        assert_eq!(calls.get(), 1, "stopped at the first check");
+        // Uncancelled, the same search reaches every spoke and checks once
+        // per CHECK_EVERY edges.
+        let calls = Cell::new(0);
+        let ball = table
+            .ball(&seeds, 1, NearDir::Out, &stop_after(usize::MAX, &calls))
+            .unwrap();
+        assert!(ball.iter().all(|&hit| hit));
+        assert_eq!(calls.get(), SPOKES / CHECK_EVERY);
+    }
+
+    /// Review r1: the build checks per link expanded, not per reference.
+    /// Each of OWNERS pages aliased `shared` names `[[shared]]` once, a
+    /// reference that reaches every owner: OWNERS references expand to about
+    /// OWNERS² links, and the checks follow the links.
+    #[test]
+    fn a_link_table_build_checks_per_link_expanded() {
+        const OWNERS: usize = 200;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+        std::fs::create_dir_all(dir.path().join("logseq")).unwrap();
+        for at in 0..OWNERS {
+            std::fs::write(
+                dir.path().join("pages").join(format!("o{at}.md")),
+                "alias:: shared\n\n- see [[shared]]\n",
+            )
+            .unwrap();
+        }
+        let (store, _, _) =
+            crate::store::Store::open(dir.path(), crate::store::OpenOptions::default()).unwrap();
+        let graph = store.whole_graph().unwrap().test_read_snapshot();
+        let calls = Cell::new(0);
+        let table = LinkGraph::build(&graph, &stop_after(usize::MAX, &calls)).unwrap();
+        let links = table.edge_count();
+        assert!(links >= OWNERS * (OWNERS - 1), "links: {links}");
+        // Two per-page passes check once per page; the expansion adds one
+        // check per CHECK_EVERY links it pushes or skips.
+        let per_page = 2 * OWNERS;
+        assert!(
+            calls.get() >= per_page + links / CHECK_EVERY,
+            "{} checks for {OWNERS} pages and {links} links",
+            calls.get()
+        );
     }
 }

@@ -32,7 +32,9 @@ use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Token, Tokenizer};
 
 mod boolean;
+mod calls;
 mod prepass;
+use calls::*;
 use prepass::*;
 
 use crate::query::ir::{
@@ -742,6 +744,12 @@ impl Lower<'_> {
             }
             Expr::Function(function) => {
                 let name = function_name(function);
+                if let Some(message) = function_modifier(function, &name)
+                    .or_else(|| non_positional_argument(function, &name))
+                {
+                    self.reject(DiagnosticKind::Syntax, message);
+                    return None;
+                }
                 let args = function_args(function);
                 match (name.as_str(), args.len()) {
                     ("prop", 1) => self.string_arg(args[0]).map(|key| Target::Prop {
@@ -944,8 +952,14 @@ impl Lower<'_> {
 
     fn function(&mut self, function: &sqlparser::ast::Function, scope: Scope) -> Filter {
         let name = function_name(function);
+        if let Some(message) = function_modifier(function, &name) {
+            return self.reject(DiagnosticKind::Syntax, message);
+        }
         if name == "near" {
             return self.near(function, scope);
+        }
+        if let Some(message) = non_positional_argument(function, &name) {
+            return self.reject(DiagnosticKind::Syntax, message);
         }
         let args = function_args(function);
         match (name.as_str(), args.len()) {
@@ -1126,6 +1140,11 @@ impl Lower<'_> {
         // that scopes it (§3.3).
         if let Expr::Function(function) = over {
             let name = function_name(function);
+            if let Some(message) = function_modifier(function, &name)
+                .or_else(|| non_positional_argument(function, &name))
+            {
+                return self.reject(DiagnosticKind::Syntax, message);
+            }
             let args = function_args(function);
             if matches!(name.as_str(), "prop" | "page_prop") && args.len() == 1 {
                 let Some(key) = self.string_arg(args[0]) else {
@@ -1456,30 +1475,6 @@ fn is_date_literal(text: &str) -> bool {
         Some(DateToken::Stem(_)) => text.len() == 10 && text.as_bytes()[4] == b'-',
         _ => false,
     }
-}
-
-fn function_name(function: &sqlparser::ast::Function) -> String {
-    function
-        .name
-        .0
-        .iter()
-        .filter_map(|part| part.as_ident())
-        .map(|ident| ident.value.to_ascii_lowercase())
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
-fn function_args(function: &sqlparser::ast::Function) -> Vec<&Expr> {
-    let FunctionArguments::List(list) = &function.args else {
-        return Vec::new();
-    };
-    list.args
-        .iter()
-        .filter_map(|arg| match arg {
-            FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => Some(expr),
-            _ => None,
-        })
-        .collect()
 }
 
 #[cfg(test)]

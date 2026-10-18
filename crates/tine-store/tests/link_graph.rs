@@ -547,3 +547,51 @@ fn links_near_a_set_cancel_flag_answers_nothing() {
     let names: BTreeSet<String> = pages.iter().map(|row| page_key(&row.name)).collect();
     assert_eq!(names, set(&["a", "w"]));
 }
+
+/// Peak extra heap of one link-table build: `owners` pages each declaring
+/// `alias:: shared`, and one page naming `[[shared]]` `repeats` times.
+fn alias_fanout_build_peak(owners: usize, repeats: usize) -> (i64, (usize, usize, usize)) {
+    let dir = tempfile::tempdir().unwrap();
+    for at in 0..owners {
+        write(
+            dir.path(),
+            &format!("pages/p{at}.md"),
+            "alias:: shared\n\n- leaf\n",
+        );
+    }
+    write(
+        dir.path(),
+        "pages/source.md",
+        &format!("- {}\n", "[[shared]] ".repeat(repeats)),
+    );
+    let (_store, graph) = open(dir.path());
+    let _ = graph.corpus();
+    let (stats, peak) = crate::query_unit_cost::peak_heap_of(|| graph.link_table_stats());
+    (peak, stats)
+}
+
+#[test]
+fn links_table_build_memory_follows_references_plus_links_not_their_product() {
+    let _integration_guard = crate::integration_lock();
+    // Review r1 (tql-review-r1): each of R occurrences of an alias shared by A
+    // owners was expanded to A targets before deduplication, O(R * A)
+    // temporary entries (200 owners x 50,000 occurrences peaked at +72 MB for
+    // a 338 KB table). The build must hold O(R + links) at its peak.
+    let (one, one_stats) = alias_fanout_build_peak(1, 50_000);
+    let (many, many_stats) = alias_fanout_build_peak(200, 50_000);
+    let retained = many_stats.2 as i64;
+    eprintln!(
+        "alias fan-out build peak: 1 owner {one} B, 200 owners {many} B, retained {retained} B"
+    );
+    assert!(
+        many_stats.1 >= 200,
+        "the source links to every owner: {many_stats:?}"
+    );
+    // The 200-owner build may add what its larger table needs (a few times
+    // the retained bytes, for growth and hashing), never 200 times the
+    // 1-owner build's per-occurrence work.
+    assert!(
+        many <= one + 8 * retained + (1 << 20),
+        "peak with 200 owners {many} B vs 1 owner {one} B (retained {retained} B, {one_stats:?})"
+    );
+}

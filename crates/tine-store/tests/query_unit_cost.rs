@@ -42,9 +42,11 @@ unsafe impl GlobalAlloc for Counting {
         if COUNTING.load(Ordering::Relaxed) {
             note(layout.size() as u64);
         }
+        peak_note(layout.size() as i64);
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        peak_note(-(layout.size() as i64));
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
@@ -52,8 +54,35 @@ unsafe impl GlobalAlloc for Counting {
         if COUNTING.load(Ordering::Relaxed) {
             note(new_size.saturating_sub(layout.size()) as u64);
         }
+        peak_note(new_size as i64 - layout.size() as i64);
         unsafe { System.realloc(ptr, layout, new_size) }
     }
+}
+
+// Peak live heap of ONE thread over a closure (`peak_heap_of`): what the
+// thread allocates minus what it frees, from the closure's start. Other
+// threads (parallel tests, the watcher) are not counted, so the bound is
+// stable under a loaded test binary.
+thread_local! {
+    static PEAK_METER: std::cell::Cell<Option<(i64, i64)>> = const { std::cell::Cell::new(None) };
+}
+
+fn peak_note(delta: i64) {
+    let _ = PEAK_METER.try_with(|meter| {
+        if let Some((live, peak)) = meter.get() {
+            let live = live + delta;
+            meter.set(Some((live, peak.max(live))));
+        }
+    });
+}
+
+/// `f`'s answer and the peak additional live heap, in bytes, that this thread
+/// held while running it (the reviewer's probe, per thread).
+pub(crate) fn peak_heap_of<T>(f: impl FnOnce() -> T) -> (T, i64) {
+    PEAK_METER.with(|meter| meter.set(Some((0, 0))));
+    let out = f();
+    let peak = PEAK_METER.with(|meter| meter.take().map_or(0, |(_, peak)| peak));
+    (out, peak)
 }
 
 #[global_allocator]

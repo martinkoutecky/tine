@@ -1255,3 +1255,75 @@ fn links_near_inside_off_and_omission() {
         }
     );
 }
+
+/// Review r1: the SQL grammar accepts `FILTER`, `OVER`, `WITHIN GROUP` and
+/// the other function modifiers on any call. The query language gives them no
+/// meaning, so every function refuses them as a syntax error instead of
+/// dropping them and running the bare call.
+#[test]
+fn every_function_refuses_sql_function_modifiers() {
+    let calls = [
+        "near(name = 'a', 2)",
+        "near(name = 'a', 2, 'both')",
+        "any(links, name = 'b')",
+        "every(linked_by, journal = false)",
+        "none(blocks, task = 'TODO')",
+        "ref('a')",
+        "page_tag('a')",
+        "off(name = 'a')",
+        "any(prop('k'), value = 'v')",
+    ];
+    for call in calls {
+        for modifier in [
+            " FILTER (WHERE false)",
+            " FILTER (WHERE name = 'x')",
+            " OVER ()",
+            " OVER (PARTITION BY name)",
+            " WITHIN GROUP (ORDER BY name)",
+        ] {
+            let source = format!("@page and {call}{modifier}");
+            let diagnostics = rejected(&source);
+            assert!(
+                diagnostics.iter().any(|d| d.kind == DiagnosticKind::Syntax
+                    && d.message.contains("no SQL function modifiers")),
+                "{source}: {diagnostics:?}"
+            );
+        }
+    }
+    // Modifiers inside the argument list, and a function in a comparison
+    // target or a quantifier's range, are refused the same way.
+    for source in [
+        "@page and ref(DISTINCT 'a')",
+        "@page and ref(ALL 'a')",
+        "@page and any(links, name = 'b' ORDER BY name)",
+        "@page and near(name = 'a', 2 LIMIT 1)",
+        "@page and prop('k') FILTER (WHERE false) = 'v'",
+        "@page and prop('k') OVER () = 'v'",
+        "@page and any(prop('k') FILTER (WHERE false), value = 'v')",
+        "@page and any(prop('k') OVER (), value = 'v')",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(
+            diagnostics.iter().any(|d| d.kind == DiagnosticKind::Syntax),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // Named and wildcard arguments: `near` reserves its slot (above); every
+    // other function takes positional arguments only.
+    for source in [
+        "@page and ref(page => 'a')",
+        "@page and any(links, name = 'b', through => journal = false)",
+        "@page and prop(key => 'k') = 'v'",
+        "@page and ref(*)",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(
+            diagnostics.iter().any(|d| d.kind == DiagnosticKind::Syntax),
+            "{source}: {diagnostics:?}"
+        );
+    }
+    // The bare calls still parse.
+    for call in calls {
+        ok(&format!("@page and {call}"));
+    }
+}
