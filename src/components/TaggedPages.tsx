@@ -11,7 +11,7 @@ import { ReferenceDisclosure } from "./ReferenceDisclosure";
 
 /** OG page.cljs tagged-pages: list pages whose page tags contain this name or,
  * unlike OG (GH #715), any name in its alias group, the same group Linked
- * References use; the page itself is excluded. The backend owns membership
+ * References use; a page tagging itself so is listed too, as in OG. The backend owns membership
  * (`tagged_pages`: normalization, Org, aliases); `(page-tags …)` queries stay
  * literal. Cost: one page scan per graph revision, O(pages), plus O(matches log
  * matches) display sorting. Read failures render a retry; stale graph reads are

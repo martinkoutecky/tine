@@ -24,6 +24,9 @@ const files = {
   "page_Y": "tags:: page_A\n\n- Y body\n",
   "page_Z": "tags:: unrelated\n\n- Z body\n",
   "Literal": "- {{query (page-tags page_A)}}\n",
+  // A page tagged with its own alias lists itself, as Logseq lists a page
+  // tagged with its own name.
+  "Selfie": "alias:: selfie_alias\ntags:: selfie_alias\n\n- Selfie body\n",
 };
 for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(GRAPH, `pages/${name}.md`), text);
 const env = { ...process.env, TINE_GRAPH: GRAPH, XDG_DATA_HOME: path.join(TMP, "data"), XDG_CONFIG_HOME: path.join(TMP, "config"), XDG_CACHE_HOME: path.join(TMP, "cache"), WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11" };
@@ -61,6 +64,10 @@ try {
   }), { timeout: 15_000, timeoutMsg: "page_X: alias tag link to shift-click" });
   await expectRows(".rs-item", "page_X|page_Y", "right sidebar, alias link");
   proof.steps.push("right sidebar via the alias tag link: same rows");
+
+  await openPageByName(browser, "Selfie");
+  await expectRows(".main-content", "Selfie", "main pane, page tagged with its own alias");
+  proof.steps.push("Selfie, tagged with its own alias, lists itself");
 
   // `(page-tags page_A)` stays literal: page_Y only.
   await openPageByName(browser, "Literal");

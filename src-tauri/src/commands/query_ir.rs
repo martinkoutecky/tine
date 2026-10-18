@@ -204,8 +204,8 @@ pub(crate) async fn query_run(
 }
 
 /// GH #715: the "Pages tagged with" rows of a page or alias name: pages
-/// tagged with any name in its alias group, itself excluded
-/// (`IrRequest::TaggedPages`). `(page-tags …)` through `query_run` stays
+/// tagged with any name in its alias group, itself included when it tags
+/// itself so (`IrRequest::TaggedPages`). `(page-tags …)` through `query_run` stays
 /// literal. Same bounds as `query_run`; waits for the initial graph load.
 #[tauri::command]
 pub(crate) async fn tagged_pages(

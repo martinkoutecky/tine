@@ -218,7 +218,8 @@ export interface Backend {
   queryRun(query: Query, view: ViewSettings, context?: ExecutionContext): Promise<QueryResult>;
   /** GH #715: the "Pages tagged with" rows (page anchor) of a page or alias
    *  name: pages tagged with any name in its alias group (the Linked References
-   *  group), itself excluded. Unlike `(page-tags …)`, which stays literal. Same
+   *  group), itself included when it tags itself so. Unlike `(page-tags …)`,
+   *  which stays literal. Same
    *  cost, memoization and bounds as `queryRun`. */
   taggedPages(name: string): Promise<QueryResult>;
   /** On-demand empty explanation: roughly two full evaluations per conjunct,

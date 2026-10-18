@@ -82,3 +82,12 @@ it("GH #715: the section shows the alias-group rows tagged_pages answers, not th
     expect(parse).not.toHaveBeenCalled();
   } finally { dispose(); }
 });
+it("GH #715: a page tagged with its own alias lists itself, as Logseq lists a self-tagged page", async () => {
+  const tagged = vi.spyOn(backend(), "taggedPages").mockResolvedValue(result(["Selfie", "Other"]));
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <TaggedPages name="Selfie" />, host);
+  try {
+    await vi.waitFor(() => expect([...host.querySelectorAll(".tagged-pages li")].map(row => row.textContent)).toEqual(["Other", "Selfie"]));
+    expect(tagged).toHaveBeenCalledWith("Selfie");
+  } finally { dispose(); }
+});

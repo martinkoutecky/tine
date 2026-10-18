@@ -1551,8 +1551,10 @@ fn gh715_tagged_pages_count_tags_through_any_alias_while_page_tags_stays_literal
             "tags:: Page A, My Important Page\n\n- both, listed once\n",
         ),
         ("Z", "tags:: Other\n\n- unrelated\n"),
-        // A page is never listed on itself, however it tags itself.
-        ("Self", "alias:: Me\ntags:: Me, Self\n\n- self\n"),
+        // A page tagging itself is listed on itself, as in OG, whether its
+        // tag is its own name or one of its aliases.
+        ("Lit", "tags:: Lit\n\n- literal self\n"),
+        ("Self", "alias:: Me\ntags:: Me\n\n- self via alias\n"),
     ];
     for (name, text) in pages {
         std::fs::write(root.join("pages").join(format!("{name}.md")), text).unwrap();
@@ -1570,8 +1572,9 @@ fn gh715_tagged_pages_count_tags_through_any_alias_while_page_tags_stays_literal
     assert_eq!(tagged("Page A"), ["W", "X", "Y"]);
     assert_eq!(tagged("My Important Page"), ["W", "X", "Y"]);
     assert_eq!(tagged("page a"), ["W", "X", "Y"]);
-    assert_eq!(tagged("Self"), Vec::<String>::new());
-    assert_eq!(tagged("Me"), Vec::<String>::new());
+    assert_eq!(tagged("Lit"), ["Lit"]);
+    assert_eq!(tagged("Self"), ["Self"]);
+    assert_eq!(tagged("Me"), ["Self"]);
     // The section agrees with Linked References, which already merge aliases.
     let linked: Vec<String> = graph
         .backlinks("Page A")

@@ -924,20 +924,18 @@ pub(crate) fn backlinks_bounded(
 
 /// GH #715 (Martin 2026-10-17): the "Pages tagged with" section's query.
 /// A page is listed when its `tags::` names any member of the alias component
-/// Linked References use (`target` itself included), except the page itself,
-/// which Linked References exclude too. `(page-tags …)` macros stay literal;
-/// this is the section only. Cost: O(component) to build; one memoized page
-/// scan per generation to run.
+/// Linked References use (`target` itself included). The page itself is no
+/// exception: like OG `get-tag-pages`, a page that tags itself (by any name of
+/// the group) is listed, so every name of the group gives the same rows.
+/// `(page-tags …)` macros stay literal; this is the section only. Cost:
+/// O(component) to build; one memoized page scan per generation to run.
 pub(crate) fn tagged_pages_query(
     graph: &ReadSnapshot,
     target: &str,
 ) -> tine_core::query::ir::Query {
-    use tine_core::query::ir::{Anchor, Attr, CmpOp, Filter, Query, Source, Value};
-    let (_, names_norm, self_page) = graph_equivalent_page_names(graph, target);
-    let filter = Filter::and(vec![
-        tine_core::query::og::page_tags_filter(names_norm),
-        Filter::attr(Attr::Name, CmpOp::NotEq, Value::text(self_page)),
-    ]);
+    use tine_core::query::ir::{Anchor, Query, Source};
+    let (_, names_norm, _) = graph_equivalent_page_names(graph, target);
+    let filter = tine_core::query::og::page_tags_filter(names_norm);
     Query::new(Anchor::Page, filter, Source::Builder)
 }
 
