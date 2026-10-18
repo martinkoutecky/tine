@@ -529,7 +529,7 @@ try {
   }
   // GH #210: the table block stays a block through a save, and its title (typed
   // next) neither raises the page-header toast nor stops the page saving.
-  await openPage("Property table");
+  await openPageByName(browser, "Property table", { entry: process.platform === "win32" ? "button" : "shortcut" });
   // The title-less table block is an ordinary block (no page-properties row).
   const openTableBlock = () => browser.execute(() => {
     const content = document.querySelector(".page-blocks .ls-block .block-content");
