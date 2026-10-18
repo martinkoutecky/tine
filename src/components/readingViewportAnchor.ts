@@ -1,4 +1,4 @@
-import { newResizeObserver } from "../windowRealm";
+import { newResizeObserver, onEachWindow } from "../windowRealm";
 
 /** Hold existing viewport content through changes to a reading surface.
  * Like editor/scrollAnchor, a gesture or another focus/scroll owner releases
@@ -6,24 +6,69 @@ import { newResizeObserver } from "../windowRealm";
  * when its pane/graph retires. One observer per live anchor. */
 export const readingScrollerSelector = ".main-content, .right-sidebar";
 const owners = new WeakMap<HTMLElement, () => void>();
+const touchScrolling = new WeakSet<HTMLElement>();
+
+// A fling may already be running when capture is requested. Observe its
+// lifetime before capture, in every workspace window. scrollend is definitive;
+// older WebKit falls back to a quiet period after the last momentum scroll.
+onEachWindow(win => {
+  const doc = win.document;
+  if (!doc?.addEventListener) return;
+  let scroller: HTMLElement | null = null;
+  let held = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = () => {
+    clearTimeout(timer);
+    if (scroller) touchScrolling.delete(scroller);
+    scroller = null;
+    held = false;
+  };
+  const settle = () => {
+    clearTimeout(timer);
+    if (!held) timer = setTimeout(clear, 200);
+  };
+  const start = (event: Event) => {
+    clear();
+    scroller = (event.target as Element)?.closest?.<HTMLElement>(readingScrollerSelector) ?? null;
+    if (scroller) { held = true; touchScrolling.add(scroller); }
+  };
+  const end = () => { held = false; settle(); };
+  const scroll = (event: Event) => { if (event.target === scroller) settle(); };
+  const scrollend = (event: Event) => { if (event.target === scroller && !held) clear(); };
+  const listeners = { touchstart: start, touchend: end, touchcancel: end, scroll, scrollend };
+  for (const [type, listener] of Object.entries(listeners)) doc.addEventListener(type, listener, { passive: true, capture: true });
+  return () => {
+    clear();
+    for (const [type, listener] of Object.entries(listeners)) doc.removeEventListener(type, listener, true);
+  };
+});
 
 export function captureReadingViewport(root: HTMLElement, scroller = root.closest<HTMLElement>(readingScrollerSelector)) {
   if (!scroller) return;
   owners.get(scroller)?.();
+  if (touchScrolling.has(scroller)) return;
   const focused = root.ownerDocument.activeElement;
   const top = scroller.getBoundingClientRect().top;
-  const anchor = focused && focused !== root && root.contains(focused) ? focused
-    : [...root.querySelectorAll<HTMLElement>("[data-block-id], h1.journal-title")].find(el => el.getBoundingClientRect().bottom > top);
+  // Outline parents include their children. Descend through the first visible
+  // branch so a stationary parent cannot hide reflow above a visible child.
+  let reading: HTMLElement | undefined;
+  for (const el of root.querySelectorAll<HTMLElement>("[data-block-id], h1.journal-title")) {
+    if (reading && !reading.contains(el)) break;
+    if (el.getBoundingClientRect().bottom > top) reading = el;
+  }
+  const anchor = focused && focused !== root && root.contains(focused) ? focused : reading;
   if (!anchor) return;
   const before = anchor.getBoundingClientRect().top;
   let scroll = scroller.scrollTop;
   let previousMaximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
   let released = false;
-  const gestures = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+  const gestures = ["wheel", "touchstart", "touchmove", "pointerdown", "keydown"] as const;
+  const continuingDrag = (event: PointerEvent) => { if (event.buttons) release(); };
   const release = () => {
     released = true;
     observer?.disconnect();
     for (const event of gestures) scroller.removeEventListener(event, release, true);
+    root.ownerDocument.removeEventListener("pointermove", continuingDrag, true);
     root.ownerDocument.removeEventListener("focusin", release, true);
     if (owners.get(scroller) === release) owners.delete(scroller);
   };
@@ -47,6 +92,7 @@ export function captureReadingViewport(root: HTMLElement, scroller = root.closes
   // content boxes as well when it is itself the reading root (wrap preference).
   if (root === scroller) for (const child of root.children) observer?.observe(child);
   for (const event of gestures) scroller.addEventListener(event, release, { passive: true, capture: true });
+  root.ownerDocument.addEventListener("pointermove", continuingDrag, { passive: true, capture: true });
   root.ownerDocument.addEventListener("focusin", release, true);
   owners.set(scroller, release);
   return { restore, release };

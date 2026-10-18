@@ -10,7 +10,6 @@ import { backend } from "./backend";
 import { pushToast } from "./toasts";
 import { advanceRevision, currentRevision, readOwned, revisionOwner, writeOwned } from "./owned";
 import { captureReadingViewport, readingScrollerSelector } from "./components/readingViewportAnchor";
-import { captureEditorScrollAnchor } from "./editor/scrollAnchor";
 import { isElementTag, queryAllWindowsAll, requestFrame } from "./windowRealm";
 
 const key = "code_line_wrapping";
@@ -29,17 +28,18 @@ export async function initCodeDisplay(): Promise<void> {
 
 export function changeCodeWrapping(value: boolean): void {
   // The global preference reflows every mounted surface, including inactive
-  // splits and workspace windows. A focused editor owns its scroller; reading
-  // anchors are only captured in the remaining surfaces.
+  // splits and workspace windows. The viewport anchor selects a focused
+  // editor when present and owns the whole reflow, including browser clamping.
+  // The editor commit anchor's stricter scroll-owner contract stays unchanged.
   const anchors = value === codeWrapping() ? [] : queryAllWindowsAll<HTMLElement>(readingScrollerSelector).map(scroller => {
+    const anchor = captureReadingViewport(scroller);
     const focused = scroller.ownerDocument.activeElement;
     if (isElementTag(focused, "textarea") && scroller.contains(focused)) {
-      const anchor = captureEditorScrollAnchor(focused, scroller);
       // Wait for Solid's current batch to schedule Block's coalesced autosize,
       // then restore in that same frame after the editor has measured its body.
       return { restore: () => queueMicrotask(() => requestFrame(scroller, () => anchor?.restore())) };
     }
-    return captureReadingViewport(scroller);
+    return anchor;
   });
   setWrapping(value);
   for (const anchor of anchors) anchor?.restore();

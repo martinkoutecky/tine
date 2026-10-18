@@ -18,8 +18,10 @@ for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(graph,
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(out, dir));
 fs.writeFileSync(path.join(graph, "logseq/config.edn"), '{:shortcuts {:ui/toggle-code-block-wrap "mod+alt+w"}}\n');
 const file = path.join(graph, "pages/Wrap Demo.md");
-const source = Array.from({ length: 16 }, (_, n) =>
-  `- \`\`\`js\n  ${Array.from({ length: 3 }, () => '// ' + 'long code line '.repeat(28)).join("\n  ")}\n  \`\`\`\n- Reading marker ${n}\n`).join("");
+// All code and reading markers are descendants of one enclosing outline
+// parent: its top stays fixed while wrapping moves the visible descendant.
+const source = '- Long outline parent\n' + Array.from({ length: 16 }, (_, n) =>
+  `  - \`\`\`js\n    ${Array.from({ length: 3 }, () => '// ' + 'long code line '.repeat(28)).join("\n    ")}\n    \`\`\`\n  - Reading marker ${n}\n`).join("");
 fs.writeFileSync(file, source);
 const env = { ...process.env, TINE_GRAPH: graph, XDG_DATA_HOME: path.join(out, "data"),
   XDG_CONFIG_HOME: path.join(out, "config"), XDG_CACHE_HOME: path.join(out, "cache"),
