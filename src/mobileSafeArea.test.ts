@@ -25,6 +25,13 @@ describe("mobile safe-area insets", () => {
     }
     // Every call site reads a token; env() appears only in the four definitions.
     expect(allCss.match(/env\(safe-area-inset-(?:top|right|bottom|left)(?:, 0px)?\)/gu)).toHaveLength(4);
+    // Inline styles too: a raw env() would lift the Android keyboard dock a
+    // second time above the already-inset native viewport (GH #716).
+    const sources = readdirSync("src", { recursive: true, encoding: "utf8" })
+      .filter((f) => /\.tsx?$/u.test(f) && !/\.test\.tsx?$/u.test(f));
+    for (const f of sources) {
+      expect(readFileSync(`src/${f}`, "utf8"), f).not.toMatch(/env\(safe-area-inset-[a-z]/u);
+    }
   });
 
   it("gives Android's already-inset native viewport sole ownership", () => {

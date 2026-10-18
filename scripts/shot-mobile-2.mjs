@@ -39,7 +39,13 @@ try {
       // The transient onboarding toast can cover content on a short phone.
       // Dismiss it through its visible control before holding a page link.
       while (await page.locator(".toast-close").count()) await page.locator(".toast-close").first().tap();
-      const link = page.locator(".main-content a.page-ref").filter({ hasText: "Tine" }).first();
+      // Sticky-parent copies are zero-size duplicates, and a short phone mounts
+      // only the blocks near the viewport: scroll until the real link exists.
+      const link = page.locator(".main-content a.page-ref").filter({ hasText: "Tine", visible: true }).first();
+      for (let i = 0; !(await link.count()) && i < 40; i++) {
+        await page.locator(".main-content").evaluate((el) => el.scrollBy(0, 200));
+        await sleep(100);
+      }
       await link.scrollIntoViewIfNeeded();
       const box = await link.boundingBox();
       const cdp = await page.context().newCDPSession(page);
@@ -52,7 +58,10 @@ try {
       assert.ok(previewBox.x >= 0 && previewBox.y >= 0 && previewBox.x + previewBox.width <= width && previewBox.y + previewBox.height <= height, `preview fits phone: ${JSON.stringify(previewBox)}`);
       await page.screenshot({ path: `${out}/${label}-preview.png` });
       // Tap the empty bottom padding, outside both the preview and controls.
-      await page.touchscreen.tap(width - 5, height - 4);
+      // A short phone's preview reaches within touch-adjustment range of that
+      // padding, so there tap the empty title-bar middle above it instead.
+      if (previewBox.y + previewBox.height < height - 24) await page.touchscreen.tap(width - 5, height - 4);
+      else await page.touchscreen.tap(width / 2, previewBox.y / 2);
       await preview.waitFor({ state: "detached" });
       await link.tap();
       await page.waitForFunction(async () => (await import("/src/router.ts")).route().name === "Tine");
@@ -64,6 +73,42 @@ try {
       await page.locator('[data-mobile-drawer-panel="left"]').waitFor();
       await page.keyboard.press("Escape");
       console.log(`${label}: real touch hold previews, release stays, outside tap dismisses, tap navigates, bottom Back/Forward and sidebar work`);
+    }
+    if (platform === "android") {
+      // GH #716: Back (or the IME's own hide key) closes the keyboard but keeps
+      // the block editor focused. Android pads the WebView above the IME, which
+      // a viewport resize reproduces, and MainActivity reports the IME as a
+      // `tine-ime` event, sent here by hand. The bottom row must come back
+      // unobscured and tappable, not stay replaced by the editing dock. iOS
+      // shrinks only the visual viewport, which Chromium cannot reproduce; the
+      // unit tests cover it.
+      const ime = (visible) => page.evaluate((detail) => window.dispatchEvent(new CustomEvent("tine-ime", { detail })), visible);
+      // A plain-text block on the routed Tine page (no link under the tap).
+      await page.locator(".main-content .ls-block .block-content").filter({ hasText: "Reads the same markdown graph", visible: true }).first().tap();
+      await page.locator("textarea.block-editor").waitFor();
+      const dock = page.locator("[data-mobile-keyboard-toolbar]");
+      await ime(true);
+      await page.setViewportSize({ width, height: height - 300 });
+      await dock.waitFor();
+      await page.screenshot({ path: `${out}/${label}-keyboard-open.png` });
+      await ime(false);
+      await page.setViewportSize({ width, height });
+      await dock.waitFor({ state: "hidden" });
+      assert.ok(await page.locator("textarea.block-editor").evaluate((el) => el === document.activeElement), `${label}: the editor keeps focus after the keyboard closes`);
+      await page.screenshot({ path: `${out}/${label}-keyboard-closed.png` });
+      const bottomSearch = page.locator(".mobile-navigation-toolbar [data-search-trigger]");
+      const searchBox = await bottomSearch.boundingBox();
+      assert.ok(searchBox && searchBox.y + searchBox.height <= height, `${label}: bottom Search is on screen after the keyboard closes; observed ${JSON.stringify(searchBox)}`);
+      const hit = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.closest("[data-search-trigger]") !== null, [searchBox.x + searchBox.width / 2, searchBox.y + searchBox.height / 2]);
+      assert.ok(hit, `${label}: nothing covers the bottom Search after the keyboard closes`);
+      // Bottom-anchored chrome returns to rest above the row, not to a lift
+      // measured from the hidden dock.
+      const help = await page.locator(".help-corner-btn").boundingBox();
+      assert.ok(help && help.y > height / 2 && help.y + help.height <= searchBox.y, `${label}: the help button rests just above the bottom row; observed ${JSON.stringify(help)}`);
+      await bottomSearch.tap();
+      await page.locator(".switcher-overlay").waitFor();
+      await page.keyboard.press("Escape");
+      console.log(`${label}: after the keyboard closes with the editor focused, the bottom row is unobscured and Search opens`);
     }
     await page.close();
   }
