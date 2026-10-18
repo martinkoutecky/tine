@@ -9,7 +9,7 @@ import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type J
 import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar, isFavorite, toggleFavorite, openPageProps, openBlockProps, openExportModal, openPdfExport, openFormulaEditor, type ContextMenuAction, type SheetCellRemoveCtx } from "../ui";
 import { openShareDialog } from "../shareState";
 import { isMobilePlatform } from "../nativeChrome";
-import { backgroundTabsAvailable } from "../linkGesture";
+import { touchPrimary } from "../inputCapability";
 import { pushToast } from "../toasts";
 import { bindingOwner, graphOwner, ownedWhen, readOwned, writeOwned } from "../owned";
 import { isConflicted } from "../document";
@@ -889,7 +889,7 @@ function PageMenu(props: {
   const items: MenuAction[] = [
     { id: "open", label: msg("context-menu-ui-open"), run: () => openPageTarget(target()) },
     { id: "open-sidebar", label: msg("context-menu-ui-open-in-sidebar"), run: () => openPageInSidebar(target()) },
-    ...(backgroundTabsAvailable() ? [{ id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => { openPageTargetInNewTab(target()); pushToast(msg("links-opened-in-new-tab")); } }] : []),
+    { id: "open-new-tab", label: msg("context-menu-ui-open-in-new-tab"), run: () => { openPageTargetInNewTab(target()); pushToast(msg("links-opened-in-new-tab")); } },
     ...(workspaceWindowsSupported() ? [{ id: "open-new-window", label: msg("context-menu-ui-open-in-new-window"), run: () => void openRouteInNewWindow({ ...target(), kind: "page" }) }] : []),
     { id: "favorite-toggle", label: fav() ? msg("context-menu-ui-remove-from-favorites") : msg("context-menu-ui-add-to-favorites"), run: () => toggleFavorite(props.name, props.pageKind) },
     { id: "copy-as", label: msg("context-menu-ui-copy-as"), children: [
@@ -919,9 +919,9 @@ function PageMenu(props: {
           { id: "open-default-app", label: msg("context-menu-ui-open-with-default-app"), run: () => void runFileAction(false) },
         ]
       : []),
-    // GH #338: phones have no Mod+F. The page header's menu opens Find, whose
-    // bar holds the replace row (GH #208).
-    ...(props.fileActions && isMobilePlatform ? [{ id: "find-in-page", label: msg("context-menu-ui-find-in-page"), run: () => openInPageFind() }] : []),
+    // GH #338: a touch-first device has no Mod+F. The page header's menu opens
+    // Find, whose bar holds the replace row (GH #208).
+    ...(props.fileActions && touchPrimary() ? [{ id: "find-in-page", label: msg("context-menu-ui-find-in-page"), run: () => openInPageFind() }] : []),
     ...(!readOnly() ? [{ id: "page-properties", label: msg("context-menu-ui-page-properties"), run: () => openPageProps(props.name, props.x, props.y) }] : []),
     // Carry a past day's unfinished tasks to today (journal days only, not today).
     ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(appNow())
@@ -1145,7 +1145,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
     return [
       { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
       { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-      ...(backgroundTabsAvailable() ? [{ label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } }] : []),
+      { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
       { label: msg("context-menu-ui-copy", { count: ids.length }), run: copy },
       {
         label: msg("context-menu-ui-copy-export-as"),
@@ -1158,7 +1158,7 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
   return [
     { label: msg("context-menu-ui-open-in-sidebar"), run: () => { openDurableBlock(id, "sidebar"); } },
     { label: msg("context-menu-ui-zoom-into-block"), run: () => zoomInto(id) },
-    ...(backgroundTabsAvailable() ? [{ label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } }] : []),
+    { label: msg("context-menu-ui-open-in-new-tab"), run: () => { openDurableBlock(id, "tab"); pushToast(msg("links-opened-in-new-tab")); } },
     // Margin dialogue (vision §3.7): comment on the words selected in this block.
     ...(commentSelection && !multi
       ? [{ label: msg("command-comment-on-selection"), run: () => commentOnRenderedSelection(commentSelection) }]

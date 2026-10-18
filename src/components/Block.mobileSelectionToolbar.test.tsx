@@ -11,12 +11,13 @@ import { readFileSync } from "node:fs";
 import { Block } from "./Block";
 
 const platform = vi.hoisted(() => ({ mobile: true }));
-vi.mock("../nativeChrome", () => ({
-  get isMobilePlatform() {
-    return platform.mobile;
-  },
-  // The block-swipe wiring reads the E2E gesture override; unset in unit tests.
-  touchGesturePlatform: () => null,
+// A touch-first device (D-20261018-W1: the dock and docked selection toolbar follow the
+// primary pointer, not the OS name). Swipes stay off: touchGestures() is not mocked.
+vi.mock("../inputCapability", async (original) => ({
+  ...(await original<typeof import("../inputCapability")>()),
+  touchPrimary: () => platform.mobile,
+  touchCapable: () => platform.mobile,
+  touchGestures: () => false,
 }));
 
 beforeAll(() => initParser());

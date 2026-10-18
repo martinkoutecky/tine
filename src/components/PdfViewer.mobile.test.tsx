@@ -11,9 +11,15 @@ import {
 } from "../transientLayers";
 import { makePdfRoute, type PdfRoute } from "../router";
 
-vi.mock("../nativeChrome", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../nativeChrome")>()),
-  isMobilePlatform: true,
+// A phone: a finger is the primary input and the shell is single-pane (the PDF takeover).
+vi.mock("../inputCapability", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../inputCapability")>()),
+  touchPrimary: () => true,
+  touchCapable: () => true,
+}));
+vi.mock("../viewportClass", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../viewportClass")>()),
+  isSinglePaneShell: () => true,
 }));
 
 const getDocumentMock = vi.hoisted(() => vi.fn());

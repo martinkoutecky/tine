@@ -49,6 +49,7 @@ import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallb
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
+import { touchPrimary } from "../inputCapability";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
 import { SourceTaskCheckbox } from "../components/SourceTaskCheckbox";
 import { blockRef, setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode, pageHeaderProperties } from "../document";
@@ -405,7 +406,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
-          if (isMobilePlatform && isLongPressContextMenu(e)) peek.hold();
+          if (touchPrimary() && isLongPressContextMenu(e)) peek.hold();
           else if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
         }}
       >

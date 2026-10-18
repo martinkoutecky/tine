@@ -1,9 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 
-vi.mock("../nativeChrome", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../nativeChrome")>()),
-  isMobilePlatform: true,
+vi.mock("../inputCapability", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../inputCapability")>()),
+  touchPrimary: () => true,
 }));
 
 import { backend } from "../backend";

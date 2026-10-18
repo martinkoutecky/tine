@@ -2,10 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JSX } from "solid-js";
 
 const platform = vi.hoisted(() => ({ mobile: true }));
-vi.mock("../nativeChrome", () => ({
-  get isMobilePlatform() {
-    return platform.mobile;
-  },
+vi.mock("../inputCapability", () => ({
+  touchPrimary: () => platform.mobile,
 }));
 
 type Render = typeof import("solid-js/web")["render"];

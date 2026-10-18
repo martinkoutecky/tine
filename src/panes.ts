@@ -21,7 +21,7 @@ import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
 import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
 import { journalTitle, appNow } from "./journal";
-import { isSinglePaneShell } from "./nativeChrome";
+import { isSinglePaneShell } from "./viewportClass";
 import {
   nearestPane,
   nearestPaneInDirection,

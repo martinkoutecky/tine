@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// GH #446 required neighbor: making isMobilePlatform truthful on iPad must not
-// take split panes away from it. Panes ask for the single-pane SHELL (a mobile
-// OS on a phone-shaped viewport), never the mobile OS alone.
+// GH #446 required neighbor: an iPad must keep split panes. Panes ask for the
+// single-pane SHELL (a touch-first screen on a phone-shaped viewport), never the
+// device's name (D-20261018-W1): a finger as the primary pointer decides, not
+// the OS.
 async function loadPanes(platform: "ios" | "desktop", width: number, height: number) {
   vi.resetModules();
   globalThis.__TINE_PLATFORM__ = platform;
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: platform === "ios" && query === "(pointer: coarse)",
+    addEventListener: () => {}, removeEventListener: () => {},
+  }));
   Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
   Object.defineProperty(window, "innerHeight", { configurable: true, value: height });
   const { initParser } = await import("./render/parse");
@@ -21,6 +26,7 @@ async function loadPanes(platform: "ios" | "desktop", width: number, height: num
 describe("split panes follow the device shell, not the OS (GH #446)", () => {
   afterEach(() => {
     delete globalThis.__TINE_PLATFORM__;
+    vi.unstubAllGlobals();
   });
 
   it("splits on an iPad-sized iOS viewport", async () => {

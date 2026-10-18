@@ -6,7 +6,7 @@ import { parseBlockPos, type QueryRoute } from "./routeTypes";
 import { blockPositionRef } from "./document";
 import { bindingOwner, readOwned, writeOwned, type WriteOwner } from "./owned";
 import { dismissToast, pushToastUnique } from "./toasts";
-import { isSinglePaneShell } from "./nativeChrome";
+import { isSinglePaneShell } from "./viewportClass";
 import {
   installSessionPersistence,
   mintPdfViewId,

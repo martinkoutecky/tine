@@ -34,8 +34,9 @@
   text-align: center;
 }
 
-/* Android/iOS presents a PDF as a deliberate full-width takeover instead of
-   shrinking the notes pane beside an over-wide fixed reader. */
+/* A single-pane shell (a touch-first screen too small for two documents)
+   presents a PDF as a deliberate full-width takeover instead of shrinking the
+   notes pane beside an over-wide fixed reader. */
 .pdf-pane-mobile {
   position: absolute;
   inset: 0;
@@ -570,11 +571,13 @@
   right: 12px;
   max-width: calc(100vw - 24px);
 }
-.pdf-pane-mobile .pdf-color-menu :is(.pdf-color-swatch, .pdf-hl-remove) {
+/* Finger-sized targets follow the input, not the pane layout (a tablet with
+   split panes has fingers too). */
+.pdf-pane-touch .pdf-color-menu :is(.pdf-color-swatch, .pdf-hl-remove) {
   width: 36px;
   height: 36px;
 }
-.pdf-pane-mobile .pdf-hl-action { min-height: 36px; }
+.pdf-pane-touch .pdf-hl-action { min-height: 36px; }
 
 .pdf-hl-action {
   min-height: 24px;

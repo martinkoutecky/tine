@@ -2,8 +2,8 @@
 // header's "⋯" menu), and replace-all over a block that is open in an editor.
 // UI-INPAGE-FIND-REPLACE-208, UI-INPAGE-FIND-MOBILE-ENTRY-338.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-// The keyboard-free page-menu entry belongs to mobile (UI census 2026-10).
-vi.mock("./nativeChrome", async (original) => ({ ...(await original<typeof import("./nativeChrome")>()), isMobilePlatform: true }));
+// The keyboard-free page-menu entry belongs to a touch-first device (D-20261018-W1).
+vi.mock("./inputCapability", async (original) => ({ ...(await original<typeof import("./inputCapability")>()), touchPrimary: () => true }));
 import { For, Show } from "solid-js";
 import { loadSingle } from "./document/workingSet";
 import { pageByName, undo } from "./document";

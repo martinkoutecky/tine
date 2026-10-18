@@ -8,8 +8,8 @@ import { ContextMenu } from "../components/ContextMenu";
 import { openPage, route } from "../router";
 import { readFileSync } from "node:fs";
 
-vi.mock("../nativeChrome", async (original) => ({
-  ...await original<typeof import("../nativeChrome")>(), isMobilePlatform: true,
+vi.mock("../inputCapability", async (original) => ({
+  ...await original<typeof import("../inputCapability")>(), touchPrimary: () => true,
 }));
 beforeAll(initParser);
 afterEach(() => { vi.useRealTimers(); closeContextMenu(); document.body.replaceChildren(); });

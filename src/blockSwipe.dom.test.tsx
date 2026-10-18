@@ -227,7 +227,7 @@ describe("block swipe commands (real store)", () => {
 
 describe("block swipe and the browser", () => {
   it("claims the touch (preventDefault) once the axis is horizontal, never for a vertical scroll", () => {
-    const h = attachBlockSwipe(row, { platform: "ios", editing: () => false, run() {} });
+    const h = attachBlockSwipe(row, { enabled: true, editing: () => false, run() {} });
     cleanups.push(h);
     const horiz = swipe(row, 80);
     expect(horiz.slice(2).every((e) => e.defaultPrevented)).toBe(true);
@@ -247,7 +247,7 @@ describe("block swipe and the browser", () => {
     const btn = document.createElement("button");
     row.appendChild(btn);
     btn.addEventListener("click", () => seen.push(1));
-    cleanups.push(attachBlockSwipe(row, { platform: "android", editing: () => false, run() {} }));
+    cleanups.push(attachBlockSwipe(row, { enabled: true, editing: () => false, run() {} }));
     swipe(row, 80, 0, btn);
     btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     expect(seen).toEqual([]);
@@ -261,7 +261,7 @@ describe("block swipe and the browser", () => {
   });
 
   it("the native context menu is refused while a swipe is tracking (it must not arm a long-press menu)", () => {
-    cleanups.push(attachBlockSwipe(row, { platform: "android", editing: () => false, run() {} }));
+    cleanups.push(attachBlockSwipe(row, { enabled: true, editing: () => false, run() {} }));
     fire(row, "touchstart", 200, 300, 0);
     fire(row, "touchmove", 220, 300, 10);
     const ctx = new Event("contextmenu", { bubbles: true, cancelable: true });
@@ -274,7 +274,7 @@ describe("block swipe and the browser", () => {
   });
 
   it("progress feedback is set while tracking and removed on release", () => {
-    cleanups.push(attachBlockSwipe(row, { platform: "android", editing: () => false, run() {} }));
+    cleanups.push(attachBlockSwipe(row, { enabled: true, editing: () => false, run() {} }));
     fire(row, "touchstart", 200, 300, 0);
     fire(row, "touchmove", 210, 300, 10);
     fire(row, "touchmove", 260, 300, 20);
@@ -285,7 +285,7 @@ describe("block swipe and the browser", () => {
 
   it("cleanup removes every listener", () => {
     const runs: string[] = [];
-    const off = attachBlockSwipe(row, { platform: "android", editing: () => false, run: (a) => runs.push(a) });
+    const off = attachBlockSwipe(row, { enabled: true, editing: () => false, run: (a) => runs.push(a) });
     off();
     swipe(row, 80);
     expect(runs).toEqual([]);
@@ -293,7 +293,7 @@ describe("block swipe and the browser", () => {
 
   it("a range text selection suppresses the swipe", () => {
     const runs: string[] = [];
-    cleanups.push(attachBlockSwipe(row, { platform: "android", editing: () => false, run: (a) => runs.push(a) }));
+    cleanups.push(attachBlockSwipe(row, { enabled: true, editing: () => false, run: (a) => runs.push(a) }));
     const p = document.createElement("p"); p.textContent = "some text"; row.appendChild(p);
     const r = document.createRange(); r.selectNodeContents(p);
     const s = document.getSelection()!; s.removeAllRanges(); s.addRange(r);
@@ -324,7 +324,7 @@ describe("disabled zones (OG target-disable-swipe? + Tine equivalents)", () => {
       row.appendChild(zone);
       expect(blockSwipeDisabledTarget(inner, row)).toBe(true);
       const runs: string[] = [];
-      cleanups.push(attachBlockSwipe(row, { platform: "android", editing: () => false, run: (a) => runs.push(a) }));
+      cleanups.push(attachBlockSwipe(row, { enabled: true, editing: () => false, run: (a) => runs.push(a) }));
       swipe(row, 80, 0, inner);
       expect(runs).toEqual([]);
     });

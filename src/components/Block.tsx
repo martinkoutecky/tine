@@ -93,6 +93,7 @@ import { MEDIA_EDITORS } from "../mediaEditors";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
+import { touchPrimary } from "../inputCapability";
 import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
@@ -3357,7 +3358,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         </div>
       </Show>
       <Show when={hasSel()}>
-        <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": isMobilePlatform }} data-mobile-selection-toolbar={isMobilePlatform ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
+        <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
           <For each={essentialSelectionActions}>{(action) => (
             <button
               classList={{ "sel-action-page-link": action.id === "page-link" }}
