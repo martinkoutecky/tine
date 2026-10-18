@@ -18,6 +18,7 @@ pub mod page_filename;
 pub mod property_line;
 pub mod property_refs;
 pub mod removal_refs;
+mod swallowed_rows;
 
 /// The parse entry `block_regions` asks through (`crate::render::…`), the same
 /// names `tine-core`'s render bridge exposes.
