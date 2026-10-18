@@ -17,7 +17,16 @@
 //! The table lives in memory, one per graph snapshot, built on the first query
 //! that reads it (`ReadSnapshot::link_graph`) and never persisted (I-25: no new
 //! record, file or transport byte per edit). Build: one pass over every block's
-//! reference list, O(P + B + R); memory O(P + E).
+//! reference list, O(P + B + R); memory O(P + E) once built (the adjacency
+//! lists are shrunk after deduplication, so a page that names one target many
+//! times holds one entry, not one per occurrence; the transient pending list
+//! during the build is O(R)).
+//!
+//! Every pass is cooperatively cancellable through the caller's `cancelled`
+//! check (the `Fn() -> bool` shape interactive search uses behind
+//! `store::Cancel`): the build checks it once per page and once per
+//! [`CHECK_EVERY`] references, a `near` search once per [`CHECK_EVERY`]
+//! nodes. A cancelled pass returns `None` and leaves nothing behind.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -55,13 +64,18 @@ pub(crate) struct LinkGraph {
     inn: Vec<Vec<u32>>,
 }
 
+/// How many references or nodes a pass handles between two cancellation
+/// checks.
+pub(crate) const CHECK_EVERY: usize = 1024;
+
 enum PendingTarget {
     Page { key: String, spelling: String },
     PropertyKey { folded: String, spelling: String },
 }
 
 impl LinkGraph {
-    pub(crate) fn build(graph: &ReadSnapshot) -> LinkGraph {
+    /// The table, or `None` once `cancelled` reports true.
+    pub(crate) fn build(graph: &ReadSnapshot, cancelled: &dyn Fn() -> bool) -> Option<LinkGraph> {
         let config = graph.config();
         let format = journal_format(config);
         let real = real_page_names(graph);
@@ -111,8 +125,11 @@ impl LinkGraph {
             }
         };
         let mut pending: Vec<(u32, PendingTarget)> = Vec::new();
-        graph.with_pages(|pages| {
+        let finished = graph.with_pages(|pages| {
             for (entry, _) in pages.iter() {
+                if cancelled() {
+                    return false;
+                }
                 let key = refs::page_key(&entry.name);
                 if table.by_key.contains_key(&key) {
                     continue;
@@ -126,6 +143,9 @@ impl LinkGraph {
             }
             table.physical = node_keys.len();
             for (entry, doc) in pages.iter() {
+                if cancelled() {
+                    return false;
+                }
                 let source = table.by_key[&refs::page_key(&entry.name)];
                 if favorites
                     .as_deref()
@@ -168,15 +188,27 @@ impl LinkGraph {
                 }
                 // Explicit stack: an outline's depth never recurses here.
                 let mut stack: Vec<&DocBlock> = doc.roots.iter().rev().collect();
+                let mut visited = 0usize;
                 while let Some(block) = stack.pop() {
+                    visited += 1;
+                    if visited % CHECK_EVERY == 0 && cancelled() {
+                        return false;
+                    }
                     collect(block);
                     stack.extend(block.children.iter().rev());
                 }
             }
+            true
         });
+        if !finished {
+            return None;
+        }
         // A target no node answers to is a page without a file: one node per
         // panel, registered under every name that panel answers to.
-        for (_, target) in &pending {
+        for (at, (_, target)) in pending.iter().enumerate() {
+            if at % CHECK_EVERY == 0 && cancelled() {
+                return None;
+            }
             let (missing, spelling) = match target {
                 PendingTarget::Page { key, spelling } => (!by_name.contains_key(key), spelling),
                 PendingTarget::PropertyKey { folded, spelling } => {
@@ -200,7 +232,10 @@ impl LinkGraph {
         table.out = vec![Vec::new(); count];
         table.inn = vec![Vec::new(); count];
         let empty = Vec::new();
-        for (source, target) in &pending {
+        for (at, (source, target)) in pending.iter().enumerate() {
+            if at % CHECK_EVERY == 0 && cancelled() {
+                return None;
+            }
             let targets = match target {
                 PendingTarget::Page { key, .. } => by_name.get(key),
                 PendingTarget::PropertyKey { folded, .. } => by_property_key.get(folded),
@@ -214,14 +249,24 @@ impl LinkGraph {
                 table.out[*source as usize].push(target);
             }
         }
+        drop(pending);
+        if cancelled() {
+            return None;
+        }
         for (source, targets) in table.out.iter_mut().enumerate() {
             targets.sort_unstable();
             targets.dedup();
+            // A page naming one target many times kept one slot per
+            // occurrence until here; hold only the distinct links.
+            targets.shrink_to_fit();
             for &target in targets.iter() {
                 table.inn[target as usize].push(source as u32);
             }
         }
-        table
+        for sources in &mut table.inn {
+            sources.shrink_to_fit();
+        }
+        Some(table)
     }
 
     pub(crate) fn node_count(&self) -> usize {
@@ -277,14 +322,16 @@ impl LinkGraph {
     /// `near`: the seeds and every node within `k` steps, one breadth-first
     /// search per direction (each path keeps its direction). A node failing
     /// `through` is selected when reached but not expanded; seeds always are.
-    /// Cost O(nodes + edges followed); no recursion.
+    /// Cost O(nodes + edges followed); no recursion. `None` once `cancelled`
+    /// reports true (checked once per [`CHECK_EVERY`] expanded nodes).
     pub(crate) fn ball(
         &self,
         seeds: &[bool],
         k: u32,
         dir: NearDir,
         through: Option<&[bool]>,
-    ) -> Vec<bool> {
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<Vec<bool>> {
         let mut ball = seeds.to_vec();
         let directions: &[&Vec<Vec<u32>>] = match dir {
             NearDir::Out => &[&self.out],
@@ -298,10 +345,15 @@ impl LinkGraph {
             let mut seen = seeds.to_vec();
             let mut frontier = start.clone();
             let mut step = 0u32;
+            let mut expanded = 0usize;
             while step < k && !frontier.is_empty() {
                 step += 1;
                 let mut next = Vec::new();
                 for &node in &frontier {
+                    expanded += 1;
+                    if expanded % CHECK_EVERY == 0 && cancelled() {
+                        return None;
+                    }
                     let expands = seeds[node as usize]
                         || through.is_none_or(|through| through[node as usize]);
                     if !expands {
@@ -318,7 +370,7 @@ impl LinkGraph {
                 frontier = next;
             }
         }
-        ball
+        Some(ball)
     }
 }
 
@@ -399,5 +451,162 @@ impl LinkAnswers {
             Quant::None => !hits.any(|hit| hit),
             Quant::Every => hits.all(|hit| hit),
         }
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    //! Review r1: the table build, the element and seed conditions and the
+    //! `near` searches stop once the caller's cancellation check reports true.
+    use std::cell::Cell;
+
+    use tine_core::query::ir::{ExecutionContext, QueryRows};
+    use tine_core::query::registry::Registry;
+    use tine_core::query::{parse_query_input, QueryInput};
+
+    use super::{LinkGraph, CHECK_EVERY};
+    use tine_core::query::ir::NearDir;
+
+    const CHAIN: usize = 3 * CHECK_EVERY;
+
+    /// A chain p0 → p1 → … → p{CHAIN-1}.
+    fn chain() -> (
+        tempfile::TempDir,
+        std::sync::Arc<crate::model::ReadSnapshot>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("pages")).unwrap();
+        std::fs::create_dir_all(dir.path().join("logseq")).unwrap();
+        for at in 0..CHAIN {
+            std::fs::write(
+                dir.path().join("pages").join(format!("p{at}.md")),
+                format!("- to [[p{}]]\n", at + 1),
+            )
+            .unwrap();
+        }
+        let (store, _, _) =
+            crate::store::Store::open(dir.path(), crate::store::OpenOptions::default()).unwrap();
+        let graph = store.whole_graph().unwrap().test_read_snapshot();
+        (dir, graph)
+    }
+
+    /// A check that reports true from its `after`-th call on, counting calls.
+    fn stop_after(after: usize, calls: &Cell<usize>) -> impl Fn() -> bool + '_ {
+        move || {
+            calls.set(calls.get() + 1);
+            calls.get() >= after
+        }
+    }
+
+    #[test]
+    fn a_cancelled_link_table_build_stops_and_leaves_nothing_behind() {
+        let (_dir, graph) = chain();
+        let calls = Cell::new(0);
+        assert!(LinkGraph::build(&graph, &stop_after(5, &calls)).is_none());
+        assert_eq!(calls.get(), 5, "the build stops at the first true check");
+        assert!(graph.link_graph(&stop_after(1, &Cell::new(0))).is_none());
+        // Nothing was cached: an uncancelled caller builds the whole table.
+        let table = graph.link_graph(&|| false).unwrap();
+        assert_eq!(
+            table.node_count(),
+            CHAIN + 1,
+            "p0..p{{CHAIN-1}} and fileless p{{CHAIN}}"
+        );
+        assert_eq!(table.edge_count(), CHAIN);
+    }
+
+    #[test]
+    fn a_cancelled_near_search_stops_inside_its_frontier_walk() {
+        let (_dir, graph) = chain();
+        let table = graph.link_graph(&|| false).unwrap();
+        let mut seeds = vec![false; table.node_count()];
+        seeds[table.node("p0").unwrap() as usize] = true;
+        let whole = table
+            .ball(&seeds, CHAIN as u32, NearDir::Out, None, &|| false)
+            .unwrap();
+        assert_eq!(whole.iter().filter(|&&hit| hit).count(), CHAIN + 1);
+        let calls = Cell::new(0);
+        assert!(table
+            .ball(
+                &seeds,
+                CHAIN as u32,
+                NearDir::Out,
+                None,
+                &stop_after(1, &calls)
+            )
+            .is_none());
+        // One check per CHECK_EVERY expanded nodes: stopped after the first
+        // CHECK_EVERY of the CHAIN nodes.
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn a_cancelled_link_query_returns_nothing_and_is_not_memoized() {
+        let tql = "@page and near(name = 'p0', 5000, 'out') and any(linked_by, true)";
+        let (query, view) = parse_query_input(
+            tql,
+            QueryInput::Tql,
+            tine_core::date::JournalDate::today(),
+            Registry::none(),
+        );
+        assert!(!query.is_invalid(), "{:?}", query.diagnostics);
+        let context = ExecutionContext::default();
+        let request = || crate::IrRequest::Run {
+            query: &query,
+            view: &view,
+            context: &context,
+        };
+        // How many checks a whole run makes (on its own graph: this run's
+        // answer is memoized there).
+        let total = {
+            let (_dir, graph) = chain();
+            let calls = Cell::new(0);
+            crate::query::exec::query_ir_cancellable(
+                &graph,
+                request(),
+                &stop_after(usize::MAX, &calls),
+            )
+            .unwrap()
+            .unwrap();
+            calls.get()
+        };
+        // The build checks once per page twice, the seed condition and the
+        // element condition once per node each: the run spans all of them.
+        assert!(total > 4 * CHAIN, "checks in a whole run: {total}");
+        // A fresh graph per stage: a run stopped after the build keeps the
+        // (complete) table, so a later run would make fewer checks.
+        for after in [3, total / 4, total / 2, 3 * total / 4, total - 1] {
+            let (_dir, graph) = chain();
+            let calls = Cell::new(0);
+            let answer = crate::query::exec::query_ir_cancellable(
+                &graph,
+                request(),
+                &stop_after(after, &calls),
+            )
+            .unwrap();
+            assert!(answer.is_none(), "stopped after {after} of {total} checks");
+            assert_eq!(calls.get(), after, "no check after the first true one");
+        }
+        // Nothing of a stopped run is memoized: stop one, then run it whole.
+        let (_dir, graph) = chain();
+        let stopped = crate::query::exec::query_ir_cancellable(
+            &graph,
+            request(),
+            &stop_after(total / 2, &Cell::new(0)),
+        )
+        .unwrap();
+        assert!(stopped.is_none());
+        let crate::IrAnswer::Result(result) =
+            crate::query::exec::query_ir_cancellable(&graph, request(), &|| false)
+                .unwrap()
+                .unwrap()
+        else {
+            panic!("a run answers a result");
+        };
+        let QueryRows::Page { pages } = result.rows else {
+            panic!("page rows");
+        };
+        // p1..p{CHAIN-1} (p0 has no referrer; the fileless end is no row).
+        assert_eq!(pages.len(), CHAIN - 1);
     }
 }

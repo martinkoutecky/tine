@@ -300,7 +300,9 @@ impl Plan {
     }
 
     /// One bit per link-table node: whether `pred` holds of that page. A
-    /// physical node holds when any file of its name does.
+    /// physical node holds when any file of its name does. `None` once
+    /// `cancelled` reports true (checked once per page).
+    #[allow(clippy::too_many_arguments)]
     fn node_set(
         &self,
         pred: &Filter,
@@ -309,9 +311,13 @@ impl Plan {
         config: &ParseConfig,
         atoms: &EvalCache,
         links: &LinkAnswers,
-    ) -> Vec<bool> {
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<Vec<bool>> {
         let mut set = vec![false; table.node_count()];
         for (entry, doc) in candidates.all_pages() {
+            if cancelled() {
+                return None;
+            }
             let Some(node) = table.node(&refs::normalize(&entry.name)) else {
                 continue;
             };
@@ -327,6 +333,9 @@ impl Plan {
             );
         }
         for (at, node) in table.virtuals().iter().enumerate() {
+            if at % super::link_graph::CHECK_EVERY == 0 && cancelled() {
+                return None;
+            }
             let id = (table.physical() + at) as u32;
             set[id as usize] = eval::eval_page(
                 pred,
@@ -335,20 +344,23 @@ impl Plan {
                     .with_link_node(id),
             );
         }
-        set
+        Some(set)
     }
 
     /// Every link leaf's answer, innermost first (an element or seed condition
     /// may itself read links). Empty, and free, for a plan that reads none.
+    /// `None` once `cancelled` reports true: the table build, every element
+    /// and seed condition and every `near` search check it cooperatively.
     fn link_answers(
         &self,
         graph: &ReadSnapshot,
         candidates: &candidates::Candidates<'_>,
         config: &ParseConfig,
         atoms: &EvalCache,
-    ) -> LinkAnswers {
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<LinkAnswers> {
         if !self.reads_links() {
-            return LinkAnswers::default();
+            return Some(LinkAnswers::default());
         }
         fn post_order<'f>(filter: &'f Filter, out: &mut Vec<&'f Leaf>) {
             match filter {
@@ -375,14 +387,14 @@ impl Plan {
                 Filter::True | Filter::False | Filter::Raw { .. } => {}
             }
         }
-        let table = graph.link_graph();
+        let table = graph.link_graph(cancelled)?;
         let mut answers = LinkAnswers::new(Arc::clone(&table));
         let mut leaves = Vec::new();
         post_order(&self.filter, &mut leaves);
         for leaf in leaves {
             let set = match leaf {
                 Leaf::Rel { pred, .. } => {
-                    self.node_set(pred, &table, candidates, config, atoms, &answers)
+                    self.node_set(pred, &table, candidates, config, atoms, &answers, cancelled)?
                 }
                 Leaf::Near {
                     seeds,
@@ -390,17 +402,22 @@ impl Plan {
                     dir,
                     through,
                 } => {
-                    let seeds = self.node_set(seeds, &table, candidates, config, atoms, &answers);
-                    let through = through.as_deref().map(|through| {
-                        self.node_set(through, &table, candidates, config, atoms, &answers)
-                    });
-                    table.ball(&seeds, *k, *dir, through.as_deref())
+                    let seeds = self.node_set(
+                        seeds, &table, candidates, config, atoms, &answers, cancelled,
+                    )?;
+                    let through = match through.as_deref() {
+                        Some(through) => Some(self.node_set(
+                            through, &table, candidates, config, atoms, &answers, cancelled,
+                        )?),
+                        None => None,
+                    };
+                    table.ball(&seeds, *k, *dir, through.as_deref(), cancelled)?
                 }
                 Leaf::Attr { .. } => continue,
             };
             answers.insert(leaf, set);
         }
-        answers
+        Some(answers)
     }
 
     /// The block rows of one page: every matching block whose immediate parent
@@ -847,6 +864,21 @@ pub(crate) fn execute(
     view: &ViewSettings,
     bounds: Bounds,
 ) -> Result<QueryResult, StatisticsResourceLimit> {
+    execute_cancellable(graph, plan, query, view, bounds, &|| false)
+        .map(|result| result.expect("never cancelled"))
+}
+
+/// [`execute`], stopping cooperatively once `cancelled` reports true: `Ok(None)`
+/// carries no partial result. The link work (`links`, `linked_by`, `near`:
+/// table build, element and seed conditions, searches) checks it.
+pub(crate) fn execute_cancellable(
+    graph: &ReadSnapshot,
+    plan: &Plan,
+    query: &Query,
+    view: &ViewSettings,
+    bounds: Bounds,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<QueryResult>, StatisticsResourceLimit> {
     let mut result = QueryResult {
         rows: match plan.anchor {
             Anchor::Block => QueryRows::Block { groups: Vec::new() },
@@ -868,7 +900,7 @@ pub(crate) fn execute(
     // every clause is a dropped bare `(task)` / `(priority)`, D-18) can match
     // nothing either, so it answers without visiting a page.
     if query.is_invalid() || plan.filter == Filter::False {
-        return Ok(result);
+        return Ok(Some(result));
     }
     let wants_recency = view
         .sort
@@ -884,11 +916,15 @@ pub(crate) fn execute(
         .collect();
     let sample = view.sample.map(|n| n as usize);
     let mut fold = StatisticsFold::new(view, bounds.max_bytes)?;
+    let mut stopped = false;
     graph.with_pages(|pages| -> Result<(), StatisticsResourceLimit> {
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
-        let links = plan.link_answers(graph, &candidates, config, &atoms);
+        let Some(links) = plan.link_answers(graph, &candidates, config, &atoms, cancelled) else {
+            stopped = true;
+            return Ok(());
+        };
         match plan.anchor {
             Anchor::Block => {
                 let mut groups: Vec<(&PageEntry, Arc<PageFacts>, Vec<Hit>)> = Vec::new();
@@ -1112,17 +1148,21 @@ pub(crate) fn execute(
         }
         Ok(())
     })?;
+    if stopped {
+        return Ok(None);
+    }
     result.statistics = fold.map(StatisticsFold::finish);
-    Ok(result)
+    Ok(Some(result))
 }
 
 /// Count the rows a plan matches, constructing nothing (explain-empty's probe).
-fn count(graph: &ReadSnapshot, plan: &Plan) -> usize {
+/// `None` once `cancelled` stops its link work.
+fn count(graph: &ReadSnapshot, plan: &Plan, cancelled: &dyn Fn() -> bool) -> Option<usize> {
     graph.with_pages(|pages| {
         let candidates = candidates::Candidates::new(graph, pages, plan);
         let config = candidates.config();
         let atoms = EvalCache::default();
-        let links = plan.link_answers(graph, &candidates, config, &atoms);
+        let links = plan.link_answers(graph, &candidates, config, &atoms, cancelled)?;
         let mut count = 0usize;
         let mut hits = Vec::new();
         for (entry, doc) in candidates.pages() {
@@ -1140,7 +1180,7 @@ fn count(graph: &ReadSnapshot, plan: &Plan) -> usize {
                 }
             }
         }
-        count
+        Some(count)
     })
 }
 
@@ -1170,23 +1210,49 @@ pub(crate) fn query_ir(
     query_ir_on_day(graph, request, tine_core::date::JournalDate::today())
 }
 
+/// [`query_ir`] with cooperative cancellation (`Ok(None)`: stopped, no partial
+/// answer, nothing memoized).
+pub(crate) fn query_ir_cancellable(
+    graph: &crate::model::ReadSnapshot,
+    request: crate::IrRequest<'_>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<crate::IrAnswer>, StatisticsResourceLimit> {
+    query_ir_on_day_cancellable(
+        graph,
+        request,
+        tine_core::date::JournalDate::today(),
+        cancelled,
+    )
+}
+
 /// Same production entry body, with the sampled day explicit for conformance.
 pub(crate) fn query_ir_on_day(
     graph: &crate::model::ReadSnapshot,
     request: crate::IrRequest<'_>,
     today: tine_core::date::JournalDate,
 ) -> Result<crate::IrAnswer, StatisticsResourceLimit> {
+    query_ir_on_day_cancellable(graph, request, today, &|| false)
+        .map(|answer| answer.expect("never cancelled"))
+}
+
+fn query_ir_on_day_cancellable(
+    graph: &crate::model::ReadSnapshot,
+    request: crate::IrRequest<'_>,
+    today: tine_core::date::JournalDate,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<crate::IrAnswer>, StatisticsResourceLimit> {
     use crate::query::memo::Answer;
     let (query, view, context) = match request {
         crate::IrRequest::Registry => {
             let index = graph.query_index();
             let registry = graph.with_pages(|pages| index.registry(pages));
-            return Ok(crate::IrAnswer::Registry(registry));
+            return Ok(Some(crate::IrAnswer::Registry(registry)));
         }
         crate::IrRequest::ExplainEmpty { query, context } => {
             let resolved = tine_core::query::resolve_for_execution(query, context, today);
-            let answer = explain_empty(graph, &resolved);
-            return Ok(crate::IrAnswer::ExplainEmpty(answer));
+            return Ok(
+                explain_empty(graph, &resolved, cancelled).map(crate::IrAnswer::ExplainEmpty)
+            );
         }
         crate::IrRequest::Run {
             query,
@@ -1200,17 +1266,24 @@ pub(crate) fn query_ir_on_day(
         serde_json::to_string(&(resolved.query(), resolved.report())).unwrap_or_default(),
         serde_json::to_string(view).unwrap_or_default(),
     );
-    let answer = graph.query_answer(key, today, || {
+    let Some(answer) = graph.query_answer_cancellable(key, today, || {
         let bounds = tine_core::query::ir::Bounds {
             max_rows: crate::store::RESULT_BRIDGE_MAX_ROWS,
             max_bytes: crate::store::RESULT_BRIDGE_MAX_BYTES,
         };
-        let (result, plan) = run_resolved(graph, &resolved, view, bounds);
-        (Answer::Result(result.map(Arc::new)), Some(plan))
-    });
+        let (result, plan) = run_resolved_cancellable(graph, &resolved, view, bounds, cancelled);
+        let result = match result {
+            Ok(None) => return None,
+            Ok(Some(result)) => Ok(Arc::new(result)),
+            Err(limit) => Err(limit),
+        };
+        Some((Answer::Result(result), Some(plan)))
+    }) else {
+        return Ok(None);
+    };
     match answer {
         Answer::Result(result) => {
-            result.map(|result| crate::IrAnswer::Result(Box::new(result.as_ref().clone())))
+            result.map(|result| Some(crate::IrAnswer::Result(Box::new(result.as_ref().clone()))))
         }
         _ => unreachable!("R keys hold IR results"),
     }
@@ -1218,35 +1291,50 @@ pub(crate) fn query_ir_on_day(
 
 /// `query_run`'s evaluation (SPEC §7.1): the resolved tree under the
 /// statistics-execution view, with the binding's report attached afterwards.
-pub(crate) fn run_resolved(
+/// `None` inside the result once `cancelled` stopped it.
+fn run_resolved_cancellable(
     graph: &ReadSnapshot,
     resolved: &ResolvedQuery,
     view: &ViewSettings,
     bounds: Bounds,
-) -> (Result<QueryResult, StatisticsResourceLimit>, Arc<Plan>) {
+    cancelled: &dyn Fn() -> bool,
+) -> (
+    Result<Option<QueryResult>, StatisticsResourceLimit>,
+    Arc<Plan>,
+) {
     let view = statistics_execution_view(resolved.query(), view);
     let plan = Arc::new(plan(graph, resolved.query(), resolved.today(), false));
-    let result = execute(graph, &plan, resolved.query(), &view, bounds).map(|mut result| {
-        result.report = resolved.report().clone();
-        result
-    });
+    let result = execute_cancellable(graph, &plan, resolved.query(), &view, bounds, cancelled).map(
+        |result| {
+            result.map(|mut result| {
+                result.report = resolved.report().clone();
+                result
+            })
+        },
+    );
     (result, plan)
 }
 
 /// `query_explain_empty` (SPEC §7.1, N19): one count per probe of the plan.
-pub(crate) fn explain_empty(graph: &ReadSnapshot, resolved: &ResolvedQuery) -> ExplainEmptyResult {
+pub(crate) fn explain_empty(
+    graph: &ReadSnapshot,
+    resolved: &ResolvedQuery,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<ExplainEmptyResult> {
     let explain = explain_empty_plan(resolved);
     let counts: Vec<usize> = explain
         .probes
         .iter()
         .map(|probe| {
             let plan = plan(graph, probe, resolved.today(), false);
-            count(graph, &plan)
+            count(graph, &plan, cancelled)
         })
-        .collect();
-    explain
-        .answer(resolved, &counts)
-        .expect("one count per probe, by construction")
+        .collect::<Option<_>>()?;
+    Some(
+        explain
+            .answer(resolved, &counts)
+            .expect("one count per probe, by construction"),
+    )
 }
 
 /// The legacy block-group bridge for one resolved query (`run_query`, the

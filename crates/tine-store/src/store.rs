@@ -3100,6 +3100,21 @@ impl WholeGraph {
         crate::query::exec::query_ir(&self.graph, request)
     }
 
+    /// [`Self::query_ir`], stopping cooperatively once `cancel` is set, the
+    /// same flag interactive search takes. `Ok(None)`: cancelled, no partial
+    /// answer, nothing memoized. The link work behind `links`, `linked_by` and
+    /// `near` (table build, element and seed conditions, the searches) checks
+    /// it at least once per page and once per 1024 references or nodes.
+    pub fn query_ir_cancellable(
+        &self,
+        request: IrRequest<'_>,
+        cancel: &Cancel,
+    ) -> Result<Option<IrAnswer>, tine_core::query::statistics::StatisticsResourceLimit> {
+        crate::query::exec::query_ir_cancellable(&self.graph, request, &|| {
+            cancel.0.load(Ordering::Acquire)
+        })
+    }
+
     /// Graph search, with an optional syntactically checked file scope and
     /// caller cancellation. An absent scoped file yields an empty answer;
     /// check existence separately when it matters.
@@ -3170,7 +3185,7 @@ impl WholeGraph {
     /// as (nodes, links, estimated heap bytes), building it if needed.
     #[cfg(any(test, feature = "test-faults"))]
     pub fn link_table_stats(&self) -> (usize, usize, usize) {
-        let table = self.graph.link_graph();
+        let table = self.graph.link_graph(&|| false).expect("never cancelled");
         (
             table.node_count(),
             table.edge_count(),

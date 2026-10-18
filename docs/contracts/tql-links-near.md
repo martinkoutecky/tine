@@ -116,16 +116,26 @@ its text, as in OG.
 - **The link table.** Built once per graph snapshot when a query first needs it
   (`tine-store` `query::link_graph`), in memory, never persisted: one pass over
   every block's parser-owned reference spans, O(P + B + R) for P pages, B blocks
-  and R explicit references; memory O(P + E) for E links (two `u32` adjacency
-  entries per link plus one name per page). A later snapshot builds its own.
+  and R explicit references. Retained memory is O(P + E) for E distinct links:
+  two `u32` adjacency entries per link (each list is deduplicated and shrunk to
+  its length, so a page naming one target many times holds one entry), one key
+  per physical page and one name per page without a file. During the build a
+  transient list of every reference occurrence is held, O(R). Measured on the
+  realistic 10k graph: 13,904 nodes, 94,121 links, about 2.3 MiB retained. A
+  later snapshot builds its own.
 - **`near`** is breadth-first search over that table, one search per
   direction, never recursion: O(seeds + pages reached + links followed). The seed
-  condition is evaluated once per page; `through` is evaluated once per page a
-  search reaches.
+  condition and `through` are each evaluated once per page.
 - **`links` / `linked_by`** evaluate their element condition once per page, then
   each row reads its own adjacency: O(P + E) per condition.
 - Nested link conditions are evaluated innermost first; each is computed once
   per query execution.
+- **Cancellation.** The table build, every element, seed and `through`
+  condition and every `near` search check the caller's cancellation flag
+  cooperatively (`WholeGraph::query_ir_cancellable`, the `Cancel` flag
+  interactive search takes): at least once per page and once per 1,024
+  references or reached pages. A cancelled run answers nothing, memoizes
+  nothing and keeps no partial table.
 - **Bounds.** A link query is bounded like every page query (20,000 rows /
   32 MiB). A k = 2 search through hub pages can select most of a graph; that is
   the correct answer, not an error. `k` larger than the graph's depth selects

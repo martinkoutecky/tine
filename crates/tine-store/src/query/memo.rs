@@ -145,6 +145,19 @@ impl QueryMemo {
         parse_config: &ParseConfig,
         compute: impl FnOnce() -> (Answer, Option<Arc<Plan>>),
     ) -> Answer {
+        self.answer_cancellable(key, today, parse_config, || Some(compute()))
+            .expect("never cancelled")
+    }
+
+    /// [`Self::answer`] whose computation may stop: `None` from `compute` is
+    /// returned as `None` and nothing is retained.
+    pub(crate) fn answer_cancellable(
+        &self,
+        key: String,
+        today: JournalDate,
+        parse_config: &ParseConfig,
+        compute: impl FnOnce() -> Option<(Answer, Option<Arc<Plan>>)>,
+    ) -> Option<Answer> {
         let today = today.ordinal_key();
         {
             let mut memo = self.inner.write().unwrap();
@@ -153,16 +166,16 @@ impl QueryMemo {
                     if let Some(entry) = memo.entries.get(&key) {
                         let answer = entry.answer.clone();
                         touch(&mut memo.lru, &key);
-                        return answer;
+                        return Some(answer);
                     }
                 }
             }
         }
-        let (answer, plan) = compute();
+        let (answer, plan) = compute()?;
         // The memo is per day; an answer that read the instant (`now`) is
         // stale within minutes, so it is returned but never retained.
         if plan.as_ref().is_some_and(|plan| plan.reads_clock()) {
-            return answer;
+            return Some(answer);
         }
         let pages = Arc::new(answer.pages());
         let bytes = answer
@@ -174,14 +187,14 @@ impl QueryMemo {
             .saturating_add(retained::parse_config_bytes(parse_config))
             .saturating_add(key.len().saturating_mul(2));
         if bytes > MAX_ENTRY_BYTES {
-            return answer;
+            return Some(answer);
         }
         let mut guard = self.inner.write().unwrap();
         let memo = match guard.as_mut() {
             Some(memo) if memo.today == today && memo.parse_config == *parse_config => memo,
             // A different day's memo is not replaced by an answer computed for
             // an older day than it (a query that straddled midnight).
-            Some(memo) if memo.today > today => return answer,
+            Some(memo) if memo.today > today => return Some(answer),
             _ => guard.insert(Memo {
                 today,
                 parse_config: parse_config.clone(),
@@ -209,7 +222,7 @@ impl QueryMemo {
                 memo.bytes = memo.bytes.saturating_sub(removed.bytes);
             }
         }
-        answer
+        Some(answer)
     }
 
     /// Carry `previous`'s answers into this (new) snapshot's memo, dropping

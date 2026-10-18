@@ -9,7 +9,7 @@ use tine_core::query::ir::{ExecutionContext, QueryRows};
 use tine_core::query::registry::Registry;
 use tine_core::query::{parse_query_input, QueryInput};
 use tine_core::refs::page_key;
-use tine_store::{IrAnswer, IrRequest, Resolved, Store, WholeGraph};
+use tine_store::{Cancel, IrAnswer, IrRequest, Resolved, Store, WholeGraph};
 
 fn write(root: &Path, rel: &str, text: &str) {
     let path = root.join(rel);
@@ -518,4 +518,44 @@ fn links_near_k2_on_the_realistic_graph() {
         graph.corpus().pages.len(),
         rss_kib("VmHWM:")
     );
+}
+
+/// Review r1: a link query takes the flag interactive search takes; a set flag
+/// answers nothing, and the same query then runs whole.
+#[test]
+fn links_near_a_set_cancel_flag_answers_nothing() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    hand_graph(dir.path());
+    let (_store, graph) = open(dir.path());
+    let (query, view) = parse_query_input(
+        "@page and near(name = 'idea', 1, 'in')",
+        QueryInput::Tql,
+        tine_core::date::JournalDate::today(),
+        Registry::none(),
+    );
+    let context = ExecutionContext::default();
+    let run = |cancelled: bool| {
+        graph
+            .query_ir_cancellable(
+                IrRequest::Run {
+                    query: &query,
+                    view: &view,
+                    context: &context,
+                },
+                &Cancel(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+                    cancelled,
+                ))),
+            )
+            .unwrap()
+    };
+    assert!(run(true).is_none());
+    let Some(IrAnswer::Result(result)) = run(false) else {
+        panic!("an uncancelled run answers a result");
+    };
+    let QueryRows::Page { pages } = result.rows else {
+        panic!("page rows");
+    };
+    let names: BTreeSet<String> = pages.iter().map(|row| page_key(&row.name)).collect();
+    assert_eq!(names, set(&["a", "w"]));
 }

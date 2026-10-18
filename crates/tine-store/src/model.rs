@@ -987,6 +987,23 @@ impl ReadSnapshot {
         self.memos.query.answer(key, today, &parse_config, compute)
     }
 
+    /// [`Self::query_answer`] whose computation may stop (`None`): nothing is
+    /// memoized for a stopped computation.
+    pub(crate) fn query_answer_cancellable(
+        &self,
+        key: String,
+        today: tine_core::date::JournalDate,
+        compute: impl FnOnce() -> Option<(
+            crate::query::memo::Answer,
+            Option<Arc<crate::query::exec::Plan>>,
+        )>,
+    ) -> Option<crate::query::memo::Answer> {
+        let parse_config = tine_core::query::atom::ParseConfig::from_config(&self.config);
+        self.memos
+            .query
+            .answer_cancellable(key, today, &parse_config, compute)
+    }
+
     pub(crate) fn backlinks_bounded(
         &self,
         target: &str,
@@ -1174,11 +1191,18 @@ impl ReadSnapshot {
                 .get_or_init(|| Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))),
         )
     }
-    pub(crate) fn link_graph(&self) -> Arc<crate::query::link_graph::LinkGraph> {
-        Arc::clone(
-            self.link_graph
-                .get_or_init(|| Arc::new(crate::query::link_graph::LinkGraph::build(self))),
-        )
+    /// The snapshot's link table, built on first use; `None` when `cancelled`
+    /// stopped the build (nothing is kept, the next caller builds afresh).
+    /// Two concurrent first callers may both build; the first stored wins.
+    pub(crate) fn link_graph(
+        &self,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<Arc<crate::query::link_graph::LinkGraph>> {
+        if let Some(table) = self.link_graph.get() {
+            return Some(Arc::clone(table));
+        }
+        let table = Arc::new(crate::query::link_graph::LinkGraph::build(self, cancelled)?);
+        Some(Arc::clone(self.link_graph.get_or_init(|| table)))
     }
     pub(crate) fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
         self.aliases
