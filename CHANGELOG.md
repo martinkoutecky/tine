@@ -34,6 +34,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Starting on a phone or in a narrow touch window shows one pane but no longer discards the other saved panes, their tabs and the workspace windows: they are kept in the session file and come back on a wider screen (D-20261018-W1). A PDF opens in place, not in a 195 px companion pane, in any window under 640 px.
 - Page results in Search and List show each page's properties as text under its title again, in query blocks and in the Search tab (they had been dropped by a declutter pass) (GH #619).
 - Namespace page icons now follow property edits, and image icons refresh after symlink-target or filename-case asset events; files larger than 1 MiB show no icon (GH #346).
 - On iOS, a back swipe now slides the page fully off to the right before the previous page appears, like the native back gesture, instead of stopping partway (GH #501).
