@@ -78,3 +78,36 @@ it("typing the title of a table block that is a page's first bullet toasts nothi
     expect(submittedPages(save).at(-1)!.blocks.map((b) => b.raw)).toEqual([`test table\n${config}`, "other"]);
   } finally { dispose(); }
 });
+
+// GH #210 F4: page properties above the first bullet that hold a block-scoped key (an OG
+// PDF-highlight page's `id::`, a schema page's page-level `tine.table-widths::`) must stay the
+// page header after the header editor opens and closes, not turn into an outline bullet.
+for (const pre of [
+  "file:: [x.pdf](../assets/x.pdf)\nhls-page:: 3\nid:: 0f3966ad-17d6-4c01-9c55-675870a88c33",
+  "tine.fields:: a;b\ntine.table-widths:: prop%3Aa=171",
+]) {
+  it(`a preamble with a block-scoped key stays the page header after its editor closes: ${pre.split("\n")[0]}`, async () => {
+    const dto: PageDto = { name: "Hl", kind: "page", title: "Hl", pre_block: pre, format: "md",
+      blocks: [{ id: "o1", raw: "other", collapsed: false, children: [] }] };
+    loadSingle(structuredClone(dto));
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto as PageRead);
+    vi.spyOn(backend(), "resolvePage").mockResolvedValue({ kind: "absent", id: "pages/Hl.md" });
+    openAsLoaded(await bindTestHost());
+    const save = vi.spyOn(backend(), "pageSubmit");
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      const rows = pre.split("\n").length;
+      expect(root.querySelectorAll(".page-properties .prop-row")).toHaveLength(rows);
+      root.querySelector(".page-properties")!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+      await tick();
+      expect(root.querySelector("textarea")).not.toBeNull();
+      endEdit("blur"); await tick(); await tick();
+      expect(root.querySelectorAll(".page-properties .prop-row")).toHaveLength(rows);
+      expect([...root.querySelectorAll(".ls-block")].map((b) => (b as HTMLElement).dataset.blockId)).toEqual(["o1"]);
+      expect(await flushPage(dto.name)).toBe(true);
+      for (const written of submittedPages(save)) expect(written.pre_block).toBe(pre);
+    } finally { dispose(); }
+  });
+}
