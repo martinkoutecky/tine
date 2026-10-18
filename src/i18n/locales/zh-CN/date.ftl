@@ -40,6 +40,4 @@ date-date-picker-from-completion = 从完成日期计算
 
 date-date-picker-done = 完成
 
-date-date-picker-today = 今天
-
 date-date-picker-clear = 清除

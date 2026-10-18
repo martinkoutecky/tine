@@ -20,7 +20,7 @@ it("asks before merging onto an existing page and names the confirmed survivor",
   const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
   const rename = vi.spyOn(backend(), "renamePage").mockResolvedValue({ outcome: "merged", touched: [] });
   expect(await renameOrMergePage("Old", "New", { name: "Old", pageKind: "page", path: "pages/Old.md" })).toBe("merged");
-  expect(confirm).toHaveBeenCalledWith("Page “New” already exists. Merge “Old” into it?");
+  expect(confirm).toHaveBeenCalledWith("Page “New” already exists. Merge “Old” into it?", { okLabel: "Merge pages", cancelLabel: "Cancel" });
   expect(rename).toHaveBeenCalledWith("Old", "New", "rename-page", "pages/Old.md", "pages/New.md", []);
 });
 

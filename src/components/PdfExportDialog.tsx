@@ -1,5 +1,6 @@
 import { Rich } from "../i18n/Rich";
 import { msg, render, t } from "../i18n";
+import { DialogActions } from "./DialogActions";
 import { optionsUpdater } from "./primitives";
 import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { pdfExportPage, closePdfExport } from "../ui";
@@ -157,10 +158,9 @@ function Dialog(props: { name: string }): JSX.Element {
           <Rich message={msg("pdf-export-print-note")} slots={{ strong: children => <b>{children}</b> }} />
         </div>
 
-        <div class="export-foot">
-          <button class="export-btn-secondary" onClick={closePdfExport}>{t("pdf-export-cancel")}</button>
-          <button class="export-btn-primary" onClick={doExport}>{t("pdf-export-export")}</button>
-        </div>
+        <DialogActions
+          cancel={<button class="export-btn-secondary" onClick={closePdfExport}>{t("pdf-export-cancel")}</button>}
+          primary={<button class="export-btn-primary" onClick={doExport}>{t("pdf-export-export")}</button>} />
       </div>
     </div>
   );

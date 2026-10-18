@@ -1,5 +1,6 @@
 import { Rich } from "../i18n/Rich";
 import { t, msg, rawText } from "../i18n";
+import { DialogActions } from "./DialogActions";
 import { For, Show, createResource, createSignal, onCleanup, onMount, type Accessor, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { exportSheets } from "../sheet/exportSheets";
@@ -132,11 +133,10 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
             <Show when={overBudget()}><button class="export-btn-secondary" onClick={() => { closeQueryExport(); openSettings("graph"); }}>{t("query-export-dialog-adjust-limit-in-settings")}</button></Show>
           </div></Show>
         </div>
-        <div class="export-foot">
-          <button class="export-btn-secondary" onClick={closeQueryExport}>{t("query-export-dialog-cancel")}</button>
-          <button class="export-btn-primary" disabled={!canExport()}
-            onClick={() => void publish()}>{busy() ? t("query-export-dialog-exporting") : t("query-export-dialog-export")}</button>
-        </div>
+        <DialogActions
+          cancel={<button class="export-btn-secondary" onClick={closeQueryExport}>{t("query-export-dialog-cancel")}</button>}
+          primary={<button class="export-btn-primary" disabled={!canExport()}
+            onClick={() => void publish()}>{busy() ? t("query-export-dialog-exporting") : t("query-export-dialog-export")}</button>} />
       </div>
     </div>
   );

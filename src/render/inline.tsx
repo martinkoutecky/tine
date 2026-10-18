@@ -876,7 +876,7 @@ function AssetImage(props: {
     if (!name || !props.blockId) return;
     const confirmed = await readOwned(owner, backend().confirm(
       t("render-move-to-the-trash-and-remove-it-from-this-block-it-stays-recoverable-in-logseq-tine-trash", { name: String(name) }),
-      "Trash asset",
+      { title: t("confirm-trash-asset-title"), okLabel: t("confirm-move-to-trash"), cancelLabel: t("confirm-cancel") },
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     // Drop the reference first (saves the block). Trash the file only when the

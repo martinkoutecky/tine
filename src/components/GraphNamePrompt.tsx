@@ -3,6 +3,7 @@ import { graphNameRequest, type GraphNameRequest } from "../graphNamePrompt";
 import { registerTransientLayer } from "../transientLayers";
 import { refuseStaleWrite } from "../binding";
 import { t } from "../i18n";
+import { DialogActions } from "./DialogActions";
 
 export function GraphNamePrompt() {
   return <Show when={graphNameRequest()}>{request => <NameForm request={request()} />}</Show>;
@@ -41,10 +42,9 @@ function NameForm(props: { request: GraphNameRequest }) {
           onInput={event => { setName(event.currentTarget.value); setError(""); }} />
       </label>
       <Show when={error()}><p id="graph-name-error" class="graph-name-error" role="alert">{error() === "wsl-rootfs" ? t("graph-wsl-rootfs-refused") : error()}</p></Show>
-      <div class="export-foot">
-        <button type="button" class="export-btn-secondary" disabled={busy()} onClick={cancel}>{t("graph-name-prompt-cancel")}</button>
-        <button type="submit" class="export-btn-primary" disabled={busy()}>{busy() ? t("graph-name-prompt-creating") : t("graph-name-prompt-create-graph")}</button>
-      </div>
+      <DialogActions
+        cancel={<button type="button" class="export-btn-secondary" disabled={busy()} onClick={cancel}>{t("graph-name-prompt-cancel")}</button>}
+        primary={<button type="submit" class="export-btn-primary" disabled={busy()}>{busy() ? t("graph-name-prompt-creating") : t("graph-name-prompt-create-graph")}</button>} />
     </form>
   </div>;
 }

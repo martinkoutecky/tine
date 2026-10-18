@@ -1756,10 +1756,23 @@ html[data-system-insets="native-viewport"] {
   opacity: 0.45;
   cursor: default;
 }
-.export-foot {
+.dialog-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+/* Auxiliary actions sit at the leading end; the Cancel/primary pair stays
+   trailing. Never reorder with `order`/`row-reverse`: DOM order is visual order. */
+.dialog-actions-aux {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-right: auto;
+}
+.dialog-actions-aux:empty {
+  display: none;
 }
 .export-btn-secondary,
 .export-btn-primary {
@@ -3421,10 +3434,6 @@ html[data-system-insets="native-viewport"] {
 }
 .conflict-btn:hover {
   background: var(--bg-tertiary);
-}
-.conflict-btn.keep {
-  border-color: var(--marker-todo, #e5484d);
-  color: var(--marker-todo, #e5484d);
 }
 
 .page-load-error {
@@ -5167,6 +5176,13 @@ body.file-drop-active::after {
   font-weight: 700;
   color: var(--accent, #10b981);
   opacity: 1;
+  /* Today has no button (D-20261018-UI1); the cell is the way to it, so the
+     mark must stay visible whether or not the cell is also selected. */
+  box-shadow: inset 0 0 0 1px var(--accent, #10b981);
+}
+.dp-cell.today.selected {
+  color: var(--on-accent, #fff);
+  box-shadow: inset 0 0 0 2px var(--bg-primary, #fff);
 }
 .dp-cell.selected {
   background: var(--accent, #10b981);
@@ -5183,9 +5199,12 @@ body.file-drop-active::after {
   visibility: hidden;
 }
 .dp-foot {
-  display: flex;
   gap: 6px;
   margin-top: 8px;
+}
+.dp-foot .dialog-actions-aux {
+  flex: 1;
+  margin-right: 0;
 }
 .dp-btn {
   flex: 1;
@@ -5470,11 +5489,6 @@ body.file-drop-active::after {
 .formula-builder-raw-error {
   color: var(--marker-todo);
   font-size: 11px;
-}
-.formula-editor-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 .formula-editor-btn {
   border: 1px solid var(--border-color);

@@ -1,6 +1,9 @@
-app-choose-no-to-review-retry-saving = { app-close-explanation }{ "\u000A" }{ "\u000A" }{ app-close-inventory }{ "\u000A" }{ "\u000A" }选择“否”可检查草稿、重试保存或复制内容。仍要关闭此窗口并丢失这些内容吗？
+app-quit-without-saving-body = { app-close-explanation }{ "\u000A" }{ "\u000A" }{ app-close-inventory }{ "\u000A" }{ "\u000A" }选择“返回”可检查草稿、重试保存或复制内容；或者放弃这些内容并退出。
+app-quit-without-saving-title = { $count ->
+    [0] 不保存就退出吗？
+   *[other] 不保存 { NUMBER($count, useGrouping: 0) } 个页面就退出吗？
+    }
 
-app-unsaved-changes = 未保存的更改
 
 app-couldn-t-save-pending-pdf-changes-the-graph = 无法保存待处理的 PDF 更改。图谱仍保持打开。
 

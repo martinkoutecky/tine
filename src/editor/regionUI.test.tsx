@@ -54,8 +54,8 @@ it("OG-D1 #6: calendar UI inserts planning outside a leading code fence",()=>{
   openDatePicker("target","scheduled",0,0);
   const disposePicker=render(()=><DatePicker />,root);
   try {
-    const today=Array.from(root.querySelectorAll<HTMLButtonElement>(".dp-btn")).find(b=>b.textContent==="Today");
-    expect(today).toBeDefined();today!.click();
+    const today=root.querySelector<HTMLButtonElement>(".dp-cell.today");
+    expect(today).not.toBeNull();today!.click();
     [...root.querySelectorAll<HTMLButtonElement>(".dp-btn")].find(button => button.textContent === "Done")!.click();
     expect(doc.byId.target.raw).toContain(raw);
     expect(doc.byId.target.raw.slice(raw.length)).toContain("SCHEDULED:");

@@ -1,4 +1,5 @@
 import { msg, t, render, type Msg } from "../i18n";
+import { DialogActions } from "./DialogActions";
 import { optionsUpdater } from "./primitives";
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { graphOwner, readOwned, type Owner } from "../owned";
@@ -637,16 +638,17 @@ function Modal(props: { request: ExportRequest }): JSX.Element {
           </div>
         </div>
 
-        <div class="export-foot">
-          <button class="export-btn-secondary" onClick={closeExportModal}>{t("export-modal-close")}</button>
-          <button
-            class="export-btn-primary"
-            disabled={warming()}
-            onClick={copy}
-          >
-            {warming() ? t("export-modal-resolving") : t("export-modal-copy")}
-          </button>
-        </div>
+        <DialogActions
+          cancel={<button class="export-btn-secondary" onClick={closeExportModal}>{t("export-modal-close")}</button>}
+          primary={
+            <button
+              class="export-btn-primary"
+              disabled={warming()}
+              onClick={copy}
+            >
+              {warming() ? t("export-modal-resolving") : t("export-modal-copy")}
+            </button>
+          } />
       </div>
     </div>
   );

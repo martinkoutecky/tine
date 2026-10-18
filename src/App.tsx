@@ -134,12 +134,12 @@ export const safeClose = createSafeCloseCoordinator({
     const pagesSaved = await flushAll();
     return cssSaved && pagesSaved;
   },
-  // GH #540: name the pages at risk; "No" opens the recovery panel.
+  // GH #540: name the pages at risk; "Go back" opens the recovery panel (D-20261018-UI2c).
   confirmDiscard: (reason) => {
     const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n");
     return backend().confirm(
-      t("app-choose-no-to-review-retry-saving", { reason, inventory: inventory || "empty" }),
-      t("app-unsaved-changes"),
+      t("app-quit-without-saving-body", { reason, inventory: inventory || "empty" }),
+      { title: t("app-quit-without-saving-title", { count: unsavedDrafts().length }), okLabel: t("confirm-discard-and-quit"), cancelLabel: t("confirm-go-back") },
     );
   },
   onDiscardDeclined: openUnsavedRecovery,

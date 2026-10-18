@@ -11,6 +11,7 @@ import {
   untrack,
   type JSX,
 } from "solid-js";
+import { DialogActions } from "./DialogActions";
 import { FloatingPortal } from "./FloatingPortal";
 import { placeSheetTop } from "./popoverFit";
 import { backend } from "../backend";
@@ -316,21 +317,21 @@ function QueryTextPane(props: {
         <Show when={pending() && !error()}>
           <span class="query-text-pane-pending">{t("query-query-builder-checking")}</span>
         </Show>
-        <span class="query-text-pane-actions">
-          <Show when={props.dismiss}>
+        <DialogActions
+          class="query-text-pane-actions"
+          cancel={<Show when={props.dismiss}>
             {(dismiss) => (
               <button type="button" class="qc-done query-text-pane-dismiss" onClick={() => dismiss()()}>
                 {draft() !== null ? t("query-calm-cancel") : t("query-calm-done")}</button>
             )}
-          </Show>
-          <button
+          </Show>}
+          primary={<button
             type="button"
             class="qb-commit query-text-pane-save"
             disabled={!savable()}
             onClick={() => { const q = good(); if (q) props.onCommit(q); }}
           >
-            {t("query-query-builder-save-query-text")}</button>
-        </span>
+            {t("query-query-builder-save-query-text")}</button>} />
       </div>
       {/* The structured half of §4.3.2: the kind, the span, the parser's own
           alternatives, and whether the diagnostic is inside an `off` subtree. */}

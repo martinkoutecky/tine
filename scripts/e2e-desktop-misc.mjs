@@ -49,7 +49,7 @@ async function click(label) {
   await button.waitForDisplayed({ timeout: 10000 });
   await button.waitForEnabled({ timeout: 10000 });
   await button.click();
-  if (label === "Save and close") {
+  if (label === "Save & close") {
     await browser.$('[role="dialog"][aria-label="CSS editor"]').waitForExist({ timeout: 10000, reverse: true });
   }
 }
@@ -70,7 +70,7 @@ try {
   await browser.$('textarea[aria-label="CSS editor"]').setValue(globalText);
   await click("Save");
   await styleSaved(path.join(xdg, "config", APP_ID, "global.css"), globalText);
-  await click("Save and close");
+  await click("Save & close");
   await command("custom.css", "Edit custom.css");
   const graphText = ":root { --tine-bullet-color: rgb(30, 40, 50); }";
   await browser.$('textarea[aria-label="CSS editor"]').setValue(graphText);
@@ -82,7 +82,7 @@ try {
     return global?.textContent.includes("7, 8, 9") && graph?.textContent.includes("30, 40, 50") && Boolean(global.compareDocumentPosition(graph) & Node.DOCUMENT_POSITION_FOLLOWING);
   }), { timeout: 10000, timeoutMsg: "global-before-graph cascade did not apply" });
   try { await browser.saveScreenshot(path.join(fixture, "css-editor-saved.png")); } catch {}
-  await click("Save and close");
+  await click("Save & close");
   await command("safe mode", "Toggle custom CSS");
   assert.equal(await browser.execute(() => document.querySelector("#tine-global-css")?.textContent + document.querySelector("#tine-custom-css")?.textContent), "");
   await command("safe mode", "Toggle custom CSS");
@@ -92,7 +92,7 @@ try {
   await browser.$('textarea[aria-label="CSS editor"]').setValue(backgroundText);
   await browser.execute(() => window.dispatchEvent(new Event("pagehide")));
   await styleSaved(graphCss, backgroundText);
-  await click("Save and close");
+  await click("Save & close");
   journey = "desktop CSS editing";
   if (process.env.E2E_PROBE_EXPORT === "1") {
     journey = "native HTML export";

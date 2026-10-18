@@ -4,6 +4,7 @@ import { For, Show, type JSX } from "solid-js";
 import { conflictReason, conflicts, pageByName, resolveConflict } from "../document";
 import { liveConflictForPage } from "../liveConflicts";
 import { openPageTarget } from "../routerBridge";
+import { DiskOrMineChoice } from "./DiskOrMineChoice";
 
 // Global save-conflict surface. The page host refuses to overwrite a file that
 // changed on disk under this window's input (external edit / Syncthing) and
@@ -35,8 +36,8 @@ export function ConflictBar(): JSX.Element {
               <span class="conflict-msg">
                 <Rich message={msg("conflict-bar-unsaved-notice", { name, deleted: conflictReason(name)?.observedRev === null ? 1 : 0 })} /></span>
               <span class="conflict-actions">
-                <button class="conflict-btn" onClick={() => void resolveConflict(name, "disk")}>{t("conflict-bar-use-disk-version")}</button>
-                <button class="conflict-btn keep" onClick={() => void resolveConflict(name, "mine")}>{t("conflict-bar-keep-mine-overwrite")}</button>
+                <DiskOrMineChoice buttonClass="conflict-btn"
+                  onKeepMine={() => void resolveConflict(name, "mine")} onUseDisk={() => void resolveConflict(name, "disk")} />
               </span>
             </div>
             </Show>

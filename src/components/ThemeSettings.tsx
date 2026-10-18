@@ -89,7 +89,7 @@ export function ThemeSettings(): JSX.Element {
   const uninstallTheme = async (key: string, name: string) => {
     const result = await readOwned(ownedWhen(() => alive), backend().confirm(
       t("themes-uninstall-this-removes-the-theme-from", { name: name }),
-      t("themes-uninstall-theme")
+      { title: t("themes-uninstall-theme"), okLabel: t("confirm-uninstall"), cancelLabel: t("confirm-cancel") },
     ));
     if (result.kind === "stale") return;
     const confirmed = result.value;

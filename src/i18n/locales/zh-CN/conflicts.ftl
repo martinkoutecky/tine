@@ -1,8 +1,8 @@
 conflict-bar-review = 检查
 
-conflict-bar-use-disk-version = 使用磁盘版本
+conflict-choice-keep-mine = 保留我的版本
 
-conflict-bar-keep-mine-overwrite = 保留我的版本（覆盖）
+conflict-choice-use-disk-version = 使用磁盘版本
 
 conflict-overview-unsaved-drafts = 未保存的草稿
 
