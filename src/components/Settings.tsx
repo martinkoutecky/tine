@@ -61,6 +61,7 @@ import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { LanguageSetting } from "./LanguageSetting";
+import { CommentNameSetting } from "./CommentNameSetting";
 import { GraphFolderSetting } from "./GraphFolderSetting";
 import { msg, render, renderEnglish, t, type Msg } from "../i18n";
 import { SETTING_SEARCH, rankedSettingMatches, settingHighlight, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
@@ -686,6 +687,7 @@ function EditorTab(props: { search: string }): JSX.Element {
   });
   return (
     <>
+      <CommentNameSetting />
       <Field
         label={t("settings-ui-file-format")}
         hint={

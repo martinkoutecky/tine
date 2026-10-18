@@ -1403,7 +1403,8 @@ pub(crate) fn run_advanced_query_bounded(
     exec::run_advanced_query_bounded(graph, query_src, max_rows, max_bytes).0
 }
 
-/// Literal fuzzy full-text autocomplete for the `((` block picker, grouped by
+/// Literal-fragment full-text autocomplete for the `((` block picker (OG's
+/// `LIKE '%a%b%'`: pieces in order, no scattered letters), grouped by
 /// page and capped at `limit` total blocks. Ctrl-K uses `run_graph_search*` and
 /// retains the shared search dialect through `QueryPlan::friendly*`.
 #[cfg(test)]

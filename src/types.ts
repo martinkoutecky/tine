@@ -453,7 +453,7 @@ export interface MatchSpan {
 export interface MatchEvidence {
   clause_id: number;
   field: "page_name" | "visible_content";
-  mode: "contains" | "phrase" | "regex" | "fuzzy";
+  mode: "contains" | "phrase" | "regex" | "fuzzy" | "fragments";
   spans: MatchSpan[];
   score?: number;
 }

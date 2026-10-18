@@ -374,14 +374,22 @@ impl QueryPlan {
         }
     }
 
-    /// `((` autocomplete: fold the whole query as one ordered-subsequence fuzzy
-    /// term, without Ctrl-K's Boolean grammar. Blank input has no candidates.
+    /// `((` autocomplete, matching OG's `search-blocks` non-FTS leg
+    /// (`electron/search.cljs`): fold the whole query (OG's `search-normalize`
+    /// on both sides) and require its whitespace-separated fragments to occur
+    /// literally, in order, without Ctrl-K's Boolean grammar and without
+    /// scattering a fragment's letters. Blank input has no candidates.
     pub(crate) fn block_search_literal_with_policy(
         query: &str,
         limit: usize,
         remove_accents: bool,
     ) -> Self {
-        let branches = if query.is_empty() {
+        let folded = if remove_accents {
+            canonical_fold(query)
+        } else {
+            literal_fold(query)
+        };
+        let branches = if folded.split_whitespace().next().is_none() {
             Vec::new()
         } else {
             vec![QueryBranch {
@@ -389,12 +397,8 @@ impl QueryPlan {
                 predicate: QueryExpr::Text(TextPredicate {
                     clause_id: 1,
                     field: TextField::VisibleContent,
-                    mode: TextMatchMode::Fuzzy,
-                    value: if remove_accents {
-                        canonical_fold(query)
-                    } else {
-                        literal_fold(query)
-                    },
+                    mode: TextMatchMode::Fragments,
+                    value: folded,
                 }),
                 limit,
             }]
@@ -655,6 +659,9 @@ fn explain_expr(expr: &QueryExpr) -> ExplainNode {
                 TextMatchMode::Phrase => format!("contains the exact phrase “{}”", p.value),
                 TextMatchMode::Regex => format!("matches /{}/", p.value),
                 TextMatchMode::Fuzzy => format!("fuzzily matches “{}”", p.value),
+                TextMatchMode::Fragments => {
+                    format!("contains the fragments “{}” in order", p.value)
+                }
             },
             children: Vec::new(),
         },
@@ -740,6 +747,7 @@ fn eval_expr_fast(
                 .get(&pred.clause_id)
                 .is_some_and(|regex| regex.is_match(original)),
             TextMatchMode::Fuzzy => fuzzy_name_score(lower, &pred.value).is_some(),
+            TextMatchMode::Fragments => fragments_first_offset(lower, &pred.value).is_some(),
         },
         QueryExpr::And(children) => children
             .iter()
@@ -781,12 +789,13 @@ fn match_text(plan: &QueryPlan, pred: &TextPredicate, original: &str) -> Option<
             })
         }
         TextMatchMode::Fuzzy => fuzzy_evidence(pred, original, plan.remove_accents),
+        TextMatchMode::Fragments => fragments_evidence(pred, original, plan.remove_accents),
     }
 }
 
 #[path = "query_plan/fold.rs"]
 mod fold;
-use fold::{casefold_substring_spans, fuzzy_evidence};
+use fold::{casefold_substring_spans, fragments_evidence, fuzzy_evidence};
 mod blocks;
 #[path = "query_plan/pages.rs"]
 mod pages;
@@ -1024,6 +1033,23 @@ fn fuzzy_name_score(lower_name: &str, lower_query: &str) -> Option<(i32, Objecti
             .all(|needle| chars.any(|candidate| candidate == needle))
             .then_some((100, ObjectiveMatchClass::Fuzzy))
     }
+}
+
+/// OG's block search leg `LIKE '%frag1%frag2%'` (`electron/search.cljs`
+/// `search-blocks`: whitespace in the query becomes `%`): every
+/// whitespace-separated fragment of the already-folded `query` occurs literally
+/// in `lower`, in order, without overlap. Greedy leftmost matching decides
+/// membership exactly. Returns the byte offset of the first fragment's leftmost
+/// occurrence; a query with no fragment matches nothing.
+fn fragments_first_offset(lower: &str, query: &str) -> Option<usize> {
+    let mut at = 0;
+    let mut first = None;
+    for fragment in query.split_whitespace() {
+        let found = at + lower[at..].find(fragment)?;
+        first.get_or_insert(found);
+        at = found + fragment.len();
+    }
+    first
 }
 
 fn walk_blocks<'a>(
@@ -1432,12 +1458,25 @@ mod tests {
             return Vec::new();
         }
         let query = canonical_fold(query);
+        let fragments: Vec<&str> = query.split_whitespace().collect();
+        if fragments.is_empty() {
+            return Vec::new();
+        }
+        // Independent oracle for OG's `LIKE '%a%b%'`: a regex built from the
+        // escaped fragments, not the production greedy scan.
+        let pattern = fragments
+            .iter()
+            .map(|fragment| regex::escape(fragment))
+            .collect::<Vec<_>>()
+            .join(".*");
+        let regex = regex::Regex::new(&format!("(?s){pattern}")).unwrap();
+        let query = regex;
         graph.with_pages(|pages| {
             let mut out = Vec::new();
             fn visit(
                 page: &str,
                 blocks: &[DocBlock],
-                query: &str,
+                query: &regex::Regex,
                 remaining: &mut usize,
                 out: &mut Vec<(String, String)>,
             ) {
@@ -1446,7 +1485,7 @@ mod tests {
                         return;
                     }
                     let projection = block.projection();
-                    if fuzzy_name_score(block.visible_folded(true), query).is_some() {
+                    if query.is_match(block.visible_folded(true)) {
                         out.push((page.to_string(), block.raw().to_owned()));
                         *remaining -= 1;
                     }
@@ -2056,13 +2095,131 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    fn picker_blocks(graph: &ReadSnapshot, query: &str) -> Vec<String> {
+        block_fingerprint(crate::query::search(graph, query, usize::MAX))
+            .into_iter()
+            .map(|(_, raw)| raw)
+            .collect()
+    }
+
+    /// OG `search-blocks` (electron/search.cljs): the non-FTS leg is
+    /// `content LIKE '%frag1%frag2%'`, so letters of a fragment are never
+    /// scattered across words and fragments keep their order.
     #[test]
-    fn literal_block_search_adapter_preserves_fuzzy_membership_and_ranked_topk() {
+    fn block_picker_matches_literal_fragments_not_scattered_letters() {
+        let (dir, graph) = fixture();
+        // f-d-r occur in order inside "foo draft" but only scattered.
+        assert!(picker_blocks(&graph, "fdr").is_empty());
+        assert!(picker_blocks(&graph, "frd").is_empty());
+        assert!(picker_blocks(&graph, "rdy").is_empty());
+        // Fragments in order, each literal and case-insensitive.
+        assert_eq!(picker_blocks(&graph, "fo dr"), ["foo draft"]);
+        assert_eq!(picker_blocks(&graph, "FOO   Ready"), ["🧠 foo ready"]);
+        // A fragment is not an anchor: it may start or end mid-word.
+        assert_eq!(picker_blocks(&graph, "oo dra"), ["foo draft"]);
+        // Order matters and fragments cannot overlap.
+        assert!(picker_blocks(&graph, "draft foo").is_empty());
+        assert!(picker_blocks(&graph, "foo oo ready only").is_empty());
+        // Single fragment: contiguous substring, prefix hits rank first.
+        assert_eq!(
+            picker_blocks(&graph, "ready"),
+            ["ready only", "🧠 foo ready"]
+        );
+        // Blank and whitespace-only input has no candidates.
+        assert!(picker_blocks(&graph, "").is_empty());
+        assert!(picker_blocks(&graph, "  \t ").is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn block_picker_fragments_fold_diacritics_and_case_for_czech_text() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-picker-cs-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages").join("Cs.md"),
+            "- Příliš žluťoučký kůň úpěl ďábelské ódy\n- Zelená louka\n",
+        )
+        .unwrap();
+        let graph = snapshot_for_dir(&dir);
+        let run = |query: &str, remove_accents: bool| {
+            let plan = QueryPlan::block_search_literal_with_policy(query, 10, remove_accents);
+            plan.execute(&graph, || false)
+                .hits
+                .into_iter()
+                .filter_map(|hit| match hit {
+                    QueryHit::Block { display_text, .. } => Some(display_text),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let whole = "Příliš žluťoučký kůň úpěl ďábelské ódy";
+        // Accent-insensitive policy: ASCII and accented queries both match;
+        // case is folded for non-ASCII letters too (SQLite LIKE would not).
+        assert_eq!(run("prilis KUN", true), [whole]);
+        assert_eq!(run("PŘÍLIŠ ŽLUŤ", true), [whole]);
+        assert_eq!(run("ĎÁBEL ódy", true), [whole]);
+        // Accent-sensitive policy keeps the diacritics significant.
+        assert_eq!(run("příliš kůň", false), [whole]);
+        assert!(run("prilis kun", false).is_empty());
+        // Scattered letters of one word never match under either policy.
+        assert!(run("pls", true).is_empty());
+        assert!(run("zlk", true).is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn fragment_evidence_marks_each_fragment_in_original_utf16_offsets() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-picker-ev-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(dir.join("pages").join("Ev.md"), "- 😀 Foo bar BAZ qux\n").unwrap();
+        let graph = snapshot_for_dir(&dir);
+        let plan = QueryPlan::block_search_literal_with_policy("foo baz", 10, true);
+        let hits = plan.execute(&graph, || false).hits;
+        let QueryHit::Block {
+            evidence,
+            match_class,
+            ..
+        } = &hits[0]
+        else {
+            panic!("expected a block hit");
+        };
+        assert_eq!(*match_class, ObjectiveMatchClass::Substring);
+        assert_eq!(evidence[0].mode, TextMatchMode::Fragments);
+        assert_eq!(
+            evidence[0].spans,
+            vec![
+                MatchSpan { start: 3, end: 6 },
+                MatchSpan { start: 11, end: 14 }
+            ]
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn literal_block_search_adapter_preserves_fragment_membership_and_ranked_topk() {
         let (dir, graph) = fixture();
         for query in [
             "",
             "foo",
             "foo ready",
+            "fo re",
+            "o o",
+            "ready foo",
+            "e e e",
             "foo OR ready",
             "foo -draft",
             "-draft",

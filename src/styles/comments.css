@@ -1,0 +1,174 @@
+/* Margin dialogue, slice 1 (vision 2026-10 §3.7): inline comment cards.
+   A comment block (`quote::` under a parent block) and its thread are one tinted
+   card; agent-written blocks (`author::`) carry a chip and a quiet left mark. */
+
+.ls-block.comment-card {
+  /* Slice 2b: no bullets. A reply's depth is a thin rule plus this indent,
+     capped at depth 2 (the rule keeps showing). */
+  --comment-reply-indent: 10px;
+  --comment-rule: color-mix(in srgb, var(--accent) 42%, transparent);
+  margin: 4px 0;
+  padding: 2px 8px 4px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-primary, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.comment-quote {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+  padding: 3px 0 0 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.comment-quote-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  padding-left: 6px;
+  font-style: italic;
+}
+.comment-quote-text.whole {
+  font-style: normal;
+}
+.comment-quote.stale .comment-quote-text {
+  border-left-color: var(--text-muted);
+}
+.comment-quote-stale {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 7px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.author-chip {
+  float: right;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  user-select: none;
+}
+.author-chip.agent {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.block-content.done > .author-chip {
+  text-decoration: none;
+}
+
+/* "Not yours": a block an agent wrote keeps a quiet mark at its content edge. */
+.ls-block.authored > .block-main > .block-content-wrapper {
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
+  padding-left: 6px;
+}
+
+/* Slice 2b: replies nest without the outline's full indent and without bullets
+   or fold arrows (a comment's author chip is its handle). */
+.ls-block.comment-in-thread > .block-children-container {
+  margin-left: 0;
+}
+.ls-block.comment-in-thread > .block-children-container > .block-children {
+  margin-left: 0;
+  padding-left: var(--comment-reply-indent, 10px);
+  border-left: 2px solid var(--comment-rule);
+}
+.ls-block.comment-card .block-children .block-children .block-children {
+  padding-left: 0;
+}
+.ls-block.comment-in-thread > .block-children-container > .block-children-left-border {
+  display: none;
+}
+/* Inside a thread the chip alone says who wrote it: the quiet "not yours" edge
+   would read as a second depth rule. */
+.ls-block.comment-in-thread.authored > .block-main > .block-content-wrapper {
+  box-shadow: none;
+  padding-left: 0;
+}
+.comment-handle {
+  cursor: grab;
+}
+
+/* The passage a comment quotes, inside the parent's text. */
+.comment-quote-anchor {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 2px;
+}
+
+/* Margin dialogue, slice 2: the comment column. On a wide main pane, a page with
+   comments widens its centred column by the margin (the outline keeps its width
+   and moves left) and draws each thread beside the passage it quotes. The pane
+   breakpoint is MARGIN_MIN_PANE_WIDTH in src/margin.ts. */
+:root {
+  --margin-column-width: 280px;
+  --margin-column-gap: 32px;
+}
+.main-content-inner:has(.page-blocks.margin-active) {
+  max-width: calc(var(--tine-main-content-max-width, var(--ls-main-content-max-width)) + var(--margin-column-width) + var(--margin-column-gap));
+  padding-right: calc(48px + var(--margin-column-width) + var(--margin-column-gap));
+}
+.wide-mode .main-content-inner:has(.page-blocks.margin-active) {
+  max-width: var(--tine-wide-content-max-width, var(--ls-main-content-max-width-wide));
+}
+.page-section:has(> .margin-column) {
+  position: relative;
+}
+.margin-column {
+  position: absolute;
+  top: 0;
+  left: calc(100% + var(--margin-column-gap));
+  width: var(--margin-column-width);
+}
+.margin-thread {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+}
+.margin-thread > .ls-block.comment-card {
+  margin: 0;
+  font-size: 0.93em;
+}
+.margin-thread.active > .ls-block.comment-card {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+    0 1px 6px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.page-blocks.margin-active .comment-quote-anchor.active {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-bottom-color: var(--accent);
+}
+
+/* The main column's count of a block's comments drawn in the margin. */
+.margin-marker {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin: 3px 0 0 6px;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 9px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  cursor: pointer;
+}
+.margin-marker:hover,
+.margin-marker.active {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
