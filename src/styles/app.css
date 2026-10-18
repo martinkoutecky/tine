@@ -7663,11 +7663,14 @@ img.emoji {
 
 /* GH #417: Edit link / Open source / Remove for one embed, above its top-right
    corner so the controls do not cover the embedded content (the reporter's ask;
-   the right sidebar is the exception below). Desktop: on hover
+   the right sidebar is the exception below). Hidden by transparency, not
+   display, so Tab still reaches them. Desktop: on hover
    (a nested embed shows only its own). Touch has no hover: while a block inside
    the embed is being edited. */
 .embed-actions {
-  display: none;
+  display: flex;
+  opacity: 0;
+  pointer-events: none;
   position: absolute;
   right: 0;
   bottom: 100%;
@@ -7700,14 +7703,17 @@ img.emoji {
    the first block, so above-the-corner would cover ✕: sit inside the corner. */
 .right-sidebar .embed-actions { bottom: auto; top: 2px; right: 2px; }
 @media (hover: hover) {
-  .embed-block:hover > .embed-actions { display: flex; }
-  .embed-block:has(.embed-block:hover) > .embed-actions { display: none; }
+  .embed-block:hover > .embed-actions { opacity: 1; pointer-events: auto; }
+  .embed-block:has(.embed-block:hover) > .embed-actions { opacity: 0; pointer-events: none; }
 }
 @media (hover: none) {
-  .embed-block:focus-within > .embed-actions { display: flex; }
-  .embed-block:has(.embed-block:focus-within) > .embed-actions { display: none; }
+  .embed-block:focus-within > .embed-actions { opacity: 1; pointer-events: auto; }
+  .embed-block:has(.embed-block:focus-within) > .embed-actions { opacity: 0; pointer-events: none; }
   .embed-actions button { padding: 6px 12px; }
 }
+/* Keyboard: the buttons stay in the Tab order while transparent, and the
+   toolbar shows while one of them has focus, whatever the pointer does. */
+.embed-block > .embed-actions:focus-within { opacity: 1; pointer-events: auto; }
 
 /* Style knob "Embedded blocks" = accent line and dot only (src/styleKnobs.ts,
    class on <html>): the shade goes, the accent bullet and guide stay. It sits

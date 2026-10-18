@@ -24,7 +24,7 @@ import { blockRefTarget } from "../resolveBatch";
 import { PaneContext, focusedPaneId } from "../panes";
 import { internalLinkDest } from "../linkGesture";
 import { openRefTarget } from "../blockRefActions";
-import { editOccurrence, occurrenceEditable, removeOccurrence, useOccurrenceOwner, type RefOccurrence } from "../refOccurrence";
+import { editOccurrence, occurrenceEditable, removeOccurrence, takeOccurrence, useOccurrenceOwner, type RefOccurrence } from "../refOccurrence";
 
 /** `span` is the macro's parser source span in its host block (`blockId`); with
  *  it, the embed offers Edit link and Remove for this one occurrence (GH #417). */
@@ -80,9 +80,7 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
   // GH #417: actions on this occurrence, in a toolbar above the embed's top-right
   // corner (desktop hover; on touch while a block inside the embed is edited).
   const occurrence = (): RefOccurrence | undefined =>
-    props.blockId && props.span && !insidePeek
-      ? { host: props.blockId, span: props.span, kind: "embed", target: target() }
-      : undefined;
+    insidePeek ? undefined : takeOccurrence(props.blockId, props.span, "embed", target());
   const source = () => {
     const e = embedded();
     if (!e) return null;
@@ -96,9 +94,12 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
   return (
     <div class="embed-block" classList={{ "embed-page": !!pageTarget() }}>
       <Show when={!insidePeek && (occurrenceEditable(occurrence()) || source())}>
-        {/* mousedown: not the host's edit gesture, and keep a touch editor's focus. */}
+        {/* mousedown: not the host's edit gesture, and keep a touch editor's focus.
+            click: an embed rendered inside a block reference must not also run
+            that reference's navigation after Open source. */}
         <div class="embed-actions" role="toolbar" aria-label={t("ref-occurrence-actions")}
-          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onClick={(e) => e.stopPropagation()}>
           <Show when={occurrenceEditable(occurrence())}>
             <button type="button" class="embed-action-edit" title={t("ref-occurrence-edit-title")}
               onClick={() => editOccurrence(occurrence()!, owner())}>{t("ref-occurrence-edit")}</button>

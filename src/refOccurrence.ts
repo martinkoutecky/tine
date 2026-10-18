@@ -26,6 +26,17 @@ export interface RefOccurrence {
   kind: "ref" | "embed";
   /** Text the occurrence must contain: the uuid of a reference, the target of an embed. */
   target: string;
+  /** The host's whole text when the occurrence was taken from the rendered view;
+   *  the span addresses this text and no other. */
+  raw: string;
+}
+
+/** Snapshot one rendered occurrence: its span together with the host text that
+ *  span addresses (Solid renders synchronously, so the rendered span and the
+ *  host's current text agree at the moment of the gesture). */
+export function takeOccurrence(host: string | undefined, span: Span | undefined, kind: RefOccurrence["kind"], target: string): RefOccurrence | undefined {
+  const raw = host && span ? docNode(host)?.raw : undefined;
+  return raw === undefined ? undefined : { host: host!, span: span!, kind, target, raw };
 }
 
 /** An occurrence with the rendered host instance (see `useOccurrenceOwner`) that
@@ -43,12 +54,14 @@ export function useOccurrenceOwner(host: () => string | undefined): () => string
   return () => (ctx && ctx.id === host() ? ctx.owner : null);
 }
 
-/** The occurrence's UTF-16 range in the host's current raw, or null when that
- *  text is no longer the rendered token (the block changed after it was drawn,
- *  e.g. an external editor or a sync delivery replaced it). */
+/** The occurrence's UTF-16 range in the host's raw, or null when the host's
+ *  text is no longer exactly the text the occurrence was taken from (an
+ *  external editor, a sync delivery, a reload or another surface changed it
+ *  while a menu or preview stayed open): a span into changed text can address a
+ *  different reference or a code literal, so any change refuses. */
 function rawRange(o: RefOccurrence): { start: number; end: number } | null {
   const raw = docNode(o.host)?.raw;
-  if (raw === undefined) return null;
+  if (raw === undefined || raw !== o.raw) return null;
   const start = utf8ByteToUtf16Offset(raw, rebulletedSourceByteToRawByte(raw, o.span[0]));
   const end = utf8ByteToUtf16Offset(raw, rebulletedSourceByteToRawByte(raw, o.span[1]));
   const text = raw.slice(start, end);

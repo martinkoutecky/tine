@@ -1,7 +1,8 @@
 // Visual check for GH #417/#418: hovering an embed shows Edit link / Open source /
 // Remove just above its top-right corner, clear of the embedded content; a nested
 // or neighbouring embed shows only its own. On a touch screen the same toolbar
-// appears while a block inside the embed is being edited.
+// appears while a block inside the embed is being edited. Keyboard: Tab reaches
+// every button and the toolbar stays visible while one has focus.
 // Usage: npm run build && node scripts/shot-embed-actions.mjs
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
@@ -37,7 +38,7 @@ async function openPage(page, name, ready) {
 
 /** Visible toolbars, and whether each sits above (not over) its embed. */
 const toolbars = (page) => page.evaluate(() => [...document.querySelectorAll(".embed-actions")]
-  .filter((bar) => getComputedStyle(bar).display !== "none")
+  .filter((bar) => getComputedStyle(bar).opacity === "1" && getComputedStyle(bar).pointerEvents !== "none")
   .map((bar) => {
     const embed = bar.parentElement.getBoundingClientRect(), r = bar.getBoundingClientRect();
     return { labels: [...bar.querySelectorAll("button")].map((b) => b.textContent), clearOfContent: r.bottom <= embed.top + 1, rightAligned: Math.abs(r.right - embed.right) <= 1 };
@@ -74,6 +75,26 @@ try {
     await sleep(100);
     if ((await toolbars(desktop)).length) throw new Error(`${file}: toolbar stays visible without hover`);
   }
+
+  // Keyboard (review r1): Tab reaches the buttons without hover, the toolbar shows
+  // while one has focus even when the pointer leaves, and Tab walks all three.
+  await desktop.mouse.move(5, 5);
+  await desktop.evaluate(() => document.activeElement?.blur?.());
+  const tabbed = [];
+  for (let i = 0; i < 400 && tabbed.length < 3; i++) {
+    await desktop.keyboard.press("Tab");
+    const cls = await desktop.evaluate(() => document.activeElement?.closest(".embed-actions") ? document.activeElement.className : null);
+    if (cls) {
+      tabbed.push(cls);
+      const bars = await toolbars(desktop);
+      if (bars.length !== 1) throw new Error(`keyboard: focused ${cls} but ${bars.length} toolbars visible`);
+      if (tabbed.length === 1) await desktop.screenshot({ path: `${OUT}/keyboard-focus-desktop.png` });
+    } else if (tabbed.length) break;
+  }
+  console.log("keyboard", JSON.stringify(tabbed));
+  if (tabbed.join("|") !== "embed-action-edit|embed-action-source|embed-action-remove") throw new Error(`keyboard: Tab order ${tabbed}`);
+  await desktop.evaluate(() => document.activeElement?.blur?.());
+  if ((await toolbars(desktop)).length) throw new Error("keyboard: toolbar stays visible after focus leaves");
 
   const phone = await browser.newPage({ viewport: { width: 390, height: 760 }, hasTouch: true, isMobile: true });
   phone.setDefaultTimeout(5000);

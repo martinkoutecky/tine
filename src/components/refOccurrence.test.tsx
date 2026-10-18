@@ -20,6 +20,7 @@ import { PeekContext } from "../render/PeekPopup";
 import { EmbedMacro } from "./Macro";
 import { removeOccurrence } from "../refOccurrence";
 import { toasts } from "../toasts";
+import { bumpDataRev } from "../graphSession";
 
 const T = "41700000-0000-4000-8000-000000000001";
 const TARGET_RAW = `target text\nid:: ${T}`;
@@ -118,6 +119,25 @@ describe("embed actions (GH #417/#418)", () => {
     } finally { dispose(); }
   });
 
+  it("Open source on an embed shown inside a block reference goes to the embedded block, not the reference's", async () => {
+    const U = "41700000-0000-4000-8000-000000000002";
+    vi.spyOn(backend(), "resolveBlocks").mockImplementation(async ids => ids.map((id) => id === T
+      ? { page: "Holder", kind: "page" as const, blocks: [{ id: T, raw: `{{embed ((${U}))}}\nid:: ${T}`, collapsed: false, children: [] }] }
+      : { page: "Source", kind: "page" as const, blocks: [{ id: U, raw: `target text\nid:: ${U}`, collapsed: false, children: [] }] }));
+    loadSingle({ name: "Host", title: "Host", kind: "page", pre_block: null,
+      blocks: [{ id: "host", raw: `see ((${T}))`, collapsed: false, children: [] }] });
+    bumpDataRev(); // T resolved to a different block in earlier cases
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <Block id="host" />, root);
+    try {
+      await tick(); await tick();
+      const open = root.querySelector<HTMLButtonElement>(".block-ref .embed-action-source");
+      expect(open).not.toBeNull();
+      open!.click();
+      expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+    } finally { dispose(); }
+  });
+
   it("a missing embed can still be edited and removed; a preview offers no actions", async () => {
     const missing = "41700000-0000-4000-8000-0000000000ff";
     vi.spyOn(backend(), "resolveBlocks").mockResolvedValue([] as never);
@@ -203,14 +223,66 @@ describe("block reference actions (GH #417)", () => {
 });
 
 describe("occurrence guard", () => {
+  const rightClick = (el: Element) =>
+    el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 5, clientY: 5 }));
+  const menuItem = (label: string) => [...document.querySelectorAll<HTMLElement>(".ctx-item")].find((el) => el.textContent === label)!;
+  const warned = () => toasts().some((t) => t.kind === "warn" && t.message.includes("changed after it was shown"));
+
   it("refuses, changing nothing, when the block no longer holds the shown reference there", async () => {
     loadSingle({ name: "Host", title: "Host", kind: "page", pre_block: null,
       blocks: [{ id: "host", raw: `see ((${T}))`, collapsed: false, children: [] }] });
     // The span the render saw ("- see ((…))" bytes 6..46), then an external edit moved the text.
+    const shown = doc.byId.host.raw;
     setRaw("host", `prefix text, see ((${T}))`);
     const before = doc.byId.host.raw;
-    expect(removeOccurrence({ host: "host", span: [6, 46], kind: "ref", target: T })).toBe(false);
+    expect(removeOccurrence({ host: "host", span: [6, 46], kind: "ref", target: T, raw: shown })).toBe(false);
     expect(doc.byId.host.raw).toBe(before);
-    expect(toasts().some((t) => t.kind === "warn")).toBe(true);
+    expect(warned()).toBe(true);
+  });
+
+  // Review r1 (8a5539b18): a menu left open while the block changed must not act
+  // on whatever now sits at the old span.
+  it("an open menu refuses after the reference was replaced by a code literal at the same place", async () => {
+    const { root, dispose } = mountHost(`safe ((${T})) suffix`);
+    try {
+      await tick();
+      rightClick(root.querySelector(".block-content .block-ref")!);
+      await tick();
+      const changed = `\`lit ((${T}))\` suffix`;
+      setRaw("host", changed);
+      await tick();
+      menuItem("Remove reference").click();
+      expect(doc.byId.host.raw).toBe(changed);
+      expect(warned()).toBe(true);
+    } finally { dispose(); }
+  });
+
+  it("an open menu refuses after its reference was deleted and an identical one moved into its place", async () => {
+    const { root, dispose } = mountHost(`left ((${T})) middle ((${T})) right`);
+    try {
+      await tick();
+      rightClick(root.querySelector(".block-content .block-ref")!);
+      await tick();
+      const changed = `left ((${T})) right`;
+      setRaw("host", changed);
+      await tick();
+      menuItem("Remove reference").click();
+      expect(doc.byId.host.raw).toBe(changed);
+    } finally { dispose(); }
+  });
+
+  it("an open menu's Edit link refuses after the block changed, opening no editor", async () => {
+    const { root, dispose } = mountHost(`left ((${T})) middle ((${T})) right`);
+    try {
+      await tick();
+      rightClick(root.querySelector(".block-content .block-ref")!);
+      await tick();
+      setRaw("host", `left ((${T})) right`);
+      await tick();
+      menuItem("Edit link").click();
+      await tick();
+      expect(editingId()).toBeNull();
+      expect(warned()).toBe(true);
+    } finally { dispose(); }
   });
 });

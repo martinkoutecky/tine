@@ -13,7 +13,7 @@ import { assetRelPath, extOf, mediaKind } from "../media";
 import { openPage, openPageInNewTab, openInNewTab } from "../router";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { openRefTarget } from "../blockRefActions";
-import { editOccurrence, occurrenceEditable, removeOccurrence, useOccurrenceOwner, type RefOccurrence } from "../refOccurrence";
+import { editOccurrence, occurrenceEditable, removeOccurrence, takeOccurrence, useOccurrenceOwner, type RefOccurrence } from "../refOccurrence";
 import { isJournalTitle } from "../journal";
 import { openPageInSidebar, openPageContextMenu, openBlockRefContextMenu, openLightbox, setAudioPlayer, showBrackets } from "../ui";
 import { dataRev, graphEpoch, graphMeta } from "../graphSession";
@@ -1296,13 +1296,15 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // keeps a loaded reactive node winning and otherwise shows the short id.
   const grp = () => readOr(grpResource, undefined, "block reference target");
   const peek = createPeekBridge(() => insidePeek);
+  // GH #231's deliberate hold opens this reference's menu on touch, where it is
+  // the route to Edit link / Remove reference (GH #417).
+  const longPress = createLongPress(() => anchorEl);
+  onCleanup(longPress.dispose);
   // GH #417: this reference occurrence in its host block, for Edit link / Remove
   // (the preview's title row and the right-click / long-press menu).
   const owner = useOccurrenceOwner(() => props.blockId);
   const occurrence = (): RefOccurrence | undefined =>
-    props.blockId && props.span && !insidePeek
-      ? { host: props.blockId, span: props.span, kind: "ref", target: props.id }
-      : undefined;
+    insidePeek ? undefined : takeOccurrence(props.blockId, props.span, "ref", props.id);
   // A loaded target shares the editor's reactive node, so references update on
   // the keystroke without re-resolving every visible uuid after every save. The
   // backend snapshot remains the fallback for targets outside the working set;
@@ -1379,11 +1381,15 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         }}
         onPointerEnter={peek.anchorEnter}
         onPointerLeave={peek.anchorLeave}
+        onPointerDown={longPress.onPointerDown}
+        onPointerMove={longPress.onPointerMove}
+        onPointerUp={longPress.onPointerUp}
+        onPointerCancel={longPress.onPointerCancel}
         onContextMenu={(e) => {
           const g = grp();
           if (!g) return; // missing target → let the default menu through
           const ref = blockRefTarget(props.id, g);
-          if (!shouldOpenTextContextMenu(e.target)) return;
+          if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
           const o = occurrence();
@@ -1392,6 +1398,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         }}
         onClick={(e) => {
           e.stopPropagation();
+          if (longPress.consumeClick(e)) { e.preventDefault(); return; }
           const g = grp();
           if (!g) return;
           const ref = blockRefTarget(props.id, g);

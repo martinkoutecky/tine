@@ -1,7 +1,8 @@
 // GH #417 (with #418's toolbar remainder): Edit link / Open source / Remove on
 // one embed or block reference, through the real pointer in the main pane, a
-// split pane and the right sidebar. Remove must change only the containing
-// page's file (never the referenced block's), and Undo must bring it back.
+// split pane and the right sidebar, plus keyboard focus on the embed toolbar.
+// Remove must change only the containing page's file (never the referenced
+// block's), and Undo must bring it back.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -36,7 +37,7 @@ const log = fs.openSync(path.join(RUN, "driver.log"), "w");
 const driver = spawn(TD, ["--port", String(port), "--native-port", String(port + 1), "--native-driver", "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", log, log], detached: true });
 const read = (p) => fs.readFileSync(p, "utf8");
 let browser, stage = "startup";
-const receipt = { tested: "333835e73 + GH #417 diff", app: APP, format: ext, surfaces: [], screenshots: [], screenshotErrors: [] };
+const receipt = { tested: "8a5539b18 + review r1 fixes", app: APP, format: ext, surfaces: [], screenshots: [], screenshotErrors: [] };
 
 /** Screenshots are evidence, not assertions: a stalled WebKitWebDriver
  *  screenshot GET must not fail a journey whose state checks passed. */
@@ -58,7 +59,7 @@ async function hoverEmbed(scope) {
   await embed.moveTo();
   await browser.waitUntil(() => browser.execute((s) => {
     const bar = document.querySelector(`${s} .embed-block > .embed-actions`);
-    return !!bar && getComputedStyle(bar).display !== "none" && bar.getBoundingClientRect().height > 0;
+    return !!bar && getComputedStyle(bar).opacity === "1" && getComputedStyle(bar).pointerEvents !== "none" && bar.getBoundingClientRect().height > 0;
   }, scope), { timeout: 5000, timeoutMsg: `${stage}: hovering the embed did not show its actions` });
 }
 
@@ -98,6 +99,16 @@ try {
   await openPageByName(browser, "Host");
 
   await embedActions('[data-pane-id="main"]', "main");
+
+  stage = "main: keyboard focus keeps the toolbar and Tab walks it";
+  await (await browser.$('[data-pane-id="main"] h1.page-title')).moveTo();
+  await browser.execute(() => document.querySelector('[data-pane-id="main"] .embed-action-edit').focus());
+  await browser.keys(["Tab"]);
+  assert.deepEqual(await browser.execute(() => {
+    const bar = document.querySelector('[data-pane-id="main"] .embed-block > .embed-actions');
+    return [document.activeElement?.className, getComputedStyle(bar).opacity];
+  }), ["embed-action-source", "1"], `${stage}: focus left the toolbar or it hid without hover`);
+  await browser.execute(() => document.activeElement?.blur());
 
   stage = "main: block reference Remove reference + Undo";
   const ref = await browser.$('[data-pane-id="main"] .block-content .block-ref');
