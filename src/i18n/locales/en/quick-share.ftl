@@ -1,0 +1,84 @@
+# Quick share: the link dialog and Settings → Sharing (DESIGN §0, §3.9; docs/contracts/quick-share.md).
+quick-share-title = Share as a link
+quick-share-loading = Reading your quick share account…
+quick-share-preparing = Preparing the share…
+quick-share-connect-title = Connect GitHub
+quick-share-connect-permission = Tine asks for GitHub's gist permission. It lets Tine create and delete gists in your account; Tine only touches the shares it made.
+quick-share-connect-google-tip = No GitHub account? On GitHub's sign-up page choose Continue with Google.
+quick-share-connect-button = Connect GitHub
+quick-share-connect-again = Try again
+quick-share-connect-code = Enter this code on GitHub:
+quick-share-connect-open = Open github.com/login/device
+quick-share-connect-waiting = Waiting for you to approve Tine on GitHub…
+quick-share-connected-as = Connected to GitHub as @{ $login }.
+quick-share-connect-expired = The code expired before it was approved. Try again.
+quick-share-connect-denied = The request was declined on GitHub.
+quick-share-connect-no-gist-scope = GitHub did not grant the gist permission
+quick-share-connect-records = Tine could not save the GitHub connection on this device.
+quick-share-connect-superseded = A newer connection attempt replaced this one.
+quick-share-connect-refused = GitHub refused the connection. Try again later.
+quick-share-cancel = Cancel
+quick-share-disclosure = The full text of these pages is shared, including their properties.
+quick-share-not-included = Images and other files are not included; readers see only their file names.
+quick-share-size = Size: { $size }
+quick-share-size-bytes = { $bytes } bytes
+quick-share-size-kib = { $size } KB
+quick-share-size-mib = { $size } MB
+quick-share-as-shown = Shares the pages as shown; refresh to include later edits.
+quick-share-refresh = Refresh
+quick-share-create = Create link
+quick-share-creating = Uploading…
+quick-share-created = The share is on GitHub.
+quick-share-copied = Link copied. Anyone with the link can read these pages.
+quick-share-copy-failed = Tine could not copy the link to the clipboard. Try Copy link again.
+quick-share-copy-again = Copy link again
+quick-share-link-masked = https://tine.page/s/1/#{ $login }/{ $gist }/…
+quick-share-key-on-device = The link's key is kept only on this device, in Settings → Sharing.
+quick-share-check = Check
+quick-share-check-found = Found on GitHub: the share is live.
+quick-share-check-not-yet = Not found yet. GitHub may not list it yet; check again in a minute.
+quick-share-done = Done
+quick-share-toast-failed = Quick share: { $error }
+quick-share-error-other = Quick share failed: { $error }
+quick-share-error-disabled = Quick share is not available in this build yet.
+quick-share-error-not-connected = Connect GitHub first.
+quick-share-error-reconnect = GitHub no longer accepts Tine's access. Reconnect GitHub.
+quick-share-error-rate-limited = { $minutes ->
+    [one] GitHub is limiting requests; try again in 1 minute.
+   *[other] GitHub is limiting requests; try again in { $minutes } minutes.
+}
+quick-share-error-github = GitHub refused: { $message }
+quick-share-error-network = Tine could not reach GitHub, so nothing was sent. Check the connection and try again.
+quick-share-error-unavailable = GitHub did not answer as expected. Try again later.
+quick-share-error-maybe-uploaded = The upload may have finished. Check
+quick-share-error-preview-expired = This preview expired. Refresh it, then create the link.
+quick-share-error-wrong-account = This share belongs to @{ $login }; connect that account to delete it.
+quick-share-error-not-found = GitHub has no such share.
+quick-share-error-refused = Tine cannot share this: { $message }
+quick-share-error-records = { $message }
+quick-share-settings-account = GitHub account
+quick-share-settings-not-connected = Not connected. Connect GitHub to share pages as links.
+quick-share-settings-disconnect = Disconnect
+quick-share-settings-revoke = Disconnect removes the connection from this device. To revoke Tine's access on GitHub as well, remove Tine in GitHub's Applications settings.
+quick-share-settings-revoke-link = Open GitHub's Applications settings
+quick-share-settings-shares = Shares made on this device
+quick-share-settings-none = No shares yet.
+quick-share-settings-row = { $pages ->
+    [one] 1 page
+   *[other] { $pages } pages
+} · { $date } · @{ $login }
+quick-share-settings-pending = Upload not confirmed: Check looks for it on GitHub.
+quick-share-settings-gone = No longer on GitHub
+quick-share-settings-other-account = Made with @{ $login }; connect that account to check or delete it.
+quick-share-settings-copy = Copy link
+quick-share-settings-copied = Link copied.
+quick-share-settings-delete = Delete
+quick-share-settings-delete-confirm = Delete this share from GitHub? Copies that readers saved, clones of the gist and caches are not reached, and GitHub may keep backups.
+quick-share-settings-deleted = Deleted from GitHub.
+quick-share-settings-forget = Forget
+quick-share-settings-forget-confirm = Forget this share? If it exists on GitHub, its link can no longer be recovered here.
+quick-share-settings-find = Find shares on GitHub
+quick-share-settings-find-hint = Lists the Tine shares in this GitHub account that this device has no record of.
+quick-share-settings-finding = Searching GitHub…
+quick-share-settings-found-none = No other Tine shares in this account.
+quick-share-settings-found-row = Tine share made elsewhere (cannot be opened from here)

@@ -109,3 +109,6 @@ settings-search-about = About
 settings-search-version-licenses-updates = version licenses updates
 settings-search-your-name = Your name
 settings-search-comment-author-name-margin-reply = comment author name margin reply identity
+settings-search-quick-share-account = Quick share: connect or disconnect GitHub for share links
+settings-search-quick-share-shares = Quick share links made on this device: copy, check, delete, forget
+settings-search-quick-share-find = Quick share: list the Tine shares in your GitHub account

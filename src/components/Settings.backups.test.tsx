@@ -9,6 +9,8 @@ const backupBackend = vi.hoisted(() => ({
   getBackupKeep: vi.fn(),
   listBackups: vi.fn(),
   setBackupKeep: vi.fn(),
+  // Settings reads the quick share gate on mount (the Sharing tab); off here.
+  quickShareList: vi.fn(async () => ({ enabled: false, account: null, shares: [], error: null })),
 }));
 
 vi.mock("../backend", async (importOriginal) => {

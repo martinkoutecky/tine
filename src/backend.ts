@@ -56,6 +56,7 @@ import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
 import { nativeTineLinks } from "./nativeTineLinks";
+import type { QuickShareCheckOutcome, QuickShareConnectStart, QuickShareConnectStatus, QuickShareCreated, QuickShareDeleteOutcome, QuickShareFound, QuickShareListing, QuickSharePrepared } from "./quickShare/commands";
 import { ASSET_INGRESS_MAX_BYTES, clipboardImageToPng } from "./clipboardImage";
 
 // Encode asset bytes as one base64 string for save_* and Android image-copy
@@ -394,6 +395,46 @@ class TauriBackend implements Backend {
   }
   publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]) {
     return this.call<PublicationReceipt>("publish_live", { destination, name, allPages, sheets });
+  }
+  quickSharePrepare(request: QueryPublicationRequest) {
+    return this.call<QuickSharePrepared>("quick_share_prepare", { request });
+  }
+  quickShareCreate(prepareId: string) {
+    return this.call<QuickShareCreated>("quick_share_create", { prepareId });
+  }
+  quickShareDiscard(prepareId: string) {
+    return this.call<void>("quick_share_discard", { prepareId });
+  }
+  quickShareList() {
+    return this.call<QuickShareListing>("quick_share_list");
+  }
+  quickShareCheck(shareId: string) {
+    return this.call<QuickShareCheckOutcome>("quick_share_check", { shareId });
+  }
+  quickShareFind() {
+    return this.call<QuickShareFound[]>("quick_share_find");
+  }
+  quickShareDelete(target: { shareId: string } | { gistId: string }) {
+    return this.call<QuickShareDeleteOutcome>("quick_share_delete", {
+      shareId: "shareId" in target ? target.shareId : null, gistId: "gistId" in target ? target.gistId : null });
+  }
+  quickShareForget(shareId: string) {
+    return this.call<void>("quick_share_forget", { shareId });
+  }
+  quickShareCopyLink(shareId: string) {
+    return this.call<boolean>("quick_share_copy_link", { shareId });
+  }
+  quickShareConnectStart() {
+    return this.call<QuickShareConnectStart>("quick_share_connect_start");
+  }
+  quickShareConnectStatus(attemptId: string) {
+    return this.call<QuickShareConnectStatus>("quick_share_connect_status", { attemptId });
+  }
+  quickShareConnectCancel(attemptId: string) {
+    return this.call<void>("quick_share_connect_cancel", { attemptId });
+  }
+  quickShareDisconnect() {
+    return this.call<void>("quick_share_disconnect");
   }
   sheetExportInputs(pages?: string[], scope?: SheetScope) {
     return this.call<SheetInput[]>("sheet_export_inputs", { pages: pages ?? null, scope: scope ?? null });

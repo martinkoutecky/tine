@@ -4,9 +4,11 @@ import { stickyParents, changeStickyParents } from "../stickyParents";
 import { graphConfigProblem } from "../graph";
 import { ResourceFailure } from "./ResourceFailure";
 import { reportUiFailure } from "../uiFailure";
+import { dbg } from "../debug";
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { PluginsTab } from "./PluginsTab";
+import { QuickShareSettings } from "./QuickShareSettings";
 import { AboutTab } from "./AboutTab";
 import { platformKind } from "../platform";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
@@ -97,6 +99,7 @@ const TABS: { id: SettingsTabId; label: Msg }[] = [
   { id: "files", label: msg("settings-ui-files") },
   { id: "backups", label: msg("settings-ui-backups-recovery") },
   { id: "graph", label: msg("settings-ui-graph") },
+  { id: "sharing", label: msg("settings-ui-sharing") },
   { id: "plugins", label: msg("settings-ui-plugins") },
   { id: "diagnostics", label: msg("settings-ui-help-diagnostics") },
   { id: "shortcuts", label: msg("settings-ui-keyboard-shortcuts") },
@@ -119,7 +122,16 @@ export function Settings(): JSX.Element {
     const platform = readOr(settingsPlatform, undefined, "settings-platform");
     return platform === "desktop" || platform === "android";
   };
-  const availableTabs = createMemo(() => pluginsAvailable() ? TABS : TABS.filter((entry) => entry.id !== "plugins"));
+  // Sharing appears where quick share is on (DESIGN §5: off in shipped builds until its viewer is deployed).
+  // A signal, not a resource: a resource read here would suspend the whole dialog (GH #409).
+  const [sharingAvailable, setSharingAvailable] = createSignal(false);
+  onMount(() => {
+    void readOwned(graphOwner(), backend().quickShareList())
+      .then((answer) => { if (answer.kind === "current") setSharingAvailable(answer.value.enabled); })
+      .catch((error) => dbg(`settings: reading the quick share gate failed: ${String(error)}`));
+  });
+  const availableTabs = createMemo(() => TABS.filter((entry) =>
+    (entry.id !== "plugins" || pluginsAvailable()) && (entry.id !== "sharing" || sharingAvailable())));
   const matches = createMemo(() => {
     const query = settingsQuery();
     return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab)), query) : [];
@@ -303,6 +315,9 @@ export function Settings(): JSX.Element {
                 <GraphFolderSetting />
                 <HomePageSetting />
                 <GraphPublish /><QueryExportLimitSetting />
+              </Show>
+              <Show when={tab() === "sharing" && sharingAvailable()}>
+                <QuickShareSettings />
               </Show>
               <Show when={tab() === "plugins" && pluginsAvailable()}>
                 <PluginsTab />

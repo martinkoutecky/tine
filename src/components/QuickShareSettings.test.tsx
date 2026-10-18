@@ -1,0 +1,151 @@
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { Suspense } from "solid-js";
+import { render } from "solid-js/web";
+import { backend } from "../backend";
+import { QuickShareSettings } from "./QuickShareSettings";
+import { Settings } from "./Settings";
+import { closeSettings, openSettings } from "../ui";
+import { setToasts, toasts } from "../toasts";
+import type { QuickShareListed, QuickShareListing } from "../quickShare/commands";
+
+// Settings → Sharing (DESIGN §0, §3.6, §3.9) over a scripted native surface.
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const settle = async () => { for (let i = 0; i < 8; i++) await tick(); };
+const row = (extra: Partial<QuickShareListed>): QuickShareListed => ({ shareId: "s1", state: "live", login: "octo", gistId: "g1",
+  createdAt: "2026-10-17T10:00:00Z", title: "Project", pages: 3, accountMatches: true, ...extra });
+let shares: QuickShareListed[];
+const listing = (extra: Partial<QuickShareListing> = {}): QuickShareListing =>
+  ({ enabled: true, account: { login: "octo", accountId: 7 }, shares, error: null, ...extra });
+
+let dispose: (() => void) | undefined;
+let api: ReturnType<typeof spies>;
+function spies() {
+  const b = backend();
+  return {
+    list: vi.spyOn(b, "quickShareList").mockImplementation(async () => listing()),
+    copy: vi.spyOn(b, "quickShareCopyLink").mockResolvedValue(true),
+    check: vi.spyOn(b, "quickShareCheck").mockResolvedValue("notFoundYet"),
+    remove: vi.spyOn(b, "quickShareDelete").mockResolvedValue("deleted"),
+    forget: vi.spyOn(b, "quickShareForget").mockResolvedValue(),
+    find: vi.spyOn(b, "quickShareFind").mockResolvedValue([{ gistId: "f1", createdAt: "2026-10-01T00:00:00Z" }]),
+    disconnect: vi.spyOn(b, "quickShareDisconnect").mockResolvedValue(),
+    confirm: vi.spyOn(b, "confirm").mockResolvedValue(true),
+    open: vi.spyOn(b, "openExternal").mockResolvedValue(),
+  };
+}
+beforeEach(() => {
+  shares = [row({}), row({ shareId: "s2", state: "pending", gistId: null, title: "Draft" }),
+    row({ shareId: "s3", login: "other", accountMatches: false, title: "Theirs" })];
+  api = spies();
+});
+afterEach(() => { dispose?.(); dispose = undefined; document.body.innerHTML = ""; closeSettings(); setToasts([]); vi.restoreAllMocks(); });
+
+async function mount() {
+  const root = document.createElement("div"); document.body.append(root);
+  dispose = render(() => <QuickShareSettings />, root);
+  await settle();
+  return root;
+}
+const share = (root: HTMLElement, id: string) => root.querySelector<HTMLElement>(`[data-share-id="${id}"]`)!;
+const has = (element: HTMLElement, cls: string) => !!element.querySelector(`.${cls}`);
+
+it("lists this device's shares with the actions each state allows", async () => {
+  const root = await mount();
+  expect(root.textContent).toContain("Connected to GitHub as @octo.");
+  const live = share(root, "s1"), pending = share(root, "s2"), theirs = share(root, "s3");
+  expect(live.textContent).toContain("Project");
+  expect(live.textContent).toContain("3 pages");
+  expect([has(live, "quick-share-row-copy"), has(live, "quick-share-row-delete"), has(live, "quick-share-row-check")]).toEqual([true, true, false]);
+  expect([has(pending, "quick-share-row-check"), has(pending, "quick-share-row-forget"), has(pending, "quick-share-row-copy")]).toEqual([true, true, false]);
+  expect(pending.textContent).toContain("Upload not confirmed");
+  expect(has(theirs, "quick-share-row-delete"), "another account's share cannot be deleted from here").toBe(false);
+  expect(theirs.textContent).toContain("Made with @other; connect that account to check or delete it.");
+});
+
+it("Check keeps a share that is not found yet pending, and a found share is listed live", async () => {
+  const root = await mount();
+  share(root, "s2").querySelector<HTMLButtonElement>(".quick-share-row-check")!.click();
+  await settle();
+  expect(api.check).toHaveBeenCalledWith("s2");
+  expect(share(root, "s2").textContent).toContain("Not found yet.");
+  api.check.mockResolvedValueOnce("live");
+  shares = [row({}), row({ shareId: "s2", title: "Draft", gistId: "g2" })];
+  share(root, "s2").querySelector<HTMLButtonElement>(".quick-share-row-check")!.click();
+  await settle();
+  expect(share(root, "s2").dataset.state).toBe("live");
+  expect(has(share(root, "s2"), "quick-share-row-copy")).toBe(true);
+});
+
+it("Delete asks first, removes a deleted share, and marks one GitHub no longer has", async () => {
+  const root = await mount();
+  api.confirm.mockResolvedValueOnce(false);
+  share(root, "s1").querySelector<HTMLButtonElement>(".quick-share-row-delete")!.click();
+  await settle();
+  expect(api.remove, "a declined confirmation deletes nothing").not.toHaveBeenCalled();
+  api.remove.mockResolvedValueOnce("gone");
+  share(root, "s1").querySelector<HTMLButtonElement>(".quick-share-row-delete")!.click();
+  await settle();
+  expect(api.remove).toHaveBeenCalledWith({ shareId: "s1" });
+  expect(share(root, "s1").textContent).toContain("No longer on GitHub");
+  expect(has(share(root, "s1"), "quick-share-row-forget"), "the key goes only on Forget").toBe(true);
+  share(root, "s1").querySelector<HTMLButtonElement>(".quick-share-row-forget")!.click();
+  await settle();
+  expect(api.forget).toHaveBeenCalledWith("s1");
+});
+
+it("a wrong-account refusal is shown and nothing else happens", async () => {
+  api.remove.mockRejectedValueOnce({ kind: "wrongAccount", login: "other" });
+  const root = await mount();
+  share(root, "s1").querySelector<HTMLButtonElement>(".quick-share-row-delete")!.click();
+  await settle();
+  expect(root.querySelector("[role=alert]")!.textContent).toBe("This share belongs to @other; connect that account to delete it.");
+  expect(share(root, "s1")).toBeTruthy();
+});
+
+it("Find shares on GitHub lists unknown shares with Delete only", async () => {
+  const root = await mount();
+  root.querySelector<HTMLButtonElement>(".quick-share-find")!.click();
+  await settle();
+  const found = root.querySelector<HTMLElement>('[data-gist-id="f1"]')!;
+  expect(found.textContent).toContain("Tine share made elsewhere (cannot be opened from here)");
+  expect([...found.querySelectorAll("button")].map((b) => b.className)).toEqual(["export-btn-secondary quick-share-found-delete"]);
+  found.querySelector<HTMLButtonElement>(".quick-share-found-delete")!.click();
+  await settle();
+  expect(api.remove).toHaveBeenCalledWith({ gistId: "f1" });
+  expect(root.querySelector('[data-gist-id="f1"]')).toBeNull();
+  expect(toasts().map((toast) => toast.kind)).toContain("success");
+});
+
+it("Disconnect forgets the account here and points to GitHub's Applications settings", async () => {
+  const root = await mount();
+  root.querySelector<HTMLButtonElement>(".quick-share-revoke")!.click();
+  await settle();
+  expect(api.open).toHaveBeenCalledWith("https://github.com/settings/connections/applications/Ov23liMHqsgTkxqKqFG6");
+  api.list.mockImplementation(async () => listing({ account: null }));
+  root.querySelector<HTMLButtonElement>(".quick-share-disconnect")!.click();
+  await settle();
+  expect(api.disconnect).toHaveBeenCalledTimes(1);
+  expect(root.querySelector(".quick-share-settings-connect")).toBeTruthy();
+  expect(root.querySelector(".quick-share-find"), "Find needs an account").toBeNull();
+});
+
+it("an unreadable shares file is reported, not shown as no shares", async () => {
+  api.list.mockImplementation(async () => listing({ shares: [], error: "Tine cannot read its list of shares (quick-shares.json); nothing was changed" }));
+  const root = await mount();
+  expect(root.querySelector("[role=alert]")!.textContent).toContain("Tine cannot read its list of shares");
+  expect(root.querySelector(".quick-share-settings-none")).toBeNull();
+});
+
+it("Settings shows the Sharing tab only where quick share is on", async () => {
+  for (const enabled of [false, true]) {
+    api.list.mockImplementation(async () => listing({ enabled }));
+    const root = document.createElement("div"); document.body.append(root);
+    const done = render(() => <Suspense><Settings /></Suspense>, root);
+    openSettings();
+    await settle();
+    const tabs = [...root.querySelectorAll(".settings-nav-item")].map((item) => item.textContent);
+    expect(tabs.includes("Sharing"), `enabled=${enabled}`).toBe(enabled);
+    done(); closeSettings(); document.body.innerHTML = "";
+  }
+});

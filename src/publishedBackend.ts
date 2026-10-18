@@ -22,6 +22,7 @@ import { blockRefsInText } from "./render/pageRefs";
 import { searchSubstringSpans } from "./editor/searchQuery";
 import { searchFold } from "./editor/searchFold";
 import { setQuickSharePrefix } from "./publishedPermalink";
+import type { QuickShareListing } from "./quickShare/commands";
 
 type PublishedPage = PageDto & { path: string };
 
@@ -909,6 +910,10 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async legacyDraftsFile() {
       return null;
     },
+    // Quick share is a native feature (DESIGN §3.9): a published export reports it off.
+    async quickShareList(): Promise<QuickShareListing> {
+      return { enabled: false, account: null, shares: [], error: null };
+    },
   };
 
   const explicit: Record<string, unknown> = { ...answered, ...constant };
@@ -1063,6 +1068,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "onGraphOpenWaiting",
   "onGraphOpenOwnerWaiting",
   "legacyDraftsFile",
+  "quickShareList",
 ] as const;
 
 /** Refused with `PublishedExportReadOnlyError`: writes, sync, install,
@@ -1173,6 +1179,18 @@ export const PUBLISHED_REFUSED_METHODS = [
   "pageSaveNow",
   "pageDraftsRetry",
   "mergeLiveConflict",
+  "quickSharePrepare",
+  "quickShareCreate",
+  "quickShareDiscard",
+  "quickShareCheck",
+  "quickShareFind",
+  "quickShareDelete",
+  "quickShareForget",
+  "quickShareCopyLink",
+  "quickShareConnectStart",
+  "quickShareConnectStatus",
+  "quickShareConnectCancel",
+  "quickShareDisconnect",
 ] as const;
 
 /** Optional `Backend` members a published export leaves absent. */

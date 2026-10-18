@@ -213,3 +213,6 @@ settings-search-about = 关于
 settings-search-version-licenses-updates = 版本 许可证 更新
 settings-search-your-name = 你的名字
 settings-search-comment-author-name-margin-reply = 批注 作者 名字 页边 回复 身份
+settings-search-quick-share-account = 快速分享：连接或断开用于分享链接的 GitHub
+settings-search-quick-share-shares = 在此设备上创建的快速分享链接：复制、检查、删除、忘记
+settings-search-quick-share-find = 快速分享：列出你 GitHub 账号中的 Tine 分享

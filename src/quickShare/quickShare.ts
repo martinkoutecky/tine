@@ -60,12 +60,9 @@ export function b64uEncode(bytes: Uint8Array): string {
  *  non-zero trailing bits are refused (null). */
 export function b64uDecode(text: string): Uint8Array<ArrayBuffer> | null {
   if (!B64U.test(text) || text.length % 4 === 1) return null;
-  let binary: string;
-  try {
-    binary = atob(text.replace(/-/g, "+").replace(/_/g, "/"));
-  } catch {
-    return null;
-  }
+  // Cannot throw: forgiving-base64 refuses only foreign characters and a length
+  // of 1 mod 4, both refused above.
+  const binary = atob(text.replace(/-/g, "+").replace(/_/g, "/"));
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return b64uEncode(bytes) === text ? bytes : null;

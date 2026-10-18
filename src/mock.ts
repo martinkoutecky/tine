@@ -7,6 +7,7 @@ import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticRepo
 import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
+import { mockQuickShareCommands } from "./mockQuickShare";
 import { mockPageHost } from "./mockPageHost";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
@@ -1017,6 +1018,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return { groups: [], ran: [], ignored: [], supported: false };
     },
     ...mockQueryCommands,
+    ...mockQuickShareCommands,
     async runQuery(query: string): Promise<RefGroup[]> {
       // Simplified mock evaluator: task/todo filter or page-ref filter.
       if (/\b(todo|task)\b/i.test(query)) {

@@ -143,3 +143,95 @@ and refreshes goldens. Cases: `pages` (aliases, two identical macros in one
 block, a query in page properties, page-property backlinks, dotted and
 duplicate property keys, `id::` uuids with reference counts, an Org page, a
 journal, a Unicode name, an empty page, a private page left out) and `one-page`.
+
+## Writer side: GitHub, device records, commands (phase 2)
+
+Code: `src-tauri/src/quick_share/` (`github.rs` transport, `records.rs`,
+`mod.rs` service and commands, `tests.rs` against a local mock GitHub). UI:
+`src/components/QuickShareDialog.tsx`, `src/components/QuickShareSettings.tsx`
+(Settings → Sharing), types in `src/quickShare/commands.ts`.
+
+### Build gate
+
+Creating shares is off in shipped builds until the viewer is deployed
+(DESIGN §5 phase 3). On only in a debug build, or when Tine starts with
+`TINE_QUICK_SHARE=1` in its environment. Off: `quick_share_list` answers
+`enabled: false` (the share dialog's Link stays "coming soon", Settings has no
+Sharing tab) and every GitHub-touching command refuses with `disabled`.
+`quick_share_forget`, `quick_share_copy_link` and `quick_share_list` stay
+available, so records made while it was on remain manageable.
+
+### GitHub transport
+
+- `reqwest` 0.13 without its `json`/`form` features (bodies are built and read
+  by hand, bounded): native-tls + `system-proxy` on Windows; rustls (ring
+  provider) + `system-proxy` on Linux, macOS, Android and iOS. A target outside
+  the five does not compile (`compile_error!`). Pinned by
+  `quick_share_tls_is_declared_for_every_shipped_target` and
+  `quick_share_platform_cfgs_name_all_five_targets`.
+- Every request: `User-Agent: Tine/<version>`, `X-GitHub-Api-Version:
+  2022-11-28`, connect timeout 15 s, read timeout 60 s, no redirects, HTTPS
+  only. Bodies are read through a bound: 64 KiB from the OAuth endpoints, 4 MiB
+  from the API, the envelope cap + 1 from raw reads.
+- The token is a newtype that prints `<redacted>`; only the transport reads it.
+  OAuth bodies never enter an error; GitHub's other messages are cut to one
+  line of at most 300 characters with the token and keys removed.
+- Errors (the `kind` a command rejects with): 401 → `reconnect`; 403/429 with
+  `Retry-After`, or `x-ratelimit-remaining: 0` with `x-ratelimit-reset` →
+  `rateLimited{minutes}` (a bare 429: 1 minute); other 403 → `github{message}`;
+  a request that never left (DNS, connect, TLS) → `network`; 5xx, timeouts and
+  malformed answers → `unavailable`.
+
+### Device records
+
+App data (`app_data_dir`), never in a graph. Tine never writes the graph for
+sharing.
+
+- `quick-share-account.json`: `{"v":1,"login","account_id","token","scopes","connected_at"}`.
+- `quick-shares.json`: `{"v":1,"shares":[{"share_id","state","account_id","login","gist_id"?,"created_at","title","pages","key"}]}`.
+  `share_id` and `key` are canonical base64url; `pages` is the number of shared
+  pages; `state` is `pending` or `live`.
+- Both are written by `atomic_write_private`: a temporary created owner-only
+  (mode 0600 at creation on Linux, Android, macOS, iOS; on Windows the per-user
+  app-data ACL), fsync, rename, directory sync. Every read-modify-write of the
+  shares holds one process-wide lock (all windows share the process).
+- Create: the payload is consumed first (a second create with the same
+  `prepareId` is `previewExpired`); the row is written `pending` before
+  `POST /gists`; 201 → `live` with the gist id. A request that never left, or a
+  4xx answer (a definite non-creation), removes the row. Any other outcome keeps
+  it `pending` and the command rejects with `maybeUploaded{shareId}`. Nothing is
+  retried automatically.
+- Check, Delete and Find run only for the connected `account_id`. A 404 on
+  Delete answers `gone` (shown "No longer on GitHub"; not persisted); the key
+  goes only on Forget.
+- No command result, error or log line carries the token or a key: a link is
+  written to the clipboard natively (`quick_share_create`,
+  `quick_share_copy_link`) and never returned.
+
+| Refusal | In-scope threat | Recovery |
+| --- | --- | --- |
+| `quick-shares.json` that does not parse, or has a newer `v`, is never overwritten; every share change refuses and the list reports it | disk error or torn write from another tool, an external editor, a newer Tine on the same app data | the file is left for repair or a newer Tine; it holds keys that exist nowhere else |
+| An unreadable `quick-share-account.json` reads as not connected | disk error, external editor | Connect writes a fresh file; the token is re-obtainable |
+| A token for a superseded, cancelled or disconnected sign-in is dropped, never stored | concurrent honest instances (two windows), a late answer from GitHub | the newest attempt connects |
+| Check and Delete for another `account_id` | multi-device divergence (records made with another account) | connect that account |
+| A found gist without the marker, or owned by another user, is not deleted | malformed input from the gist listing | none needed |
+
+Unit cost (I-25), measured by `records_are_written_owner_only_through_an_atomic_rename`
+(`--nocapture` prints it): per graph edit nothing, no graph writes ever. Per
+share: two rewrites of `quick-shares.json` (pending, then live), 250 B per row
+(269 B for a one-row file; a 60-share file ≈ 15 KB, rewritten whole, so a
+create costs ≈ 2 × file size), 1 file; one gist create of the envelope (≈ 1.37 ×
+`P`) plus the fixed README. Connect: one 149 B file. Transport per graph edit:
+none (shares are made on request).
+
+### Commands
+
+`quick_share_prepare(request)`, `quick_share_create(prepareId)`,
+`quick_share_discard(prepareId)`, `quick_share_list()`,
+`quick_share_check(shareId)`, `quick_share_find()`,
+`quick_share_delete(shareId | gistId)`, `quick_share_forget(shareId)`,
+`quick_share_copy_link(shareId)`, `quick_share_connect_start()`,
+`quick_share_connect_status(attemptId)`, `quick_share_connect_cancel(attemptId)`,
+`quick_share_disconnect()`. Host commands, not plugin capabilities (ADR 0052).
+A prepared payload lives 10 minutes, at most 4 at a time, and goes when the
+dialog closes.

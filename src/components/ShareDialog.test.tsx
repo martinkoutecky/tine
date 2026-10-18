@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { ShareDialog, SHARE_REVIEW_DEBOUNCE_MS } from "./ShareDialog";
 import { closeQueryExport, queryExportRequest } from "../ui";
-import { closeShareDialog, openShareDialog, queryExportAfter, shareTarget } from "../shareState";
+import { closeQuickShare, closeShareDialog, openShareDialog, queryExportAfter, quickShareRequest, shareTarget } from "../shareState";
 import { clearTransientLayersForTest } from "../transientLayers";
 import { toasts, setToasts } from "../toasts";
 
@@ -58,7 +58,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   dispose?.(); dispose = undefined; document.body.innerHTML = "";
-  closeShareDialog(); closeQueryExport(); clearTransientLayersForTest(); setToasts([]); vi.restoreAllMocks();
+  closeShareDialog(); closeQuickShare(); closeQueryExport(); clearTransientLayersForTest(); setToasts([]); vi.restoreAllMocks();
 });
 
 async function open(target: Parameters<typeof openShareDialog>[0]) {
@@ -186,4 +186,23 @@ it("closes on Escape through the transient layer and traps Tab inside the dialog
   const { dismissTopTransient } = await import("../transientLayers");
   expect(dismissTopTransient("escape")).toBe(true);
   expect(shareTarget()).toBeNull();
+});
+
+// Quick share (DESIGN §3.9): Link is offered only where quick share is on, and hands the reviewed request to the
+// quick share dialog. Nothing is written to the graph for a link (DESIGN §4).
+it("offers Link only where quick share is on, and hands the reviewed request to the quick share dialog", async () => {
+  vi.spyOn(backend(), "quickShareList").mockResolvedValue({ enabled: true, account: null, shares: [], error: null });
+  const root = await open({ page: "Project" });
+  const link = radios(root, "share-where").find((radio) => radio.value === "link")!;
+  expect(link.disabled).toBe(false);
+  expect(root.textContent).toContain("Uploads an encrypted copy to a secret gist in your GitHub account");
+  link.click(); await settle();
+  expect(exportButton(root).textContent).toBe("Create link…");
+  root.querySelector<HTMLInputElement>(".query-export-include-query input")!.click();
+  exportButton(root).click(); await settle();
+  expect(shareTarget(), "the share dialog is gone").toBeNull();
+  expect(quickShareRequest()).toMatchObject({ argument: "@page and name = 'Project'", dialect: "macro_tql", includeQueryText: true, properties: [] });
+  expect(queryExportRequest(), "no folder export").toBeNull();
+  expect(doc.appended, "no definition is written for a link").toEqual([]);
+  expect(doc.set).toEqual([]);
 });

@@ -124,6 +124,9 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "diagnostics", label: msg("graph-verification-verify-synchronized-graph"), description: msg("graph-verification-compare-the-exact-markdown-and-org-file-bytes") },
   { tab: "shortcuts", label: msg("settings-search-keyboard-shortcuts"), description: msg("settings-search-key-bindings-commands-remap") },
   { tab: "about", label: msg("settings-search-about"), description: msg("settings-search-version-licenses-updates") },
+  { tab: "sharing", label: msg("quick-share-settings-account"), description: msg("settings-search-quick-share-account"), aliases: ["GitHub", "gist"] },
+  { tab: "sharing", label: msg("quick-share-settings-shares"), description: msg("settings-search-quick-share-shares") },
+  { tab: "sharing", label: msg("quick-share-settings-find"), description: msg("settings-search-quick-share-find") },
 ];
 
 function textsOf(...parts: (string | Msg | undefined)[]): string {

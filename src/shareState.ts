@@ -24,3 +24,9 @@ export function openQueryExportThen(request: QueryPublicationRequest, after: Que
   exportAfter.set(request, after);
   openQueryExport(request);
 }
+
+/** The quick share dialog (DESIGN §3.9): the reviewed request the share dialog's Link option hands over. Graph-bound
+ *  like the share dialog; closing it discards the prepared payload. */
+export const [quickShareRequest, setQuickShareRequest] = graphScopedSignal<QueryPublicationRequest>();
+export function openQuickShare(request: QueryPublicationRequest): void { setQuickShareRequest(request); }
+export function closeQuickShare(): void { setQuickShareRequest(null); }

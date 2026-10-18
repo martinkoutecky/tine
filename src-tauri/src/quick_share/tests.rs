@@ -1303,10 +1303,17 @@ fn records_are_written_owner_only_through_an_atomic_rename() {
         .filter(|n| n.ends_with(".tmp"))
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
-    let shares: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(f.dir.path().join(SHARES_FILE)).unwrap()).unwrap();
+    let shares_bytes = std::fs::read(f.dir.path().join(SHARES_FILE)).unwrap();
+    let shares: serde_json::Value = serde_json::from_slice(&shares_bytes).unwrap();
     assert_eq!(shares["v"], 1);
     let row = &shares["shares"][0];
+    // I-25 (docs/contracts/quick-share.md "Device records"): the measured sizes.
+    eprintln!(
+        "I-25 quick share: quick-shares.json {} B with one row ({} B row); quick-share-account.json {} B",
+        shares_bytes.len(),
+        serde_json::to_vec(row).unwrap().len(),
+        std::fs::metadata(f.dir.path().join(ACCOUNT_FILE)).unwrap().len()
+    );
     for field in [
         "share_id",
         "state",
