@@ -63,10 +63,18 @@ if (!process.env.DISPLAY && !opts.summarizeOnly) throw new Error("start under xv
 const sha256 = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
 /** An arm: the binary copied into the output dir, its receipt (if any) and its publish adapter. */
+/** The publish adapter a binary supports when none is given: "events" when it embeds the bench-events switch
+ *  (og since the step-3 engine: no save_pages IPC any more), else "ipc" (stable and older). An A/A on an og binary
+ *  with the "ipc" default found no publish at all (found 2026-10-17), hence the detection. */
+function detectAdapter(file) {
+  return fs.readFileSync(file).includes("TINE_BENCH_EVENTS") ? "events" : "ipc";
+}
+
 function makeArm(id, binary, receiptPath, adapter) {
   if (!binary) throw new Error(`--${id} <binary> is required (or --aa <binary>)`);
   const source = path.resolve(binary);
   if (!fs.existsSync(source)) throw new Error(`missing binary: ${source}`);
+  adapter = adapter || detectAdapter(source);
   const dest = path.join(opts.outAbs, "binaries", id, "tine");
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(source, dest);
@@ -110,7 +118,7 @@ async function prepareCorpus() {
     throw new Error(`unknown --corpus ${opts.corpus} (anonymized | 2k | 10k)`);
   }
   writeFixtures(dest);
-  fs.writeFileSync(path.join(dest, ".ab-bench-ready"), "fixtures v1\n");
+  fs.writeFileSync(path.join(dest, ".ab-bench-ready"), "fixtures v2\n");
   return dest;
 }
 
@@ -222,10 +230,10 @@ let arms;
 if (opts.summarizeOnly) {
   arms = JSON.parse(fs.readFileSync(path.join(opts.outAbs, "summary.json"), "utf8")).arms;
 } else if (opts.aa) {
-  arms = [makeArm("baseline", opts.aa, opts.baselineReceipt, opts.baselineAdapter || "ipc"), makeArm("candidate", opts.aa, opts.baselineReceipt, opts.candidateAdapter || "ipc")];
+  arms = [makeArm("baseline", opts.aa, opts.baselineReceipt, opts.baselineAdapter), makeArm("candidate", opts.aa, opts.baselineReceipt, opts.candidateAdapter)];
 } else {
-  arms = [makeArm("baseline", opts.baseline, opts.baselineReceipt, opts.baselineAdapter || "ipc"),
-    makeArm("candidate", opts.candidate, opts.candidateReceipt, opts.candidateAdapter || "events")];
+  arms = [makeArm("baseline", opts.baseline, opts.baselineReceipt, opts.baselineAdapter),
+    makeArm("candidate", opts.candidate, opts.candidateReceipt, opts.candidateAdapter)];
 }
 const mode = opts.aa || (arms[0].sha256 === arms[1].sha256 && arms[0].adapter === arms[1].adapter) ? "A/A" : "A/B";
 const scenarios = opts.summarizeOnly ? JSON.parse(fs.readFileSync(path.join(opts.outAbs, "summary.json"), "utf8")).scenarios : scenarioList();

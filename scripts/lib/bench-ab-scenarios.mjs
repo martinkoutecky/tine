@@ -19,6 +19,17 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const pad = (n, w = 3) => String(n).padStart(w, "0");
 const MARKER_LEN = 3; // "qzx": keys before the marker is complete cannot be matched
 
+/** The query scenario's five query blocks [query, title]. The first block of the page matches the
+ *  first, second, third and fifth query (it is a TODO that links the hub and holds the needle) and
+ *  deliberately NOT the property query (a control: its results must not gain the typed token). */
+export const QUERY_BLOCKS = [
+  ["(and [[Bench QHub]])", "BenchQ refs"],
+  ["(and [[Bench QHub]] (task TODO))", "BenchQ tasks"],
+  ['(and "qbenchneedle")', "BenchQ text"],
+  ["(property qbenchprop alpha)", "BenchQ prop"],
+  ["(task TODO DOING)", "BenchQ open"],
+];
+
 // -- fixtures ---------------------------------------------------------------------
 export function writeFixtures(dir) {
   const pages = path.join(dir, "pages");
@@ -41,6 +52,17 @@ export function writeFixtures(dir) {
   w("Bench Del", "- doomed block one\n- doomed block two\n- doomed block three\n");
   w("Bench ExtHeld", "- held block one\n- held block two\n");
   for (let i = 0; i < 20; i++) w(`Bench Ext ${pad(i)}`, `- unheld block ${i}\n`);
+  // Query scenario: a hub, 4 matching data blocks (few, so the results of all five queries fit in the 820 px window:
+  // result lists below the fold are not rendered, and the edit is observed in the rendered ones), and a page whose FIRST block is the edit target
+  // (the harness types into the first block) followed by five query blocks.
+  w("Bench QHub", "- query hub\n");
+  const qdata = [];
+  for (let i = 0; i < 4; i++) {
+    qdata.push(`- TODO qbench data ${i} [[Bench QHub]] qbenchneedle`);
+    if (i % 2 === 0) qdata.push("  qbenchprop:: alpha");
+  }
+  w("Bench QZData", qdata.join("\n") + "\n");
+  w("Bench QSrc", ["- TODO qbenchedit first qbenchneedle [[Bench QHub]]", ...QUERY_BLOCKS.map(([q, title]) => `- {{query ${q} {:title "${title}"}}}`)].join("\n") + "\n");
   w("Bench RefSrc", "- source block\n");
   w("Bench RefTarget", "- refpick target alpha\n");
   for (let i = 0; i < 50; i++) {
@@ -162,6 +184,140 @@ function checkpointWrittenSince(s, sinceMs) {
   return walk(s.xdg).some((p) => /launch-checkpoints/.test(p) && fs.statSync(p).mtimeMs >= sinceMs);
 }
 
+// -- query helpers ----------------------------------------------------------------
+/** (busy: aria-busy OR the text "Loading query results": a re-run shows that with count 0 while aria-busy is already off.)
+ *  In page, self-contained (serialized by WebDriver): the query blocks titled `titles` that are in the DOM,
+ *  with their result count text, busy flag and whether `token` is in their text. */
+function queryState(titles, token) {
+  const blocks = [...document.querySelectorAll(".query-block")];
+  return titles.map((title) => {
+    const el = blocks.find((b) => b.querySelector(".query-title")?.textContent?.trim() === title);
+    return { title, present: !!el, count: el?.querySelector(".query-count")?.textContent?.trim() ?? "",
+      busy: el?.getAttribute("aria-busy") === "true" || /Loading query results/.test(el?.textContent ?? ""), hasToken: !!(el && token && el.textContent.includes(token)), len: el?.textContent?.length ?? 0, items: el?.querySelectorAll(".ls-block").length ?? 0, text: (el?.textContent ?? "").slice(0, 160) };
+  });
+}
+
+/** In page, self-contained: arm a watcher that stamps (Date.now(), the same clock as the probe's input
+ *  events) the first moment every query in `mustShow` contains `token` (and the first one that does).
+ *  A MutationObserver plus a 50 ms timer, so it adds no steady polling load while typing. */
+function armQueryWatch(titles, mustShow, token) {
+  const w = { first: null, all: null };
+  window.__abQueryWatch = w;
+  const check = () => {
+    if (w.all != null) return;
+    const blocks = [...document.querySelectorAll(".query-block")];
+    const has = (title) => blocks.some((b) => b.querySelector(".query-title")?.textContent?.trim() === title && b.textContent.includes(token));
+    const shown = mustShow.filter(has).length;
+    if (shown > 0 && w.first == null) w.first = Date.now();
+    if (shown === mustShow.length) { w.all = Date.now(); observer.disconnect(); clearInterval(timer); }
+  };
+  const observer = new MutationObserver(check);
+  observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  const timer = setInterval(check, 50);
+}
+function readQueryWatch() { return window.__abQueryWatch ? { first: window.__abQueryWatch.first, all: window.__abQueryWatch.all } : null; }
+
+/** The edit target holds a [[link]], and a click at the centre of its block can land on the link and
+ *  navigate away. Click the plain word "qbenchedit" (found in the page) instead, then End. */
+async function enterQueryEditBlock(s) {
+  const b = s.browser;
+  const rect = await b.execute(() => {
+    const block = document.querySelector(".ls-block .block-content");
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const at = n.textContent.indexOf("qbenchedit");
+      if (at < 0) continue;
+      const range = document.createRange();
+      range.setStart(n, at);
+      range.setEnd(n, at + "qbenchedit".length);
+      const r = range.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    }
+    return null;
+  });
+  if (!rect) throw new Error("the edit target's plain text is not on the page");
+  await b.action("pointer").move({ x: rect.x, y: rect.y }).down().up().perform();
+  await b.$("textarea.block-editor").waitForExist({ timeout: 10000 });
+  await b.keys(["End"]);
+}
+
+/** Type `token` at the end of the page's first block, wait for the publish carrying it, and for every
+ *  query in QUERY_REFLECT to show it. Records `${name}.reflectMs` (last key -> all shown), `${name}.reflectFirstMs`
+ *  and `${name}.publishedMs`; and the control query must NOT have gained the token. */
+async function queryEdit(s, name, code, titles, mustShow, control) {
+  const token = makeToken(code, 12);
+  await s.browser.execute(armQueryWatch, titles, mustShow, token);
+  await enterQueryEditBlock(s);
+  const since = Date.now();
+  await s.typeRange(token, 0, token.length, 100);
+  const typed = s.keysSince(await s.records(), since);
+  if (!typed.length) throw new Error("no key reached the editor");
+  const last = typed.at(-1).t;
+  const full = token.slice(0, typed.length);
+  if (full !== token) throw new Error(`only ${typed.length} of ${token.length} keys were delivered`);
+  const { hit } = await s.waitPublished(full, since);
+  s.m(`${name}.publishedMs`, hit.t - last);
+  const deadline = Date.now() + 30000;
+  let watch = null;
+  while (Date.now() < deadline) {
+    watch = await s.browser.execute(readQueryWatch);
+    if (watch?.all != null) break;
+    await sleep(20);
+  }
+  if (watch?.all == null) {
+    const state = await s.browser.execute(queryState, titles, token);
+    throw new Error(`query results never showed the edit within 30 s: ${JSON.stringify(state)}`);
+  }
+  s.m(`${name}.reflectMs`, watch.all - last);
+  if (watch.first != null) s.m(`${name}.reflectFirstMs`, watch.first - last);
+  // Typed text reaches the results at once (the page's live state); the storage-relevant half is that they
+  // stay right once the save is published and the queries are no longer busy.
+  const quiet = Date.now() + 30000;
+  let after = [];
+  while (Date.now() < quiet) {
+    after = await s.browser.execute(queryState, titles, token);
+    if (after.every((q) => !q.busy)) break;
+    await sleep(10);
+  }
+  s.m(`${name}.settledMs`, Date.now() - last);
+  await s.leaveEditor();
+  await s.settle();
+  // Leaving the editor can start one more re-run; judge the results only once none is loading.
+  const loaded = Date.now() + 30000;
+  for (;;) {
+    after = await s.browser.execute(queryState, titles, token);
+    if (after.every((q) => !q.busy) || Date.now() > loaded) break;
+    await sleep(20);
+  }
+  const stale = mustShow.filter((t) => !after.find((q) => q.title === t)?.hasToken);
+  s.m(`${name}.staleAfterSettle`, stale.length);
+  const bad = after.find((q) => q.title === control && q.hasToken);
+  if (bad) throw new Error(`the control query ${control} shows an edit it cannot match`);
+  if (stale.length) throw new Error(`after the save settled these queries lost the edit: ${stale.join(", ")} (state: ${JSON.stringify(after.filter((q) => stale.includes(q.title)).map((q) => ({ title: q.title, count: q.count, stillLoading: q.busy })))})`);
+}
+
+/** An edit made by another program: rewrite the page file with a new token in the first block while the page is
+ *  open and clean, and time until the rendered matching queries show it (the file -> index -> query path). */
+async function queryExternalEdit(s, titles, mustShow) {
+  const token = "qzxextqabcdef";
+  await s.browser.execute(armQueryWatch, titles, mustShow, token);
+  const file = pageFile(s, "Bench QSrc");
+  const text = fs.readFileSync(file, "utf8");
+  const t0 = Date.now();
+  fs.writeFileSync(file, text.replace(/^(- TODO qbenchedit first qbenchneedle \[\[Bench QHub\]\]).*$/m, `$1${token}`));
+  const deadline = t0 + 30000;
+  let watch = null;
+  while (Date.now() < deadline) {
+    watch = await s.browser.execute(readQueryWatch);
+    if (watch?.all != null) break;
+    await sleep(10);
+  }
+  if (watch?.all == null) throw new Error(`the queries never showed the external edit within 30 s: ${JSON.stringify(await s.browser.execute(queryState, titles, token))}`);
+  s.m("queryExt.reflectMs", watch.all - t0);
+  if (watch.first != null) s.m("queryExt.reflectFirstMs", watch.first - t0);
+  if (await s.browser.$(".conflict-banner").isExisting()) throw new Error("the external edit raised a conflict on a clean page");
+}
+
 // -- scenarios --------------------------------------------------------------------
 export const SCENARIOS = {
   launch: {
@@ -188,6 +344,50 @@ export const SCENARIOS = {
         await s.step(`${prefix}.iso`, () => isolatedEdit(s, prefix, page, code));
         await s.step(`${prefix}.burst`, () => burstEdit(s, prefix, page, `${code}b`));
       }
+    },
+  },
+
+  query: {
+    title: "query-heavy page: open a page with five {{query}} blocks, then edit a block they match: time until every query shows the edit; RSS",
+    timeoutMs: () => 180000, maxRuns: (o) => o.runs,
+    async run(s) {
+      await s.launch();
+      const titles = QUERY_BLOCKS.map(([, title]) => title);
+      await s.journey("query");
+      // Open: navigate to the page, wait until all five queries are present, have a count and are not busy.
+      const t0 = Date.now();
+      await s.openPage("Bench QSrc");
+      let state = [];
+      const deadline = Date.now() + 60000;
+      while (Date.now() < deadline) {
+        state = await s.browser.execute(queryState, titles, "");
+        if (state.every((q) => q.present && q.count !== "" && !q.busy)) break;
+        await sleep(10);
+      }
+      if (!state.every((q) => q.present && q.count !== "" && !q.busy)) throw new Error(`query blocks never all settled: ${JSON.stringify(state)}`);
+      s.m("query.openToResultsMs", Date.now() - t0);
+      // Result lists are rendered only for queries in (or near) the viewport. The edit is watched in the
+      // matching queries that are rendered, and how many that is is itself reported (it must agree on both arms).
+      await s.settle();
+      state = await s.browser.execute(queryState, titles, "");
+      const mustShow = state.filter((q) => q.title !== "BenchQ prop" && q.items > 0).map((q) => q.title);
+      s.m("query.renderedMatching", mustShow.length);
+      if (mustShow.length < 2) throw new Error(`fewer than two matching queries are rendered: ${JSON.stringify(state)}`);
+      // A correctness number next to the timing: the total of the five result counts (equal on both arms).
+      s.m("query.resultCountTotal", state.reduce((a, q) => a + (Number(q.count.replace(/\D/g, "")) || 0), 0));
+      await s.settle();
+      const r0 = s.rss();
+      s.m("query.rssMainMiB", mib(r0.main));
+      s.m("query.rssTreeMiB", mib(r0.tree));
+      // Edit twice: the first re-run is cold, the second warm.
+      await s.step("edit1", () => queryEdit(s, "query", "q", titles, mustShow, "BenchQ prop"));
+      await s.step("edit2", () => queryEdit(s, "queryWarm", "w", titles, mustShow, "BenchQ prop"));
+      await s.step("external", () => queryExternalEdit(s, titles, mustShow));
+      const r = await s.records();
+      s.longTasks(r, "query", "query");
+      const r1 = s.rss();
+      s.m("query.rssMainAfterMiB", mib(r1.main));
+      s.m("query.rssMainGrowthMiB", mib(r1.main) - mib(r0.main));
     },
   },
 
@@ -336,6 +536,22 @@ export const SCENARIOS = {
       }
       if (seen.held) s.m("ext.heldVisibleMs", seen.held - t0);
       if (seen.unheld) s.m("ext.unheldVisibleMs", seen.unheld - t0);
+      s.m("ext.unheldLive", seen.unheld ? 1 : 0);
+      if (seen.held && !seen.unheld) {
+        // Stable v0.7.4 shows the edited open page but never refreshes its Linked References for 20 NEW
+        // files written under it (found by the first stable-vs-og run, 2026-10-17). Do not lose the
+        // whole trial: leave the page and come back, and time until the index serves the 20 pages.
+        const back = Date.now();
+        await s.openPage("Bench Hub");
+        await s.openPage("Bench ExtHeld");
+        const limit = Date.now() + 30000;
+        while (Date.now() < limit) {
+          const refs = await s.browser.execute(() => Number(document.querySelector(".linked-references .references-count")?.textContent) || 0);
+          if (refs >= 20) { s.m("ext.unheldAfterReopenMs", Date.now() - back); seen.unheld = Date.now(); break; }
+          await sleep(20);
+        }
+        s.note("externalUnheldNeededReopen", true);
+      }
       await s.settle(1500);
       s.m("ext.conflicts", seen.conflict ? 1 : 0);
       // A clean held page must not be rewritten by Tine: its bytes are still the external ones.
@@ -725,11 +941,19 @@ function draftLaunch(title, configs, pagePrefix, tag, maxRunsCap = Infinity) {
   };
 }
 
-export const DEFAULT_SCENARIOS = ["launch", "relaunch", "typing", "delete", "rename", "external", "blockref", "carry2", "carry5", "custody", "drafts", "unitcost"];
+export const DEFAULT_SCENARIOS = ["launch", "query", "relaunch", "typing", "delete", "rename", "external", "blockref", "carry2", "carry5", "custody", "drafts", "unitcost"];
 
 // -- metric registry ----------------------------------------------------------------
 /** WebKit rounds timers to 1 ms and the typing probe sees 6..10 ms, so a 1-3 ms move is quantization, not signal. */
 const TIMER_FLOOR_MS = 3;
+/** Query timings: five result sets are re-run per edit and the re-run is debounced, so a move below 100 ms
+ *  (a quarter of a ~400 ms save) is not a finding. Provisional like the RSS slope tolerance: set from the
+ *  existing A/A floors (publish 0.2 %, first page 1.8 %, but carry-over visibility needed 15 ms for a 4 ms
+ *  timer clamp) at about 5x the largest A/A median difference seen on a comparable UI timing, and to be
+ *  replaced by the first calm-machine A/A of the query scenario. */
+const QUERY_ABS_MS = 100;
+/** RSS: the A/A medians differ by 1-3 MiB (main 207.4 vs 209.4, tree 760.5 vs 763.5), so 10 MiB is about 3-5x. */
+const RSS_ABS_MIB = 10;
 const METRIC_LIST = [
   ["launch.firstPageMs", "ms", "cold launch (request) to first painted page"],
   ["launch.firstEditableMs", "ms", "cold launch (request) to first block that opens an editor"],
@@ -757,6 +981,24 @@ const METRIC_LIST = [
     [`${p}.burst.longTaskMaxMs`, "ms", "longest gap during the burst", { absFloor: 20 }],
     [`${p}.admissionRttP95Ms`, "ms", "candidate: page_submit round trip p95 during ordinary saves (R9)", { candidateOnly: true }],
   ]),
+  ["query.openToResultsMs", "ms", "navigate to a page with five {{query}} blocks -> all five show a settled result count", { absFloor: QUERY_ABS_MS }],
+  ["query.renderedMatching", "count", "matching queries whose result list is rendered (viewport-limited); the edit is watched in these; must agree on both arms", { neutral: true }],
+  ["query.resultCountTotal", "count", "sum of the five result counts (a correctness number: must be equal on both arms)", { neutral: true }],
+  ["query.rssMainMiB", "MiB", "RSS of the main process with the five queries rendered", { absFloor: RSS_ABS_MIB }],
+  ["query.rssTreeMiB", "MiB", "RSS of the process tree with the five queries rendered", { absFloor: RSS_ABS_MIB }],
+  ["query.rssMainAfterMiB", "MiB", "RSS of the main process after two edits re-ran the queries", { absFloor: RSS_ABS_MIB }],
+  ["query.rssMainGrowthMiB", "MiB", "RSS growth of the main process across the two edits", { absFloor: RSS_ABS_MIB }],
+  ...["query", "queryWarm"].flatMap((p) => [
+    [`${p}.publishedMs`, "ms", "query scenario edit: last key -> publish carrying the typed text"],
+    [`${p}.reflectMs`, "ms", `query scenario edit (${p === "query" ? "cold" : "warm"}): last key -> every rendered matching query shows the typed text (live state: single-digit ms is normal)`, { absFloor: QUERY_ABS_MS }],
+    [`${p}.reflectFirstMs`, "ms", "same, until the FIRST query shows it", { absFloor: QUERY_ABS_MS }],
+    [`${p}.settledMs`, "ms", `query scenario edit (${p === "query" ? "cold" : "warm"}): last key -> no query busy any more (the save published and the queries re-ran)`, { absFloor: QUERY_ABS_MS }],
+    [`${p}.staleAfterSettle`, "count", "matching rendered queries that did NOT show the edit after it settled (must be 0)", { neutral: true }],
+  ]),
+  ["queryExt.reflectMs", "ms", "an external rewrite of the open, clean page: write -> every rendered matching query shows the new text (file -> index -> query)", { absFloor: QUERY_ABS_MS }],
+  ["queryExt.reflectFirstMs", "ms", "same, until the FIRST query shows it", { absFloor: QUERY_ABS_MS }],
+  ["query.longTaskCount", "count", "main-thread gaps over 100 ms during the query journey"],
+  ["query.longTaskMaxMs", "ms", "longest gap during the query journey", { absFloor: 20 }],
   ["delete.ipcMs", "ms", "delete command round trip"],
   ["delete.sourceGoneMs", "ms", "delete command start -> source file gone"],
   ["delete.trashEntryMs", "ms", "delete command start -> entry present in .tine-trash"],
@@ -769,6 +1011,8 @@ const METRIC_LIST = [
   ["rename.indexVisibleMs", "ms", "submit -> the renamed page shows its 200 linked references"],
   ["ext.heldVisibleMs", "ms", "external edit burst -> held page shows the new text"],
   ["ext.unheldVisibleMs", "ms", "external edit burst -> 20 unheld pages visible in the index (linked references)"],
+  ["ext.unheldLive", "count", "1 when the 20 new files' linked references appeared on the open page without leaving it (stable v0.7.4: 0)", { neutral: true }],
+  ["ext.unheldAfterReopenMs", "ms", "when not live: leave the page and come back -> the 20 pages served by the index"],
   ["ext.conflicts", "count", "conflict banners on clean pages (must be 0)", { neutral: true }],
   ["ext.cleanPageRewritten", "count", "clean held page rewritten by Tine (must be 0)", { neutral: true }],
   ["ext.mailParseP50Us", "us", "candidate: page-mail DTO parse cost p50 (mail_parse events)", { candidateOnly: true }],
@@ -794,6 +1038,10 @@ const METRIC_LIST = [
     [`${p}.firstPageMs`, "ms", "scaling probe: relaunch with recovered drafts -> first page"],
     [`${p}.firstEditableMs`, "ms", "scaling probe: -> first editable"],
   ]),
+  ["relaunchEdit.afterLastKeyMs", "ms", "relaunch scenario's first edit: last key -> Published"],
+  ["relaunchEdit.iso.typingP50Ms", "ms", "relaunch scenario's first edit: typing latency p50", { absFloor: TIMER_FLOOR_MS }],
+  ["relaunchEdit.iso.typingP95Ms", "ms", "relaunch scenario's first edit: typing latency p95", { absFloor: TIMER_FLOOR_MS }],
+  ...["drafts0", "drafts20"].map((p) => [`${p}.recoveredDrafts`, "count", "candidate: drafts recovered at launch (launch_recovered event); the base has the offer metrics instead", { candidateOnly: true, neutral: true }]),
   ["relaunch.checkpointWritten", "count", "an edit then 12 s idle wrote a launch checkpoint (1 = yes)", { neutral: true }],
   ["relaunch.firstPageMs", "ms", "relaunch after edit + idle + crash -> first painted page"],
   ["relaunch.firstEditableMs", "ms", "relaunch after edit + idle + crash -> first editable"],

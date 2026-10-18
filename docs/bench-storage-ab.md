@@ -41,6 +41,7 @@ nice -n 5 xvfb-run -a -s "-screen 0 1920x1080x24" node scripts/bench-storage-ab.
 Each arm is observed through one adapter yielding the same neutral records (publishes, save spans,
 durable drafts, IPC round trips).
 
+- **Adapter choice is automatic**: a binary that embeds the string `TINE_BENCH_EVENTS` (og since the step-3 engine) gets `events`, any other gets `ipc` (stable v0.7.x). `--baseline-adapter` / `--candidate-adapter` override. An A/A on an og binary needs no flag. (Before 2026-10-17 `--aa` defaulted to `ipc`, and an og binary then yields no publish at all.)
 - **`ipc` (the base, and the og-storage head `e19281dd7`, which still run the old engine).** The
   base writes no log line at publication: `flight.rs record_save` records only failed or >= 150 ms
   saves, without a timestamp, and `commands.rs log_save_kinds` runs BEFORE the save. The publish
@@ -96,6 +97,7 @@ them.
 | `typing` | keystroke to Published on a 1-block, 60-block and 1500-block page, isolated (tail after the last key) and during a 5 s burst (10 keys/s); lost keys; typing latency (input to next paint) p50/p95 overall, during a running save, and near a save (during it or up to 500 ms after, because both arms save in tens of ms and few keys land inside); long tasks | the 1500-block page is where a save is long enough to type during |
 | `delete` | source gone, trash entry present, "Deleted" toast | base trash: `<graph>/logseq/.tine-trash/pages` |
 | `rename` | referrers rewritten (200), file moved, new page shows its linked references | |
+| `query` | query-heavy page (Martin 2026-10-17, OH1: queries can have storage-kind bugs). Open `Bench QSrc` (five `{{query}}` blocks: a page reference, reference AND task, full text, a property control, and the global `(task TODO DOING)`; 100 matching blocks in `Bench QData` plus whatever the corpus holds): navigate -> all five show a settled result count. Then type 12 characters at the end of the page's first block (a TODO that four of the five queries match; the property query is a control that must NOT gain it) and measure last key -> every matching query shows the typed text, cold (edit 1) and warm (edit 2); RSS with the queries rendered and its growth across the two edits; long tasks | `*Ms` timings carry an absolute tolerance of 100 ms (provisional, see below); `resultCountTotal` must be equal on both arms; the page-side watcher is a MutationObserver (no steady polling) |
 | `external` | external edit burst over a held and 20 unheld pages: time until visible; no conflict banner on clean pages; clean held page not rewritten | |
 | `blockref` | picker Enter to the reference shown (in-page stopwatch); target's `id::` published | |
 | `custody` | last key to draft durable with saves failing (`pages/` read-only) and under an external replacement | |
@@ -107,6 +109,15 @@ them.
 
 Typing is paced by an absolute schedule so a slow tick does not stretch the burst. Long tasks come
 from a requestAnimationFrame gap above 100 ms because WebKitGTK exposes no `longtask` observer.
+
+### Query scenario tolerances
+
+`query.*` timings use an absolute tolerance of 100 ms and RSS metrics 10 MiB. Both are PROVISIONAL. Method: the existing A/A
+(`scratch/aa3` in the harness receipt) has key-to-Published at 0.2 % spread (about 1 ms of 410), RSS medians 1-3 MiB apart
+(main 207.4 vs 209.4, tree 760.5 vs 763.5), and the least stable in-page UI timing (carry-over visibility) needed 15 ms for a 4 ms
+timer clamp. A query re-run adds a debounce, five result sets and a render, so its tolerance is set well above those: 100 ms is a
+quarter of a save round trip and about 5x the largest A/A median gap of any UI timing here; 10 MiB is 3-5x the RSS gap. A calm-machine
+A/A of the `query` scenario (`--aa <binary> --scenarios query --runs 7`) must replace both numbers before a verdict on them blocks a cut.
 
 ## Unit cost
 

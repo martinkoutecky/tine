@@ -12,7 +12,7 @@ import {
   typedPrefixIn, keyToPublish, allSeenAt, slopePerMinute, summarizeIo, parseNdjson,
 } from "./lib/bench-ab-stats.mjs";
 import { Adapter } from "./lib/bench-ab-adapters.mjs";
-import { SCENARIOS, DEFAULT_SCENARIOS, METRICS, metricInfo } from "./lib/bench-ab-scenarios.mjs";
+import { SCENARIOS, DEFAULT_SCENARIOS, METRICS, metricInfo, QUERY_BLOCKS, writeFixtures } from "./lib/bench-ab-scenarios.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -189,6 +189,28 @@ test("every metric a scenario can emit is known to the registry and every scenar
   assert.equal(metricInfo("carry2.unfreezeMs").candidateOnly, true);
   assert.equal(metricInfo("ext.mailParseP95Us").candidateOnly, true);
   assert.notEqual(metricInfo("typing1.afterLastKeyMs").candidateOnly, true);
+});
+
+test("the query scenario is in the default set, its metrics are registered, and its fixture page is shaped for it", () => {
+  assert.ok(DEFAULT_SCENARIOS.includes("query"));
+  for (const m of ["query.openToResultsMs", "query.reflectMs", "queryWarm.reflectMs", "query.publishedMs", "query.rssMainMiB", "query.rssMainGrowthMiB", "query.resultCountTotal", "queryExt.reflectMs", "query.settledMs", "query.staleAfterSettle", "query.renderedMatching"]) {
+    assert.ok(METRICS[m], `metric ${m} missing from the registry`);
+  }
+  assert.equal(METRICS["query.reflectMs"].absFloor, 100);
+  assert.equal(METRICS["query.resultCountTotal"].neutral, true);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-fixtures-"));
+  try {
+    writeFixtures(dir);
+    const lines = fs.readFileSync(path.join(dir, "pages", "Bench QSrc.md"), "utf8").trimEnd().split("\n");
+    // The harness types into the FIRST block: it must be the edit target, free of properties, and not a query.
+    assert.match(lines[0], /^- TODO qbenchedit .*qbenchneedle .*\[\[Bench QHub\]\]$/);
+    assert.equal(lines.length, 1 + QUERY_BLOCKS.length);
+    for (const [q, title] of QUERY_BLOCKS) assert.ok(lines.some((l) => l.includes(`{{query ${q} {:title "${title}"}}}`)), title);
+    // The property query is the control: the edit target must not match it.
+    assert.ok(!lines[0].includes("qbenchprop"));
+    const data = fs.readFileSync(path.join(dir, "pages", "Bench QZData.md"), "utf8");
+    assert.equal((data.match(/qbenchneedle/g) || []).length, 4);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 const haveGcc = spawnSync("gcc", ["--version"], { encoding: "utf8" }).status === 0;
