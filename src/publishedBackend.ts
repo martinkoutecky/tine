@@ -1086,6 +1086,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "publishQuery",
   "pagePrintHtml",
   "queryExplainEmpty",
+  "taggedPages",
   "runQuery",
   "exportQuerySubtrees",
   "runAdvancedQuery",
