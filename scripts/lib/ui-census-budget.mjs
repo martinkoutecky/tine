@@ -85,15 +85,15 @@ export const SURFACES = Object.freeze({
   // --- Phone/tablet app (uiCensus.mobile.budget.test.tsx) ---------------------
   "mobile.keyboardToolbar": { env: "mobile", budget: 15, what: "buttons in the mobile keyboard toolbar (with Hide keyboard)", source: "MobileKeyboardToolbar mounted by the app shell on an Android build" },
   "mobile.bottomBar": { env: "mobile", budget: 4, what: "buttons in the bottom navigation row (Navigation buttons at the bottom on)", source: "App .mobile-navigation-toolbar" },
-  "mobile.menu.block.plain": mobileMenu("block.plain", 14),
-  "mobile.menu.block.full": mobileMenu("block.full", 18),
+  "mobile.menu.block.plain": mobileMenu("block.plain", 15), // +1 Open in new tab, D-20261018-W1
+  "mobile.menu.block.full": mobileMenu("block.full", 19), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.block.full.nested": mobileMenu("block.full.nested", 6),
-  "mobile.menu.block.multi": mobileMenu("block.multi", 13),
-  "mobile.menu.block.readonly": mobileMenu("block.readonly", 5),
-  "mobile.menu.page.link": mobileMenu("page.link", 11),
-  "mobile.menu.page.header.page": mobileMenu("page.header.page", 14),
+  "mobile.menu.block.multi": mobileMenu("block.multi", 14), // +1 Open in new tab, D-20261018-W1
+  "mobile.menu.block.readonly": mobileMenu("block.readonly", 6), // +1 Open in new tab, D-20261018-W1
+  "mobile.menu.page.link": mobileMenu("page.link", 12), // +1 Open in new tab, D-20261018-W1
+  "mobile.menu.page.header.page": mobileMenu("page.header.page", 15), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.page.header.nested": mobileMenu("page.header.nested", 2),
-  "mobile.menu.page.header.journal": mobileMenu("page.header.journal", 14),
+  "mobile.menu.page.header.journal": mobileMenu("page.header.journal", 15), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.blockref": mobileMenu("blockref", 7),
 });
 

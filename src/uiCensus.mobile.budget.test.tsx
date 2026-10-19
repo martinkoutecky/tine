@@ -5,6 +5,13 @@
 // there, plus the page header's Find in page). Budgets: scripts/lib/ui-census-budget.mjs.
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.hoisted(() => { globalThis.__TINE_PLATFORM__ = "android"; });
+// A phone is a touch-first device (D-20261018-W1: UI follows input, not the OS
+// name), so the shell's touch surfaces (keyboard toolbar) mount as on a phone.
+vi.mock("./inputCapability", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./inputCapability")>()),
+  touchPrimary: () => true,
+  touchCapable: () => true,
+}));
 import { checkSurfaceBudgets } from "../scripts/lib/ui-census-budget.mjs";
 import { App } from "./App";
 import { initParser } from "./render/parse";
