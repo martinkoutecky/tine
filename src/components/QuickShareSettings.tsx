@@ -54,10 +54,13 @@ export function QuickShareSettings(): JSX.Element {
       if (alive) setBusy(null);
     }
   };
-  const confirmed = async (message: string, okLabel: string, owner: WriteOwner) => {
+  const confirmed = async (message: string, action: "delete" | "forget", owner: WriteOwner) => {
     const answer = await readOwned(
       ownedWhen(() => alive, owner),
-      backend().confirm(message, { okLabel, cancelLabel: t("confirm-cancel") }),
+      backend().confirm(message, {
+        okLabel: t(action === "delete" ? "quick-share-settings-delete" : "quick-share-settings-forget"),
+        cancelLabel: t("confirm-cancel"),
+      }),
     );
     return answer.kind === "current" && answer.value;
   };
@@ -84,7 +87,7 @@ export function QuickShareSettings(): JSX.Element {
   });
   const remove = async (row: QuickShareListed) => {
     const owner = bindingOwner();
-    if (busy() || !(await confirmed(t("quick-share-settings-delete-confirm"), t("quick-share-settings-delete"), owner))) return;
+    if (busy() || !(await confirmed(t("quick-share-settings-delete-confirm"), "delete", owner))) return;
     void act(`delete:${row.shareId}`, owner, () => backend().quickShareDelete({ shareId: row.shareId }), async (outcome) => {
       if (outcome === "gone") { setGone((set) => add(set, row.shareId)); return; }
       pushToast(msg("quick-share-settings-deleted"), "success");
@@ -94,7 +97,7 @@ export function QuickShareSettings(): JSX.Element {
   };
   const forget = async (row: QuickShareListed) => {
     const owner = bindingOwner();
-    if (busy() || !(await confirmed(t("quick-share-settings-forget-confirm"), t("quick-share-settings-forget"), owner))) return;
+    if (busy() || !(await confirmed(t("quick-share-settings-forget-confirm"), "forget", owner))) return;
     void act(`forget:${row.shareId}`, owner, () => backend().quickShareForget(row.shareId), async () => {
       await unlist(row.gistId, owner);
       return refresh();
@@ -115,7 +118,7 @@ export function QuickShareSettings(): JSX.Element {
   };
   const removeFound = async (gist: QuickShareFound) => {
     const owner = bindingOwner();
-    if (busy() || !(await confirmed(t("quick-share-settings-delete-confirm"), t("quick-share-settings-delete"), owner))) return;
+    if (busy() || !(await confirmed(t("quick-share-settings-delete-confirm"), "delete", owner))) return;
     void act(`delete:${gist.gistId}`, owner, () => backend().quickShareDelete({ gistId: gist.gistId }), async () => {
       setFound((list) => list?.filter((item) => item.gistId !== gist.gistId) ?? null);
       pushToast(msg("quick-share-settings-deleted"), "success");

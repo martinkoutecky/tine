@@ -1,4 +1,5 @@
 import { For, Show, createSignal, onCleanup, onMount, type Accessor, type JSX } from "solid-js";
+import { DialogActions } from "./DialogActions";
 import { msg, t } from "../i18n";
 import { backend } from "../backend";
 import { bindingOwner, graphOwner, latestOwner, readOwned, readOwnedResource, writeOwned, type WriteOwner } from "../owned";
@@ -90,13 +91,12 @@ export function QuickShareConnect(props: { onConnected: (login: string) => void 
       }>
         <div class="quick-share-code-label">{t("quick-share-connect-code")}</div>
         <div class="quick-share-code" aria-live="polite">{attempt()!.userCode}</div>
-        <div class="quick-share-connect-actions">
-          <button type="button" class="export-btn-secondary quick-share-open-github"
+        <DialogActions
+          cancel={<button type="button" class="export-btn-secondary quick-share-connect-cancel"
+            onClick={() => { cancel(attempt()!.attemptId); setAttempt(null); setStatus(null); }}>{t("quick-share-cancel")}</button>}
+          primary={<button type="button" class="export-btn-secondary quick-share-open-github"
             onClick={() => void readOwned(graphOwner(), backend().openExternal(attempt()!.verificationUri))
-              .catch((failure) => setError(quickShareErrorText(failure)))}>{t("quick-share-connect-open")}</button>
-          <button type="button" class="export-btn-secondary quick-share-connect-cancel"
-            onClick={() => { cancel(attempt()!.attemptId); setAttempt(null); setStatus(null); }}>{t("quick-share-cancel")}</button>
-        </div>
+              .catch((failure) => setError(quickShareErrorText(failure)))}>{t("quick-share-connect-open")}</button>} />
       </Show>
       <Show when={status()}>{(current) => <p class="settings-hint quick-share-connect-status" role="status">{quickShareConnectText(current())}</p>}</Show>
       <Show when={error()}><div role="alert" class="query-export-refused">{error()}</div></Show>
@@ -320,8 +320,9 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
             <Show when={checkNote()}><p class="settings-hint quick-share-check-note" role="status">{checkNote()}</p></Show>
             <Show when={error()}><div role="alert" class="query-export-refused quick-share-error">{error()}</div></Show>
           </div>
-          <div class="export-foot share-foot">
-            <button type="button" class="export-btn-secondary" onClick={closeQuickShare}>{done() ? t("quick-share-done") : t("share-dialog-cancel")}</button>
+          <DialogActions class="share-foot"
+            cancel={<button type="button" class="export-btn-secondary" onClick={closeQuickShare}>{done() ? t("quick-share-done") : t("share-dialog-cancel")}</button>}
+            primary={<>
             <Show when={pending()}>
               <button type="button" class="export-btn-primary quick-share-check" disabled={!!busy()} onClick={() => void check()}>{t("quick-share-check")}</button>
             </Show>
@@ -333,7 +334,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
               <button type="button" class="export-btn-primary quick-share-create" disabled={!prepareId() || !!busy() || needsConnect()}
                 onClick={() => void create()}>{busy() === "create" ? t("quick-share-creating") : t("quick-share-create")}</button>
             </Show>
-          </div>
+            </>} />
         </div>
       </div>
     </div>
