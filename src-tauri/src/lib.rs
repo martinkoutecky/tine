@@ -60,6 +60,7 @@ mod portable;
 mod query_export;
 #[path = "commands/query_ir.rs"]
 mod query_ir;
+mod quick_share;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod quit_signal;
 mod search_workspace;
@@ -1074,6 +1075,19 @@ pub fn run() {
             publish_html,
             publish_query_plan,
             publish_query,
+            quick_share::quick_share_prepare,
+            quick_share::quick_share_create,
+            quick_share::quick_share_discard,
+            quick_share::quick_share_list,
+            quick_share::quick_share_check,
+            quick_share::quick_share_find,
+            quick_share::quick_share_delete,
+            quick_share::quick_share_forget,
+            quick_share::quick_share_copy_link,
+            quick_share::quick_share_connect_start,
+            quick_share::quick_share_connect_status,
+            quick_share::quick_share_connect_cancel,
+            quick_share::quick_share_disconnect,
             publish_live,
             sheet_export_inputs,
             page_print_html,
@@ -1541,7 +1555,7 @@ mod platform_lifecycle_guard_tests {
         );
         assert!(
             windows_lines.contains(
-                &"reqwest = { version = \"0.13\", default-features = false, features = [\"system-proxy\"] }"
+                &"reqwest = { version = \"0.13\", default-features = false, features = [\"native-tls\", \"system-proxy\"] }"
             ),
             "GH #241: the Windows updater must follow the system proxy via reqwest's system-proxy feature"
         );

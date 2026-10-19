@@ -251,7 +251,8 @@ fn host_publication_witnesses_cover_exactly_the_five_shipped_targets() {
     // Positive property: the families named in I-16's exemplars (paired and
     // standalone) are checked.
     let pinned = [
-        ("src/atomic_file.rs", 3),
+        // atomic_write_private adds two: its owner-only arm and refusal stub.
+        ("src/atomic_file.rs", 5),
         ("src/directory_durability.rs", 2),
         ("src/no_replace.rs", 8),
     ];
@@ -333,8 +334,9 @@ fn every_positive_ios_cfg_omission_is_rejected() {
             probed += 1;
         }
     }
-    // atomic 1, directory 1, no_replace 6 (four paired, two standalone).
-    assert_eq!(probed, 8);
+    // atomic 2 (rename_replace, atomic_write_private), directory 1,
+    // no_replace 6 (four paired, two standalone).
+    assert_eq!(probed, 9);
 }
 
 fn walk(dir: &Path) -> Vec<std::path::PathBuf> {

@@ -16,6 +16,10 @@ A page whose page properties carry `tine/exports:: true` (Org
 marker, so a rename keeps it working. It holds the definitions the share dialog
 writes and an overview query, `definitions_query()`.
 
+A quick share writes its `tine.share::` once the gist exists and removes it when
+the share is deleted or forgotten (`docs/contracts/quick-share.md`, "In the
+graph").
+
 ## What every export leaves out
 
 `render::export_left_out` is the one rule set, applied by the query export, the

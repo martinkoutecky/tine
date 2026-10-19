@@ -59,6 +59,9 @@ tine-store = { path = "../crates/tine-store" }
 tine-graph-features = { path = "../crates/tine-graph-features" }
 # data_home: probe the app-data home with an unnamed temporary file (og I1a).
 tempfile = "3"
+# Quick share's device-flow poll waits (DESIGN §3.4); tokio is already in the
+# lock through tauri and reqwest.
+tokio = { version = "1", default-features = false, features = ["time"] }
 
 [dev-dependencies]
 clap_mangen = "0.2"
@@ -88,6 +91,14 @@ tine-ios-native-integrations = { path = "ios-native-integrations" }
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 signal-hook-registry = "=1.4.8"
 
+# Quick share's GitHub transport (DESIGN §3.3) on Linux, macOS, Android and
+# iOS: rustls with the platform verifier and the ring provider, the updater's
+# own rustls stack (no aws-lc). Android's verifier needs its activity hook,
+# which phase 3 settles on a device. Windows is declared below.
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "android", target_os = "ios"))'.dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "5.4.1"
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win32_System_Console", "Win32_Storage_Packaging_Appx", "Win32_UI_WindowsAndMessaging"] }
@@ -98,7 +109,10 @@ tauri-plugin-updater = { version = "2", default-features = false, features = ["n
 # The updater disables Reqwest defaults; opt back into Reqwest's Windows
 # system-proxy reader so it follows the same route as WebView2 and the browser
 # instead of consulting only proxy environment variables (GH #241).
-reqwest = { version = "0.13", default-features = false, features = ["system-proxy"] }
+# Quick share's GitHub transport (DESIGN §3.3) takes the same Windows route:
+# Schannel through native-tls plus the system proxy. Pinned by the guard test
+# `quick_share_tls_is_declared_for_every_shipped_target`.
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "system-proxy"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 # System tray (GH #625): desktop only, so the feature is requested only here.

@@ -1,6 +1,6 @@
 // The exports page and export definitions (share dialog, docs/contracts/export-definitions.md).
 // An ordinary page marked `tine/exports:: true` (Org `#+tine/exports: true`) holds the definitions the
-// share dialog writes: query blocks carrying `export:: <folder>`. Located by its marker through the query
+// share dialog writes: query blocks carrying `export:: <folder>` or `tine.share:: <login>/<gist_id>`. Located by its marker through the query
 // engine (the `tine/journal-sections` pattern), so renaming it keeps it working and no config key is
 // written. Created on first use as "Exports" (a free name: "Exports 2", ...) with `public:: false` too, so
 // OG Logseq's own publishing skips it, plus one overview block listing every definition. Definitions are
@@ -19,6 +19,8 @@ export const EXPORTS_PAGE_PROPERTY = "tine/exports";
 export const DEFAULT_EXPORTS_PAGE = "Exports";
 /** The destination property of a folder export (contract: `DESTINATION_KEYS`). */
 export const EXPORT_PROPERTY = "export";
+/** The destination property of a quick share, `<login>/<gist_id>` without the key (contract: `DESTINATION_KEYS`). */
+export const SHARE_PROPERTY = "tine.share";
 /** The overview query, the contract's `definitions_query()` in a query macro. */
 export const EXPORTS_OVERVIEW = `{{${QUERY_MACRO_NAMES[0]} (or (property export) (property tine.share))}}`;
 
