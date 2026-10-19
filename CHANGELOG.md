@@ -39,6 +39,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Sticky parent bullets stay inside their own subtree: a pinned `1a` no longer covers the next row at its own level or above (its sibling `1b`, or `2`). That row now pushes the pin up and out, as a section header in a list, and a pin covers only its own descendants (GH #717).
 - **Enter on the PDF export dialog's Cancel button cancels** instead of exporting; Enter elsewhere in the dialog still exports. On a narrow phone window, Cancel and the confirming button stay together on one row (the helper buttons wrap above them) instead of splitting across two rows.
 - Page results in Search and List show each page's properties as text under its title again, in query blocks and in the Search tab (they had been dropped by a declutter pass) (GH #619).
 - Namespace page icons now follow property edits, and image icons refresh after symlink-target or filename-case asset events; files larger than 1 MiB show no icon (GH #346).
@@ -46,6 +47,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Journals shows today's body and nearby saved days while the graph loads, then merges referenced days without losing an open editor or your place (GF4).
 
 - The `((` block picker matches like Logseq: a block is listed when each space-separated piece of what you typed occurs in its text, in that order, ignoring case and accents. Before, any block containing your letters in order matched, however far apart (`fdr` found "foo draft"), which made results feel scattered. Search (Ctrl+K), the page switcher and `[[` are unchanged (UI-BLOCK-PICKER-OG-FRAGMENTS).
+- The `((` block picker also finds a block that holds every word you typed as a whole word in any order, as Logseq does (`draft foo` finds "foo draft"); those blocks are listed first, then the ones where your pieces occur in order. A word must be a whole word here (`dra foo` does not find "foo draft" out of order), and punctuation in what you typed (`foo-bar`, `don't`) turns it into one phrase that must appear in that order, as in Logseq. Search (Ctrl+K), the page switcher and `[[` are unchanged (UI-BLOCK-PICKER-OG-FULLTEXT).
 - Query exports leave out pages marked `public:: false` and the exports page, as every other export already did; the review lists the pages left out and notes when the export includes the page the query is written on. The published export no longer carries the query itself unless **Include the query text** is ticked (REG-QUERY-EXPORT-PRIVATE-PAGES).
 - Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.
 
