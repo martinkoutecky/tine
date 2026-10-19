@@ -63,7 +63,7 @@ import { HomePageSetting } from "./HomePageSetting";
 import { LanguageSetting } from "./LanguageSetting";
 import { GraphFolderSetting } from "./GraphFolderSetting";
 import { msg, render, renderEnglish, t, type Msg } from "../i18n";
-import { SETTING_SEARCH, rankedSettingMatches, settingHighlight, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
+import { SETTING_SEARCH, rankedSettingMatches, settingHighlight, advancedMatch, matchedDescription, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
 import { ThemeSettings } from "./ThemeSettings";
@@ -274,7 +274,11 @@ export function Settings(): JSX.Element {
                         <button type="button" class="settings-search-result" onClick={() => openSearchResult(entry)}>
                           <span><For each={settingHighlight(typeof entry.label === "string" ? entry.label : render(entry.label), settingsQuery())}>
                             {(part) => part.marked ? <mark>{part.text}</mark> : part.text}
-                          </For></span>
+                          </For><Show when={matchedDescription(entry, settingsQuery())}>{(description) => (
+                            <span class="settings-search-description"><For each={settingHighlight(description(), settingsQuery())}>
+                              {(part) => part.marked ? <mark>{part.text}</mark> : part.text}
+                            </For></span>
+                          )}</Show></span>
                           <small>{t("settings-search-result-location", { tab: render(TABS.find((candidate) => candidate.id === entry.tab)!.label), level: entry.level ?? "basic" })}</small>
                         </button>
                       )}
