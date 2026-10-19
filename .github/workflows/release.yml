@@ -393,8 +393,11 @@ jobs:
 
       # Portable Windows build: the compiled Tauri exe is already self-contained
       # (frontend + lsdoc-wasm are embedded; WebView2Loader is statically linked),
-      # so "portable" is just that one exe, zipped. The NSIS installer we also
-      # ship wraps this same binary; the portable zip skips the installer AND its
+      # so "portable" is that one exe plus a `tine-data` folder, zipped. The
+      # folder beside the exe is what makes it portable (GH #719,
+      # src-tauri/src/portable.rs): settings and WebView2 data stay in it, not
+      # in the host's AppData. The NSIS installer we also ship wraps this same
+      # binary without the folder; the portable zip skips the installer AND its
       # WebView2 bootstrapper — WebView2 is preinstalled on Windows 10/11, so this
       # runs for ~everyone, but a machine without the runtime won't launch it.
       - name: Package portable Windows zip
@@ -411,7 +414,12 @@ jobs:
             Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $exe) { throw "portable: main Tine exe not found under $dir" }
           $zip = $env:RELEASE_PORTABLE
-          Compress-Archive -Path $exe -DestinationPath $zip -Force
+          $stage = Join-Path $env:RUNNER_TEMP "tine-portable-stage"
+          if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path (Join-Path $stage "tine-data") | Out-Null
+          Copy-Item $exe $stage
+          Copy-Item "src-tauri/portable/README.txt" (Join-Path $stage "tine-data/README.txt")
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -Force
 
       # The expensive Linux build above is also the exact binary under test and
       # is a hard publication gate. Windows advisory evidence runs independently

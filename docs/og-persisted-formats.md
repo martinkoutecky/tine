@@ -1,6 +1,6 @@
 # og persisted-format census (batch 5b)
 
-The pinned count is **30 durable layouts** in `scripts/lib/og-enforcement.mjs`.
+The pinned count is **33 durable layouts** in `scripts/lib/og-enforcement.mjs`.
 Several rows share a low-level writer. A format means a byte layout or durable
 directory convention, not each JSON key or filename. Temporary files used for
 atomic publication have the same payload as their final name.
@@ -38,6 +38,8 @@ atomic publication have the same payload as their final name.
 | Draft store JSON | app data `drafts/<graph-id>.v1.json`, unsaved drafts of pages that could not be saved, ≤ 64 records and 8 MiB, enforced on read (a file past either bound is set aside) and on write (ADR 0061) | `src-tauri/src/drafts.rs` `write_unlocked`, `bounded_records` |
 | Launch checkpoint | app data `launch-checkpoints/<graph-id>.bin`: magic `TINECKPT`, format version, a postcard header (lsdoc tag, graph root, config key of the build-read settings, lengths, SHA-256) and a zstd postcard dump of the whole published generation with per-file stamps; disposable, never under the graph root, any mismatch or damage means a full build (ADR 0070) | `crates/tine-store/src/store/checkpoint.rs` `Publisher::write_once` (via `atomic_file::atomic_write_with_check`) |
 | Share inbox | app-owned `share-inbox/` (iOS App Group container, Android `filesDir`), never under a graph root: per item `<id>/item.json` + resource files (native producers, published by one directory rename from `.tmp-<id>/`) and `<id>/prepared.json` (bound graph, frozen day, shaped block, imported assets, armed revision, written flag); removed after ingest, leaving an empty `.committed-<id>` tombstone pruned after 30 days (Android redelivery check); Android also keeps a `.receiving-<id>` summary marker only while copying a share (a leftover one is reported at the next start, then deleted); unreadable items kept as `.rejected-<id>/` (ADR 0073; Martin 2026-10-10 (Rule 8 new persisted format: share-inbox)) | `src-tauri/src/share_inbox.rs` `prepare` and `commit` (tombstone), both via `device_io::atomic_write`; producers `src-tauri/ios-app/Shared/ShareInbox.swift`, Android `ShareIntake.kt` (`InboxWriter`, `deliver`) via `NativeIntegrationsPlugin.kt` |
+| Quick share records JSON | app data `quick-shares.json`: `{"v":1,"shares":[{"share_id","state","account_id","login","gist_id"?,"created_at","title","pages","key"}]}`, this device's shares with each link's key (secret), owner-only 0600 from creation, rewritten whole; never in a graph, not synced (ADR 0076; Martin 2026-10-18, D-20261018-Q1 S1) | `src-tauri/src/quick_share/records.rs` `Records::update_shares` → `device_io::atomic_write_private` → `crates/tine-store/src/atomic_file.rs` `atomic_write_private` |
+| Quick share account JSON | app data `quick-share-account.json`: `{"v":1,"login","account_id","token","scopes","connected_at"}`, the GitHub OAuth token (secret), owner-only 0600 from creation; deleted on Disconnect (ADR 0076; Martin 2026-10-18, D-20261018-Q1 S1) | `src-tauri/src/quick_share/records.rs` `Records::store_account` → `atomic_write_private` |
 
 Opening a graph PDF reads its existing primary or active legacy sidecar without
 creating, rewriting or moving graph files. The first highlight or annotation
@@ -76,3 +78,12 @@ writer sites are approved in `APPROVED_WRITER_SITES`. The same document classifi
 app-data entry the released Tine writes as read as-is or master-only.
 
 Graph link identity costs one tiny file per graph written once, zero bytes/files per ordinary 1- or 60-block edit and zero transport. Opening and browsing only read it; a copied graph shares it, with a device-local choice remembered in the existing settings JSON. Existing malformed identity is preserved and reported.
+
+Quick share's records (ADR 0076) cost no graph bytes. The share's in-graph
+trace is the `tine.share:: <login>/<gist_id>` property on its export definition
+(`tine.share:: pending/<record id>` while its upload is unconfirmed),
+an ordinary page edit through the guarded save (no new format: a block property
+in Page Markdown/Org). `prepare`'s private build graph is a scratch copy of the
+selected pages in a temporary directory under app cache, removed before
+`prepare` returns; it is not a persisted format, and its writer sites are
+approved as such.

@@ -2549,8 +2549,8 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lsdoc"
-version = "0.5.8"
-source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.5.8#32e63ef095c711d6d9947257bf5fd07d540fa59d"
+version = "0.5.9"
+source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.5.9#28b63c223f472cf4792c8b68449830ed3289fcf4"
 dependencies = [
  "memchr",
  "phf 0.11.3",
@@ -5056,6 +5056,7 @@ dependencies = [
  "image",
  "libc",
  "reqwest",
+ "rustls",
  "same-file",
  "serde",
  "serde_json",
@@ -5076,6 +5077,7 @@ dependencies = [
  "tine-ios-folder-picker-native",
  "tine-ios-native-integrations",
  "tine-store",
+ "tokio",
  "unicode-normalization",
  "uuid",
  "webkit2gtk",
@@ -5109,7 +5111,10 @@ dependencies = [
 name = "tine-graph-features"
 version = "0.8.0-beta.4"
 dependencies = [
+ "base64 0.22.1",
+ "flate2",
  "lsdoc",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

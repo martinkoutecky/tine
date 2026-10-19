@@ -18,17 +18,22 @@ import type { ExecutionContext, ParsedQuery, Query, QueryResult, QueryTextDialec
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, MatchEvidence, PageDto, PageEntry, PageRead, QueryExecution, QueryHit, QueryPageScope, RefGroup } from "./types";
 import { previewDtoSubtree } from "./previewProjection";
 import { pageIdentityKey } from "./pageIdentity";
-import { blockRegions } from "./render/parse";
+import { blockRegions, initParser } from "./render/parse";
 import { blockRefsInText } from "./render/pageRefs";
 import { searchSubstringSpans } from "./editor/searchQuery";
 import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
 import { searchFold } from "./editor/searchFold";
+import { setQuickSharePrefix } from "./publishedPermalink";
+import type { QuickShareListing } from "./quickShare/commands";
 
 type PublishedPage = PageDto & { path: string };
 
 /** `<meta name="tine-published" content="snapshot.json">` in the exported shell. */
 export const PUBLISHED_META_NAME = "tine-published";
 export const PUBLISHED_SNAPSHOT_SCHEMA = 1;
+/** The meta content of a quick share viewer (`/s/1/`): the snapshot is the
+ *  share named by the page's fragment (`quickShare/quickShare.ts`). */
+export const QUICK_SHARE_SNAPSHOT = "quick-share:1";
 /** The reason code every refused query carries (typed-errors contract). */
 export const PUBLISHED_QUERY_REASON = "published_export_static";
 export const PUBLISHED_QUERY_MESSAGE = "This export answers only the queries it was made with.";
@@ -130,6 +135,16 @@ export async function readBounded(response: Response, max: number, label: string
 export function loadPublishedSnapshot(url = publishedSnapshotUrl() ?? "snapshot.json"): Promise<PublishedSnapshot> {
   if (!snapshotPromise) {
     snapshotPromise = (async () => {
+      if (url === QUICK_SHARE_SNAPSHOT) {
+        // A quick share viewer: the snapshot comes from the link's gist,
+        // decrypted in the browser; navigation keeps the share prefix.
+        // Admission keys page names with the WASM page identity, so the parser must be up first.
+        await initParser();
+        const { loadQuickShare } = await import("./quickShare/quickShare");
+        const share = await loadQuickShare(globalThis.location?.hash ?? "");
+        setQuickSharePrefix(share.link.prefix);
+        return share.snapshot;
+      }
       const response = await fetch(url, { cache: "no-store" });
       if (!response.ok) throw new Error(`snapshot ${url}: HTTP ${response.status}`);
       // I-22: bound the served bytes before they become a string and an object graph.
@@ -673,7 +688,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       return [];
     },
     async gpuEnv() {
-      return { software_forced: false, appimage: false, flatpak: false, packaged: false };
+      return { software_forced: false, appimage: false, flatpak: false, packaged: false, portable: false };
     },
     // A published export has no backend clock; the browser's is the authority.
     async localClock() {
@@ -887,6 +902,10 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async legacyDraftsFile() {
       return null;
     },
+    // Quick share is a native feature (DESIGN §3.9): a published export reports it off.
+    async quickShareList(): Promise<QuickShareListing> {
+      return { enabled: false, account: null, shares: [], error: null };
+    },
   };
 
   const explicit: Record<string, unknown> = { ...answered, ...constant };
@@ -1041,6 +1060,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "onGraphOpenWaiting",
   "onGraphOpenOwnerWaiting",
   "legacyDraftsFile",
+  "quickShareList",
 ] as const;
 
 /** Refused with `PublishedExportReadOnlyError`: writes, sync, install,
@@ -1152,6 +1172,18 @@ export const PUBLISHED_REFUSED_METHODS = [
   "pageSaveNow",
   "pageDraftsRetry",
   "mergeLiveConflict",
+  "quickSharePrepare",
+  "quickShareCreate",
+  "quickShareDiscard",
+  "quickShareCheck",
+  "quickShareFind",
+  "quickShareDelete",
+  "quickShareForget",
+  "quickShareCopyLink",
+  "quickShareConnectStart",
+  "quickShareConnectStatus",
+  "quickShareConnectCancel",
+  "quickShareDisconnect",
 ] as const;
 
 /** Optional `Backend` members a published export leaves absent. */

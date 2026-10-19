@@ -189,6 +189,10 @@ pub(crate) fn run_early() {
     if crate::app_identity::APP_IDENTIFIER != crate::app_identity::RELEASE_IDENTIFIER {
         return;
     }
+    // A portable instance never touches the host's per-user folders (GH #719).
+    if crate::portable::active() {
+        return;
+    }
     if let Some(new_dir) = current_app_data_dir() {
         if migrate_app_data_dir(&new_dir) {
             MIGRATED.store(true, Ordering::SeqCst);

@@ -13,7 +13,7 @@ const native = vi.hoisted(() => ({
 vi.mock("../backend", () => ({
   isTauri: () => true,
   backend: () => ({
-    gpuEnv: async () => ({ packaged: false, flatpak: false }),
+    gpuEnv: async () => ({ packaged: false, flatpak: false, portable: false }),
     appArchitecture: async () => "aarch64",
     openExternal: native.openExternal,
   }),
