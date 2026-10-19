@@ -10,6 +10,7 @@ import { timetrackingEnabled, openDatePicker } from "../ui";
 import { ResultWriteTargetContext } from "./queryResultIdentity";
 import { PropertyRows } from "../render/PropertyRows";
 import { taskCheckboxState } from "../markers";
+import { flashTaskToggle } from "../justToggled";
 import { markerLabelClickable } from "../editor/repeat";
 import { logbookInfo, type LogbookInfo } from "../logbook";
 import { annotationInfo } from "../editor/annotation";
@@ -190,7 +191,9 @@ export function Rendered(props: {
           onMouseDown={(e) => {
             e.stopPropagation();
             e.preventDefault();
+            const box = e.currentTarget;
             toggleBlockCheckbox(props.id);
+            flashTaskToggle(box);
           }}
           // A direct listener also makes the checked box a Chromium touch
           // adjustment candidate, rather than redirecting a near-edge tap to
@@ -204,7 +207,9 @@ export function Rendered(props: {
           classList={{ "marker-clickable": markerLabelClickable(facets().marker) }}
           onClick={(e) => {
             e.stopPropagation();
+            const chip = e.currentTarget;
             toggleBlockMarkerLabel(props.id);
+            flashTaskToggle(chip);
           }}
         >
           {facets().marker}

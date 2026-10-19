@@ -220,14 +220,25 @@ mod tests {
     /// never claimed (lsdoc's facets do not see it as an id).
     #[test]
     fn a_swallowed_id_row_is_not_claimed() {
-        for raw in [
-            "> a\nID:: x",
-            "> a\nId:: x",
-            "> a\ncollapsed:: true\nID:: x",
-        ] {
+        for raw in ["> a\nID:: x", "> a\nId:: x"] {
             let blocks = crate::render::parse_block(raw, false);
             assert!(rows(raw, &blocks).is_empty(), "{raw:?}");
         }
+        // Since lsdoc v0.5.9 the quote ends at `ID::` (as mldoc), so `ID:: x` is a
+        // Properties node the backend sees; only the swallowed `collapsed::` row
+        // above it is claimed.
+        let raw = "> a\ncollapsed:: true\nID:: x";
+        let blocks = crate::render::parse_block(raw, false);
+        assert!(
+            matches!(blocks.last(), Some(Block::Properties { .. })),
+            "{blocks:?}"
+        );
+        let found = rows(raw, &blocks);
+        assert_eq!(
+            found.iter().map(|p| p.key.as_str()).collect::<Vec<_>>(),
+            ["collapsed"],
+            "{raw:?}"
+        );
         let raw = "> a\ncollapsed:: true";
         let blocks = crate::render::parse_block(raw, false);
         assert_eq!(rows(raw, &blocks).len(), 1);

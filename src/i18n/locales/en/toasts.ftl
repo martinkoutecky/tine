@@ -389,7 +389,11 @@ ui-failure-conflict-inventory = Couldn't refresh conflicts. The last successful 
 
 ui-failure-graph-verification = Couldn't verify graph files.
 
-ui-failure-unreadable-files = Some page files couldn't be read. The rest of the graph is available; the file list is in the debug log.
+ui-failure-unreadable-files =
+    { $more ->
+        [0] Some page files couldn't be read: { $names }. The rest of the graph is available.
+       *[other] Some page files couldn't be read: { $names } and { NUMBER($more, useGrouping: 0) } more (Copy lists them all). The rest of the graph is available.
+    }
 
 ui-failure-asset-inventory = Couldn't inspect orphan assets. The last successful scan is kept.
 

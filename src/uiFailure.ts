@@ -1,4 +1,4 @@
-import { msg, type Msg } from "./i18n";
+import { msg, renderEnglish, type Msg } from "./i18n";
 // UI failure presentation. Callers provide a fixed family and opaque cause;
 // this door owns the user text and opt-in diagnostic sink. Work is O(visible
 // toasts + error detail length), with no graph read or persistence. Callers
@@ -33,7 +33,6 @@ export type UiFailureFamily =
   | "config-read"
   | "conflict-inventory"
   | "graph-verification"
-  | "unreadable-files"
   | "asset-read"
   | "page-refresh"
   | "logbook"
@@ -55,7 +54,6 @@ const MESSAGES: Record<UiFailureFamily, Msg> = {
   "config-read": msg("ui-failure-config-read"),
   "conflict-inventory": msg("ui-failure-conflict-inventory"),
   "graph-verification": msg("ui-failure-graph-verification"),
-  "unreadable-files": msg("ui-failure-unreadable-files"),
   "asset-inventory": msg("ui-failure-asset-inventory"),
   "trash-inventory": msg("ui-failure-trash-inventory"),
   "backup-read": msg("ui-failure-backup-read"),
@@ -83,7 +81,7 @@ const MESSAGES: Record<UiFailureFamily, Msg> = {
 const GRAPH_READS: ReadonlySet<UiFailureFamily> = new Set<UiFailureFamily>([
   "query-hydration", "page-inventory", "session-read", "template-read", "journal-feed",
   "block-counts", "block-resolution", "backup-read", "asset-inventory", "trash-inventory",
-  "custom-css", "config-read", "conflict-inventory", "graph-verification", "unreadable-files",
+  "custom-css", "config-read", "conflict-inventory", "graph-verification",
   "asset-read", "page-refresh", "export-preview", "sheet-export",
 ]);
 
@@ -104,4 +102,24 @@ export function reportUiFailure(family: UiFailureFamily, error: unknown): void {
   const unbound = GRAPH_READS.has(family) && captureBinding().backendGeneration === 0;
   dbg(`${family}${unbound ? " (window unbound; not reported)" : ""}: ${detail(error)}`);
   if (!unbound) pushToastUnique(msg(MESSAGES[family].id), "error");
+}
+
+/** How many unreadable files the toast names before "and N more". */
+const UNREADABLE_SHOWN = 5;
+
+/** Name the files the backend skipped as unreadable (graph-relative `path` or
+ * `path: reason`), so the user can find them without any opt-in log (GH #727).
+ * The toast shows the first few; Copy carries the full list. Same unbound-window
+ * rule as `reportUiFailure`. Cost O(files). */
+export function reportUnreadableFiles(files: readonly string[]): void {
+  if (!files.length) return;
+  const unbound = captureBinding().backendGeneration === 0;
+  dbg(`unreadable-files${unbound ? " (window unbound; not reported)" : ""}: ${files.join(", ")}`);
+  if (unbound) return;
+  const shown = files.slice(0, UNREADABLE_SHOWN);
+  pushToastUnique(
+    msg("ui-failure-unreadable-files", { names: shown.join("; "), more: files.length - shown.length }),
+    "error",
+    { copyText: renderEnglish(msg("ui-failure-unreadable-files", { names: files.join("\n"), more: 0 })) },
+  );
 }

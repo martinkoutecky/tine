@@ -826,6 +826,7 @@ export interface MessageArgs {
   "failure-boundary-retry": {};
   "failure-boundary-slow-operations": { "count": number; "seconds": string | number };
   "favorites-block-action": {};
+  "favorites-block-remove-action": {};
   "favorites-could-not-read-the-favorites-page": { "error": string | number; "page": string | number };
   "favorites-recovered-the-favorites-page-from-an-interrupted-save": { "name": string | number };
   "filedrop-couldn-t-insert-dropped-file": { "error": string | number };
@@ -2041,6 +2042,9 @@ export interface MessageArgs {
   "ref-occurrence-remove-embed-title": {};
   "ref-occurrence-remove-ref": {};
   "ref-occurrence-remove-ref-title": {};
+  "ref-occurrence-replace-embed": {};
+  "ref-occurrence-replace-text": {};
+  "ref-occurrence-target-unreadable": {};
   "reference-evidence-jump-to-mention": { "index": string | number; "kind": string | number };
   "reference-evidence-mention-count": { "count": number };
   "reference-evidence-occurrence-label": { "index": string | number; "total": string | number };
@@ -2840,7 +2844,7 @@ export interface MessageArgs {
   "ui-failure-template-read": {};
   "ui-failure-template-write": {};
   "ui-failure-trash-inventory": {};
-  "ui-failure-unreadable-files": {};
+  "ui-failure-unreadable-files": { "more": number; "names": string | number };
   "ui-failure-window-action": {};
   "ui-failure-window-state": {};
   "ui-main-community-extensions-unavailable": { "value1": string | number };
