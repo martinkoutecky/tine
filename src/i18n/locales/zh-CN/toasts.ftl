@@ -351,7 +351,10 @@ ui-failure-conflict-inventory = 无法刷新冲突，保留上次成功获取的
 
 ui-failure-graph-verification = 无法验证图谱文件。
 
-ui-failure-unreadable-files = 部分页面文件无法读取。其余图谱仍可使用，文件列表见调试日志。
+ui-failure-unreadable-files = { $more ->
+    [0] 部分页面文件无法读取：{ $names }。其余图谱仍可使用。
+   *[other] 部分页面文件无法读取：{ $names }，另有 { NUMBER($more, useGrouping: 0) } 个（点“复制”可查看全部）。其余图谱仍可使用。
+    }
 
 ui-failure-asset-inventory = 无法检查未引用附件，保留上次成功扫描的结果。
 

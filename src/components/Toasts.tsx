@@ -46,7 +46,7 @@ export function Toasts(): JSX.Element {
                 onClick={(e) => {
                   e.stopPropagation();
                   // The error toast stays open; the copy result is a separate note.
-                  void writeClipboardText(t.message).then(
+                  void writeClipboardText(t.copyText ?? t.message).then(
                     () => pushToast(msg("toast-copied"), "success"),
                     () => pushToast(msg("toast-copy-failed"), "warn"),
                   );

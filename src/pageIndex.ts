@@ -1,4 +1,4 @@
-import { reportUiFailure } from "./uiFailure";
+import { reportUiFailure, reportUnreadableFiles } from "./uiFailure";
 import { createEffect, createMemo, createRoot, createSignal, on } from "solid-js";
 import { backend } from "./backend";
 import { graphOwner, latestOwner, readOwned } from "./owned";
@@ -71,7 +71,7 @@ export async function refreshPageIndex(): Promise<void> {
     if (owner()) reportUiFailure("page-inventory", error);
     return;
   }
-  if (inventory.unreadable?.length) reportUiFailure("unreadable-files", inventory.unreadable.join(", "));
+  if (inventory.unreadable?.length) reportUnreadableFiles(inventory.unreadable);
   const rev = BigInt(inventory.rev);
   const current = held();
   if (current && current.generation === generation && rev < current.rev) return;

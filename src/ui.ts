@@ -1,7 +1,7 @@
 import { msg } from "./i18n";
 import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { reportUiFailure } from "./uiFailure";
+import { reportUiFailure, reportUnreadableFiles } from "./uiFailure";
 import { graphMeta, setGraphMeta, bumpGraphEpoch } from "./graphSession";
 import { pushToast } from "./toasts";
 import { isMobilePlatform } from "./nativeChrome";
@@ -282,7 +282,7 @@ export async function refreshSyncConflicts(notify: "new" | false = false): Promi
     if (result.kind === "stale" || !conflictRefreshCurrent(episode)) return;
     const previous = new Set(conflictQueue().map((conflict) => conflict.id));
     setConflictInventory(result.value);
-    if (result.value.unreadable?.length) reportUiFailure("unreadable-files", result.value.unreadable.join(", "));
+    if (result.value.unreadable?.length) reportUnreadableFiles(result.value.unreadable);
     const arrived = result.value.queue.filter((c) => c.source === "sync-copy" && !previous.has(c.id));
     if (notify === "new" && arrived.length) {
       const first = arrived[0];

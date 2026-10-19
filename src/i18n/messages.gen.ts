@@ -2645,7 +2645,7 @@ export interface MessageArgs {
   "ui-failure-template-read": {};
   "ui-failure-template-write": {};
   "ui-failure-trash-inventory": {};
-  "ui-failure-unreadable-files": {};
+  "ui-failure-unreadable-files": { "more": number; "names": string | number };
   "ui-failure-window-action": {};
   "ui-failure-window-state": {};
   "ui-main-community-extensions-unavailable": { "value1": string | number };
