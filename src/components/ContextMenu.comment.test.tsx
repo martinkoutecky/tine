@@ -87,7 +87,7 @@ describe("block menu: Comment on selection", () => {
     commentItem()!.click();
     const parent = doc.byId["p"];
     expect(parent.children).toHaveLength(1);
-    expect(doc.byId[parent.children[0]].raw).toBe("\nquote:: a phrase worth disputing");
+    expect(doc.byId[parent.children[0]].raw).toBe("\nquote:: a phrase worth disputing\nquote-prefix:: An agent wrote\nquote-suffix:: here.");
     expect(editingId()).toBe(parent.children[0]);
     expect(doc.byId["q"].children).toHaveLength(0);
     undo();

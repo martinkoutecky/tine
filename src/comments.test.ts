@@ -14,8 +14,29 @@ describe("margin comment anchor (vision §3.7)", () => {
     const parent = "Agent's paragraph text that has a phrase worth disputing.\nauthor:: claude";
     const at = parent.indexOf("a phrase");
     const selector = quoteSelectorFor(parent, at, at + "a phrase worth disputing".length, parent);
-    expect(selector).toEqual({ quote: "a phrase worth disputing", prefix: null, suffix: null });
+    expect(selector).toEqual({ quote: "a phrase worth disputing", prefix: "Agent's paragraph text that has", suffix: ". author:: claude" });
     expect(sliceOf(parent, anchorQuote(parent, selector))).toBe("a phrase worth disputing");
+  });
+
+  it("always writes context, so a later second occurrence does not re-anchor the comment (ADR 0075, MC2)", () => {
+    const parent = "Start here, then a phrase worth disputing, then the end.";
+    const at = parent.indexOf("a phrase");
+    const selector = quoteSelectorFor(parent, at, at + "a phrase".length, parent);
+    expect(selector.prefix).toBe("Start here, then");
+    expect(selector.suffix).toBe("worth disputing, then the end.");
+    const edited = "a phrase added at the top. " + parent;
+    const anchor = anchorQuote(edited, selector);
+    expect(anchor).toEqual({ kind: "range", start: edited.lastIndexOf("a phrase"), end: edited.lastIndexOf("a phrase") + 8 });
+  });
+
+  it("trims context at a word boundary", () => {
+    const parent = "unbelievably longwinded introductory words before the quote and plenty of trailing words after it ends";
+    const at = parent.indexOf("the quote");
+    const selector = quoteSelectorFor(parent, at, at + "the quote".length, parent);
+    expect(selector.prefix!.length).toBeLessThanOrEqual(QUOTE_CONTEXT_MAX);
+    expect(parent).toContain(" " + selector.prefix + " the quote");
+    expect(selector.suffix!.length).toBeLessThanOrEqual(QUOTE_CONTEXT_MAX);
+    expect(parent).toContain("the quote " + selector.suffix + " ");
   });
 
   it("tells repeated occurrences apart by prefix and suffix", () => {
@@ -42,7 +63,9 @@ describe("margin comment anchor (vision §3.7)", () => {
     const selector = quoteSelectorFor(parent, second, second + 1, parent);
     expect(selector.prefix!.length).toBeLessThanOrEqual(QUOTE_CONTEXT_MAX);
     expect(selector.suffix!.length).toBeLessThanOrEqual(QUOTE_CONTEXT_MAX);
-    expect(selector.prefix!.endsWith("🎉 two")).toBe(true);
+    // The cut splits the emoji run before "two", so the word boundary drops it (MC2); the suffix is all one word.
+    expect(selector.prefix).toBe("two");
+    expect(selector.suffix!.startsWith("🎉")).toBe(true);
     expect(selector.prefix!.charCodeAt(0)).not.toBe(0xdc89); // no lone low surrogate at the cut
     expect(anchorQuote(parent, selector)).toEqual({ kind: "range", start: second, end: second + 1 });
   });

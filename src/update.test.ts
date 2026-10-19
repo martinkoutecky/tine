@@ -169,6 +169,19 @@ describe("update checks", () => {
     } finally { cancel(); }
   });
 
+  it("a WebDriver-driven window schedules no automatic check", async () => {
+    const { update, getAppBoolMock } = await loadUpdate({ autoUpdates: true });
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    vi.stubGlobal("navigator", { webdriver: true });
+    try {
+      const cancel = update.scheduleAutomaticUpdateCheck();
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      expect(getAppBoolMock).not.toHaveBeenCalled();
+      expect(timer.mock.calls.filter(([, delay]) => delay === 3000)).toHaveLength(0);
+      cancel();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("GH #618: cleanup while settings load prevents scheduling", async () => {
     let resolve!: (on: boolean) => void;
     const { update } = await loadUpdate({ settingsRead: () => new Promise((r) => { resolve = r; }) });
