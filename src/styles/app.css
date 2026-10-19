@@ -1756,9 +1756,30 @@ html[data-system-insets="native-viewport"] {
   opacity: 0.45;
   cursor: default;
 }
-.export-foot {
+.dialog-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
+}
+/* Auxiliary actions sit at the leading end; the Cancel/primary pair stays
+   trailing. Never reorder with `order`/`row-reverse`: DOM order is visual order. */
+.dialog-actions-aux {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-right: auto;
+}
+.dialog-actions-aux:empty {
+  display: none;
+}
+/* Cancel + the primary action never separate: when the row is too narrow for
+   everything, the auxiliary group wraps above this one (D-20261018-UI1). */
+.dialog-actions-main {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 8px;
 }
 .export-btn-secondary,
@@ -3421,10 +3442,6 @@ html[data-system-insets="native-viewport"] {
 }
 .conflict-btn:hover {
   background: var(--bg-tertiary);
-}
-.conflict-btn.keep {
-  border-color: var(--marker-todo, #e5484d);
-  color: var(--marker-todo, #e5484d);
 }
 
 .page-load-error {
@@ -5167,6 +5184,13 @@ body.file-drop-active::after {
   font-weight: 700;
   color: var(--accent, #10b981);
   opacity: 1;
+  /* Today has no button (D-20261018-UI1); the cell is the way to it, so the
+     mark must stay visible whether or not the cell is also selected. */
+  box-shadow: inset 0 0 0 1px var(--accent, #10b981);
+}
+.dp-cell.today.selected {
+  color: var(--on-accent, #fff);
+  box-shadow: inset 0 0 0 2px var(--bg-primary, #fff);
 }
 .dp-cell.selected {
   background: var(--accent, #10b981);
@@ -5183,9 +5207,14 @@ body.file-drop-active::after {
   visibility: hidden;
 }
 .dp-foot {
-  display: flex;
   gap: 6px;
   margin-top: 8px;
+}
+.dp-foot .dialog-actions-aux,
+.dp-foot .dialog-actions-main {
+  flex: 1;
+  margin-right: 0;
+  gap: 6px;
 }
 .dp-btn {
   flex: 1;
@@ -5470,11 +5499,6 @@ body.file-drop-active::after {
 .formula-builder-raw-error {
   color: var(--marker-todo);
   font-size: 11px;
-}
-.formula-editor-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 .formula-editor-btn {
   border: 1px solid var(--border-color);
@@ -8818,6 +8842,23 @@ html.tine-embed-shading-accent .embed-block {
   overflow-wrap: anywhere;
   border: 0;
   background: transparent;
+}
+/* GH #619 item 8: the page's properties, plain selectable text under its title. */
+.query-page-props {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  padding: 0 10px 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.query-page-prop-key {
+  color: var(--text-muted);
 }
 .query-grouping-clear {
   margin-left: 8px;

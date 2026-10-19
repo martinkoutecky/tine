@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, type Accessor, type JSX } from "solid-js";
 import { t, msg } from "../i18n";
+import { DialogActions } from "./DialogActions";
 import { backend } from "../backend";
 import { bindingCurrent, captureBinding } from "../binding";
 import { appendQueryBlock, blockProperty, blockWritable, setBlockProperty } from "../document";
@@ -277,10 +278,10 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
               <p class="settings-hint share-existing">{t("share-dialog-already-exported", { folder: existingFolder()! })}</p>
             </Show>
           </div>
-          <div class="export-foot share-foot">
-            <button type="button" class="export-btn-secondary" onClick={closeShareDialog}>{t("share-dialog-cancel")}</button>
-            <button type="button" class="export-btn-primary share-export" disabled={!canExport()} onClick={exportNow}>{where() === "link" ? t("share-dialog-create-link") : t("share-dialog-export")}</button>
-          </div>
+          <DialogActions
+            class="share-foot"
+            cancel={<button type="button" class="export-btn-secondary" onClick={closeShareDialog}>{t("share-dialog-cancel")}</button>}
+            primary={<button type="button" class="export-btn-primary share-export" disabled={!canExport()} onClick={exportNow}>{where() === "link" ? t("share-dialog-create-link") : t("share-dialog-export")}</button>} />
         </div>
       </div>
     </div>

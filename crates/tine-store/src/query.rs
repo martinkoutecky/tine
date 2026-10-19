@@ -21,6 +21,7 @@ use tine_core::refs;
 mod eval;
 pub(crate) mod exec;
 pub(crate) mod index;
+pub(crate) mod link_graph;
 pub(crate) mod memo;
 pub(crate) mod page_properties;
 #[cfg(test)]
@@ -354,9 +355,10 @@ fn collect_bounded(
 
 /// True when a block's raw text is only page-header properties (OG treats such
 /// a FIRST block as the page-properties (pre-)block). One answerer: the parser's
-/// page header (`tine_core::block_regions::page_header_only`, I-12).
+/// page header, minus the block-scoped exemption (GH #210/#540): the shared
+/// `model::is_page_header_candidate`, the same answerer save-time promotion uses.
 fn is_properties_only(raw: &str) -> bool {
-    tine_core::block_regions::page_header_only(raw.trim_end_matches(['\n', '\r'])).is_some()
+    crate::model::is_page_header_candidate(raw.trim_end_matches(['\n', '\r']))
 }
 
 /// Map of `alias::` → canonical page name (original case). The alias key is
@@ -526,28 +528,48 @@ fn graph_equivalent_page_names(
     graph: &ReadSnapshot,
     target: &str,
 ) -> (String, Vec<String>, String) {
-    let mut resolved = equivalent_page_names(&real_page_names(graph), &graph.alias_edges(), target);
     let format = journal_format(graph.config());
+    graph_equivalent_page_names_with(
+        &real_page_names(graph),
+        &graph.alias_edges(),
+        &format,
+        target,
+        |day| {
+            // O(journals) name parses, only for a date-shaped target.
+            graph
+                .page_list_arc()
+                .iter()
+                .find(|entry| {
+                    entry.kind == PageKind::Journal && format.parse(&entry.name) == Some(day)
+                })
+                .map(|entry| entry.name.clone())
+        },
+    )
+}
+
+/// [`graph_equivalent_page_names`] with its graph reads supplied: the real
+/// page names, the alias relation, the journal format and the FIRST journal
+/// page (page-list order) of a day. The link table resolves every page through
+/// this one body with a precomputed day lookup, so the Linked References panel
+/// and `links` / `linked_by` cannot drift (I-12).
+pub(crate) fn graph_equivalent_page_names_with(
+    real_pages: &RealPageNames,
+    edges: &AliasEdges,
+    format: &JournalFormat,
+    target: &str,
+    journal_for_day: impl FnOnce(JournalDate) -> Option<String>,
+) -> (String, Vec<String>, String) {
+    let mut resolved = equivalent_page_names(real_pages, edges, target);
     let Some(target_day) = format.parse(target) else {
         return resolved;
     };
-    // O(journals) name parses, only for a date-shaped target.
-    let pages = graph.page_list_arc();
-    let Some(journal) = pages.iter().find(|entry| {
-        entry.kind == PageKind::Journal && format.parse(&entry.name) == Some(target_day)
-    }) else {
+    let Some(journal_name) = journal_for_day(target_day) else {
         // A date with no real page is an editable virtual journal. Keep real
         // ordinary pages and aliases intact; only fileless dates share spellings.
-        if real_page_names(graph)
-            .get(&refs::page_key(&resolved.0))
-            .is_none()
-        {
+        if real_pages.get(&refs::page_key(&resolved.0)).is_none() {
             let title = format.title(target_day);
-            let spellings = journal_spelling_keys(&format, target_day, &title);
-            if spellings
-                .iter()
-                .any(|name| real_page_names(graph).get(name).is_some())
-            {
+            let spellings = journal_spelling_keys(format, target_day, &title);
+            if spellings.iter().any(|name| real_pages.get(name).is_some()) {
                 return resolved;
             }
             resolved.1.extend(spellings);
@@ -560,11 +582,11 @@ fn graph_equivalent_page_names(
     };
     resolved
         .1
-        .extend(journal_spelling_keys(&format, target_day, &journal.name));
+        .extend(journal_spelling_keys(format, target_day, &journal_name));
     resolved.1.sort();
     resolved.1.dedup();
-    resolved.0 = journal.name.clone();
-    resolved.2 = journal.name.clone();
+    resolved.0 = journal_name.clone();
+    resolved.2 = journal_name;
     resolved
 }
 
@@ -2325,6 +2347,45 @@ mod tests {
         let graph = test_snapshot(&dir);
         let result = run_advanced_query(&graph, "[:find ?b :where (");
         assert!(!result.supported);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// GH #210 B1: a properties-only first bullet is the page header (so its
+    /// `alias::` registers, GH #62) UNLESS it carries a block-scoped key; a table
+    /// block's `alias::` line is block text, the same answer save-time promotion gives.
+    #[test]
+    fn a_table_first_bullet_contributes_no_page_alias() {
+        let dir = std::env::temp_dir().join(format!("tine-gh210-alias-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        std::fs::write(dir.join("pages/Header.md"), "- alias:: Plain\n").unwrap();
+        std::fs::write(
+            dir.join("pages/Tabled.md"),
+            "- alias:: Blocky\n  tine.view:: table\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("pages/Leftover.md"),
+            "- alias:: Left\n  tine.table-widths:: prop%3Atest=171\n",
+        )
+        .unwrap();
+        let (store, _, _) =
+            crate::store::Store::open(&dir, crate::store::OpenOptions::default()).unwrap();
+        let graph = store.whole_graph().unwrap();
+        assert!(matches!(
+            graph.resolve("Plain", false),
+            crate::Resolved::Alias { .. }
+        ));
+        assert!(!matches!(
+            graph.resolve("Blocky", false),
+            crate::Resolved::Alias { .. }
+        ));
+        assert!(!matches!(
+            graph.resolve("Left", false),
+            crate::Resolved::Alias { .. }
+        ));
+        drop(graph);
+        store.close();
         let _ = std::fs::remove_dir_all(dir);
     }
 

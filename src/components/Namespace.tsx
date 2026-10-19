@@ -1,7 +1,8 @@
+import { PageIcon } from "./PageIcon";
 import { t } from "../i18n";
-import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import { pageIdentityKey } from "../pageIdentity";
-import { backend } from "../backend";
+import { pageIcon } from "../pageIconBatch";
 import { openPage, openPageInNewTab } from "../router";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -11,7 +12,6 @@ import { EmojiText } from "../render/emoji";
 import { SidebarTitle } from "./SidebarTitle";
 import type { PageKind } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { readOr } from "../resourceRead";
 
 // Namespace hierarchy for a page named `a/b/c`: a clickable breadcrumb of the
 // ancestor namespaces (shown above the title) and a list of direct child pages
@@ -173,14 +173,14 @@ export function namespaceRows(nodes: NsNode[]): { node: NsNode; depth: number }[
   return rows;
 }
 
-function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string, string> }): JSX.Element {
+function NsMacroNode(props: { node: NsNode; depth: number }): JSX.Element {
   return (
     <div class="ns-macro-node">
       <div class="ns-macro-row" style={{ "padding-left": `${props.depth * 18}px` }}>
         <span class="ns-bullet" />
-        <Show when={props.icons[props.node.full]}>
+        <Show when={pageIcon(props.node.full)}>
           <span class="page-icon">
-            <EmojiText text={props.icons[props.node.full]} />
+            <PageIcon value={pageIcon(props.node.full)} name={props.node.full} />
           </span>
         </Show>
         <a class="page-ref" {...nsLink(props.node.full, undefined, true)}>
@@ -195,23 +195,15 @@ function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string,
  *  page showing its `icon::` (like OG's namespace macro). */
 export function NamespaceMacro(props: { root: string }): JSX.Element {
   // The descendant tree is a pure CPU derivation off the shared page-name
-  // inventory (src/pages.ts). Only the per-page icon lookup stays an IPC, keyed on the
-  // resulting `fulls` set (so it refetches when the page set changes, not per nav).
+  // inventory (src/pages.ts). Icons use the shared reactive batched lookup,
+  // including unsaved loaded-page edits and publications for unloaded pages.
   const treeData = createMemo(() => {
     const prefix = `${pageIdentityKey(props.root)}/`;
     const names = allPageNames().filter((n) => pageIdentityKey(n).startsWith(prefix));
     const tree = buildNamespaceTree(names);
-    const fulls = namespaceRows(tree).map(row => row.node.full);
-    return { tree, fulls };
+    return { tree };
   });
-  const [iconsResource] = createResource(
-    () => treeData().fulls,
-    (fulls) =>
-      fulls.length ? backend().pageIcons(fulls) : Promise.resolve({} as Record<string, string>)
-  );
-  // Namespace rows without their icons still navigate; the tree is the feature.
-  const icons = () => readOr(iconsResource, undefined, "namespace page icons");
-  const iconOf = (full: string) => (icons() ?? {})[full];
+  const iconOf = pageIcon;
   return (
     <Show
       when={treeData().tree.length > 0}
@@ -227,7 +219,7 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
               <span class="ns-macro-label">{t("namespace-macro-label")}</span>
               <Show when={iconOf(root.full)}>
                 <span class="page-icon">
-                  <EmojiText text={iconOf(root.full)!} />
+                  <PageIcon value={iconOf(root.full)!} name={root.full} />
                 </span>
               </Show>
               <a class="page-ref" {...nsLink(root.full, undefined, true)}>
@@ -236,7 +228,7 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
             </div>
             <div class="ns-macro-tree">
               <For each={namespaceRows(root.children)}>
-                {(row) => <NsMacroNode node={row.node} depth={row.depth} icons={icons() ?? {}} />}
+                {(row) => <NsMacroNode node={row.node} depth={row.depth} />}
               </For>
             </div>
           </div>

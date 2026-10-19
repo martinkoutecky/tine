@@ -1,12 +1,14 @@
 query-calm-actions = Query actions
 query-calm-view = View
 query-calm-edit = Edit
+query-calm-edit-query = Edit query
 query-calm-text = Edit as text
 query-calm-copy = Copy results
 query-calm-search = Open in Search
 query-calm-export = Export…
 query-calm-share = Share…
 query-calm-done = Done
+query-calm-cancel = Cancel
 query-calm-condition = Add a condition to see results.
 query-calm-columns = Columns
 query-calm-all = Select all

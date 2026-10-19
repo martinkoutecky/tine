@@ -402,6 +402,12 @@ function NodeList(props: {
         const count = () => group.children.length;
         const body = (
           <>
+            {/* The root list is implicit and has no controls. An `all of` root reads as the sheet itself,
+                but a root that is not `all of` (any of / none of / not all of) must say so, or its rows
+                read as if they were all required (GH #619 c6, Q4). */}
+            <Show when={props.isRoot && group.header !== "all of"}>
+              <div class="qs-root-op" role="note">{group.header}</div>
+            </Show>
             <div
               class="qs-rows"
               role="list"

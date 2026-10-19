@@ -68,7 +68,7 @@ import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
-import { initNavSettings } from "./navSettings";
+import { initNavSettings, mobileNavigationAtBottom } from "./navSettings";
 import { initCommentIdentity } from "./commentIdentity";
 import { initLocalFileSettings } from "./localFileSettings";
 import { initAssetSettings } from "./assetSettings";
@@ -134,12 +134,12 @@ export const safeClose = createSafeCloseCoordinator({
     const pagesSaved = await flushAll();
     return cssSaved && pagesSaved;
   },
-  // GH #540: name the pages at risk; "No" opens the recovery panel.
+  // GH #540: name the pages at risk; "Go back" opens the recovery panel (D-20261018-UI2c).
   confirmDiscard: (reason) => {
     const inventory = unsavedDrafts().map((p) => `• ${p.name} — ${p.state}`).join("\n");
     return backend().confirm(
-      t("app-choose-no-to-review-retry-saving", { reason, inventory: inventory || "empty" }),
-      t("app-unsaved-changes"),
+      t("app-quit-without-saving-body", { reason, inventory: inventory || "empty" }),
+      { title: t("app-quit-without-saving-title", { count: unsavedDrafts().length }), okLabel: t("confirm-discard-and-quit"), cancelLabel: t("confirm-go-back") },
     );
   },
   onDiscardDeclined: openUnsavedRecovery,
@@ -1104,7 +1104,10 @@ export function App(): JSX.Element {
     onCleanup(installInterfaceZoomWheel());
   });
 
-  // One shared group: mobile places it below the document, desktop in the title bar.
+  // One shared group: the title bar by default (desktop, phone, tablet; GH #716),
+  // or, on a mobile app that turned on "Navigation buttons at the bottom", a row
+  // below the document (GH #598). Exactly one of the two is mounted.
+  const navigationAtBottom = () => isMobilePlatform && mobileNavigationAtBottom();
   const NavigationActions = () => (
     <div class="navigation-actions topbar-left">
       <button
@@ -1242,7 +1245,7 @@ export function App(): JSX.Element {
             user drag the window by its empty areas (buttons/tabs, being children
             without the attribute, still click normally; double-click maximizes). */}
         <header class="topbar" data-tauri-drag-region>
-          <Show when={!isMobilePlatform}><FailureBoundary region="Navigation"><NavigationActions /></FailureBoundary></Show>
+          <Show when={!navigationAtBottom()}><FailureBoundary region="Navigation"><NavigationActions /></FailureBoundary></Show>
           {/* A collapsed sidebar has no mounted sidebar header. Keep a compact
               one-tap workspace path in the toolbar without putting its full
               non-shrinking label back in this no-wrap row. */}
@@ -1353,7 +1356,7 @@ export function App(): JSX.Element {
           </DrawerBackground>
           <FailureBoundary region="The reference sidebar"><RightSidebar /></FailureBoundary>
         </div>
-        <Show when={isMobilePlatform}>
+        <Show when={navigationAtBottom()}>
           <DrawerBackground class="mobile-navigation-toolbar" blockedBy="any">
             <FailureBoundary region="Navigation"><NavigationActions /></FailureBoundary>
           </DrawerBackground>

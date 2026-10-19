@@ -27,6 +27,8 @@ setting-sticky-parents = Sticky parent bullets
 setting-sticky-parents-hint = Keep offscreen ancestors at the top of scrolling outlines. Click one to return to it. On by default; saved on this device.
 sticky-parents-load-error = Could not load sticky parent bullets
 sticky-parents-save-error = Could not remember sticky parent bullets
+settings-mobile-navigation-label = Navigation buttons at the bottom
+settings-mobile-navigation-hint = Phones and tablets: put Sidebar, Search, Back and Forward in a row at the bottom of the screen, within thumb reach, instead of the top bar. The row gives way to the editing toolbar while the keyboard is up. Off by default; saved on this device.
 settings-embed-breadcrumbs = Block embed breadcrumbs
 settings-embed-breadcrumbs-hint = Show the source page and parent trail above embedded blocks. Off by default.
 
@@ -485,7 +487,7 @@ settings-ui-trash = Trash
 
 # Helper-return and component-prop interface text (GH #107).
 settings-prose-always-ask-before-applying-an-external-change = Always ask before applying an external change
-settings-prose-when-a-page-you-are-not-editing-changes-on-disk = When a page you are not editing changes on disk, keep what you are reading and offer Reload from disk / Keep mine instead of updating it. Changes that conflict or arrive mid-edit are always handled safely either way.
+settings-prose-when-a-page-you-are-not-editing-changes-on-disk = When a page you are not editing changes on disk, keep what you are reading and offer Keep mine / Use disk version instead of updating it. Changes that conflict or arrive mid-edit are always handled safely either way.
 settings-prose-re-reads-every-file-in-the-open-graph-and-rebuilds = Re-reads every file in the open graph and rebuilds Tine's view of it.
 settings-prose-show-tine-in-the-system-tray = Show Tine in the system tray
 settings-prose-adds-a-tray-notification-area-macos-menu-bar-icon-click = Adds a tray / notification-area (macOS: menu-bar) icon. Click it to show or hide the main window; its menu has Open Tine, Quick Capture and Quit. Closing the window still quits Tine. Off by default.

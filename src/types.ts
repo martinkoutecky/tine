@@ -505,6 +505,9 @@ export interface QueryExecution {
   explanation: { branches: QueryExplainNode[] };
   /** Absent only when talking to an older backend or using an older test fixture. */
   has_more?: { pages: boolean; blocks: boolean };
+  /** A query-engine (dsl) answer names the result families its query asked for, so the workspace shows
+   *  only those (GH #619 c6). Absent for a friendly search, which always answers both. */
+  families?: ("page" | "block")[];
   cancelled: boolean;
 }
 

@@ -957,7 +957,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // this WebKitGTK build, so the tab would close without ever asking. Unpinned
     // tabs skip the await and close synchronously (no behaviour change there).
     if (t?.pinned) {
-      const confirmation = await readOwned(owner, backend().confirm(translate("router-close-pinned-tab", { title: String(routeTitle(tabRoute(t))) })));
+      const confirmation = await readOwned(owner, backend().confirm(translate("router-close-pinned-tab", { title: String(routeTitle(tabRoute(t))) }), { okLabel: translate("confirm-close-tab"), cancelLabel: translate("confirm-keep-open") }));
       if (confirmation.kind === "stale" || !confirmation.value) return;
     }
     if (!owner()) return;

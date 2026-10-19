@@ -1,3 +1,5 @@
+import { PageIcon } from "./PageIcon";
+import { pageIcon } from "../pageIconBatch";
 import { Rich } from "../i18n/Rich";
 import { BlockList } from "./BlockList";
 import { t, msg } from "../i18n";
@@ -40,7 +42,7 @@ import { editingId, endEditForSurface, startEditing } from "../editorController"
 import type { JournalFeedPage, PageRead, RefGroup } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
-import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
+import { rendersAsPageHeader, splitPagePreamble } from "../editor/properties";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { PagePropertyValue } from "./PagePropertyValue";
 import { PageConflictResolution } from "./ConflictResolution";
@@ -350,8 +352,8 @@ async function completeJournalFeed(owner: JournalsFeedOwner, generation: number,
 }
 
 // Page properties NOT shown in the under-title property list: `alias` is surfaced
-// as "aka" chips above. `icon` stays editable here as well as decorating the
-// title, matching OG's editable-built-in-properties. Hide internal tag-table metadata.
+// as "aka" chips above. `tine.icon` and the OG-compatible `icon` stay editable here as well as decorating the
+// title (OG's editable-built-in-properties lists `icon`). Hide internal tag-table metadata.
 // `tine/exports` is the exports page marker (docs/contracts/export-definitions.md), not something to edit.
 const PAGE_PROPS_HIDDEN = new Set(["alias", "tine.tag-table", "tine/exports"]);
 const TAG_TABLE_PROP = "tine.tag-table";
@@ -994,7 +996,8 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
     // must stay in the outline so its children can be selected/deleted/outdented;
     // pageToDto still refuses to serialize a marked header until it is repaired.
     const first = docNode(id);
-    return id && editingId() !== id && first && first.children.length === 0 && isPropertiesOnly(first.raw) ? id : null;
+    return id && editingId() !== id && first && first.children.length === 0
+      && rendersAsPageHeader(first.raw, first.originatedFromPageHeader) ? id : null;
   };
   // The page header shows the same answerer the properties panel lists; a first
   // root rendered as an ordinary block (being edited, or not a header) is excluded.
@@ -1137,9 +1140,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
               </svg>
             </Show>
             <Show
-              when={headerProperties()
-                .find(([k]) => k.toLowerCase() === "icon")?.[1]
-                ?.trim()}
+              when={pageIcon(props.page.name)}
             >
               {(icon) => (
                 <span
@@ -1150,7 +1151,7 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
                     editPageHeader();
                   }}
                 >
-                  <EmojiText text={icon()} />
+                  <PageIcon value={icon()} name={props.page.name} />
                 </span>
               )}
             </Show>

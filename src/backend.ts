@@ -76,7 +76,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 export type { Backend } from "./backendInterface";
-import type { Backend } from "./backendInterface";
+import type { Backend, ConfirmOptions } from "./backendInterface";
 
 
 export type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiscardReason, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange, GraphFolderPickResult, PreparedGraphFolder, ClipboardAssetFile, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheEnvelope, PluginRegistryCacheLoad, LoadGraphResult, CaptureGraphBindingResult, GraphAccessInspection } from "./backendTypes";
@@ -710,9 +710,9 @@ class TauriBackend implements Backend {
   readTextFile(path: string) {
     return this.call<string>("read_text_file", { path });
   }
-  async confirm(message: string, title?: string): Promise<boolean> {
+  async confirm(message: string, options: ConfirmOptions): Promise<boolean> {
     const { ask } = await import("@tauri-apps/plugin-dialog");
-    return ask(message, { title: title ?? t("backend-backend-tine"), kind: "warning" });
+    return ask(message, { title: options.title ?? t("backend-backend-tine"), kind: "warning", okLabel: options.okLabel, cancelLabel: options.cancelLabel });
   }
   async pickFolder(title?: string, defaultPath?: string): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");

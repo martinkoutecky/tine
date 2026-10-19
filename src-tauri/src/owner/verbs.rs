@@ -172,11 +172,13 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                 }));
                 return Err(body);
             }
+            let run = slot.begin_query_run();
             let result = crate::query_ir::run(
                 &graph,
                 &parsed.query,
                 &parsed.view,
                 &tine_core::query::ir::ExecutionContext::none(),
+                run.cancel(),
             )
             .map_err(|e| read_failed(Diag::QueryFailed, e))?;
             let mut payload = to_value(&result)?;

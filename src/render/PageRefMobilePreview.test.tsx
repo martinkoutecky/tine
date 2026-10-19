@@ -91,7 +91,8 @@ it.each(["pointermove", "pointercancel", "pointerup"])("%s cancels the pending m
 
 it("the mobile Guide explains reachable navigation, preview dismissal and ordinary text selection", () => {
   const guide = readFileSync("crates/tine-core/src/templates/platforms-and-mobile.md", "utf8");
-  expect(guide).toContain("Search, the navigation sidebar, Back and Forward are at the bottom");
+  expect(guide).toContain("Sidebar, Search, Back and Forward are in the top bar");
+  expect(guide).toContain("Navigation buttons at the bottom");
   expect(guide).toContain("Long-press a page reference or tag to preview");
   expect(guide).toContain("Tap outside the preview to dismiss");
   expect(guide).toContain("**Page actions**");

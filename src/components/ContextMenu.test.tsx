@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { ContextMenu, deletePageMenuLabel, pageMenuAvailability } from "./ContextMenu";
 import { initParser } from "../render/parse";
-import { blockProperty, pageByName, readPageProperty, resetStore } from "../document";
+import { blockProperty, pageByName, readPageProperty, resetStore, setPageProperty } from "../document";
 import { editingId, endEdit } from "../editorController";
 import { type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
@@ -207,7 +207,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     dispose();
   });
 
-  it.each(["md", "org"] as const)("sets short text and removes a page icon from the menu through the %s property writer", async (format) => {
+  it.each(["md", "org"] as const)("sets short text in tine.icon and removes a page icon from the menu through the %s property writer", async (format) => {
     load();
     setDoc("pages", 0, "format", format);
     const dispose = mount(() => <ContextMenu />);
@@ -220,10 +220,42 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
       input.value = "AB";
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-      expect(readPageProperty("P", "icon")).toBe("AB");
-      expect(pageByName("P")?.preBlock).toContain(format === "org" ? "#+icon: AB" : "icon:: AB");
+      expect(readPageProperty("P", "tine.icon")).toBe("AB");
+      expect(readPageProperty("P", "icon")).toBeNull();
+      expect(pageByName("P")?.preBlock).toContain(format === "org" ? "#+tine.icon: AB" : "tine.icon:: AB");
       openPageContextMenu(10, 10, "P", "page", true);
       document.querySelector<HTMLButtonElement>('[data-page-action-id="remove-page-icon"]')!.click();
+      expect(readPageProperty("P", "tine.icon")).toBeNull();
+      expect(readPageProperty("P", "icon")).toBeNull();
+    } finally { dispose(); }
+  });
+
+  // D-20261018-IC1: `icon::` is the OG-visible fallback. A page that already has only `icon::` is edited
+  // in place (one property, still shown by OG); Remove clears both so a shadowed fallback cannot return.
+  it("edits a legacy icon:: in place and removes both icon properties", async () => {
+    load();
+    reloadPage({ name: "P", title: "P", kind: "page", id: pageByName("P")!.id, pre_block: "icon:: 🏁",
+      blocks: [{ id: "legacy", raw: "Body", collapsed: false, children: [] }] });
+    const dispose = mount(() => <ContextMenu />);
+    try {
+      const set = (value: string) => {
+        openPageContextMenu(10, 10, "P", "page", true);
+        document.querySelector<HTMLButtonElement>('[data-page-action-id="set-page-icon"]')!.click();
+        const input = document.querySelector<HTMLInputElement>('[data-page-icon-input]')!;
+        input.value = value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      };
+      set("AB");
+      expect(readPageProperty("P", "icon")).toBe("AB");
+      expect(readPageProperty("P", "tine.icon")).toBeNull();
+      setPageProperty("P", "tine.icon", "CD");
+      set("EF");
+      expect(readPageProperty("P", "tine.icon")).toBe("EF");
+      expect(readPageProperty("P", "icon")).toBe("AB");
+      openPageContextMenu(10, 10, "P", "page", true);
+      document.querySelector<HTMLButtonElement>('[data-page-action-id="remove-page-icon"]')!.click();
+      expect(readPageProperty("P", "tine.icon")).toBeNull();
       expect(readPageProperty("P", "icon")).toBeNull();
     } finally { dispose(); }
   });

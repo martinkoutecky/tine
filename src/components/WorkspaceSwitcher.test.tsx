@@ -135,7 +135,7 @@ describe("WorkspaceSwitcher", () => {
     const confirm = vi.spyOn(backend(), "confirm").mockResolvedValue(true);
     menu.querySelector<HTMLButtonElement>('[aria-label="Delete Alpha"]')!.click();
     await vi.waitFor(() => expect(workspaces()).toHaveLength(1));
-    expect(confirm).toHaveBeenCalledWith("Delete workspace “Alpha”?", "Delete workspace");
+    expect(confirm).toHaveBeenCalledWith("Delete workspace “Alpha”?", { title: "Delete workspace", okLabel: "Delete workspace", cancelLabel: "Cancel" });
     expect(activeWorkspaceId()).not.toBe("default");
   });
   // Master GH #498: the name field was rendered under a keyed <Show> whose key

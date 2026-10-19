@@ -154,10 +154,18 @@ fn answer_from<E: serde::de::Error>(parts: AnswerParts) -> Result<Answer, E> {
 impl Serialize for MemoState {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let memo = &self.0;
-        let mut keys: Vec<&String> = memo.entries.keys().collect();
+        // A link-reading answer (`links`, `linked_by`, `near`) is left out:
+        // any edit drops it anyway, and leaving it out keeps the checkpoint
+        // readable by a build that does not know those conditions.
+        let mut keys: Vec<&String> = memo
+            .entries
+            .iter()
+            .filter(|(_, entry)| !entry.plan.as_ref().is_some_and(|plan| plan.reads_links()))
+            .map(|(key, _)| key)
+            .collect();
         keys.sort();
         let mut entries = Vec::with_capacity(keys.len());
-        for key in keys {
+        for key in keys.iter().copied() {
             let entry = &memo.entries[key];
             let plan = match &entry.plan {
                 Some(plan) => {
@@ -196,8 +204,13 @@ impl Serialize for MemoState {
             today: memo.today,
             parse_config: memo.parse_config.clone(),
             entries,
-            lru: memo.lru.iter().cloned().collect(),
-            bytes: memo.bytes,
+            lru: memo
+                .lru
+                .iter()
+                .filter(|key| keys.binary_search(key).is_ok())
+                .cloned()
+                .collect(),
+            bytes: keys.iter().map(|key| memo.entries[*key].bytes).sum(),
         }
         .serialize(s)
     }

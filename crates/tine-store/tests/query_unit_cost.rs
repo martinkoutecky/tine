@@ -42,9 +42,11 @@ unsafe impl GlobalAlloc for Counting {
         if COUNTING.load(Ordering::Relaxed) {
             note(layout.size() as u64);
         }
+        peak_note(layout.size() as i64);
         unsafe { System.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        peak_note(-(layout.size() as i64));
         unsafe { System.dealloc(ptr, layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
@@ -52,8 +54,35 @@ unsafe impl GlobalAlloc for Counting {
         if COUNTING.load(Ordering::Relaxed) {
             note(new_size.saturating_sub(layout.size()) as u64);
         }
+        peak_note(new_size as i64 - layout.size() as i64);
         unsafe { System.realloc(ptr, layout, new_size) }
     }
+}
+
+// Peak live heap of ONE thread over a closure (`peak_heap_of`): what the
+// thread allocates minus what it frees, from the closure's start. Other
+// threads (parallel tests, the watcher) are not counted, so the bound is
+// stable under a loaded test binary.
+thread_local! {
+    static PEAK_METER: std::cell::Cell<Option<(i64, i64)>> = const { std::cell::Cell::new(None) };
+}
+
+fn peak_note(delta: i64) {
+    let _ = PEAK_METER.try_with(|meter| {
+        if let Some((live, peak)) = meter.get() {
+            let live = live + delta;
+            meter.set(Some((live, peak.max(live))));
+        }
+    });
+}
+
+/// `f`'s answer and the peak additional live heap, in bytes, that this thread
+/// held while running it (the reviewer's probe, per thread).
+pub(crate) fn peak_heap_of<T>(f: impl FnOnce() -> T) -> (T, i64) {
+    PEAK_METER.with(|meter| meter.set(Some((0, 0))));
+    let out = f();
+    let peak = PEAK_METER.with(|meter| meter.take().map_or(0, |(_, peak)| peak));
+    (out, peak)
 }
 
 #[global_allocator]
@@ -98,7 +127,10 @@ const QUERIES: &[&str] = &[
 ];
 
 fn warm(graph: &WholeGraph, memo: bool) {
-    match graph.query_ir(IrRequest::Registry) {
+    match graph
+        .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+        .map(|answer| answer.expect("never cancelled"))
+    {
         Ok(IrAnswer::Registry(_)) => {}
         _ => panic!("registry"),
     }
@@ -116,7 +148,10 @@ fn warm(graph: &WholeGraph, memo: bool) {
 /// registry) and warmed queries whose answers are page-sized, so the bytes
 /// measured are the edit's, not a graph-sized answer's copy to the caller.
 fn after_edit(graph: &WholeGraph) {
-    match graph.query_ir(IrRequest::Registry) {
+    match graph
+        .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+        .map(|answer| answer.expect("never cancelled"))
+    {
         Ok(IrAnswer::Registry(_)) => {}
         _ => panic!("registry"),
     }
@@ -128,11 +163,17 @@ fn after_edit(graph: &WholeGraph) {
 }
 
 fn run(graph: &WholeGraph, query: &tine_core::query::ir::Query, view: &ViewSettings) {
-    match graph.query_ir(IrRequest::Run {
-        query,
-        view,
-        context: &ExecutionContext::none(),
-    }) {
+    match graph
+        .query_ir(
+            IrRequest::Run {
+                query,
+                view,
+                context: &ExecutionContext::none(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
+    {
         Ok(IrAnswer::Result(_)) => {}
         other => panic!("{other:?}"),
     }
@@ -200,7 +241,10 @@ fn probe_edit(pages: usize, blocks: usize, memo: bool, edits: [&str; 2]) -> Prob
         let ((), query_bytes, query) = measure(|| after_edit(&graph));
         let watcher_bytes = save_watcher_bytes + WATCHER_ALLOCATED.load(Ordering::Relaxed);
         if text == edits[1] {
-            let rare_row = match graph.query_ir(IrRequest::Registry) {
+            let rare_row = match graph
+                .query_ir(IrRequest::Registry, &tine_store::Cancel::default())
+                .map(|answer| answer.expect("never cancelled"))
+            {
                 Ok(IrAnswer::Registry(registry)) => registry.row("rare").is_some(),
                 _ => panic!("registry"),
             };

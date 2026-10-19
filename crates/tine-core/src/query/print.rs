@@ -420,6 +420,16 @@ fn tql_leaf(leaf: &Leaf, through_page: bool) -> String {
             tql_comparison(&name, *op, value)
         }
         Leaf::Rel { rel, quant, pred } => tql_rel(*rel, *quant, pred, through_page),
+        Leaf::Near { seeds, k, dir } => {
+            // The canonical form (docs/contracts/tql-links-near.md): the
+            // default direction is not printed.
+            let mut text = format!("near({}, {k}", tql_expr(seeds, Prec::Or));
+            if *dir != crate::query::ir::NearDir::Both {
+                text.push_str(&format!(", {}", sql_string(dir.tql_name())));
+            }
+            text.push(')');
+            text
+        }
     }
 }
 
@@ -446,7 +456,13 @@ fn tql_rel(rel: Rel, quant: Quant, pred: &Filter, through_page: bool) -> String 
             None => format!("any(tags, {})", tql_expr(pred, Prec::Or)),
         },
         Rel::Props => tql_props(quant, pred, through_page),
-        Rel::Children | Rel::Parent | Rel::Ancestors | Rel::Descendants | Rel::Blocks => format!(
+        Rel::Children
+        | Rel::Parent
+        | Rel::Ancestors
+        | Rel::Descendants
+        | Rel::Blocks
+        | Rel::Links
+        | Rel::LinkedBy => format!(
             "{}({}, {})",
             quant_name(quant),
             rel.tql_name(),
@@ -740,6 +756,9 @@ fn og_leaf(leaf: &Leaf, anchor: Anchor, through_page: bool) -> Option<String> {
             og_attr(*attr, *op, value, through_page || anchor == Anchor::Page)
         }
         Leaf::Rel { rel, quant, pred } => og_rel(*rel, *quant, pred, anchor, through_page),
+        // Tine-only (docs/contracts/tql-links-near.md): OG's DSL has no link
+        // traversal, so a query using one saves as `{{tine-query}}`.
+        Leaf::Near { .. } => None,
     }
 }
 
@@ -816,7 +835,9 @@ fn og_rel(
         | Rel::Parent
         | Rel::Ancestors
         | Rel::Descendants
-        | Rel::Blocks => None,
+        | Rel::Blocks
+        | Rel::Links
+        | Rel::LinkedBy => None,
     }
 }
 

@@ -345,7 +345,8 @@ export function PageConflictResolution(props: { conflict: ConflictObject }): JSX
   const trashDayFile = async (name: string) => {
     const owner = bindingOwner(() => mounted);
     const confirmed = await readOwned(owner, backend().confirm(
-      t("conflict-resolution-trash-confirmation", { name })
+      t("conflict-resolution-trash-confirmation", { name }),
+      { okLabel: t("confirm-move-to-trash"), cancelLabel: t("confirm-cancel") },
     ));
     if (confirmed.kind === "stale" || !owner() || !confirmed.value) return;
     await reconcileFile(() => writeOwned(bindingOwner(() => mounted), backend().trashJournalFile(name, "delete-page")), msg("conflict-resolution-file-trashed", { name }));

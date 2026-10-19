@@ -647,3 +647,25 @@ mod tests {
         );
     }
 }
+#[cfg(test)]
+mod tql_near_seed_rename_tests {
+    /// docs/contracts/tql-links-near.md "Renames": a bracketed seed inside a
+    /// `near(...)` follows a rename through the ordinary reference rewrite.
+    #[test]
+    fn a_rename_rewrites_bracketed_near_seeds() {
+        let raw = "- {{tine-query @page and near(name in ([[Project]], [[Notes]]), 2)}}\n";
+        let renames: std::collections::HashMap<String, String> =
+            [("project".to_string(), "Project archive".to_string())]
+                .into_iter()
+                .collect();
+        assert_eq!(
+            super::rename_refs_multi(
+                raw,
+                &renames,
+                false,
+                crate::config::FileNameFormat::TripleLowbar
+            ),
+            "- {{tine-query @page and near(name in ([[Project archive]], [[Notes]]), 2)}}\n"
+        );
+    }
+}

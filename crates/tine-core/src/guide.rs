@@ -338,14 +338,18 @@ mod journal_guide_tests {
     #[test]
     fn page_icon_property_remains_editable_in_the_guide() {
         let reference = include_str!("templates/pages-links-references-search.md");
-        assert!(reference.contains("`icon::` property stays visible in the page-properties block"));
+        assert!(
+            reference.contains("`tine.icon::` property stays visible in the page-properties block")
+        );
         assert!(reference.contains("click its row to edit it"));
         for detail in [
             "**Set page icon…**",
             "**Remove page icon**",
             "emoji or short text",
             "including external file changes",
-            "`#+icon:`",
+            "`#+tine.icon:`",
+            "A page with no `tine.icon::` uses its `icon::` property instead",
+            "`tine.icon::` wins",
         ] {
             assert!(
                 reference.contains(detail),
@@ -681,6 +685,44 @@ mod search_guide_tests {
         );
         assert!(queries.contains("Pages board groups adjacent results"));
     }
+    #[test]
+    fn the_links_section_examples_are_valid_tql() {
+        // docs/contracts/tql-links-near.md: every query the Guide shows for
+        // `links`, `linked_by` and `near` must read as the language reads it.
+        let queries = include_str!("templates/queries.md");
+        let section = queries
+            .split("- ## Links between pages")
+            .nth(1)
+            .and_then(|rest| rest.split("\n- ## ").next())
+            .expect("the Guide has a Links between pages section");
+        let mut checked = 0;
+        for (at, code) in section.split('`').enumerate() {
+            // `…` marks a placeholder, not an example.
+            if at % 2 == 0 || code.contains('…') {
+                continue;
+            }
+            let text = match code
+                .strip_prefix("{{tine-query ")
+                .and_then(|rest| rest.strip_suffix("}}"))
+            {
+                Some(text) => text.to_string(),
+                None if code.starts_with("near(") || code.starts_with("any(") => {
+                    format!("@page and {code}")
+                }
+                None => continue,
+            };
+            let (query, _) = crate::query::parse_query_input(
+                &text,
+                crate::query::QueryInput::Tql,
+                crate::date::JournalDate::from_ordinal(20261018),
+                crate::query::registry::Registry::none(),
+            );
+            assert!(!query.is_invalid(), "{text}: {:?}", query.diagnostics);
+            checked += 1;
+        }
+        assert!(checked >= 6, "only {checked} examples found");
+    }
+
     #[test]
     fn search_fold_and_graph_opt_out_are_documented() {
         let tips = include_str!("templates/tips.md");
@@ -1388,7 +1430,12 @@ mod query_guide_tests {
             "**Pages and blocks**",
             "`tine.result-kinds:: pages-and-blocks`",
             "press **Edit as text**",
-            "press the pencil beside a result to edit its properties",
+            "with the page's properties as text underneath; press the pencil beside a result to edit those properties",
+            "reveal the pencil (**Edit query**) and **⋯**",
+            "**Done** (at the bottom right of the builder)",
+            "**Cancel** beside it drops unsaved text",
+            "and **Pages and blocks** travel with it",
+            "a query whose top level is **Any of** says so above its rows",
             "**Grouped by**",
             "**⋯ → View → Group by → None** to remove grouping",
             "instead of a table containing only `(none)`",
@@ -1546,7 +1593,7 @@ mod customize_look_guide_tests {
             "logseq/custom.css",
             "**Edit global CSS**",
             "per-user config directory",
-            "**Reload from disk**",
+            "**Reload**",
             "**Ctrl+K**",
             "Settings",
             "**Edit custom.css**",
@@ -1871,7 +1918,7 @@ mod og_20d_guide_tests {
         let files = include_str!("templates/files-external-edits-backups.md");
         for control in [
             "**Always ask before applying an external change**",
-            "**Reload from disk** / **Keep mine**",
+            "**Keep mine** / **Use disk version**",
             "Returning to Tine asks the watcher for a fresh pass",
             "grouped into one external revision",
             "`.git/`",

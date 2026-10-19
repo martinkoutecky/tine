@@ -268,6 +268,14 @@ pub(crate) struct EvalCtx<'a> {
     /// Every page key some page's `tags::` names: the graph-wide answer behind
     /// `used_as_tag` (OG `(all-page-tags)`). Empty unless the plan reads it.
     pub(crate) tag_targets: &'a HashSet<String>,
+    /// This execution's `links` / `linked_by` / `near` answers (graph-wide,
+    /// computed before any row; empty unless the plan reads links).
+    pub(crate) links: &'a super::link_graph::LinkAnswers,
+    /// This row's link-table node when the caller already knows it (every
+    /// row evaluated while building a link answer, and the only way to reach
+    /// a page without a file, which has no key in the table's page index).
+    /// `None`: look the node up by `page_key`.
+    pub(crate) link_node: Option<u32>,
     pub(crate) cache: &'a EvalCache,
 }
 
@@ -285,6 +293,7 @@ impl<'a> EvalCtx<'a> {
         config: &'a ParseConfig,
         registry: &'a Registry,
         tag_targets: &'a HashSet<String>,
+        links: &'a super::link_graph::LinkAnswers,
         cache: &'a EvalCache,
     ) -> Self {
         EvalCtx {
@@ -303,8 +312,16 @@ impl<'a> EvalCtx<'a> {
             config,
             registry,
             tag_targets,
+            links,
+            link_node: None,
             cache,
         }
+    }
+
+    /// The same row, known to be link-table node `node`.
+    pub(crate) fn with_link_node(mut self, node: u32) -> Self {
+        self.link_node = Some(node);
+        self
     }
 }
 
@@ -446,9 +463,11 @@ fn eval_block_leaf(
                     Quant::None => !hit,
                 }
             }
-            // `blocks` is a page-row relation; a block-anchored walk never sees it.
-            Rel::Blocks => false,
+            // Page-row relations; a block-anchored walk never sees them.
+            Rel::Blocks | Rel::Links | Rel::LinkedBy => false,
         },
+        // A page condition: reached from a block row only through `page(…)`.
+        Leaf::Near { .. } => false,
     }
 }
 
@@ -502,9 +521,14 @@ pub(crate) fn eval_page(filter: &Filter, ctx: &EvalCtx) -> bool {
                 }
                 _ => false,
             },
+            Leaf::Near { .. } => ctx.links.near(leaf, ctx.link_node, &ctx.page_key),
             Leaf::Rel { rel, quant, pred } => match rel {
                 Rel::Props => eval_props(*quant, pred, ctx.page_props, ctx),
                 Rel::Blocks => eval_page_blocks(*quant, pred, ctx),
+                Rel::Links | Rel::LinkedBy => {
+                    ctx.links
+                        .related(leaf, *rel, *quant, ctx.link_node, &ctx.page_key)
+                }
                 // A `page` hop from a page row is the row itself (og.rs
                 // `rebase_to_page`; the TQL printer collapses it the same way).
                 // The builder's page conditions carry it at `@page` (GH #619 c6).

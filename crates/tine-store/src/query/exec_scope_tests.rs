@@ -34,11 +34,15 @@ fn page_scoped_simple_and_tql_queries_build_no_unrelated_page_facts() {
             );
             let context = ExecutionContext::none();
             let crate::IrAnswer::Result(answer) = graph
-                .query_ir(crate::IrRequest::Run {
-                    query: &query,
-                    view: &view,
-                    context: &context,
-                })
+                .query_ir(
+                    crate::IrRequest::Run {
+                        query: &query,
+                        view: &view,
+                        context: &context,
+                    },
+                    &crate::Cancel::default(),
+                )
+                .map(|answer| answer.expect("never cancelled"))
                 .unwrap()
             else {
                 panic!("expected result")
@@ -96,11 +100,15 @@ fn page_constraints_preserve_or_not_refs_duplicates_and_page_rows() {
         );
         let context = ExecutionContext::none();
         let crate::IrAnswer::Result(answer) = graph
-            .query_ir(crate::IrRequest::Run {
-                query: &query,
-                view: &view,
-                context: &context,
-            })
+            .query_ir(
+                crate::IrRequest::Run {
+                    query: &query,
+                    view: &view,
+                    context: &context,
+                },
+                &crate::Cancel::default(),
+            )
+            .map(|answer| answer.expect("never cancelled"))
             .unwrap()
         else {
             panic!("expected result")

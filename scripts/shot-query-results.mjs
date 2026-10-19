@@ -28,7 +28,9 @@ try {
     await page.goto(`http://localhost:${port}/scripts/harness/query-results.html`);
     await page.waitForSelector(".query-summary-table");
     assert.equal(await page.locator(".query-page-link").count(), 9);
-    assert.equal(await page.locator(".query-page-props").count(), 0);
+    // GH #619 (D-20261018-Q619 Q6): each page row carries its properties as text under the title.
+    assert.equal(await page.locator(".query-page-props").count(), 9);
+    assert.ok((await page.locator(".query-page-props").first().textContent()).includes("source: Synthetic corpus"));
     assert.equal(await page.locator(".query-summary-table").count(), 1);
     assert.equal(await page.locator('[aria-label="Clear grouping"]').count(), 2);
     const raw = await page.evaluate(() => window.__qbvRaw());
@@ -47,7 +49,7 @@ try {
     await page.waitForFunction(() => window.__qbvRaw()[0].includes("tine.group-field:: prop:anchor"));
     assert.equal(await page.locator(".query-summary-table").count(), 1);
     await page.close();
-    console.log(`ok QBV ${width}px: title rows, named grouping, sole missing group hidden, clear persisted`);
+    console.log(`ok QBV ${width}px: title rows with property text, named grouping, sole missing group hidden, clear persisted`);
   }
 } finally {
   await browser?.close();

@@ -1024,6 +1024,8 @@ function leafPhrase(filter: Filter, leaf: Leaf, depth: number): PhraseSegment[] 
     }
     return phrase("query-prose-relation", { quant: leaf.quant, relation: leaf.rel, inner: filterPhrase(leaf.pred, depth + 1) });
   }
+  // `near` has no builder row yet (prototype): it reads as advanced TQL.
+  if (leaf.kind === "near") return advanced();
   switch (kind) {
     case "task": {
       const markers = listOf(leaf.value) ?? [];

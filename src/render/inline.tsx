@@ -30,6 +30,7 @@ import { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
 export { renderRawHtml, renderSanitizedHtml } from "./rawHtml";
 import { resolvedTarget } from "../pageIndex";
 import { pageIcon } from "../pageIconBatch";
+import { PageIcon } from "../components/PageIcon";
 import { coarseSpanAttrs, literalSpanAttrs, rebulletedSourceByteToRawByte, utf8ByteToUtf16Offset, type SpanDomAttrs } from "./spans";
 import { QuoteHighlightContext } from "./quoteHighlight";
 import { renderPlain, renderQuotedPlain } from "./plainText";
@@ -409,7 +410,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
         }}
       >
         <Show when={icon()}>
-          <span class="page-icon page-ref-icon"><EmojiText text={icon()!} /></span>
+          <span class="page-icon page-ref-icon"><PageIcon value={icon()!} name={targetName()} /></span>
         </Show>
         <Show when={props.tag} fallback={
           <Show when={props.alias} fallback={<><Show when={showBrackets()}><span class="bracket">[[</span></Show>{props.name}<Show when={showBrackets()}><span class="bracket">]]</span></Show></>}>
@@ -875,7 +876,7 @@ function AssetImage(props: {
     if (!name || !props.blockId) return;
     const confirmed = await readOwned(owner, backend().confirm(
       t("render-move-to-the-trash-and-remove-it-from-this-block-it-stays-recoverable-in-logseq-tine-trash", { name: String(name) }),
-      "Trash asset",
+      { title: t("confirm-trash-asset-title"), okLabel: t("confirm-move-to-trash"), cancelLabel: t("confirm-cancel") },
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     // Drop the reference first (saves the block). Trash the file only when the

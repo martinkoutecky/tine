@@ -197,6 +197,18 @@ describe("persisted split session", () => {
     expect(JSON.stringify(parsed)).not.toContain("results");
   });
 
+  it("keeps a Pages-and-blocks query workspace's result kinds across a restart, and drops an unreadable value only", () => {
+    const entry = (resultKinds: unknown) => JSON.stringify({
+      tabs: [{ history: [{ kind: "query", id: "query-2", sourceKind: "dsl", source: "{{tine-query @block}}", presentation: "list", resultKinds }], pos: 0 }],
+      activeIndex: 0,
+    });
+    expect(parsePersistedSession(entry("pages-and-blocks"))!.snapshots.get("main")?.tabs[0].history[0])
+      .toMatchObject({ kind: "query", id: "query-2", resultKinds: "pages-and-blocks" });
+    const bad = parsePersistedSession(entry("everything"))!.snapshots.get("main")?.tabs[0].history[0];
+    expect(bad).toMatchObject({ kind: "query", id: "query-2", source: "{{tine-query @block}}" });
+    expect(bad).not.toHaveProperty("resultKinds");
+  });
+
   it("restores the shallow panes of a hostile deep or wide layout instead of discarding the session (og C, I-22)", () => {
     const pane = (paneId: string) => JSON.stringify({ kind: "pane", paneId, ...page(paneId) });
     // A 10,000-level children[0] split chain, built as text so the fixture itself never recurses.

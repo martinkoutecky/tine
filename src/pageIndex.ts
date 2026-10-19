@@ -185,6 +185,12 @@ export function navigationName(name: string): string {
   return held()?.nameById.get(id) ?? name;
 }
 
+/** Physical owner's display name, using the inventory's existing identity map. */
+export function pageNameForPath(path: string): string | undefined {
+  ensureInstalled();
+  return held()?.nameById.get(path);
+}
+
 /** Every physical page and journal file (`undefined` until the first load). */
 export function allPages(): PageEntry[] | undefined {
   return ensureInstalled().allPages();

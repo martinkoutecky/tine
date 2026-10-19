@@ -29,6 +29,7 @@ pub fn is_linkable_property_separator(ch: char) -> bool {
 }
 
 use crate::page_filename as reference_filename;
+pub use crate::swallowed_rows::strip_swallowed_rows;
 
 /// Interpret an already accepted link target. Evidence uses File labels;
 /// filename candidates use decoded page filenames, preserving the existing
@@ -302,7 +303,7 @@ pub struct BlockRegions {
 }
 
 // The only conversion from prepared single-block coordinates to raw coordinates.
-fn raw_range(raw: &str, span: &Option<Span>, document: bool) -> Option<Range> {
+pub(crate) fn raw_range(raw: &str, span: &Option<Span>, document: bool) -> Option<Range> {
     let Span(start, end) = span.as_ref()?;
     let lead = if document {
         0
@@ -325,7 +326,7 @@ fn whole_line(raw: &str, r: Range) -> Range {
     };
     Range(start, end)
 }
-fn line_ranges(raw: &str, range: Range) -> Vec<Range> {
+pub(crate) fn line_ranges(raw: &str, range: Range) -> Vec<Range> {
     let mut at = range.0;
     range
         .slice(raw)
@@ -342,7 +343,7 @@ fn line_ranges(raw: &str, range: Range) -> Vec<Range> {
 /// folds a blank line into a property node before a trailing directive
 /// (`a:: 1\n\n#+b: 2`), and slicing that line as `[end + 1..end]` panicked
 /// every page open and the name index (GH #644).
-fn trimmed_range(raw: &str, range: Range) -> Range {
+pub(crate) fn trimmed_range(raw: &str, range: Range) -> Range {
     let s = range.slice(raw);
     let start = range.0 + (s.len() - s.trim_start().len());
     Range(start, start + s.trim().len())
@@ -426,6 +427,9 @@ fn mapped_regions(raw: &str, is_org: bool, blocks: &[Block], document: bool) -> 
     let mut result = BlockRegions::default();
     result.header = header_of(raw, blocks, !document);
     visit_blocks(raw, is_org, blocks, document, &mut result);
+    if !document && !is_org {
+        crate::swallowed_rows::add_regions(raw, blocks, &mut result);
+    }
     result.literals.sort_by_key(|r| r.0);
     let mut merged: Vec<Range> = Vec::new();
     for r in result.literals.drain(..) {

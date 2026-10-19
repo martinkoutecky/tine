@@ -221,11 +221,15 @@ fn export_definition_pages(
         tine_core::query::registry::Registry::none(),
     );
     let answer = graph
-        .query_ir(IrRequest::Run {
-            query: &parsed.query,
-            view: &ViewSettings::default(),
-            context: &ExecutionContext::default(),
-        })
+        .query_ir(
+            IrRequest::Run {
+                query: &parsed.query,
+                view: &ViewSettings::default(),
+                context: &ExecutionContext::default(),
+            },
+            &tine_store::Cancel::default(),
+        )
+        .map(|answer| answer.expect("never cancelled"))
         .map_err(|e| io::Error::other(e.to_string()))?;
     let IrAnswer::Result(result) = answer else {
         return Err(io::Error::other("query run returned another answer"));

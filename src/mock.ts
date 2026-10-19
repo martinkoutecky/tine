@@ -4,6 +4,7 @@
 import { linkable_property_names } from "./render/wasm/lsdoc_wasm.js";
 import type { GraphVerificationReport } from "./graphVerification";
 import type { Backend, GpuEnv, DebugInfo, DiagnosticFrontendKind, DiagnosticReport, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
+import type { ConfirmOptions } from "./backendInterface";
 import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
@@ -1127,7 +1128,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async pageIcons(names: string[]): Promise<Record<string, string>> {
       const out: Record<string, string> = {};
       for (const name of names) {
-        const m = all.find((p) => p.name === name)?.pre_block?.match(/^icon::\s*(.+)$/m);
+        const pre = all.find((p) => p.name === name)?.pre_block;
+        const m = pre?.match(/^tine\.icon::\s*(.+)$/m) ?? pre?.match(/^icon::\s*(.+)$/m);
         if (m) out[name] = m[1].trim();
       }
       return out;
@@ -1452,7 +1454,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async onConflictsChanged(): Promise<() => void> {
       return () => {};
     },
-    async confirm(message: string): Promise<boolean> {
+    async confirm(message: string, _options: ConfirmOptions): Promise<boolean> {
       // The browser/test env has a working global confirm (unlike the WebKitGTK
       // app), so defer to it. Read it off globalThis so test stubs (vi.stubGlobal)
       // are honoured.

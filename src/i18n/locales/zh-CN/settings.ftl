@@ -36,6 +36,10 @@ sticky-parents-load-error = 无法加载父块吸顶设置
 
 sticky-parents-save-error = 无法保存父块吸顶设置
 
+settings-mobile-navigation-label = 导航按钮置于底部
+
+settings-mobile-navigation-hint = 手机和平板：把侧边栏、搜索、后退和前进放在屏幕底部的一行（单手易触及），不放在顶栏。键盘弹出时，这一行让位给编辑工具栏。默认关闭，保存在本设备上。
+
 settings-embed-breadcrumbs = 块嵌入面包屑
 
 settings-embed-breadcrumbs-hint = 在嵌入块上方显示来源页面和父块路径。默认关闭。
@@ -733,7 +737,7 @@ settings-ui-trash = 移入回收站
 
 # Helper-return and component-prop interface text (GH #107).
 settings-prose-always-ask-before-applying-an-external-change = 应用外部更改前始终询问
-settings-prose-when-a-page-you-are-not-editing-changes-on-disk = 当你未在编辑的页面在磁盘上发生更改时，保留当前阅读的内容，并提供“从磁盘重新加载”和“保留我的版本”选项。发生冲突或编辑过程中到来的更改始终会得到安全处理。
+settings-prose-when-a-page-you-are-not-editing-changes-on-disk = 当你未在编辑的页面在磁盘上发生更改时，保留当前阅读的内容，并提供“保留我的版本”和“使用磁盘版本”选项。发生冲突或编辑过程中到来的更改始终会得到安全处理。
 settings-prose-re-reads-every-file-in-the-open-graph-and-rebuilds = 重新读取当前图谱中的每个文件，并重建 Tine 中的视图。
 settings-prose-show-tine-in-the-system-tray = 在系统托盘中显示 Tine
 settings-prose-adds-a-tray-notification-area-macos-menu-bar-icon-click = 添加系统托盘或通知区域图标（macOS 上为菜单栏图标）。点击图标可显示或隐藏主窗口，菜单包含“打开 Tine”“快速记录”和“退出”。关闭窗口仍会退出 Tine。默认关闭。

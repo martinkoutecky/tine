@@ -9,9 +9,10 @@
 //    still forces a re-read, as a fallback for a platform event that never came.
 // The focus listener installs lazily on first use.
 
+import { batch } from "solid-js";
 import { backend } from "./backend";
 import { captureBinding } from "./binding";
-import { invalidateAsset, refreshAsset } from "./assetCache";
+import { invalidateAsset, refreshAsset, refreshIconAssets } from "./assetCache";
 import { ownedWhen, readOwnedResource } from "./owned";
 import { onAppReturn } from "./windowRealm";
 
@@ -54,10 +55,12 @@ function deferHotSwap(rel: string): boolean {
  *  refresh in place. PDF/audio/video bytes are only invalidated for their next
  *  open: an already-open document or playback session is deliberately left alone. */
 export function applyObservedAssetChanges(paths: string[]): void {
-  for (const rel of new Set(paths.filter(Boolean))) {
-    if (deferHotSwap(rel)) invalidateAsset(rel);
-    else refreshAsset(rel);
-  }
+  batch(() => {
+    for (const rel of new Set(paths.filter(Boolean))) {
+      if (deferHotSwap(rel)) { invalidateAsset(rel); refreshIconAssets(); }
+      else refreshAsset(rel);
+    }
+  });
 }
 
 /** Subscribe this window to the watcher's `asset-changed` events for the graph

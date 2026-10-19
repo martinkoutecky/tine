@@ -315,8 +315,11 @@ pub fn lsdoc_tag() -> String {
 
 #[wasm_bindgen]
 pub fn parse_block_bundle_json(raw: &str, is_org: bool) -> String {
-    let blocks = lsdoc_block_parse::parse_block(raw, is_org);
+    let mut blocks = lsdoc_block_parse::parse_block(raw, is_org);
     let regions = block_regions::from_blocks(raw, is_org, &blocks);
+    if !is_org {
+        block_regions::strip_swallowed_rows(raw, &mut blocks);
+    }
     format!(
         "{{\"blocks\":{},\"regions\":{},\"sole_macro\":{}}}",
         lsdoc::blocks_to_json(&blocks).unwrap(),

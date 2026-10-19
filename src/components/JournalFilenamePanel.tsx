@@ -34,7 +34,8 @@ export function JournalFilenamePanel(): JSX.Element {
     const migrations = pending();
     const count = migrations.length;
     const confirmed = await readOwned(owner, backend().confirm(
-      t("journal-filename-panel-confirmation", { count })
+      t("journal-filename-panel-confirmation", { count }),
+      { okLabel: t("confirm-rename-files"), cancelLabel: t("confirm-cancel") },
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     setBusy(true);

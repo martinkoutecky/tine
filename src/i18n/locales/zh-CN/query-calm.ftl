@@ -4,6 +4,8 @@ query-calm-view = 视图
 
 query-calm-edit = 编辑
 
+query-calm-edit-query = 编辑查询
+
 query-calm-text = 以文本形式编辑
 
 query-calm-copy = 复制结果
@@ -14,6 +16,8 @@ query-calm-export = 导出…
 query-calm-share = 分享…
 
 query-calm-done = 完成
+
+query-calm-cancel = 取消
 
 query-calm-condition = 添加条件以查看结果。
 

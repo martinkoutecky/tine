@@ -791,6 +791,52 @@ describe("B5: the save path chooses the name and answers NotApplicable", () => {
       expect(document.activeElement).toBe(root.querySelector('[aria-label="Query actions"]'));
     } finally { dispose(); }
   });
+  // GH #619 c6 (D-20261018-Q619, UI1): Done is bottom-right under the conditions, not a top-right float.
+  it("puts Done at the end of the Edit panel, in a trailing action row", async () => {
+    load('{{query (task TODO)}}');
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      for (const action of ["Edit", "View"]) {
+        const panel = await openCalmQuery(root, action);
+        const actions = panel.lastElementChild as HTMLElement;
+        expect(actions.className).toBe("qc-panel-actions");
+        expect([...actions.children].map((el) => el.textContent)).toEqual(["Done"]);
+        expect(panel.firstElementChild).not.toBe(actions);
+        // opening lands on the first control, not on a Done button at the bottom
+        expect(document.activeElement).not.toBe(actions.querySelector(".qc-done"));
+        expect(panel.contains(document.activeElement)).toBe(true);
+        actions.querySelector<HTMLButtonElement>(".qc-done")!.click();
+        expect(root.querySelector(".qc-panel")).toBeNull();
+      }
+    } finally { dispose(); }
+  });
+  it("puts Save query text at the trailing end with its dismiss just left of it: Done when clean, Cancel with unsaved text", async () => {
+    load('{{query (task TODO)}}');
+    vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));
+    vi.spyOn(backend(), "queryOgExpressible").mockResolvedValue(true);
+    vi.spyOn(backend(), "printQuery").mockResolvedValue("(task TODO)");
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      const input = await openPane(root);
+      const panel = root.querySelector<HTMLElement>(".qc-panel")!;
+      // one dismiss per panel: the pane carries it, the generic Done row is not drawn
+      expect(panel.querySelectorAll(".qc-done")).toHaveLength(1);
+      expect(panel.querySelector(".qc-panel-actions")).toBeNull();
+      const row = root.querySelector<HTMLElement>(".query-text-pane-actions .dialog-actions-main")!;
+      expect([...row.children].map((el) => el.textContent)).toEqual(["Done", "Save query text"]);
+      expect(row.nextElementSibling).toBeNull();
+      expect(row.parentElement!.lastElementChild).toBe(row);
+      vi.spyOn(backend(), "parseQuery").mockImplementation(async source => parsedAs(source));
+      type(input, "-- task DONE");
+      expect([...row.children].map((el) => el.textContent)).toEqual(["Cancel", "Save query text"]);
+      const before = doc.byId.query.raw;
+      row.querySelector<HTMLButtonElement>(".qc-done")!.click();
+      expect(root.querySelector(".qc-panel")).toBeNull();
+      expect(doc.byId.query.raw).toBe(before);
+    } finally { dispose(); }
+  });
   it("switching the view from the View panel keeps the authored query text", async () => {
     load("{{query (todo TODO)}}");
     vi.spyOn(backend(), "queryRun").mockResolvedValue(blockRunResult(groups()));

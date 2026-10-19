@@ -85,6 +85,77 @@ fn page_icons_use_the_file_format_and_parser_property_ownership() {
     assert!(!icons.contains_key("Literal"));
 }
 
+/// D-20261018-IC1: `tine.icon::` is the page icon property; the OG-compatible `icon::` is the
+/// fallback. A dotted key must parse in every page-property form, whichever is written first
+/// wins by name (not by position), and a blank `tine.icon::` does not hide `icon::`.
+#[test]
+fn page_icons_prefer_tine_icon_and_fall_back_to_icon() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("pages")).unwrap();
+    for (name, raw) in [
+        ("Tine.md", "tine.icon:: ![](../assets/a.png)\n\n- body\n"),
+        ("Legacy.md", "icon:: 🏁\n\n- body\n"),
+        ("Both.md", "icon:: 🏁\ntine.icon:: ⭐\n\n- body\n"),
+        ("Blank.md", "tine.icon::\nicon:: 🏁\n\n- body\n"),
+        ("Upper.md", "Tine.Icon:: ⭐\n\n- body\n"),
+        (
+            "Directive.org",
+            "#+tine.icon: [[file:../assets/a.png]]\n\n* body\n",
+        ),
+        ("OrgBoth.org", "#+icon: 🏁\n#+tine.icon: ⭐\n\n* body\n"),
+        (
+            "Drawer.org",
+            ":PROPERTIES:\n:icon: 🏁\n:tine.icon: ⭐\n:END:\n\n* body\n",
+        ),
+        ("Literal.md", "```\ntine.icon:: 👻\n```\n\n- body\n"),
+        ("Owner.md", "tine.icon:: ⭐\nalias:: Nick\n\n- body\n"),
+    ] {
+        std::fs::write(dir.path().join("pages").join(name), raw).unwrap();
+    }
+    let store = Store::open(dir.path(), Default::default()).unwrap().0;
+    let names = [
+        "Tine",
+        "Legacy",
+        "Both",
+        "Blank",
+        "Upper",
+        "Directive",
+        "OrgBoth",
+        "Drawer",
+        "Literal",
+        "Owner",
+        "Nick",
+    ];
+    let icons = store
+        .whole_graph()
+        .unwrap()
+        .page_icons(&names.map(String::from));
+    let icon = |name: &str| icons.get(name).map(String::as_str);
+    assert_eq!(icon("Tine"), Some("![](../assets/a.png)"));
+    assert_eq!(icon("Legacy"), Some("🏁"), "icon:: is the fallback");
+    assert_eq!(
+        icon("Both"),
+        Some("⭐"),
+        "tine.icon:: wins wherever it is written"
+    );
+    assert_eq!(
+        icon("Blank"),
+        Some("🏁"),
+        "a blank tine.icon:: does not hide icon::"
+    );
+    assert_eq!(icon("Upper"), Some("⭐"), "keys compare case-insensitively");
+    assert_eq!(icon("Directive"), Some("[[file:../assets/a.png]]"));
+    assert_eq!(icon("OrgBoth"), Some("⭐"));
+    assert_eq!(icon("Drawer"), Some("⭐"));
+    assert_eq!(icon("Literal"), None, "a fenced line is not a property");
+    assert_eq!(
+        icon("Nick"),
+        Some("⭐"),
+        "an alias inherits the owner's icon"
+    );
+}
+
 #[test]
 fn saving_org_conflict_marker_examples_preserves_the_literal_and_allows_the_edit() {
     let _integration_guard = crate::integration_lock();

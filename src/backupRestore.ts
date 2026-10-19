@@ -36,7 +36,8 @@ export async function restoreBackupFromSettings(
   let transitioning = false;
   try {
     const confirmed = await readOwned(owner, backend().confirm(
-      t("backup-restore-confirmation", { when, files: String(backup.files) })
+      t("backup-restore-confirmation", { when, files: String(backup.files) }),
+      { okLabel: t("confirm-restore-backup"), cancelLabel: t("confirm-cancel") },
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     setGraphTransitioning(true);

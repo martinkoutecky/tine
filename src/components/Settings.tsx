@@ -20,7 +20,7 @@ import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
-import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
+import { isMac, isMobilePlatform, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
 import {
   copyIncludeSubtree,
   setCopyIncludeSubtree,
@@ -29,7 +29,7 @@ import {
   refClickZoom,
   setRefClickZoom,
 } from "../copySettings";
-import { navReuseTabs, setNavReuseTabs } from "../navSettings";
+import { mobileNavigationAtBottom, navReuseTabs, setMobileNavigationAtBottom, setNavReuseTabs } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
@@ -134,7 +134,7 @@ export function Settings(): JSX.Element {
     (entry.id !== "plugins" || pluginsAvailable()) && (entry.id !== "sharing" || sharingAvailable())));
   const matches = createMemo(() => {
     const query = settingsQuery();
-    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab)), query) : [];
+    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && (isMobilePlatform || !entry.mobileOnly)), query) : [];
   });
   // A setting whose field mounts after an async load (Developer tools waits for
   // the platform probe) is not in the DOM when the tab opens, so the lookup is
@@ -498,6 +498,14 @@ function AppearanceTab(props: { search: string }): JSX.Element {
           </Show>
         </div>
       </Field>
+
+      {/* GH #716: the phone/tablet app keeps Sidebar, Search, Back and Forward in
+          the top bar; this opt-in restores the GH #598 bottom row. */}
+      <Show when={isMobilePlatform}>
+        <Field label={render(msg("settings-mobile-navigation-label"))} hint={render(msg("settings-mobile-navigation-hint"))}>
+          <Toggle on={mobileNavigationAtBottom()} onClick={() => setMobileNavigationAtBottom(!mobileNavigationAtBottom())} />
+        </Field>
+      </Show>
 
       <Field label={t("settings-ui-wide-mode")} hint={t("settings-ui-drops-the-reading-width-cap")}>
         <Toggle on={wideMode()} onClick={toggleWideMode} />
@@ -1159,7 +1167,8 @@ function JournalConflictsPanel(): JSX.Element {
   const trashFile = async (name: string) => {
     const owner = bindingOwner();
     const confirmed = await readOwned(owner, backend().confirm(
-        t("settings-ui-move-the-journal-file-to-the-trash-it-s", { name: name })
+        t("settings-ui-move-the-journal-file-to-the-trash-it-s", { name: name }),
+        { okLabel: t("confirm-move-to-trash"), cancelLabel: t("confirm-cancel") },
       ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     await writeOwned(owner, reconcile(() => backend().trashJournalFile(name, "delete-page"), msg("settings-ui-moved-to-trash", { name })));
@@ -1447,7 +1456,8 @@ function AssetsTab(): JSX.Element {
     const info = trashInfo();
     if (!info.count) return;
     const confirmed = await readOwned(owner, backend().confirm(
-        t("settings-asset-trash-confirmation", { count: info.count, size: fmtSize(info.bytes) })
+        t("settings-asset-trash-confirmation", { count: info.count, size: fmtSize(info.bytes) }),
+        { okLabel: t("confirm-empty-trash"), cancelLabel: t("confirm-cancel") },
       ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {

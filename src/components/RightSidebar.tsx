@@ -18,7 +18,8 @@ import { nearestAncestors } from "../render/blockTrail";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
 import { EmojiText } from "../render/emoji";
-import { pageIconPrefix } from "../pageIconBatch";
+import { pageIcon } from "../pageIconBatch";
+import { PageIcon } from "./PageIcon";
 import { backend } from "../backend";
 import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
@@ -424,7 +425,7 @@ function PageItem(props: {
           else openPageTarget(target);
         }} onAuxClick={(e) => internalLinkAuxClick(e, () =>
           openPageTargetInNewTab({ name: props.item.name, pageKind: props.item.pageKind, path: props.item.path }))}>
-          <EmojiText text={pageIconPrefix(props.item.name) + props.item.name} />
+          <Show when={pageIcon(props.item.name)}>{icon => <><PageIcon value={icon()} name={props.item.name} />{" "}</>}</Show><EmojiText text={props.item.name} />
         </a>
         <ItemActions index={props.row.index} surfaceKey={props.surfaceKey} page={props.item} collapsed={props.collapsed} onClose={props.onClose} />
       </div>

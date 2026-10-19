@@ -1865,10 +1865,10 @@ describe("page route loading", () => {
 });
 
 describe("page properties", () => {
-  it("GH #346: keeps icon visible in the properties list and editable beside the title icon", async () => {
+  it.each(["icon", "tine.icon"])("GH #346: keeps %s:: visible in the properties list and editable beside the title icon", async (key) => {
     const propsId = "11111111-1111-4111-8111-111111111111";
     const dto = { name: "Flag", kind: "page" as const, title: "Flag", pre_block: null,
-      blocks: [{ id: propsId, raw: "icon:: 🚩", collapsed: false, children: [] }] };
+      blocks: [{ id: propsId, raw: `${key}:: 🚩`, collapsed: false, children: [] }] };
     setDoc({ byId: { [propsId]: node(propsId, dto.blocks[0].raw, dto.name) },
       pages: [page(dto.name, "page", [propsId])], feed: [dto.name], loaded: true });
     vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
@@ -1876,11 +1876,11 @@ describe("page properties", () => {
     const { root, dispose } = mount(() => <PageView />);
     try {
       await tick(); await tick();
-      expect(root.querySelector(".page-properties")?.textContent).toContain("icon");
+      expect(root.querySelector(".page-properties")?.textContent).toContain(key);
       (root.querySelector(".page-properties .prop-row") as HTMLElement).click();
       await tick();
       expect(editingId()).toBe(propsId);
-      expect(root.querySelector("textarea")?.value).toContain("icon:: 🚩");
+      expect(root.querySelector("textarea")?.value).toContain(`${key}:: 🚩`);
     } finally { dispose(); }
   });
   it("keeps a first-bullet alias editor mounted while the property is being typed (GH #62)", async () => {
@@ -2066,7 +2066,7 @@ describe("Markdown preamble content", () => {
       await tick(); await tick();
       expect(pageToDto(dto.name)).toBeNull();
       finishPageHeaderEdit(header);
-      expect(toasts().some((toast) => toast.message.includes("Page-header properties must contain only valid key:: value lines"))).toBe(true);
+      expect(toasts().map((toast) => toast.message)).toEqual(["Page properties can't be saved yet: the properties block has child blocks. Outdent or delete them."]);
       const face = root.querySelector<HTMLElement>(`[data-block-id="${child}"] .block-content-wrapper`);
       expect(face).not.toBeNull();
       face!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0, cancelable: true }));

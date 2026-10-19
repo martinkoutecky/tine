@@ -33,7 +33,6 @@ export interface MessageArgs {
   "app-capture-couldn-t-be-saved-its-text": {};
   "app-captured-to": { "title": string | number };
   "app-captured-to-today-s-journal": {};
-  "app-choose-no-to-review-retry-saving": { "inventory": string | number; "reason": string | number };
   "app-close": {};
   "app-close-explanation": { "reason": string | number };
   "app-close-inventory": { "inventory": string | number };
@@ -52,6 +51,8 @@ export interface MessageArgs {
   "app-prose-navigation-sidebar": {};
   "app-prose-unexpected-failure": {};
   "app-quick-capture-could-not-connect-to-this": {};
+  "app-quit-without-saving-body": { "inventory": string | number; "reason": string | number };
+  "app-quit-without-saving-title": { "count": number };
   "app-refreshing-changes-from-disk": {};
   "app-settings-t-s": {};
   "app-still-saving-your-changes-closing-in": {};
@@ -61,7 +62,6 @@ export interface MessageArgs {
   "app-tine-was-renamed-under-the-hood-so": {};
   "app-toggle-right-sidebar-t-r": {};
   "app-toggle-theme-t-t": {};
-  "app-unsaved-changes": {};
   "asset-landing-saved-to-the-assets-of-graph-it-was": { "graphName": string | number; "stored": string | number };
   "asset-landing-the-asset-was-saved-but-it-was-not": {};
   "audio-overlay-back-15s": {};
@@ -270,11 +270,33 @@ export interface MessageArgs {
   "config-query-details": {};
   "config-query-title": {};
   "config-query-unsupported": {};
-  "conflict-bar-keep-mine-overwrite": {};
+  "confirm-allow-and-open": {};
+  "confirm-cancel": {};
+  "confirm-close-tab": {};
+  "confirm-delete": {};
+  "confirm-delete-workspace": {};
+  "confirm-discard-and-quit": {};
+  "confirm-discard-and-reload": {};
+  "confirm-discard-changes": {};
+  "confirm-discard-copy": {};
+  "confirm-discard-my-changes": {};
+  "confirm-dont-allow": {};
+  "confirm-empty-trash": {};
+  "confirm-go-back": {};
+  "confirm-keep-editing": {};
+  "confirm-keep-open": {};
+  "confirm-merge-pages": {};
+  "confirm-move-to-trash": {};
+  "confirm-open-link": {};
+  "confirm-rename-files": {};
+  "confirm-restore-backup": {};
+  "confirm-trash-asset-title": {};
+  "confirm-uninstall": {};
   "conflict-bar-live-notice": { "name": string | number };
   "conflict-bar-review": {};
   "conflict-bar-unsaved-notice": { "deleted": number; "name": string | number };
-  "conflict-bar-use-disk-version": {};
+  "conflict-choice-keep-mine": {};
+  "conflict-choice-use-disk-version": {};
   "conflict-overview-conflict-copy": {};
   "conflict-overview-conflicts": {};
   "conflict-overview-couldn-t-discard-it": { "error": string | number };
@@ -467,6 +489,8 @@ export interface MessageArgs {
   "crossing-notice-undo-that-change": {};
   "crossing-notice-undo-use-ctrl-z": {};
   "crossing-notice-warning": { "feature": string | number; "has_feature": number };
+  "css-cancel": {};
+  "css-discard-confirm": {};
   "css-draft-recovered": {};
   "css-edit-global": {};
   "css-edit-graph": {};
@@ -479,6 +503,7 @@ export interface MessageArgs {
   "css-read-failed": { "error": string | number };
   "css-reload": {};
   "css-reload-confirm": {};
+  "css-reload-title": {};
   "css-safe-hint": {};
   "css-save": {};
   "css-save-close": {};
@@ -500,7 +525,6 @@ export interface MessageArgs {
   "date-date-picker-previous-month": {};
   "date-date-picker-remove-time": {};
   "date-date-picker-time": {};
-  "date-date-picker-today": {};
   "date-date-picker-weekly": {};
   "date-date-picker-yearly": {};
   "date-target-label": { "target": string | number };
@@ -793,8 +817,6 @@ export interface MessageArgs {
   "export-remember-failed": { "error": string | number };
   "export-reveal-failed": { "error": string | number };
   "export-show-folder": {};
-  "external-change-bar-keep-mine": {};
-  "external-change-bar-reload-from-disk": {};
   "external-change-bar-this-page-changed-on-disk-you-asked-to": {};
   "external-link-couldn-t-open": { "dest": string | number; "error": string | number };
   "failure-boundary-copy-details": {};
@@ -1315,7 +1337,6 @@ export interface MessageArgs {
   "pdf-highlight-conflict-resolve-it-before-editing-more-highlights": {};
   "pdf-highlight-saved-but-an-unused-area-image-couldn-t-move-to-trash": { "detail": string | number };
   "pdf-highlight-saved-but-notes-couldn-t-reload": { "detail": string | number };
-  "pdf-keep-mine": {};
   "pdf-linked-references": {};
   "pdf-loading-outline": {};
   "pdf-local-highlight-changes-discarded-disk-sidecar-was-left-untouched": {};
@@ -1344,7 +1365,6 @@ export interface MessageArgs {
   "pdf-theme-options": {};
   "pdf-unsaved-highlight": {};
   "pdf-untitled": {};
-  "pdf-use-disk-version": {};
   "pdf-using-disk-highlights-local-changes-were-discarded": {};
   "pdf-zoom-in": {};
   "pdf-zoom-out": {};
@@ -1431,6 +1451,8 @@ export interface MessageArgs {
   "print-pdf-export-stopped-because-some-page-edits-could": {};
   "print-print-failed": {};
   "print-query-limit": { "detail": string | number };
+  "properties-page-header-bad-line": { "line": string | number; "text": string | number };
+  "properties-page-header-has-child-blocks": {};
   "properties-page-header-properties-must-contain-only-valid-key": {};
   "property-type-could-not-save-property-type": { "error": string | number };
   "property-type-declare-type": {};
@@ -1447,6 +1469,7 @@ export interface MessageArgs {
   "query-calm-all": {};
   "query-calm-apply": {};
   "query-calm-backlinks": {};
+  "query-calm-cancel": {};
   "query-calm-collapse": {};
   "query-calm-columns": {};
   "query-calm-condition": {};
@@ -1456,6 +1479,7 @@ export interface MessageArgs {
   "query-calm-date-comparison": {};
   "query-calm-done": {};
   "query-calm-edit": {};
+  "query-calm-edit-query": {};
   "query-calm-expand": {};
   "query-calm-export": {};
   "query-calm-fold-failed": {};
@@ -2173,6 +2197,8 @@ export interface MessageArgs {
   "settings-links": {};
   "settings-links-to-pages-that-do-not-exist": {};
   "settings-links-to-the-web-or-a-file": {};
+  "settings-mobile-navigation-hint": {};
+  "settings-mobile-navigation-label": {};
   "settings-most-recent-first-journal-pages-by": {};
   "settings-newest-first": {};
   "settings-no-underline": {};
@@ -2283,6 +2309,7 @@ export interface MessageArgs {
   "settings-search-page-block-autocomplete-spacing": {};
   "settings-search-page-references-config-shortcut": {};
   "settings-search-paste-drag-media-names": {};
+  "settings-search-phone-tablet-top-bar-bottom-row-back-forward-search-sidebar": {};
   "settings-search-quick-capture-enter-key": {};
   "settings-search-quick-share-account": {};
   "settings-search-quick-share-find": {};

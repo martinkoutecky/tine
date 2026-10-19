@@ -3,6 +3,11 @@ import { expect, it } from "vitest";
 
 const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
 
+it("the Guide explains local image icon syntax, containment and sizing", () => {
+  const text = guide("pages-links-references-search");
+  for (const detail of ["tine.icon:: ![](../assets/quick-capture.png)", "#+tine.icon: [[file:../assets/quick-capture.png]]", "`icon::` accepts the same links when the page has no `tine.icon::`", "Logseq prints an `icon::` value as raw text", "Logseq shows `tine.icon::` as an ordinary property", "inside the graph's `assets/`", "no larger than 1 MiB (1,048,576 bytes)", "Larger files show no icon", "width/height attributes are ignored", "no remote image is requested", "show no icon or raw link text", "property row still shows the value as written", "without reloading"]) expect(text).toContain(detail);
+});
+
 it("the Guide teaches Chinese IME reference and command input with ASCII storage", () => {
   const references = guide("pages-links-references-search");
   for (const detail of ["`【【`", "`（（`", "`(())`", "composition finishes", "`《〈`", "selected text", "ASCII"]) {

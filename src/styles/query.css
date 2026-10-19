@@ -480,7 +480,9 @@
   text-decoration: underline;
 }
 .qs-group {
-  border-left: 2px solid var(--border-color);
+  /* GH #619 c6 (Q4): a group is told apart by a heavier rail, a ruled heading and a divider from its
+     siblings, not by more indentation. */
+  border-left: 3px solid var(--text-muted);
   padding-left: 8px;
   margin-left: 2px;
   display: flex;
@@ -491,12 +493,29 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--border-color);
+}
+.qs-root-op {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 4px;
+}
+/* A divider wherever a group meets a sibling (another group or a loose condition). */
+.qs-rows > .qs-listitem:has(> .qs-group) + *,
+.qs-rows > * + .qs-listitem:has(> .qs-group) {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-color);
 }
 .qs-group-op {
   border: none;
   background: transparent;
-  color: var(--text-muted);
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -851,6 +870,14 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+/* GH #619 c6 (UI1): Save at the trailing end, its dismiss just left of it. */
+.query-text-pane-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.query-text-pane-actions .qb-commit { margin-top: 0; }
 .query-text-pane-error {
   color: var(--tine-danger-color, var(--palette-danger));
   font-size: 12px;

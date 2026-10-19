@@ -49,7 +49,8 @@ export function ConflictOverview(props: { router: PaneRouter }): JSX.Element {
     const owner = bindingOwner(() => alive);
     const name = path.split("/").pop() ?? path;
     const confirmed = await readOwned(owner, backend().confirm(
-      t("conflict-overview-discard-confirmation", { name, page: pageName })
+      t("conflict-overview-discard-confirmation", { name, page: pageName }),
+      { okLabel: t("confirm-discard-copy"), cancelLabel: t("confirm-cancel") },
     ));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     try {

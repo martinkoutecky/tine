@@ -1,3 +1,5 @@
+import { PAGE_ICON_PROPERTIES, PAGE_ICON_PROPERTY } from "../pageIconImage";
+import { pageIconPropertyInUse, readPageIconProperty } from "../pageIconBatch";
 import { focusOnMount } from "../focusOnMount";
 import { Rich } from "../i18n/Rich";
 import { boardGroupField as groupFieldForToken, formulaReferenceName } from "../sheet/boardColumns";
@@ -16,7 +18,7 @@ import { openPage, openPageTarget, openPageTargetInNewTab, openPageAtBlock, page
 import { focusedRouter, removePageTargetAcrossPanes } from "../panes";
 import "../graph"; // installs the document rename's navigation refresh handler
 import { backend } from "../backend";
-import { readPageProperty, setPageProperty } from "../document";
+import { setPageProperty } from "../document";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
@@ -853,7 +855,7 @@ function PageMenu(props: {
     // delete the page with no prompt.
     // A conflicted page is deleted through its conflict (master parity): the
     // prompt says the unsaved changes go too.
-    const confirmed = await readOwned(owner, backend().confirm(t("context-menu-ui-delete-the-file-moves-to-the-graph-s-tine", { name, unsaved: isConflicted(name) ? "discard" : "none" })));
+    const confirmed = await readOwned(owner, backend().confirm(t("context-menu-ui-delete-the-file-moves-to-the-graph-s-tine", { name, unsaved: isConflicted(name) ? "discard" : "none" }), { okLabel: t("confirm-delete"), cancelLabel: t("confirm-cancel") }));
     if (confirmed.kind === "stale" || !confirmed.value) return;
     if (!captured.path && (pageByName(name) !== openedPage || pageByName(name)?.id !== path)) {
       pushToast(msg("context-menu-ui-this-page-target-changed-reopen-the-page-actions-menu"), "error");
@@ -979,12 +981,14 @@ function PageIconMenu(props: { name: string; close: (restoreFocus?: boolean) => 
   const subject = pageByName(props.name);
   const owner = graphOwner(() => !!subject && pageByName(props.name) === subject);
   const [editing, setEditing] = createSignal(false);
-  const [value, setValue] = createSignal(readPageProperty(props.name, "icon") ?? "");
+  const [value, setValue] = createSignal(readPageIconProperty(props.name));
   let input: HTMLInputElement | undefined;
   let trigger: HTMLButtonElement | undefined;
   const write = (value: string | null) => {
     if (!owner()) pushToast(msg("page-icon-stale"), "error");
-    else setPageProperty(props.name, "icon", value);
+    else if (value === null) {
+      for (const property of PAGE_ICON_PROPERTIES) setPageProperty(props.name, property, null);
+    } else setPageProperty(props.name, pageIconPropertyInUse(props.name) || PAGE_ICON_PROPERTY, value);
     props.close();
   };
   createEffect(() => { if (editing()) queueMicrotask(() => input?.focus()); });
@@ -1006,7 +1010,7 @@ function PageIconMenu(props: { name: string; close: (restoreFocus?: boolean) => 
         <button type="button" class="ctx-template-submit" onClick={() => write(value().trim() || null)}>{t("page-icon-save")}</button>
       </div>
     </Show>
-    <Show when={readPageProperty(props.name, "icon")}>
+    <Show when={readPageIconProperty(props.name)}>
       <button class="ctx-item ctx-page-item" role="menuitem" tabIndex={-1} data-page-action-id="remove-page-icon"
         onClick={() => write(null)}>{t("page-icon-remove")}</button>
     </Show>

@@ -132,7 +132,7 @@ export function SidebarFavorites(props: {
               {toggle}
               {/* ⭐ via EmojiText: WebKitGTK's Skia COLRv1 path crashes painting a
                   raw color-emoji glyph on hardened libstdc++ (#29). */}
-              <SidebarTitle text={`${name ? pageIcon(name) || "⭐" : "⭐"} ${title()}`} fullTitle={title()} />
+              <SidebarTitle icon={name ? pageIcon(name) || "⭐" : "⭐"} pageName={name ?? undefined} text={title()} fullTitle={title()} />
             </div>
           );
         }}
