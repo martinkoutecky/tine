@@ -51,8 +51,12 @@ if (index.schemaVersion !== 1 || !Array.isArray(index.inventories) || index.inve
       problems.push(`${inventory.id}: catalog must have schemaVersion 1 and entries`);
       continue;
     }
+    const entryIds = new Set();
     for (const entry of data.entries) {
       if (!entry.id?.startsWith(inventory.idPrefix)) problems.push(`${inventory.id}: invalid entry id ${entry.id}`);
+      // A union merge of two catalog sides can copy a row twice (2026-10-19); one id, one row.
+      if (entryIds.has(entry.id)) problems.push(`${inventory.id}: duplicate entry id ${entry.id}`);
+      entryIds.add(entry.id);
       if (!allowedStatuses.has(entry.status)) problems.push(`${entry.id}: invalid status ${entry.status}`);
       // A single issue can contain a later, separately testable regression after
       // an earlier fix shipped. Catalog IDs own behaviors; issue numbers only
