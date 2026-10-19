@@ -1081,19 +1081,24 @@ export function PdfViewer(props: {
     queueMicrotask(() => captureTextSelection(e.target,
       touch ? { x: touch.clientX, y: touch.clientY } : undefined));
   };
-  onMount(() => {
+  // Follows the input capability (D-20261018-W1): registered while a touch input
+  // exists, removed when it goes away, so a convertible changing mode does not
+  // need the PDF reopened.
+  createEffect(() => {
     if (!touchCapable()) return;
-    let timer: number | undefined;
-    const selectionChanged = () => {
-      clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        if (!findOpen()) captureTextSelection(viewerRootEl ?? null);
-      }, 120);
-    };
-    ownerWindow.document.addEventListener("selectionchange", selectionChanged);
-    onCleanup(() => {
-      clearTimeout(timer);
-      ownerWindow.document.removeEventListener("selectionchange", selectionChanged);
+    untrack(() => {
+      let timer: number | undefined;
+      const selectionChanged = () => {
+        clearTimeout(timer);
+        timer = window.setTimeout(() => {
+          if (!findOpen()) captureTextSelection(viewerRootEl ?? null);
+        }, 120);
+      };
+      ownerWindow.document.addEventListener("selectionchange", selectionChanged);
+      onCleanup(() => {
+        clearTimeout(timer);
+        ownerWindow.document.removeEventListener("selectionchange", selectionChanged);
+      });
     });
   });
 

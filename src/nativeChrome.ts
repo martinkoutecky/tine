@@ -19,7 +19,7 @@ import { browserPlatform } from "./browserPlatform";
 //
 // The capture mini-window is deliberately frameless and ignores this preference.
 
-import { createSignal } from "solid-js";
+import { createEffect, createRoot, createSignal } from "solid-js";
 import { backend } from "./backend";
 import { touchGestures } from "./inputCapability";
 import { advanceRevision, currentRevision, ownedWhen, readOwned, revisionOwner, serializeDurable } from "./owned";
@@ -93,10 +93,19 @@ export function touchGesturePlatform(): "android" | "ios" | null {
  *  rows, swipe feedback) can key on it. The value is the OS whose back-gesture
  *  model applies, or "touch" on a desktop-class device with a touch screen.
  *  CSS never asks which platform this is (D-20261018-W1): the former
- *  `data-platform` attribute is gone. */
-export function installPlatformAttribute(): void {
-  if (typeof document === "undefined") return;
-  if (touchGestures()) document.documentElement.setAttribute("data-touch-gestures", touchGesturePlatform() ?? "touch");
+ *  `data-platform` attribute is gone. The stamp follows the input capability
+ *  (set when a touch input appears, removed when it goes away), so CSS and the
+ *  swipe wiring agree. Returns the stop function. */
+export function installPlatformAttribute(): () => void {
+  if (typeof document === "undefined") return () => {};
+  const root = document.documentElement;
+  return createRoot((dispose) => {
+    createEffect(() => {
+      if (touchGestures()) root.setAttribute("data-touch-gestures", touchGesturePlatform() ?? "touch");
+      else root.removeAttribute("data-touch-gestures");
+    });
+    return dispose;
+  });
 }
 
 // macOS detection: WKWebView's UA contains "Macintosh"/"Mac OS X". navigator.platform

@@ -154,7 +154,7 @@ import { SheetBoard } from "./SheetBoard";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
-import { wireBlockSwipe } from "./blockSwipeWiring";
+import { followBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
 import { clipboardSizeAllowed } from "../clipboardImage";
 import { noticeMoveOutOfView } from "../moveNotice";
@@ -345,8 +345,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       <div
         class="block-main"
         ref={(el) => {
-          // GH #501: touch swipes on the row (touch platforms only; src/blockSwipe.ts).
-          onMount(() => onCleanup(wireBlockSwipe(el, { id: props.id, scope: outlineScope, editing, readOnly })));
+          // GH #501: touch swipes on the row while a touch input exists, following
+          // it if it appears or goes away (src/blockSwipe.ts).
+          followBlockSwipe(el, { id: props.id, scope: outlineScope, editing, readOnly });
         }}
         classList={{
           // Heading level on the row so the bullet column can match the (taller)

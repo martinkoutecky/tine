@@ -1,3 +1,4 @@
+import { createEffect, onCleanup, untrack } from "solid-js";
 import { attachBlockSwipe, swipeDisabledByTags, type BlockSwipeAction } from "../blockSwipe";
 import { graphMeta } from "../graphSession";
 import { pageIdentityKey } from "../pageIdentity";
@@ -13,6 +14,18 @@ export interface BlockRowSwipeDeps {
   scope: OutlineScope | null | undefined;
   editing(): boolean;
   readOnly(): boolean;
+}
+
+/** The block-row swipe for the current owner, following the input capability:
+ *  attached while a touch input exists, detached (every listener and any cue
+ *  removed) when it goes away, re-attached when it returns (D-20261018-W1: a
+ *  touch laptop or convertible changes mode while the row stays mounted). One
+ *  computation per row, as the former mount-time wiring was. */
+export function followBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): void {
+  createEffect(() => {
+    if (!touchGestures()) return;
+    untrack(() => onCleanup(wireBlockSwipe(row, deps)));
+  });
 }
 
 /** Runs a block-row swipe through the commands the keyboard and the selection
