@@ -8,38 +8,32 @@
 //! one by-path stamp. Its own test binary: the counters are process-global.
 use std::fs;
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use tine_store::cost_counters::{self, Counts};
 use tine_store::Store;
 
 static CASE_LOCK: Mutex<()> = Mutex::new(());
 
-/// Longer than the path-scoped diff's debounce plus the racy follow-up.
-const QUIET: Duration = Duration::from_secs(4);
+/// How long a settled watcher is watched for further reads. The only
+/// wall-clock wait left, and it can only miss a late read, never invent one.
+const ABSENCE: Duration = Duration::from_secs(4);
 
 /// Every read of a graph file, on any thread.
 fn reads(c: &Counts) -> u64 {
     c.full_reads + c.preamble_reads + c.hash_reads + c.watcher_reads
 }
 
-/// Wait until at least `least` reads were counted and none for `QUIET`.
-fn settle(least: u64) -> Counts {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let mut last = reads(&cost_counters::snapshot());
-    let mut quiet_since = Instant::now();
-    while last < least || quiet_since.elapsed() < QUIET {
-        assert!(
-            Instant::now() < deadline,
-            "the watcher never settled: {last} reads"
-        );
-        std::thread::sleep(Duration::from_millis(100));
-        let now = reads(&cost_counters::snapshot());
-        if now != last {
-            last = now;
-            quiet_since = Instant::now();
-        }
-    }
+/// The measurement boundary (contract §5.4, REVIEW-3b-P2b-2 N3): the watcher
+/// drained, so every notification of a write made so far is reconciled and no
+/// racy follow-up is due. A quiet-counters timer cannot be one: a watcher
+/// that a loaded host has not yet installed, or is blocked, is as quiet as an
+/// idle one, and its work then lands in the next window.
+fn settle(store: &Store) -> Counts {
+    assert!(
+        store.watcher_drained_for_tests(Duration::from_secs(60)),
+        "the watcher never drained"
+    );
     cost_counters::snapshot()
 }
 
@@ -62,14 +56,18 @@ fn deliver(pages: usize, delivered: usize) -> (Counts, Counts) {
     }
     let store = Store::open(&root, Default::default()).unwrap().0;
     store.whole_graph().unwrap();
-    settle(0);
+    settle(&store);
     cost_counters::reset();
     for index in 0..delivered {
         fs::write(page(index), format!("- delivered {index}\n")).unwrap();
     }
-    let delivery = settle(delivered as u64);
+    let delivery = settle(&store);
+    assert!(
+        reads(&delivery) >= delivered as u64,
+        "the drain returned before the delivery was read: {delivery:?}"
+    );
     cost_counters::reset();
-    std::thread::sleep(QUIET);
+    std::thread::sleep(ABSENCE);
     let after = cost_counters::snapshot();
     store.close();
     (delivery, after)

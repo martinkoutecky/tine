@@ -38,12 +38,19 @@ struct Graph {
     aged: bool,
     /// How many of the unrelated pages the window holds open beside it.
     held: usize,
+    /// Whether the store's background watcher is stopped for the measurement.
+    /// Its echo of the save reaches the host as one more observation round
+    /// (reconcile and worker-key visits) when its cycle falls between the
+    /// save's rename and its publication, which the machine's load decides;
+    /// a count of visits that must be exact cannot include it.
+    no_watcher: bool,
 }
 
 const ALONE: Graph = Graph {
     unrelated: 0,
     aged: false,
     held: 0,
+    no_watcher: false,
 };
 
 /// `edits` submits of the page's first block, each answered before the next,
@@ -70,6 +77,9 @@ fn edit(blocks: usize, edits: usize, graph: Graph) -> (Counts, u64) {
     }
     let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
     store.whole_graph().unwrap();
+    if graph.no_watcher {
+        store.stop_watcher_for_tests();
+    }
     let (sink, mail) = mpsc::channel();
     let host = PageHost::start(
         &store,
@@ -198,6 +208,7 @@ fn an_edits_publication_does_not_scale_with_the_unrelated_graph() {
                 unrelated,
                 aged,
                 held: 0,
+                no_watcher: false,
             };
             let (counts, _) = edit(1, 1, graph);
             eprintln!("R4(a) aged={aged} unrelated={unrelated}: {counts:?}");
@@ -236,6 +247,7 @@ fn an_edit_among_many_held_pages_visits_what_changed() {
             unrelated: held as usize,
             aged: true,
             held: held as usize,
+            no_watcher: true,
         };
         let (counts, _) = edit(1, 1, graph);
         eprintln!("M4 held={held}: {counts:?}");
