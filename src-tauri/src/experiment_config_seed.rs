@@ -52,6 +52,11 @@ pub(crate) fn seed_from_release_once() {
     if APP_IDENTIFIER == RELEASE_IDENTIFIER {
         return;
     }
+    // A portable instance neither reads nor writes the host's per-user
+    // folders (GH #719); importing an installed Tine's config is not decided.
+    if crate::portable::active() {
+        return;
+    }
     let (Some(own), Some(release)) = (
         app_data_dir_of(APP_IDENTIFIER),
         app_data_dir_of(RELEASE_IDENTIFIER),

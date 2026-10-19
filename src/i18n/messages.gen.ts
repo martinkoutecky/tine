@@ -2874,6 +2874,7 @@ export interface MessageArgs {
   "update-installed-restart": { "name": string | number };
   "update-is-available-but-automatic-updates-are": { "product": string | number; "version": string | number };
   "update-is-available-the-flatpak-cannot-update": { "product": string | number; "version": string | number };
+  "update-is-available-the-portable-build-cannot-update": { "product": string | number; "version": string | number };
   "update-is-available-you-re-on": { "current": string | number; "product": string | number; "version": string | number };
   "update-mac-backup-location": { "path": string | number };
   "update-mac-install-failed": { "bundle": string | number };

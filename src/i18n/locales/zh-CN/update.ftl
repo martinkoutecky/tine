@@ -8,6 +8,8 @@ update-is-available-but-automatic-updates-are = { $product } { $version } 已发
 
 update-is-available-the-flatpak-cannot-update = { $product } { $version } 已发布。Flatpak 无法自行更新：请下载新的 .flatpak 包，再用 flatpak install --user 安装。
 
+update-is-available-the-portable-build-cannot-update = { $product } { $version } 已发布。便携版不会自行更新：请下载新的便携版 ZIP，退出 Tine，再解压到同一文件夹。你的设置保存在其中的 tine-data 文件夹里。
+
 update-couldn-t-restart-tine-quit-and-start = 无法重启 Tine（{ $error }）。请退出后重新启动。
 
 update-downloading = 正在下载 { $product } { $version }…
