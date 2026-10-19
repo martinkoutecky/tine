@@ -130,25 +130,47 @@ function textsOf(...parts: (string | Msg | undefined)[]): string {
   return parts.flatMap((text) => text === undefined ? [] : typeof text === "string" ? [text] : [render(text), renderEnglish(text)]).join(" ").toLowerCase();
 }
 
-/** A one-character term (any script) is too unspecific to match prose: a single
- * "发" occurs incidentally in many descriptions (GH #706). */
+/** A one-character term (any script) matches only text shown in the active
+ * language: label, description and keywords, not their English originals or the
+ * aliases. A single "S" would otherwise hit almost every hidden English label in
+ * the Chinese interface, while a single "发" must still find descriptions
+ * (GH #706). Longer terms match both languages. */
 const isShortTerm = (term: string) => [...term].length === 1;
 const queryTerms = (query: string) => query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+
+function shownTextsOf(...parts: (string | Msg | undefined)[]): string {
+  return parts.flatMap((text) => text === undefined ? [] : [typeof text === "string" ? text : render(text)]).join(" ").toLowerCase();
+}
 
 /** Whether every query word hits the entry's label, keywords or aliases. */
 function nameMatches(entry: SettingSearchEntry, terms: string[]): boolean {
   const names = textsOf(entry.label, entry.keywords, ...(entry.aliases ?? []));
-  return terms.every((term) => names.includes(term));
+  const shownNames = shownTextsOf(entry.label, entry.keywords);
+  return terms.every((term) => (isShortTerm(term) ? shownNames : names).includes(term));
 }
 
 /** Match all query words against one entry's label, description, keywords and
- * aliases; a one-character word matches everything but the description.
- * O(entry text × query words), no I/O or failure. */
+ * aliases in both languages; a one-character word only against the shown
+ * language's label, description and keywords. O(entry text × query words), no
+ * I/O or failure. */
 export function settingMatches(entry: SettingSearchEntry, query: string): boolean {
   const terms = queryTerms(query);
   const haystack = textsOf(entry.label, entry.description, entry.keywords, ...(entry.aliases ?? []));
-  const names = textsOf(entry.label, entry.keywords, ...(entry.aliases ?? []));
-  return terms.every((term) => (isShortTerm(term) ? names : haystack).includes(term));
+  const shown = shownTextsOf(entry.label, entry.description, entry.keywords);
+  return terms.every((term) => (isShortTerm(term) ? shown : haystack).includes(term));
+}
+
+/** The description to show under a result whose name does not match: the
+ * shown-language text when it holds a query word, else the English original.
+ * Undefined when the name matches, so name hits stay one line (GH #706: a
+ * description match looked unrelated while the description was hidden). */
+export function matchedDescription(entry: SettingSearchEntry, query: string): string | undefined {
+  const terms = queryTerms(query);
+  if (!terms.length || nameMatches(entry, terms)) return undefined;
+  const shown = typeof entry.description === "string" ? entry.description : render(entry.description);
+  if (terms.some((term) => shown.toLowerCase().includes(term))) return shown;
+  const english = typeof entry.description === "string" ? entry.description : renderEnglish(entry.description);
+  return terms.some((term) => !isShortTerm(term) && english.toLowerCase().includes(term)) ? english : undefined;
 }
 
 /** Matching entries with label/keyword/alias matches before description-only
