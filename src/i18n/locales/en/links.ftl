@@ -47,4 +47,7 @@ ref-occurrence-remove = Remove
 ref-occurrence-remove-embed-title = Remove this embed from this block. The embedded page or block is not changed.
 ref-occurrence-remove-ref-title = Remove this reference from this block. The referenced block is not changed.
 ref-occurrence-remove-ref = Remove reference
+ref-occurrence-replace-text = Replace with text
+ref-occurrence-replace-embed = Replace with embed
+ref-occurrence-target-unreadable = The referenced block could not be read, so nothing was changed.
 ref-occurrence-changed = This block changed after it was shown, so nothing was edited. Try again.

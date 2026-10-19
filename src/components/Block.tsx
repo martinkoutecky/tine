@@ -17,7 +17,8 @@ import {
   refCompletionEnd,
   withRefCompletionSpace,
   autoPairEdit,
-  fullWidthRefReplace,
+  applyFullWidthRefReplace,
+  applyFullWidthCloserThrough,
   pageInsert,
   tagInsert,
   orderAcItems,
@@ -2027,14 +2028,6 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     clearTimeout(acTimer);
     acTimer = setTimeout(() => void updateAutocomplete(), 90);
   };
-  const applyFullWidthRefReplace = () => {
-    if (ref.selectionStart !== ref.selectionEnd) return false;
-    const paired = fullWidthRefReplace(ref.value, ref.selectionStart);
-    if (!paired) return false;
-    ref.value = paired.value;
-    ref.setSelectionRange(paired.caret, paired.caret);
-    return true;
-  };
   // IMEs replace the textarea's transient composition range many times before
   // committing. Keep that range DOM-local: every setRaw() also dirties the page
   // and starts its save/reparse work. The finalized value has one canonical
@@ -2090,9 +2083,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
           handled = true;
         }
       }
-      if (ch === "【" || ch === "（" || ch === "〈") {
-        handled = applyFullWidthRefReplace();
-      }
+      if (ch === "【" || ch === "（" || ch === "〈") handled = applyFullWidthRefReplace(ref);
+      else if (ch === "】" || ch === "）") handled = applyFullWidthCloserThrough(ref, autoPairing());
       // GH #413: the third backtick of a whole-block fence trigger is an EXPLICIT
       // scaffold decision, not a character to pair: insert the matching closing
       // fence and offer the language picker on the still-visible opener line
@@ -2156,7 +2148,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
   const onCompositionEnd = () => {
     compositionActive = false;
-    applyFullWidthRefReplace();
+    if (!applyFullWidthRefReplace(ref)) applyFullWidthCloserThrough(ref, autoPairing());
     compositionEndValue = ref.value;
     commit(ref.value);
     endCompositionHold();

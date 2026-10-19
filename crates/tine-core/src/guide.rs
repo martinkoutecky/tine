@@ -384,6 +384,9 @@ mod journal_guide_tests {
             "Block embed breadcrumbs",
             // GH #417/#418: per-occurrence actions on references and embeds.
             "**Edit link** and **Remove reference**",
+            // D-20261019-QC(5): OG's Replace with text / embed on a block reference.
+            "**Replace with text**, **Replace with embed**, **Edit link** and **Remove reference**",
+            "a labelled reference `[label](((id)))` is replaced whole, label included",
             "Hover an embed to show **Edit link**, **Open source** and **Remove**",
             "never the embedded page or block, and **Undo** brings it back",
             "the same buttons appear while you edit a block inside the embed",
@@ -1613,6 +1616,9 @@ mod customize_look_guide_tests {
             "**Links to the web or a file**",
             "**Links to pages that do not exist yet**",
             "style.knobs.v1",
+            // Discussion #714: the transient toggle class for theme animations.
+            "`just-toggled`",
+            "never there when a page loads",
             // GH #583: arrows render as typed unless the user opts in.
             "**Typographic replacements**",
             "It is **Off** by default",

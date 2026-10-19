@@ -10,7 +10,7 @@ it("the Guide explains local image icon syntax, containment and sizing", () => {
 
 it("the Guide teaches Chinese IME reference and command input with ASCII storage", () => {
   const references = guide("pages-links-references-search");
-  for (const detail of ["`【【`", "`（（`", "`(())`", "composition finishes", "`《〈`", "selected text", "ASCII"]) {
+  for (const detail of ["`【【`", "`（（`", "`(())`", "composition finishes", "`【【name】】` ends as `[[name]]`", "`《〈`", "selected text", "ASCII"]) {
     expect(references).toContain(detail);
   }
 });

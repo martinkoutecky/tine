@@ -398,6 +398,52 @@ export function fullWidthRefReplace(value: string, caret: number): { value: stri
   return null;
 }
 
+/** Full-width closers a Chinese IME types for the ASCII closers of the pairs
+ *  `fullWidthRefReplace` and the selection wrap produce (`【` → `]`, `（` → `)`). */
+const FULL_WIDTH_CLOSERS: Readonly<Record<string, string>> = { "】": "]", "）": ")" };
+
+/** GH #53: typing through a full-width closer, like `autoPairEdit` does for `]`.
+ *  `【【` becomes `[[]]` with the caret inside; typing `】` there must step over
+ *  the ASCII `]` already after the caret, not leave `[[x】]]`. `value`/`caret` are
+ *  the finalized post-input state, the typed `】` sitting just before the caret.
+ *  The typed character is dropped and the caret steps over the existing closer
+ *  (the same edit `autoPairEdit` makes for an ASCII `]`). `）` mirrors the ASCII
+ *  `)`, which the opt-in auto-pairing (`autoPairInsertOnInput`'s skip-over) steps
+ *  over and the always-on path does not, so it steps over only when
+ *  `autoPairingOn`. Nothing happens unless the character after the caret is the
+ *  matching ASCII closer, so a full-width closer typed anywhere else stays text. */
+export function fullWidthCloserEdit(
+  value: string,
+  caret: number,
+  autoPairingOn: boolean
+): { value: string; caret: number } | null {
+  if (caret < 1) return null;
+  const ascii = FULL_WIDTH_CLOSERS[value[caret - 1]];
+  if (!ascii || value[caret] !== ascii) return null;
+  if (ascii === ")" && !autoPairingOn) return null;
+  return { value: value.slice(0, caret - 1) + value.slice(caret), caret };
+}
+
+/** Apply `fullWidthRefReplace` to the editor textarea at its collapsed caret. */
+export function applyFullWidthRefReplace(el: HTMLTextAreaElement): boolean {
+  if (el.selectionStart !== el.selectionEnd) return false;
+  const paired = fullWidthRefReplace(el.value, el.selectionStart);
+  if (!paired) return false;
+  el.value = paired.value;
+  el.setSelectionRange(paired.caret, paired.caret);
+  return true;
+}
+
+/** Apply `fullWidthCloserEdit` (GH #53) to the editor textarea at its collapsed caret. */
+export function applyFullWidthCloserThrough(el: HTMLTextAreaElement, autoPairingOn: boolean): boolean {
+  if (el.selectionStart !== el.selectionEnd) return false;
+  const stepped = fullWidthCloserEdit(el.value, el.selectionStart, autoPairingOn);
+  if (!stepped) return false;
+  el.value = stepped.value;
+  el.setSelectionRange(stepped.caret, stepped.caret);
+  return true;
+}
+
 /** Replace [start,end) in `raw` with `insert`; caret lands at
  *  `start + caretInInsert` (defaults to end of the inserted text). */
 export function applyCompletion(
