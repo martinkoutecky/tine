@@ -48,6 +48,26 @@ describe("Settings progressive disclosure and search", () => {
     dispose();
   });
 
+  it("shows the matching description under a description-only result (zh-CN, GH #706)", async () => {
+    await setActiveLocale("zh-CN");
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    openSettings("appearance");
+    await tick();
+    const search = root.querySelector<HTMLInputElement>(".settings-search-input")!;
+    search.value = "发";
+    search.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await tick();
+    const results = [...root.querySelectorAll(".settings-search-result")];
+    const graph = results.find((result) => result.querySelector("span")?.firstChild?.textContent === "图谱")!;
+    expect(graph).toBeDefined();
+    expect(graph.querySelector(".settings-search-description mark")?.textContent).toBe("发");
+    const publish = results.find((result) => result.textContent?.startsWith("发布"))!;
+    expect(publish.querySelector(".settings-search-description")).toBeNull();
+    dispose();
+  });
+
   it.each(["en", "zh-CN"] as const)("opens and scrolls to a translated matching control (%s)", async (locale) => {
     await setActiveLocale(locale);
     const root = document.createElement("div");

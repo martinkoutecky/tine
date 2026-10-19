@@ -1979,6 +1979,7 @@ html[data-system-insets="native-viewport"] {
 }
 .settings-search-result:hover,.settings-search-result:focus-visible { background: var(--bg-tertiary); }
 .settings-search-result small { color: var(--text-muted); }
+.settings-search-description { display: block; margin-top: 2px; color: var(--text-muted); font-size: 0.85em; }
 .settings-search-empty { padding: 8px; color: var(--text-muted); font-size: 13px; }
 .settings-pane-body {
   flex: 1;
