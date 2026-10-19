@@ -223,6 +223,7 @@ impl Fixture {
         let id = random_id();
         self.service.prepared.lock().unwrap().push(Prepared {
             id: id.clone(),
+            share_id: share::fresh_share_id().unwrap(),
             payload: payload.to_vec(),
             title: "Project".into(),
             pages: 1,
@@ -1000,6 +1001,13 @@ fn prepare_then_create_uploads_the_previewed_text_not_a_later_edit() {
         (row.title.as_str(), row.pages, row.gist_id.as_deref()),
         ("Project", 1, Some(created.gist_id.as_str()))
     );
+    // D-20261018-QS3: the record id prepare answered (the webview's
+    // `pending/<id>` marker) is the row's and the envelope's share id.
+    assert_eq!(created.share_id, prepared.share_id);
+    assert_eq!(row.share_id, prepared.share_id);
+    let header = share::b64u_decode(&envelope).unwrap();
+    assert_eq!(share::b64u(&header[5..21]), prepared.share_id);
+    assert!(!share::looks_like_gist_id(&prepared.share_id));
 }
 
 // ---- check, find, delete, forget ----
