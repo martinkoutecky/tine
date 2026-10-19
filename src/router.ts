@@ -1059,7 +1059,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     if (next !== list) { setTabs(next); persist(); }
   }
   const moveTabToIndex = (dragId: string, index: number) => editTree((list) =>
-    moveTabSubtree(list, dragId, list[Math.min(Math.max(0, index | 0), list.length)]?.id ?? null, "keep"));
+    moveTabSubtree(list, dragId, list[Math.min(Math.max(0, index | 0), list.length)]?.id ?? null, "flat"));
   const moveTabInTree = (tabId: string, beforeId: string | null, depth: number) =>
     editTree((list) => moveTabSubtree(list, tabId, beforeId, depth));
   const moveTabOutOfGroup = (tabId: string) => editTree((list) => treeMoveOutOfGroup(list, tabId));

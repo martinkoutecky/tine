@@ -120,18 +120,48 @@ function slotRange(rest: readonly TreeTab[], slot: number) {
   return { min, max, parentAt: (depth: number) => (depth === 0 ? null : chain[depth - 1] ?? null) };
 }
 
+/** The slot of `rest` nearest to `wanted` where a tab can sit with `parent`
+ *  as its parent (T1 holds): for a root, before a root, a pinned tab, or the
+ *  end; for a child of P, after P or one of its descendants and before P's next
+ *  child or the end of P's subtree. The tab's own former slot always
+ *  qualifies, so there is always an answer. */
+function nearestSlotKeepingParent(rest: readonly TreeTab[], wanted: number, preferEarlier: boolean, parent: string | null): number {
+  const depths = tabDepths(rest);
+  let lo = 0;
+  let hi = rest.length;
+  let parentDepth = -1;
+  if (parent !== null) {
+    const p = rest.findIndex((t) => t.id === parent);
+    if (p < 0) return wanted;
+    parentDepth = depths[p];
+    lo = p + 1;
+    hi = subtreeEnd(rest, p, depths);
+  }
+  const legal = (s: number) => s >= lo && s <= hi && (s === rest.length || rest[s].pinned || depths[s] <= parentDepth + 1);
+  for (let k = 0; k <= rest.length; k++) {
+    const first = preferEarlier ? wanted - k : wanted + k;
+    const second = preferEarlier ? wanted + k : wanted - k;
+    if (legal(first)) return first;
+    if (legal(second)) return second;
+  }
+  return wanted;
+}
+
 /** Move the tab `id` together with its subtree so it lands right before
  *  `beforeId` (null: at the end), measured on the list with the subtree lifted
- *  out. `depth` is the asked depth (clamped to what the slot allows); "keep"
- *  keeps the current parent when the slot allows it, else the shallowest depth
- *  (the flat strip's rule: a strip drag never nests anything by itself).
+ *  out. `depth` is the asked depth (clamped to what the slot allows), or
+ *  "flat": the strip's and the ∨ overview's move, which never creates or
+ *  changes a parent (the design keeps nesting out of the flat surfaces). A
+ *  flat move whose slot cannot keep the tab's parent lands on the nearest slot
+ *  that can (a root before or after a group, a child among its siblings); on a
+ *  tie, the one further in the direction of travel.
  *  Nesting into a collapsed tab expands it (and its ancestors), or the moved
  *  tab would vanish from the sidebar. */
 export function moveTabSubtree<T extends TreeTab>(
   list: readonly T[],
   id: string,
   beforeId: string | null,
-  depth: number | "keep",
+  depth: number | "flat",
 ): T[] {
   const from = list.findIndex((t) => t.id === id);
   if (from < 0) return list as T[];
@@ -146,22 +176,21 @@ export function moveTabSubtree<T extends TreeTab>(
   if (slot < 0) return list as T[];
   const moved = block[0];
   let parent: string | null = null;
-  if (!moved.pinned) {
+  if (moved.pinned) {
+    // Pinned tabs are roots; settling keeps them in front.
+  } else if (depth === "flat") {
+    slot = nearestSlotKeepingParent(rest, slot, slot < from, moved.parent);
+    parent = moved.parent;
+  } else {
     const range = slotRange(rest, slot);
-    let d: number;
-    if (depth === "keep") {
-      d = range.min;
-      for (let k = range.min; k <= range.max; k++) {
-        if (range.parentAt(k) === moved.parent) { d = k; break; }
-      }
-    } else d = Math.max(range.min, Math.min(Math.round(depth), range.max));
-    parent = range.parentAt(d);
+    parent = range.parentAt(Math.max(range.min, Math.min(Math.round(depth), range.max)));
   }
   const placed = [{ ...moved, parent }, ...block.slice(1)] as T[];
-  // The new parent and every ancestor of it open, so the moved tab is visible.
+  // A new parent and every ancestor of it open, so the moved tab is visible (a
+  // flat move keeps the parent, and the sidebar's collapse state with it).
   const opened = new Set<string>();
   const byId = new Map(rest.map((t) => [t.id, t] as const));
-  for (let a = parent; a !== null && !opened.has(a); a = byId.get(a)?.parent ?? null) opened.add(a);
+  for (let a = depth === "flat" ? null : parent; a !== null && !opened.has(a); a = byId.get(a)?.parent ?? null) opened.add(a);
   const out = [...rest.slice(0, slot), ...placed, ...rest.slice(slot)]
     .map((t) => (opened.has(t.id) && t.collapsed ? { ...t, collapsed: false } : t));
   return settleTabTree(out);

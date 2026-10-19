@@ -41,6 +41,16 @@ function assertTree(list: readonly TreeTab[]) {
   for (const t of list) if (t.collapsed) expect(list.some((c) => c.parent === t.id)).toBe(true);
 }
 
+/** A seeded LCG in exact 32-bit integer arithmetic (a float product loses the
+ *  low bits), drawing from the high bits. */
+function seeded(seed: number) {
+  let state = seed >>> 0;
+  return (n: number) => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return Math.floor((state / 0x100000000) * n);
+  };
+}
+
 describe("tab tree (pure)", () => {
   it("normalize keeps a valid tree as the same array and repairs every broken link", () => {
     const ok = [tt("a"), tt("b", "a"), tt("c", "b"), tt("d", "a"), tt("e")];
@@ -68,14 +78,30 @@ describe("tab tree (pure)", () => {
     // Before a child, a root is not possible: at least the depth of the row below.
     expect(shape(moveTabSubtree(list, "c", "b1", 0))).toBe("a+ -a1 b -c -b1");
     // Onto its own subtree: no move.
-    expect(shape(moveTabSubtree(list, "b", "b1", "keep"))).toBe(shape(list));
+    expect(shape(moveTabSubtree(list, "b", "b1", "flat"))).toBe(shape(list));
   });
 
-  it("the strip's keep rule keeps the parent where the slot allows it, else takes the shallowest depth", () => {
+  it("a flat (strip / overview) move never creates or changes a parent: it lands on the nearest boundary that keeps it", () => {
     const list = [tt("a"), tt("a1", "a"), tt("a2", "a"), tt("b"), tt("c")];
-    expect(shape(moveTabSubtree(list, "a2", "a1", "keep"))).toBe("a -a2 -a1 b c");
-    expect(shape(moveTabSubtree(list, "a2", null, "keep"))).toBe("a -a1 b c a2");
-    expect(shape(moveTabSubtree(list, "c", "a1", "keep"))).toBe("a -c -a1 -a2 b");
+    // A child moves among its siblings.
+    expect(shape(moveTabSubtree(list, "a2", "a1", "flat"))).toBe("a -a2 -a1 b c");
+    // Past its group: stays the group's last child, never un-nests.
+    expect(shape(moveTabSubtree(list, "a2", null, "flat"))).toBe("a -a1 -a2 b c");
+    expect(shape(moveTabSubtree(list, "a1", "c", "flat"))).toBe("a -a2 -a1 b c");
+    // A root dropped inside a group lands before or after the group, never in it
+    // (moving up: the earlier boundary on a tie; moving down: the later one).
+    expect(shape(moveTabSubtree(list, "c", "a1", "flat"))).toBe("c a -a1 -a2 b");
+    expect(shape(moveTabSubtree(list, "c", "a2", "flat"))).toBe("a -a1 -a2 c b");
+    const down = [tt("z"), tt("a"), tt("a1", "a"), tt("a2", "a"), tt("b")];
+    expect(shape(moveTabSubtree(down, "z", "a2", "flat"))).toBe("a -a1 -a2 z b");
+    // The review's case: A > A1, B, C; C dropped between A and A1.
+    const review = [tt("A"), tt("A1", "A"), tt("B"), tt("C")];
+    const moved = moveTabSubtree(review, "C", "A1", "flat");
+    expect(moved.find((t) => t.id === "C")!.parent).toBeNull();
+    expect(shape(moved)).toBe("C A -A1 B");
+    // A flat move of a child of a collapsed group keeps it collapsed.
+    const closed = [tt("a", null, { collapsed: true }), tt("a1", "a"), tt("a2", "a"), tt("b")];
+    expect(shape(moveTabSubtree(closed, "a2", "a1", "flat"))).toBe("a+ -a2 -a1 b");
   });
 
   it("never nests under or into a pinned tab, and a pinned tab stays a root up front", () => {
@@ -93,24 +119,46 @@ describe("tab tree (pure)", () => {
   });
 
   it("random edit sequences keep T1/T2 (property-style, seeded)", () => {
-    let seed = 704;
-    const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    const rnd = seeded(704);
+    const ops = [0, 0, 0, 0, 0, 0];
+    let nestedSteps = 0;
+    let collapsedSteps = 0;
+    let steps = 0;
     for (let run = 0; run < 200; run++) {
       let list: TreeTab[] = [];
       let next = 0;
       for (let step = 0; step < 40; step++) {
         const pick = () => list[rnd(list.length)]?.id;
-        switch (rnd(6)) {
-          case 0: list = settleTabTree([...list, tt(`t${next++}`, null, { pinned: rnd(5) === 0 })]); break;
+        // Opens and nesting moves are drawn twice as often, so trees grow deep.
+        const op = [0, 0, 1, 2, 2, 3, 4, 5][rnd(8)];
+        ops[op]++;
+        switch (op) {
+          case 0: list = settleTabTree([...list, tt(`t${next++}`, null, { pinned: rnd(8) === 0 })]); break;
           case 1: if (list.length) list = removeTabPromoting(list, pick()!); break;
-          case 2: if (list.length) list = moveTabSubtree(list, pick()!, rnd(4) ? pick() ?? null : null, rnd(4)); break;
-          case 3: if (list.length) list = moveTabSubtree(list, pick()!, pick() ?? null, "keep"); break;
+          case 2: if (list.length) list = moveTabSubtree(list, pick()!, rnd(4) ? pick() ?? null : null, rnd(4) ? 1 + rnd(3) : 0); break;
+          case 3: if (list.length) {
+            const before = new Map(list.map((t) => [t.id, t.parent] as const));
+            list = moveTabSubtree(list, pick()!, pick() ?? null, "flat");
+            expect(new Map(list.map((t) => [t.id, t.parent] as const))).toEqual(before);
+          } break;
           case 4: if (list.length) list = moveTabOutOfGroup(list, pick()!); break;
-          case 5: if (list.length) { const id = pick()!; list = normalizeTabTree(list.map((t) => t.id === id ? { ...t, collapsed: !t.collapsed } : t)); } break;
+          case 5: if (list.length) {
+            const parents = list.filter((t) => list.some((c) => c.parent === t.id));
+            const id = parents.length && rnd(4) ? parents[rnd(parents.length)].id : pick()!;
+            list = normalizeTabTree(list.map((t) => t.id === id ? { ...t, collapsed: rnd(4) !== 0 } : t));
+          } break;
         }
         assertTree(list);
+        steps++;
+        if (list.some((t) => t.parent !== null)) nestedSteps++;
+        if (list.some((t) => t.collapsed)) collapsedSteps++;
       }
     }
+    // The sequences really exercise every edit on real trees.
+    for (const count of ops) expect(count).toBeGreaterThan(steps / 8 / 2);
+    expect(nestedSteps).toBeGreaterThan(steps / 4); // each run starts empty
+    expect(collapsedSteps).toBeGreaterThan(steps / 20); // nesting into a collapsed tab opens it
+    if (process.env.TAB_TREE_STATS) console.log("pure", { ops, steps, nestedSteps, collapsedSteps });
   });
 });
 
@@ -152,12 +200,24 @@ describe("tab tree in the pane router", () => {
     assertTree(r.tabs());
   });
 
-  it("the strip's index move carries the subtree; reorderTab too", () => {
+  it("the strip's index move carries the subtree and never changes a parent; reorderTab too", () => {
     const r = nestedPane("tree-strip");
     r.moveTabToIndex(idOf(r, "A"), 4);
     expect(names(r)).toBe("D A -B --C");
+    // D (a root) dropped onto C (inside A's group): after the group, still a root.
     r.reorderTab(idOf(r, "D"), idOf(r, "C"));
-    expect(names(r)).toBe("A -B --D --C");
+    expect(names(r)).toBe("A -B --C D");
+    // C (B's child) dragged to the strip's front: stays B's only child.
+    r.moveTabToIndex(idOf(r, "C"), 0);
+    expect(names(r)).toBe("A -B --C D");
+    // Every strip move, of every tab to every index: no tab's parent changes.
+    const parents = () => new Map(r.tabs().map((t) => [t.id, t.parent] as const));
+    const before = parents();
+    for (let i = 0; i <= 4; i++) for (const name of ["A", "B", "C", "D"]) {
+      r.moveTabToIndex(idOf(r, name), i);
+      expect(parents()).toEqual(before);
+      assertTree(r.tabs());
+    }
     assertTree(r.tabs());
   });
 
@@ -188,22 +248,37 @@ describe("tab tree in the pane router", () => {
   it("random router operations keep T1/T2 (property-style, seeded)", async () => {
     vi.spyOn(backend(), "confirm").mockResolvedValue(true);
     try {
-      let seed = 1704;
-      const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+      const rnd = seeded(1704);
       const r = createPaneRouter("tree-prop");
       const other = createPaneRouter("tree-prop-other");
+      const ops = Array(10).fill(0);
+      let nestedSteps = 0;
+      let collapsedSteps = 0;
+      let nestedRoundTrips = 0;
       let n = 0;
-      for (let step = 0; step < 400; step++) {
+      const STEPS = 400;
+      for (let step = 0; step < STEPS; step++) {
         const list = r.tabs();
         const pick = () => list[rnd(list.length)].id;
-        switch (rnd(10)) {
+        const op = rnd(10);
+        ops[op]++;
+        switch (op) {
           case 0: case 1: r.openInNewTab(page(`P${n++}`), rnd(2) === 0); break;
-          case 2: await r.closeTab(pick()); break;
+          case 2: if (list.length > 3) await r.closeTab(pick()); break;
           case 3: r.togglePin(pick()); break;
-          case 4: r.moveTabToIndex(pick(), rnd(list.length + 1)); break;
-          case 5: r.moveTabInTree(pick(), rnd(3) ? pick() : null, rnd(4)); break;
+          case 4: {
+            const before = new Map(list.map((t) => [t.id, t.parent] as const));
+            r.moveTabToIndex(pick(), rnd(list.length + 1));
+            expect(new Map(r.tabs().map((t) => [t.id, t.parent] as const))).toEqual(before);
+            break;
+          }
+          case 5: r.moveTabInTree(pick(), rnd(4) ? pick() : null, 1 + rnd(3)); break;
           case 6: r.moveTabOutOfGroup(pick()); break;
-          case 7: r.setTabCollapsed(pick(), rnd(2) === 0); break;
+          case 7: {
+            const parents = list.filter((t) => list.some((c) => c.parent === t.id));
+            r.setTabCollapsed(parents.length ? parents[rnd(parents.length)].id : pick(), rnd(3) !== 0);
+            break;
+          }
           case 8: {
             const moved = r.extractTabForAdoption(pick());
             if (moved) other.adoptTab(moved.tab, false, rnd(other.tabs().length + 1));
@@ -213,15 +288,25 @@ describe("tab tree in the pane router", () => {
           }
           case 9: {
             const restored = createPaneRouter("tree-prop-restore");
-            expect(restored.restoreSnapshot(r.snapshot())).toBe(true);
+            expect(restored.restoreSnapshot(JSON.parse(JSON.stringify(r.snapshot())))).toBe(true);
             expect(names(restored)).toBe(names(r));
+            if (r.tabs().some((t) => t.parent !== null)) nestedRoundTrips++;
             break;
           }
         }
         assertTree(r.tabs());
         assertTree(other.tabs());
         expect(r.tabs().some((t) => t.id === r.activeId())).toBe(true);
+        if (r.tabs().some((t) => t.parent !== null)) nestedSteps++;
+        if (r.tabs().some((t) => t.collapsed)) collapsedSteps++;
       }
+      // Every operation ran, mostly on nested (and often collapsed) trees, and
+      // snapshots of nested trees round-tripped: the sequence cannot go flat unseen.
+      for (const count of ops) expect(count).toBeGreaterThan(STEPS / 10 / 2);
+      expect(nestedSteps).toBeGreaterThan(STEPS / 3);
+      expect(collapsedSteps).toBeGreaterThan(STEPS / 10);
+      expect(nestedRoundTrips).toBeGreaterThan(10);
+      if (process.env.TAB_TREE_STATS) console.log("router", { ops, nestedSteps, collapsedSteps, nestedRoundTrips });
     } finally { vi.restoreAllMocks(); }
   });
 });

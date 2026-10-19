@@ -11,6 +11,8 @@ import { LONG_PRESS_DELAY, LONG_PRESS_MOVE_TOLERANCE } from "../render/longPress
 
 const DRAG_THRESHOLD_PX = 4;
 let suppressClick = false;
+/** The one armed gesture: it belongs to the pointer that started it. */
+let armed: { pointerId: number; cancel: () => void } | null = null;
 
 /** True for the click that ends a reorder drag; row click handlers bail. */
 export const rowReorderClickSuppressed = () => suppressClick;
@@ -47,6 +49,15 @@ export function beginRowReorderDrag(
   opts: RowReorderOptions = {},
 ): void {
   if (event.button !== 0) return;
+  if (armed) {
+    // A second finger (or pen) never starts or steers a drag while one is
+    // armed. A primary pointer going down again means the old gesture lost its
+    // pointerup (e.g. released outside the window): drop it and start afresh.
+    if (event.isPrimary === false && event.pointerId !== armed.pointerId) return;
+    armed.cancel();
+  }
+  const pointerId = event.pointerId;
+  const mine = (ev: PointerEvent) => ev.pointerId === pointerId;
   const startX = event.clientX;
   const startY = event.clientY;
   // The drag's own window: listeners and hit tests follow the pointer's document.
@@ -56,6 +67,12 @@ export function beginRowReorderDrag(
   const hold = !!opts.touchHold && (event.pointerType === "touch" || event.pointerType === "pen");
   let holdTimer: ReturnType<typeof setTimeout> | undefined;
   const blockScroll = (ev: Event) => { if (ev.cancelable) ev.preventDefault(); };
+  // The hold's own menu: neither the platform's nor the row's (a capture
+  // listener on the document runs first and keeps it from the row).
+  const swallowMenu = (ev: Event) => {
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  };
   const startDragging = () => {
     dragging = true;
     setDragSelectionSuppressed(true, doc);
@@ -64,7 +81,7 @@ export function beginRowReorderDrag(
   if (hold) {
     // The platform's own hold menu (Android fires contextmenu near the same
     // moment) must not open over the drag.
-    doc.addEventListener("contextmenu", blockScroll, true);
+    doc.addEventListener("contextmenu", swallowMenu, true);
     holdTimer = setTimeout(() => {
       holdTimer = undefined;
       startDragging();
@@ -72,6 +89,7 @@ export function beginRowReorderDrag(
     }, LONG_PRESS_DELAY);
   }
   const onMove = (ev: PointerEvent) => {
+    if (!mine(ev)) return;
     if (!dragging) {
       const moved = Math.hypot(ev.clientX - startX, ev.clientY - startY);
       if (hold) {
@@ -97,18 +115,21 @@ export function beginRowReorderDrag(
     onTarget(target);
   };
   function cleanup() {
+    if (armed?.cancel === cleanup) armed = null;
     clearTimeout(holdTimer);
     holdTimer = undefined;
     doc.removeEventListener("touchmove", blockScroll);
     // The hold's own (native) contextmenu can arrive just after release.
-    if (hold) setTimeout(() => doc.removeEventListener("contextmenu", blockScroll, true), 0);
+    if (hold) setTimeout(() => doc.removeEventListener("contextmenu", swallowMenu, true), 0);
     doc.removeEventListener("pointermove", onMove);
     doc.removeEventListener("pointerup", onUp);
-    doc.removeEventListener("pointercancel", cleanup);
+    doc.removeEventListener("pointercancel", onCancel);
     setDragSelectionSuppressed(false);
     onTarget(null);
   }
-  const onUp = () => {
+  const onCancel = (ev: PointerEvent) => { if (mine(ev)) cleanup(); };
+  const onUp = (ev: PointerEvent) => {
+    if (!mine(ev)) return;
     cleanup();
     if (!dragging) return;
     suppressClick = true;
@@ -117,5 +138,6 @@ export function beginRowReorderDrag(
   };
   doc.addEventListener("pointermove", onMove);
   doc.addEventListener("pointerup", onUp);
-  doc.addEventListener("pointercancel", cleanup);
+  doc.addEventListener("pointercancel", onCancel);
+  armed = { pointerId, cancel: cleanup };
 }

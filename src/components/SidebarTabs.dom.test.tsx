@@ -85,10 +85,14 @@ describe("SidebarTabs (GH #704 v1)", () => {
 // GH #704 v2 (D-20261019-VT1): drag to reorder and to nest/unnest (the
 // Favorites depth rule, through beginRowReorderDrag), collapse hides sidebar
 // rows only, "Move out of group" on a nested row's context menu.
-function pointer(type: string, x: number, y: number, pointerType = "mouse"): Event {
+function pointer(type: string, x: number, y: number, pointerType = "mouse", id?: { pointerId: number; isPrimary: boolean }): Event {
   const Ctor = (window as { PointerEvent?: typeof PointerEvent }).PointerEvent ?? MouseEvent;
   const event = new Ctor(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1 });
   Object.defineProperty(event, "pointerType", { value: pointerType });
+  if (id) {
+    Object.defineProperty(event, "pointerId", { value: id.pointerId });
+    Object.defineProperty(event, "isPrimary", { value: id.isPrimary });
+  }
   return event;
 }
 
@@ -239,5 +243,74 @@ describe("SidebarTabs tree (GH #704 v2)", () => {
       vi.advanceTimersByTime(10);
       expect(titles(host)).toEqual(["Gamma", "Alpha", "Beta"]);
     } finally { dispose(); vi.useRealTimers(); }
+  });
+
+  it("touch: the hold's context menu opens neither the platform's nor the row's menu; a mouse right-click still does", async () => {
+    const { host, dispose } = mountWithStrip(["Alpha", "Beta", "Gamma"]);
+    try {
+      await drag(host, "Beta", 20, ROW_H + ROW_H / 2 + 2); // nest Beta: its row has the custom menu
+      expect(depths(host)).toEqual([0, 1, 0]);
+      vi.useFakeTimers();
+      layOut(host);
+      const beta = rows(host)[1]!.querySelector(".nav-tab-main")!;
+      beta.dispatchEvent(pointer("pointerdown", 50, 45, "touch"));
+      vi.advanceTimersByTime(600);
+      const hold = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 45 });
+      beta.dispatchEvent(hold);
+      expect(hold.defaultPrevented).toBe(true);
+      expect(contextMenu()).toBeFalsy();
+      document.dispatchEvent(pointer("pointerup", 50, 45, "touch"));
+      vi.advanceTimersByTime(10);
+      vi.useRealTimers();
+      expect(depths(host)).toEqual([0, 1, 0]);
+      beta.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 50, clientY: 45 }));
+      expect(contextMenu()?.kind).toBe("action-menu");
+    } finally { dispose(); vi.useRealTimers(); }
+  });
+
+  it("touch: a second finger neither steers, releases nor cancels the held drag, and starts none of its own", async () => {
+    vi.useFakeTimers();
+    const { host, dispose } = mountWithStrip(["Alpha", "Beta", "Gamma"]);
+    try {
+      layOut(host);
+      const main = (i: number) => rows(host)[i]!.querySelector(".nav-tab-main")!;
+      const one = { pointerId: 1, isPrimary: true };
+      const two = { pointerId: 2, isPrimary: false };
+      main(2).dispatchEvent(pointer("pointerdown", 50, 75, "touch", one));
+      vi.advanceTimersByTime(600);
+      main(0).dispatchEvent(pointer("pointerdown", 50, 15, "touch", two));
+      vi.advanceTimersByTime(600);
+      document.dispatchEvent(pointer("pointermove", 50, 40, "touch", two));
+      document.dispatchEvent(pointer("pointermove", 50, 2, "touch", two));
+      document.dispatchEvent(pointer("pointerup", 50, 2, "touch", two));
+      document.dispatchEvent(pointer("pointercancel", 50, 2, "touch", two));
+      vi.advanceTimersByTime(10);
+      expect(titles(host)).toEqual(["Alpha", "Beta", "Gamma"]);
+      // The first finger's drag is still live and is the one that lands.
+      document.dispatchEvent(pointer("pointermove", 50, 40, "touch", one));
+      document.dispatchEvent(pointer("pointermove", 50, 2, "touch", one));
+      document.dispatchEvent(pointer("pointerup", 50, 2, "touch", one));
+      vi.advanceTimersByTime(10);
+      expect(titles(host)).toEqual(["Gamma", "Alpha", "Beta"]);
+    } finally { dispose(); vi.useRealTimers(); }
+  });
+
+  it("a collapsed group hiding the active tab carries the active cue", async () => {
+    const { host, dispose } = mountWithStrip(["Alpha", "Beta", "Gamma"]);
+    try {
+      await drag(host, "Beta", 20, ROW_H + ROW_H / 2 + 2);
+      rows(host)[1]!.querySelector<HTMLElement>(".nav-tab-main")!.click(); // activate Beta
+      expect(rows(host)[1]!.classList.contains("active")).toBe(true);
+      expect(rows(host)[0]!.classList.contains("has-active-child")).toBe(false);
+      rows(host)[0]!.querySelector<HTMLElement>(".nav-tab-toggle")!.click();
+      expect(titles(host)).toEqual(["Alpha", "Gamma"]);
+      expect(rows(host)[0]!.classList.contains("has-active-child")).toBe(true);
+      expect(rows(host)[1]!.classList.contains("has-active-child")).toBe(false);
+      // Collapsing changed nothing about the route: Beta is still the active tab.
+      expect(paneRouter("main").activeId()).toBe(paneRouter("main").tabs()[1]!.id);
+      rows(host)[0]!.querySelector<HTMLElement>(".nav-tab-toggle")!.click();
+      expect(rows(host)[0]!.classList.contains("has-active-child")).toBe(false);
+      expect(rows(host)[1]!.classList.contains("active")).toBe(true);
+    } finally { dispose(); }
   });
 });

@@ -9,6 +9,7 @@ import { mainRouter, resetPaneLayoutToSingle } from "./panes";
 import type { PaneSnapshot, SerializedTab } from "./router";
 import { tabDepths } from "./tabTree";
 import { applySidebarSession } from "./ui";
+import { readFileSync } from "node:fs";
 
 const st = (name: string, extra: Partial<SerializedTab> = {}): SerializedTab =>
   ({ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false, ...extra });
@@ -53,6 +54,26 @@ describe("session tab tree (GH #704)", () => {
     resetPaneLayoutToSingle(snap([journalsTab()]));
     restoreFrom(raw);
     expect(JSON.stringify(buildPersistedSession())).toBe(raw);
+  });
+
+  it("a flat session is byte-identical to the previous build's writer (frozen at 99923a87b)", () => {
+    // Bytes written by buildPersistedSession() at base 99923a87b for this layout
+    // (a pinned tab, Journals, a two-entry history, the active tab third).
+    const previous = readFileSync(new URL("./fixtures/session-flat-99923a87b.json", import.meta.url), "utf8");
+    resetPaneLayoutToSingle({
+      tabs: [
+        st("Pinned note", { pinned: true }),
+        journalsTab(),
+        { history: [{ kind: "page", name: "Alpha", pageKind: "page" }, { kind: "page", name: "Beta", pageKind: "page" }], pos: 1, pinned: false },
+        st("Gamma"),
+      ],
+      activeIndex: 2,
+    });
+    expect(JSON.stringify(buildPersistedSession())).toBe(previous);
+    // And the previous writer's file restores to the same bytes.
+    resetPaneLayoutToSingle(snap([journalsTab()]));
+    restoreFrom(previous);
+    expect(JSON.stringify(buildPersistedSession())).toBe(previous);
   });
 
   it("an old (v1, no-field) session restores flat", () => {

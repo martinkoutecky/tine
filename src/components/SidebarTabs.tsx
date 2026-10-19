@@ -24,20 +24,29 @@ const [tabsSectionExpanded, setTabsSectionExpanded] = createSignal(true);
  *  (the Favorites rule). */
 const INDENT_PX = 16;
 
-interface TabRow { tab: Tab; depth: number; hasChildren: boolean }
+interface TabRow {
+  tab: Tab;
+  depth: number;
+  hasChildren: boolean;
+  /** A collapsed row hiding the active tab: it carries the active cue. */
+  hidesActive: boolean;
+}
 
 /** Drawn rows in tree order, skipping what a collapsed tab hides. A row's
  *  index is its `data-row-index`. */
-export function visibleTabRows(tabs: readonly Tab[]): TabRow[] {
+export function visibleTabRows(tabs: readonly Tab[], activeId: string | null = null): TabRow[] {
   const depths = tabDepths(tabs);
   const rows: TabRow[] = [];
   let hiddenBelow = Infinity; // rows deeper than this are inside a collapsed tab
   tabs.forEach((tab, i) => {
     const depth = depths[i];
-    if (depth > hiddenBelow) return;
+    if (depth > hiddenBelow) {
+      if (tab.id === activeId) rows[rows.length - 1].hidesActive = true; // the collapsed row above
+      return;
+    }
     hiddenBelow = Infinity;
     const hasChildren = depths[i + 1] !== undefined && depths[i + 1] > depth;
-    rows.push({ tab, depth, hasChildren });
+    rows.push({ tab, depth, hasChildren, hidesActive: false });
     if (tab.collapsed && hasChildren) hiddenBelow = depth;
   });
   return rows;
@@ -68,7 +77,7 @@ const [dropDepth, setDropDepth] = createSignal(0);
 export function SidebarTabs(props: { onActiveNavigationComplete?: () => void }): JSX.Element {
   // The focused pane of the main window; the sidebar exists only there.
   const router = () => focusedRouterOf(MAIN_WINDOW_ID);
-  const rows = createMemo(() => visibleTabRows(router().tabs()));
+  const rows = createMemo(() => visibleTabRows(router().tabs(), router().activeId()));
   // The disclosure column appears once anything is nested; a flat list looks as v1 did.
   const nesting = createMemo(() => router().tabs().some((tab) => tab.parent !== null));
   const startDrag = (from: number, event: PointerEvent) => {
@@ -113,6 +122,7 @@ export function SidebarTabs(props: { onActiveNavigationComplete?: () => void }):
                     classList={{
                       active: tab.id === router().activeId(),
                       pinned: tab.pinned,
+                      "has-active-child": row.hidesActive,
                       "row-drop-before": dropping() && dropTarget()!.before,
                       "row-drop-after": dropping() && !dropTarget()!.before,
                     }}

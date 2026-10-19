@@ -99,3 +99,11 @@
 #sidebar-tabs-list .nav-tab.row-drop-after {
   background-position: bottom left;
 }
+
+/* A collapsed group hiding the active tab says so (GH #704): the active cue,
+   lighter, with an accent edge; expanding it shows the active row itself. */
+.nav-tab.has-active-child {
+  color: var(--text-title);
+  font-weight: 500;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
