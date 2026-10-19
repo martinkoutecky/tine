@@ -424,6 +424,26 @@ export function fullWidthCloserEdit(
   return { value: value.slice(0, caret - 1) + value.slice(caret), caret };
 }
 
+/** Apply `fullWidthRefReplace` to the editor textarea at its collapsed caret. */
+export function applyFullWidthRefReplace(el: HTMLTextAreaElement): boolean {
+  if (el.selectionStart !== el.selectionEnd) return false;
+  const paired = fullWidthRefReplace(el.value, el.selectionStart);
+  if (!paired) return false;
+  el.value = paired.value;
+  el.setSelectionRange(paired.caret, paired.caret);
+  return true;
+}
+
+/** Apply `fullWidthCloserEdit` (GH #53) to the editor textarea at its collapsed caret. */
+export function applyFullWidthCloserThrough(el: HTMLTextAreaElement, autoPairingOn: boolean): boolean {
+  if (el.selectionStart !== el.selectionEnd) return false;
+  const stepped = fullWidthCloserEdit(el.value, el.selectionStart, autoPairingOn);
+  if (!stepped) return false;
+  el.value = stepped.value;
+  el.setSelectionRange(stepped.caret, stepped.caret);
+  return true;
+}
+
 /** Replace [start,end) in `raw` with `insert`; caret lands at
  *  `start + caretInInsert` (defaults to end of the inserted text). */
 export function applyCompletion(
