@@ -764,7 +764,7 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async readLocalImage() {
       return new Uint8Array();
     },
-    async listTemplates() {
+    async listTemplates(_name?: string) {
       return [];
     },
     async guidePages() {

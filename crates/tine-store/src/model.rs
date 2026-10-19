@@ -10,6 +10,7 @@ pub(crate) mod entry_identity;
 pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 pub(crate) use held_index::Source;
+mod launch_patch;
 mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
@@ -3619,8 +3620,22 @@ impl Graph {
         // on-demand build rather than install a stale snapshot).
         let phase = std::time::Instant::now();
         let _bl = self.build_lock.lock().unwrap();
-        let installed = self.install_built(built, gen0, replace, Some(&stamps), Some(discovery));
-        if installed {
+        let built = launch_patch::LaunchPass {
+            built,
+            stamps,
+            racy,
+            named,
+            discovery,
+            withheld,
+        };
+        let installed = self.install_pass(built, gen0, replace);
+        let installed_any = installed.is_some();
+        if let Some(launch_patch::Installed {
+            named,
+            stamps,
+            racy,
+        }) = installed
+        {
             self.install_launch_listing(self.cache_gen.load(Ordering::Acquire), named);
             if !replace {
                 *self.launch_observations.lock().unwrap() = Some(LaunchObservations {
@@ -3630,6 +3645,7 @@ impl Graph {
                 });
             }
         }
+        let installed = installed_any;
         pass.install_us = diag::micros(phase.elapsed());
         #[cfg(test)]
         crate::store::pause_at_hook(&self.warm_after_install_pause);
@@ -4265,7 +4281,7 @@ impl Graph {
                 // bump; if it did, continue to cache_upsert below. Otherwise
                 // the generation moves under the lock install_built takes, so
                 // its pre-write candidate cannot be installed afterward.
-                if self.cold_reconcile_bump() {
+                if self.cold_reconcile_bump(path) {
                     return None;
                 }
             }

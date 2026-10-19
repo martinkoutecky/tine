@@ -25,6 +25,7 @@ mod render_query_cache;
 mod retained;
 pub use render::{SheetExport, SheetInput};
 pub mod search;
+pub mod templates;
 
 use std::io;
 use tine_store::{FileId, Refusal, Store, StoreError, TxOutcome, Why};

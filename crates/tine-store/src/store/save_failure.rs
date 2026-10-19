@@ -39,6 +39,8 @@ impl Store {
     /// creation can additionally walk O(P) file-list metadata for twin checks
     /// and update the name index. It can
     /// wait for graph snapshot capture and other writers without a timeout.
+    /// While the graph first loads (no view yet), it waits for no
+    /// whole-graph build: the first complete view publishes the save.
     /// If a caller abandons that wait, it must re-read the file: cancellation
     /// outside this call does not reveal whether the bytes reached disk.
     /// Missing target parent directories are created during apply. A

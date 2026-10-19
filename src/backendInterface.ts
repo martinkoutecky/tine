@@ -453,7 +453,9 @@ export interface Backend {
   /** Capture-only page/tag completion capability. It is intentionally not the
    * general graph command route used by the main WebView. */
   captureQuickSwitch(query: string, limit: number, transliteration?: boolean): Promise<PageEntry[]>;
-  listTemplates(): Promise<TemplateDto[]>;
+  /** Every template; with `name`, at most the one graph-wide discovery picks
+   * for that exact name, answered early when the graph's files settle it. */
+  listTemplates(name?: string): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
   /** Explicit bounded subtree; ordinary resolution is intentionally shallow. */

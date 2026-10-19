@@ -140,6 +140,9 @@ mod journal_sections_locate;
 #[path = "launch_one_read.rs"]
 mod launch_one_read;
 
+#[path = "loading_own_save.rs"]
+mod loading_own_save;
+
 #[path = "lifecycle.rs"]
 mod lifecycle;
 

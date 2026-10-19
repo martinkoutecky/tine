@@ -82,6 +82,33 @@ generation; `whole_graph()` returns the load error. A successful
 `refresh()` (at any `Depth`) retries the load and publishes a fresh
 generation. A closed store is terminal.
 
+An own save while the initial parse runs and no view exists yet (no launch
+checkpoint served) waits for no whole-graph build (BqbeQ, D-20261019-B6). The
+transaction or page-host publication commits, the page reads from its file at
+once, and the publication is deferred: `TxOutcome::Committed` carries the
+current revision and no `Change`. The launch pass takes the save in. Every
+cache-generation move made while no cache exists is recorded with the paths it
+moved (`model/derived_cold.rs`), and the pass re-derives exactly those paths,
+and the pages a hold withheld from it, from their files before it installs
+(`model/launch_patch.rs`). A move it cannot attribute to paths (a discarded
+cache, a config change, a duplicate journal day) declines the install, and the
+Ready publication builds on demand as before. The Ready publication comes
+first and its view holds each saved page once, with its last saved bytes; the
+deferred changes follow in save order under the same writer hold, and the
+Ready publication does not announce their files as outside writes. A
+publication that does not wait while changes still do (a config write during
+loading, which publishes a view early) publishes the waiting changes first, so
+own changes keep save order; their files stay unannounced by the Ready
+publication and the launch checkpoint stays declined. A deferred
+save declines a launch checkpoint not yet installed: the checkpoint lacks the
+save, and the watcher's baseline already holds the save's own stamp, so no
+diff would correct it. A config write never defers. If the load stops, the
+deferred changes are dropped and the recovery's first view covers their
+writes. The page host's `wait_published` means durable and indexed, as after
+Ready; it does not wait for the Ready view. Proof:
+`crates/tine-store/src/store/loading_save_tests.rs`,
+`crates/tine-store/tests/loading_own_save.rs`.
+
 `Store::refresh(Depth)` is the one refresh door. `Depth::Stamps` trusts a file
 whose modification time, length and identity are unchanged (the watcher's
 depth and the focus-return rescan's); `Depth::Bytes` hashes every graph-text

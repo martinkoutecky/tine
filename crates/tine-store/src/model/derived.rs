@@ -186,6 +186,8 @@ pub(crate) struct Derived {
     /// by these paths too, so no generation misses a mutation its pages root
     /// contains. A leaf lock; a superset only costs a redundant patch.
     touched: Mutex<BTreeSet<PathBuf>>,
+    /// Moves made while no cache is installed (`derived_cold.rs`).
+    cold_moves: Mutex<cold::ColdMoves>,
 }
 
 impl Default for Derived {
@@ -203,6 +205,7 @@ impl Default for Derived {
             disk_revs: RwLock::new(HashMap::new()),
             vcs_anchored: RwLock::new(HashSet::new()),
             touched: Mutex::new(BTreeSet::new()),
+            cold_moves: Default::default(),
         }
     }
 }
@@ -898,6 +901,7 @@ impl Graph {
         *self.derived.cache_index.write().unwrap() = Some(index);
         *self.derived.disk_revs.write().unwrap() = revs;
         *self.derived.vcs_anchored.write().unwrap() = anchored;
+        self.forget_cold_moves();
         if replace {
             // A replaced cache is new content under the old generation: the
             // generation-keyed page list, name index and block index must
@@ -949,6 +953,7 @@ impl Graph {
         // The loaded generation keeps its number, so the evaluator, the
         // reference index and the generation-keyed listing agree with it.
         self.cache_gen.store(cache_generation, Ordering::Release);
+        self.forget_cold_moves();
         *self.derived.page_list_cache.write().unwrap() = Some((cache_generation, list));
         drop(guard);
         true
@@ -1028,7 +1033,7 @@ impl Graph {
     /// builders install under (a read guard excludes their install), so a
     /// build that read the earlier bytes declines. False when a cache was
     /// installed meanwhile.
-    pub(super) fn cold_reconcile_bump(&self) -> bool {
+    pub(super) fn cold_reconcile_bump(&self, path: &Path) -> bool {
         let cache = self.derived.cache.read().unwrap();
         if cache.is_some() {
             return false;
@@ -1036,7 +1041,7 @@ impl Graph {
         *self.derived.page_list_cache.write().unwrap() = None;
         *self.derived.find_entry_cache.write().unwrap() = None;
         *self.derived.cache_index.write().unwrap() = None;
-        self.cache_gen.fetch_add(1, Ordering::Release);
+        self.move_generation(true, &[path]);
         true
     }
 
@@ -1055,8 +1060,11 @@ impl Graph {
         }
     }
 
-    pub(crate) fn transaction_bump_generation(&self) {
-        let before = self.cache_gen.fetch_add(1, Ordering::Release);
+    /// Move the generation for a publication of `paths` that moved none.
+    pub(crate) fn transaction_bump_generation(&self, paths: &[&Path]) {
+        let cache = self.derived.cache.read().unwrap();
+        let before = self.move_generation(cache.is_none(), paths);
+        drop(cache);
         self.retag_name_memos(before, before + 1);
     }
 
@@ -1185,8 +1193,8 @@ impl Graph {
         // sees the new document, so a derived result computed at generation G
         // reflects every edit whose generation is <= G. The bump is
         // unconditional, even on a cold cache, so a racing lock-free build
-        // detects the mutation and retries.
-        self.cache_gen.fetch_add(1, Ordering::Release);
+        // detects the mutation (and the launch pass re-derives the path).
+        self.move_generation(guard.is_none(), &[&path]);
         drop(guard);
     }
 
@@ -1202,7 +1210,7 @@ impl Graph {
         }
         // Bump AFTER the removal is published (under the cache lock); see
         // `cache_upsert`.
-        self.cache_gen.fetch_add(1, Ordering::Release);
+        self.move_generation(guard.is_none(), &[&entry.path]);
         drop(guard);
     }
 
@@ -1241,6 +1249,9 @@ pub(super) type CheckpointRows = (Vec<String>, Vec<(PathBuf, String)>, Vec<PathB
 
 #[path = "derived_owners.rs"]
 mod owners;
+
+#[path = "derived_cold.rs"]
+mod cold;
 
 #[cfg(test)]
 #[path = "derived_tests.rs"]

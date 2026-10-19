@@ -1,6 +1,38 @@
-//! Name-discovery transport: readable names plus the unreadable paths.
-use super::{ResolvedWire, WholeGraph};
+//! Name-discovery transport: readable names plus the unreadable paths, and
+//! the wire form of one name's resolution.
+use super::WholeGraph;
 use serde::Serialize;
+use tine_store::{PageId, Resolved};
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ResolvedWire {
+    Existing { id: String, others: Vec<String> },
+    Alias { owners: Vec<String> },
+    Absent { id: String },
+}
+
+impl From<Resolved> for ResolvedWire {
+    fn from(value: Resolved) -> Self {
+        Self::from(&value)
+    }
+}
+
+impl From<&Resolved> for ResolvedWire {
+    fn from(value: &Resolved) -> Self {
+        let id = |id: &PageId| id.as_str().to_owned();
+        match value {
+            Resolved::Existing { id: first, others } => Self::Existing {
+                id: id(first),
+                others: others.iter().map(id).collect(),
+            },
+            Resolved::Alias { owners } => Self::Alias {
+                owners: owners.iter().map(id).collect(),
+            },
+            Resolved::Absent { id: absent } => Self::Absent { id: id(absent) },
+        }
+    }
+}
 
 #[derive(Serialize)]
 pub(crate) struct PageInventoryWire {
