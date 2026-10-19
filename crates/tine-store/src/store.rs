@@ -313,10 +313,7 @@ pub(crate) struct ChangeFeed {
     /// The launch checkpoint publisher, when this store keeps one.
     pub(crate) checkpoint: std::sync::OnceLock<Arc<checkpoint::Signal>>,
     #[cfg(test)]
-    pub(crate) snapshot_publish_pause: Mutex<Option<TestPause>>,
-    /// Every snapshot published, in order (tests compare each generation).
-    #[cfg(test)]
-    pub(crate) published_log: Mutex<Vec<Arc<Snapshot>>>,
+    pub(crate) publish_hooks: snapshot::PublishHooks,
 }
 
 /// Told `Some(reason)` when the OS refuses live notifications and `None`
@@ -404,9 +401,7 @@ impl ChangeFeed {
             watch_status: Mutex::new((None, None)),
             checkpoint: std::sync::OnceLock::new(),
             #[cfg(test)]
-            snapshot_publish_pause: Mutex::new(None),
-            #[cfg(test)]
-            published_log: Mutex::new(Vec::new()),
+            publish_hooks: Default::default(),
         }
     }
 
@@ -551,17 +546,12 @@ impl ChangeFeed {
             self.checkpoint.get().inspect(|signal| signal.published());
         }
         #[cfg(test)]
-        pause_at_hook(&self.snapshot_publish_pause);
+        self.publish_hooks.before_publish(&snapshot);
         let mut state = self.state.lock().unwrap();
         state.rev += 1;
         let rev = GraphRev(state.rev);
         debug_assert_eq!(snapshot.rev, rev);
         let answers = snapshot.answers.clone();
-        #[cfg(test)]
-        self.published_log
-            .lock()
-            .unwrap()
-            .push(Arc::clone(&snapshot));
         *self.snapshot.write().unwrap() = Some(snapshot);
         before_notify();
         if !state.closed {
@@ -3877,7 +3867,7 @@ mod rev5_tests {
             observer_store.whole_graph().unwrap().rev()
         });
         let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
-        *store.changes.snapshot_publish_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        *store.changes.publish_hooks.pause.lock().unwrap() = Some(Arc::clone(&pause));
         let recovery_store = Arc::clone(&store);
         let recovery = std::thread::spawn(move || recovery_store.refresh(crate::Depth::Stamps));
         wait_hook(&pause);
@@ -3907,7 +3897,7 @@ mod rev5_tests {
         fs::write(&hold_load, "").unwrap();
         let store = Arc::new(Store::open(&root, Default::default()).unwrap().0);
         let pause: TestPause = Arc::new((Mutex::new((false, false)), Condvar::new()));
-        *store.changes.snapshot_publish_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        *store.changes.publish_hooks.pause.lock().unwrap() = Some(Arc::clone(&pause));
         fs::remove_file(hold_load).unwrap();
         wait_hook(&pause);
         let poll_store = Arc::clone(&store);
@@ -5032,7 +5022,7 @@ mod rev5_tests {
             let hook = if during_cache_write {
                 &store.graph.cache_publish_pause
             } else {
-                &store.changes.snapshot_publish_pause
+                &store.changes.publish_hooks.pause
             };
             *hook.lock().unwrap() = Some(Arc::clone(&pause));
             let writer_store = Arc::clone(&store);

@@ -71,11 +71,29 @@ impl WholeGraph {
     }
 }
 
+/// Test-only hooks on snapshot publication: a pause before a snapshot is
+/// published, and every published snapshot in order (tests compare each
+/// generation).
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct PublishHooks {
+    pub(crate) pause: Mutex<Option<super::TestPause>>,
+    log: Mutex<Vec<Arc<Snapshot>>>,
+}
+
+#[cfg(test)]
+impl PublishHooks {
+    pub(super) fn before_publish(&self, snapshot: &Arc<Snapshot>) {
+        super::pause_at_hook(&self.pause);
+        self.log.lock().unwrap().push(Arc::clone(snapshot));
+    }
+}
+
 #[cfg(test)]
 impl ChangeFeed {
     /// How many snapshots this feed has published.
     pub(crate) fn published_count(&self) -> usize {
-        self.published_log.lock().unwrap().len()
+        self.publish_hooks.log.lock().unwrap().len()
     }
 
     /// For each snapshot published from index `from` on: the cache
@@ -87,7 +105,7 @@ impl ChangeFeed {
         from: usize,
         image: &dyn Fn(&crate::model::ReadSnapshot) -> String,
     ) -> Vec<(u64, String, String)> {
-        let log: Vec<_> = self.published_log.lock().unwrap()[from..].to_vec();
+        let log: Vec<_> = self.publish_hooks.log.lock().unwrap()[from..].to_vec();
         log.iter()
             .map(|snapshot| {
                 let fresh = crate::model::ReadSnapshot::capture(
