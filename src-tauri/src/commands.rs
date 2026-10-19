@@ -348,7 +348,7 @@ pub(crate) async fn resolve_page(
 ) -> Result<ResolvedWire, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        if let Some(early) = templates::early_absent_journal(&slot.store, &name, kind) {
+        if let Some(early) = templates::early_absent_journal(&slot, &name, kind) {
             return early;
         }
         slot.store

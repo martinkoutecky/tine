@@ -7,18 +7,26 @@ use std::sync::Arc;
 use tine_core::model::TemplateDto;
 use tine_graph_features::templates::{named_template_from_files, NamedTemplate};
 
+/// Whether this binding's launch warm already holds a graph view (a served
+/// launch checkpoint or the loaded graph; `graph::warm_cache_async` sets it
+/// once `whole_graph` returned). The early file answers stand down then: the
+/// view answers at once. Before it flips, the named-template race below still
+/// lets an arriving view stop the file lookup.
+fn view_at_hand(slot: &GraphSlot) -> bool {
+    slot.warm_done.load(Ordering::Acquire)
+}
+
 /// A journal day no file claims is absent at its configured id
 /// (`absent_journal_id`); `None` leaves the answer to the graph.
 pub(super) fn early_absent_journal(
-    store: &tine_store::Store,
+    slot: &GraphSlot,
     name: &str,
     kind: PageKind,
 ) -> Option<Result<ResolvedWire, String>> {
-    // A served launch checkpoint (or the ready graph) answers at once.
-    if kind != PageKind::Journal || !store.first_view_pending() {
+    if kind != PageKind::Journal || view_at_hand(slot) {
         return None;
     }
-    match tine_graph_features::journals::absent_journal_id(store, name) {
+    match tine_graph_features::journals::absent_journal_id(&slot.store, name) {
         Ok(Some(id)) => Some(Ok(Resolved::Absent { id }.into())),
         Err(StoreError::Closed) => Some(Err("graph load failed: Closed".to_owned())),
         // Claimed, not a day, or a read error: the graph-wide answer decides.
@@ -31,7 +39,8 @@ pub(super) fn early_absent_journal(
 /// first usable answer wins: a graph view (already loaded, or a served launch
 /// checkpoint) answers at once and stops the file lookup between files; a
 /// settled file answer returns without the graph, whose wait then ends with
-/// the load. Cost: see `named_template_from_files`.
+/// the load. With a view already at hand only the graph answers. Cost: see
+/// `named_template_from_files`.
 pub(super) async fn named_template(
     slot: Arc<GraphSlot>,
     name: String,
@@ -40,18 +49,7 @@ pub(super) async fn named_template(
         Graph(Result<WholeGraph, tine_store::LoadError>),
         Files(std::io::Result<NamedTemplate>),
     }
-    // A served launch checkpoint (or the ready graph) answers at once: no
-    // file lookup then.
-    if !slot.store.first_view_pending() {
-        return tauri::async_runtime::spawn_blocking(move || {
-            let view =
-                (slot.store.whole_graph()).map_err(|e| format!("graph load failed: {e:?}"))?;
-            let found = view.templates().into_iter().find(|t| t.name == name);
-            Ok(found.into_iter().collect())
-        })
-        .await
-        .map_err(|error| error.to_string())?;
-    }
+    let files = !view_at_hand(&slot);
     let arrived = Arc::new(AtomicBool::new(false));
     let (send, answers) = std::sync::mpsc::channel();
     {
@@ -62,7 +60,7 @@ pub(super) async fn named_template(
             let _ = send.send(First::Graph(view));
         });
     }
-    {
+    if files {
         let wanted = name.clone();
         tauri::async_runtime::spawn_blocking(move || {
             let stop = || arrived.load(Ordering::Acquire);
@@ -91,4 +89,37 @@ pub(super) async fn named_template(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// BqbeQ: the early absent-day answer runs only until the launch warm
+    /// holds a view (a served launch checkpoint answers at once).
+    #[test]
+    fn the_early_absent_day_answer_stands_down_once_a_view_is_at_hand() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for area in ["pages", "journals", "logseq"] {
+            std::fs::create_dir_all(root.join(area)).unwrap();
+        }
+        std::fs::write(root.join("pages/A.md"), "- a\n").unwrap();
+        std::fs::write(root.join(".tine-test-pause-load"), "").unwrap();
+        let store = tine_store::Store::open(root, Default::default()).unwrap().0;
+        let slot = GraphSlot::new(store, root.to_path_buf());
+        let today = tine_core::date::JournalDate::today().title();
+        assert!(matches!(
+            early_absent_journal(&slot, &today, PageKind::Journal),
+            Some(Ok(ResolvedWire::Absent { .. }))
+        ));
+        assert!(early_absent_journal(&slot, "A", PageKind::Page).is_none());
+        slot.warm_done.store(true, Ordering::Release);
+        assert!(
+            early_absent_journal(&slot, &today, PageKind::Journal).is_none(),
+            "with a view at hand the graph answers"
+        );
+        std::fs::remove_file(root.join(".tine-test-pause-load")).unwrap();
+        slot.store.close();
+    }
 }

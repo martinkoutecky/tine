@@ -43,10 +43,10 @@ impl Store {
     }
 
     /// The initial load is running and no view exists yet: no launch
-    /// checkpoint is served, so `whole_graph` would wait for the parse. Early
-    /// answers from the files (an unclaimed journal day, a named template)
-    /// run only then; with a served checkpoint the view answers at once.
-    pub fn first_view_pending(&self) -> bool {
+    /// checkpoint is served, so `whole_graph` would wait for the parse.
+    /// `page_named` answers an unclaimed journal day from the files only
+    /// then; with a served checkpoint the view answers.
+    pub(crate) fn first_view_pending(&self) -> bool {
         matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading)
             && self.changes.snapshot.read().unwrap().is_none()
     }

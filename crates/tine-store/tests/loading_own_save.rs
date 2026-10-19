@@ -116,3 +116,128 @@ fn todays_journal_created_on_the_host_while_loading_waits_for_no_graph_build() {
     drop(host);
     store.close();
 }
+
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name == ".git" || name == "bak" || name == ".recycle" {
+            continue;
+        }
+        let target = to.join(&name);
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else if entry.file_type().unwrap().is_file() {
+            fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+/// Every page of a view: id, name and root text, sorted.
+fn fingerprint(store: &Store) -> Vec<(String, String, String)> {
+    let view = store.whole_graph().unwrap();
+    let mut pages: Vec<_> = (view.corpus().pages.iter())
+        .map(|page| {
+            let text: Vec<String> = (page.document.roots.iter())
+                .map(|root| root.raw().to_string())
+                .collect();
+            (page.id.to_string(), page.name.clone(), text.join("\n"))
+        })
+        .collect();
+    pages.sort();
+    pages
+}
+
+/// AGENTS.md §4 corpus gate, on a COPY of the anonymized graph: saves made
+/// while the graph loads (a new today's journal and an edit of an existing
+/// page) leave the first complete view equal to a fresh open of the result.
+/// `cargo test -p tine-store --test integration own_saves_while_loading_match_a_fresh_open_on_the_anonymized_graph -- --ignored`
+#[test]
+#[ignore = "needs ~/research/logseq-anonymized"]
+fn own_saves_while_loading_match_a_fresh_open_on_the_anonymized_graph() {
+    let source = Path::new(&std::env::var("HOME").unwrap()).join("research/logseq-anonymized");
+    assert!(source.is_dir(), "the anonymized graph is missing");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("graph");
+    copy_tree(&source, &root);
+    let today = JournalDate::today();
+    let rel = format!("journals/{}.md", today.file_stem());
+    let _ = fs::remove_file(root.join(&rel));
+    let mut existing: Vec<_> = fs::read_dir(root.join("pages"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
+        .collect();
+    existing.sort();
+    let edited = format!(
+        "pages/{}",
+        existing[existing.len() / 2]
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+    );
+    let hold = root.join(".tine-test-pause-load");
+    fs::write(&hold, "").unwrap();
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    let read = store.page(&PageId::from(edited.as_str())).unwrap();
+    let mut doc = read.doc.clone();
+    doc.blocks.push(BlockDto {
+        raw: "BQBEQ-CORPUS-EDIT".into(),
+        ..Default::default()
+    });
+    let journal = PageDto {
+        name: today.file_stem(),
+        kind: PageKind::Journal,
+        title: today.title(),
+        pre_block: None,
+        blocks: vec![BlockDto {
+            raw: "BQBEQ-CORPUS-TODAY".into(),
+            ..Default::default()
+        }],
+        rev: None,
+        format: Format::Md,
+        read_only: false,
+        guide: false,
+    };
+    let mut tx = store.transaction(Some(EditKind::ReplacePage));
+    tx.save_page(
+        &[EditKind::ReplacePage],
+        &PageId::from(rel.as_str()),
+        tine_store::SaveBase::CreateNew,
+        &journal,
+    );
+    tx.save_page(
+        &[EditKind::ReplacePage],
+        &PageId::from(edited.as_str()),
+        tine_store::SaveBase::Existing(read.rev.clone()),
+        &doc,
+    );
+    assert!(matches!(
+        tx.commit(),
+        tine_store::TxOutcome::Committed { change: None, .. }
+    ));
+    assert_eq!(builds(&store), 0, "the saves built the graph while loading");
+    fs::remove_file(&hold).unwrap();
+    let during = fingerprint(&store);
+    assert_eq!(builds(&store), 0);
+    assert_eq!(
+        store.diagnostics()["launch"]["loadPassOutcomes"],
+        serde_json::json!([])
+    );
+    store.close();
+    drop(store);
+    let fresh = Store::open(&root, Default::default()).unwrap().0;
+    let after = fingerprint(&fresh);
+    assert_eq!(during.len(), after.len(), "page count");
+    for (a, b) in during.iter().zip(&after) {
+        assert_eq!(a, b);
+    }
+    assert_eq!(during.iter().filter(|p| p.0 == rel).count(), 1);
+    assert!(during.iter().any(|p| p.2.contains("BQBEQ-CORPUS-EDIT")));
+    eprintln!(
+        "anonymized copy: {} pages, first view == fresh open",
+        during.len()
+    );
+    fresh.close();
+}
