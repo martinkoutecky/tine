@@ -2,7 +2,8 @@
 // one embed or block reference, through the real pointer in the main pane, a
 // split pane and the right sidebar, plus keyboard focus on the embed toolbar.
 // Remove must change only the containing page's file (never the referenced
-// block's), and Undo must bring it back.
+// block's), and Undo must bring it back. Replace with text / Replace with
+// embed rewrite only the clicked reference occurrence the same way.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -120,6 +121,23 @@ try {
   await waitFile((t) => t.includes("see here") && !t.includes(`see ${REF}`) && t.includes(EMBED), "lost only the reference");
   await undo();
   await waitFile((t) => t === host, "got the reference back on Undo");
+
+  for (const [row, tag, check] of [
+    ["Replace with text", "text", (t) => t.includes("see target text here") && !t.includes(`see ${REF}`) && t.includes(EMBED)],
+    ["Replace with embed", "embed", (t) => t.includes(`see ${EMBED} here`) && !t.includes(`see ${REF}`)],
+  ]) {
+    stage = `main: block reference ${row} + Undo`;
+    const target = await browser.$('[data-pane-id="main"] .block-content .block-ref');
+    await target.waitForExist({ timeout: 10000 });
+    await target.click({ button: "right" });
+    await browser.waitUntil(() => browser.execute((want) => [...document.querySelectorAll(".ctx-item")].some((el) => el.textContent === want), row), { timeout: 5000, timeoutMsg: `${stage}: the menu has no "${row}" row` });
+    if (tag === "text") await shot("ref-menu-replace-rows.png");
+    await browser.execute((want) => [...document.querySelectorAll(".ctx-item")].find((el) => el.textContent === want).click(), row);
+    await waitFile(check, `got the ${tag} replacement`);
+    assert.ok(!read(hostPath).includes("id::") && !read(hostPath).includes(":id:"), `${stage}: the target's id property leaked into the host`);
+    await undo();
+    await waitFile((t) => t === host, "got the reference back on Undo");
+  }
 
   stage = "main: embed Open source";
   await hoverEmbed('[data-pane-id="main"]');
