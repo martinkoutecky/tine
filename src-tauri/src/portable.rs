@@ -701,11 +701,12 @@ mod tests {
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/");
-                // Test-only sources: `*_tests.rs` files and `*_tests/` modules.
+                // Test-only sources: `tests.rs` / `*_tests.rs` files and `tests/` / `*_tests/` modules.
                 if !name.ends_with(".rs")
-                    || relative
-                        .split('/')
-                        .any(|part| part.trim_end_matches(".rs").ends_with("_tests"))
+                    || relative.split('/').any(|part| {
+                        let stem = part.trim_end_matches(".rs");
+                        stem == "tests" || stem.ends_with("_tests")
+                    })
                 {
                     continue;
                 }
