@@ -11,6 +11,13 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 const out = path.resolve(process.env.OUT ?? "artifacts/queries/native");
 const testedCommit = execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const graph = `${out}/graph`;
+// Every run starts from a fresh graph and app state: a previous run's session (last route = the Search view) made
+// startup fail. Only a directory this journey created (marker file, or an older run's graph) is cleared, never an arbitrary OUT.
+const marker = `${out}/.e2e-calm-query`;
+if (fs.existsSync(out) && fs.readdirSync(out).length > 0 && !fs.existsSync(marker) && !fs.existsSync(`${graph}/pages/Queries.md`)) throw new Error(`OUT ${out} is not empty and was not created by this journey; choose an empty directory`);
+for (const dir of [graph, `${out}/xdg`]) fs.rmSync(dir, { recursive: true, force: true });
+fs.mkdirSync(out, { recursive: true });
+fs.writeFileSync(marker, "created by scripts/e2e-calm-query.mjs; graph/ and xdg/ are cleared at every run\n");
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${graph}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${out}/xdg/${dir}`, { recursive: true });
 const date = (offset) => {
