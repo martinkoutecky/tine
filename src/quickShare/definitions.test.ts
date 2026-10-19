@@ -1,6 +1,7 @@
-// A quick share in the graph (D-20261018-Q1): creating a share writes `tine.share:: <login>/<gist_id>` (no key)
-// onto the query block it started from, or a definition on the exports page; deleting or forgetting it removes
-// the property. Asserted on the bytes that reach the (fake) disk through the document layer's normal save.
+// A quick share in the graph (D-20261018-Q1, D-20261018-QS3): starting a share writes `tine.share:: pending/<record
+// id>` onto the query block it started from, or a definition on the exports page; finishing it writes
+// `<login>/<gist_id>` (no key) in its place, or removes it; deleting or forgetting a share removes the property.
+// Asserted on the bytes that reach the (fake) disk through the document layer's normal save.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
 import { clearSeededFacets } from "../render/facets";
@@ -13,7 +14,10 @@ import { doc } from "../document/model";
 import { bindTestHost } from "../document/host/wiring.test.support";
 import { installDiskHost } from "../diskHost.test.support";
 import type { BlockDto, PageDto, PageRead } from "../types";
-import { removeShareProperty, saveShareDefinition, shareValue } from "./definitions";
+import { finishSharePending, markSharePending, pendingRecordId, pendingShareMarkers, pendingValue, removeShareProperty, shareValue } from "./definitions";
+
+const ID = "Rec0rd-id_0123456789xy";
+const PENDING = `pending/${ID}`;
 
 vi.mock("../exportsPage", async (original) => ({
   ...await original<typeof import("../exportsPage")>(),
@@ -31,14 +35,14 @@ const page = (name: string, blocks: BlockDto[], format: "md" | "org" = "md", pre
 } as PageRead);
 const EXPORTS = () => page("Exports", [blk("{{query (or (property export) (property tine.share))}}")], "md", "tine/exports:: true\npublic:: false");
 
-async function bindDisk(initial: PageRead[]) {
+async function bindDisk(initial: PageRead[], failing: { path?: string } = {}, retryFailed = false) {
   const files = new Map<string, PageRead>(initial.map((dto) => [dto.id, structuredClone(dto)]));
   let rev = 0;
   const host = await bindTestHost();
   installDiskHost(host, {
     read: (path) => files.get(path) ?? null,
-    write: (path, dto) => { files.set(path, { ...structuredClone(dto), id: path, rev: `rev${++rev}` }); return `rev${rev}`; },
-  });
+    write: (path, dto) => { if (path === failing.path) throw new Error("disk full"); files.set(path, { ...structuredClone(dto), id: path, rev: `rev${++rev}` }); return `rev${rev}`; },
+  }, { retryFailed });
   vi.spyOn(backend(), "getPage").mockImplementation(async (name: string) => structuredClone([...files.values()].find((dto) => dto.name === name) ?? null));
   const raws = (path: string): string[] => {
     const out: string[] = [];
@@ -66,7 +70,7 @@ function answerShareQuery(disk: { files: Map<string, PageRead> }, pages: string[
       const flat: BlockDto[] = [];
       const walk = (blocks: BlockDto[]) => { for (const b of blocks) { flat.push(b); walk(b.children); } };
       walk(dto.blocks);
-      return { page: name, kind: "page", blocks: flat.filter((b) => b.raw.includes("tine.share::")) };
+      return { page: name, kind: "page", blocks: flat.filter((b) => b.raw.includes("tine.share::")).map((b) => ({ ...b, properties: blk(b.raw).properties })) };
     }),
   }) as never);
 }
@@ -75,19 +79,25 @@ beforeAll(() => initParser());
 beforeEach(() => { counter = 0; resetStore(); });
 afterEach(() => { vi.restoreAllMocks(); });
 
-describe("saveShareDefinition", () => {
-  it("the value is login/gist and never carries a key", () => {
+describe("markSharePending", () => {
+  it("the value is login/gist and never carries a key; a pending marker names a record id, never a gist", () => {
     expect(shareValue("octo-cat", "0123456789abcdef0123")).toBe("octo-cat/0123456789abcdef0123");
+    expect(pendingValue(ID)).toBe(PENDING);
+    expect(pendingRecordId(PENDING)).toBe(ID);
+    // A GitHub login `pending` sharing a gist is a share: record ids never have a gist id's shape.
+    expect(pendingRecordId("pending/0123456789abcdef012345")).toBeNull();
+    expect(pendingRecordId("octo/0123456789abcdef0123")).toBeNull();
+    expect(pendingRecordId("pending/short")).toBeNull();
   });
 
   it("from This page or an edited query: appends a definition with tine.share:: to the exports page and saves it", async () => {
     const disk = await bindDisk([EXPORTS()]);
     load(EXPORTS());
-    expect(await saveShareDefinition({ hostBlockId: null, macro: "{{tine-query @page and name = 'Project'}}" }, "octo/abc123")).toBe("Exports");
+    expect(await markSharePending({ hostBlockId: null, macro: "{{tine-query @page and name = 'Project'}}" }, ID)).toBe("Exports");
     expect(await flushAll()).toBe(true);
     expect(disk.raws("pages/Exports.md")).toEqual([
       "{{query (or (property export) (property tine.share))}}",
-      "{{tine-query @page and name = 'Project'}}\ntine.share:: octo/abc123",
+      `{{tine-query @page and name = 'Project'}}\ntine.share:: ${PENDING}`,
     ]);
   });
 
@@ -96,35 +106,39 @@ describe("saveShareDefinition", () => {
     const disk = await bindDisk([notes, EXPORTS()]);
     load(notes);
     const host = idOf("Notes", "{{query (task TODO)}}\nexport:: site");
-    expect(await saveShareDefinition({ hostBlockId: host, macro: "{{query (task TODO)}}" }, "octo/abc123")).toBe("Notes");
-    expect(disk.raws("pages/Notes.md")).toEqual(["intro", "{{query (task TODO)}}\nexport:: site\ntine.share:: octo/abc123"]);
+    expect(await markSharePending({ hostBlockId: host, macro: "{{query (task TODO)}}" }, ID)).toBe("Notes");
+    expect(disk.raws("pages/Notes.md")).toEqual(["intro", `{{query (task TODO)}}\nexport:: site\ntine.share:: ${PENDING}`]);
     expect(disk.raws("pages/Exports.md")).toHaveLength(1);
   });
 
-  it("a block that already names another share keeps it; the new share goes to the exports page", async () => {
-    const notes = page("Notes", [blk("{{query (task TODO)}}\ntine.share:: octo/old")]);
-    const disk = await bindDisk([notes, EXPORTS()]);
-    load(notes);
-    load(EXPORTS());
-    const host = idOf("Notes", "{{query (task TODO)}}\ntine.share:: octo/old");
-    expect(await saveShareDefinition({ hostBlockId: host, macro: "{{query (task TODO)}}" }, "octo/new")).toBe("Exports");
-    expect(await flushAll()).toBe(true);
-    expect(disk.raws("pages/Notes.md")).toEqual(["{{query (task TODO)}}\ntine.share:: octo/old"]);
-    expect(disk.raws("pages/Exports.md")[1]).toBe("{{query (task TODO)}}\ntine.share:: octo/new");
+  it("a block that already names another share, or another pending one, keeps it; the new share goes to the exports page", async () => {
+    for (const other of ["octo/old", "pending/0ther-device_record_id"]) {
+      resetStore();
+      const notes = page("Notes", [blk(`{{query (task TODO)}}\ntine.share:: ${other}`)]);
+      const disk = await bindDisk([notes, EXPORTS()]);
+      load(notes);
+      load(EXPORTS());
+      const host = idOf("Notes", `{{query (task TODO)}}\ntine.share:: ${other}`);
+      expect(await markSharePending({ hostBlockId: host, macro: "{{query (task TODO)}}" }, ID)).toBe("Exports");
+      expect(await flushAll()).toBe(true);
+      expect(disk.raws("pages/Notes.md")).toEqual([`{{query (task TODO)}}\ntine.share:: ${other}`]);
+      expect(disk.raws("pages/Exports.md")[1]).toBe(`{{query (task TODO)}}\ntine.share:: ${PENDING}`);
+      vi.restoreAllMocks();
+    }
   });
 
-  // Review r1 #3: the upload takes a while; a query edited meanwhile is a different query, so the share must not
-  // claim it. As for a deleted starting block, the share's own query goes to the exports page.
-  it("a starting block whose query changed during the upload keeps its query; the share goes to the exports page", async () => {
+  // Review r1 #3: a query edited since the dialog opened is a different query, so the share must not claim it; the
+  // share's own query goes to the exports page.
+  it("a starting block whose query changed keeps its query; the share goes to the exports page", async () => {
     const notes = page("Notes", [blk("{{query (task DONE)}}")]);
     const disk = await bindDisk([notes, EXPORTS()]);
     load(notes);
     load(EXPORTS());
     const host = idOf("Notes", "{{query (task DONE)}}");
-    expect(await saveShareDefinition({ hostBlockId: host, macro: "{{query (task TODO)}}" }, "octo/abc123")).toBe("Exports");
+    expect(await markSharePending({ hostBlockId: host, macro: "{{query (task TODO)}}" }, ID)).toBe("Exports");
     expect(await flushAll()).toBe(true);
     expect(disk.raws("pages/Notes.md")).toEqual(["{{query (task DONE)}}"]);
-    expect(disk.raws("pages/Exports.md")[1]).toBe("{{query (task TODO)}}\ntine.share:: octo/abc123");
+    expect(disk.raws("pages/Exports.md")[1]).toBe(`{{query (task TODO)}}\ntine.share:: ${PENDING}`);
   });
 
   it("writes nothing once the graph the share started on is no longer bound", async () => {
@@ -132,7 +146,7 @@ describe("saveShareDefinition", () => {
     const disk = await bindDisk([notes, EXPORTS()]);
     load(notes);
     const host = idOf("Notes", "{{query (task TODO)}}");
-    await expect(saveShareDefinition({ hostBlockId: host, macro: "{{query (task TODO)}}" }, "octo/abc123", () => false)).rejects.toThrow("graph-changed");
+    await expect(markSharePending({ hostBlockId: host, macro: "{{query (task TODO)}}" }, ID, () => false)).rejects.toThrow("graph-changed");
     expect(await flushAll()).toBe(true);
     expect(disk.raws("pages/Notes.md")).toEqual(["{{query (task TODO)}}"]);
     expect(disk.raws("pages/Exports.md")).toHaveLength(1);
@@ -142,11 +156,64 @@ describe("saveShareDefinition", () => {
     const org = page("Exports", [blk("{{query (or (property export) (property tine.share))}}")], "org", "#+tine/exports: true\n#+public: false");
     const disk = await bindDisk([org]);
     load(org);
-    await saveShareDefinition({ hostBlockId: null, macro: "{{tine-query @page and name = 'A'}}" }, "octo/abc");
+    await markSharePending({ hostBlockId: null, macro: "{{tine-query @page and name = 'A'}}" }, ID);
     expect(await flushAll()).toBe(true);
     const added = disk.raws("pages/Exports.org")[1];
     expect(added).toContain("{{tine-query @page and name = 'A'}}");
-    expect(added).toMatch(/:tine\.share: octo\/abc/);
+    expect(added).toContain(`:tine.share: ${PENDING}`);
+  });
+
+  it("an appended definition that did not reach disk is taken back out, so no later save writes it", async () => {
+    const failing: { path?: string } = { path: "pages/Exports.md" };
+    // The host retries a failed write (its save backoff): what it then writes is the page as it is now.
+    const disk = await bindDisk([EXPORTS()], failing, true);
+    load(EXPORTS());
+    await expect(markSharePending({ hostBlockId: null, macro: "{{tine-query @page and name = 'A'}}" }, ID)).rejects.toThrow("couldn't write to Exports");
+    expect(Object.values(doc.byId).some((n) => n.raw.includes(PENDING))).toBe(false);
+    failing.path = undefined;
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Exports.md")).toEqual(["{{query (or (property export) (property tine.share))}}"]);
+  });
+});
+
+describe("finishSharePending", () => {
+  it("replaces the marker wherever its block is now, on every block carrying it, loading pages that are not open", async () => {
+    const notes = page("Notes", [blk("moved here", [blk(`{{query (task DONE)}}\ntine.share:: ${PENDING}`)])]);
+    const other = page("Other", [blk(`{{query (task TODO)}}\ntine.share:: ${PENDING}`), blk("{{query (task NOW)}}\ntine.share:: pending/0ther-device_record_id")]);
+    const disk = await bindDisk([notes, other]);
+    answerShareQuery(disk, ["Notes", "Other"]);
+    expect((await finishSharePending(ID, "octo/0123456789abcdef0123")).sort()).toEqual(["Notes", "Other"]);
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Notes.md")).toEqual(["moved here", "{{query (task DONE)}}\ntine.share:: octo/0123456789abcdef0123"]);
+    expect(disk.raws("pages/Other.md")).toEqual(["{{query (task TODO)}}\ntine.share:: octo/0123456789abcdef0123",
+      "{{query (task NOW)}}\ntine.share:: pending/0ther-device_record_id"]);
+  });
+
+  it("removes it when the share was not created, and answers no page when no block carries it", async () => {
+    const notes = page("Notes", [blk(`{{query (task DONE)}}\ntine.share:: ${PENDING}`)]);
+    const disk = await bindDisk([notes]);
+    answerShareQuery(disk, ["Notes"]);
+    expect(await finishSharePending(ID, null)).toEqual(["Notes"]);
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Notes.md")).toEqual(["{{query (task DONE)}}"]);
+    answerShareQuery(disk, []);
+    expect(await finishSharePending(ID, "octo/0123456789abcdef0123")).toEqual([]);
+  });
+
+  it("lists the graph's pending markers by record id with their pages", async () => {
+    const notes = page("Notes", [blk(`{{query (task DONE)}}\ntine.share:: ${PENDING}`), blk("{{query (task NOW)}}\ntine.share:: octo/0123456789abcdef0123")]);
+    const other = page("Other", [blk(`{{query (task TODO)}}\ntine.share:: ${PENDING}`)]);
+    const disk = await bindDisk([notes, other]);
+    answerShareQuery(disk, ["Notes", "Other"]);
+    expect(await pendingShareMarkers()).toEqual({ markers: [{ shareId: ID, pages: ["Notes", "Other"] }], exceeded: false });
+  });
+
+  it("removing a share by its gist leaves pending markers alone", async () => {
+    const notes = page("Notes", [blk(`{{query (task DONE)}}\ntine.share:: ${PENDING}`)]);
+    const disk = await bindDisk([notes]);
+    answerShareQuery(disk, ["Notes"]);
+    expect(await removeShareProperty(ID)).toEqual([]);
+    expect(disk.files.get("pages/Notes.md")!.rev).toBe("r0");
   });
 });
 

@@ -35,6 +35,9 @@ function spies() {
     open: vi.spyOn(b, "openExternal").mockResolvedValue(),
     // The graph side (D-20261018-Q1), pinned on disk bytes in src/quickShare/definitions.test.ts.
     unlist: vi.spyOn(definitions, "removeShareProperty").mockResolvedValue([]),
+    // Pending markers (D-20261018-QS3), pinned on disk bytes in src/components/QuickSharePending.test.tsx.
+    markers: vi.spyOn(definitions, "pendingShareMarkers").mockResolvedValue({ markers: [], exceeded: false }),
+    unmark: vi.spyOn(definitions, "finishSharePending").mockResolvedValue([]),
   };
 }
 beforeEach(() => {
@@ -217,12 +220,13 @@ it("a graph switch while Delete runs cancels the graph bookkeeping", async () =>
   expect(api.unlist).not.toHaveBeenCalled();
 });
 
-it("forgetting a pending share touches no graph page, and a failed removal is shown, not hidden", async () => {
+it("forgetting a pending share removes only its pending marker, and a failed removal is shown, not hidden", async () => {
   const root = await mount();
   share(root, "s2").querySelector<HTMLButtonElement>(".quick-share-row-forget")!.click();
   await settle();
   expect(api.forget).toHaveBeenCalledWith("s2");
-  expect(api.unlist, "a pending share has no gist, so no property").not.toHaveBeenCalled();
+  expect(api.unlist, "a pending share has no gist, so no share property").not.toHaveBeenCalled();
+  expect(api.unmark, "its `pending/<record id>` marker goes (D-20261018-QS3)").toHaveBeenCalledWith("s2", null, expect.any(Function));
   api.unlist.mockRejectedValueOnce(new Error("couldn't remove tine.share:: octo/g1 from Notes"));
   share(root, "s1").querySelector<HTMLButtonElement>(".quick-share-row-delete")!.click();
   await settle();

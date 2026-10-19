@@ -16,9 +16,10 @@ A page whose page properties carry `tine/exports:: true` (Org
 marker, so a rename keeps it working. It holds the definitions the share dialog
 writes and an overview query, `definitions_query()`.
 
-A quick share writes its `tine.share::` once the gist exists and removes it when
-the share is deleted or forgotten (`docs/contracts/quick-share.md`, "In the
-graph").
+A quick share marks its block `tine.share:: pending/<record id>` before the
+upload, writes `<login>/<gist_id>` in its place once the gist exists, and removes
+it when the share fails, is deleted or forgotten (`docs/contracts/quick-share.md`,
+"In the graph"). A pending marker is a definition too: the overview lists it.
 
 ## What every export leaves out
 

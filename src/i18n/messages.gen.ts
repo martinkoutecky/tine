@@ -1943,6 +1943,7 @@ export interface MessageArgs {
   "quick-share-created": {};
   "quick-share-creating": {};
   "quick-share-definition-failed": { "error": string | number };
+  "quick-share-definition-missing": {};
   "quick-share-definition-saved": { "page": string | number };
   "quick-share-disclosure": {};
   "quick-share-done": {};
@@ -1964,6 +1965,8 @@ export interface MessageArgs {
   "quick-share-link-masked": { "gist": string | number; "login": string | number };
   "quick-share-loading": {};
   "quick-share-not-included": {};
+  "quick-share-pending-failed": { "error": string | number };
+  "quick-share-pending-unmark-failed": { "error": string | number };
   "quick-share-preparing": {};
   "quick-share-refresh": {};
   "quick-share-settings-account": {};
@@ -1981,6 +1984,17 @@ export interface MessageArgs {
   "quick-share-settings-found-none": {};
   "quick-share-settings-found-row": {};
   "quick-share-settings-gone": {};
+  "quick-share-settings-marker-elsewhere": {};
+  "quick-share-settings-marker-live": {};
+  "quick-share-settings-marker-pages": { "pages": string | number };
+  "quick-share-settings-marker-remove": {};
+  "quick-share-settings-marker-remove-confirm": {};
+  "quick-share-settings-marker-unknown": {};
+  "quick-share-settings-markers": {};
+  "quick-share-settings-markers-checking": {};
+  "quick-share-settings-markers-cut": {};
+  "quick-share-settings-markers-failed": { "error": string | number };
+  "quick-share-settings-markers-hint": {};
   "quick-share-settings-none": {};
   "quick-share-settings-not-connected": {};
   "quick-share-settings-other-account": { "login": string | number };

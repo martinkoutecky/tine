@@ -80,7 +80,8 @@ app-data entry the released Tine writes as read as-is or master-only.
 Graph link identity costs one tiny file per graph written once, zero bytes/files per ordinary 1- or 60-block edit and zero transport. Opening and browsing only read it; a copied graph shares it, with a device-local choice remembered in the existing settings JSON. Existing malformed identity is preserved and reported.
 
 Quick share's records (ADR 0076) cost no graph bytes. The share's in-graph
-trace is the `tine.share:: <login>/<gist_id>` property on its export definition,
+trace is the `tine.share:: <login>/<gist_id>` property on its export definition
+(`tine.share:: pending/<record id>` while its upload is unconfirmed),
 an ordinary page edit through the guarded save (no new format: a block property
 in Page Markdown/Org). `prepare`'s private build graph is a scratch copy of the
 selected pages in a temporary directory under app cache, removed before

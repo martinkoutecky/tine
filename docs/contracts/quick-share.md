@@ -196,6 +196,10 @@ its key (below, "In the graph").
   (mode 0600 at creation on Linux, Android, macOS, iOS; on Windows the per-user
   app-data ACL), fsync, rename, directory sync. Every read-modify-write of the
   shares holds one process-wide lock (all windows share the process).
+- Prepare draws the share id (the record id) and answers it as `shareId`, so the
+  webview can mark the query block before the upload (below, "In the graph");
+  its base64url spelling is never all lowercase hex of 20 to 32 characters (a
+  gist id's shape; `fresh_share_id` draws again). Create seals under that id.
 - Create: the payload is consumed first (a second create with the same
   `prepareId` is `previewExpired`); the row is written `pending` before
   `POST /gists`; 201 → `live` with the gist id. A request that never left, or a
@@ -226,44 +230,79 @@ create costs ≈ 2 × file size), 1 file; one gist create of the envelope (≈ 1
 `P`) plus the fixed README. Connect: one 149 B file. Transport per graph edit:
 none (shares are made on request).
 
-### In the graph (D-20261017-QS3, D-20261018-Q1)
+### In the graph (D-20261017-QS3, D-20261018-Q1, D-20261018-QS3)
 
 A share is an export definition (`docs/contracts/export-definitions.md`): a
-query block carrying `tine.share:: <login>/<gist_id>`. Never the key. Written by
-the webview through the document layer's ordinary block edits and its guarded
-save (`src/quickShare/definitions.ts`; no new write path):
+query block carrying `tine.share:: <login>/<gist_id>`. Never the key. While its
+upload is in flight or unconfirmed, the same block carries
+`tine.share:: pending/<record id>` (the row's `share_id`; not secret, it is in
+the envelope header). Written by the webview through the document layer's
+ordinary block edits and its guarded save (`src/quickShare/definitions.ts`; no
+new write path):
 
-- **Create** (201, or Check finding the gist): from an unchanged query block, the
-  property goes on that block (beside any `export::`); otherwise, or when that
-  block already names another share, no longer exists, or no longer carries the
-  query the share was made from (edited during the upload), a new definition
-  (the dialog's selector or query plus the property) is appended to the Exports
-  page, created on first use. Written only once the gist exists: a pending share
-  has no gist id, so no property.
+- **Start** (Create pressed): the marker goes on the query block the dialog
+  started from, when that block can be edited, still carries the query the share
+  is made from and has no `tine.share::` yet (neither another share nor another
+  pending one); otherwise a new definition (the dialog's selector or query plus
+  the marker) is appended to the Exports page, created on first use. The marker
+  is saved before `quick_share_create` is called. If it does not reach disk, the
+  share does not start: the dialog says so, the marker is taken back out of the
+  working set (the property removed, an appended definition deleted) so no later
+  save writes it, and the preview stays for another try. Closing the dialog
+  while the marker is saved cancels the share before its upload and removes the
+  marker.
+- **Finish**, found by the property (`(property tine.share)` plus the page the
+  marker was saved to), never by a remembered position or text, so an edited or
+  moved block keeps its share: on 201, or Check finding the gist, every block
+  carrying `pending/<record id>` gets `<login>/<gist_id>` (a copied block or a
+  synced duplicate is another definition of the same share). A definite failure
+  (any error but `maybeUploaded`) removes the marker; `maybeUploaded` keeps it.
+  No block carrying it (deleted meanwhile): the share stands and the dialog says
+  nothing was written to the graph.
+- **Settings → Sharing** lists the bound graph's pending markers through the
+  same `(property tine.share)` query, by record id, with their pages. Check
+  finishes those whose record is on this device: a `pending` row is first looked
+  for on GitHub (a gist created but never acknowledged), a `live` row's gist is
+  written. A row of another account is left as it is. An id with no record here
+  shows "Pending on another device, or no longer recorded here" and offers to
+  remove the marker, after a confirmation (Tine cannot tell another device's
+  share in flight from a record lost here: the record format does not name a
+  device). The row's own Check finishes its marker too.
 - **Delete** (204) and **Forget** remove the property from every block whose
   value names that gist, whatever login prefix it carries (an account rename
-  keeps the gist id; gist ids are unique on GitHub), loading pages that are not
-  open. A share GitHub no longer has (`gone`) keeps it until Forget, like its
-  key. A gist deleted from Find shares on GitHub is removed the same way.
+  keeps the gist id; gist ids are unique on GitHub), and the row's own pending
+  marker, loading pages that are not open. A pending marker is never read as a
+  gist (a record id never has a gist id's shape). A share GitHub no longer has
+  (`gone`) keeps it until Forget, like its key. A gist deleted from Find shares
+  on GitHub is removed the same way.
 - This bookkeeping belongs to the graph the action started on, not to the view:
   closing the dialog or Settings while GitHub answers still writes it; a graph
-  switch cancels it. The graph binding is rechecked before every edit and after
-  every await, so it never edits a replacement graph.
+  switch cancels it, and the marker stays for Settings → Check in that graph.
+  The graph binding is rechecked before every edit and after every await, so it
+  never edits a replacement graph.
 - The Exports page's overview query `(or (property export) (property
-  tine.share))` lists them; Settings → Sharing keeps the account, Find shares on
-  GitHub and this device's keys (Copy link, Check, Delete, Forget).
+  tine.share))` lists them, pending markers included; Settings → Sharing keeps
+  the account, Find shares on GitHub and this device's keys (Copy link, Check,
+  Delete, Forget).
 - A failure to write or remove the property is shown; the share itself (created,
   deleted or forgotten) stands.
-- A share confirmed by Check in Settings after a restart (the dialog that knew its
-  query is gone) is not added to the graph; its key row stays in Settings.
 
-Unit cost (I-25): per ordinary 1- or 60-block edit nothing. Per share: one
-property line, 57 B for an 8-character login and a 32-hex gist id, on the
-starting block, or a 101 B definition block on the Exports page (a page named
-"Project"), plus a 93 B Exports page on first use; computed from the exact
-strings written. One page file rewritten through the normal save (the whole
-file); with a synced graph, that one file is the transport. Delete/Forget: the
-same line removed from each page that carries it.
+| Refusal | In-scope threat | Recovery |
+| --- | --- | --- |
+| A share whose pending marker did not reach disk is not uploaded | disk error or torn write of the page file, a conflicting external editor or sync delivery of that page | the dialog names the cause; Create again once the page saves |
+
+Unit cost (I-25): per ordinary 1- or 60-block edit nothing. Per share: the
+marker line `  tine.share:: pending/<22-character id>`, 46 B in a Markdown page,
+written at the start and then replaced by the share's line, 57 B for an
+8-character login and a 32-hex gist id (net 57 B, as before); or a 90 B
+definition block on the Exports page (a page named "Project") becoming 101 B,
+plus a 93 B Exports page on first use. Computed from the exact strings written.
+One page file rewritten twice through the normal save (the whole file each
+time: at the start, and at the finish), where a share without the marker
+rewrote it once; with a synced graph, that one file is the transport, twice. A
+share that fails definitely: the same two rewrites, net 0 B. The same for a
+1-block and a 60-block share (a definition is one block whatever the share
+holds). Delete/Forget: the same line removed from each page that carries it.
 
 ### Commands
 

@@ -187,6 +187,9 @@ struct Flow {
 
 struct Prepared {
     id: String,
+    /// Chosen at prepare (D-20261018-QS3): the share dialog writes
+    /// `tine.share:: pending/<share_id>` before it asks for the upload.
+    share_id: [u8; 16],
     payload: Vec<u8>,
     title: String,
     pages: usize,
@@ -197,6 +200,9 @@ struct Prepared {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PrepareResult {
     pub prepare_id: String,
+    /// The record id the create will use (not secret: it is in the envelope
+    /// header). The webview marks the query block with it before Create.
+    pub share_id: String,
     pub preview: SharePreview,
 }
 
@@ -619,6 +625,9 @@ impl Service {
                 }
             })?;
         let id = random_id();
+        let share_id = share::fresh_share_id().map_err(|_| QsError::Refused {
+            message: "the system random source failed".into(),
+        })?;
         let mut all = self.prepared.lock().unwrap_or_else(|p| p.into_inner());
         let now = Instant::now();
         all.retain(|p| p.expires > now);
@@ -627,6 +636,7 @@ impl Service {
         }
         all.push(Prepared {
             id: id.clone(),
+            share_id,
             payload: prepared.payload,
             title: prepared.preview.title.clone(),
             pages: prepared.preview.pages.len(),
@@ -634,6 +644,7 @@ impl Service {
         });
         Ok(PrepareResult {
             prepare_id: id,
+            share_id: share::b64u(&share_id),
             preview: prepared.preview,
         })
     }
@@ -662,8 +673,10 @@ impl Service {
             .take_prepared(prepare_id)
             .ok_or(QsError::PreviewExpired)?;
         let account = self.connected()?;
-        let sealed = share::seal_fresh(&prepared.payload).map_err(|_| QsError::Refused {
-            message: "the system random source failed".into(),
+        let sealed = share::seal_fresh_as(&prepared.payload, prepared.share_id).map_err(|_| {
+            QsError::Refused {
+                message: "the system random source failed".into(),
+            }
         })?;
         let share_id = share::b64u(&sealed.share_id);
         let row = ShareRow {

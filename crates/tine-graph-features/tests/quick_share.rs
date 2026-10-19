@@ -171,6 +171,18 @@ fn quick_share_envelope_round_trips_and_refuses_damage() {
     let fresh = quick_share::seal_fresh(payload).unwrap();
     assert_eq!(open(&fresh.envelope, &fresh.key).unwrap(), payload);
     assert_ne!(fresh.key, KEY);
+    // D-20261018-QS3: the share id is chosen at prepare and spelled into the
+    // graph as `pending/<id>`; it must never read as a gist id.
+    for _ in 0..256 {
+        let id = quick_share::fresh_share_id().unwrap();
+        assert!(!quick_share::looks_like_gist_id(&b64u(&id)));
+    }
+    assert!(quick_share::looks_like_gist_id("0123456789abcdef0123ab"));
+    assert!(!quick_share::looks_like_gist_id("0123456789abcdef0123aB"));
+    let chosen = *b"fixture-share-id";
+    let sealed = quick_share::seal_fresh_as(payload, chosen).unwrap();
+    assert_eq!(sealed.share_id, chosen);
+    assert_eq!(open(&sealed.envelope, &sealed.key).unwrap(), payload);
 }
 
 #[test]
