@@ -108,6 +108,10 @@ pub(super) fn serialize(
     .then_some((result, reparsed))
 }
 
+/// mldoc's layout whitespace (tine-core `strip_layout_ws`): what lsdoc skips
+/// before a dash bullet and in a block's indentation.
+const LAYOUT_WS: [char; 3] = [' ', '\t', '\x0c'];
+
 fn is_unbulleted_heading_line(line: &str) -> bool {
     #[cfg(feature = "test-faults")]
     crate::cost_counters::parse();
@@ -152,7 +156,7 @@ fn map_old_blocks<'a>(old: &'a Document, lines: &[&str]) -> Option<Vec<OldBlock<
     for block in flat {
         let raw = block.raw();
         let len = raw.split('\n').count();
-        let head = lines[start].trim_start_matches([' ', '\t']);
+        let head = lines[start].trim_start_matches(LAYOUT_WS);
         let first = raw.split('\n').next().unwrap_or("");
         let dash = head
             .strip_prefix('-')
@@ -305,7 +309,7 @@ struct Emitter<'a> {
 impl Emitter<'_> {
     fn old_prefix(&self, old: usize) -> &str {
         let line = self.lines[self.olds[old].start];
-        &line[..line.len() - line.trim_start_matches([' ', '\t']).len()]
+        &line[..line.len() - line.trim_start_matches(LAYOUT_WS).len()]
     }
 
     /// Emit one sibling list. `parent` is the parent's chosen prefix; `index`
@@ -364,7 +368,7 @@ impl Emitter<'_> {
             let text = if same || line.is_empty() {
                 line.to_string()
             } else {
-                let lead = line.len() - line.trim_start_matches([' ', '\t']).len();
+                let lead = line.len() - line.trim_start_matches(LAYOUT_WS).len();
                 format!("{prefix}{}", &line[lead.min(from)..])
             };
             self.out.push((text, Some(i)));
