@@ -188,6 +188,17 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         "command future",
         "caller awaits blocking result",
     ),
+    (
+        "src-tauri/src/commands/templates.rs",
+        "spawn_blocking(",
+        // BqbeQ (checkpoint, under review): the named daily-template lookup
+        // races the graph wait against the file lookup; the answer job is
+        // awaited, the file job stops between files once the graph arrives,
+        // and the graph job can outlive the command until the load completes.
+        3,
+        "answer job: command future; file job: graph-arrived flag; graph job: load completion or Store close ends whole_graph()",
+        "answer job awaited; file and graph jobs detached, each sends one message on a channel the answer job may have dropped",
+    ),
 ];
 
 fn counts(sources: &[(String, String)]) -> BTreeMap<(String, String), usize> {
@@ -273,6 +284,7 @@ fn production_acquisitions_have_owners() {
         "src-tauri/src/commands.rs",
         "src-tauri/src/commands/concord.rs",
         "src-tauri/src/commands/journals_feed.rs",
+        "src-tauri/src/commands/templates.rs",
         "src-tauri/src/graph.rs",
         "src-tauri/src/host_retirement.rs",
         "src-tauri/src/settings.rs",

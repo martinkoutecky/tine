@@ -1976,17 +1976,17 @@ impl Store {
     /// Before the graph is ready, a name some file claims opens from that
     /// file without waiting for the index (the file-name listing below):
     /// claimant order ranks a file named for the page above any `title::`
-    /// claimant, so this is the page the index would pick. A name only the
-    /// index can resolve (an alias) or one no file claims waits for the
-    /// graph, so a name the index could still resolve never reads as absent.
+    /// claimant: the page the index would pick. An alias or an unclaimed page waits
+    /// for the graph, never absent early; an unclaimed journal day does not (no aliases).
     /// Once ready, the published index resolves the name; an alias reads its
     /// first owner. After a failed initial parse, the file-name listing
     /// answers. A closed store returns `StoreError::Closed`. A resolved file
     /// that has disappeared reads as `None`. It writes no page bytes.
     pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
-            if let Some(read) = self.page_named_from_files(name, kind)? {
-                return Ok(Some(read));
+            let read = self.page_named_from_files(name, kind)?;
+            if read.is_some() || kind == PageKind::Journal {
+                return Ok(read); // journal claimants are files only (BqbeQ)
             }
         }
         let resolved = match self.whole_graph() {

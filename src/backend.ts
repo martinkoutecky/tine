@@ -512,8 +512,8 @@ class TauriBackend implements Backend {
   captureQuickSwitch(query: string, limit: number, transliteration = false) {
     return this.call<PageEntry[]>("capture_quick_switch", { query, limit, transliteration });
   }
-  listTemplates() {
-    return this.call<TemplateDto[]>("list_templates");
+  listTemplates(name?: string) {
+    return this.call<TemplateDto[]>("list_templates", name === undefined ? undefined : { name });
   }
   resolveBlock(uuid: string) {
     return this.call<RefGroup | null>("resolve_block", { uuid });

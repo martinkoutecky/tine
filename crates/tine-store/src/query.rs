@@ -1484,26 +1484,13 @@ pub(crate) fn search_cancellable_result(
 }
 
 /// Scan all graph blocks for templates and return insertion DTOs; do not insert.
-/// Include roots unless template-including-parent is false; strip id properties
-/// and included roots' template property. O(graph blocks plus copied subtrees).
+/// Each block's answer is `tine_core::template::template_of`, the one shared
+/// with the file-scoped daily-template lookup. O(graph blocks plus copied subtrees).
 pub(crate) fn templates(graph: &ReadSnapshot) -> Vec<TemplateDto> {
     graph.with_pages(|pages| {
         let mut out: Vec<TemplateDto> = Vec::new();
         for (entry, doc) in pages {
-            walk(&doc.roots, &mut |b| {
-                let Some(name) = b.property("template") else {
-                    return;
-                };
-                if name.is_empty() {
-                    return;
-                }
-                let include_parent =
-                    b.property("template-including-parent").as_deref() != Some("false");
-                let blocks = if include_parent {
-                    vec![template_dto(b, true)]
-                } else {
-                    b.children.iter().map(|c| template_dto(c, false)).collect()
-                };
+            tine_core::template::templates_in(&doc.roots, &mut |name, blocks| {
                 out.push(TemplateDto {
                     name,
                     blocks,
@@ -1514,61 +1501,6 @@ pub(crate) fn templates(graph: &ReadSnapshot) -> Vec<TemplateDto> {
         }
         out
     })
-}
-
-/// Convert a template block subtree to a DTO, dropping `id::` (so inserted
-/// copies get fresh ids) and, at the root, the `template*` properties.
-fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
-    let raw = b
-        .projection()
-        .regions
-        .apply(
-            b.raw(),
-            b.is_org(),
-            tine_core::block_regions::Edit::StripCopy {
-                template: strip_template,
-            },
-        )
-        .expect("parsed template");
-    BlockDto {
-        id: String::new(),
-        raw,
-        collapsed: b.collapsed(),
-        children: b.children.iter().map(|c| template_dto(c, false)).collect(),
-        breadcrumb: Vec::new(),
-        ..Default::default()
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn template_copy_drops_markdown_and_org_ids_regardless_of_case() {
-    let block = DocBlock::new("body\nID:: md-id\n:PROPERTIES:\n:Id: org-id\n:END:\nkeep:: yes");
-    let copied = template_dto(&block, false);
-    assert_eq!(copied.raw, "body\n:PROPERTIES:\n:END:\nkeep:: yes");
-}
-
-#[cfg(test)]
-#[test]
-fn template_copy_preserves_collapsed_state() {
-    for (raw, expected) in [
-        ("section\ncollapsed:: true", true),
-        ("section\ncollapsed:: false", false),
-        ("section", false),
-        ("section\n:PROPERTIES:\n:collapsed: true\n:END:", true),
-        ("```\ncollapsed:: true\n```", false),
-    ] {
-        let mut block = DocBlock::new(raw);
-        block.set_org(raw.contains(":PROPERTIES:"));
-        block
-            .children
-            .push(DocBlock::new("nested\ncollapsed:: true"));
-        let copied = template_dto(&block, false);
-        assert_eq!(copied.collapsed, expected, "{raw}");
-        assert_eq!(copied.raw, raw);
-        assert!(copied.children[0].collapsed);
-        assert!(copied.id.is_empty());
-    }
 }
 
 /// Distinct property keys (each with its sorted distinct values) used across the
@@ -5032,13 +4964,13 @@ mod region_template_regression {
         let raw = "Task\ntemplate:: Example\nid:: real\n```\nid:: literal\ntemplate:: literal\n```";
         let b = tine_core::doc::DocBlock::new(raw);
         assert_eq!(
-            super::template_dto(&b, true).raw,
+            tine_core::template::template_copy(&b, true).raw,
             "Task\n```\nid:: literal\ntemplate:: literal\n```"
         );
         let mut b = tine_core::doc::DocBlock::new(
             "Task\n:PROPERTIES:\n:template: Example\n:id: real\n:END:",
         );
         b.set_org(true);
-        assert_eq!(super::template_dto(&b, true).raw, "Task");
+        assert_eq!(tine_core::template::template_copy(&b, true).raw, "Task");
     }
 }

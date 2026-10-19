@@ -1294,8 +1294,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
         cancelled: false,
       };
     },
-    async listTemplates() {
-      return [
+    async listTemplates(name?: string) {
+      const templates = [
         {
           name: "meeting",
           page: "Templates",
@@ -1307,6 +1307,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
           ],
         },
       ];
+      return name === undefined ? templates : templates.filter((t) => t.name === name).slice(0, 1);
     },
     async quickSwitch(query: string, limit: number, _editor?: { pageName: string; blockId: string; originalRaw: string }, _transliteration = false): Promise<PageEntry[]> {
       const q = fold(query.trim());
