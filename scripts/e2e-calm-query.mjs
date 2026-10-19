@@ -11,6 +11,13 @@ import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
 const out = path.resolve(process.env.OUT ?? "artifacts/queries/native");
 const testedCommit = execFileSync("rtk", ["proxy", "git", "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 const graph = `${out}/graph`;
+// Every run starts from a fresh graph and app state: a previous run's session (last route = the Search view) made
+// startup fail. Only a directory this journey created (marker file, or an older run's graph) is cleared, never an arbitrary OUT.
+const marker = `${out}/.e2e-calm-query`;
+if (fs.existsSync(out) && fs.readdirSync(out).length > 0 && !fs.existsSync(marker) && !fs.existsSync(`${graph}/pages/Queries.md`)) throw new Error(`OUT ${out} is not empty and was not created by this journey; choose an empty directory`);
+for (const dir of [graph, `${out}/xdg`]) fs.rmSync(dir, { recursive: true, force: true });
+fs.mkdirSync(out, { recursive: true });
+fs.writeFileSync(marker, "created by scripts/e2e-calm-query.mjs; graph/ and xdg/ are cleared at every run\n");
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${graph}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${out}/xdg/${dir}`, { recursive: true });
 const date = (offset) => {
@@ -145,6 +152,20 @@ await session(1, async browser => {
   await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .query-group`), active),
     { timeout: 15_000, timeoutMsg: "unfolding the query's bullet did not bring its results back" });
   await browser.waitUntil(() => !/Open tasks"\}\}\}\n\s+collapsed:: true/.test(fs.readFileSync(queries, "utf8")), { timeout: 15_000, timeoutMsg: "the bullet unfold was not saved" });
+  phase = "the query's own arrow is the same fold as the bullet (GH #619 Q8)";
+  const arrowToggle = selector => document.querySelector(`${selector} .query-collapse`)?.click();
+  const arrowFolded = selector => document.querySelector(`${selector} .query-collapse`)?.classList.contains("collapsed") ?? null;
+  const bulletFolded = selector => !!document.querySelector(selector).closest(".ls-block").querySelector(":scope > .block-main .bullet-closed");
+  await browser.execute(arrowToggle, active);
+  await browser.waitUntil(() => browser.execute(selector => document.querySelector(`${selector} .query-group`) === null, active),
+    { timeout: 10_000, timeoutMsg: "the query's arrow left its results shown" });
+  await browser.waitUntil(() => /Open tasks"\}\}\}\n\s+collapsed:: true/.test(fs.readFileSync(queries, "utf8")), { timeout: 15_000, timeoutMsg: "the arrow fold was not saved as the bullet's collapsed:: true" });
+  assert.equal(await browser.execute(bulletFolded, active), true, "the bullet shows the fold the arrow made");
+  await browser.execute(hostToggle, active);
+  await browser.waitUntil(() => browser.execute(selector => !!document.querySelector(`${selector} .query-group`), active),
+    { timeout: 15_000, timeoutMsg: "unfolding the bullet did not bring the results back" });
+  assert.equal(await browser.execute(arrowFolded, active), false, "the arrow shows the unfold the bullet made");
+  await browser.waitUntil(() => !/Open tasks"\}\}\}\n\s+collapsed:: true/.test(fs.readFileSync(queries, "utf8")), { timeout: 15_000, timeoutMsg: "the unfold was not saved" });
   phase = "rest, title rename, inline live results";
   // One click on the title starts the rename with the caret in the field
   // (GH #619 c6: WebView2 honoured `autofocus` once per document).

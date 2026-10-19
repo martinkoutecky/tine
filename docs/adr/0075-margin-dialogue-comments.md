@@ -1,6 +1,6 @@
 # 0075. Margin dialogue: a comment is an ordinary child block with `quote::`
 
-- **Status:** Proposed
+- **Status:** Accepted (Martin, 2026-10-18, D-20261018-MC2) with the amendment below: context is always written.
 - **Date:** 2026-10-17
 
 ## Context
@@ -25,7 +25,11 @@ Decisions on the surface: D-20261017-MD1 (integrate into og for 0.9) and the
   its existing children, whose text carries the property `quote:: <the selected
   words>`. Replies are its children. When the quoted words occur more than once
   in the parent, `quote-prefix::` and `quote-suffix::` (at most 32 characters of
-  surrounding text each) say which occurrence. An empty `quote::` comments on the
+  surrounding text each) say which occurrence. They are **always written** when
+  the quote occurs in the parent, trimmed at a word boundary, so a later edit
+  that adds a second occurrence of the quoted words cannot re-anchor the comment
+  (amendment, D-20261018-MC2; no released graph held margin comments, so there
+  is no migration). Readers keep accepting comments without them. An empty `quote::` comments on the
   whole block. A block written by an assistant may carry `author:: <name>`;
   human comments carry none unless the user has set **Settings > Editor > Your
   name** (D-20261017-LD1): then the comments and replies the user writes carry
