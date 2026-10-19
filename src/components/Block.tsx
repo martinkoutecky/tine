@@ -153,7 +153,7 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
-import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
+import { blockMenuOwner, ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { followBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
 import { clipboardSizeAllowed } from "../clipboardImage";
@@ -320,6 +320,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   const blockEmbedHost = createMemo(() => isBlockEmbedMacro(macro()));
   const { commentSelector, author, showsAuthor, bulletless, commentClasses } = commentFacts(node, () => blockFacets().properties, fmt);
   const stickyParent = () => stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !macro(); // a macro host's first line IS the live macro: a pin would mount a 2nd copy (GH #619)
+  let mainEl: HTMLDivElement | undefined;
 
   return (
     <div
@@ -345,6 +346,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       <div
         class="block-main"
         ref={(el) => {
+          mainEl = el;
           // GH #501: touch swipes on the row while a touch input exists, following
           // it if it appears or goes away (src/blockSwipe.ts).
           followBlockSwipe(el, { id: props.id, scope: outlineScope, editing, readOnly });
@@ -364,9 +366,10 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           editing: editing(),
         }}
         onContextMenu={(e) => {
-          if (!shouldOpenBlockContextMenu(e.target)) return;
+          // GH #726: a nested result/embed row owns its menu (contextMenuPolicy).
+          if (!ownsBlockContextMenu(e.target, mainEl) || !shouldOpenBlockContextMenu(e.target)) return;
           e.preventDefault();
-          openContextMenu(e.clientX, e.clientY, props.id);
+          openContextMenu(e.clientX, e.clientY, blockMenuOwner(mainEl, props.id, props.dragHostId));
         }}
       >
         <Show when={!blockEmbedHost() && !bulletless()}>

@@ -373,13 +373,15 @@ fn device_flow_stops_on_expired_denied_and_its_own_expiry() {
     let mock = Mock::start(|req| match req.path.as_str() {
         "/login/device/code" => json(
             200,
-            serde_json::json!({ "device_code": "dc", "user_code": "AB-CD", "verification_uri": "https://github.com/login/device", "expires_in": 12, "interval": 5 }),
+            serde_json::json!({ "device_code": "dc", "user_code": "AB-CD", "verification_uri": "https://github.com/login/device", "expires_in": 13, "interval": 5 }),
         ),
         _ => json(200, serde_json::json!({ "error": "authorization_pending" })),
     });
-    // A 10 ms "second": the code's 120 ms lifetime holds polls at 50 and
-    // 100 ms with room for the local round trips.
-    let f = fixture_with_unit(mock.endpoints(), Duration::from_millis(10));
+    // A 40 ms "second": the code's 520 ms lifetime holds polls at 200 and
+    // 400 ms (each measured from the previous answer), with 120 ms for the
+    // local round trips; a third poll (600 ms) is past the expiry. At 10 ms
+    // the room was 20 ms and a loaded machine missed the second poll.
+    let f = fixture_with_unit(mock.endpoints(), Duration::from_millis(40));
     let start = block_on(f.service.connect_start()).unwrap();
     assert_eq!(
         f.wait_status(&start.attempt_id, |s| *s != ConnectStatus::Pending),
