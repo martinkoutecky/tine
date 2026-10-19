@@ -4,7 +4,7 @@
 .SH NAME
 tine\-edit \- Replace a block\*(Aqs text, as typing it into the block would: hidden properties (id::, collapsed::) and children are kept
 .SH SYNOPSIS
-\fBtine edit\fR [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-debug\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK\fR> <\fITEXT\fR> 
+\fBtine edit\fR [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-debug\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIBLOCK\fR> <\fITEXT\fR> 
 .SH DESCRIPTION
 Replace a block\*(Aqs text, as typing it into the block would: hidden properties (id::, collapsed::) and children are kept
 .SH OPTIONS
@@ -20,6 +20,18 @@ Print the typed result (schema tine.cli/1) as JSON
 .TP
 \fB\-\-rev\fR \fI<REV>\fR
 Write only if the page is still at this rev (as `page show` prints it); required for a bare PAGE/POS without a fingerprint
+.TP
+\fB\-\-run\fR \fI<RUN>\fR
+Commit this write to the graph\*(Aqs git repository as part of RUN (from `tine run begin`)
+.RS
+May also be specified with the \fBTINE_RUN\fR environment variable. 
+.RE
+.TP
+\fB\-\-author\fR \fI<AUTHOR>\fR
+Author on created blocks and on the run\*(Aqs commits (default: agent)
+.RS
+May also be specified with the \fBTINE_AUTHOR\fR environment variable. 
+.RE
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

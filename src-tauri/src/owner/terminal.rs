@@ -345,6 +345,71 @@ pub(super) fn render(ok: &Value, out: &mut String) {
             if more > 0 {
                 let _ = writeln!(out, "... and {more} more blocks");
             }
+            git_line(ok, out);
+        }
+        "run-commits" => {
+            for commit in list(ok, "commits") {
+                let who = if commit["agent"].as_bool() == Some(true) {
+                    "agent"
+                } else {
+                    "yours"
+                };
+                let _ = writeln!(
+                    out,
+                    "{} {who:5} {}",
+                    short(text(commit, "commit")),
+                    text(commit, "subject")
+                );
+            }
+        }
+        "run" => {
+            let _ = writeln!(out, "{}", text(ok, "run"));
+        }
+        "run-end" => match ok["squashed"].as_str() {
+            Some(commit) => {
+                let _ = writeln!(
+                    out,
+                    "squashed {} commits into {}",
+                    count(ok, "commits"),
+                    short(commit)
+                );
+            }
+            None => {
+                let _ = writeln!(
+                    out,
+                    "kept {} commits as they are: {}",
+                    count(ok, "commits"),
+                    text(ok, "kept_because")
+                );
+            }
+        },
+        "run-revert" => {
+            for page in list(ok, "pages") {
+                if let Some(error) = page["error"].as_str() {
+                    let _ = writeln!(
+                        out,
+                        "not reverted {} ({error}): {}",
+                        text(page, "page"),
+                        text(page, "message")
+                    );
+                    continue;
+                }
+                let verb = if page["reverted"].as_bool() == Some(true) {
+                    "reverted"
+                } else {
+                    "unchanged"
+                };
+                let _ = writeln!(out, "{verb} {}", text(page, "page"));
+                for kept in list(page, "kept") {
+                    let _ = writeln!(
+                        out,
+                        "  kept your text ({}): {}",
+                        text(kept, "reason"),
+                        first_line(text(kept, "text"))
+                    );
+                }
+                git_line(page, out);
+            }
         }
         "deleted" => {
             let broken = count(ok, "broken_refs");
@@ -355,6 +420,7 @@ pub(super) fn render(ok: &Value, out: &mut String) {
                 if broken == 1 { "" } else { "s" }
             );
             let _ = writeln!(out, "{} rev {}", text(ok, "name"), text(ok, "rev"));
+            git_line(ok, out);
         }
         "refs" => groups(list(ok, "groups"), out),
         "search" => {
@@ -450,6 +516,39 @@ pub(super) fn render(ok: &Value, out: &mut String) {
             );
         }
     }
+}
+
+/// A run write's commit, or why it has none (CLI slice 3).
+fn git_line(ok: &Value, out: &mut String) {
+    use std::fmt::Write;
+    let git = &ok["git"];
+    if !git.is_object() {
+        return;
+    }
+    if git["committed"].as_bool() == Some(true) {
+        let snapshot = git["snapshot"]
+            .as_str()
+            .map(|s| format!(" (your edits first: {})", short(s)))
+            .unwrap_or_default();
+        let _ = writeln!(out, "committed {}{snapshot}", short(text(git, "commit")));
+        if git["index"].as_bool() == Some(false) {
+            let _ = writeln!(
+                out,
+                "warning: the git index was busy; `git status` may show the file changed"
+            );
+        }
+    } else {
+        let _ = writeln!(
+            out,
+            "warning: saved but not committed ({}): {}",
+            text(git, "error"),
+            text(git, "message")
+        );
+    }
+}
+
+fn short(commit: &str) -> &str {
+    commit.get(..10).unwrap_or(commit)
 }
 
 /// D-18's on-query cue (`query.og_hint`): which bare heads add no condition,

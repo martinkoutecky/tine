@@ -1,0 +1,29 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-run 1  "run " 
+.SH NAME
+tine\-run \- Group writes into a git run: each write made with `\-\-run ID` is committed (after a snapshot of your own pending edits), and the run can be squashed or reverted as one
+.SH SYNOPSIS
+\fBtine run\fR [\fB\-\-debug\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Group writes into a git run: each write made with `\-\-run ID` is committed (after a snapshot of your own pending edits), and the run can be squashed or reverted as one
+.SH OPTIONS
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.SH SUBCOMMANDS
+.TP
+tine\-run\-begin(1)
+Check the graph\*(Aqs git repository and print a new run id
+.TP
+tine\-run\-show(1)
+List the run\*(Aqs commits
+.TP
+tine\-run\-end(1)
+Squash the run into one commit when none of it is pushed, branched or interleaved with other commits; otherwise leave it as it is
+.TP
+tine\-run\-revert(1)
+Undo the run\*(Aqs edits, newest first. A block you changed since keeps your text and is listed

@@ -51,7 +51,7 @@ libc = "0.2"
 dirs = "6"
 # One schema owns parsing, --help, man pages and the forwarded-launch request
 # (ADR 0068 on master; the hand-rolled parser split those across three places).
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 tine-core = { path = "../crates/tine-core" }
 # The logbook's local timestamp for a command-line marker transition (as the window's Date).
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -137,6 +137,18 @@ clipboard-rs = { version = "0.3.5", default-features = false, features = ["image
 
 # Linux/macOS keep the established rustls transport. Mobile does not compile
 # or expose the updater.
+# CLI git runs (CLI slice 3, D-20261019-CL1…CL4) on the desktop owner only (the
+# command line has no mobile owner). libgit2 per git-sync G7, vendored, no
+# https/ssh (no network use here); libgit2-sys for GIT_OPT_ENABLE_FSYNC_GITDIR,
+# which git2 does not expose (spike §9.5: history writes must fsync).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies.git2]
+version = "0.21"
+default-features = false
+features = ["vendored-libgit2"]
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies.libgit2-sys]
+version = "0.18"
+
 [target.'cfg(all(not(target_os = "android"), not(target_os = "ios"), not(target_os = "windows")))'.dependencies]
 tauri-plugin-updater = "2"
 

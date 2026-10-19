@@ -4,7 +4,7 @@
 .SH NAME
 tine\-add \- Insert a page fragment, attributing every new block to its author
 .SH SYNOPSIS
-\fBtine add\fR [\fB\-\-under\fR] [\fB\-\-after\fR] [\fB\-\-debug\fR] [\fB\-\-before\fR] [\fB\-\-page\fR] [\fB\-\-journal\fR] [\fB\-\-author\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fICONTENT\fR> 
+\fBtine add\fR [\fB\-\-under\fR] [\fB\-\-after\fR] [\fB\-\-debug\fR] [\fB\-\-before\fR] [\fB\-\-page\fR] [\fB\-\-journal\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-\-rev\fR] [\fB\-\-run\fR] [\fB\-\-author\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fICONTENT\fR> 
 .SH DESCRIPTION
 Insert a page fragment, attributing every new block to its author
 .SH OPTIONS
@@ -27,9 +27,6 @@ Append to PAGE, creating it when absent
 \fB\-\-journal\fR[=\fI<DATE>\fR]
 Append to a journal, creating it when absent: `\-\-journal` is today, `\-\-journal=DATE` another day
 .TP
-\fB\-\-author\fR \fI<AUTHOR>\fR
-Author on created blocks (default: TINE_AUTHOR, else agent)
-.TP
 \fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
 The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
 .TP
@@ -38,6 +35,18 @@ Print the typed result (schema tine.cli/1) as JSON
 .TP
 \fB\-\-rev\fR \fI<REV>\fR
 Write only if the page is still at this rev (as `page show` prints it); required for a bare PAGE/POS without a fingerprint
+.TP
+\fB\-\-run\fR \fI<RUN>\fR
+Commit this write to the graph\*(Aqs git repository as part of RUN (from `tine run begin`)
+.RS
+May also be specified with the \fBTINE_RUN\fR environment variable. 
+.RE
+.TP
+\fB\-\-author\fR \fI<AUTHOR>\fR
+Author on created blocks and on the run\*(Aqs commits (default: agent)
+.RS
+May also be specified with the \fBTINE_AUTHOR\fR environment variable. 
+.RE
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

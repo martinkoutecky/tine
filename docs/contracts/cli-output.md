@@ -242,6 +242,10 @@ re-reads and re-resolves once; a second change is `stale`. Writes are never retr
   does.
 - **`block.move`**: the block and its children go under (last child), after or before a target on the same page.
   A move to another page is refused `cross-page` in this version.
+- **`--run RUN`** (optional, every write; or `TINE_RUN`): commit the write to the graph's git repository as
+  part of a run (see *Runs*). Checked before the write: a graph with no usable repository is refused `git` and
+  nothing changes. **`--author NAME`** (or `TINE_AUTHOR`, default `agent`) names the agent on created blocks'
+  `author::` and on the run's commits.
 
 Kind `written`. Write replies carry no page text.
 
@@ -254,10 +258,17 @@ Kind `written`. Write replies carry no page text.
 | `rev` | string | always | no | the page's rev after the write, from the written bytes; pass it as `--rev` to chain |
 | `blocks` | array of string | always | no | the handles (`PAGE/POS~FP`) of the blocks created or changed, in the new text, in outline order; at most 200 |
 | `more` | integer | always | yes | blocks created or changed beyond the 200 listed; the text output says how many |
+| `git` | object | optional | yes | present only for a write with `--run`: its commit, or why it has none |
+| `git.committed` | boolean | optional | yes | `true`: the write's bytes are committed. `false`: the file is saved but not committed (`git.error`, `git.message` say why: `refused:git` for a repository error, `refused:git-busy` when the branch kept moving) |
+| `git.commit` | string | optional | no | the agent commit's id |
+| `git.snapshot` | string | nullable | yes | the commit of the user's uncommitted edits to the file, made first under the user's git identity; `null` when `HEAD` already had the bytes the write started from |
+| `git.index` | boolean | optional | yes | `false` when the git index was locked, so `git status` may show the file changed until the index refreshes |
 
-Read by the text output: `name`, `rev`, `blocks`, `more`.
+Read by the text output: `name`, `rev`, `blocks`, `more`, `git`.
 
-Text: `written NAME rev REV`, then one handle per line, then `... and N more blocks` when `more` is non-zero.
+Text: `written NAME rev REV`, then one handle per line, then `... and N more blocks` when `more` is non-zero,
+then for a run write `committed COMMIT` (with `(your edits first: COMMIT)` when a snapshot was made) or
+`warning: saved but not committed (ERROR): MESSAGE`, and a warning when `git.index` is `false`.
 
 ### `block.delete`
 
@@ -278,7 +289,42 @@ Text: `written NAME rev REV`, then one handle per line, then `... and N more blo
 
 Read by the text output: `deleted`, `broken_refs`, `name`, `rev`.
 
-Text: `deleted HANDLE (breaks N references)`, then `NAME rev REV`.
+A run write's `git` object is as for `written`.
+
+Text: `deleted HANDLE (breaks N references)`, then `NAME rev REV`, then the `git` line as for `written`.
+
+### Runs: `run.begin` / `run.show` / `run.end` / `run.revert`
+
+`tine run begin|show|end|revert` (CLI slice 3, D-20261019-CL1…CL4; desktop only). A run is the commits whose
+message carries the trailer `Tine-Run: RUN`; nothing about a run is stored anywhere else. The graph must be inside
+a non-bare git work tree, on a branch, with no merge, rebase or cherry-pick in progress; otherwise every run verb
+and every `--run` write is refused `git` before it changes anything.
+
+Each `--run` write, after its guarded save succeeds, commits only the file it wrote, built from the exact bytes
+(never from the working tree or the index), on top of the branch tip by compare-and-swap: first, if the file at
+`HEAD` differs from the bytes the write started from, a snapshot of those bytes under the user's git identity
+(trailer `Tine-Snapshot: RUN`); then the written bytes under `NAME <agent@tine.invalid>`. A graph file that git
+ignores is not committed (`refused:git`).
+
+- **`run.begin`**: kind `run`; `run` (the id, `r<hex seconds>-<8 hex>`), `branch`. Text: the id.
+- **`run.show RUN`**: kind `run-commits`; `run`, `commits` (newest first: `commit`, `agent` (boolean; `false` =
+  the user's snapshot), `author`, `subject`). Text: one line per commit.
+- **`run.end RUN [-m MESSAGE]`**: kind `run-end`; `run`, `squashed` (the new commit, or `null`), `commits` (the
+  run's agent commits), `kept_because` (nullable, disclosure: why nothing was squashed). It squashes only when the
+  run's commits are contiguous at the branch tip, more than one, none reachable from another ref (a
+  remote-tracking branch, another branch, a tag), and the tip has not moved; the squash has the tip's tree and the
+  commit before the run as parent. Text: `squashed N commits into COMMIT` or `kept N commits as they are: WHY`.
+- **`run.revert RUN [--author NAME]`**: kind `run-revert`; `run`, `pages` (one per page the run's agent commits
+  touched: `page`, `reverted` (boolean), `rev`, `git` (as for `written`, trailer `Tine-Run-Revert: RUN`),
+  `kept` (disclosure: blocks left as the user has them, each `text` and `reason`: `changed-since` = the user
+  changed it after the agent, `no-base` = the merge could not place it), or `error` + `message` when that page was
+  not reverted). The agent commits are undone newest first by a Concord three-way merge per page and one guarded
+  write per page. Text: `reverted PAGE` / `unchanged PAGE` / `not reverted PAGE (ERROR): MESSAGE`, each kept block
+  as `  kept your text (REASON): FIRST LINE`.
+
+Only commits within 10 minutes before the run's begin time and at most 20,000 first-parent commits back are
+searched. The run's blocks that changed too much to pair across an edit read as a deletion plus an insertion: a
+revert then keeps both texts rather than lose one.
 
 ## The text outline
 
@@ -393,6 +439,9 @@ owner newer than this `tine`) exits `1`, like `internal`.
 | `store` | the store refused the save plan |
 | `cross-page` | `move` between two pages (not supported yet) |
 | `broken-ref` | `add` content names a `((uuid))` no block has (`detail.uuid`) |
+| `git` | a run verb or `--run` write: the graph's git repository cannot take the run's commits (none, bare, a merge/rebase in progress, a detached HEAD, an ignored file, a libgit2 error) |
+| `git-busy` | only inside a `git` object: the branch kept moving while a run write committed |
+| `merge` | only inside `run.revert`'s page entries: the Concord merge refused the page |
 | `kernel` | the edit itself cannot apply to the block (message says why) |
 | `kernel:<reason>` | the outline refused the verb: `kernel:depth_cap`, `kernel:cycle`, `kernel:read_only`, `kernel:frozen`, `kernel:cross_page_merge`, `kernel:header_root`, `kernel:no_outline_step`, `kernel:incomplete`, `kernel:unparseable` |
 
