@@ -826,6 +826,7 @@ export interface MessageArgs {
   "failure-boundary-retry": {};
   "failure-boundary-slow-operations": { "count": number; "seconds": string | number };
   "favorites-block-action": {};
+  "favorites-block-remove-action": {};
   "favorites-could-not-read-the-favorites-page": { "error": string | number; "page": string | number };
   "favorites-recovered-the-favorites-page-from-an-interrupted-save": { "name": string | number };
   "filedrop-couldn-t-insert-dropped-file": { "error": string | number };

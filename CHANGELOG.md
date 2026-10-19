@@ -45,6 +45,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Block context menu** (GH #725): a block that is already a favorite now offers **Unfavourite block** instead of adding it again, removing its row from Favorites like any other edit of the list; and **Copy block ref**, **Copy block embed** and **Copy link** are top-level rows again, as in Logseq, instead of living behind **Copy as ▸**. The page menu keeps its **Copy as ▸** submenu.
 - On a touch laptop or convertible that gains or loses its touch input while Tine is open, block swipes, touch text selection in a PDF and the touch styling of block rows now switch on and off with it, instead of keeping the state they had when the page or PDF was opened (follow-up to D-20261018-W1).
 - Creating a page while a large graph is still loading (for example today's journal filled from the daily template) saves at once instead of waiting seconds for the whole graph to be indexed, and the loaded graph shows the page once with what was saved. Opening a page during loading no longer makes the launch index the graph a second time. A daily template name in `config.edn` with surrounding spaces now matches the template, as in Logseq (BqbeQ, REG-BQBEQ-LOADING-OWN-SAVE).
 - **Typing in the Search tab (and the `((` block picker) can no longer end on "Search superseded by a newer request" with no results**: when the search for an earlier keystroke reached the search engine after the search for the latest one, it cancelled the latest. Each search now carries the order it was issued in, and the engine ignores one that was overtaken (REG-OG-SEARCH-LANE-ORDER).
@@ -117,7 +118,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Changed
 
 - Appearance starts with Themes and keeps fine-tuning, Custom CSS and content widths in searchable Advanced settings; numbered tab/pane and resize commands stay in Shortcuts, task carry uses the configured day count, empty Namespaces stays hidden, and Commands offers New workspace… (UI census 2026-10).
-- Page and block menus group reference, embed and link copying under **Copy as ▸**; page menus omit duplicate Markdown copying and show Find in page only on mobile, sidebar item menus keep contextual actions, and references and query results use one fold toggle (UI census 2026-10).
+- Page menus group reference, embed and link copying under **Copy as ▸** (block menus list them directly, GH #725); page menus omit duplicate Markdown copying and show Find in page only on mobile, sidebar item menus keep contextual actions, and references and query results use one fold toggle (UI census 2026-10).
 - Upcoming is now off by default; add `{{upcoming}}` to the Journal sections page to show future journal references in that position (GH #710).
 - Build: consolidate Rust integration tests into one executable per crate and omit third-party debug data to reduce linking time and disk writes.
 - An Android share now opens the journal where it landed and reveals the last shared item in the batch, while keeping the Captured notice (GH #608).

@@ -9,6 +9,7 @@ preview-open-source = Open source
 links-opened-in-new-tab = Opened in a new tab
 preview-page-actions = Page actions
 favorites-block-action = Favourite block
+favorites-block-remove-action = Unfavourite block
 references-linked = Linked References
 journals-upcoming = Upcoming
 references-unlinked = Unlinked References

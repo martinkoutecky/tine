@@ -426,7 +426,7 @@ mod journal_guide_tests {
         assert!(tips.contains("one Undo step"));
         assert!(tips.contains("complete subtrees for pasting"));
         assert!(tips.contains(
-            "**Copy as ▸** holds **Copy block refs**, **Copy block embeds**, and **Copy link**"
+            "**Copy block refs**, **Copy block embeds**, and **Copy link** sit in the same menu"
         ));
         let references = include_str!("templates/pages-links-references-search.md");
         assert!(references

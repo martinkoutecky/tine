@@ -823,6 +823,7 @@
   "failure-boundary-retry": "22f7f2687bfa2c2c",
   "failure-boundary-slow-operations": "88b82d77d0a189fc",
   "favorites-block-action": "2d9346f520be916c",
+  "favorites-block-remove-action": "e180de01cc6f43ab",
   "favorites-could-not-read-the-favorites-page": "b8ee74bf1126e93b",
   "favorites-recovered-the-favorites-page-from-an-interrupted-save": "7b9eeaa9a0e14f33",
   "filedrop-couldn-t-insert-dropped-file": "457e07da8dddc337",

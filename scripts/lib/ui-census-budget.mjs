@@ -56,12 +56,12 @@ export const SURFACES = Object.freeze({
   "settings.about.open": settingsOpen("about", 8),
 
   // --- Context menus (top-level rows; submenu entries are counted apart) ----
-  "menu.block.plain": { env: "desktop", budget: 15, what: "text rows, block bullet menu, one writable block", source: "ContextMenu mounted on a plain block" },
+  "menu.block.plain": { env: "desktop", budget: 17, what: "text rows, block bullet menu, one writable block", source: "ContextMenu mounted on a plain block" },
   "menu.block.colors": { env: "desktop", budget: 8, what: "background-colour swatches in the block menu", source: "ContextMenu ctx-color buttons" },
   "menu.block.headings": { env: "desktop", budget: 8, what: "heading buttons in the block menu", source: "ContextMenu ctx-h buttons" },
-  "menu.block.full": { env: "desktop", budget: 19, what: "text rows, block bullet menu with every conditional row present", source: "ContextMenu on a block with children, a template property, a trailing pipe table and selected rendered words" },
-  "menu.block.full.nested": { env: "desktop", budget: 6, what: "submenu entries inside the full block menu (Copy as, Show children as)", source: "ContextMenu .ctx-submenu-menu rows of the full block" },
-  "menu.block.multi": { env: "desktop", budget: 14, what: "text rows, block menu on a two-block selection", source: "ContextMenu with two plain blocks selected" },
+  "menu.block.full": { env: "desktop", budget: 21, what: "text rows, block bullet menu with every conditional row present", source: "ContextMenu on a block with children, a template property, a trailing pipe table and selected rendered words" },
+  "menu.block.full.nested": { env: "desktop", budget: 3, what: "submenu entries inside the full block menu (Show children as)", source: "ContextMenu .ctx-submenu-menu rows of the full block" },
+  "menu.block.multi": { env: "desktop", budget: 16, what: "text rows, block menu on a two-block selection", source: "ContextMenu with two plain blocks selected" },
   "menu.block.readonly": { env: "desktop", budget: 6, what: "text rows, block menu on a block of a read-only page", source: "ContextMenu on a read-only page" },
   "menu.page.link": { env: "desktop", budget: 14, what: "rows, page menu from a link, sidebar row or title (no file actions)", source: "ContextMenu page kind, fileActions false, icon set so Remove page icon is present" },
   "menu.page.header.page": { env: "desktop", budget: 16, what: "rows, page header menu of an ordinary page (file actions, icon, rename, delete)", source: "ContextMenu page kind, fileActions true" },
@@ -85,10 +85,10 @@ export const SURFACES = Object.freeze({
   // --- Phone/tablet app (uiCensus.mobile.budget.test.tsx) ---------------------
   "mobile.keyboardToolbar": { env: "mobile", budget: 15, what: "buttons in the mobile keyboard toolbar (with Hide keyboard)", source: "MobileKeyboardToolbar mounted by the app shell on an Android build" },
   "mobile.bottomBar": { env: "mobile", budget: 4, what: "buttons in the bottom navigation row (Navigation buttons at the bottom on)", source: "App .mobile-navigation-toolbar" },
-  "mobile.menu.block.plain": mobileMenu("block.plain", 15), // +1 Open in new tab, D-20261018-W1
-  "mobile.menu.block.full": mobileMenu("block.full", 19), // +1 Open in new tab, D-20261018-W1
-  "mobile.menu.block.full.nested": mobileMenu("block.full.nested", 6),
-  "mobile.menu.block.multi": mobileMenu("block.multi", 14), // +1 Open in new tab, D-20261018-W1
+  "mobile.menu.block.plain": mobileMenu("block.plain", 17), // +1 Open in new tab, D-20261018-W1; +2 copy rows out of Copy as, GH #725
+  "mobile.menu.block.full": mobileMenu("block.full", 21), // +1 Open in new tab, D-20261018-W1; +2 copy rows out of Copy as, GH #725
+  "mobile.menu.block.full.nested": mobileMenu("block.full.nested", 3), // Copy as left the block menu, GH #725
+  "mobile.menu.block.multi": mobileMenu("block.multi", 16), // +1 Open in new tab, D-20261018-W1; +2 copy rows out of Copy as, GH #725
   "mobile.menu.block.readonly": mobileMenu("block.readonly", 6), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.page.link": mobileMenu("page.link", 12), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.page.header.page": mobileMenu("page.header.page", 15), // +1 Open in new tab, D-20261018-W1

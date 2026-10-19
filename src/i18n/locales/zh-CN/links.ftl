@@ -16,6 +16,7 @@ links-opened-in-new-tab = 已在新标签页中打开
 preview-page-actions = 页面操作
 
 favorites-block-action = 收藏块
+favorites-block-remove-action = 取消收藏块
 
 references-linked = 链接引用
 

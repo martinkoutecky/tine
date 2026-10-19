@@ -61,3 +61,7 @@ journey (`scripts/e2e-*.mjs`), not here.
   `block.full` 18→19, `block.multi` 13→14, `block.readonly` 5→6, `page.link` 11→12, `page.header.page` 14→15,
   `page.header.journal` 14→15. The mobile census now runs as a touch-first device (`touchPrimary`), since
   touch surfaces such as the keyboard toolbar follow input capability, not the OS name.
+- 2026-10-19, GH #725 (reporter: copy ref/embed/link behind a submenu is friction; OG lists them top-level): block
+  menu rows `menu.block.plain` 15→17, `block.full` 19→21, `block.multi` 14→16 and the mobile twins likewise (Copy block
+  ref, Copy block embed and Copy link left the Copy as submenu, net +2 rows each); `block.full.nested` 6→3 (Copy as left
+  the block menu; the page menu keeps its Copy as). PENDING Martin: this raises surfaces his census cut list pinned.
