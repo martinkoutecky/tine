@@ -138,6 +138,10 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   "src-tauri/src/owner/terminal.rs": { sites: 1, approval: "Martin 2026-10-13: CLI stdout output, not a persisted format" },
   // The detached serve's stderr capture, emptied past 1 MiB (serve.rs bound_start_log); read only to report a failed start.
   "src-tauri/src/owner/client.rs": { sites: 1, approval: "Martin 2026-10-13: tine serve start log, bounded diagnostic, not a persisted format" },
+  // CLI slice 3 git runs: git's own index file, under git's index.lock protocol
+  // (create_new lock + write_all + rename, with a scratch copy for libgit2 to
+  // read). Git's format in .git, not a Tine format; never a graph file.
+  "src-tauri/src/owner/git_run.rs": { sites: 4, approval: "Martin 2026-10-19 D-20261019-CL4 (runs write .git objects, not a storage mode)" },
   "src-tauri/src/youtube_identity.rs": { sites: 1, approval: "Martin's OG-QBY native YouTube identity task; temporary bundled WebProcess module, no new persisted format" },
 });
 

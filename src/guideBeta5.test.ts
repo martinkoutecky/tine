@@ -9,6 +9,8 @@ it("the Guide describes the phone navigation row, its Appearance setting and how
     "**Sidebar, Search, Back and Forward are in the top bar**",
     "**Navigation buttons at the bottom**",
     "off by default, this device only",
+    "the editing toolbar, which then carries the same four buttons at its left end",
+    "tapping one saves the block and leaves the edit before it acts",
     "close the keyboard with Back or the keyboard's hide key",
     "tap the block to bring the keyboard and the editing toolbar back",
   ]) expect(mobile).toContain(detail);

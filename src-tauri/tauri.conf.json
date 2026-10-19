@@ -92,7 +92,12 @@
           "usr/share/man/man1/tine-move.1": "../docs/tine-move.1",
           "usr/share/man/man1/tine-prop.1": "../docs/tine-prop.1",
           "usr/share/man/man1/tine-prop-set.1": "../docs/tine-prop-set.1",
-          "usr/share/man/man1/tine-prop-remove.1": "../docs/tine-prop-remove.1"
+          "usr/share/man/man1/tine-prop-remove.1": "../docs/tine-prop-remove.1",
+          "usr/share/man/man1/tine-run.1": "../docs/tine-run.1",
+          "usr/share/man/man1/tine-run-begin.1": "../docs/tine-run-begin.1",
+          "usr/share/man/man1/tine-run-show.1": "../docs/tine-run-show.1",
+          "usr/share/man/man1/tine-run-end.1": "../docs/tine-run-end.1",
+          "usr/share/man/man1/tine-run-revert.1": "../docs/tine-run-revert.1"
         }
       },
       "rpm": {
@@ -124,7 +129,12 @@
           "/usr/share/man/man1/tine-move.1": "../docs/tine-move.1",
           "/usr/share/man/man1/tine-prop.1": "../docs/tine-prop.1",
           "/usr/share/man/man1/tine-prop-set.1": "../docs/tine-prop-set.1",
-          "/usr/share/man/man1/tine-prop-remove.1": "../docs/tine-prop-remove.1"
+          "/usr/share/man/man1/tine-prop-remove.1": "../docs/tine-prop-remove.1",
+          "/usr/share/man/man1/tine-run.1": "../docs/tine-run.1",
+          "/usr/share/man/man1/tine-run-begin.1": "../docs/tine-run-begin.1",
+          "/usr/share/man/man1/tine-run-show.1": "../docs/tine-run-show.1",
+          "/usr/share/man/man1/tine-run-end.1": "../docs/tine-run-end.1",
+          "/usr/share/man/man1/tine-run-revert.1": "../docs/tine-run-revert.1"
         }
       }
     },

@@ -24,6 +24,10 @@ import { VIEW_KINDS } from "./editor/queryIr";
 import { normalizeFriendlyPageMatchScope, normalizeQueryDisplayDraft } from "./editor/queryDisplayDraft";
 import type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 import { mainWindow, requestFrame } from "./windowRealm";
+import {
+  moveTabOutOfGroup as treeMoveOutOfGroup, moveTabSubtree, removeTabPromoting,
+  rootSlot, setTabCollapsed as treeSetCollapsed, settleTabTree,
+} from "./tabTree";
 export type { PageTarget, Route, QueryPresentation, QueryRoute, PdfRoute } from "./routeTypes";
 
 /** The one reader of a query presentation; null is "unreadable". */
@@ -116,12 +120,22 @@ export interface Tab {
   history: Route[];
   pos: number;
   pinned: boolean;
+  /** The tab this one is nested under (same pane), or null for a root. The tab
+   *  array is the tree in depth-first order (T1/T2, src/tabTree.ts). */
+  parent: string | null;
+  /** Hides this tab's descendants in the sidebar Tabs list only (GH #704). */
+  collapsed: boolean;
 }
 
 export interface SerializedTab {
   history: Route[];
   pos: number;
   pinned: boolean;
+  /** Index of the parent tab in the same snapshot (always earlier); omitted
+   *  for a root, so a session without nesting is byte-identical to v1. */
+  parent?: number;
+  /** Present (true) only for a collapsed tab that has children. */
+  collapsed?: true;
 }
 
 export interface PaneSnapshot {
@@ -203,6 +217,12 @@ export interface PaneRouter {
   togglePin(id: string): void;
   reorderTab(dragId: string, targetId: string): void;
   moveTabToIndex(tabId: string, index: number): void;
+  /** Sidebar tree drag (GH #704): move the tab and its subtree right before
+   *  `beforeId` (null: the end) at `depth`, clamped to what the slot allows. */
+  moveTabInTree(tabId: string, beforeId: string | null, depth: number): void;
+  /** "Move out of group": one level up, right after the parent's subtree. */
+  moveTabOutOfGroup(tabId: string): void;
+  setTabCollapsed(tabId: string, collapsed: boolean): void;
   extractTabForAdoption(id: string): { tab: AdoptedTab; emptied: boolean } | null;
   extractActiveTabForAdoption(): { tab: AdoptedTab; emptied: boolean } | null;
   adoptTab(tab: AdoptedTab, foreground?: boolean, index?: number): void;
@@ -329,12 +349,7 @@ function promoteRecentRoute(r: Route): void {
   if (r.kind === "page" && !isGuideRouteName(r.name)) pushRecent(pageTargetFromRoute(r)!);
 }
 
-/** Stable partition: all pinned tabs first (in their relative order), then the
- *  unpinned ones. Pinned tabs always sit to the left of the strip (matches the
- *  OG plugin), so a pinned tab can't be visually stranded among unpinned ones. */
-export function partitionPinned(list: Tab[]): Tab[] {
-  return [...list.filter((t) => t.pinned), ...list.filter((t) => !t.pinned)];
-}
+export { partitionPinned } from "./tabTree";
 
 let sessionPersistence = {
   schedule: () => {},
@@ -375,7 +390,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   // before first paint - see main.tsx. The structured session round-trips through
   // an atomic backend file rather than being tied to one WebView's localStorage.
   const [tabs, setTabs] = createSignal<Tab[]>([
-    { id: newId(), history: [{ kind: "journals" }], pos: 0, pinned: false },
+    { id: newId(), history: [{ kind: "journals" }], pos: 0, pinned: false, parent: null, collapsed: false },
   ]);
   const [activeId, setActiveId] = createSignal<string>(tabs()[0].id);
 
@@ -722,7 +737,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       if (entry.kind === "pdf") retirePdfNavigationIntent(entry.viewId);
     }
     const id = newId();
-    setTabs([{ id, history: [{ kind: "journals" }], pos: 0, pinned: false }]);
+    setTabs([{ id, history: [{ kind: "journals" }], pos: 0, pinned: false, parent: null, collapsed: false }]);
     setActiveId(id);
     persist();
   }
@@ -839,7 +854,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // a click on a pinned tab lands you on the new tab. New tabs are unpinned, so
     // appending keeps the pinned-left invariant (all pinned precede all unpinned).
     const id = newId();
-    setTabs([...tabs(), { id, history: [r], pos: 0, pinned: false }]);
+    setTabs([...tabs(), { id, history: [r], pos: 0, pinned: false, parent: null, collapsed: false }]);
     if (foreground) {
       setActiveId(id);
       activateCurrentRoute();
@@ -969,7 +984,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // in `closedTabs`, so its scrollByRoute entry is still live on reopen.
     if (activeId() === id) rememberScroll();
     const idx = list.findIndex((x) => x.id === id);
-    const next = list.filter((x) => x.id !== id);
+    // Its children stay open and move up one level, in place (GH #704).
+    const next = removeTabPromoting(list, id);
     // Remember the closed tab (its full history + position) so Ctrl+Shift+T can
     // reopen it. Most-recent last; cap the stack.
     if (t) {
@@ -995,7 +1011,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     const id = newId();
     const pos = Math.min(Math.max(0, last.pos | 0), last.history.length - 1);
     // New tabs are unpinned, so appending preserves the pinned-left invariant.
-    setTabs([...tabs(), { id, history: last.history, pos, pinned: false }]);
+    setTabs([...tabs(), { id, history: last.history, pos, pinned: false, parent: null, collapsed: false }]);
     setActiveId(id);
     activateCurrentRoute();
     persist();
@@ -1021,27 +1037,34 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     const list = tabs();
     const t = list.find((x) => x.id === id);
     if (!t) return;
-    const updated = { ...t, pinned: !t.pinned };
-    const rest = list.filter((x) => x.id !== id);
+    // A pinned tab is a root and never a parent (T2): pinning a nested tab
+    // lifts it out, and its children move up one level where they stand.
+    const updated = { ...t, pinned: !t.pinned, parent: null, collapsed: false };
+    const rest = list.filter((x) => x.id !== id)
+      .map((x) => (x.parent === id ? { ...x, parent: t.parent } : x));
     const pinned = rest.filter((x) => x.pinned);
     const unpinned = rest.filter((x) => !x.pinned);
-    setTabs([...pinned, updated, ...unpinned]);
+    setTabs(settleTabTree([...pinned, updated, ...unpinned]));
     persist();
   }
 
-  /** Move a tab to a strip index, then re-assert the pinned-left invariant (a
-   *  cross-group drag snaps back to its own group). */
-  function moveTabToIndex(dragId: string, index: number) {
-    const list = [...tabs()];
-    const from = list.findIndex((t) => t.id === dragId);
-    if (from < 0) return;
-    let to = Math.min(Math.max(0, index | 0), list.length);
-    const [moved] = list.splice(from, 1);
-    if (from < to) to -= 1;
-    list.splice(to, 0, moved);
-    setTabs(partitionPinned(list));
-    persist();
+  /** Move a tab to a strip index (an insertion boundary in the current list),
+   *  then re-assert the pinned-left invariant (a cross-group drag snaps back to
+   *  its own group). The tab's subtree moves with it; it keeps its parent when
+   *  the boundary allows that, else it takes the shallowest legal depth, so a
+   *  flat strip drag never nests a tab by itself (GH #704). */
+  function editTree(edit: (list: Tab[]) => Tab[]) {
+    const list = tabs();
+    const next = edit(list);
+    if (next !== list) { setTabs(next); persist(); }
   }
+  const moveTabToIndex = (dragId: string, index: number) => editTree((list) =>
+    moveTabSubtree(list, dragId, list[Math.min(Math.max(0, index | 0), list.length)]?.id ?? null, "flat"));
+  const moveTabInTree = (tabId: string, beforeId: string | null, depth: number) =>
+    editTree((list) => moveTabSubtree(list, tabId, beforeId, depth));
+  const moveTabOutOfGroup = (tabId: string) => editTree((list) => treeMoveOutOfGroup(list, tabId));
+  const setTabCollapsed = (tabId: string, collapsed: boolean) =>
+    editTree((list) => treeSetCollapsed(list, tabId, collapsed));
 
   /** Move the dragged tab to the position of the target tab. */
   function reorderTab(dragId: string, targetId: string) {
@@ -1067,13 +1090,14 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     };
     if (list.length === 1) {
       const id = newId();
-      setTabs([{ id, history: [{ kind: "journals" }], pos: 0, pinned: false }]);
+      setTabs([{ id, history: [{ kind: "journals" }], pos: 0, pinned: false, parent: null, collapsed: false }]);
       setActiveId(id);
       persist();
       return { tab: moved, emptied: true };
     }
     const idx = list.findIndex((t) => t.id === moving.id);
-    const next = list.filter((t) => t.id !== moving.id);
+    // The tab leaves alone; its children stay here, one level up, in place.
+    const next = removeTabPromoting(list, moving.id);
     setTabs(next);
     if (activeId() === moving.id) setActiveId(next[Math.max(0, idx - 1)].id);
     persist();
@@ -1088,12 +1112,13 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     if (!tab.history.length) return;
     const id = newId();
     const pos = Math.min(Math.max(0, tab.pos | 0), tab.history.length - 1);
-    const adopted: Tab = { id, history: tab.history, pos, pinned: tab.pinned };
+    const adopted: Tab = { id, history: tab.history, pos, pinned: tab.pinned, parent: null, collapsed: false };
     if (typeof tab.scroll === "number" && tab.scroll > 0) scrollByRoute.set(adopted.history[pos], tab.scroll);
     const list = [...tabs()];
-    const to = typeof index === "number" ? Math.min(Math.max(0, index | 0), list.length) : list.length;
+    // An arriving tab is a root: a drop inside a group lands after that group.
+    const to = typeof index === "number" ? rootSlot(list, index) : list.length;
     list.splice(to, 0, adopted);
-    setTabs(partitionPinned(list));
+    setTabs(settleTabTree(list));
     if (foreground) {
       setActiveId(id);
       activateCurrentRoute();
@@ -1104,8 +1129,15 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function snapshot(): PaneSnapshot {
     const list = tabs();
     rememberScroll();
+    const indexOf = new Map(list.map((t, i) => [t.id, i] as const));
     return {
-      tabs: list.map((t) => ({ history: t.history, pos: t.pos, pinned: t.pinned })),
+      tabs: list.map((t) => {
+        const tab: SerializedTab = { history: t.history, pos: t.pos, pinned: t.pinned };
+        const parent = t.parent === null ? undefined : indexOf.get(t.parent);
+        if (parent !== undefined) tab.parent = parent;
+        if (t.collapsed) tab.collapsed = true;
+        return tab;
+      }),
       activeIndex: Math.max(0, list.findIndex((t) => t.id === activeId())),
       scrolls: list.map((t) => scrollByRoute.get(t.history[t.pos]) ?? null),
     };
@@ -1114,17 +1146,25 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function parseSnapshot(s: PaneSnapshot): { tabs: Tab[]; active: number } | null {
     const scrolls = Array.isArray(s?.scrolls) ? s.scrolls : [];
     const restored: Tab[] = [];
+    // Snapshot index -> restored id, for the parent links (an index that is not
+    // an earlier, restored tab makes the child a root; settleTabTree then drops
+    // any link T1/T2 forbid, so a corrupt tree restores flat, never refused).
+    const idAt: (string | undefined)[] = [];
     (s?.tabs ?? []).forEach((t, i) => {
       if (!t || !Array.isArray(t.history) || t.history.length === 0) return;
       const pos = Math.min(Math.max(0, t.pos | 0), t.history.length - 1);
-      const tab: Tab = { id: newId(), history: t.history, pos, pinned: !!t.pinned };
+      const parentIndex = t.parent;
+      const parent = typeof parentIndex === "number" && Number.isInteger(parentIndex) && parentIndex >= 0 && parentIndex < i
+        ? idAt[parentIndex] ?? null : null;
+      const tab: Tab = { id: newId(), history: t.history, pos, pinned: !!t.pinned, parent, collapsed: t.collapsed === true };
+      idAt[i] = tab.id;
       restored.push(tab);
       const sc = scrolls[i];
       if (typeof sc === "number" && sc > 0) scrollByRoute.set(tab.history[pos], sc);
     });
     if (!restored.length) return null;
     const activeTabId = restored[Math.min(Math.max(0, s.activeIndex | 0), restored.length - 1)].id;
-    const ordered = partitionPinned(restored);
+    const ordered = settleTabTree(restored);
     const active = Math.max(0, ordered.findIndex((t) => t.id === activeTabId));
     return { tabs: ordered, active };
   }
@@ -1208,6 +1248,9 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     togglePin,
     reorderTab,
     moveTabToIndex,
+    moveTabInTree,
+    moveTabOutOfGroup,
+    setTabCollapsed,
     extractTabForAdoption,
     extractActiveTabForAdoption,
     adoptTab,

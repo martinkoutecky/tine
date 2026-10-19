@@ -84,6 +84,7 @@ export const SURFACES = Object.freeze({
 
   // --- Phone/tablet app (uiCensus.mobile.budget.test.tsx) ---------------------
   "mobile.keyboardToolbar": { env: "mobile", budget: 15, what: "buttons in the mobile keyboard toolbar (with Hide keyboard)", source: "MobileKeyboardToolbar mounted by the app shell on an Android build" },
+  "mobile.keyboardToolbar.withNavigation": { env: "mobile", budget: 19, what: "buttons in the keyboard toolbar while the keyboard is up with Navigation buttons at the bottom on (the 15 above plus Sidebar, Search, Back, Forward; GH #598, D-20261019-N2)", source: "MobileKeyboardToolbar with the App's navigation group, keyboard simulated up" },
   "mobile.bottomBar": { env: "mobile", budget: 4, what: "buttons in the bottom navigation row (Navigation buttons at the bottom on)", source: "App .mobile-navigation-toolbar" },
   "mobile.menu.block.plain": mobileMenu("block.plain", 17), // +1 Open in new tab, D-20261018-W1; +2 copy rows out of Copy as, GH #725
   "mobile.menu.block.full": mobileMenu("block.full", 21), // +1 Open in new tab, D-20261018-W1; +2 copy rows out of Copy as, GH #725

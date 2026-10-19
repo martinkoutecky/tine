@@ -538,4 +538,96 @@ describe("MobileKeyboardToolbar", () => {
     unregister();
     dispose();
   });
+  // GH #598 (D-20261019-N2): with "Navigation buttons at the bottom" on, the bottom
+  // row gives way to this toolbar while the keyboard is up, so the App hands the
+  // toolbar the same four-button group. The toolbar only hosts it.
+  describe("navigation group (GH #598)", () => {
+    async function mountWithNavigation(withNavigation: boolean) {
+      platform.mobile = true;
+      const { render } = await import("solid-js/web");
+      const bridge = await import("../editorCommandBridge");
+      const { MobileKeyboardToolbar } = await import("./MobileKeyboardToolbar");
+      const calls: string[] = [];
+      const unregister = bridge.registerFocusedEditorCommandBridge({
+        blockId: "b1",
+        dispatch(command) { calls.push(command); return true; },
+        blur() { calls.push("blur"); },
+      });
+      const Navigation = () => (
+        <div class="navigation-actions">
+          {["Toggle sidebar", "Search", "Go back", "Go forward"].map((title) => (
+            <button type="button" class="icon-btn" title={title} onClick={() => calls.push(`nav:${title}`)} />
+          ))}
+        </div>
+      );
+      const { div, dispose } = mount(render, () => <MobileKeyboardToolbar navigation={withNavigation ? Navigation : undefined} />);
+      const toolbar = div.querySelector("[data-mobile-keyboard-toolbar]") as HTMLElement;
+      const back = () => toolbar.querySelector<HTMLButtonElement>('button[title="Go back"]')!;
+      return { div, toolbar, back, calls, cleanup: () => { unregister(); dispose(); } };
+    }
+
+    it("shows the four navigation buttons at the leading end, outside the scrolling strip", async () => {
+      const { toolbar, cleanup } = await mountWithNavigation(true);
+      try {
+        const nav = toolbar.querySelector(".mobile-keyboard-toolbar-nav")!;
+        expect(nav).not.toBeNull();
+        expect([...nav.querySelectorAll("button")].map((b) => b.title)).toEqual(["Toggle sidebar", "Search", "Go back", "Go forward"]);
+        // First child of the toolbar, and not inside the strip that scrolls away.
+        expect(toolbar.firstElementChild).toBe(nav);
+        expect(nav.closest(".mobile-keyboard-toolbar-strip")).toBeNull();
+        // The formatting buttons are all still there.
+        expect(toolbar.querySelectorAll(".mobile-keyboard-toolbar-strip .mobile-keyboard-toolbar-btn")).toHaveLength(14);
+      } finally { cleanup(); }
+    });
+
+    it("shows nothing extra when the App passes no navigation (setting off)", async () => {
+      const { toolbar, cleanup } = await mountWithNavigation(false);
+      try {
+        expect(toolbar.querySelector(".mobile-keyboard-toolbar-nav")).toBeNull();
+        expect(toolbar.querySelectorAll("button")).toHaveLength(15);
+      } finally { cleanup(); }
+    });
+
+    it("a finger tap ends the edit first, then runs the action once, and swallows the trailing click", async () => {
+      const { back, calls, cleanup } = await mountWithNavigation(true);
+      const probe = document.createElement("button");
+      let probeClicks = 0;
+      probe.onclick = () => probeClicks++;
+      document.body.appendChild(probe);
+      try {
+        const down = pointer("pointerdown");
+        back().dispatchEvent(down);
+        expect(down.defaultPrevented, "the editor keeps focus until the tap completes").toBe(true);
+        expect(calls).toEqual([]);
+        back().dispatchEvent(pointer("pointerup"));
+        expect(calls).toEqual(["blur", "nav:Go back"]);
+        // The compatibility click that trails the pointer sequence must not act again.
+        const click = new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 });
+        Object.defineProperty(click, "pointerId", { value: 1 });
+        back().dispatchEvent(click);
+        expect(calls).toEqual(["blur", "nav:Go back"]);
+        expect(probeClicks).toBe(0);
+      } finally { probe.remove(); cleanup(); }
+    });
+
+    it("a keyboard or assistive-technology activation also ends the edit before acting", async () => {
+      const { back, calls, cleanup } = await mountWithNavigation(true);
+      try {
+        back().click(); // detail 0, no pointer sequence
+        expect(calls).toEqual(["blur", "nav:Go back"]);
+      } finally { cleanup(); }
+    });
+
+    it("sliding off the button cancels the tap", async () => {
+      const { back, calls, cleanup } = await mountWithNavigation(true);
+      try {
+        back().getBoundingClientRect = () => ({ left: 0, right: 40, top: 0, bottom: 44, width: 40, height: 44, x: 0, y: 0, toJSON() { return {}; } });
+        back().dispatchEvent(pointer("pointerdown"));
+        const up = new MouseEvent("pointerup", { bubbles: true, cancelable: true, clientX: 300, clientY: 300 });
+        Object.defineProperty(up, "pointerId", { value: 1 });
+        back().dispatchEvent(up);
+        expect(calls).toEqual([]);
+      } finally { cleanup(); }
+    });
+  });
 });

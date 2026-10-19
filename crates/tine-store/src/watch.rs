@@ -1068,7 +1068,7 @@ impl WatchHandle {
     }
 
     /// Join the background watcher while keeping explicit refresh available.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-faults"))]
     pub(crate) fn stop_background_for_test(&self) {
         self.stop();
         self.core.closed.store(false, Ordering::Release);

@@ -47,7 +47,9 @@ by integration" failure), so this toggle must be flipped by hand once.
 `website/guide/` is built from the onboarding demo templates
 (`crates/tine-core/src/templates/`) as Tine's read-only published app. The same
 folder retains the HTML export as its no-JavaScript and `?static` fallback.
-Re-run after changing the templates or the frontend:
+The published site follows **stable**: regenerate on `master` at a stable cut,
+not on the Beta line (`og`), where Guide changes land only in the templates and
+the onboarding assertions:
 
 ```sh
 source scripts/env.sh
@@ -58,8 +60,9 @@ The generator builds the current frontend, scaffolds the demo graph in a temp
 directory, publishes **all** its pages (forcing all-pages-public in memory only —
 the shipped onboarding config stays private-by-default), rewrites fallback asset
 paths to be self-contained, and replaces `website/guide/`. `docs:check` rebuilds
-the same live export in a temporary directory and compares every byte, so CI
-rejects either stale Guide content or a stale app bundle.
+the same live export in a temporary directory and compares every byte, so
+stable's CI rejects either stale Guide content or a stale app bundle (the Beta
+line's CI skips this check, since its templates run ahead of the published Guide).
 
 ## Regenerating screenshots
 

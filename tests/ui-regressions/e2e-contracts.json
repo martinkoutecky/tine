@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-sidebar-tabs-tree.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"In the sidebar Tabs list, dragging a row right nests it under the row above and left moves it out (even when the pointer passes the rows' left edge), a parent's triangle collapses its group in the sidebar only, Move out of group lifts a nested tab, the top strip stays a flat list in tree order, and the tree with its collapse state survives a restart, including in a viewport narrower than 640 px (interface zoom on a minimum-width window) where the list is the only tab surface.","blocking":true,"authority":"GH #704"}],
+      "acceptableVariations":["Indent width, drop-line styling, drag thresholds and save latency may vary while the nesting, order and collapse outcomes hold."],
+      "nonRequirements":["Exact pixels, touch hold timing on a real Android device, cross-pane drag in the sidebar, nesting in the strip or the overview, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-page-image-icons.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A local static PNG image link in tine.icon:: (or the OG-compatible icon:: fallback; tine.icon:: wins when both exist) decodes in the page title and Favorites, follows replacement without navigation and a menu property edit saves through the guarded path; Org image links also render.","blocking":true,"authority":"GH #346"},{"class":"exact-safety-interoperability","userOutcome":"A remote image icon shows no image or raw link text in the title and Favorites, preserves its value in the visible property row and produces no network request.","blocking":true,"authority":"GH #346"}],
       "acceptableVariations":["Image proportions, navigation and watcher latency may vary within the existing emoji-sized box."],
@@ -45,6 +51,12 @@
       "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet (GH #440).","blocking":true}],
       "acceptableVariations":["Separator glyphs, truncation and styling may vary while the page, ancestor order and swap agree."],
       "nonRequirements":["Modifier destinations of crumbs (component-level), and native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-query-result-cut.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Right-clicking a {{tine-query}} or {{query}} result (bullet or text) and choosing Cut or Delete removes that result from its own page file and puts it on the clipboard for Cut, while the query host block stays in its page; in table view and the OG legacy query table a right click on a result never offers the host block's Cut/Delete (GH #726).","blocking":true}],
+      "acceptableVariations":["Menu placement, the menu offered by table cells, styling and save latency may vary while the query host's file bytes are unchanged and the chosen result leaves its source page."],
+      "nonRequirements":["Exact pixels, a block menu on legacy-table cells (OG offers none), or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
     "scripts/e2e-sw-r2-residue.mjs": {
@@ -538,7 +550,7 @@
       "stability": "stable"
     },
     "scripts/e2e-page-properties.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal; Enter at the start of the page properties keeps them the page header and the page saving (GH #210 F1).", "blocking": true }],
       "acceptableVariations": ["Panel layout and native form-control styling may evolve.", "Custom property and add-property controls may participate in native Tab traversal before Done; Done can be activated by keyboard."],
       "nonRequirements": ["Exact section spacing, control dimensions, or debounce timing.", "A fixed five-preset-only Tab sequence.", "Sidebar navigation or a fixed post-paint delay before opening a fixture page."],
       "stability": "stable"

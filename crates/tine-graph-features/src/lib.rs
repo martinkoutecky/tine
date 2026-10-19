@@ -23,6 +23,7 @@ pub mod quick_share;
 mod render;
 mod render_query_cache;
 mod retained;
+pub mod run_revert;
 pub use render::{SheetExport, SheetInput};
 pub mod search;
 pub mod templates;

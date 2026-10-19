@@ -416,6 +416,74 @@ pub(super) fn write_page_with_create(
     create: bool,
     mut compute: impl FnMut(&PageDto, &PageId) -> Result<Planned, ErrorBody>,
 ) -> Result<Value, ErrorBody> {
+    write_page_from_bytes(slot, page, kind, rev, create, |doc, page, _| {
+        compute(doc, page)
+    })
+}
+
+#[cfg(desktop)]
+thread_local! {
+    /// The git run the current write verb belongs to (set by the verb
+    /// dispatcher for the duration of one verb), with the verb's commit subject.
+    static RUN: std::cell::RefCell<Option<(super::git_run::RunCtx, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run `verb` with its writes committed to the graph's git repository as
+/// part of `run` (CLI slice 3, D-20261019-CL1).
+#[cfg(desktop)]
+pub(super) fn in_run<T>(
+    run: Option<super::git_run::RunCtx>,
+    subject: &str,
+    verb: impl FnOnce() -> T,
+) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            RUN.with(|r| r.borrow_mut().take());
+        }
+    }
+    RUN.with(|r| *r.borrow_mut() = run.map(|run| (run, subject.to_string())));
+    let _reset = Reset;
+    verb()
+}
+
+/// Commit a successful write when it belongs to a run. A commit that fails
+/// does not undo the saved write: the reply says so under `git`.
+#[cfg(desktop)]
+fn commit_if_in_run(
+    slot: &GraphSlot,
+    page: &PageId,
+    old: Option<&[u8]>,
+    new: &[u8],
+    reply: &mut Value,
+) {
+    let Some((run, subject)) = RUN.with(|r| r.borrow().clone()) else {
+        return;
+    };
+    let git = match super::git_run::commit_write(slot, &run, page, &subject, old, Some(new)) {
+        Ok(done) => done.to_json(),
+        Err(error) => json!({
+            "committed": false,
+            "error": super::git_run::reason_of(&error),
+            "message": error.message,
+        }),
+    };
+    if let Some(reply) = reply.as_object_mut() {
+        reply.insert("git".into(), git);
+    }
+}
+
+/// [`write_page_with_create`] whose `compute` also sees the page's current
+/// bytes (empty for a page being created).
+pub(super) fn write_page_from_bytes(
+    slot: &GraphSlot,
+    page: &PageId,
+    kind: EditKind,
+    rev: Option<&str>,
+    create: bool,
+    mut compute: impl FnMut(&PageDto, &PageId, &[u8]) -> Result<Planned, ErrorBody>,
+) -> Result<Value, ErrorBody> {
     let flush = || {
         crate::page_commands::with_host(slot, |host| host.flush_input(std::slice::from_ref(page)))
             .map_err(host_failed)?
@@ -492,7 +560,7 @@ pub(super) fn write_page_with_create(
                 ));
             }
         }
-        let planned = compute(&current.doc, &read.page)?;
+        let planned = compute(&current.doc, &read.page, &bytes)?;
         let mut tx = slot.store.transaction(Some(kind));
         tx.save_page(
             &[kind],
@@ -556,12 +624,17 @@ pub(super) fn write_page_with_create(
                         absent,
                     );
                 }
-                return Ok(written(
+                #[allow(unused_mut)]
+                let mut reply = written(&read.page, &reparsed.doc, &reparsed.rev, &planned.changed);
+                #[cfg(desktop)]
+                commit_if_in_run(
+                    slot,
                     &read.page,
-                    &reparsed.doc,
-                    &reparsed.rev,
-                    &planned.changed,
-                ));
+                    (!absent).then_some(&bytes[..]),
+                    &new_bytes,
+                    &mut reply,
+                );
+                return Ok(reply);
             }
             Err(ApplyRefusal::Changed) => continue,
             Err(refusal) => return Err(apply_refused(refusal, &read.page)),

@@ -373,13 +373,15 @@ fn device_flow_stops_on_expired_denied_and_its_own_expiry() {
     let mock = Mock::start(|req| match req.path.as_str() {
         "/login/device/code" => json(
             200,
-            serde_json::json!({ "device_code": "dc", "user_code": "AB-CD", "verification_uri": "https://github.com/login/device", "expires_in": 12, "interval": 5 }),
+            serde_json::json!({ "device_code": "dc", "user_code": "AB-CD", "verification_uri": "https://github.com/login/device", "expires_in": 13, "interval": 5 }),
         ),
         _ => json(200, serde_json::json!({ "error": "authorization_pending" })),
     });
-    // A 10 ms "second": the code's 120 ms lifetime holds polls at 50 and
-    // 100 ms with room for the local round trips.
-    let f = fixture_with_unit(mock.endpoints(), Duration::from_millis(10));
+    // A 40 ms "second": the code's 520 ms lifetime holds polls at 200 and
+    // 400 ms (each measured from the previous answer), with 120 ms for the
+    // local round trips; a third poll (600 ms) is past the expiry. At 10 ms
+    // the room was 20 ms and a loaded machine missed the second poll.
+    let f = fixture_with_unit(mock.endpoints(), Duration::from_millis(40));
     let start = block_on(f.service.connect_start()).unwrap();
     assert_eq!(
         f.wait_status(&start.attempt_id, |s| *s != ConnectStatus::Pending),
@@ -407,16 +409,27 @@ fn short_lived_code(access: Resp, user: Option<Duration>) -> Mock {
 /// no further poll is sent.
 #[test]
 fn a_slow_answer_that_outlives_the_code_expires_the_attempt_and_polls_no_more() {
+    // A 100 ms code (1 ms "seconds") polled after 1 ms, whose answer takes
+    // 400 ms: the first poll is sent with 99 ms to spare even on a loaded
+    // machine, and its answer outlives the code. (At a 10 ms lifetime a
+    // loaded machine sent no poll at all before the expiry.)
     let pending = json(200, serde_json::json!({ "error": "authorization_pending" }))
-        .delayed(Duration::from_millis(40));
-    let mock = short_lived_code(pending, None);
+        .delayed(Duration::from_millis(400));
+    let mock = Mock::start(move |req| match req.path.as_str() {
+        "/login/device/code" => json(
+            200,
+            serde_json::json!({ "device_code": "dc", "user_code": "AB-CD", "verification_uri": "https://github.com/login/device", "expires_in": 100, "interval": 1 }),
+        ),
+        "/login/oauth/access_token" => pending.clone(),
+        _ => resp(404, "{}"),
+    });
     let f = fixture(mock.endpoints());
     let start = block_on(f.service.connect_start()).unwrap();
     assert_eq!(
         f.wait_status(&start.attempt_id, |s| *s != ConnectStatus::Pending),
         ConnectStatus::Expired
     );
-    std::thread::sleep(Duration::from_millis(150));
+    std::thread::sleep(Duration::from_millis(600));
     assert_eq!(
         mock.count("POST", "/login/oauth/access_token"),
         1,
