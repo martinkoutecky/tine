@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.0-beta.6] - 2026-10-19
+
 ### Changed
 
 - Settings search: the setting a result jumps to is highlighted for about two seconds, so it is easy to spot on a long tab (GH #706).
