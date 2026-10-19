@@ -46,9 +46,21 @@ describe("mock backend", () => {
     const ids = async (q: string) => (await b.search(q, 20)).flatMap((group) => group.blocks).map((block) => block.id);
     expect(await ids("qzfo qzdr")).toEqual(["a"]);
     expect(await ids("ZFOO  QZDRA")).toEqual(["a"]);
-    expect(await ids("qzdraft qzfoo")).toEqual([]);
+    expect(await ids("qzdra qzfoo")).toEqual([]); // not in order, and `qzdra` is not a whole word
     expect(await ids("qzfdr")).toEqual([]);
     expect(await ids("   ")).toEqual([]);
+  });
+
+  it("block picker search adds OG's full-text leg: whole words in any order, listed before fragment-only blocks", async () => {
+    const page: PageDto = { name: "P", title: "P", kind: "page", pre_block: null,
+      blocks: [{ id: "a", raw: "qzfoo qzbarx tail", collapsed: false, children: [] },
+        { id: "b", raw: "xx qzbar yy qzfoo", collapsed: false, children: [] },
+        { id: "c", raw: "qzfoo qzdraft", collapsed: false, children: [] }], format: "md" };
+    const b = mockBackend([page]);
+    const ids = async (q: string, limit = 20) => (await b.search(q, limit)).flatMap((group) => group.blocks).map((block) => block.id);
+    expect(await ids("qzdraft qzfoo")).toEqual(["c"]);
+    expect(await ids("qzfoo qzbar")).toEqual(["b", "a"]);
+    expect(await ids("qzfoo qzbar", 1)).toEqual(["b"]);
   });
 
   it("query (todo TODO DOING) matches both open tasks", async () => {
