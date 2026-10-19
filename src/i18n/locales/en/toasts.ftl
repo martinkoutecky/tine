@@ -218,6 +218,11 @@ paste-pasted-as-a-copy-references-to-these-blocks = Pasted as a copy; references
 
 properties-page-header-properties-must-contain-only-valid-key = Page-header properties must contain only valid key:: value lines before they can be saved.
 
+# $line is the 1-based line number inside the page-properties block; $text is that line, shortened.
+properties-page-header-bad-line = Page properties can't be saved yet: line { $line } of the properties block, "{ $text }", is not a key:: value property. Fix or remove it.
+
+properties-page-header-has-child-blocks = Page properties can't be saved yet: the properties block has child blocks. Outdent or delete them.
+
 selection-outline-is-too-deep-to-indent = Outline is too deep to indent
 
 # $error is an untranslated diagnostic from the operating system or backend.

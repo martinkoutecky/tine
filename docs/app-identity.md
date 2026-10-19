@@ -68,6 +68,11 @@ A few identity-bearing places need no file of their own:
 
 - The iOS bundle id is Tauri's `identifier`. No `gen/apple` project is
   checked in.
+- iOS has no Beta app yet, so `ios-testflight.yml` with `beta_as_release`
+  builds a Beta tag under the stable identity `page.tine.Tine`, with marketing
+  version `X.Y.Z` (the `-beta.N` suffix stripped) and "What to Test" naming the
+  Beta (D-20261018-I1 option A). From 0.9 a separate TestFlight-only Tine Beta
+  app replaces this (option B).
 - The Linux window class, Wayland `app_id` and runtime `.desktop` file come
   from `TINE_APP_IDENTIFIER`. Tauri's deb/rpm launcher filename uses the
   product name. When that packaged launcher is present, the runtime app-ID

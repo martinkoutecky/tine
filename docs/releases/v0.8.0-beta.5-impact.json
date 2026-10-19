@@ -1,0 +1,650 @@
+{
+  "schemaVersion": 1,
+  "version": "0.8.0-beta.5",
+  "baseTag": "v0.8.0-beta.4",
+  "focusedAudit": {
+    "required": false,
+    "reason": "A Beta release; no exact-tree release audit was run for this Beta; explicit deferral, not certification."
+  },
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "Linux: middle-click pasting text selected in a block into a rich-text app (Tuta, Anki, ...) now pastes only the selection. Before, selecting the last line of a block (a one-line block, or Select All) also pasted the editor's own markup (`<div contenteditable=\"plaintext-only\">`), the selection toolbar's button labels and the text of the blocks below (GH #530).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH530-PRIMARY-SELECTION"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH530-PRIMARY-SELECTION (fail-before proven; Linux WebKitGTK/Xvfb only, Wayland and Tuta/Anki not exercised). The unit test pins the placeholder that gives the textarea's shadow tree a trailing node; the native journey reads the PRIMARY selection flavours.",
+        "refs": [
+          "src/textareaPrimarySelection.test.tsx",
+          "scripts/e2e-editor-bugs.mjs",
+          "scripts/read-primary-selection.py"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the expected paste of a selection; no Guide page describes the X11 primary selection or what a middle-click paste carries, and no sentence becomes wrong.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Queries: folding a query block's bullet now folds its results too, as in Logseq, also when the block has no children (GH #619).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH619-FOLD-HIDES-RESULTS"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-OG-GH619-FOLD-HIDES-RESULTS (fail-before proven). The unit test folds and unfolds a childless query block and checks the saved collapsed:: true; the native journey does it in the real app.",
+        "refs": [
+          "src/components/QueryMacro.test.tsx",
+          "scripts/e2e-calm-query.mjs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The Queries page now says to fold the query block's bullet to hide its results, as in Logseq (changed in 4e389bcfe; asserted in src/guideBeta5.test.ts).",
+        "refs": [
+          "crates/tine-core/src/templates/queries.md",
+          "src/guideBeta5.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Queries on Windows: one click on a query's title starts the rename with the caret in the field; before, every rename after the first needed a second click. The same fix applies to the other fields that open focused (query builder values, table and board cells, context menu search) (GH #619).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH619-TITLE-ONE-CLICK"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-OG-GH619-TITLE-ONE-CLICK (fail-before proven). The unit test checks the caret lands in the title field after one click; a guard test pins the focus-on-mount helper used by the other fields that open focused.",
+        "refs": [
+          "src/components/QueryMacro.test.tsx",
+          "src/focusOnMount.guard.test.ts",
+          "scripts/e2e-calm-query.mjs",
+          "scripts/shot-gh619-query-oct18.mjs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The Queries page already says to click the title to rename it; one click now does what the sentence says on Windows.",
+        "refs": [
+          "crates/tine-core/src/templates/queries.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Queries: the options in **Find blocks ▾** and the other builder menus stay on one line instead of wrapping word by word, and a menu opened in one query is no longer drawn under the query below it (GH #619).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH619-FIND-MENU-ONE-LINE",
+        "UI-OG-GH619-MENU-ABOVE-NEXT-QUERY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-OG-GH619-FIND-MENU-ONE-LINE and UI-OG-GH619-MENU-ABOVE-NEXT-QUERY (fail-before proven by the screenshot script, which asserts one-line labels and the menu's stacking over the next query and exits non-zero otherwise). Layout only; no jsdom test can measure it.",
+        "refs": [
+          "scripts/shot-gh619-query-oct18.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Layout and stacking of menus the Guide does not describe at this level; no sentence changes.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Queries: a page condition reads *Page is X* / *Page is not X* / *Page is in namespace X* instead of *On page is X* (GH #619).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH619-ON-PAGE-WORDING"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-OG-GH619-ON-PAGE-WORDING (fail-before proven). The test reads a page row as Page is X and never On page on page X.",
+        "refs": [
+          "src/components/QuerySheet.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "No Guide page quotes the condition row wording (searched the templates for \"On page\" and \"Page is\"); the fix is a label correction.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Queries: with **Pages and blocks**, a condition on the block's page (such as *Page is X*) now finds that page in the Pages section instead of saying \"`page.name` is not a field of this query\" (GH #619).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH619-BOTH-KINDS-PAGE-FIELD"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-OG-GH619-BOTH-KINDS-PAGE-FIELD (fail-before proven). The printer tests and the store conformance test run a block query that names its page (page.name = ...) under Pages and blocks.",
+        "refs": [
+          "crates/tine-core/src/query/print_tests.rs",
+          "crates/tine-store/tests/query_conformance.rs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The Guide already says Pages and blocks shows both from the same conditions and that page.name reaches the block's own page; the fix makes that combination work.",
+        "refs": [
+          "crates/tine-core/src/templates/query-model.md",
+          "crates/tine-core/src/templates/find-and-revisit.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A query block with children no longer shows a second, clipped copy of the live query in the sticky parent row while you scroll its children (GH #619).",
+      "userVisible": true,
+      "regressions": [
+        "UI-OG-GH619-STICKY-PIN-NO-LIVE-QUERY"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-OG-GH619-STICKY-PIN-NO-LIVE-QUERY (fail-before proven). The test checks that a query or embed host with children is pinned as a one-line label and mounts its live macro once.",
+        "refs": [
+          "src/components/StickyAncestor.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The pinned-ancestors section already describes ancestors pinned at the top; a one-line label instead of a second live query restores the described behaviour.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Phones and tablets: Sidebar, Search, Back and Forward are in the top bar again by default, in the same place whether or not you are editing, as in stable and on desktop. The bottom row from Beta 4 is now a setting, **Navigation buttons at the bottom** (Settings → Appearance, off by default, this device only), for thumb reach (GH #716, GH #598).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH716-MOBILE-NAV-TOP",
+        "UI-GH598-MOBILE-NAVIGATION"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH716-MOBILE-NAV-TOP and the re-scoped UI-GH598-MOBILE-NAVIGATION (fail-before proven). Unit tests cover Android and iOS defaults (top bar, no bottom row), the live setting, its Settings switch (default off, remembered on this device, Settings search finds it) and desktop (no change); the screenshot script lays out the 320 px, phone and tablet cases.",
+        "refs": [
+          "src/App.mobileNavigation.test.tsx",
+          "src/components/Settings.mobileNavigation.test.tsx",
+          "scripts/shot-mobile-2.mjs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The Platforms and mobile page now says Sidebar, Search, Back and Forward are in the top bar (Back and Forward fold into the menu at about 320 px) and describes the Appearance setting Navigation buttons at the bottom (off by default, this device only, also on iOS); asserted in src/guideBeta5.test.ts. The page's earlier claim of a bottom row by default was removed in the same change.",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md",
+          "src/guideBeta5.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Phones with **Navigation buttons at the bottom** on: closing the keyboard with Back or the keyboard's own hide key brings back the bottom row (sidebar, Search, Back, Forward). Before, the block stayed in editing, so the editing toolbar stayed in the row's place without a keyboard, and the help button could jump off screen. Tap the block to bring the keyboard and the editing toolbar back (GH #716).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH716-MOBILE-NAV-AFTER-KEYBOARD"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH716-MOBILE-NAV-AFTER-KEYBOARD (fail-before proven). Unit tests drive the native keyboard-visibility event and a resize that is not a keyboard; the screenshot script covers the layout.",
+        "refs": [
+          "src/components/MobileKeyboardToolbar.test.tsx",
+          "src/mobileSafeArea.test.ts",
+          "scripts/shot-mobile-2.mjs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Guide gap filled in the release prep: the Platforms and mobile page said only that the bottom row gives way to the editing toolbar while the keyboard is up. It now says that closing the keyboard with Back or its hide key brings the row back at once while the block stays in editing, and that a tap on the block brings the keyboard and toolbar back (asserted in src/guideBeta5.test.ts).",
+        "refs": [
+          "crates/tine-core/src/templates/platforms-and-mobile.md",
+          "src/guideBeta5.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A query that lists a block you just edited no longer sometimes stays at \"Loading query results…\" with a count of 0 after you leave the editor, until some later change re-ran it (UI-QUERY-STUCK-LOADING-AFTER-EDIT). Leaving the editor briefly marked the page busy without telling the query blocks, so a result that arrived in that moment was dropped and never asked for again.",
+      "userVisible": true,
+      "regressions": [
+        "UI-QUERY-STUCK-LOADING-AFTER-EDIT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-QUERY-STUCK-LOADING-AFTER-EDIT (fail-before proven). The wiring test replays a result that arrives while the page is held busy after leaving the editor and requires the query to be asked for again.",
+        "refs": [
+          "src/document/host/wiring.resultsGate.test.ts",
+          "src/document/host/client.notify.test.ts"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Race fix with no change to any workflow or setting; the Guide does not describe when query results refresh internally.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Sticky parent bullets appear as their row reaches its place in the sticky stack, so they no longer pop up over the next child while scrolling (GH #717; GH #718).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH717-STICKY-OVERLAP"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH717-STICKY-OVERLAP (fail-before proven; GH #718 shares the row). The component test pins the slot boundary and the screenshot script scrolls nested outlines and asserts the next child stays readable.",
+        "refs": [
+          "src/components/StickyAncestor.test.tsx",
+          "scripts/shot-sticky-overlap.mjs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The pinned-ancestors section already describes ancestors pinned at the top while scrolling; the fix changes only when each pin appears so it no longer covers the next child.",
+        "refs": [
+          "crates/tine-core/src/templates/keep-context-visible.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "On phones and tablets, which have no tab strip, **Open in new tab** is no longer offered in page, block and preview menus, and Ctrl/Cmd-click, middle-click and Ctrl/Cmd+Enter in Search open the link in place instead of in a background tab you cannot reach; use **Open in sidebar** there. Desktop is unchanged (GH #705).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH705-MOBILE-NO-BACKGROUND-TAB"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH705-MOBILE-NO-BACKGROUND-TAB (fail-before proven). Tests cover the page, block and preview menus, the shared link gesture (Ctrl/Cmd-click, middle-click), outline-bullet zoom and Search Ctrl-click / Ctrl+Enter on a phone, and a Guide assertion.",
+        "refs": [
+          "src/components/newTab.mobile.test.tsx",
+          "crates/tine-core/src/guide.rs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The References page now says phones and tablets have no tab strip, so their menus omit Open in new tab and offer Open in sidebar, and Ctrl/Cmd-click and middle-click open in place (it previously said mobile long-press menus offered Open in new tab); Tips says the same (changed in c41934dd0; asserted in guide.rs and src/guideBeta5.test.ts).",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/tips.md",
+          "crates/tine-core/src/guide.rs",
+          "src/guideBeta5.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "All pages: the header no longer shows a lone \"JOURNAL DATE\" line under PAGE, and a \"—\" no longer strikes through the first letter of the next row (the journal-date cell had no grid column). The journal-date column now appears only while \"Show journals\" is on, and its checkbox is drawn from the theme instead of a white native box on dark surfaces (UI-ALL-PAGES-GRID-001).",
+      "userVisible": true,
+      "regressions": [
+        "UI-ALL-PAGES-GRID-001"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-ALL-PAGES-GRID-001 (fail-before proven). The component test requires the journal-date header cell and row cells only while journals are listed; a theme test pins the checkbox colours; the screenshot script measures the grid.",
+        "refs": [
+          "src/components/AllPages.test.tsx",
+          "src/styles/themes/colorScheme.test.ts",
+          "scripts/shot-all-pages.mjs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Guide gap filled in the release prep: the Where things are page now says that ticking Show journals also adds the Journal date column (and that the sortable columns are Updated, Page and Backlinks); asserted in src/guideBeta5.test.ts. Before, it described Journal date as always present.",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md",
+          "src/guideBeta5.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Settings search no longer lists unrelated settings for a one-character query such as \"发\" (a single character now matches only a setting's name, keywords and aliases, not its description), puts settings whose name matches before those matching only their description, and scrolls to a result whose control appears a moment after the tab opens, such as Developer tools (GH #706).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH706-SETTINGS-RELEVANCE-SCROLL"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH706-SETTINGS-RELEVANCE-SCROLL (fail-before proven). Unit tests cover one-character terms in two scripts, name-before-description ranking and the scroll to Developer tools, which mounts after an async load.",
+        "refs": [
+          "src/components/settingsSearch.test.ts",
+          "src/components/Settings.devtoolsSearch.test.tsx"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "Guide gap filled in the release prep: the Where things are page described Settings search only as showing matching settings. It now says a single character matches only a setting's name and aliases, not its description, and that name matches come before description matches (asserted in src/guideBeta5.test.ts).",
+        "refs": [
+          "crates/tine-core/src/templates/where-things-are.md",
+          "src/guideBeta5.test.ts"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Org graphs: a page you create from Search (Ctrl+K), with **Customize** for Today's sections, or by opening a page or journal that has no file yet is now edited as Org from the start. Before, until Tine next read the file, a property added to it (a block id from **Copy block ref**, a page property, a collapsed or heading flag) was written Markdown-style (`id:: …`) into the `.org` file, where Logseq and Tine show it as text instead of reading it as a property (ORG-CREATED-FORMAT).",
+      "userVisible": true,
+      "regressions": [
+        "UI-ORG-CREATED-FORMAT"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-ORG-CREATED-FORMAT (fail-before proven). The jsdom test creates pages the three ways named (Search, Customize Today's sections, an open page with no file yet) on an Org graph and checks the :PROPERTIES: drawer and #+key: line; the native journey checks the saved .org bytes after Copy block ref (Linux WebKitGTK).",
+        "refs": [
+          "src/document/createdPageFormat.test.ts",
+          "scripts/e2e-org-created-format.mjs"
+        ]
+      },
+      "docs": {
+        "status": "current",
+        "reason": "The References page already says each property is written in the form its file uses (an Org page gets #+key: and a :PROPERTIES: drawer); the fix makes a freshly created page on an Org graph follow it. Bring-existing-graph says New pages follow Settings -> Editor -> File format.",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md",
+          "crates/tine-core/src/templates/bring-existing-graph.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Unlinked References show every mention that fits the excerpt as a highlight again, and the numbered circles come back only for mentions past the excerpt, as before 0.8.0-beta.1 (GH #200; GH #556's one-highlight-at-a-time change is reverted, its bullet that opens the source block stays).",
+      "userVisible": true,
+      "regressions": [
+        "UI-UNLINKED-REF-CIRCLES-PAST-CAP-200",
+        "UI-UNLINKED-REF-HIGHLIGHT-556",
+        "UI-UNLINKED-REF-JUMP-CONTROL-001"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-UNLINKED-REF-CIRCLES-PAST-CAP-200 (new), UI-UNLINKED-REF-HIGHLIGHT-556 (re-scoped: only the bullet-opens-block half stands) and UI-UNLINKED-REF-JUMP-CONTROL-001 (the highlight still opens its mention). Tests mark every mention that fits the excerpt and show circles only past it.",
+        "refs": [
+          "src/components/ReferenceEvidence.test.tsx",
+          "src/components/UnlinkedReferences.test.tsx",
+          "scripts/e2e-query-workspace.mjs"
+        ]
+      },
+      "docs": {
+        "status": "update",
+        "reason": "The References page's Unlinked References bullet is rewritten: each mention is highlighted and clickable, Show full block marks every mention, and a block whose mentions do not all fit the excerpt gets a numbered jump row (the Beta 1 single-highlight wording is gone).",
+        "refs": [
+          "crates/tine-core/src/templates/pages-links-references-search.md"
+        ]
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "A table, grid or board block that is the first block of a page and has its view set but no title yet is no longer rewritten as page properties when the page saves, so typing its title or adding rows no longer raises \"Page-header properties must contain only valid key:: value lines\" (often twice) or leaves the page unsaved. When that message is shown for a real page-properties block it now names the first line that is not a `key:: value` property (or says the block has child blocks), appears once however often you leave the editor, and is no longer shown for a block that is not the page's first block (GH #210). Choosing \"Show children as: Outline\" on such a block (which leaves its column-width settings behind) keeps it a block too, and setting an alias, icon or filter on that page no longer writes into the table block.",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH210-HEADER-TOAST"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH210-HEADER-TOAST (fail-before proven on 4e389bcfe: the render journey and the Rust test write the table block into the page preamble). Linux real-app journey e2e-page-properties.mjs; Windows/macOS/Android unverified.",
+        "refs": [
+          "src/components/pageHeaderToast.test.tsx",
+          "src/document/edits/pageHeaderToast.test.ts",
+          "crates/tine-store/tests/gh210_sheet_first_bullet.rs",
+          "scripts/e2e-page-properties.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores saving of a page whose first block is a table; the Guide never described the toast or the promotion, and no sentence becomes wrong.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Repeatedly collapsing a block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) no longer stacks extra `collapsed:: true` lines or shows them as text; existing stacked lines are removed on the next collapse toggle (GH #721).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH721-COLLAPSED-TRAILER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH721-COLLAPSED-TRAILER (fail-before proven in jsdom on release/0.8); the Linux native journey e2e-editor-bugs.mjs is the control.",
+        "refs": [
+          "src/components/Block.collapsedTrailer.test.tsx",
+          "crates/tine-core/tests/block_regions.rs",
+          "scripts/e2e-editor-bugs.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the expected collapse of a block; no Guide page describes where collapsed:: is written.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    }
+  ]
+}

@@ -2,9 +2,9 @@ import { type BlockDto, type Format, type PageDto, type RefGroup } from "../type
 import { Node, FeedPage, DocState, doc, freshId } from "./model";
 import { seedFacets, facetsFromDto } from "../render/facets";
 import { trimBlockTrailingSpace } from "../editor/format";
-import { isPageHeaderPropertiesOnly, pageHeaderKeys } from "../editor/properties";
+import { BLOCK_SCOPED_PROPERTY_KEYS, isPropertiesOnly } from "../editor/properties";
 import { journalTitle, appNow } from "../journal";
-import { rawWithCollapsed } from "./edits/properties";
+import { pageHeaderDraftProblem, rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
 
 /** Wire DTO constructors live here; callers choose the intent and supply content. */
@@ -200,19 +200,8 @@ function toDto(id: string): BlockDto {
   return { id: n.id, raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }
 
-/** Properties that describe the block they sit on, never a page: a first
- *  bullet carrying one stays an outline block. An empty numbered-list item is
- *  exactly `logseq.order-list-type:: number`, and folding it into the page
- *  header turned the list into page properties and jammed every later save
- *  (GH #540). Mirror of Rust `BLOCK_SCOPED_PROPERTY_KEYS` (tine-store
- *  model.rs), which carries the OG provenance. */
-export const BLOCK_SCOPED_PROPERTY_KEYS: readonly string[] = [
-  "id",
-  "heading",
-  "collapsed",
-  "background-color",
-  "logseq.order-list-type",
-];
+/** Re-exported from `editor/properties` (the shared predicate's home). */
+export { BLOCK_SCOPED_PROPERTY_KEYS };
 
 /** Mirror of Rust `first_root_is_promotable_page_header` (model.rs): a childless
  *  first root whose raw is exactly canonical page-header properties and carries
@@ -221,11 +210,7 @@ export const BLOCK_SCOPED_PROPERTY_KEYS: readonly string[] = [
  *  leave them as bullets). */
 function isPromotablePageHeaderRoot(node: Node): boolean {
   const canonicalRaw = node.raw.replace(/\n+$/, "");
-  return (
-    node.children.length === 0 &&
-    isPageHeaderPropertiesOnly(canonicalRaw) &&
-    !pageHeaderKeys(canonicalRaw).some((key) => BLOCK_SCOPED_PROPERTY_KEYS.includes(key))
-  );
+  return node.children.length === 0 && isPropertiesOnly(canonicalRaw);
 }
 
 /** Page `p`'s pre-block and outline roots as its file holds them: a marked
@@ -236,11 +221,10 @@ export function foldMarkedPageHeader(p: FeedPage): { preBlock: string | null; ro
   const first = doc.byId[p.roots[0]];
   if (!first?.originatedFromPageHeader) return { preBlock: p.preBlock, rootIds: p.roots };
   // Tolerate only Enter's authoring artifact at the disk firewall; keep the
-  // strict shared display predicate and live raw intact.
+  // strict shared display predicate and live raw intact. The exit toast reports
+  // this same predicate (`pageHeaderDraftProblem`).
+  if (pageHeaderDraftProblem(first)) return null;
   const canonicalRaw = first.raw.replace(/\n+$/, "");
-  if (first.children.length > 0 || (first.raw !== "" && !isPageHeaderPropertiesOnly(canonicalRaw))) {
-    return null;
-  }
   // Exact raw is authoritative here: ordinary toDto trimming must never eat a
   // page-header value or its separator trivia. An empty draft deletes the
   // header and emits no stray outline bullet.
