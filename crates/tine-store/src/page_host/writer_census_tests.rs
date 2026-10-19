@@ -51,6 +51,14 @@ const EXEMPT: &[(&str, &str)] = &[
         "trashes the superseded legacy highlight sidecar and deleted crop image assets after a highlight save; no page",
     ),
     (
+        "src-tauri/src/owner/git_run.rs::commit_pair",
+        "git2 `Repository::commit(None, ..)` writes git commit objects under .git; the page bytes were saved by the run's host-routed write (D-20261019-CL4); no page",
+    ),
+    (
+        "src-tauri/src/owner/git_run.rs::run_end",
+        "git2 `Repository::commit(None, ..)` writes the squash commit object under .git; no page (D-20261019-CL4)",
+    ),
+    (
         "crates/tine-graph-features/src/config.rs::update",
         "writes config.edn; no page",
     ),
