@@ -38,6 +38,7 @@ pub mod render;
 pub mod render_facets;
 pub mod search_query;
 pub mod sync_diff;
+pub mod template;
 pub mod text_merge;
 
 /// Re-export the lsdoc parser so the Tauri shell can name its AST types

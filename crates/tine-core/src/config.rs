@@ -78,7 +78,8 @@ pub struct Config {
     /// folded with `property_key_norm` when matched.
     pub property_pages_excludelist: Vec<String>,
     /// `:default-templates {:journals "Name"}` — template applied to a new,
-    /// empty journal page.
+    /// empty journal page: trimmed, and a blank name is `None` (OG
+    /// `state/get-default-journal-template`).
     pub default_journal_template: Option<String>,
     /// `:default-home {:page "Name"}` — the graph's home page (OG
     /// `state/get-default-home`). Only a string `:page` directly inside a
@@ -309,8 +310,9 @@ impl Config {
         cfg.property_pages_enabled =
             bool_value(edn, ":property-pages/enabled?").unwrap_or(cfg.property_pages_enabled);
         cfg.property_pages_excludelist = parse_keyword_set(edn, ":property-pages/excludelist");
-        cfg.default_journal_template =
-            nested_string(edn, ":default-templates", ":journals").filter(|s| !s.is_empty());
+        cfg.default_journal_template = nested_string(edn, ":default-templates", ":journals")
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty());
         cfg.default_home =
             nested_string(edn, ":default-home", ":page").filter(|s| !s.trim().is_empty());
         cfg.favorites = parse_string_vector(edn, ":favorites");
@@ -1445,6 +1447,24 @@ mod tests {
             vec!["Inbox".to_string(), "Reading List".to_string()]
         );
         assert!(Config::parse("{}").favorites.is_empty());
+    }
+
+    #[test]
+    fn default_journal_template_is_trimmed_and_blank_is_none_as_in_og() {
+        // OG frontend.state/get-default-journal-template: `(when-not
+        // (string/blank? t) (string/trim t))`.
+        let template = |edn: &str| Config::parse(edn).default_journal_template;
+        assert_eq!(
+            template(r#"{:default-templates {:journals " Daily "}}"#).as_deref(),
+            Some("Daily")
+        );
+        assert_eq!(
+            template(r#"{:default-templates {:journals "Daily"}}"#).as_deref(),
+            Some("Daily")
+        );
+        assert_eq!(template(r#"{:default-templates {:journals "  "}}"#), None);
+        assert_eq!(template(r#"{:default-templates {:journals ""}}"#), None);
+        assert_eq!(template("{}"), None);
     }
 
     #[test]

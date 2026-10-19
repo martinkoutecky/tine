@@ -46,6 +46,7 @@ import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, Med
 import type { EditKinds } from "./editKind";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import type { NativeTineLinks } from "./nativeTineLinks";
+import type { QuickShareCheckOutcome, QuickShareConnectStart, QuickShareConnectStatus, QuickShareCreated, QuickShareDeleteOutcome, QuickShareFound, QuickShareListing, QuickSharePrepared } from "./quickShare/commands";
 import type { DebugInfo, DiagnosticReport, DiagnosticFrontendKind, DiagnosticFrontendFields, GpuEnv, BackupInfo, GraphChange, AssetChangedBatch, GraphConfigChange, CustomCssChange, TrashAssetOutcome, GraphAnswersChange } from "./backendTypes";
 import type { DiskToken, OwedPage, PageMail, PageOperation, PageRefusal, PublishedNeed } from "./document";
 
@@ -191,6 +192,33 @@ export interface Backend {
   /** Publish a whole-graph read-only app plus static fallback under a picked
    * folder. `allPages` explicitly includes private pages; default public only. */
   publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]): Promise<PublicationReceipt>;
+  /** Quick share (DESIGN §3.9; src-tauri/src/quick_share). Every GitHub call,
+   * the token and each share's key stay native; failures reject with a
+   * `QuickShareError`. Prepare builds the exact payload a later create uploads,
+   * kept natively for 10 minutes under `prepareId`. */
+  quickSharePrepare(request: QueryPublicationRequest): Promise<QuickSharePrepared>;
+  /** Upload the prepared payload once (never retried) and copy the link to the
+   *  clipboard natively; the link is not returned. */
+  quickShareCreate(prepareId: string): Promise<QuickShareCreated>;
+  quickShareDiscard(prepareId: string): Promise<void>;
+  /** This device's shares and the connected account; `enabled` is the build gate. */
+  quickShareList(): Promise<QuickShareListing>;
+  /** Look for a pending share on GitHub (connected account only); found → live. */
+  quickShareCheck(shareId: string): Promise<QuickShareCheckOutcome>;
+  /** The account's Tine shares that no record on this device knows. */
+  quickShareFind(): Promise<QuickShareFound[]>;
+  /** Delete a share's gist (by record, or a found gist by id); connected account only. */
+  quickShareDelete(target: { shareId: string } | { gistId: string }): Promise<QuickShareDeleteOutcome>;
+  /** Remove a record and its key; the link can no longer be recovered here. */
+  quickShareForget(shareId: string): Promise<void>;
+  /** Copy a live share's link to the clipboard natively; true when copied. */
+  quickShareCopyLink(shareId: string): Promise<boolean>;
+  /** Start GitHub's device flow; the device code never leaves native code. */
+  quickShareConnectStart(): Promise<QuickShareConnectStart>;
+  quickShareConnectStatus(attemptId: string): Promise<QuickShareConnectStatus>;
+  quickShareConnectCancel(attemptId: string): Promise<void>;
+  /** Delete the account file (the grant is revoked on GitHub's settings page). */
+  quickShareDisconnect(): Promise<void>;
   /** The `tine.view` sheet blocks of the named pages (every page when omitted)
    * with the data the sheet evaluator needs to compute each for a static export.
    * The `sheets` argument of publishLive/publishQuery/pagePrintHtml answers it
@@ -425,7 +453,9 @@ export interface Backend {
   /** Capture-only page/tag completion capability. It is intentionally not the
    * general graph command route used by the main WebView. */
   captureQuickSwitch(query: string, limit: number, transliteration?: boolean): Promise<PageEntry[]>;
-  listTemplates(): Promise<TemplateDto[]>;
+  /** Every template; with `name`, at most the one graph-wide discovery picks
+   * for that exact name, answered early when the graph's files settle it. */
+  listTemplates(name?: string): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
   /** Explicit bounded subtree; ordinary resolution is intentionally shallow. */

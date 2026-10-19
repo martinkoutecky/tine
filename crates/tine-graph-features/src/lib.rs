@@ -19,11 +19,13 @@ pub mod pdf;
 pub mod print;
 pub mod publish;
 pub mod publish_query;
+pub mod quick_share;
 mod render;
 mod render_query_cache;
 mod retained;
 pub use render::{SheetExport, SheetInput};
 pub mod search;
+pub mod templates;
 
 use std::io;
 use tine_store::{FileId, Refusal, Store, StoreError, TxOutcome, Why};

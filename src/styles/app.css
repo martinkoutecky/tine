@@ -1979,6 +1979,7 @@ html[data-system-insets="native-viewport"] {
 }
 .settings-search-result:hover,.settings-search-result:focus-visible { background: var(--bg-tertiary); }
 .settings-search-result small { color: var(--text-muted); }
+.settings-search-description { display: block; margin-top: 2px; color: var(--text-muted); font-size: 0.85em; }
 .settings-search-empty { padding: 8px; color: var(--text-muted); font-size: 13px; }
 .settings-pane-body {
   flex: 1;
@@ -3512,7 +3513,13 @@ html[data-system-insets="native-viewport"] {
   position: relative;
 }
 
-.sticky-ancestor { position: sticky; height: 30px; margin-bottom: -30px; pointer-events: none; }
+/* GH #717: the pin is a sticky child of its own block, so it can never leave
+   that block's box: the next row at its level or above pushes it up and out
+   instead of being covered. The constraint rectangle is the margin box, so the
+   pin takes its full 30 px in flow and the row pulls itself back up over it
+   (a -30 px bottom margin on the pin instead let it hang 30 px below the block). */
+.sticky-ancestor { position: sticky; height: 30px; pointer-events: none; }
+[data-sticky-parent] > .block-main { margin-top: -30px; }
 .sticky-ancestor button { pointer-events: auto; display: flex; align-items: center; width: 100%; height: 30px; padding: 0; text-align: left; overflow: hidden; white-space: nowrap; border: 0; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); font: inherit; cursor: pointer; }
 .sticky-ancestor button[hidden] { display: none; }
 /* Same widths as .collapse-toggle and .bullet-container, so the pinned bullet
@@ -3524,7 +3531,7 @@ html[data-system-insets="native-viewport"] {
 .sticky-ancestor-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .sticky-ancestor-label * { white-space: nowrap; }
 [data-sticky-parent] > .block-main { scroll-margin-top: 30px; }
-@media print { .sticky-ancestor { display: none; } }
+@media print { .sticky-ancestor { display: none; } [data-sticky-parent] > .block-main { margin-top: 0; } }
 
 .block-main {
   display: flex;
@@ -8142,6 +8149,18 @@ html.tine-embed-shading-accent .embed-block {
 .switcher-syntax-toggle:focus-visible {
   outline: 1px solid var(--link-color);
   outline-offset: 2px;
+}
+/* Settings search: mark the setting a result jumped to (GH #706). */
+.settings-jump-flash {
+  border-radius: 6px;
+  animation: settings-jump-flash 2s ease-out;
+}
+@keyframes settings-jump-flash {
+  0%, 50% { background: var(--match-mark-bg); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-jump-flash { animation: none; background: var(--match-mark-bg); }
 }
 /* Brief highlight when jumping to a block from search. */
 .block-flash > .block-main {

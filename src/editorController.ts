@@ -26,6 +26,7 @@ export type EndEditReason =
   | "page-navigation"
   | "query-builder"
   | "redo"
+  | "rendered-selection"
   | "select-block"
   | "sidebar-collapse"
   | "undo";

@@ -150,6 +150,7 @@ pub(super) fn text_predicate_relevance(
     original: &str,
     lower: &str,
 ) -> Option<BlockRelevance> {
+    let mut leg = 0;
     let (match_class, word_boundary, first_offset, occurrences) = match pred.mode {
         TextMatchMode::Contains | TextMatchMode::Phrase => {
             let mut matches = lower.match_indices(&pred.value);
@@ -189,7 +190,7 @@ pub(super) fn text_predicate_relevance(
             )
         }
         TextMatchMode::Fragments => {
-            let first = fragments_first_offset(lower, &pred.value)?;
+            let first = plan.fragments_matcher(pred).first_offset(lower)?;
             let match_class = if lower.split_whitespace().eq(pred.value.split_whitespace()) {
                 ObjectiveMatchClass::Exact
             } else if first == 0 {
@@ -207,6 +208,17 @@ pub(super) fn text_predicate_relevance(
                 occurrences,
             )
         }
+        TextMatchMode::Words => {
+            let first = plan.words_matcher(pred).first_offset(lower)?;
+            leg = 1;
+            let match_class = if first == 0 {
+                ObjectiveMatchClass::Prefix
+            } else {
+                ObjectiveMatchClass::Substring
+            };
+            // Whole tokens start at a word boundary by construction.
+            (match_class, true, lower[..first].encode_utf16().count(), 1)
+        }
         TextMatchMode::Fuzzy => {
             let (_, match_class) = fuzzy_name_score(lower, &pred.value)?;
             let first = lower.find(&pred.value).unwrap_or(0);
@@ -219,6 +231,7 @@ pub(super) fn text_predicate_relevance(
         }
     };
     Some(BlockRelevance {
+        leg,
         match_class,
         word_boundary,
         first_offset,

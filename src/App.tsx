@@ -28,6 +28,7 @@ import { subscribeAssetChanges } from "./assetRefresh";
 import { initConflictPolicy } from "./conflictPolicy";
 import { RightSidebar } from "./components/RightSidebar";
 import { MobileKeyboardToolbar } from "./components/MobileKeyboardToolbar";
+import { RenderedSelectionToolbar } from "./components/RenderedSelectionToolbar";
 import {
   DrawerBackground,
   MobileDrawerController,
@@ -78,6 +79,8 @@ import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg, recordDiagnostic, recordSessionActive } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls, touchGesturePlatform } from "./nativeChrome";
+import { touchPrimary } from "./inputCapability";
+import { pdfTakesOverPane, tabStripFits } from "./viewportClass";
 import {
   PaneContext,
   closePane,
@@ -389,7 +392,7 @@ function PaneRouteBody(props: { paneId: string; router: PaneRouter; scrollerClas
         </div>}
       </Show>
     }>
-      {(pdf) => <div class="pdf-pane pdf-route-pane" classList={{ "pdf-pane-mobile": isMobilePlatform }}
+      {(pdf) => <div class="pdf-pane pdf-route-pane" classList={{ "pdf-pane-mobile": pdfTakesOverPane(), "pdf-pane-touch": touchPrimary() }}
         data-pane-id={props.scrollerClass ? undefined : props.paneId} data-pdf-view-id={pdf().viewId}>
         <FailureBoundary region="This PDF"><Suspense fallback={<div class="pdf-loading" />}>
           <KeyedPdfViewer route={() => props.router.route() as PdfRoute} owner={currentPdfOwnership}
@@ -1107,7 +1110,7 @@ export function App(): JSX.Element {
   // One shared group: the title bar by default (desktop, phone, tablet; GH #716),
   // or, on a mobile app that turned on "Navigation buttons at the bottom", a row
   // below the document (GH #598). Exactly one of the two is mounted.
-  const navigationAtBottom = () => isMobilePlatform && mobileNavigationAtBottom();
+  const navigationAtBottom = () => touchPrimary() && mobileNavigationAtBottom();
   const NavigationActions = () => (
     <div class="navigation-actions topbar-left">
       <button
@@ -1252,10 +1255,12 @@ export function App(): JSX.Element {
           <Show when={!sidebarOpen() && !isPublishedExport()}>
             <FailureBoundary region="The workspace switcher"><WorkspaceSwitcher compact /></FailureBoundary>
           </Show>
-          {/* The tab strip is a desktop feature; on a phone it only crowds the
-              single-row toolbar (and its pill clips). Hide it there, keeping a
-              flex spacer so the right-side icons stay pinned to the edge. */}
-          <Show when={!isMobilePlatform && !layoutHasMultiplePanes(layoutRoot(MAIN_WINDOW_ID))} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
+          {/* The tab strip shows whenever the top bar has room for it, on any
+              platform (D-20261018-W1); in a drawer-width window (< 640 px) it
+              would only crowd the single-row toolbar, so the sidebar's Tabs
+              section is the way to switch there. A flex spacer keeps the
+              right-side icons pinned to the edge. */}
+          <Show when={tabStripFits() && !layoutHasMultiplePanes(layoutRoot(MAIN_WINDOW_ID))} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
             {/* Keyed on the SOLE pane's id: after closing panes the survivor
                 need not be "main", and TabBar freezes its router at mount. */}
             <Show when={firstPaneId(layoutRoot(MAIN_WINDOW_ID)) ?? "main"} keyed>
@@ -1380,6 +1385,7 @@ export function App(): JSX.Element {
         deepLink={<FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>}
         keyboardToolbar={<DrawerBackground class="drawer-floating-background" blockedBy="any">
           <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>
+          <FailureBoundary region="The selection toolbar"><RenderedSelectionToolbar /></FailureBoundary>
         </DrawerBackground>}
         recovery={<FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>}
         // First-run onboarding covers the (empty) app when no graph is configured;

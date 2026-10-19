@@ -10,6 +10,7 @@ pub(crate) mod entry_identity;
 pub(crate) mod held_index;
 pub(crate) use checkpoint_state::{GraphState, LazyMarks, NotCaptured, PagesIn, PagesOut};
 pub(crate) use held_index::Source;
+mod launch_patch;
 mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
@@ -445,16 +446,15 @@ pub(crate) struct ReadSnapshot {
     alias_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     referenced_name_index: std::sync::OnceLock<SnapshotPageDerivedIndex>,
     real_page_names: Arc<crate::query::RealPageNames>,
-    /// Shared so a save that moved no alias carries it by refcount (I-25).
-    aliases: std::sync::OnceLock<Arc<Vec<(String, String, String)>>>,
-    /// The alias relation indexed for component walks; derived from `aliases`.
-    alias_edges: std::sync::OnceLock<Arc<crate::query::AliasEdges>>,
+    /// The alias relation: edge index, owner paths and alias list in one
+    /// persistent value. Built on first use by one walk; a later generation
+    /// inherits it and patches only the pages a save changed, also when an
+    /// alias or a page name moved (D-20261018-M2c, I-25).
+    alias_relation: std::sync::OnceLock<Arc<crate::query::AliasRelation>>,
     /// TQL's link table (`links`, `linked_by`, `near`), built on the first
     /// query that reads it; in memory only, never carried across a generation
     /// (an edit anywhere can move any link).
     link_graph: std::sync::OnceLock<Arc<crate::query::link_graph::LinkGraph>>,
-    /// Alias owner paths keyed by `page_key(alias)`, in `aliases` order.
-    alias_owner_paths_by_key: std::sync::OnceLock<Arc<HashMap<String, Vec<String>>>>,
     referenced_names: std::sync::OnceLock<Vec<String>>,
     block_ref_counts: std::sync::OnceLock<Arc<SharedMap<String, usize>>>,
     public_block_ref_counts: std::sync::OnceLock<Arc<HashMap<String, usize>>>,
@@ -559,20 +559,10 @@ impl ReadSnapshot {
         keys
     }
     /// Owner paths of the aliases whose page key is `key`, in
-    /// `page_aliases_with_owners` order. Built once per snapshot so a
-    /// resolve costs O(1) instead of cloning and re-keying every alias.
-    pub(crate) fn alias_owner_paths(&self, key: &str) -> Option<&Vec<String>> {
-        self.alias_owner_paths_by_key
-            .get_or_init(|| {
-                let mut map: HashMap<String, Vec<String>> = HashMap::new();
-                for (alias, _, path) in self.page_aliases_with_owners() {
-                    map.entry(tine_core::refs::page_key(&alias))
-                        .or_default()
-                        .push(path);
-                }
-                Arc::new(map)
-            })
-            .get(key)
+    /// `page_aliases_with_owners` order. Read from the alias relation, so a
+    /// resolve costs O(owners of the key), not a pass over every alias.
+    pub(crate) fn alias_owner_paths(&self, key: &str) -> Option<Vec<String>> {
+        self.alias_relation().owner_paths(key)
     }
 
     #[cfg(test)]
@@ -741,10 +731,8 @@ impl ReadSnapshot {
             alias_index,
             referenced_name_index,
             real_page_names,
-            aliases: std::sync::OnceLock::new(),
-            alias_edges: std::sync::OnceLock::new(),
+            alias_relation: std::sync::OnceLock::new(),
             link_graph: std::sync::OnceLock::new(),
-            alias_owner_paths_by_key: std::sync::OnceLock::new(),
             referenced_names: std::sync::OnceLock::new(),
             block_ref_counts: std::sync::OnceLock::new(),
             public_block_ref_counts: std::sync::OnceLock::new(),
@@ -829,9 +817,52 @@ impl ReadSnapshot {
                 }
             }
         }
+        if let Some((old, relation)) =
+            old.and_then(|old| old.alias_relation.get().map(|relation| (old, relation)))
+        {
+            if let Some(next) = snapshot.alias_relation_after(old, relation, changed_paths) {
+                let _ = snapshot.alias_relation.set(next);
+            }
+        }
         #[cfg(feature = "test-faults")]
         crate::cost_counters::snapshot_elapsed(capture_started.elapsed());
         snapshot
+    }
+
+    /// The alias relation of this generation from `old`'s: only the pages in
+    /// `changed_paths` are looked at, whether the edit moved an alias, a page
+    /// name, a page's existence or none of them. `None` when the generation
+    /// is not a successor by those paths (the relation is then built on first
+    /// use). An edit that moves nothing carries `old`'s value itself.
+    fn alias_relation_after(
+        &self,
+        old: &Self,
+        relation: &Arc<crate::query::AliasRelation>,
+        changed_paths: &[String],
+    ) -> Option<Arc<crate::query::AliasRelation>> {
+        if changed_paths.is_empty() {
+            return Arc::ptr_eq(&old.pages, &self.pages).then(|| Arc::clone(relation));
+        }
+        let mut next = (**relation).clone();
+        let mut moved = false;
+        for rel in changed_paths {
+            let before = snapshot_page_by_rel(&old.pages, None, rel);
+            let after = snapshot_page_by_rel(&self.pages, None, rel);
+            if let Some((entry, _)) = before {
+                if after.is_none_or(|(now, _)| now.path != entry.path) {
+                    moved |= next.replace(&entry.path, None);
+                }
+            }
+            if let Some((entry, doc)) = after {
+                let spellings = crate::query::document_alias_spellings(doc);
+                moved |= next.replace(&entry.path, crate::query::AliasRow::of(entry, &spellings));
+            }
+        }
+        Some(if moved {
+            Arc::new(next)
+        } else {
+            Arc::clone(relation)
+        })
     }
 
     /// Carry what `old` derived into this generation for an edit of
@@ -853,7 +884,6 @@ impl ReadSnapshot {
         if !aliases_unchanged {
             return false;
         }
-        self.carry_alias_list_from(old);
         let folds_only = edits
             .iter()
             .all(|(_, previous, current)| collapse_only::collapse_only(previous, current));
@@ -895,27 +925,10 @@ impl ReadSnapshot {
         }
     }
 
-    /// Whether this generation's alias list is built (or inherited).
+    /// Whether this generation's alias relation is built (or inherited).
     #[cfg(test)]
     pub(crate) fn alias_list_built(&self) -> bool {
-        self.aliases.get().is_some()
-    }
-
-    /// Inherit `old`'s alias list; the caller has checked that no page name
-    /// and no changed page's aliases moved. Otherwise the first alias read of
-    /// every generation — any backlinks answer — rebuilds it by walking every
-    /// page, O(P) per save (GH #623 item 3). The list is a function of page
-    /// names, paths and per-page aliases, so it is unchanged.
-    fn carry_alias_list_from(&self, old: &Self) {
-        if let Some(aliases) = old.aliases.get() {
-            let _ = self.aliases.set(Arc::clone(aliases));
-        }
-        if let Some(edges) = old.alias_edges.get() {
-            let _ = self.alias_edges.set(Arc::clone(edges));
-        }
-        if let Some(by_key) = old.alias_owner_paths_by_key.get() {
-            let _ = self.alias_owner_paths_by_key.set(Arc::clone(by_key));
-        }
+        self.alias_relation.get().is_some()
     }
 
     /// `{{query}}` through the legacy block-group bridge, memoized. Reached
@@ -1131,6 +1144,7 @@ impl ReadSnapshot {
 /// Read-only inputs consumed by graph evaluators. Disk and mutation helpers
 /// remain on `Graph`; a published generation supplies these answers directly.
 impl ReadSnapshot {
+    #[cfg(test)]
     pub(crate) fn page_aliases(&self) -> Vec<(String, String)> {
         self.page_aliases_with_owners()
             .into_iter()
@@ -1204,10 +1218,23 @@ impl ReadSnapshot {
         }
     }
     pub(crate) fn alias_edges(&self) -> Arc<crate::query::AliasEdges> {
-        Arc::clone(
-            self.alias_edges
-                .get_or_init(|| Arc::new(crate::query::AliasEdges::new(&self.page_aliases()))),
-        )
+        self.alias_relation().edges()
+    }
+    /// The alias relation of this generation: inherited by delta from the
+    /// previous one when it had built it, else built once here by walking the
+    /// pages (the cold path; no edit takes it twice).
+    pub(crate) fn alias_relation(&self) -> &Arc<crate::query::AliasRelation> {
+        self.alias_relation.get_or_init(|| {
+            let index = self.alias_spelling_index();
+            Arc::new(crate::query::AliasRelation::build(
+                self.pages.iter().filter_map(|(entry, _)| {
+                    #[cfg(feature = "test-faults")]
+                    crate::cost_counters::alias_page_probe();
+                    let row = crate::query::AliasRow::of(entry, index.get(&entry.path)?)?;
+                    Some((entry.path.clone(), row))
+                }),
+            ))
+        })
     }
     /// The snapshot's link table, built on first use; `None` when `cancelled`
     /// stopped the build (nothing is kept, the next caller builds afresh).
@@ -1222,24 +1249,16 @@ impl ReadSnapshot {
         let table = Arc::new(crate::query::link_graph::LinkGraph::build(self, cancelled)?);
         Some(Arc::clone(self.link_graph.get_or_init(|| table)))
     }
+    /// `(alias page key, owner name, owner rel path)` for every declared
+    /// alias, in path order then spelling order.
     pub(crate) fn page_aliases_with_owners(&self) -> Vec<(String, String, String)> {
-        self.aliases
-            .get_or_init(|| {
-                Arc::new(
-                    self.page_alias_spellings_with_owners()
-                        .into_iter()
-                        .map(|(alias, owner, path)| {
-                            (tine_core::refs::page_key(&alias), owner, path)
-                        })
-                        .collect(),
-                )
-            })
-            .as_ref()
-            .clone()
+        self.alias_relation().list()
     }
 
-    pub(crate) fn page_alias_spellings_with_owners(&self) -> Vec<(String, String, String)> {
-        let index = self.alias_index.get_or_init(|| {
+    /// The per-page authored alias spellings, built on first use and
+    /// inherited by delta like every page-derived index.
+    fn alias_spelling_index(&self) -> &SnapshotPageDerivedIndex {
+        self.alias_index.get_or_init(|| {
             SnapshotPageDerivedIndex::capture(
                 None,
                 &self.pages,
@@ -1247,9 +1266,15 @@ impl ReadSnapshot {
                 crate::query::document_alias_spellings,
                 None,
             )
-        });
+        })
+    }
+
+    pub(crate) fn page_alias_spellings_with_owners(&self) -> Vec<(String, String, String)> {
+        let index = self.alias_spelling_index();
         let mut owned = Vec::new();
         for (entry, _) in self.pages.iter() {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::alias_page_probe();
             if let Some(projection) = index.get(&entry.path) {
                 for alias in projection {
                     owned.push((
@@ -3595,8 +3620,22 @@ impl Graph {
         // on-demand build rather than install a stale snapshot).
         let phase = std::time::Instant::now();
         let _bl = self.build_lock.lock().unwrap();
-        let installed = self.install_built(built, gen0, replace, Some(&stamps), Some(discovery));
-        if installed {
+        let built = launch_patch::LaunchPass {
+            built,
+            stamps,
+            racy,
+            named,
+            discovery,
+            withheld,
+        };
+        let installed = self.install_pass(built, gen0, replace);
+        let installed_any = installed.is_some();
+        if let Some(launch_patch::Installed {
+            named,
+            stamps,
+            racy,
+        }) = installed
+        {
             self.install_launch_listing(self.cache_gen.load(Ordering::Acquire), named);
             if !replace {
                 *self.launch_observations.lock().unwrap() = Some(LaunchObservations {
@@ -3606,6 +3645,7 @@ impl Graph {
                 });
             }
         }
+        let installed = installed_any;
         pass.install_us = diag::micros(phase.elapsed());
         #[cfg(test)]
         crate::store::pause_at_hook(&self.warm_after_install_pause);
@@ -4241,7 +4281,7 @@ impl Graph {
                 // bump; if it did, continue to cache_upsert below. Otherwise
                 // the generation moves under the lock install_built takes, so
                 // its pre-write candidate cannot be installed afterward.
-                if self.cold_reconcile_bump() {
+                if self.cold_reconcile_bump(path) {
                     return None;
                 }
             }
@@ -6535,7 +6575,10 @@ mod tests {
 
         let store = model_store(&dir);
         let snapshot = published_snapshot(&store);
-        assert!(snapshot.aliases.get().is_none(), "alias cache starts cold");
+        assert!(
+            snapshot.alias_relation.get().is_none(),
+            "alias cache starts cold"
+        );
         assert!(
             snapshot.block_ref_counts.get().is_some(),
             "block-ref count cache is primed at publication"
@@ -6544,7 +6587,7 @@ mod tests {
         let _ = snapshot.page_aliases_with_owners();
         let _ = snapshot.block_ref_counts();
 
-        let aliases = snapshot.aliases.get().cloned().unwrap();
+        let aliases = snapshot.alias_relation.get().unwrap().list();
         assert!(
             aliases
                 .iter()

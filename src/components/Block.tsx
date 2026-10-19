@@ -4,7 +4,7 @@ import { codeWrapping } from "../codeDisplay";
 import { stickyParents } from "../stickyParents";
 import { StickyAncestor } from "./StickyAncestor";
 import { AstBody } from "../render/body";
-import { codeFences } from "../editor/fences";
+import { codeFences, caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { LineGutter } from "../render/LineGutter";
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, on, untrack, onMount, onCleanup, type JSX } from "solid-js";
 import { autocompleteFacets, backend } from "../backend";
@@ -81,6 +81,7 @@ import {
   secondarySelectionActions,
   type SelectionAction,
 } from "../editor/selectionActions";
+import { selectionActionLabel } from "./SelectionActionLabel";
 import { effectiveHeadingLevel, facetsOf, EMPTY_FACETS, type Facets } from "../render/facets";
 import { CopyButton } from "../render/inline";
 import {
@@ -93,6 +94,7 @@ import { MEDIA_EDITORS } from "../mediaEditors";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
+import { touchPrimary } from "../inputCapability";
 import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
@@ -127,7 +129,6 @@ import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, caretOnPropertyLin
 import { propertyEditorSession } from "../editor/propertySession";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
-import { caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
 import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
@@ -153,7 +154,7 @@ import { SheetBoard } from "./SheetBoard";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
 import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
-import { wireBlockSwipe } from "./blockSwipeWiring";
+import { followBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
 import { clipboardSizeAllowed } from "../clipboardImage";
 import { noticeMoveOutOfView } from "../moveNotice";
@@ -344,8 +345,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       <div
         class="block-main"
         ref={(el) => {
-          // GH #501: touch swipes on the row (touch platforms only; src/blockSwipe.ts).
-          onMount(() => onCleanup(wireBlockSwipe(el, { id: props.id, scope: outlineScope, editing, readOnly })));
+          // GH #501: touch swipes on the row while a touch input exists, following
+          // it if it appears or goes away (src/blockSwipe.ts).
+          followBlockSwipe(el, { id: props.id, scope: outlineScope, editing, readOnly });
         }}
         classList={{
           // Heading level on the row so the bullet column can match the (taller)
@@ -1122,19 +1124,6 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     applyEdit(action.apply(ref.value, ref.selectionStart, ref.selectionEnd, pageFmt(), ref.selectionDirection));
     setSelectionOverflowOpen(false);
     queueMicrotask(updateSel);
-  };
-  const selectionActionLabel = (action: SelectionAction): JSX.Element => {
-    if (action.id === "bold") return <b>{action.label}</b>;
-    if (action.id === "italic") return <i>{action.label}</i>;
-    if (action.id === "strikethrough") return <s>{action.label}</s>;
-    if (action.id === "highlight") return <mark>{action.label}</mark>;
-    if (action.id === "link") return (
-      <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
-        <path d="M9 15l6-6M10 6l1-1a4 4 0 015.7 5.7l-1 1M14 18l-1 1a4 4 0 01-5.7-5.7l1-1"
-          fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-      </svg>
-    );
-    return action.label;
   };
 
   // Insert `text` in place of the active trigger and restore the caret. If the
@@ -3358,7 +3347,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         </div>
       </Show>
       <Show when={hasSel()}>
-        <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": isMobilePlatform }} data-mobile-selection-toolbar={isMobilePlatform ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
+        <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
           <For each={essentialSelectionActions}>{(action) => (
             <button
               classList={{ "sel-action-page-link": action.id === "page-link" }}

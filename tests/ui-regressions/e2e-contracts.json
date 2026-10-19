@@ -13,6 +13,15 @@
       "nonRequirements": ["Exact pane width, code colors or DOM structure; default shortcut; per-block setting."],
       "stability": "burn-in"
     },
+    "scripts/e2e-journal-template-cold.mjs": {
+      "contracts": [
+        {"class":"exact-safety-interoperability","userOutcome":"On a cold launch of the realistic 10k graph with a configured daily template and no file for today, the template's rows fill today exactly once with its variables resolved, and today's file is written once through the guarded save; a launch with a launch checkpoint does the same.","blocking":true,"authority":"BqbeQ"},
+        {"class":"core-operation","userOutcome":"Time from session start to the template rows showing is recorded on a first and a checkpointed launch for before/after comparison; E2E_HOLD_LOAD=1 with a test-faults binary checks whether they show before the graph-wide parse.","blocking":false,"authority":"BqbeQ"}
+      ],
+      "acceptableVariations": ["Latency varies with machine load; no fixed latency budget."],
+      "nonRequirements": ["A latency budget; the hold mode passing (BqbeQ: the template save still waits for the graph-wide build); platforms other than Linux WebKitGTK."],
+      "stability": "burn-in"
+    },
     "scripts/e2e-journals-today.mjs": {
       "contracts": [
         {"class":"core-operation","userOutcome":"On a cold graph launch, today's file-backed journal body is usable before graph loading finishes.","blocking":true,"authority":"GF4"},
@@ -731,6 +740,12 @@
       "contracts": [{ "class": "core-operation", "userOutcome": "The real Windows WebView2 app can complete its core smoke workflow with real backend and disk state.", "blocking": true }],
       "acceptableVariations": ["Windows chrome, WebView2 startup timing, and native control rendering may vary."],
       "nonRequirements": ["Exact titlebar palette, DPI-scaled geometry, or startup animation."],
+      "stability":"burn-in"
+    },
+    "scripts/e2e-windows-portable.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "A portable Windows Tine (tine-data beside the exe) keeps its settings, diagnostics and WebView2 data in that folder and creates or changes nothing under the host's %APPDATA% or %LOCALAPPDATA% folder for its identity (GH #719).", "blocking": false, "authority": "GH #719 (portable apps leave no data on the host); src-tauri/src/portable.rs layout and docs/app-identity.md." }],
+      "acceptableVariations": ["Which files appear inside tine-data, and WebView2 startup timing."],
+      "nonRequirements": ["Writes Windows itself makes (Prefetch, shell MRU and notification-area registry, Defender caches), and %TEMP%."],
       "stability":"burn-in"
     },
     "scripts/probe-formula-builder.mjs": {

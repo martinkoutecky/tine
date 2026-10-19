@@ -56,6 +56,7 @@ import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import { isPublishedExport, publishedBackend } from "./publishedBackend";
 
 import { nativeTineLinks } from "./nativeTineLinks";
+import type { QuickShareCheckOutcome, QuickShareConnectStart, QuickShareConnectStatus, QuickShareCreated, QuickShareDeleteOutcome, QuickShareFound, QuickShareListing, QuickSharePrepared } from "./quickShare/commands";
 import { ASSET_INGRESS_MAX_BYTES, clipboardImageToPng } from "./clipboardImage";
 
 // Encode asset bytes as one base64 string for save_* and Android image-copy
@@ -110,6 +111,12 @@ class TauriBackend implements Backend {
   private bindingGeneration = 0;
   private ipcDiagnosticsUnavailable = false;
   private readonly ordered = orderedLane();
+  /** Issue order of lane searches. The native handlers reach their lane in
+   *  scheduler order, so a keystroke's older search can land after the newer
+   *  and cancel it; the lane keeps the highest order and refuses an older one.
+   *  Seeded from the clock so a reloaded WebView never restarts below a
+   *  request the native side still holds. */
+  private laneSeq = Date.now() * 1000;
 
   constructor() {
     this.ready = import("@tauri-apps/api/core").then((m) => {
@@ -395,6 +402,46 @@ class TauriBackend implements Backend {
   publishLive(destination: string, name: string, allPages: boolean, sheets: SheetExport[]) {
     return this.call<PublicationReceipt>("publish_live", { destination, name, allPages, sheets });
   }
+  quickSharePrepare(request: QueryPublicationRequest) {
+    return this.call<QuickSharePrepared>("quick_share_prepare", { request });
+  }
+  quickShareCreate(prepareId: string) {
+    return this.call<QuickShareCreated>("quick_share_create", { prepareId });
+  }
+  quickShareDiscard(prepareId: string) {
+    return this.call<void>("quick_share_discard", { prepareId });
+  }
+  quickShareList() {
+    return this.call<QuickShareListing>("quick_share_list");
+  }
+  quickShareCheck(shareId: string) {
+    return this.call<QuickShareCheckOutcome>("quick_share_check", { shareId });
+  }
+  quickShareFind() {
+    return this.call<QuickShareFound[]>("quick_share_find");
+  }
+  quickShareDelete(target: { shareId: string } | { gistId: string }) {
+    return this.call<QuickShareDeleteOutcome>("quick_share_delete", {
+      shareId: "shareId" in target ? target.shareId : null, gistId: "gistId" in target ? target.gistId : null });
+  }
+  quickShareForget(shareId: string) {
+    return this.call<void>("quick_share_forget", { shareId });
+  }
+  quickShareCopyLink(shareId: string) {
+    return this.call<boolean>("quick_share_copy_link", { shareId });
+  }
+  quickShareConnectStart() {
+    return this.call<QuickShareConnectStart>("quick_share_connect_start");
+  }
+  quickShareConnectStatus(attemptId: string) {
+    return this.call<QuickShareConnectStatus>("quick_share_connect_status", { attemptId });
+  }
+  quickShareConnectCancel(attemptId: string) {
+    return this.call<void>("quick_share_connect_cancel", { attemptId });
+  }
+  quickShareDisconnect() {
+    return this.call<void>("quick_share_disconnect");
+  }
   sheetExportInputs(pages?: string[], scope?: SheetScope) {
     return this.call<SheetInput[]>("sheet_export_inputs", { pages: pages ?? null, scope: scope ?? null });
   }
@@ -497,10 +544,10 @@ class TauriBackend implements Backend {
     return this.assetCall<TrashAssetOutcome>("trash_asset", { name }, bindingGeneration);
   }
   search(query: string, limit: number, lane?: string) {
-    return this.call<RefGroup[]>("search", { query, limit, lane });
+    return this.call<RefGroup[]>("search", { query, limit, lane, laneSeq: ++this.laneSeq });
   }
   async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, views?: { page: ViewSettings; block: ViewSettings }, transliteration = false) {
-    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null, transliteration });
+    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, laneSeq: ++this.laneSeq, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null, transliteration });
     return {
       ...execution,
       has_more: execution.has_more ?? { pages: false, blocks: false },
@@ -512,8 +559,8 @@ class TauriBackend implements Backend {
   captureQuickSwitch(query: string, limit: number, transliteration = false) {
     return this.call<PageEntry[]>("capture_quick_switch", { query, limit, transliteration });
   }
-  listTemplates() {
-    return this.call<TemplateDto[]>("list_templates");
+  listTemplates(name?: string) {
+    return this.call<TemplateDto[]>("list_templates", name === undefined ? undefined : { name });
   }
   resolveBlock(uuid: string) {
     return this.call<RefGroup | null>("resolve_block", { uuid });

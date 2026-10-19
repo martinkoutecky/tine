@@ -529,8 +529,9 @@ function templateOwnerCurrent(owner: JournalTemplateOwner): boolean {
  * `deferred` means a write guard refused or an alias conflicted; `error`
  * carries a read/write failure for the feed's route error/toast policy.
  * `stale` means the graph, template or local day changed, possibly after a
- * successful save. A cold named lookup can scan O(graph pages) preambles;
- * the day read, template inventory, expansion and save add their own cost.
+ * successful save. The named template lookup reads the graph's files (one
+ * read per page file, a parse of those mentioning `template`) when the graph
+ * is still loading; the day read, expansion and save add their own cost.
  * The write uses the document's edit-kind and base-revision door. */
 export async function ensureJournalTemplateForDay(
   date: Date,
@@ -558,7 +559,10 @@ export async function ensureJournalTemplateForDay(
       if (page.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
       const existing = page.value;
       if (existing && journalHasContent(existing.blocks)) return "ready";
-      const templates = await readOwned(graphOwner(), backend().listTemplates());
+      // The named lookup: the template graph-wide discovery picks, answered
+      // from the files when they settle it, so an empty today need not wait
+      // for the whole graph (BqbeQ).
+      const templates = await readOwned(graphOwner(), backend().listTemplates(owner.template));
       if (templates.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
       const tmpl = templates.value.find((t) => t.name === owner.template);
       if (!tmpl) return "ready";
@@ -569,6 +573,8 @@ export async function ensureJournalTemplateForDay(
         id: "", raw: applyTemplateVars(b.raw, owner.title), collapsed: b.collapsed,
         children: b.children.map(resolve),
       });
+      // An unclaimed journal day resolves without the graph-wide parse
+      // (BqbeQ, `absent_journal_id`); the alias refusal stays the backstop.
       const resolution = existing?.id ? null : await readOwned(graphOwner(), backend().resolvePage(owner.title, "journal"));
       if (resolution?.kind === "stale" || !templateOwnerCurrent(owner)) return "stale";
       if (!canWrite()) return "deferred";

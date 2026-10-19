@@ -4,9 +4,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // setting, default off, offered (and searchable) only on a phone or tablet app.
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+// D-20261018-W1: the bottom row follows the input (a finger as the primary
+// pointer), not the OS name; the harness gives the "mobile" cases a touch screen.
+function stubPointer(touch: boolean) {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: touch && (query === "(pointer: coarse)" || query === "(any-pointer: coarse)"),
+    addEventListener: () => {}, removeEventListener: () => {},
+  }));
+}
 async function open(platform: "android" | "desktop") {
   vi.resetModules();
   globalThis.__TINE_PLATFORM__ = platform;
+  stubPointer(platform !== "desktop");
   const { render } = await import("solid-js/web");
   const { backend } = await import("../backend");
   const { Settings } = await import("./Settings");
@@ -27,6 +36,7 @@ const field = (root: HTMLElement) => root.querySelector<HTMLElement>('[data-sett
 describe("Settings: Navigation buttons at the bottom (GH #716)", () => {
   afterEach(() => {
     delete globalThis.__TINE_PLATFORM__;
+    vi.unstubAllGlobals();
     document.body.innerHTML = "";
     vi.restoreAllMocks();
   });

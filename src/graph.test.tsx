@@ -488,6 +488,21 @@ describe("default journal template graph bind", () => {
     expect(saved.raw).toBe("Folded\ncollapsed:: true");
     expect(saved.id).toBe("");
   });
+  // BqbeQ: an empty today asks for the one configured template by name (which
+  // the backend answers from the graph's files before the graph-wide parse)
+  // instead of the whole template inventory.
+  it("asks for the configured template by name for an empty today", async () => {
+    const { loadGraphPath, ensureJournalTemplateForDay, api, createPage } = await loadHarness(null);
+    await loadGraphPath(META.root);
+    api.listTemplates.mockClear();
+    api.resolvePage.mockClear();
+    createPage.mockClear();
+    expect(await ensureJournalTemplateForDay(new Date())).toBe("ready");
+    expect(api.listTemplates.mock.calls).toEqual([["Daily"]]);
+    expect(api.resolvePage).toHaveBeenCalledWith("Jul 10th, 2026", "journal");
+    expect(createPage).toHaveBeenCalledTimes(1);
+    expect(createPage.mock.calls[0][2]).toMatchObject({ baseRev: null });
+  });
   // Master 5bb8ce020 (GH #266): graph open does not await the optional
   // default-journal template (a getPage + listTemplates that can wait for the
   // whole-graph parse). The visible Journals surface owns materialization and

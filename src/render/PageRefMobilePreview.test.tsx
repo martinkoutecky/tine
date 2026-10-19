@@ -8,8 +8,8 @@ import { ContextMenu } from "../components/ContextMenu";
 import { openPage, route } from "../router";
 import { readFileSync } from "node:fs";
 
-vi.mock("../nativeChrome", async (original) => ({
-  ...await original<typeof import("../nativeChrome")>(), isMobilePlatform: true,
+vi.mock("../inputCapability", async (original) => ({
+  ...await original<typeof import("../inputCapability")>(), touchPrimary: () => true,
 }));
 beforeAll(initParser);
 afterEach(() => { vi.useRealTimers(); closeContextMenu(); document.body.replaceChildren(); });
@@ -43,9 +43,9 @@ it.each(["[[Tine]]", "#Tine"])("GH #655: holding %s keeps preview and page actio
     expect(actionIds()).toEqual(expected);
     expect(route()).toMatchObject({ name: "Before" });
     expect(document.querySelector(".peek-popup")).not.toBeNull();
-    // GH #705: a phone has no tab strip, so the shared menu must not offer a
-    // background tab the user could never reach.
-    expect(actionIds()).not.toContain("open-new-tab");
+    // GH #705 + D-20261018-W1: a phone offers Open in new tab like any screen;
+    // the background tab is listed under Tabs in the left sidebar.
+    expect(actionIds()).toContain("open-new-tab");
     // Tapping a menu action never dismisses the preview that owns the menu.
     document.querySelector<HTMLElement>('[data-page-action-id="open-sidebar"]')!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" }));
     expect(document.querySelector(".peek-popup")).not.toBeNull();

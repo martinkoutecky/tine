@@ -71,6 +71,60 @@ impl WholeGraph {
     }
 }
 
+/// Test-only hooks on snapshot publication: a pause before a snapshot is
+/// published, and every published snapshot in order (tests compare each
+/// generation).
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct PublishHooks {
+    pub(crate) pause: Mutex<Option<super::TestPause>>,
+    log: Mutex<Vec<Arc<Snapshot>>>,
+}
+
+#[cfg(test)]
+impl PublishHooks {
+    pub(super) fn before_publish(&self, snapshot: &Arc<Snapshot>) {
+        super::pause_at_hook(&self.pause);
+        self.log.lock().unwrap().push(Arc::clone(snapshot));
+    }
+}
+
+#[cfg(test)]
+impl ChangeFeed {
+    /// How many snapshots this feed has published.
+    pub(crate) fn published_count(&self) -> usize {
+        self.publish_hooks.log.lock().unwrap().len()
+    }
+
+    /// For each snapshot published from index `from` on: the cache
+    /// generation it was captured from, its image, and the image of a
+    /// parent-free capture of the cache as it is now (comparable only at the
+    /// current generation).
+    pub(crate) fn published_images(
+        &self,
+        from: usize,
+        image: &dyn Fn(&crate::model::ReadSnapshot) -> String,
+    ) -> Vec<(u64, String, String)> {
+        let log: Vec<_> = self.publish_hooks.log.lock().unwrap()[from..].to_vec();
+        log.iter()
+            .map(|snapshot| {
+                let fresh = crate::model::ReadSnapshot::capture(
+                    &self.graph,
+                    (*snapshot.config.config).clone(),
+                    Arc::clone(&snapshot.list),
+                    None,
+                    &[],
+                );
+                (
+                    snapshot.cache_generation,
+                    image(&snapshot.graph),
+                    image(&fresh),
+                )
+            })
+            .collect()
+    }
+}
+
 impl Snapshot {
     pub(super) fn capture(
         graph: &Graph,
@@ -97,6 +151,18 @@ impl Snapshot {
             if !files.iter().any(|(file, _, _)| *file == id) {
                 files.push((id.clone(), ChangeKind::Modified, None));
                 retired.insert(id);
+            }
+        }
+        // Rows the cache changed that no publication named (a failed
+        // transaction publishes its own files and an outside writer's
+        // separately, after caching both): every index patches them now.
+        let mut unnamed = false;
+        for path in graph.take_touched() {
+            let id = FileId::from(graph.rel_path(&path));
+            if !files.iter().any(|(file, _, _)| *file == id) {
+                files.push((id.clone(), ChangeKind::Modified, None));
+                retired.insert(id);
+                unnamed = true;
             }
         }
         let changed_names: Vec<_> = files
@@ -246,9 +312,9 @@ impl Snapshot {
             .map(|(id, _, _)| id.as_str().to_owned())
             .collect();
         let mut folds_only = false;
-        let evaluator = if let Some(old) = old
-            .filter(|old| old.cache_generation == cache_generation && !config_changed && !rebuild)
-        {
+        let evaluator = if let Some(old) = old.filter(|old| {
+            old.cache_generation == cache_generation && !config_changed && !rebuild && !unnamed
+        }) {
             Arc::clone(&old.graph)
         } else {
             let evaluator = ReadSnapshot::capture(
@@ -305,7 +371,9 @@ impl Store {
     /// pre-transition row, also when the owner's first publication fails.
     /// The caller holds the writer, under which the transitions ran.
     pub(crate) fn publish_retired(&self) {
-        if self.graph.has_retired() {
+        if self.graph.has_retired() && self.defers_publication(false) {
+            self.defer_retired();
+        } else if self.graph.has_retired() {
             self.changes
                 .publish(Origin::External, Vec::new(), false, Vec::new());
         }
@@ -353,6 +421,19 @@ impl Store {
                 self.refresh_journal_ids();
             }
             return (self.changes.rev(), None);
+        }
+        // Before the first complete view, the publication waits for it
+        // (`first_view.rs`): the current revision, no change yet.
+        if self.defers_publication(config_changed) {
+            self.defer_publication(origin, files, pages, (raced, journal_set_changed));
+            return (self.changes.rev(), None);
+        }
+        // A publication that does not wait while changes still do (a config
+        // write during loading publishes the first view early): the waiting
+        // changes go first, so own changes keep save order (review R1).
+        if self.changes.has_deferred_changes() {
+            self.changes
+                .publish_deferred_early(&self.watch.core_for_load());
         }
         let rev = self.changes.publish_observed(
             origin,

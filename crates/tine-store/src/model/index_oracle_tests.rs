@@ -185,6 +185,12 @@ fn lazy_lines(
     let mut spellings = snapshot.page_alias_spellings_with_owners();
     spellings.sort();
     out.push_str(&format!("lazy alias_spellings {spellings:?}\n"));
+    // The alias relation (edges, owner paths, list) as one image; the delta
+    // that patches it must equal the build that walks every page.
+    out.push_str(&format!(
+        "lazy alias_relation\n{}",
+        snapshot.alias_relation().image()
+    ));
     let mut counts: Vec<_> = snapshot
         .public_block_ref_counts()
         .iter()
@@ -412,8 +418,29 @@ fn check(
     log: &mut String,
     mismatches: &mut Vec<String>,
 ) {
+    check_lines(store, root, label, probes, log, mismatches, |_| true);
+}
+
+/// [`check`] comparing only the image lines `keep` admits (the log keeps all).
+fn check_lines(
+    store: &crate::store::Store,
+    root: &Path,
+    label: &str,
+    probes: &[&str],
+    log: &mut String,
+    mismatches: &mut Vec<String>,
+    keep: impl Fn(&str) -> bool,
+) {
+    let only = |image: &str| -> String {
+        image
+            .lines()
+            .filter(|line| keep(line))
+            .flat_map(|line| [line, "\n"])
+            .collect()
+    };
     let view = store.whole_graph().unwrap();
-    let live = snapshot_image(&view.graph, probes);
+    let live_image = snapshot_image(&view.graph, probes);
+    let live = only(&live_image);
     let fresh = ReadSnapshot::capture(
         &store.graph,
         (*view.config.config).clone(),
@@ -421,13 +448,13 @@ fn check(
         None,
         &[],
     );
-    let fresh = snapshot_image(&fresh, probes);
+    let fresh = only(&snapshot_image(&fresh, probes));
     let reopened = {
         let other = crate::store::Store::open(root, Default::default())
             .unwrap()
             .0;
         let view = other.whole_graph().unwrap();
-        let image = snapshot_image(&view.graph, probes);
+        let image = only(&snapshot_image(&view.graph, probes));
         drop(view);
         other.close();
         image
@@ -440,7 +467,7 @@ fn check(
             mismatches.push(format!("{label}: incremental vs {what}: {difference}"));
         }
     }
-    log.push_str(&format!("=== {label}\n{live}"));
+    log.push_str(&format!("=== {label}\n{live_image}"));
 }
 
 fn rev(root: &Path, rel: &str) -> crate::FileRev {
@@ -466,6 +493,23 @@ fn save(store: &crate::store::Store, rel: &str, edit: impl FnOnce(&mut tine_core
         &doc,
     ) {
         crate::SaveOutcome::Saved(_) => {}
+        other => panic!("save {rel}: {other:?}"),
+    }
+}
+
+/// [`save`] for an edit that may change nothing.
+fn save_any(store: &crate::store::Store, rel: &str, edit: impl FnOnce(&mut tine_core::PageDto)) {
+    let id = crate::PageId::from(rel.to_owned());
+    let read = store.page(&id).unwrap();
+    let mut doc = read.doc;
+    edit(&mut doc);
+    match store.save(
+        crate::EditKind::ReplacePage,
+        &id,
+        crate::SaveBase::Existing(read.rev),
+        &doc,
+    ) {
+        crate::SaveOutcome::Saved(_) | crate::SaveOutcome::Unchanged(_) => {}
         other => panic!("save {rel}: {other:?}"),
     }
 }
@@ -684,4 +728,307 @@ fn index_oracle_incremental() {
         mismatches.join("\n")
     );
     fs::write(out, text.replace(copy.path().to_str().unwrap(), "<root>")).unwrap();
+}
+
+/// D-20261018-M2c, T4 (incremental = rebuild) at the store: after every step
+/// of a seeded random sequence of alias-relevant edits (declare with `alias::`
+/// or `aliases::`, drop, change case only, create, rename, delete) the
+/// generation that patched the alias relation by delta has exactly the image
+/// of a parent-free capture and of a reopened store, relation included.
+#[test]
+fn random_alias_edits_equal_a_fresh_build() {
+    const POOL: &[&str] = &[
+        "Ax", "ax", "AX", "Ay", "Shared", "Other", "Page 1", "page 2",
+    ];
+    for seed in [3u64, 11, 29] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for sub in ["pages", "journals", "logseq"] {
+            fs::create_dir_all(root.join(sub)).unwrap();
+        }
+        let mut live: Vec<String> = Vec::new();
+        for index in 0..6 {
+            let rel = format!("pages/Page {index}.md");
+            let head = if index % 2 == 0 {
+                format!("alias:: {}\n\n", POOL[index])
+            } else {
+                String::new()
+            };
+            fs::write(
+                root.join(&rel),
+                format!("{head}- body [[Page {}]]\n", (index + 1) % 6),
+            )
+            .unwrap();
+            live.push(rel);
+        }
+        let store = crate::store::Store::open(root, Default::default())
+            .unwrap()
+            .0;
+        let mut rng = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let mut next = move |bound: usize| {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            (rng % bound as u64) as usize
+        };
+        let (mut log, mut mismatches) = (String::new(), Vec::new());
+        // The alias shapes only: the referenced-name index keeps whichever
+        // case variant of a name it met first, which differs between a
+        // patched generation and a rebuilt one and is not under test here.
+        let alias_lines = |line: &str| {
+            [
+                "aliases ",
+                "lazy alias",
+                "row ",
+                "neighbors ",
+                "originals ",
+                "owners ",
+            ]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        };
+        check_lines(
+            &store,
+            root,
+            "open",
+            &[],
+            &mut log,
+            &mut mismatches,
+            alias_lines,
+        );
+        let mut fresh_page = 0;
+        for step in 0..40 {
+            let target = live[next(live.len())].clone();
+            let label = match next(10) {
+                7 | 8 => {
+                    // An owner change without editing the new owner: a title::
+                    // makes this file claim another page's name (or, without
+                    // one, gives the name back to its file name).
+                    let claimed = ["Page 1", "Page 2", "Page 3"][next(3)];
+                    let alias = POOL[next(POOL.len())];
+                    let line = if next(2) == 0 {
+                        format!("title:: {claimed}\naliases:: {alias}")
+                    } else {
+                        format!("aliases:: {alias}")
+                    };
+                    save_any(&store, &target, |doc| doc.pre_block = Some(line.clone()));
+                    format!("set `{}` on {target}", line.replace('\n', " / "))
+                }
+                9 => {
+                    // A second file claiming an existing name.
+                    fresh_page += 1;
+                    let rel = format!("pages/Twin {fresh_page}.md");
+                    let claimed = ["Page 1", "Page 2", "Page 3"][next(3)];
+                    let alias = POOL[next(POOL.len())];
+                    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+                    tx.create(
+                        &crate::PageId::from(rel.clone()).file(),
+                        crate::Content::Bytes(
+                            format!("title:: {claimed}\naliases:: {alias}\n\n- twin\n")
+                                .into_bytes(),
+                        ),
+                    );
+                    commit(tx, "create twin");
+                    live.push(rel.clone());
+                    format!("create {rel} claiming {claimed} and declaring {alias}")
+                }
+                0 | 1 => {
+                    let key = ["alias", "aliases"][next(2)];
+                    let values: Vec<_> = (0..1 + next(3)).map(|_| POOL[next(POOL.len())]).collect();
+                    let line = format!("{key}:: {}", values.join(", "));
+                    save_any(&store, &target, |doc| doc.pre_block = Some(line.clone()));
+                    format!("declare `{line}` on {target}")
+                }
+                2 => {
+                    save_any(&store, &target, |doc| doc.pre_block = None);
+                    format!("drop aliases of {target}")
+                }
+                3 => {
+                    // Case only: the same names, other capitals.
+                    let id = crate::PageId::from(target.clone());
+                    let flipped = store.page(&id).unwrap().doc.pre_block.map(|pre| {
+                        pre.chars()
+                            .map(|c| {
+                                if c.is_uppercase() {
+                                    c.to_ascii_lowercase()
+                                } else {
+                                    c.to_ascii_uppercase()
+                                }
+                            })
+                            .collect::<String>()
+                    });
+                    save_any(&store, &target, |doc| doc.pre_block = flipped.clone());
+                    format!("flip case of the properties of {target}")
+                }
+                4 => {
+                    fresh_page += 1;
+                    let rel = format!("pages/Created {fresh_page}.md");
+                    let alias = POOL[next(POOL.len())];
+                    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+                    tx.create(
+                        &crate::PageId::from(rel.clone()).file(),
+                        crate::Content::Bytes(
+                            format!("aliases:: {alias}\n\n- created\n").into_bytes(),
+                        ),
+                    );
+                    commit(tx, "create");
+                    live.push(rel.clone());
+                    format!("create {rel} declaring {alias}")
+                }
+                5 => {
+                    fresh_page += 1;
+                    let to = format!("pages/Moved {fresh_page}.md");
+                    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+                    tx.move_file(
+                        &crate::PageId::from(target.clone()).file(),
+                        rev(root, &target),
+                        &crate::PageId::from(to.clone()).file(),
+                        None,
+                    );
+                    commit(tx, "rename");
+                    live.retain(|rel| *rel != target);
+                    live.push(to.clone());
+                    format!("rename {target} to {to}")
+                }
+                _ if live.len() > 3 => {
+                    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+                    tx.trash(
+                        &crate::PageId::from(target.clone()).file(),
+                        rev(root, &target),
+                        crate::TrashIf::Any,
+                    );
+                    commit(tx, "delete");
+                    live.retain(|rel| *rel != target);
+                    format!("delete {target}")
+                }
+                _ => continue,
+            };
+            assert!(
+                store.whole_graph().unwrap().graph.alias_list_built(),
+                "seed {seed} step {step}: the generation inherits the relation by delta, \
+                 so the comparison below is delta against rebuild"
+            );
+            check_lines(
+                &store,
+                root,
+                &format!("seed {seed} step {step}: {label}"),
+                &[],
+                &mut log,
+                &mut mismatches,
+                alias_lines,
+            );
+        }
+        store.close();
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+        assert!(
+            log.contains("lazy alias_relation\nrow "),
+            "not vacuous: the relation holds rows"
+        );
+        assert!(
+            log.lines().any(|line| line.starts_with("row ")
+                && line.contains("rel: \"pages/Twin")
+                && line.contains("name: \"Page ")),
+            "not vacuous: a file that only claims another page's name by title:: declares aliases"
+        );
+    }
+}
+
+/// B1 of the alias-delta review. A transaction fails at step 1 because an
+/// outside writer replaced B, and the undo of its own create of A fails too:
+/// `publish_final_files` caches A (own) and B (external) together, then the
+/// store publishes twice (Own for A, External for B). Every generation
+/// published must equal a parent-free capture of the cache it was captured
+/// from, so B's old alias row, its reference to `Target` and its candidate
+/// signatures are gone from both, and a view held from before keeps them.
+#[test]
+fn split_own_external_publication_equals_a_fresh_build() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    for sub in ["pages", "journals", "logseq"] {
+        fs::create_dir_all(root.join(sub)).unwrap();
+    }
+    fs::write(
+        root.join("pages/B.md"),
+        "alias:: oldb\n\n- B sees [[Target]]\n",
+    )
+    .unwrap();
+    fs::write(root.join("pages/Target.md"), "- target\n").unwrap();
+    let store = crate::store::Store::open(
+        root,
+        crate::OpenOptions {
+            watch: crate::WatchMode::Poll,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .0;
+    let held = store.whole_graph().unwrap();
+    assert!(matches!(
+        held.resolve("oldb", false),
+        crate::Resolved::Alias { .. }
+    ));
+    assert_eq!(held.backlinks("Target").unwrap().len(), 1);
+    let published_before = store.changes.published_count();
+
+    let read = store.page(&crate::PageId::from("pages/B.md")).unwrap();
+    let mut doc = read.doc;
+    doc.pre_block = Some("alias:: intendedb".into());
+    store.inject_fault(crate::FaultPoint::Stage2MismatchAt(1));
+    store.inject_fault(crate::FaultPoint::UndoWithdrawalIo);
+    let mut tx = store.transaction(Some(crate::EditKind::ReplacePage));
+    tx.create(
+        &crate::PageId::from("pages/A.md").file(),
+        crate::Content::Bytes(b"alias:: newa\n\n- A\n".to_vec()),
+    );
+    tx.save_page(
+        &[crate::EditKind::ReplacePage],
+        &crate::PageId::from("pages/B.md"),
+        crate::SaveBase::Existing(read.rev),
+        &doc,
+    );
+    assert!(matches!(
+        tx.commit(),
+        crate::TxOutcome::NotCommitted { step: 1, .. }
+    ));
+    assert_eq!(
+        fs::read_to_string(root.join("pages/B.md")).unwrap(),
+        "external stage-2"
+    );
+
+    let probes = ["Target", "oldb", "newa", "intendedb"];
+    let published = store
+        .changes
+        .published_images(published_before, &|snapshot| {
+            snapshot_image(snapshot, &probes)
+        });
+    assert!(
+        published.len() >= 2,
+        "the failed transaction publishes its own file and the external one separately"
+    );
+    let current = store.graph.cache_generation();
+    for (index, (generation, live, fresh)) in published.iter().enumerate() {
+        // The cache is not touched after the last publication, so every
+        // generation published at the current cache generation is comparable
+        // with a capture from it.
+        assert_eq!(
+            *generation, current,
+            "publication {index} was captured from another cache generation"
+        );
+        if let Some(difference) = first_difference(live, fresh) {
+            panic!("publication {index}: incremental vs parent-free capture: {difference}");
+        }
+    }
+    let after = store.whole_graph().unwrap();
+    assert!(!matches!(
+        after.resolve("oldb", false),
+        crate::Resolved::Alias { .. }
+    ));
+    assert_eq!(after.backlinks("Target").unwrap().len(), 0);
+    // A view acquired before the transaction keeps what it saw.
+    assert!(matches!(
+        held.resolve("oldb", false),
+        crate::Resolved::Alias { .. }
+    ));
+    assert_eq!(held.backlinks("Target").unwrap().len(), 1);
+    store.close();
 }

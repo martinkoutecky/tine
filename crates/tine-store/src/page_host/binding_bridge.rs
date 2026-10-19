@@ -146,7 +146,7 @@ pub(super) fn index(store: &Store, publication: &Publication) -> bool {
         ),
     };
     if graph.cache_generation() == before {
-        graph.transaction_bump_generation();
+        graph.transaction_bump_generation(&[&path]);
     }
     let files = vec![(id.clone(), kind, rev)];
     let mut observations = PublishedObservations {

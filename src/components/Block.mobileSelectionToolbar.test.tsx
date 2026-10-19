@@ -7,16 +7,16 @@ import { resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import { pageByName } from "../document/model";
 import type { BlockDto } from "../types";
-import { readFileSync } from "node:fs";
 import { Block } from "./Block";
 
 const platform = vi.hoisted(() => ({ mobile: true }));
-vi.mock("../nativeChrome", () => ({
-  get isMobilePlatform() {
-    return platform.mobile;
-  },
-  // The block-swipe wiring reads the E2E gesture override; unset in unit tests.
-  touchGesturePlatform: () => null,
+// A touch-first device (D-20261018-W1: the dock and docked selection toolbar follow the
+// primary pointer, not the OS name). Swipes stay off: touchGestures() is not mocked.
+vi.mock("../inputCapability", async (original) => ({
+  ...(await original<typeof import("../inputCapability")>()),
+  touchPrimary: () => platform.mobile,
+  touchCapable: () => platform.mobile,
+  touchGestures: () => false,
 }));
 
 beforeAll(() => initParser());
@@ -61,41 +61,8 @@ async function mountSelectedEditor(mobile: boolean) {
 }
 
 describe("selected-text toolbar platform ownership (GH #375)", () => {
-  it.each(["md", "org"] as const)("transfers a native text selection from another rendered %s block to its docked editor", async (format) => {
-    platform.mobile = true;
-    loadSingle({ name: "Other block", kind: "page", title: "Other block", format, pre_block: null, blocks: [
-      { id: "first", raw: "first block", collapsed: false, children: [] },
-      { id: "second", raw: "alpha selected omega", collapsed: false, children: [] },
-    ] });
-    startEditing("first", 0);
-    const mounted = mount(() => <For each={pageByName("Other block")?.roots ?? []}>{(id) => <Block id={id} />}</For>);
-    try {
-      mounted.root.querySelector<HTMLTextAreaElement>("textarea")!.focus();
-      const second = mounted.root.querySelector('[data-block-id="second"]')!;
-      const walker = document.createTreeWalker(second, NodeFilter.SHOW_TEXT);
-      let text = walker.nextNode();
-      while (text && !text.textContent?.includes("alpha selected omega")) text = walker.nextNode();
-      expect(text).not.toBeNull();
-      const range = document.createRange();
-      range.setStart(text!, 6);
-      range.setEnd(text!, 14);
-      document.getSelection()!.removeAllRanges();
-      document.getSelection()!.addRange(range);
-      document.dispatchEvent(new Event("selectionchange"));
-      await vi.waitFor(() => expect(second.querySelector("[data-mobile-selection-toolbar]")).not.toBeNull());
-      const editor = second.querySelector<HTMLTextAreaElement>("textarea")!;
-      expect(document.activeElement).toBe(editor);
-      expect(editor.value.slice(editor.selectionStart, editor.selectionEnd)).toBe("selected");
-      expect(second.querySelector(".sel-toolbar-mobile")).not.toBeNull();
-      const style = document.createElement("style");
-      style.textContent = readFileSync("src/styles/touchGestures.css", "utf8");
-      mounted.root.append(style);
-      const toolbar = second.querySelector<HTMLElement>(".sel-toolbar-mobile")!;
-      expect(getComputedStyle(toolbar).position).toBe("fixed");
-      expect(getComputedStyle(toolbar).top).toBe("auto");
-      expect(getComputedStyle(toolbar).bottom).toContain("--mobile-kb-toolbar-lift");
-    } finally { document.getSelection()?.removeAllRanges(); mounted.dispose(); }
-  });
+  // A selection in another RENDERED block no longer hands off to that block's
+  // editor (D-20261018-LP2): RenderedSelectionToolbar.test.tsx owns that path.
   it("tracks native selectionchange without a select or mouseup event", async () => {
     const mounted = await mountEditor(true);
     try {

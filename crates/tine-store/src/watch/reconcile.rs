@@ -567,6 +567,11 @@ mod tests {
     fn focus_full_walk_inspects_no_files_under_the_page_save_writer() {
         let (_dir, store) = open();
         let core = store.watch.core_for_load();
+        // REG-LOAD-FLAKY-FOCUS-WRITER: the background watcher's own full
+        // walks (its install diff, the launch's racy follow-up) and its
+        // writer-held cycles share this core's counter and writer; under load
+        // they overlapped the measured refresh and were billed to it.
+        store.watch.stop_background_for_test();
         core.full_walk_locked_files.store(0, Ordering::Relaxed);
         store.refresh(crate::Depth::Stamps).unwrap();
         let files = core.full_walk_locked_files.load(Ordering::Relaxed);
@@ -579,6 +584,14 @@ mod tests {
     fn focus_observation_retries_an_intervening_save_and_keeps_external_changes() {
         let (dir, store) = open();
         let core = store.watch.core_for_load();
+        // REG-LOAD-FLAKY-FOCUS-WRITER: only the refresh may reach the walk
+        // pause, and only this test may hold the writer while it waits there.
+        // Under load the background watcher's own diffs can reach the same
+        // hook or hold the writer (an install diff's config check, an asset
+        // pass), so the probe below judged the watcher, not the refresh
+        // (failed at load ~14, beta.5 og gate); with it stopped,
+        // the late external changes are also the refresh's own to observe.
+        store.watch.stop_background_for_test();
         let pause: crate::store::TestPause =
             Arc::new((Mutex::new((false, false)), std::sync::Condvar::new()));
         *core.full_walk_pause.lock().unwrap() = Some(Arc::clone(&pause));

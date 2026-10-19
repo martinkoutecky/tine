@@ -273,6 +273,20 @@ impl Graph {
         ) {
             return None;
         }
+        // The alias list names its owners by relative path; the owner map is
+        // the same rows keyed the other way and is not read back. A row naming
+        // a page the cache lacks leaves the relation unbuilt: the first alias
+        // read walks the pages, as at a cold Ready.
+        let alias_relation = derived
+            .aliases
+            .and_then(|state| match state {
+                AliasListState::In(list) => crate::query::AliasRelation::from_list(&list, |rel| {
+                    let slot = *pages.positions.get(rel)?;
+                    pages.get(slot).map(|(entry, _)| entry.path.clone())
+                }),
+                AliasListState::Out(_) => None,
+            })
+            .map(Arc::new);
         let mut read = ReadSnapshot {
             pages,
             config,
@@ -285,14 +299,8 @@ impl Graph {
             alias_index: cell(state.alias_index),
             referenced_name_index: cell(derived.referenced_name_index),
             real_page_names: state.real_page_names,
-            aliases: cell(derived.aliases.map(Arc::new)),
-            alias_edges: std::sync::OnceLock::new(),
+            alias_relation: cell(alias_relation),
             link_graph: std::sync::OnceLock::new(),
-            alias_owner_paths_by_key: cell(
-                derived
-                    .alias_owner_paths_by_key
-                    .map(|sorted| Arc::new(Sorted::into_map(sorted))),
-            ),
             referenced_names: cell(derived.referenced_names),
             block_ref_counts: cell(state.block_ref_counts),
             public_block_ref_counts: cell(derived.public_block_ref_counts.map(|counts| counts.0)),
@@ -326,8 +334,8 @@ impl Graph {
 pub(crate) struct DerivedState {
     block_index: Option<BlockIndexState>,
     referenced_name_index: Option<SnapshotPageDerivedIndex>,
-    aliases: Option<Vec<(String, String, String)>>,
-    alias_owner_paths_by_key: Option<Sorted<Vec<String>>>,
+    aliases: Option<AliasListState>,
+    alias_owner_paths_by_key: Option<AliasOwnersState>,
     referenced_names: Option<Vec<String>>,
     public_block_ref_counts: Option<Sorted<usize>>,
     derived_cache: Option<DerivedCacheState>,
@@ -343,11 +351,14 @@ impl DerivedState {
                 root: root.to_path_buf(),
             }),
             referenced_name_index: read.referenced_name_index.get().cloned(),
-            aliases: read.aliases.get().map(|aliases| aliases.as_ref().clone()),
-            alias_owner_paths_by_key: read
-                .alias_owner_paths_by_key
+            aliases: read
+                .alias_relation
                 .get()
-                .map(|map| Sorted(Arc::clone(map))),
+                .map(|relation| AliasListState::Out(Arc::clone(relation))),
+            alias_owner_paths_by_key: read
+                .alias_relation
+                .get()
+                .map(|relation| AliasOwnersState::Out(Arc::clone(relation))),
             referenced_names: read.referenced_names.get().cloned(),
             public_block_ref_counts: read.public_block_ref_counts.get().cloned().map(Sorted),
             derived_cache: read
@@ -363,14 +374,54 @@ impl DerivedState {
     }
 }
 
-/// A string-keyed map written in key order.
-pub(crate) struct Sorted<V>(Arc<HashMap<String, V>>);
+/// The alias list as the checkpoint stores it: `(alias key, owner name, owner
+/// rel path)` rows in path order. Written from the generation's alias
+/// relation when the file is encoded (off the writer), read back as plain
+/// rows; the wire form is the plain row list it has always been.
+pub(crate) enum AliasListState {
+    Out(Arc<crate::query::AliasRelation>),
+    In(Vec<(String, String, String)>),
+}
 
-impl<V: Clone> Sorted<V> {
-    fn into_map(self) -> HashMap<String, V> {
-        Arc::try_unwrap(self.0).unwrap_or_else(|shared| (*shared).clone())
+impl serde::Serialize for AliasListState {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            AliasListState::Out(relation) => relation.list().serialize(s),
+            AliasListState::In(rows) => rows.serialize(s),
+        }
     }
 }
+
+impl<'de> serde::Deserialize<'de> for AliasListState {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Vec::deserialize(d).map(AliasListState::In)
+    }
+}
+
+/// The alias owner map as the checkpoint stores it: each alias key with the
+/// rel paths of its owners, in key order (the shape `Sorted` wrote).
+pub(crate) enum AliasOwnersState {
+    Out(Arc<crate::query::AliasRelation>),
+    In(Vec<(String, Vec<String>)>),
+}
+
+impl serde::Serialize for AliasOwnersState {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            AliasOwnersState::Out(relation) => relation.owner_rows().serialize(s),
+            AliasOwnersState::In(rows) => rows.serialize(s),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AliasOwnersState {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Vec::deserialize(d).map(AliasOwnersState::In)
+    }
+}
+
+/// A string-keyed map written in key order.
+pub(crate) struct Sorted<V>(Arc<HashMap<String, V>>);
 
 impl<V: serde::Serialize> serde::Serialize for Sorted<V> {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -589,8 +640,7 @@ impl LazyMarks {
             read.block_index.get().is_some(),
             read.alias_index.get().is_some(),
             read.referenced_name_index.get().is_some(),
-            read.aliases.get().is_some(),
-            read.alias_owner_paths_by_key.get().is_some(),
+            read.alias_relation.get().is_some(),
             read.referenced_names.get().is_some(),
             read.block_ref_counts.get().is_some(),
             read.public_block_ref_counts.get().is_some(),

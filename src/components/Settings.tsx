@@ -4,9 +4,11 @@ import { stickyParents, changeStickyParents } from "../stickyParents";
 import { graphConfigProblem } from "../graph";
 import { ResourceFailure } from "./ResourceFailure";
 import { reportUiFailure } from "../uiFailure";
+import { dbg } from "../debug";
 import { For, Show, Suspense, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { PluginsTab } from "./PluginsTab";
+import { QuickShareSettings } from "./QuickShareSettings";
 import { AboutTab } from "./AboutTab";
 import { platformKind } from "../platform";
 import { JournalFilenamePanel } from "./JournalFilenamePanel";
@@ -18,7 +20,8 @@ import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
-import { isMac, isMobilePlatform, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
+import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
+import { touchPrimary } from "../inputCapability";
 import {
   copyIncludeSubtree,
   setCopyIncludeSubtree,
@@ -64,7 +67,7 @@ import { LanguageSetting } from "./LanguageSetting";
 import { CommentNameSetting } from "./CommentNameSetting";
 import { GraphFolderSetting } from "./GraphFolderSetting";
 import { msg, render, renderEnglish, t, type Msg } from "../i18n";
-import { SETTING_SEARCH, rankedSettingMatches, settingHighlight, advancedMatch, type SettingSearchEntry } from "./settingsSearch";
+import { SETTING_SEARCH, rankedSettingMatches, settingHighlight, advancedMatch, matchedDescription, type SettingSearchEntry } from "./settingsSearch";
 import { settingsMaximized, setSettingsMaximized } from "../settingsLayout";
 import { ThemeChoice } from "./ThemeChoice";
 import { ThemeSettings } from "./ThemeSettings";
@@ -97,6 +100,7 @@ const TABS: { id: SettingsTabId; label: Msg }[] = [
   { id: "files", label: msg("settings-ui-files") },
   { id: "backups", label: msg("settings-ui-backups-recovery") },
   { id: "graph", label: msg("settings-ui-graph") },
+  { id: "sharing", label: msg("settings-ui-sharing") },
   { id: "plugins", label: msg("settings-ui-plugins") },
   { id: "diagnostics", label: msg("settings-ui-help-diagnostics") },
   { id: "shortcuts", label: msg("settings-ui-keyboard-shortcuts") },
@@ -104,6 +108,7 @@ const TABS: { id: SettingsTabId; label: Msg }[] = [
 ];
 /** How long a search result waits for an async-mounted target before giving up. */
 const SEARCH_SCROLL_WAIT_MS = 1000;
+const SETTINGS_FLASH_MS = 2000;
 export function Settings(): JSX.Element {
   const [tab, setTab] = createSignal<SettingsTabId>("appearance");
   const [settingsQuery, setSettingsQuery] = createSignal("");
@@ -119,10 +124,19 @@ export function Settings(): JSX.Element {
     const platform = readOr(settingsPlatform, undefined, "settings-platform");
     return platform === "desktop" || platform === "android";
   };
-  const availableTabs = createMemo(() => pluginsAvailable() ? TABS : TABS.filter((entry) => entry.id !== "plugins"));
+  // Sharing appears where quick share is on (DESIGN §5: off in shipped builds until its viewer is deployed).
+  // A signal, not a resource: a resource read here would suspend the whole dialog (GH #409).
+  const [sharingAvailable, setSharingAvailable] = createSignal(false);
+  onMount(() => {
+    void readOwned(graphOwner(), backend().quickShareList())
+      .then((answer) => { if (answer.kind === "current") setSharingAvailable(answer.value.enabled); })
+      .catch((error) => dbg(`settings: reading the quick share gate failed: ${String(error)}`));
+  });
+  const availableTabs = createMemo(() => TABS.filter((entry) =>
+    (entry.id !== "plugins" || pluginsAvailable()) && (entry.id !== "sharing" || sharingAvailable())));
   const matches = createMemo(() => {
     const query = settingsQuery();
-    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && (isMobilePlatform || !entry.mobileOnly)), query) : [];
+    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && (touchPrimary() || !entry.touchOnly)), query) : [];
   });
   // A setting whose field mounts after an async load (Developer tools waits for
   // the platform probe) is not in the DOM when the tab opens, so the lookup is
@@ -143,7 +157,15 @@ export function Settings(): JSX.Element {
       if (run !== scrollRun) return;
       const target = findTarget();
       if (first) searchInput?.focus({ preventScroll: true });
-      if (target) target.scrollIntoView({ block: "center" });
+      if (target) {
+        target.scrollIntoView({ block: "center" });
+        // Mark where the jump landed for 2 s, so the eye finds the setting (GH #706).
+        const row = target.closest<HTMLElement>(".settings-field, .settings-row, .settings-section") ?? target;
+        row.classList.remove("settings-jump-flash");
+        void row.offsetWidth;
+        row.classList.add("settings-jump-flash");
+        setTimeout(() => row.classList.remove("settings-jump-flash"), SETTINGS_FLASH_MS);
+      }
       else if (Date.now() < deadline) (typeof requestAnimationFrame === "function" ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16))(() => attempt(false));
     };
     queueMicrotask(() => attempt(true));
@@ -275,7 +297,11 @@ export function Settings(): JSX.Element {
                         <button type="button" class="settings-search-result" onClick={() => openSearchResult(entry)}>
                           <span><For each={settingHighlight(typeof entry.label === "string" ? entry.label : render(entry.label), settingsQuery())}>
                             {(part) => part.marked ? <mark>{part.text}</mark> : part.text}
-                          </For></span>
+                          </For><Show when={matchedDescription(entry, settingsQuery())}>{(description) => (
+                            <span class="settings-search-description"><For each={settingHighlight(description(), settingsQuery())}>
+                              {(part) => part.marked ? <mark>{part.text}</mark> : part.text}
+                            </For></span>
+                          )}</Show></span>
                           <small>{t("settings-search-result-location", { tab: render(TABS.find((candidate) => candidate.id === entry.tab)!.label), level: entry.level ?? "basic" })}</small>
                         </button>
                       )}
@@ -303,6 +329,9 @@ export function Settings(): JSX.Element {
                 <GraphFolderSetting />
                 <HomePageSetting />
                 <GraphPublish /><QueryExportLimitSetting />
+              </Show>
+              <Show when={tab() === "sharing" && sharingAvailable()}>
+                <QuickShareSettings />
               </Show>
               <Show when={tab() === "plugins" && pluginsAvailable()}>
                 <PluginsTab />
@@ -484,9 +513,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
         </div>
       </Field>
 
-      {/* GH #716: the phone/tablet app keeps Sidebar, Search, Back and Forward in
+      {/* GH #716: a touch-first device (phone/tablet) keeps Sidebar, Search, Back and Forward in
           the top bar; this opt-in restores the GH #598 bottom row. */}
-      <Show when={isMobilePlatform}>
+      <Show when={touchPrimary()}>
         <Field label={render(msg("settings-mobile-navigation-label"))} hint={render(msg("settings-mobile-navigation-hint"))}>
           <Toggle on={mobileNavigationAtBottom()} onClick={() => setMobileNavigationAtBottom(!mobileNavigationAtBottom())} />
         </Field>

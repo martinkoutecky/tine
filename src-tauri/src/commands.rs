@@ -15,8 +15,10 @@ use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_graph_features::{config, IncompleteTransaction as IncompleteTx};
 use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 mod discovery;
+mod templates;
 use discovery::{
     page_inventory_wire, page_modified_wire, resolve_name, PageInventoryWire, PageModifiedWire,
+    ResolvedWire,
 };
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
@@ -52,36 +54,6 @@ fn page_dto(read: tine_store::PageRead) -> PageWire {
     PageWire {
         id: read.id.into(),
         doc,
-    }
-}
-
-#[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum ResolvedWire {
-    Existing { id: String, others: Vec<String> },
-    Alias { owners: Vec<String> },
-    Absent { id: String },
-}
-
-impl From<Resolved> for ResolvedWire {
-    fn from(value: Resolved) -> Self {
-        Self::from(&value)
-    }
-}
-
-impl From<&Resolved> for ResolvedWire {
-    fn from(value: &Resolved) -> Self {
-        let id = |id: &PageId| id.as_str().to_owned();
-        match value {
-            Resolved::Existing { id: first, others } => Self::Existing {
-                id: id(first),
-                others: others.iter().map(id).collect(),
-            },
-            Resolved::Alias { owners } => Self::Alias {
-                owners: owners.iter().map(id).collect(),
-            },
-            Resolved::Absent { id: absent } => Self::Absent { id: id(absent) },
-        }
     }
 }
 
@@ -376,6 +348,9 @@ pub(crate) async fn resolve_page(
 ) -> Result<ResolvedWire, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
+        if let Some(early) = templates::early_absent_journal(&slot, &name, kind) {
+            return early;
+        }
         slot.store
             .whole_graph()
             .map_err(|e| format!("graph load failed: {e:?}"))
@@ -696,6 +671,7 @@ pub(crate) async fn run_graph_search(
     page_limit: usize,
     block_limit: usize,
     lane: Option<String>,
+    lane_seq: Option<u64>,
     explain: bool,
     scope: Option<QueryPageScope>,
     page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
@@ -711,13 +687,14 @@ pub(crate) async fn run_graph_search(
         path: scope.path,
     });
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::run_graph_search_with_transliteration(
+        tine_graph_features::search::run_graph_search_sequenced(
             &slot.store,
             &slot.block_search_lanes,
             source,
             page_limit,
             block_limit,
             lane.as_deref(),
+            lane_seq,
             explain,
             scope,
             page_match_scope,
@@ -944,16 +921,18 @@ pub(crate) async fn search(
     query: String,
     limit: usize,
     lane: Option<String>,
+    lane_seq: Option<u64>,
     state: GraphContext<'_>,
 ) -> Result<Vec<RefGroup>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::find_blocks(
+        tine_graph_features::search::find_blocks_sequenced(
             &slot.store,
             &slot.block_search_lanes,
             &query,
             limit,
             lane.as_deref(),
+            lane_seq,
         )
         .map_err(feature_search_error)
     })
@@ -1202,11 +1181,18 @@ pub(crate) async fn off_ui_graph_read<T: Send + 'static>(
     .map_err(|error| error.to_string())?
 }
 
+/// Every template, or with `name` at most the one graph-wide discovery picks
+/// for that exact name, answered early from the files when they settle it
+/// (BqbeQ; `templates::named_template`).
 #[tauri::command]
 pub(crate) async fn list_templates(
+    name: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<tine_core::model::TemplateDto>, String> {
-    off_ui_graph_read(&state, |view| Ok(view.templates())).await
+    let Some(name) = name else {
+        return off_ui_graph_read(&state, |view| Ok(view.templates())).await;
+    };
+    templates::named_template(slot_for_context(&state)?, name).await
 }
 
 #[tauri::command]

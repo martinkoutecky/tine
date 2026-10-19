@@ -494,6 +494,20 @@ pub(crate) struct Core {
 }
 
 impl Core {
+    /// Reconcile the paths an external writer raced an own write on. The
+    /// caller holds the writer.
+    pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {
+        if !paths.is_empty() {
+            let _ = self.reconcile_locked(Some(paths), true, false, DiffTrigger::WatchEvent);
+            let mut snapshot = self.snapshot.lock().unwrap();
+            for path in paths {
+                if !self.tracks_in_snapshot(path) {
+                    snapshot.remove(path);
+                }
+            }
+        }
+    }
+
     /// Record the live-notification state on the change feed, which tells
     /// its subscriber (see `ChangeFeed::set_watch_refusal`).
     fn set_refusal(&self, now: Option<String>, restored: bool) {
@@ -1050,17 +1064,7 @@ impl WatchHandle {
     }
 
     pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {
-        if !paths.is_empty() {
-            let _ = self
-                .core
-                .reconcile_locked(Some(paths), true, false, DiffTrigger::WatchEvent);
-            let mut snapshot = self.core.snapshot.lock().unwrap();
-            for path in paths {
-                if !self.core.tracks_in_snapshot(path) {
-                    snapshot.remove(path);
-                }
-            }
-        }
+        self.core.reconcile_raced(paths);
     }
 
     /// Join the background watcher while keeping explicit refresh available.
@@ -1352,6 +1356,98 @@ mod tests {
                 ("assets/pic.png", ChangeKind::Modified, true),
                 ("assets/sub/new.png", ChangeKind::Created, true),
             ]
+        );
+        store.close();
+        fs::remove_dir_all(root).unwrap();
+        true
+    }
+
+    /// REG-LOAD-FLAKY-DRAIN-BEFORE-INSTALL (REVIEW-3b-P2b-2 N3): a drain
+    /// requested while the watch is still being installed (a loaded host
+    /// starts the watcher thread late) wrote its sentinel before the root was
+    /// registered, so no notification of it ever came and the drain waited out
+    /// its deadline: `n3_*` saw "the fresh host settles" fail under load. The
+    /// installed watch adopts a sentinel already in the root, and answers it
+    /// only after a full diff that began after it, so every write made before
+    /// the request is reconciled first.
+    #[test]
+    fn a_drain_requested_before_the_watch_is_installed_is_answered() {
+        judged_despite_os_refusals(drain_before_install_attempt);
+    }
+
+    fn drain_before_install_attempt() -> bool {
+        let root = fs::canonicalize(temp_root("drain-before-install")).unwrap();
+        fs::write(root.join("pages/a.md"), "- a\n").unwrap();
+        let (store, _, _) = Store::open(
+            &root,
+            OpenOptions {
+                watch: WatchMode::Poll,
+                ..OpenOptions::default()
+            },
+        )
+        .unwrap();
+        store.whole_graph().unwrap();
+        let subscription = store.subscribe();
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&statuses);
+        subscription.observe_watch_status(move |status| {
+            sink.lock().unwrap().push(status);
+        });
+        let pause: crate::store::TestPause =
+            Arc::new((Mutex::new((false, false)), std::sync::Condvar::new()));
+        *store.watch.core.before_install_pause.lock().unwrap() = Some(Arc::clone(&pause));
+        store.watch.set_mode(WatchMode::Notify);
+        let (gate, ready) = &*pause;
+        let state = gate.lock().unwrap();
+        let (state, timeout) = ready
+            .wait_timeout_while(state, Duration::from_secs(10), |state| !state.0)
+            .unwrap();
+        assert!(
+            !timeout.timed_out(),
+            "watch installation did not reach the barrier"
+        );
+        drop(state);
+        // A write the drain must cover, made before the root is registered.
+        fs::write(root.join("pages/a.md"), "- before install\n").unwrap();
+        let drained = std::thread::scope(|scope| {
+            let watch = &store.watch;
+            let drain = scope.spawn(move || watch.drained_for_tests(Duration::from_secs(10)));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !fs::read_dir(&root).unwrap().any(|entry| {
+                entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".tine-watch-drain-")
+            }) {
+                assert!(
+                    Instant::now() < deadline,
+                    "the drain never wrote its sentinel"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            *store.watch.core.before_install_pause.lock().unwrap() = None;
+            gate.lock().unwrap().1 = true;
+            ready.notify_all();
+            drain.join().unwrap()
+        });
+        let statuses = statuses.lock().unwrap().clone();
+        if os_refused(&statuses) {
+            // A refused watch polls, and a poll cycle answers every drain:
+            // only a registered watch can judge the gap.
+            store.close();
+            fs::remove_dir_all(root).unwrap();
+            return false;
+        }
+        assert!(
+            drained,
+            "N3: a drain requested before the watch was installed was never answered"
+        );
+        let id = PageId::from("pages/a.md");
+        assert_eq!(
+            store.page(&id).unwrap().doc.blocks[0].raw,
+            "before install",
+            "N3: the drain was answered before the write it covers was reconciled"
         );
         store.close();
         fs::remove_dir_all(root).unwrap();

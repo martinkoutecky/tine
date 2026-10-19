@@ -32,6 +32,9 @@ fn isolated_case(name: &str) -> bool {
     true
 }
 
+#[path = "alias_edit_cost.rs"]
+mod alias_edit_cost;
+
 #[path = "answer_changes.rs"]
 mod answer_changes;
 
@@ -136,6 +139,9 @@ mod journal_sections_locate;
 
 #[path = "launch_one_read.rs"]
 mod launch_one_read;
+
+#[path = "loading_own_save.rs"]
+mod loading_own_save;
 
 #[path = "lifecycle.rs"]
 mod lifecycle;

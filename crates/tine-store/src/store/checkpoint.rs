@@ -56,10 +56,13 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// candidate indexes and cached backlinks; old disposable caches rebuild.
 /// 15 (GH #699): parser-token extraction separates stored page tag facets and
 /// aliases; older combined names in derived indexes and answers must rebuild.
-pub(crate) const FORMAT: u32 = 15;
+/// 16 (card BqlaU, D-20261018-M2 Q6): a header priority `[#A]` joins the explicit
+/// reference projection, and the marker and priority join `refs_norm`, so cached
+/// projections, candidate indexes and backlink/query answers rebuild.
+pub(crate) const FORMAT: u32 = 16;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
-pub(crate) const PARSER: &str = "lsdoc v0.5.8";
+pub(crate) const PARSER: &str = "lsdoc v0.5.9";
 /// Quiet time after the last dirtying publication before a checkpoint.
 pub(crate) const IDLE: Duration = Duration::from_secs(60);
 /// Least time between two checkpoint writes (Martin, 2026-10-02): at most 12
@@ -378,13 +381,15 @@ impl ChangeFeed {
     /// an `Origin::External` publication with no file tuples), and its page
     /// cache in the graph. Returns the watcher baseline it carries, or
     /// `None` when another path filled the cache or published first (an
-    /// on-demand build during launch): the launch then completes cold.
+    /// on-demand build during launch), or a publication waits for the first
+    /// view (an own save during launch, `first_view.rs`): the launch then
+    /// completes cold.
     /// Caller holds the store writer.
     pub(crate) fn install_checkpoint(
         &self,
         loaded: Loaded,
     ) -> Option<crate::model::LaunchObservations> {
-        if self.snapshot.read().unwrap().is_some() {
+        if self.snapshot.read().unwrap().is_some() || self.deferred_any() {
             return None;
         }
         let Body {

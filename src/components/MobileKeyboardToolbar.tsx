@@ -1,8 +1,8 @@
 import { msg, t, render, type Msg } from "../i18n";
-import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, untrack, type JSX } from "solid-js";
 import { dispatchFocusedEditorCommand, blurFocusedEditor, focusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
 import { runGlobalCommand } from "../keybindings";
-import { isMobilePlatform } from "../nativeChrome";
+import { touchPrimary } from "../inputCapability";
 import { isRecordingAudio } from "../mediaCapture";
 
 type ToolbarIcon =
@@ -60,15 +60,19 @@ function viewportKeyboardTop(): number {
 }
 
 /** Scroll the focused block editor's nearest scroller (or the window) just enough
- *  that the editor's bottom sits 8px above `toolbarTop` (GH #384). Returns true
- *  only when it scrolled; a non-editor focus or an already-visible editor is a
- *  no-op returning false. O(1) layout reads. */
+ *  that the editor's bottom sits 8px above `toolbarTop` (GH #384), or above the
+ *  editor's docked formatting row when one is shown, which sits above the dock
+ *  (GH #375: measuring only the dock left a selection just above it under the
+ *  formatting row). Returns true only when it scrolled; a non-editor focus or an
+ *  already-visible editor is a no-op returning false. O(1) layout reads. */
 export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   const editor = document.activeElement;
   if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) {
     return false;
   }
-  const overlap = editor.getBoundingClientRect().bottom + EDITOR_TOOLBAR_MARGIN - toolbarTop;
+  const formatting = document.querySelector<HTMLElement>("[data-mobile-selection-toolbar]")?.getBoundingClientRect();
+  const top = formatting && formatting.height > 0 ? Math.min(toolbarTop, formatting.top) : toolbarTop;
+  const overlap = editor.getBoundingClientRect().bottom + EDITOR_TOOLBAR_MARGIN - top;
   if (overlap <= 0) return false;
   const scroller = editor.closest<HTMLElement>(
     ".main-content, .right-sidebar-scroll, .left-sidebar-scroll",
@@ -140,8 +144,13 @@ export function MobileKeyboardToolbar(): JSX.Element {
     setFocusedFallback(focused && !keyboardSeen);
   };
 
-  onMount(() => {
-    if (!isMobilePlatform) return;
+  // The dock belongs to a touch-first device (D-20261018-W1: input capability,
+  // not the OS name); the listeners follow `touchPrimary()` if it flips.
+  createEffect(() => {
+    if (!touchPrimary()) return;
+    untrack(attachViewportListeners);
+  });
+  function attachViewportListeners() {
     const vv = window.visualViewport;
     const scheduleEditorReveal = () => {
       if (revealFrame) return;
@@ -184,11 +193,11 @@ export function MobileKeyboardToolbar(): JSX.Element {
       document.removeEventListener("input", revealAfterEditorInput, true);
       if (revealFrame) cancelAnimationFrame(revealFrame);
     });
-  });
+  }
 
   createEffect(() => {
     focusedEditorCommandBridge();
-    if (isMobilePlatform) queueMicrotask(updateDock);
+    if (touchPrimary()) queueMicrotask(updateDock);
   });
 
   // GH #336: the hide button's pointerdown blurs the editor, which drops the
@@ -217,7 +226,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
   // overlapping. Re-runs when the dock position or visibility changes; measures
   // the real rendered box (robust to whatever the keyboard does to the viewport).
   createEffect(() => {
-    const shown = isMobilePlatform && visible();
+    const shown = touchPrimary() && visible();
     dockTop(); // re-measure when the keyboard/dock moves
     const root = typeof document !== "undefined" ? document.documentElement : null;
     if (!root) return;
@@ -258,8 +267,11 @@ export function MobileKeyboardToolbar(): JSX.Element {
   // primary pointerdown starts a new gesture; keyboard/AT clicks have detail 0.
   // No elapsed-time window may suppress an independent second activation.
   let completedPointer: number | null = null;
-  onMount(() => {
-    if (!isMobilePlatform) return;
+  createEffect(() => {
+    if (!touchPrimary()) return;
+    untrack(attachCompletedPointerGuard);
+  });
+  function attachCompletedPointerGuard() {
     const beginPointer = (e: PointerEvent) => {
       if (e.isPrimary) completedPointer = null;
     };
@@ -277,7 +289,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
       document.removeEventListener("pointerdown", beginPointer, true);
       document.removeEventListener("click", consumeClick, true);
     });
-  });
+  }
 
   // Pointer-up remains the primary activation path: iOS WebKit can omit the
   // compatibility click after our focus-preserving canceled pointerdown (#434).
@@ -342,7 +354,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
     // The toolbar belongs to the mobile shell, not a particular editor DOM node.
     // Preserve its buttons and horizontal scroll through bridge handoffs; only
     // its visibility follows focus/keyboard state.
-    <Show when={isMobilePlatform}>
+    <Show when={touchPrimary()}>
       <div
         ref={toolbarRef}
         class="mobile-keyboard-toolbar"

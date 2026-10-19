@@ -435,46 +435,8 @@ fn sorted_alias_owners(
 mod page_names;
 pub(crate) use page_names::{real_page_names, RealPageNames};
 
-/// The alias relation of one generation, indexed once: normalized name to its
-/// alias-adjacent normalized names, and to the spellings it was written with.
-/// A component walk then costs O(component), not O(every alias in the graph)
-/// (I-25); a save that moves no alias carries the whole value by `Arc`.
-#[derive(Default)]
-pub(crate) struct AliasEdges {
-    neighbors: std::collections::HashMap<String, Vec<String>>,
-    originals: std::collections::HashMap<String, Vec<String>>,
-}
-
-impl AliasEdges {
-    pub(crate) fn new(aliases: &[(String, String)]) -> Self {
-        let mut edges = Self::default();
-        for (alias, owner) in aliases {
-            let alias_norm = refs::page_key(alias);
-            let owner_norm = refs::page_key(owner);
-            edges
-                .neighbors
-                .entry(alias_norm.clone())
-                .or_default()
-                .push(owner_norm.clone());
-            edges
-                .neighbors
-                .entry(owner_norm.clone())
-                .or_default()
-                .push(alias_norm.clone());
-            edges
-                .originals
-                .entry(alias_norm)
-                .or_default()
-                .push(alias.clone());
-            edges
-                .originals
-                .entry(owner_norm)
-                .or_default()
-                .push(owner.clone());
-        }
-        edges
-    }
-}
+mod alias_relation;
+pub(crate) use alias_relation::{AliasEdges, AliasRelation, AliasRow};
 
 /// Resolve a requested page/alias to its canonical display name, the complete
 /// alias-connected component, and the real page to exclude as self. The
@@ -492,9 +454,7 @@ fn equivalent_page_names(
         if !component.insert(name.clone()) {
             continue;
         }
-        if let Some(adjacent) = edges.neighbors.get(&name) {
-            pending.extend(adjacent.iter().cloned());
-        }
+        pending.extend(edges.neighbors(&name).cloned());
     }
 
     let canonical = component
@@ -509,8 +469,7 @@ fn equivalent_page_names(
                 .chain(
                     component
                         .iter()
-                        .filter_map(|name| edges.originals.get(name))
-                        .flatten()
+                        .flat_map(|name| edges.originals(name))
                         .map(String::as_str),
                 )
                 .min()
@@ -1484,26 +1443,13 @@ pub(crate) fn search_cancellable_result(
 }
 
 /// Scan all graph blocks for templates and return insertion DTOs; do not insert.
-/// Include roots unless template-including-parent is false; strip id properties
-/// and included roots' template property. O(graph blocks plus copied subtrees).
+/// Each block's answer is `tine_core::template::template_of`, the one shared
+/// with the file-scoped daily-template lookup. O(graph blocks plus copied subtrees).
 pub(crate) fn templates(graph: &ReadSnapshot) -> Vec<TemplateDto> {
     graph.with_pages(|pages| {
         let mut out: Vec<TemplateDto> = Vec::new();
         for (entry, doc) in pages {
-            walk(&doc.roots, &mut |b| {
-                let Some(name) = b.property("template") else {
-                    return;
-                };
-                if name.is_empty() {
-                    return;
-                }
-                let include_parent =
-                    b.property("template-including-parent").as_deref() != Some("false");
-                let blocks = if include_parent {
-                    vec![template_dto(b, true)]
-                } else {
-                    b.children.iter().map(|c| template_dto(c, false)).collect()
-                };
+            tine_core::template::templates_in(&doc.roots, &mut |name, blocks| {
                 out.push(TemplateDto {
                     name,
                     blocks,
@@ -1514,61 +1460,6 @@ pub(crate) fn templates(graph: &ReadSnapshot) -> Vec<TemplateDto> {
         }
         out
     })
-}
-
-/// Convert a template block subtree to a DTO, dropping `id::` (so inserted
-/// copies get fresh ids) and, at the root, the `template*` properties.
-fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
-    let raw = b
-        .projection()
-        .regions
-        .apply(
-            b.raw(),
-            b.is_org(),
-            tine_core::block_regions::Edit::StripCopy {
-                template: strip_template,
-            },
-        )
-        .expect("parsed template");
-    BlockDto {
-        id: String::new(),
-        raw,
-        collapsed: b.collapsed(),
-        children: b.children.iter().map(|c| template_dto(c, false)).collect(),
-        breadcrumb: Vec::new(),
-        ..Default::default()
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn template_copy_drops_markdown_and_org_ids_regardless_of_case() {
-    let block = DocBlock::new("body\nID:: md-id\n:PROPERTIES:\n:Id: org-id\n:END:\nkeep:: yes");
-    let copied = template_dto(&block, false);
-    assert_eq!(copied.raw, "body\n:PROPERTIES:\n:END:\nkeep:: yes");
-}
-
-#[cfg(test)]
-#[test]
-fn template_copy_preserves_collapsed_state() {
-    for (raw, expected) in [
-        ("section\ncollapsed:: true", true),
-        ("section\ncollapsed:: false", false),
-        ("section", false),
-        ("section\n:PROPERTIES:\n:collapsed: true\n:END:", true),
-        ("```\ncollapsed:: true\n```", false),
-    ] {
-        let mut block = DocBlock::new(raw);
-        block.set_org(raw.contains(":PROPERTIES:"));
-        block
-            .children
-            .push(DocBlock::new("nested\ncollapsed:: true"));
-        let copied = template_dto(&block, false);
-        assert_eq!(copied.collapsed, expected, "{raw}");
-        assert_eq!(copied.raw, raw);
-        assert!(copied.children[0].collapsed);
-        assert!(copied.id.is_empty());
-    }
 }
 
 /// Distinct property keys (each with its sorted distinct values) used across the
@@ -4418,6 +4309,34 @@ mod tests {
     }
 
     #[test]
+    fn priority_markers_link_to_the_priority_page_like_og() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("tine-priority-backlinks-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            "- [#A] call Alice\n- TODO [#A] call Bob\n- [#B] mid\n- see [#A] later\n- `[#A] code`\n- ordinary A word\n",
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        let a = backlinks(&graph, "A");
+        assert_eq!(a.len(), 1);
+        let raws: Vec<&str> = a[0].blocks.iter().map(|b| b.raw.as_str()).collect();
+        assert_eq!(raws, ["[#A] call Alice", "TODO [#A] call Bob"]);
+        // Page identity is case-insensitive: "a" is the same page.
+        assert_eq!(backlinks(&graph, "a")[0].blocks.len(), 2);
+        assert_eq!(backlinks(&graph, "B")[0].blocks[0].raw, "[#B] mid");
+        // The plain word "A" is an unlinked mention, never the priority block.
+        assert!(!unlinked_refs(&graph, "A")
+            .iter()
+            .flat_map(|g| &g.blocks)
+            .any(|b| b.raw.contains("[#")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn disabled_property_pages_suppress_only_key_membership() {
         use std::fs;
 
@@ -5032,13 +4951,13 @@ mod region_template_regression {
         let raw = "Task\ntemplate:: Example\nid:: real\n```\nid:: literal\ntemplate:: literal\n```";
         let b = tine_core::doc::DocBlock::new(raw);
         assert_eq!(
-            super::template_dto(&b, true).raw,
+            tine_core::template::template_copy(&b, true).raw,
             "Task\n```\nid:: literal\ntemplate:: literal\n```"
         );
         let mut b = tine_core::doc::DocBlock::new(
             "Task\n:PROPERTIES:\n:template: Example\n:id: real\n:END:",
         );
         b.set_org(true);
-        assert_eq!(super::template_dto(&b, true).raw, "Task");
+        assert_eq!(tine_core::template::template_copy(&b, true).raw, "Task");
     }
 }

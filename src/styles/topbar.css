@@ -61,8 +61,8 @@
 }
 
 /* Two occupants reach the real fit boundary before a phone does: a frameless
-   desktop window's three window buttons, and a desktop tab strip (phones hide
-   it), which needs room for at least one readable tab pill. Only those topbars
+   desktop window's three window buttons, and a tab strip (shown only at 640px
+   and wider, tabStripFits() in viewportClass.ts), which needs room for at least one readable tab pill. Only those topbars
    collapse here, not every phone (GH #205, master a006f1308; og H). */
 @container topbar (max-width: 460px) {
   .topbar:where(:has(.win-controls, .tab-bar)) .topbar-optional-action,
@@ -111,10 +111,10 @@
   }
 }
 
-/* A desktop tab strip needs one whole 112px pill beside the fixed clusters;
+/* A tab strip needs one whole 112px pill beside the fixed clusters;
    below a 440px window it would be squeezed to a couple of letters (og-f).
    Desktop has Back/Forward shortcuts and mouse buttons, so the pair moves to
-   the menu here; phones (no tab strip) keep it inline until 300px (og H). */
+   the menu here; a topbar without a strip (a phone-width window) keeps it inline until 300px (og H). */
 @container topbar (max-width: 411px) {
   .topbar:where(:has(.tab-bar)) .topbar-navigation-action {
     display: none;

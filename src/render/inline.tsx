@@ -49,6 +49,7 @@ import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallb
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
+import { touchPrimary } from "../inputCapability";
 import { blockRefTarget, resolveBlockBatched } from "../resolveBatch";
 import { SourceTaskCheckbox } from "../components/SourceTaskCheckbox";
 import { blockRef, setRaw, flushPage, formatForPage, formatForBlock, isBlockRefUuid, node as docNode, pageHeaderProperties } from "../document";
@@ -405,7 +406,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           if (!shouldOpenTextContextMenu(e)) return;
           e.preventDefault();
           e.stopPropagation();
-          if (isMobilePlatform && isLongPressContextMenu(e)) peek.hold();
+          if (touchPrimary() && isLongPressContextMenu(e)) peek.hold();
           else if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
         }}
       >
@@ -1261,7 +1262,7 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
       const fmt = formatForBlock(props.blockId);
       if (parserReady() && expansionIsBlockLevel(expanded, fmt)) {
         return (
-          <div class="macro-blocks">
+          <div class="macro-blocks" data-foreign-source="macro">
             <AstBody raw={expanded} blockId={props.blockId} format={fmt} headingLevel={expansionHeadingLevel(expanded, fmt)} macroExpansion />
           </div>
         );
@@ -1366,6 +1367,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
       <span
         ref={anchorEl}
         data-block-ref={props.id}
+        data-foreign-source="block-ref"
         class="block-ref"
         classList={{ "block-ref-missing": !grp() }}
         {...(props.spanAttrs ?? {})}

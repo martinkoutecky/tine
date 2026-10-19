@@ -32,7 +32,7 @@ icon:: 🛟
 	- 3. What you should see: a snapshot is taken first, the files take their date names, and the days appear in the journal feed.
 - ## Tine will not start
 	- 1. Set `TINE_DEBUG=1` in the environment when you launch Tine, reproduce the problem, then quit.
-	- 2. By default the log is `tine-debug.log` in your platform's temporary folder; `TINE_DEBUG_LOG=/path` overrides it.
+	- 2. By default the log is `tine-debug.log` in your platform's temporary folder (portable Windows Tine: in `tine-data\<app id>\local\logs` beside `Tine.exe`); `TINE_DEBUG_LOG=/path` overrides it.
 	- 3. What you should see: a timestamped trace covering the environment, startup milestones, and any panic with a backtrace. It records no note content — send that file with your report.
 	- 4. On Linux, if the window never appears at all, launch once with `TINE_GPU=0`: a rare GPU/WebKitGTK rendering failure then falls back to software rendering.
 - ## Tine could not open your last graph
