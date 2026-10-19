@@ -30,6 +30,9 @@ pub(super) struct Deferred {
     /// A publication was deferred since open, also one with no change of
     /// its own (rows an ownership transition retired).
     any: bool,
+    /// Files of deferred changes already published early (a view appeared
+    /// before Ready): the launch pass still must not announce them.
+    published_early: HashSet<String>,
 }
 
 impl Store {
@@ -96,6 +99,11 @@ impl ChangeFeed {
         self.deferred.lock().unwrap().any
     }
 
+    /// Whether deferred changes wait to be published.
+    pub(super) fn has_deferred_changes(&self) -> bool {
+        !self.deferred.lock().unwrap().changes.is_empty()
+    }
+
     /// The launch pass's files written since open, less those a deferred
     /// publication names: its own change, after the first view, announces
     /// them (an own save is not announced as an outside write).
@@ -106,6 +114,7 @@ impl ChangeFeed {
         let deferred = self.deferred.lock().unwrap();
         let named: HashSet<&str> = (deferred.changes.iter())
             .flat_map(|change| change.files.iter().map(|(id, _, _)| id.as_str()))
+            .chain(deferred.published_early.iter().map(String::as_str))
             .collect();
         written.retain(|(path, ..)| !named.contains(self.graph.rel_path(path).as_str()));
         written
@@ -120,7 +129,28 @@ impl ChangeFeed {
         let Some(watch) = watch else {
             return;
         };
-        for change in deferred.changes {
+        self.publish_deferred(deferred.changes, watch);
+    }
+
+    /// Publish the waiting changes now, before Ready, because a view already
+    /// exists (review R1). Deferral stays on record until the load ends: the
+    /// launch checkpoint stays declined and the launch pass still does not
+    /// announce these files as outside writes. The caller holds the writer.
+    pub(super) fn publish_deferred_early(&self, watch: &crate::watch::Core) {
+        let changes = {
+            let mut deferred = self.deferred.lock().unwrap();
+            let changes = std::mem::take(&mut deferred.changes);
+            let ids: Vec<String> = (changes.iter())
+                .flat_map(|change| change.files.iter().map(|(id, _, _)| id.as_str().to_owned()))
+                .collect();
+            deferred.published_early.extend(ids);
+            changes
+        };
+        self.publish_deferred(changes, watch);
+    }
+
+    fn publish_deferred(&self, changes: Vec<DeferredChange>, watch: &crate::watch::Core) {
+        for change in changes {
             // Named from the cache now: a later deferred save of the same
             // page may have renamed it since.
             self.publish_observed(

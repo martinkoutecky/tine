@@ -87,11 +87,12 @@ pub fn named_template_from_files(
         if stop() {
             return Ok(NamedTemplate::Unsettled);
         }
-        let bytes = match store.read(&entry.id, None) {
+        let bytes = match store.read(&entry.id, Some(tine_store::PARSE_INPUT_MAX_BYTES)) {
             Ok((bytes, _)) => bytes,
             // Deleted since the listing: the graph will not have it either.
             Err(StoreError::NotFound) => continue,
             Err(StoreError::Closed) => return Err(crate::store_error(StoreError::Closed)),
+            // Also a file over the parse cap (TooLarge, review F4): the graph answers.
             Err(_) => return Ok(NamedTemplate::Unsettled),
         };
         if !may_define_template(&bytes) {

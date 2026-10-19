@@ -395,3 +395,195 @@ fn early_file_answers_stand_down_while_a_launch_checkpoint_is_served() {
     fs::remove_file(&held).unwrap();
     store.close();
 }
+
+// Review r1 (subagent-tasks/notes/review-og-loading-own-save.md): R1 and the
+// F3 scenarios the contract names.
+
+fn feed_files(feed: &crate::Subscription) -> Vec<(Origin, Vec<(String, ChangeKind)>)> {
+    std::iter::from_fn(|| feed.try_recv().unwrap())
+        .map(|change| {
+            let files = (change.files.iter())
+                .map(|(id, kind, _)| (id.as_str().to_owned(), *kind))
+                .collect();
+            (change.origin, files)
+        })
+        .collect()
+}
+
+fn names_c(changes: &[(Origin, Vec<(String, ChangeKind)>)]) -> Vec<Origin> {
+    (changes.iter())
+        .filter(|(_, files)| files.iter().any(|(id, _)| id == "pages/C.md"))
+        .map(|(origin, _)| *origin)
+        .collect()
+}
+
+/// R1: a config write during loading publishes a view before Ready; the
+/// save deferred before it is published first, so C's own changes keep
+/// save order, and neither is announced as an outside write.
+#[test]
+fn a_config_write_during_loading_keeps_own_changes_in_save_order() {
+    let root = graph();
+    let store = held_open(root.path());
+    let feed = store.subscribe();
+    let listed = pause();
+    *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
+    go(root.path());
+    wait_hook(&listed);
+    let read = store.page(&PageId::from("pages/C.md")).unwrap();
+    let first = edit(&store, "C", read.rev, "own C");
+    let cfg = FileId::from("logseq/config.edn".to_owned());
+    let (_, config_rev) = store.read(&cfg, None).unwrap();
+    let mut tx = store.transaction(None);
+    tx.replace(
+        &cfg,
+        config_rev,
+        b"{:preferred-format :markdown :x 1}\n".to_vec(),
+    );
+    assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+    let second = edit(&store, "C", first.clone(), "own C two");
+    release_hook(&listed);
+    assert_once(&store, "C", "own C two");
+    std::thread::sleep(Duration::from_millis(200));
+    let c: Vec<_> = std::iter::from_fn(|| feed.try_recv().unwrap())
+        .filter_map(|change| {
+            let rev = (change.files.iter())
+                .find(|(id, _, _)| id.as_str() == "pages/C.md")
+                .map(|(_, _, rev)| rev.clone())?;
+            Some((change.origin, rev))
+        })
+        .collect();
+    assert_eq!(
+        c,
+        [(Origin::Own, Some(first)), (Origin::Own, Some(second))],
+        "C's own changes in save order, none announced as outside"
+    );
+    store.close();
+}
+
+/// F3: a trash during the parse, after it read the page, is gone from the
+/// first view, and the own delete is not announced as an outside write.
+#[test]
+fn a_trash_after_the_parse_read_the_page_is_gone_from_the_first_view() {
+    let root = graph();
+    let store = held_open(root.path());
+    let feed = store.subscribe();
+    let listed = pause();
+    *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
+    go(root.path());
+    wait_hook(&listed);
+    for name in ["A", "B", "C", "D", "E"] {
+        let read = store
+            .page(&PageId::from(format!("pages/{name}.md").as_str()))
+            .unwrap();
+        let mut tx = store.transaction(Some(crate::EditKind::DeletePage));
+        tx.trash(
+            &FileId::from(format!("pages/{name}.md")),
+            read.rev,
+            crate::TrashIf::Any,
+        );
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+    }
+    release_hook(&listed);
+    let view = store.whole_graph().unwrap();
+    let names: Vec<_> = view.corpus().pages.iter().map(|p| p.name.clone()).collect();
+    for name in ["A", "B", "C", "D", "E"] {
+        assert!(
+            !names.iter().any(|n| n.eq_ignore_ascii_case(name)),
+            "{name} resurrected: {names:?}"
+        );
+    }
+    let got = feed_files(&feed);
+    assert!(
+        !got.iter().any(
+            |(o, f)| *o == Origin::External && f.iter().any(|(id, _)| id.starts_with("pages/"))
+        ),
+        "own delete announced as outside: {got:?}"
+    );
+    store.close();
+}
+
+/// F3: a rename during the parse, after it read the page: the first view
+/// holds the new name once and not the old one.
+#[test]
+fn a_rename_after_the_parse_read_the_page_holds_the_new_name_once() {
+    let root = graph();
+    let store = held_open(root.path());
+    let listed = pause();
+    *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
+    go(root.path());
+    wait_hook(&listed);
+    for name in ["A", "B", "C", "D", "E"] {
+        let read = store
+            .page(&PageId::from(format!("pages/{name}.md").as_str()))
+            .unwrap();
+        let mut tx = store.transaction(Some(crate::EditKind::RenamePage));
+        tx.move_file(
+            &FileId::from(format!("pages/{name}.md")),
+            read.rev,
+            &FileId::from(format!("pages/{name}2.md")),
+            None,
+        );
+        assert!(matches!(tx.commit(), crate::TxOutcome::Committed { .. }));
+    }
+    release_hook(&listed);
+    let view = store.whole_graph().unwrap();
+    let names: Vec<_> = view
+        .corpus()
+        .pages
+        .iter()
+        .map(|p| p.name.to_lowercase())
+        .collect();
+    for name in ["a", "b", "c", "d", "e"] {
+        assert!(
+            !names.contains(&name.to_string()),
+            "{name} resurrected: {names:?}"
+        );
+        assert_eq!(
+            names.iter().filter(|n| **n == format!("{name}2")).count(),
+            1,
+            "{names:?}"
+        );
+    }
+    store.close();
+}
+
+/// F3: an outside writer (an editor, sync delivery) after a deferred own
+/// save: the outside bytes win and are announced as outside.
+#[test]
+fn an_outside_write_after_a_deferred_save_is_kept_and_announced() {
+    let root = graph();
+    let store = held_open(root.path());
+    let feed = store.subscribe();
+    let listed = pause();
+    *store.graph.warm_after_first_page_pause.lock().unwrap() = Some(Arc::clone(&listed));
+    go(root.path());
+    wait_hook(&listed);
+    let read = store.page(&PageId::from("pages/C.md")).unwrap();
+    edit(&store, "C", read.rev, "own C");
+    std::thread::sleep(Duration::from_millis(30));
+    fs::write(root.path().join("pages/C.md"), "- outside C longer bytes\n").unwrap();
+    release_hook(&listed);
+    assert_once(&store, "C", "outside C");
+    std::thread::sleep(Duration::from_millis(200));
+    let got = feed_files(&feed);
+    assert!(
+        names_c(&got).contains(&Origin::External),
+        "the outside write was swallowed: {got:?}"
+    );
+    store.close();
+}
+
+/// F3: closing with saves still deferred loses nothing: the bytes are on
+/// disk and the next open's first view holds them.
+#[test]
+fn closing_with_deferred_saves_then_reopening_keeps_them() {
+    let root = graph();
+    let store = held_open(root.path());
+    create(&store, "New", "durable");
+    store.close();
+    drop(store);
+    let _ = fs::remove_file(root.path().join(".tine-test-pause-load"));
+    let (store, _, _) = Store::open(root.path(), Default::default()).unwrap();
+    assert_once(&store, "New", "durable");
+    store.close();
+}

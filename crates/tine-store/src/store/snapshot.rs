@@ -428,6 +428,13 @@ impl Store {
             self.defer_publication(origin, files, pages, (raced, journal_set_changed));
             return (self.changes.rev(), None);
         }
+        // A publication that does not wait while changes still do (a config
+        // write during loading publishes the first view early): the waiting
+        // changes go first, so own changes keep save order (review R1).
+        if self.changes.has_deferred_changes() {
+            self.changes
+                .publish_deferred_early(&self.watch.core_for_load());
+        }
         let rev = self.changes.publish_observed(
             origin,
             files.clone(),

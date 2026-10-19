@@ -95,7 +95,11 @@ cache, a config change, a duplicate journal day) declines the install, and the
 Ready publication builds on demand as before. The Ready publication comes
 first and its view holds each saved page once, with its last saved bytes; the
 deferred changes follow in save order under the same writer hold, and the
-Ready publication does not announce their files as outside writes. A deferred
+Ready publication does not announce their files as outside writes. A
+publication that does not wait while changes still do (a config write during
+loading, which publishes a view early) publishes the waiting changes first, so
+own changes keep save order; their files stay unannounced by the Ready
+publication and the launch checkpoint stays declined. A deferred
 save declines a launch checkpoint not yet installed: the checkpoint lacks the
 save, and the watcher's baseline already holds the save's own stamp, so no
 diff would correct it. A config write never defers. If the load stops, the
