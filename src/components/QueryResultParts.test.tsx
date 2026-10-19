@@ -199,6 +199,28 @@ describe("QueryPageRows", () => {
 });
 
 describe("QueryStatisticsSummary", () => {
+  it("names the grouping and offers no clear control (grouping changes in the View panel)", () => {
+    const { root, dispose } = mount(() => (
+      <QueryStatisticsSummary
+        statistics={{
+          count: 3,
+          aggregates: [["", "count"]],
+          group_by: "prop:status",
+          overall: [{ kind: "number", value: 3, skipped: 0 }],
+          groups: [{ key: "open", count: 3, cells: [{ kind: "number", value: 3, skipped: 0 }] }],
+          grouping_status: "exact",
+        }}
+      />
+    ));
+    try {
+      expect(root.textContent).toContain("Grouped by status");
+      expect(root.querySelector("button")).toBeNull();
+      expect(root.querySelector('[aria-label="Clear grouping"]')).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
   it("shows the engine's overall aggregates, including a marker instead of a number", () => {
     const { root, dispose } = mount(() => (
       <QueryStatisticsSummary

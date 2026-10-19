@@ -126,8 +126,8 @@ export function QueryPageRows(props: { rows: PageRow[]; view: QueryView; groupBy
  *  answerer (I-12) instead of a frontend fold over the returned rows. An absent
  *  answer is never a numeric zero. Grouping is named; a sole missing-value
  *  group shows overall totals instead of a table. O(returned statistic cells);
- *  the host supplies a clear action only on writable surfaces. */
-export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onClearGrouping?: () => void }): JSX.Element {
+ *  grouping is changed in the Display menu, not here. */
+export function QueryStatisticsSummary(props: { statistics: QueryStatistics }): JSX.Element {
   const stop = (e: MouseEvent) => e.stopPropagation();
   const summary = createMemo(() => querySummary({ statistics: props.statistics })!);
   const groupLabel = () => {
@@ -143,9 +143,6 @@ export function QueryStatisticsSummary(props: { statistics: QueryStatistics; onC
       <Show when={props.statistics.group_by}>
         <div class="query-summary" onClick={stop}>
           <span class="qs-label">{t("query-grouped-by", { field: groupLabel() ?? "" })}</span>
-          <Show when={props.onClearGrouping}>
-            <button type="button" class="query-grouping-clear" aria-label={t("query-query-result-parts-clear-grouping")} onClick={() => props.onClearGrouping?.()}>{t("query-query-sheet-parts-clear")}</button>
-          </Show>
         </div>
       </Show>
       <Show when={summary().notice}>

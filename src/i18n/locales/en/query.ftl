@@ -554,7 +554,6 @@ query-query-result-parts-page-results-grouped = Page results grouped
 query-query-result-parts-no-value = No value
 
 
-query-query-result-parts-clear-grouping = Clear grouping
 
 
 

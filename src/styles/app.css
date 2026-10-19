@@ -8912,9 +8912,6 @@ html.tine-embed-shading-accent .embed-block {
 .query-page-prop-key {
   color: var(--text-muted);
 }
-.query-grouping-clear {
-  margin-left: 8px;
-}
 .query-results-list .query-page-props-edit,
 .query-page-props-edit {
   display: inline-block;

@@ -32,24 +32,35 @@ try {
     assert.equal(await page.locator(".query-page-props").count(), 9);
     assert.ok((await page.locator(".query-page-props").first().textContent()).includes("source: Synthetic corpus"));
     assert.equal(await page.locator(".query-summary-table").count(), 1);
-    assert.equal(await page.locator('[aria-label="Clear grouping"]').count(), 2);
+    // Calm query blocks carry no summary row: the grouping is named, never cleared from the results.
+    assert.equal(await page.locator('[aria-label="Clear grouping"]').count(), 0);
+    assert.equal(await page.locator(".query-grouping-clear").count(), 0);
     const raw = await page.evaluate(() => window.__qbvRaw());
     assert.ok(!raw[0].includes("group-field"), "rendering must not persist a grouping");
     await page.screenshot({ path: `${out}/qbv-query-results-${width}.png`, fullPage: true });
-    await page.locator('[aria-label="Clear grouping"]').first().click();
-    await page.waitForFunction(() => !document.body.textContent.includes("Grouped by anchor"));
+    // Grouping is cleared from the block's View panel (query actions -> View -> None).
+    await page.locator('[aria-label="Query actions"]').nth(1).click();
+    // The harness has no popover anchoring, so the menu sits at the page corner under the results: click by DOM.
+    await page.getByRole("button", { name: "View", exact: true }).evaluate((button) => button.click());
+    await page.locator(".qc-panel").getByRole("button", { name: "None", exact: true }).first().evaluate((button) => button.click());
+    // The harness has no save pipeline, so the shown answer is not re-adopted; what a clear does is the write.
+    await page.getByRole("button", { name: "Done", exact: true }).evaluate((button) => button.click());
+    await page.waitForFunction(() => window.__qbvRaw()[1].includes("tine.group-field::") && !window.__qbvRaw()[1].includes("prop:anchor"));
     assert.ok((await page.evaluate(() => window.__qbvRaw()))[1].includes("tine.group-field::"));
     assert.equal(await page.locator(".query-page-link").count(), 9);
-    await page.locator(".qs-gear").first().click();
-    await page.locator(".qd-trigger").click();
-    await page.getByRole("button", { name: "Change", exact: true }).click();
+    // Opening the grouping picker writes nothing; choosing a field does.
+    const cleared = (await page.evaluate(() => window.__qbvRaw()))[1];
+    await page.locator('[aria-label="Query actions"]').nth(1).click();
+    await page.getByRole("button", { name: "View", exact: true }).evaluate((button) => button.click());
+    await page.locator(".qc-panel").getByRole("button", { name: "Change", exact: true }).first().evaluate((button) => button.click());
     await page.getByRole("option", { name: "anchor", exact: true }).waitFor();
-    assert.equal((await page.evaluate(() => window.__qbvRaw()))[0], raw[0], "opening the grouping picker writes nothing");
-    await page.getByRole("option", { name: "anchor", exact: true }).click();
-    await page.waitForFunction(() => window.__qbvRaw()[0].includes("tine.group-field:: prop:anchor"));
-    assert.equal(await page.locator(".query-summary-table").count(), 1);
+    assert.equal((await page.evaluate(() => window.__qbvRaw()))[1], cleared, "opening the grouping picker writes nothing");
+    await page.getByRole("option", { name: "anchor", exact: true }).evaluate((option) => option.click());
+    await page.waitForFunction(() => window.__qbvRaw()[1].includes("tine.group-field:: prop:anchor"));
+    await page.getByRole("button", { name: "Done", exact: true }).evaluate((button) => button.click());
+    assert.equal(await page.locator('[aria-label="Clear grouping"]').count(), 0);
     await page.close();
-    console.log(`ok QBV ${width}px: title rows with property text, named grouping, sole missing group hidden, clear persisted`);
+    console.log(`ok QBV ${width}px: title rows with property text, named grouping with no clear button, clear and re-group persisted from the View panel`);
   }
 } finally {
   await browser?.close();
