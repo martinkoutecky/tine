@@ -1914,6 +1914,42 @@ mod og_20d_guide_tests {
         }
     }
 
+    /// CLI slice 3 (D-20261019-CL1…CL4): git runs, the user's snapshot first,
+    /// the squash conditions and a revert that keeps the user's later edits.
+    #[test]
+    fn command_line_guide_teaches_git_runs() {
+        let cli = page("Reference/Command line");
+        for command in [
+            "tine run begin",
+            "--run",
+            "TINE_RUN",
+            "tine run show",
+            "tine run end",
+            "tine run revert",
+        ] {
+            assert!(cli.contains(command), "Guide must teach {command}");
+        }
+        let blocks: Vec<_> = cli.lines().map(str::to_lowercase).collect();
+        for concepts in [
+            vec![
+                "git repository",
+                "committed",
+                "your own git name",
+                "agent's commit",
+            ],
+            vec!["squashes", "pushed", "left as they are"],
+            vec!["revert", "you changed since", "keeps your text", "listed"],
+            vec!["merge or rebase", "detached", "not committed"],
+        ] {
+            assert!(
+                blocks
+                    .iter()
+                    .any(|block| concepts.iter().all(|concept| block.contains(concept))),
+                "Command-line onboarding must connect {concepts:?}"
+            );
+        }
+    }
+
     /// og 21a: a live-draft conflict is merged at the page and survives a
     /// restart; a rename leaves a mid-merge referrer alone and says so.
     #[test]

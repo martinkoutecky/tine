@@ -152,9 +152,6 @@ enum Command {
         content: String,
         #[command(flatten)]
         place: AddPlace,
-        /// Author on created blocks (default: TINE_AUTHOR, else agent).
-        #[arg(long)]
-        author: Option<String>,
         #[command(flatten)]
         write: WriteArgs,
     },
@@ -180,6 +177,51 @@ enum Command {
     Prop {
         #[command(subcommand)]
         action: PropAction,
+    },
+    /// Group writes into a git run: each write made with `--run ID` is
+    /// committed (after a snapshot of your own pending edits), and the run can
+    /// be squashed or reverted as one.
+    Run {
+        #[command(subcommand)]
+        action: RunAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum RunAction {
+    /// Check the graph's git repository and print a new run id.
+    Begin {
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// List the run's commits.
+    Show {
+        #[arg(value_name = "RUN", env = "TINE_RUN")]
+        run: String,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// Squash the run into one commit when none of it is pushed, branched
+    /// or interleaved with other commits; otherwise leave it as it is.
+    End {
+        #[arg(value_name = "RUN", env = "TINE_RUN")]
+        run: String,
+        /// Subject of the squashed commit.
+        #[arg(long, short = 'm', value_name = "MESSAGE")]
+        message: Option<String>,
+        #[command(flatten)]
+        read: ReadArgs,
+    },
+    /// Undo the run's edits, newest first. A block you changed since keeps
+    /// your text and is listed.
+    Revert {
+        #[arg(value_name = "RUN", env = "TINE_RUN")]
+        run: String,
+        /// Name on the revert commits (default: TINE_AUTHOR, else agent).
+        #[arg(long, env = "TINE_AUTHOR")]
+        author: Option<String>,
+        #[command(flatten)]
+        read: ReadArgs,
     },
 }
 
@@ -252,6 +294,25 @@ struct WriteArgs {
     /// required for a bare PAGE/POS without a fingerprint.
     #[arg(long, value_name = "REV")]
     rev: Option<String>,
+    /// Commit this write to the graph's git repository as part of RUN (from
+    /// `tine run begin`).
+    #[arg(long, value_name = "RUN", env = "TINE_RUN")]
+    run: Option<String>,
+    /// Author on created blocks and on the run's commits (default: agent).
+    #[arg(long, env = "TINE_AUTHOR")]
+    author: Option<String>,
+}
+
+impl WriteArgs {
+    /// The verb's arguments plus `rev`, `run` and `author`.
+    fn args(&self, mut fields: serde_json::Value) -> serde_json::Value {
+        if let Some(object) = fields.as_object_mut() {
+            object.insert("rev".into(), serde_json::json!(self.rev));
+            object.insert("run".into(), serde_json::json!(self.run));
+            object.insert("author".into(), serde_json::json!(self.author));
+        }
+        fields
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -507,7 +568,8 @@ pub(crate) fn dispatch() -> Option<i32> {
             | Command::Prop { .. }
             | Command::Move { .. }
             | Command::Delete { .. }
-            | Command::Add { .. }),
+            | Command::Add { .. }
+            | Command::Run { .. }),
         ) => return Some(read_command(command)),
         Some(Command::Export { format }) => export(format).map(|receipt| {
             terminal_stdout(format_args!(
@@ -586,16 +648,12 @@ fn read_command(command: Command) -> i32 {
             } else {
                 text
             };
-            write_verb(
-                write.read.target(),
-                "block.edit",
-                json!({ "handle": handle, "text": text, "rev": write.rev }),
-            )
+            let args = write.args(json!({ "handle": handle, "text": text }));
+            write_verb(write.read.target(), "block.edit", args)
         }
         Command::Add {
             content,
             place,
-            author,
             write,
         } => {
             let content = if content == "-" {
@@ -609,21 +667,16 @@ fn read_command(command: Command) -> i32 {
             } else {
                 content
             };
-            write_verb(
-                write.read.target(),
-                "block.add",
-                json!({
-                    "content": content, "under": place.under, "after": place.after,
-                    "before": place.before, "page": place.page, "journal": place.journal,
-                    "author": author.or_else(|| std::env::var("TINE_AUTHOR").ok()), "rev": write.rev,
-                }),
-            )
+            let args = write.args(json!({
+                "content": content, "under": place.under, "after": place.after,
+                "before": place.before, "page": place.page, "journal": place.journal,
+            }));
+            write_verb(write.read.target(), "block.add", args)
         }
-        Command::Delete { handle, write } => write_verb(
-            write.read.target(),
-            "block.delete",
-            json!({ "handle": handle, "rev": write.rev }),
-        ),
+        Command::Delete { handle, write } => {
+            let args = write.args(json!({ "handle": handle }));
+            write_verb(write.read.target(), "block.delete", args)
+        }
         Command::Move {
             handle,
             place,
@@ -635,11 +688,8 @@ fn read_command(command: Command) -> i32 {
                 (_, _, Some(to)) => ("before", to),
                 _ => return 2,
             };
-            write_verb(
-                write.read.target(),
-                "block.move",
-                json!({ "handle": handle, "to": to, "at": at, "rev": write.rev }),
-            )
+            let args = write.args(json!({ "handle": handle, "to": to, "at": at }));
+            write_verb(write.read.target(), "block.move", args)
         }
         Command::Prop {
             action:
@@ -649,18 +699,32 @@ fn read_command(command: Command) -> i32 {
                     value,
                     write,
                 },
-        } => write_verb(
-            write.read.target(),
-            "block.prop",
-            json!({ "handle": handle, "key": key, "value": value, "rev": write.rev }),
-        ),
+        } => {
+            let args = write.args(json!({ "handle": handle, "key": key, "value": value }));
+            write_verb(write.read.target(), "block.prop", args)
+        }
         Command::Prop {
             action: PropAction::Remove { handle, key, write },
-        } => write_verb(
-            write.read.target(),
-            "block.prop",
-            json!({ "handle": handle, "key": key, "value": null, "rev": write.rev }),
-        ),
+        } => {
+            let args = write.args(json!({ "handle": handle, "key": key, "value": null }));
+            write_verb(write.read.target(), "block.prop", args)
+        }
+        Command::Run { action } => match action {
+            RunAction::Begin { read } => write_verb(read.target(), "run.begin", json!({})),
+            RunAction::Show { run, read } => {
+                read_verb(read.target(), "run.show", json!({ "run": run }))
+            }
+            RunAction::End { run, message, read } => write_verb(
+                read.target(),
+                "run.end",
+                json!({ "run": run, "message": message }),
+            ),
+            RunAction::Revert { run, author, read } => write_verb(
+                read.target(),
+                "run.revert",
+                json!({ "run": run, "author": author }),
+            ),
+        },
         _ => 2,
     }
 }
@@ -1028,6 +1092,20 @@ mod tests {
             (
                 "tine-prop-remove.1",
                 include_str!("../../docs/tine-prop-remove.1"),
+            ),
+            ("tine-run.1", include_str!("../../docs/tine-run.1")),
+            (
+                "tine-run-begin.1",
+                include_str!("../../docs/tine-run-begin.1"),
+            ),
+            (
+                "tine-run-show.1",
+                include_str!("../../docs/tine-run-show.1"),
+            ),
+            ("tine-run-end.1", include_str!("../../docs/tine-run-end.1")),
+            (
+                "tine-run-revert.1",
+                include_str!("../../docs/tine-run-revert.1"),
             ),
         ];
         if std::env::var_os("TINE_UPDATE_MAN_PAGE").is_some() {

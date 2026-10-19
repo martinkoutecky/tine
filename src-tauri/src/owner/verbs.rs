@@ -215,16 +215,69 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
                 json!({ "namespace": namespace, "pages": pages }),
             ))
         }
-        "block.edit" => super::write::edit_block(slot, args),
-        "block.prop" => super::write::prop_block(slot, args),
-        "block.move" => super::write::move_block(slot, args),
-        "block.delete" => super::write::delete_block(slot, args),
-        "block.add" => super::add::add_block(slot, args),
+        "block.edit" => in_run(slot, args, "tine edit", || {
+            super::write::edit_block(slot, args)
+        }),
+        "block.prop" => in_run(slot, args, "tine prop", || {
+            super::write::prop_block(slot, args)
+        }),
+        "block.move" => in_run(slot, args, "tine move", || {
+            super::write::move_block(slot, args)
+        }),
+        "block.delete" => in_run(slot, args, "tine delete", || {
+            super::write::delete_block(slot, args)
+        }),
+        "block.add" => in_run(slot, args, "tine add", || super::add::add_block(slot, args)),
+        #[cfg(desktop)]
+        "run.begin" => super::git_run::run_begin(slot),
+        #[cfg(desktop)]
+        "run.show" => super::git_run::run_show(slot, args),
+        #[cfg(desktop)]
+        "run.end" => super::git_run::serialized(|| super::git_run::run_end(slot, args)),
+        #[cfg(desktop)]
+        "run.revert" => super::git_run::serialized(|| super::git_run::run_revert(slot, args)),
         other => Err(ErrorBody::new(
             "unknown-verb",
             format!("this owner does not know `{other}`; it may be an older Tine"),
             false,
         )),
+    }
+}
+
+/// A write verb, committed to git when its arguments name a run.
+fn in_run(
+    slot: &GraphSlot,
+    args: &Value,
+    subject: &str,
+    verb: impl FnOnce() -> Result<Value, ErrorBody>,
+) -> Result<Value, ErrorBody> {
+    #[cfg(desktop)]
+    {
+        let Some(run) = super::git_run::run_of(args)? else {
+            return verb();
+        };
+        // The save and its commits as one step, in save order (CL1).
+        super::git_run::serialized(|| {
+            super::git_run::check_repository(slot)?;
+            super::write::in_run(Some(run), subject, verb)
+        })
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = subject;
+        if args
+            .get("run")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.is_empty())
+        {
+            let _ = slot;
+            return Err(super::write::refused(
+                "git",
+                None,
+                "git runs need the desktop app",
+            ));
+        }
+        verb()
     }
 }
 

@@ -28,6 +28,10 @@ mod lifecycle;
 #[path = "owner_tests/proof.rs"]
 mod proof;
 
+#[cfg(desktop)]
+#[path = "owner_tests/git_run_tests.rs"]
+mod git_run;
+
 struct Graph {
     _dir: tempfile::TempDir,
     root: PathBuf,
@@ -503,6 +507,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
         ("arena", include_str!("arena.rs")),
         ("client", include_str!("client.rs")),
         ("endpoint", include_str!("endpoint.rs")),
+        ("git_run", include_str!("git_run.rs")),
         ("lease", include_str!("lease.rs")),
         ("lock", include_str!("lock.rs")),
         ("mod", include_str!("mod.rs")),
@@ -529,7 +534,7 @@ fn the_endpoint_has_no_webview_or_plugin_door() {
             name.ends_with(".rs") && name != "owner_tests.rs"
         })
         .count();
-    assert_eq!(files, 14, "scan every owner/*.rs file");
+    assert_eq!(files, 15, "scan every owner/*.rs file");
     let lib = include_str!("../lib.rs");
     let start = lib.find("generate_handler![").expect("the invoke handler");
     let handlers = &lib[start..start + lib[start..].find("])").unwrap()];

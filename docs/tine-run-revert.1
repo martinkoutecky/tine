@@ -1,0 +1,34 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tine-run-revert 1  "revert " 
+.SH NAME
+tine\-run\-revert \- Undo the run\*(Aqs edits, newest first. A block you changed since keeps your text and is listed
+.SH SYNOPSIS
+\fBtine run revert\fR [\fB\-\-author\fR] [\fB\-\-debug\fR] [\fB\-g\fR|\fB\-\-graph\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIRUN\fR> 
+.SH DESCRIPTION
+Undo the run\*(Aqs edits, newest first. A block you changed since keeps your text and is listed
+.SH OPTIONS
+.TP
+\fB\-\-author\fR \fI<AUTHOR>\fR
+Name on the revert commits (default: TINE_AUTHOR, else agent)
+.RS
+May also be specified with the \fBTINE_AUTHOR\fR environment variable. 
+.RE
+.TP
+\fB\-\-debug\fR
+Enable diagnostic logging for the desktop app
+.TP
+\fB\-g\fR, \fB\-\-graph\fR \fI<GRAPH>\fR
+The graph. Defaults to $TINE_GRAPH, else the graph folder around the current directory
+.TP
+\fB\-\-json\fR
+Print the typed result (schema tine.cli/1) as JSON
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIRUN\fR>
+
+.RS
+May also be specified with the \fBTINE_RUN\fR environment variable. 
+.RE
