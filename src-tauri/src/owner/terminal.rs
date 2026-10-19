@@ -402,7 +402,7 @@ pub(super) fn render(ok: &Value, out: &mut String) {
                 let _ = writeln!(out, "{verb} {}", text(page, "page"));
                 for kept in list(page, "kept") {
                     let what = if text(kept, "reason") == "unclear" {
-                        "not brought back (you changed the agent's version)"
+                        "not brought back (unclear whether you removed it)"
                     } else {
                         "kept your text"
                     };

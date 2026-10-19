@@ -342,29 +342,63 @@ impl Repo {
     /// Point the index entry of `path` at what was committed, so `git status`
     /// shows the file clean when the working tree still has those bytes.
     ///
-    /// The index is the user's: an entry staged with other content than
-    /// `HEAD` had (`tip`) or the commit's base (`old`, kept in the snapshot)
-    /// is left alone, so nothing staged is lost. A held index lock, a
-    /// conflict, or an index another process rewrote meanwhile skips the
-    /// update too; status then shows a spurious change until git refreshes.
+    /// The index is the user's. It is changed under git's own lock protocol:
+    /// `index.lock` is created exclusively first (a held lock means another
+    /// git command is at work: the index is left alone), the index is read
+    /// while the lock is held, and the new index is written into the lock
+    /// file and renamed over the index, so a concurrent `git add` either
+    /// finishes before the read or fails on the lock; it is never
+    /// overwritten. An entry staged with other content than `HEAD` had
+    /// (`tip`) or the commit's base (`old`, kept in the snapshot) is left as
+    /// it is, so nothing staged is lost; so is a conflicted index.
     fn sync_index(
         &self,
         path: &str,
-        bytes: Option<&[u8]>,
+        blob: Option<Oid>,
+        size: u32,
         mode: u32,
         tip: Option<Oid>,
         old: Option<Oid>,
     ) -> IndexSync {
-        let stamp = || {
-            let file = self.repo.path().join("index");
-            std::fs::metadata(&file)
-                .ok()
-                .map(|m| (m.len(), m.modified().ok()))
+        use std::io::Write;
+        let gitdir = self.repo.path();
+        let index_file = gitdir.join("index");
+        let lock_file = gitdir.join("index.lock");
+        let Ok(mut lock) = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_file)
+        else {
+            return IndexSync::Busy;
         };
-        let attempt = || -> Result<IndexSync, git2::Error> {
-            let before = stamp();
-            let mut index = self.repo.index()?;
-            index.read(true)?;
+        // Removes the lock unless it was renamed into place.
+        struct Held<'a>(&'a Path, bool);
+        impl Drop for Held<'_> {
+            fn drop(&mut self) {
+                if !self.1 {
+                    let _ = std::fs::remove_file(self.0);
+                }
+            }
+        }
+        let mut held = Held(&lock_file, false);
+        // A private copy for libgit2 to read and write (its own write would
+        // want the lock this function holds).
+        let scratch = gitdir.join(format!("tine-index-{}.tmp", uuid::Uuid::new_v4().simple()));
+        struct Scratch<'a>(&'a Path);
+        impl Drop for Scratch<'_> {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(self.0);
+                let _ = std::fs::remove_file(self.0.with_extension("tmp.lock"));
+            }
+        }
+        let _scratch = Scratch(&scratch);
+        let mut attempt = || -> Result<IndexSync, Box<dyn std::error::Error>> {
+            match std::fs::copy(&index_file, &scratch) {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+            let mut index = git2::Index::open(&scratch)?;
             if index.has_conflicts() {
                 return Ok(IndexSync::Busy);
             }
@@ -372,37 +406,37 @@ impl Repo {
             if staged != tip && staged != old {
                 return Ok(IndexSync::StagedKept);
             }
-            match bytes {
-                Some(bytes) => {
-                    let entry = git2::IndexEntry {
-                        ctime: git2::IndexTime::new(0, 0),
-                        mtime: git2::IndexTime::new(0, 0),
-                        dev: 0,
-                        ino: 0,
-                        mode,
-                        uid: 0,
-                        gid: 0,
-                        file_size: 0,
-                        id: Oid::ZERO_SHA1,
-                        flags: 0,
-                        flags_extended: 0,
-                        path: path.as_bytes().to_vec(),
-                    };
-                    index.add_frombuffer(&entry, bytes)?;
-                }
+            match blob {
+                Some(id) => index.add(&git2::IndexEntry {
+                    ctime: git2::IndexTime::new(0, 0),
+                    mtime: git2::IndexTime::new(0, 0),
+                    dev: 0,
+                    ino: 0,
+                    mode,
+                    uid: 0,
+                    gid: 0,
+                    file_size: size,
+                    id,
+                    flags: 0,
+                    flags_extended: 0,
+                    path: path.as_bytes().to_vec(),
+                })?,
                 None => {
                     let _ = index.remove_path(Path::new(path));
                 }
             }
-            // libgit2 locks only for the write itself: a `git add` that
-            // rewrote the index since it was read would be overwritten.
-            if stamp() != before {
-                return Ok(IndexSync::Busy);
-            }
             index.write()?;
+            lock.write_all(&std::fs::read(&scratch)?)?;
+            lock.sync_all()?;
+            std::fs::rename(&lock_file, &index_file)?;
             Ok(IndexSync::Synced)
         };
-        attempt().unwrap_or(IndexSync::Busy)
+        let result = attempt();
+        if matches!(result, Ok(IndexSync::Synced)) {
+            held.1 = true;
+        }
+        drop(held);
+        result.unwrap_or(IndexSync::Busy)
     }
 }
 
@@ -554,7 +588,8 @@ fn commit_pair(
         {
             let index = repo.sync_index(
                 &path,
-                new,
+                new_blob,
+                new.map_or(0, |b| b.len() as u32),
                 mode as u32,
                 repo.blob_at(tip_tree.as_ref(), &path),
                 old_blob,
@@ -819,11 +854,16 @@ pub(crate) fn revert_plan(slot: &GraphSlot, id: &RunId) -> Result<Vec<PageSteps>
 ///
 /// The revert is itself a run with a new id (its commits carry `Tine-Run:
 /// <new id>` and `Tine-Run-Revert: <undone id>`), so `run revert <new id>`
-/// undoes the whole revert in one command. Every page is merged before any is
-/// written: a page the merge refuses refuses the revert, with nothing changed.
+/// undoes the revert in one command. Every page is read and merged before any
+/// is written: a page that cannot be read or merged refuses the revert, with
+/// nothing changed. Pages are then saved one by one; a page whose save fails
+/// later is listed with its error, and the pages saved before it stay
+/// reverted (each one's commit is part of the revert run).
 pub(crate) fn run_revert(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
     use tine_graph_features::run_revert::{revert_page, RevertStep};
     let id = id_arg(args)?;
+    // The same pre-write gate as a `--run` write (index lock, repository state).
+    check_repository(slot)?;
     let plan = revert_plan(slot, &id)?;
     let ctx = RunCtx {
         id: RunId::mint(chrono::Utc::now().timestamp()),

@@ -262,7 +262,7 @@ Kind `written`. Write replies carry no page text.
 | `git.committed` | boolean | optional | yes | `true`: the write's bytes are committed. `false`: the file is saved but not committed (`git.error`, `git.message` say why: `refused:git` for a repository error, `refused:git-busy` when the branch kept moving) |
 | `git.commit` | string | optional | no | the agent commit's id |
 | `git.snapshot` | string | nullable | yes | the commit of the user's uncommitted edits to the file, made first under the user's git identity; `null` when `HEAD` already had the bytes the write started from |
-| `git.index` | string | optional | yes | the committed file's index entry: `synced` (now matches the commit), `staged-kept` (the user had other content staged for the file; left staged, nothing of it lost), `busy` (the index was locked, conflicted or rewritten meanwhile; untouched, so `git status` may show the file changed until git refreshes) |
+| `git.index` | string | optional | yes | the committed file's index entry: `synced` (now matches the commit; changed under git's `index.lock` protocol, so a concurrent `git add` is never overwritten), `staged-kept` (the user had other content staged for the file; left staged, nothing of it lost), `busy` (the index was locked or conflicted; untouched, so `git status` may show the file changed until git refreshes) |
 
 Read by the text output: `name`, `rev`, `blocks`, `more`, `git`.
 
@@ -321,8 +321,10 @@ content staged for it (`git.index`).
   run's agent commits), `kept_because` (nullable, disclosure: why nothing was squashed). It squashes only when the
   run's commits are contiguous at the branch tip, more than one, none reachable from another ref (a
   remote-tracking branch, another branch, a tag), and the tip has not moved; the squash has the tip's tree and the
-  commit before the run as parent. Known limit: a push by URL that leaves no ref behind (`git push /path branch`
-  with no remote configured) cannot be seen, and the squash then rewrites published commits. Text: `squashed N commits into COMMIT` or `kept N commits as they are: WHY`.
+  commit before the run as parent. Known limit: only local refs are checked. A push by URL that leaves no ref
+  behind (`git push /path branch` with no remote configured), a copy of the repository made by a file sync
+  (Syncthing) or a tracking ref deleted since cannot be seen, and the squash then rewrites commits another copy
+  has. Text: `squashed N commits into COMMIT` or `kept N commits as they are: WHY`.
 - **`run.revert RUN [--author NAME]`**: kind `run-revert`; `run`, `revert_run` (the revert's own run id),
   `pages` (one per page the run's agent commits touched: `page`, `reverted` (boolean), `rev`, `git` (as for
   `written`; the commit carries `Tine-Run: REVERT_RUN` and `Tine-Run-Revert: RUN`), `kept` (disclosure: blocks
@@ -331,11 +333,14 @@ content staged for it (`git.index`).
   removed or rewrote it beyond pairing and the user has since changed or removed what the agent wrote; `text` is
   then the old block's first line), or `error` + `message` when that page was not reverted). The agent commits
   are undone newest first by a Concord three-way merge per page and one guarded write per page. Every page is
-  merged before any is written: a page whose merge is refused refuses the whole revert with `refused:merge` and
-  nothing changed. The revert is itself a run, so `run revert REVERT_RUN` undoes it in one command. Text:
+  read and merged before any is written: a page that cannot be read or merged refuses the whole revert with
+  `refused:merge` and nothing changed. The pages are then saved one by one, not as one transaction: a page whose
+  save fails is listed with its error and the pages saved before it stay reverted. The revert is itself a run, so
+  `run revert REVERT_RUN` undoes its committed pages in one command; it is not a step of the app's Undo. Text:
   `reverted PAGE` / `unchanged PAGE` / `not reverted PAGE (ERROR): MESSAGE`, each kept block as
-  `  kept your text (REASON): FIRST LINE` (`  not brought back (...) (unclear): FIRST LINE`), then
-  `undo this revert: tine run revert REVERT_RUN`.
+  `  kept your text (REASON): FIRST LINE` (`  not brought back (unclear whether you removed it) (unclear): FIRST
+  LINE`), then `undo this revert: tine run revert REVERT_RUN`. `run revert` passes the same index-lock gate as a
+  `--run` write.
 
 Only commits within 10 minutes before the run's begin time and at most 20,000 first-parent commits back are
 searched.

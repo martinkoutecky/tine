@@ -146,6 +146,16 @@ fn each_run_write_commits_its_bytes_after_a_snapshot_of_the_users_edits() {
         status.is_empty(),
         "the index follows the commit: {status:?}"
     );
+    assert!(
+        !repo.path().join("index.lock").exists(),
+        "the index lock is released"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(repo.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("tine-index-"))
+        .collect();
+    assert!(leftovers.is_empty(), "no scratch index left behind");
 
     // The user's own edit (not in a run), then the agent's next write: the
     // user's bytes are committed first, under the user's name.
@@ -424,4 +434,27 @@ fn a_revert_is_a_run_that_reverting_undoes() {
     assert!(!disk(&graph, "pages/a.md").contains("by the agent"));
     verb(&slot, "run.revert", json!({ "run": again })).unwrap();
     assert_eq!(disk(&graph, "pages/a.md"), by_agent);
+}
+
+#[test]
+fn a_held_index_lock_refuses_a_revert_before_it_changes_anything() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let repo = repo(&graph);
+    let run = begin(&slot);
+    edit(
+        &slot,
+        &handle(&slot, "a", 1),
+        "two, by the agent",
+        Some(&run),
+    );
+    let lock = repo.path().join("index.lock");
+    std::fs::write(&lock, "").unwrap();
+    let before = disk(&graph, "pages/a.md");
+    let tip = head(&repo).id();
+    let (code, detail) = error_code(verb(&slot, "run.revert", json!({ "run": run })));
+    std::fs::remove_file(&lock).unwrap();
+    assert_eq!((code.as_str(), reason(&detail)), ("refused", "git-busy"));
+    assert_eq!(disk(&graph, "pages/a.md"), before);
+    assert_eq!(head(&repo).id(), tip);
 }
