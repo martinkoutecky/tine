@@ -55,6 +55,7 @@ mod page_commands;
 mod pdf_crop_rollback;
 mod platform;
 mod plugins;
+mod portable;
 #[path = "commands/query_export.rs"]
 mod query_export;
 #[path = "commands/query_ir.rs"]
@@ -598,6 +599,12 @@ mod multi_window_tests {
     }
 }
 
+/// GH #719: stop a portable instance whose `tine-data` folder cannot be
+/// written, before the CLI or the app writes anything (`portable.rs`).
+pub fn portable_preflight() {
+    portable::preflight();
+}
+
 /// Dispatch a desktop command before GUI initialization. A returned exit code
 /// means the command already printed its outcome and no app should start.
 #[cfg(desktop)]
@@ -609,6 +616,8 @@ pub fn cli_dispatch() -> Option<i32> {
 pub fn run() {
     #[cfg(target_os = "linux")]
     init_xlib_threads();
+    // GH #719: refuse an unwritable portable folder before anything writes.
+    portable::preflight();
 
     // Bring up debug logging FIRST (TINE_DEBUG=1 / --debug), so every later
     // milestone — and any panic — is captured to the log file from the very start.
@@ -707,6 +716,9 @@ pub fn run() {
     let native_frame_active = settings::init_native_frame_active();
     let force_mobile_drawers = force_mobile_drawers_e2e();
     let mut context = tauri::generate_context!();
+    // GH #719: a portable Windows instance keeps every app directory, and so
+    // the WebView2 user data, in `tine-data` beside the exe (portable.rs).
+    portable::apply(context.config_mut());
     #[cfg(target_os = "windows")]
     {
         let automation_enabled = std::env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() == Ok("true");

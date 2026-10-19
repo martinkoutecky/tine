@@ -2857,6 +2857,7 @@
   "update-installed-restart": "b134c12da86b35f2",
   "update-is-available-but-automatic-updates-are": "f4254679894a9943",
   "update-is-available-the-flatpak-cannot-update": "ac436badde645a4e",
+  "update-is-available-the-portable-build-cannot-update": "9db7b20ce9123b98",
   "update-is-available-you-re-on": "b3361aa656f9f446",
   "update-mac-backup-location": "618bb7f548fda76b",
   "update-mac-install-failed": "1e0a6b75642f57b2",
