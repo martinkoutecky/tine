@@ -177,6 +177,15 @@ pub(crate) struct Derived {
     /// anchor line ([`Graph::vcs_anchor_state`]). A superset is harmless; a
     /// subset would hide a conflicted page. Checkpointed (FORMAT 6).
     vcs_anchored: RwLock<HashSet<PathBuf>>,
+    /// Every path whose cached row [`Graph::put_row`] or
+    /// [`Graph::retire_row`] changed since the last snapshot capture took
+    /// them ([`Graph::take_touched`]). A publication names the files it
+    /// publishes, but the cache can hold more than that: a failed
+    /// transaction caches its own files and an outside writer's together and
+    /// publishes them separately. The capture patches every per-page index
+    /// by these paths too, so no generation misses a mutation its pages root
+    /// contains. A leaf lock; a superset only costs a redundant patch.
+    touched: Mutex<BTreeSet<PathBuf>>,
 }
 
 impl Default for Derived {
@@ -193,6 +202,7 @@ impl Default for Derived {
             launch_listing: RwLock::new(None),
             disk_revs: RwLock::new(HashMap::new()),
             vcs_anchored: RwLock::new(HashSet::new()),
+            touched: Mutex::new(BTreeSet::new()),
         }
     }
 }
@@ -642,6 +652,12 @@ impl Graph {
         std::mem::take(&mut self.held.retired.lock().unwrap())
     }
 
+    /// Paths whose cached rows changed since the last capture (see
+    /// `Derived::touched`).
+    pub(crate) fn take_touched(&self) -> BTreeSet<PathBuf> {
+        std::mem::take(&mut self.derived.touched.lock().unwrap())
+    }
+
     /// Whether a transition settled paths no capture has taken yet.
     pub(crate) fn has_retired(&self) -> bool {
         !self.held.retired.lock().unwrap().is_empty()
@@ -1050,6 +1066,7 @@ impl Graph {
     /// file time, all under the held cache lock.
     fn put_row(&self, pages: &mut Pages, (entry, doc, disk): Row) {
         let path = entry.path.clone();
+        self.derived.touched.lock().unwrap().insert(path.clone());
         let rel = entry.rel_path_str().to_owned();
         match self.cached_page_index_for_path(pages, &entry.path) {
             Some(i) => {
@@ -1101,6 +1118,11 @@ impl Graph {
     /// Remove `path`'s row from `pages` with its revision, anchor and file
     /// time; with `errors`, also its error bookkeeping. True when a row went.
     fn retire_row(&self, pages: Option<&mut Pages>, path: &Path, errors: bool) -> bool {
+        self.derived
+            .touched
+            .lock()
+            .unwrap()
+            .insert(path.to_path_buf());
         let mut removed = false;
         if let Some(pages) = pages {
             if let Some(i) = self.cached_page_index_for_path(pages, path) {

@@ -71,6 +71,42 @@ impl WholeGraph {
     }
 }
 
+#[cfg(test)]
+impl ChangeFeed {
+    /// How many snapshots this feed has published.
+    pub(crate) fn published_count(&self) -> usize {
+        self.published_log.lock().unwrap().len()
+    }
+
+    /// For each snapshot published from index `from` on: the cache
+    /// generation it was captured from, its image, and the image of a
+    /// parent-free capture of the cache as it is now (comparable only at the
+    /// current generation).
+    pub(crate) fn published_images(
+        &self,
+        from: usize,
+        image: &dyn Fn(&crate::model::ReadSnapshot) -> String,
+    ) -> Vec<(u64, String, String)> {
+        let log: Vec<_> = self.published_log.lock().unwrap()[from..].to_vec();
+        log.iter()
+            .map(|snapshot| {
+                let fresh = crate::model::ReadSnapshot::capture(
+                    &self.graph,
+                    (*snapshot.config.config).clone(),
+                    Arc::clone(&snapshot.list),
+                    None,
+                    &[],
+                );
+                (
+                    snapshot.cache_generation,
+                    image(&snapshot.graph),
+                    image(&fresh),
+                )
+            })
+            .collect()
+    }
+}
+
 impl Snapshot {
     pub(super) fn capture(
         graph: &Graph,
@@ -97,6 +133,18 @@ impl Snapshot {
             if !files.iter().any(|(file, _, _)| *file == id) {
                 files.push((id.clone(), ChangeKind::Modified, None));
                 retired.insert(id);
+            }
+        }
+        // Rows the cache changed that no publication named (a failed
+        // transaction publishes its own files and an outside writer's
+        // separately, after caching both): every index patches them now.
+        let mut unnamed = false;
+        for path in graph.take_touched() {
+            let id = FileId::from(graph.rel_path(&path));
+            if !files.iter().any(|(file, _, _)| *file == id) {
+                files.push((id.clone(), ChangeKind::Modified, None));
+                retired.insert(id);
+                unnamed = true;
             }
         }
         let changed_names: Vec<_> = files
@@ -246,9 +294,9 @@ impl Snapshot {
             .map(|(id, _, _)| id.as_str().to_owned())
             .collect();
         let mut folds_only = false;
-        let evaluator = if let Some(old) = old
-            .filter(|old| old.cache_generation == cache_generation && !config_changed && !rebuild)
-        {
+        let evaluator = if let Some(old) = old.filter(|old| {
+            old.cache_generation == cache_generation && !config_changed && !rebuild && !unnamed
+        }) {
             Arc::clone(&old.graph)
         } else {
             let evaluator = ReadSnapshot::capture(

@@ -314,6 +314,9 @@ pub(crate) struct ChangeFeed {
     pub(crate) checkpoint: std::sync::OnceLock<Arc<checkpoint::Signal>>,
     #[cfg(test)]
     pub(crate) snapshot_publish_pause: Mutex<Option<TestPause>>,
+    /// Every snapshot published, in order (tests compare each generation).
+    #[cfg(test)]
+    pub(crate) published_log: Mutex<Vec<Arc<Snapshot>>>,
 }
 
 /// Told `Some(reason)` when the OS refuses live notifications and `None`
@@ -402,6 +405,8 @@ impl ChangeFeed {
             checkpoint: std::sync::OnceLock::new(),
             #[cfg(test)]
             snapshot_publish_pause: Mutex::new(None),
+            #[cfg(test)]
+            published_log: Mutex::new(Vec::new()),
         }
     }
 
@@ -552,6 +557,11 @@ impl ChangeFeed {
         let rev = GraphRev(state.rev);
         debug_assert_eq!(snapshot.rev, rev);
         let answers = snapshot.answers.clone();
+        #[cfg(test)]
+        self.published_log
+            .lock()
+            .unwrap()
+            .push(Arc::clone(&snapshot));
         *self.snapshot.write().unwrap() = Some(snapshot);
         before_notify();
         if !state.closed {

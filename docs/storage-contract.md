@@ -179,15 +179,34 @@ renames an aliased page or deletes one patches that value for the pages the
 save changed (`ReadSnapshot::alias_relation_after`, the same changed paths
 `RealPageNames::capture` uses) and never walks the graph: classes are not
 stored, they are a walk over the adjacency at read time, so a removal that
-splits a class needs no repair. Unit cost (D-20261018-M2b/M2c): in memory
-only; no persisted record, file or transport byte per edit. The launch
-checkpoint writes the alias list and the owner map in the format it always
-had (`FORMAT` unchanged). Pages examined to serve the first alias read after
-one edit, 10,000-page graph: 1 (2 for a rename), where the former rebuild
-walked 10,000. Proof: `crates/tine-store/tests/alias_edit_cost.rs`; the delta
-equals a rebuild after every step of random edit sequences
-(`query/alias_relation.rs` `delta_equals_rebuild_over_random_edit_sequences`,
+splits a class needs no repair. That holds only from a warm predecessor
+relation (the previous generation's, already built or installed from the
+checkpoint); the first alias read of a generation with no relation, such as
+the first after a cold open without a checkpoint or after a rescan, builds it
+and walks every page once. Unit cost (D-20261018-M2b/M2c), scoped to the
+alias relation's page-row work: in memory only; no persisted record, file or
+transport byte per edit. Pages the relation examined to serve the first alias
+read after one edit from a warm relation, 10,000-page graph: 1 (2 for a
+rename), where the former rebuild walked 10,000. The launch checkpoint keeps
+the encoding and the meaning of the alias list and the owner map
+(`FORMAT` unchanged); which lazy slots are occupied does change, since the
+owner map is present whenever the relation is, so a checkpoint is not
+byte-identical to one written before. Proof:
+`crates/tine-store/tests/alias_edit_cost.rs`; the delta equals a rebuild after
+every step of random edit sequences (`query/alias_relation.rs`
+`delta_equals_rebuild_over_random_edit_sequences`,
 `model/index_oracle_tests.rs` `random_alias_edits_equal_a_fresh_build`).
+
+Every per-page index of a generation (this relation, the explicit-reference
+index, the candidate signatures, the name keys and the rest) is patched by the
+files its publication names plus every row the page cache changed since the
+previous capture (`Graph::take_touched`), so a generation never lacks a
+mutation its pages root contains. The case that needs the second set: a failed
+transaction caches the files it wrote and an outside writer's replacement
+together, then publishes them as an Own and an External change; the first
+capture sees both, the second reuses it. Proof:
+`model/index_oracle_tests.rs`
+`split_own_external_publication_equals_a_fresh_build`.
 
 ## Page host binding (step 3b)
 
