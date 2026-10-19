@@ -81,6 +81,7 @@ import {
   secondarySelectionActions,
   type SelectionAction,
 } from "../editor/selectionActions";
+import { selectionActionLabel } from "./SelectionActionLabel";
 import { effectiveHeadingLevel, facetsOf, EMPTY_FACETS, type Facets } from "../render/facets";
 import { CopyButton } from "../render/inline";
 import {
@@ -1122,19 +1123,6 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     applyEdit(action.apply(ref.value, ref.selectionStart, ref.selectionEnd, pageFmt(), ref.selectionDirection));
     setSelectionOverflowOpen(false);
     queueMicrotask(updateSel);
-  };
-  const selectionActionLabel = (action: SelectionAction): JSX.Element => {
-    if (action.id === "bold") return <b>{action.label}</b>;
-    if (action.id === "italic") return <i>{action.label}</i>;
-    if (action.id === "strikethrough") return <s>{action.label}</s>;
-    if (action.id === "highlight") return <mark>{action.label}</mark>;
-    if (action.id === "link") return (
-      <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
-        <path d="M9 15l6-6M10 6l1-1a4 4 0 015.7 5.7l-1 1M14 18l-1 1a4 4 0 01-5.7-5.7l1-1"
-          fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-      </svg>
-    );
-    return action.label;
   };
 
   // Insert `text` in place of the active trigger and restore the caret. If the

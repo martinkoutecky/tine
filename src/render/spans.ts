@@ -1,4 +1,4 @@
-import { rawOffsetToVisibleOffset, type HidePolicy, type PropFormat } from "../editor/properties";
+import { rawOffsetToVisibleOffset, visibleOffsetToRawByte, type HidePolicy, type PropFormat } from "../editor/properties";
 import { typographicSegments } from "./typography";
 import type { Span, SpanMap } from "./ast";
 
@@ -308,6 +308,82 @@ export function editorOffsetFromRenderedRange(
   const rawByte = rebulletedSourceByteToRawByte(raw, sourceByte);
   const rawUtf16 = utf8ByteToUtf16Offset(raw, rawByte);
   return rawOffsetToVisibleOffset(raw, rawUtf16, isHidden, format);
+}
+
+/** The DOM point inside `root` at editor offset `offset`: the inverse of
+ *  {@link editorOffsetFromRenderedRange}, used to re-select text in a block that
+ *  re-rendered after an edit made without entering edit mode (GH #375).
+ *
+ *  Only byte-exact (plain) span leaves can hold the point; coarse constructs
+ *  (links, chips) and unmapped output (code cards, macros) answer null. Every
+ *  candidate is checked by mapping it forward again, so a point is returned
+ *  only when the forward mapping agrees exactly. `edge` breaks the tie at a
+ *  boundary between two leaves: a selection start prefers the later leaf, an
+ *  end the earlier one. O(span leaves + block bytes); runs once per action. */
+export function renderedPointFromEditorOffset(
+  root: Element,
+  raw: string,
+  isHidden: HidePolicy,
+  format: PropFormat,
+  offset: number,
+  edge: "start" | "end",
+): { node: Node; offset: number } | null {
+  const rawLen = utf8ByteLength(raw);
+  const lead = rawLen - utf8ByteLength(raw.trimStart());
+  // Inverse of rebulletedSourceByteToRawByte (the parser sees a "- " bullet).
+  const sourceByte = visibleOffsetToRawByte(raw, offset, isHidden, format) - lead + 2;
+  const candidates: Array<{ el: Element; text: string; textByte: number; atEdge: boolean }> = [];
+  for (const el of Array.from(root.querySelectorAll("[data-so]"))) {
+    if (el.querySelector("[data-so]")) continue; // only leaves hold text positions
+    const data = spanDataFromElement(el);
+    if (!data || data.kind !== "plain") continue;
+    const text = renderedTextCaret(el, el, 0).text;
+    const textLength = utf8ByteLength(text);
+    const segments: SpanMap = data.spanMap && data.spanMap.length > 0
+      ? data.spanMap
+      : [[0, data.span[0], data.span[1] - data.span[0]]];
+    for (const [textOff, sourceOff, len] of segments) {
+      if (sourceByte < sourceOff || sourceByte > sourceOff + len) continue;
+      const textByte = textOff + (sourceByte - sourceOff);
+      if (textByte > textLength) continue;
+      candidates.push({ el, text, textByte, atEdge: edge === "start" ? textByte === textLength : textByte === 0 });
+    }
+  }
+  candidates.sort((a, b) => Number(a.atEdge) - Number(b.atEdge));
+  for (const candidate of candidates) {
+    const point = textPointAt(candidate.el, utf8ByteToUtf16Offset(candidate.text, candidate.textByte));
+    if (!point) continue;
+    const back = editorOffsetFromRenderedRange(root, { startContainer: point.node, startOffset: point.offset }, raw, isHidden, format);
+    if (back === offset) return point;
+  }
+  return null;
+}
+
+/** The text node and offset at UTF-16 position `at` of `el`'s rendered text
+ *  (the same walk as {@link renderedTextCaret}); null when `at` falls on a
+ *  `<br>` or an image's alt text, which no text node holds. */
+function textPointAt(el: Element, at: number): { node: Node; offset: number } | null {
+  let seen = 0;
+  let found: { node: Node; offset: number } | null = null;
+  const walk = (n: Node): boolean => {
+    if (n.nodeType === Node.TEXT_NODE) {
+      const length = (n.textContent ?? "").length;
+      if (at >= seen && at <= seen + length) {
+        found = { node: n, offset: at - seen };
+        return true;
+      }
+      seen += length;
+      return false;
+    }
+    if (n.nodeType !== Node.ELEMENT_NODE) return false;
+    const tag = (n as Element).tagName;
+    if (tag === "BR") { seen += 1; return false; }
+    if (tag === "IMG") { seen += ((n as Element).getAttribute("alt") ?? "").length; return false; }
+    for (const child of Array.from(n.childNodes)) if (walk(child)) return true;
+    return false;
+  };
+  walk(el);
+  return found;
 }
 
 /** Rectangles of one rendered block's content, one per visual line box.

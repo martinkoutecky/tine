@@ -85,3 +85,4 @@ editor-block-pasted-outline-was-refused = 粘贴的大纲被拒绝
 editor-block-copy-result = 复制结果
 
 editor-block-more-formatting = 更多格式
+editor-block-selection-formatting = 设置所选文本格式

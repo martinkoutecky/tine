@@ -140,6 +140,33 @@ describe("MobileKeyboardToolbar", () => {
     expect(scroller.scrollTop).toBe(28);
   });
 
+  it("reveals the editor above its docked formatting row, not only above the dock (GH #375)", async () => {
+    const { revealFocusedEditorAboveToolbar } = await import("./MobileKeyboardToolbar");
+    const scroller = document.createElement("main");
+    scroller.className = "main-content";
+    const editor = document.createElement("textarea");
+    editor.className = "block-editor";
+    scroller.appendChild(editor);
+    // The editor's selection row floats above the dock (dock top 520, row 480-512).
+    const formatting = document.createElement("div");
+    formatting.setAttribute("data-mobile-selection-toolbar", "");
+    formatting.getBoundingClientRect = () => ({
+      top: 480, bottom: 512, left: 0, right: 300, width: 300, height: 32, x: 0, y: 480,
+      toJSON() { return {}; },
+    });
+    document.body.append(scroller, formatting);
+    editor.focus();
+    // A one-line selection just above the dock, under the formatting row.
+    editor.getBoundingClientRect = () => ({
+      top: 470, bottom: 500, left: 0, right: 300, width: 300, height: 30, x: 0, y: 470,
+      toJSON() { return {}; },
+    });
+    expect(revealFocusedEditorAboveToolbar(520)).toBe(true);
+    expect(scroller.scrollTop).toBe(28); // 500 + 8 - 480
+    formatting.remove();
+    scroller.remove();
+  });
+
   it("consumes the full hide-keyboard gesture instead of touching through (GH #336)", async () => {
     platform.mobile = true;
     const { render } = await import("solid-js/web");

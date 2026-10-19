@@ -48,6 +48,17 @@
   justify-content: center;
 }
 
+/* GH #375 (D-20261018-LP2 a): text selected in a RENDERED block has no editor
+   and normally no keyboard below it, so its toolbar docks at the bottom of the
+   screen, above the bottom navigation row when that row is shown, and above the
+   keyboard dock if one is up. */
+.sel-toolbar-mobile.rendered-selection-toolbar {
+  bottom: max(
+    calc(var(--overlay-inset-bottom, 0px) + var(--mobile-navigation-height, 0px) + 8px),
+    var(--mobile-kb-toolbar-lift, 0px)
+  );
+}
+
 /* The dock is already above the keyboard, so its narrow-layout overflow opens
    farther upward rather than covering the keyboard toolbar below. */
 .sel-toolbar-mobile .sel-toolbar-overflow {

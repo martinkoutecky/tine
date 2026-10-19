@@ -306,3 +306,25 @@ describe("code-card click-to-caret mapping (GH #489)", () => {
     }
   });
 });
+
+describe("rendered point from editor offset (GH #375 re-selection)", () => {
+  it("inverts the click mapping on byte-exact leaves and declines coarse ones", async () => {
+    const { renderedPointFromEditorOffset } = await import("./spans");
+    const raw = "see [[Target]] and **bold** text — ü";
+    const { root, dispose } = mountedBody(raw);
+    try {
+      for (const needle of ["bold", " and ", " text", "ü"]) {
+        for (const edge of ["start", "end"] as const) {
+          const offset = raw.indexOf(needle) + (edge === "end" ? needle.length : 0);
+          const point = renderedPointFromEditorOffset(root, raw, BUILTIN_HIDE, "md", offset, edge);
+          expect(point, `${needle} ${edge}`).not.toBeNull();
+          expect(editorOffsetFromRenderedRange(root, { startContainer: point!.node, startOffset: point!.offset }, raw, BUILTIN_HIDE)).toBe(offset);
+        }
+      }
+      // Inside a page link's label there is no exact rendered position.
+      expect(renderedPointFromEditorOffset(root, raw, BUILTIN_HIDE, "md", raw.indexOf("Target") + 2, "start")).toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+});

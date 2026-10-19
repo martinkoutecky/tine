@@ -652,6 +652,7 @@ export interface MessageArgs {
   "editor-block-recording-limit-reached-saving-the-captured-audio": {};
   "editor-block-recording-run-record-again-to-stop": {};
   "editor-block-recording-tap-the-mic-again-to-stop": {};
+  "editor-block-selection-formatting": {};
   "editor-block-skipped-item-folders-and-byte-only-files-over-64-mib-aren-t-pasted": { "count": number };
   "editor-block-template": { "name": string | number };
   "editor-block-the-clipboard-doesn-t-hold-a-link-or-a-block-ref": {};

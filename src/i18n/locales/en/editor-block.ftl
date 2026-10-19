@@ -46,3 +46,4 @@ editor-block-pasted-outline-is-too-deep = Pasted outline is too deep
 editor-block-pasted-outline-was-refused = Pasted outline was refused
 editor-block-copy-result = Copy result
 editor-block-more-formatting = More formatting
+editor-block-selection-formatting = Format selected text

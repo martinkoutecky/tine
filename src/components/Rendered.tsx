@@ -1,5 +1,5 @@
 import { t } from "../i18n";
-import { Show, Switch, Match, onMount, onCleanup, useContext, type JSX } from "solid-js";
+import { Show, Switch, Match, useContext, type JSX } from "solid-js";
 import { pageByName, blockPageReadOnly, blockExternalId, type OutlineScope, type Node as ReadonlyNode } from "../document";
 import { isPropertyLine } from "../render/block";
 import { renderedProperties, type Facets } from "../render/facets";
@@ -19,11 +19,8 @@ import { blockBackgroundColor } from "../blockColors";
 import { queryMacroExtent, type MacroExtent } from "../editor/queryMacro";
 import { isQuarantined, parseBlock, parserReady, soleBlockMacro } from "../render/parse";
 import { isQueryMacroName } from "../editor/queryMacro";
-import { beginEditGesture, renderedClickOffset, registerRenderedSelection } from "./blockGestures";
-import { touchCapable } from "../inputCapability";
-import { startEditing } from "../editorController";
-import { editorOffsetFromRenderedRange } from "../render/spans";
-import { BUILTIN_HIDE, HIDE_ALL, splitProps } from "../editor/properties";
+import { beginEditGesture, renderedClickOffset } from "./blockGestures";
+import { HIDE_ALL, splitProps } from "../editor/properties";
 import { CalGlyph, ClockBadge, toggleBlockMarkerLabel, toggleBlockCheckbox } from "./blockParts";
 import { OccurrenceHostContext } from "../refOccurrence";
 import type { Span } from "../render/ast";
@@ -105,27 +102,6 @@ export function Rendered(props: {
   // Anything without trustworthy span data (chips, macro hosts, parser fallback)
   // keeps the old end-of-block behavior.
   let contentRef: HTMLDivElement | undefined;
-  onMount(() => {
-    if (!touchCapable() || !contentRef) return;
-    const owner = contentRef.ownerDocument;
-    const transferSelection = () => {
-      if (readOnly() || !contentRef?.isConnected) return;
-      const selection = owner.getSelection();
-      if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return;
-      const range = selection.getRangeAt(0);
-      // Own both endpoints in this rendered block. Cross-block selections,
-      // embeds and controls retain their existing owners.
-      if (!contentRef.contains(range.startContainer) || !contentRef.contains(range.endContainer)) return;
-      if (range.startContainer.parentElement?.closest(".ls-block")?.getAttribute("data-block-id") !== props.id
-        || range.endContainer.parentElement?.closest(".ls-block")?.getAttribute("data-block-id") !== props.id) return;
-      const start = editorOffsetFromRenderedRange(contentRef, range, node().raw, BUILTIN_HIDE, fmt());
-      const end = editorOffsetFromRenderedRange(contentRef, { startContainer: range.endContainer, startOffset: range.endOffset }, node().raw, BUILTIN_HIDE, fmt());
-      if (start === null || end === null || start === end) return;
-      const direction = selection.anchorNode === range.startContainer && selection.anchorOffset === range.startOffset ? "forward" : "backward";
-      startEditing(props.id, { start, end, direction }, props.owner ?? null);
-    };
-    onCleanup(registerRenderedSelection(contentRef, transferSelection));
-  });
   const clickOffset = (e: MouseEvent): number | null =>
     contentRef ? renderedClickOffset(contentRef, node().raw, pageByName(node().page)?.format === "org" ? "org" : "md", e) : null;
   // For annotation blocks the editor shows only the highlight text (metadata
@@ -188,6 +164,11 @@ export function Rendered(props: {
     <div
       ref={contentRef}
       class="block-content"
+      // GH #375: the rendered-selection toolbar formats text selected here
+      // (RenderedSelectionToolbar; the name is RENDERED_BLOCK_ATTR). An
+      // annotation swatch edits through HIDE_ALL, which the BUILTIN_HIDE span
+      // mapping does not describe, so it opts out.
+      data-rendered-block={annotation() ? undefined : props.id}
       classList={{ done: facets().done, "has-bg": !!bgColor(), [`heading h${headingLevel() ?? ""}`]: headingLevel() != null }}
       style={bgColor() ? { background: bgColor() } : undefined}
       onMouseDown={onMouseDown}

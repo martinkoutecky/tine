@@ -60,15 +60,19 @@ function viewportKeyboardTop(): number {
 }
 
 /** Scroll the focused block editor's nearest scroller (or the window) just enough
- *  that the editor's bottom sits 8px above `toolbarTop` (GH #384). Returns true
- *  only when it scrolled; a non-editor focus or an already-visible editor is a
- *  no-op returning false. O(1) layout reads. */
+ *  that the editor's bottom sits 8px above `toolbarTop` (GH #384), or above the
+ *  editor's docked formatting row when one is shown, which sits above the dock
+ *  (GH #375: measuring only the dock left a selection just above it under the
+ *  formatting row). Returns true only when it scrolled; a non-editor focus or an
+ *  already-visible editor is a no-op returning false. O(1) layout reads. */
 export function revealFocusedEditorAboveToolbar(toolbarTop: number): boolean {
   const editor = document.activeElement;
   if (!(editor instanceof HTMLTextAreaElement) || !editor.classList.contains("block-editor")) {
     return false;
   }
-  const overlap = editor.getBoundingClientRect().bottom + EDITOR_TOOLBAR_MARGIN - toolbarTop;
+  const formatting = document.querySelector<HTMLElement>("[data-mobile-selection-toolbar]")?.getBoundingClientRect();
+  const top = formatting && formatting.height > 0 ? Math.min(toolbarTop, formatting.top) : toolbarTop;
+  const overlap = editor.getBoundingClientRect().bottom + EDITOR_TOOLBAR_MARGIN - top;
   if (overlap <= 0) return false;
   const scroller = editor.closest<HTMLElement>(
     ".main-content, .right-sidebar-scroll, .left-sidebar-scroll",

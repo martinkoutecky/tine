@@ -28,6 +28,7 @@ import { subscribeAssetChanges } from "./assetRefresh";
 import { initConflictPolicy } from "./conflictPolicy";
 import { RightSidebar } from "./components/RightSidebar";
 import { MobileKeyboardToolbar } from "./components/MobileKeyboardToolbar";
+import { RenderedSelectionToolbar } from "./components/RenderedSelectionToolbar";
 import {
   DrawerBackground,
   MobileDrawerController,
@@ -1384,6 +1385,7 @@ export function App(): JSX.Element {
         deepLink={<FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>}
         keyboardToolbar={<DrawerBackground class="drawer-floating-background" blockedBy="any">
           <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>
+          <FailureBoundary region="The selection toolbar"><RenderedSelectionToolbar /></FailureBoundary>
         </DrawerBackground>}
         recovery={<FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>}
         // First-run onboarding covers the (empty) app when no graph is configured;
