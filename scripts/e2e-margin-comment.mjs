@@ -121,8 +121,12 @@ try {
   const indent = (line) => line.length - line.trimStart().length;
   if (indent(lines[replyLine]) === 0) throw new Error(`reply is not a child bullet: ${JSON.stringify(saved)}`);
   if (lines[replyLine + 1]?.trim() !== `quote:: ${PHRASE}`) throw new Error(`quote:: does not follow the reply: ${JSON.stringify(saved)}`);
+  // The comment's own property lines: quote::, its context (ADR 0075, MC2), then author::.
+  const props = [];
+  for (let i = replyLine + 1; i < lines.length && !lines[i].trimStart().startsWith("- "); i++) props.push(lines[i].trim());
+  if (!props.some((line) => line.startsWith("quote-prefix:: "))) throw new Error(`the comment carries no quote-prefix:: (MC2): ${JSON.stringify(saved)}`);
   // Your name: the comment carries it, and so does the reply written with Enter.
-  if (lines[replyLine + 2]?.trim() !== `author:: ${MY_NAME}`) throw new Error(`the comment does not carry author:: ${MY_NAME}: ${JSON.stringify(saved)}`);
+  if (props[props.length - 1] !== `author:: ${MY_NAME}`) throw new Error(`the comment does not carry author:: ${MY_NAME}: ${JSON.stringify(saved)}`);
   const secondReply = lines.findIndex((line) => line.trimStart() === `- ${REPLY_2}`);
   if (secondReply < 0 || indent(lines[secondReply]) <= indent(lines[replyLine]) || lines[secondReply + 1]?.trim() !== `author:: ${MY_NAME}`) {
     throw new Error(`the reply does not nest under the comment with author:: ${MY_NAME}: ${JSON.stringify(saved)}`);

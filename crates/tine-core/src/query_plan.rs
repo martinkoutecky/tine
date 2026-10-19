@@ -31,6 +31,13 @@ pub enum TextMatchMode {
     /// without overlapping (OG's `LIKE '%a%b%'`). Letters of one fragment are
     /// never scattered.
     Fragments,
+    /// The query's words occur as whole tokens, in any order (OG's FTS5
+    /// `content MATCH ?` leg of the `((` block picker). The value is one word
+    /// group per line, a group's tokens separated by single spaces; a group
+    /// with several tokens is a phrase (adjacent tokens, in order). Differences
+    /// from FTS5: no `and`/`or`/`not` operator rewriting, no trailing-`*`
+    /// prefix words, no bm25 ordering.
+    Words,
 }
 
 /// Explainable objective relevance. Variant order is deliberately not used for

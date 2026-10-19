@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { Block } from "./Block";
@@ -79,4 +81,16 @@ it("GH #619 c6: a query or embed host with children is not pinned, so its live m
       expect(root.querySelector('[data-block-id="c"]'), raw).not.toBeNull();
     } finally { dispose(); resetStore(); root.remove(); }
   }
+});
+
+it("GH #717: the pin keeps its whole 30 px in flow so it can never hang below its own block", () => {
+  // jsdom has no layout; scripts/shot-sticky-overlap.mjs proves the geometry in a
+  // real browser. A negative bottom margin on the pin shrinks the margin box that
+  // `position: sticky` constrains to zero height and lets the pin cover the next
+  // row at its own level (the reporter's `1a` over `1b` and `2`).
+  const css = readFileSync(resolve(__dirname, "../styles/app.css"), "utf8");
+  const pin = css.match(/\n\.sticky-ancestor \{([^}]*)\}/)![1];
+  expect(pin).toContain("position: sticky");
+  expect(pin).not.toMatch(/margin-bottom\s*:\s*-/);
+  expect(css).toMatch(/\n\[data-sticky-parent\] > \.block-main \{ margin-top: -30px; \}/);
 });
