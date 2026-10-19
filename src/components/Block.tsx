@@ -154,7 +154,7 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
-import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
+import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { wireBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
 import { clipboardSizeAllowed } from "../clipboardImage";
@@ -315,6 +315,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // A standalone query or embed host is never pinned: its first line IS the live
   // macro, and the 30 px pin would mount a second copy of it (GH #619 c6).
   const stickyParent = () => stickyParents() && hasChildren() && (props.forceExpanded || !collapsed()) && !macro();
+  let mainEl: HTMLDivElement | undefined;
 
   return (
     <div
@@ -340,6 +341,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
       <div
         class="block-main"
         ref={(el) => {
+          mainEl = el;
           // GH #501: touch swipes on the row (touch platforms only; src/blockSwipe.ts).
           onMount(() => onCleanup(wireBlockSwipe(el, { id: props.id, scope: outlineScope, editing, readOnly })));
         }}
@@ -358,9 +360,16 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           editing: editing(),
         }}
         onContextMenu={(e) => {
-          if (!shouldOpenBlockContextMenu(e.target)) return;
+          // GH #726: a right click inside a nested result/embed row belongs to
+          // that row (or to nobody), never to this host block.
+          if (!ownsBlockContextMenu(e.target, mainEl) || !shouldOpenBlockContextMenu(e.target)) return;
           e.preventDefault();
-          openContextMenu(e.clientX, e.clientY, props.id);
+          // The root row of a transparent whole-block embed is the occurrence's
+          // only handle: its menu keeps acting on the embed, as its drag does
+          // (master GH #514). Every other nested row acts on its own block.
+          const host = mainEl?.closest<HTMLElement>(".block-embed-host");
+          const menuOwner = props.dragHostId && host?.dataset.blockId === props.dragHostId ? props.dragHostId : props.id;
+          openContextMenu(e.clientX, e.clientY, menuOwner);
         }}
       >
         <Show when={!blockEmbedHost()}>

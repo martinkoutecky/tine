@@ -34,3 +34,19 @@ export function shouldOpenTextContextMenu(
   if (event && isLongPressContextMenu(event)) return !editableTarget(target);
   return !mobile && !editableTarget(target);
 }
+
+/** Marks an element that draws OTHER blocks inside a host block's content (a
+ * query's results, an embed). A block-menu gesture inside it belongs to the
+ * block row drawn there, or to nobody, never to the host (GH #726: a right
+ * click on a query result opened the host's menu, so Cut deleted the query). */
+export const BLOCK_SURFACE_ATTR = "data-block-surface";
+const BLOCK_MENU_OWNER = `.block-main, .reference-excerpt-row, [${BLOCK_SURFACE_ATTR}]`;
+
+/** True when `row` (a block's own `.block-main`) is the nearest block-menu
+ * owner of `target`: no nested block row or foreign block surface lies between
+ * them. O(depth) ancestor walk. */
+export function ownsBlockContextMenu(target: EventTarget | null, row: Element | undefined): boolean {
+  if (!row) return false;
+  const element = isElementNode(target) ? target : null;
+  return !!element && element.closest(BLOCK_MENU_OWNER) === row;
+}

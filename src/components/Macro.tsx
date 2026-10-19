@@ -1055,6 +1055,9 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
             </Show>
             <Show when={emptyDraft()}><div class="query-empty">{t("query-calm-condition")}</div></Show>
             <Show when={!collapsed() && !emptyDraft()}>
+              {/* GH #726: the results draw OTHER blocks; a right click in here
+                  never opens this host block's menu (contextMenuPolicy). */}
+              <div class="query-results-region" style={{ display: "contents" }} data-block-surface="query">
               <Show when={displayed()?.statistics}>
                 {(statistics) => <QueryStatisticsSummary statistics={statistics()} />}
               </Show>
@@ -1234,6 +1237,7 @@ function QueryMacroContent(props: Parameters<typeof QueryMacro>[0]): JSX.Element
                   </Show>
                 </Match>
               </Switch>
+              </div>
             </Show>
           </Match>
         </Switch>
