@@ -99,6 +99,81 @@ fn rows(raw: &str, blocks: &[Block]) -> Vec<Property> {
     found
 }
 
+/// How a Markdown block relates to quotes (GH #721 follow-up F1/F3). Writers use
+/// it to place metadata BEFORE a quote, where the parser accepts it: a row
+/// appended after a final quote is its lazy continuation, and a row put after
+/// the first line of a titleless block lands inside that quote (the window's
+/// `joinProps` #684 placement and OG's `insert-property`, which prepends to a
+/// titleless quote, agree).
+pub(crate) struct QuoteTail {
+    /// Start of the line the final quote opens on, when the block's last
+    /// non-property node is a quote.
+    pub start: Option<usize>,
+    /// Start of the line the block's FIRST non-property node opens on, when that
+    /// node is itself a quote: the block has no title, its first line is quoted.
+    pub titleless: Option<usize>,
+    /// Line ranges of the swallowed built-in rows ([`SWALLOWED_KEYS`]).
+    pub swallowed: Vec<Range>,
+}
+
+/// The quote facts of one raw Markdown block, or `None` when it has no
+/// titleless first quote and does not end in a quote. One parse, only for a
+/// block containing `>`, and only on the add/relocate paths of a property edit.
+pub(crate) fn quote_tail(raw: &str) -> Option<QuoteTail> {
+    if !raw.contains('>') {
+        return None;
+    }
+    let blocks = crate::render::parse_block(raw, false);
+    let line_start = |at: usize| raw[..at].rfind('\n').map_or(0, |p| p + 1);
+    let quote_line = |b: &Block| match b {
+        Block::Quote { span, .. } => raw_range(raw, span, false).map(|r| line_start(r.0)),
+        _ => None,
+    };
+    // The header bullet of a titleless block carries no title text, marker or priority.
+    let untitled = |b: &&Block| match b {
+        Block::Properties { .. } => true,
+        Block::Bullet {
+            inline,
+            marker: None,
+            priority: None,
+            ..
+        } => inline.is_empty(),
+        _ => false,
+    };
+    let titleless = blocks.iter().find(|b| !untitled(b)).and_then(quote_line);
+    let start = blocks
+        .iter()
+        .rfind(|b| !matches!(b, Block::Properties { .. }))
+        .and_then(quote_line);
+    if start.is_none() && titleless.is_none() {
+        return None;
+    }
+    Some(QuoteTail {
+        start,
+        titleless,
+        swallowed: rows(raw, &blocks).iter().map(|p| p.line).collect(),
+    })
+}
+
+/// The lines of the swallowed rows whose key is `key`, empty unless `key` is one
+/// of [`SWALLOWED_KEYS`] (so an ordinary property edit never parses).
+pub(crate) fn swallowed_lines(raw: &str, key: &str) -> Vec<Range> {
+    if !SWALLOWED_KEYS.iter().any(|k| k.eq_ignore_ascii_case(key)) {
+        return Vec::new();
+    }
+    let Some(tail) = quote_tail(raw) else {
+        return Vec::new();
+    };
+    tail.swallowed
+        .into_iter()
+        .filter(|line| {
+            let t = trimmed_range(raw, *line).slice(raw);
+            t.split_once("::")
+                .is_some_and(|(k, _)| k.eq_ignore_ascii_case(key))
+        })
+        .collect()
+}
+
 /// Remove the swallowed rows' text from the render AST so they are not painted
 /// inside the quote (GH #721). The final quote paragraph ends
 /// `[…, Plain(row), Break]` once per row; any other shape is left untouched, so

@@ -951,6 +951,22 @@ impl BlockRegions {
                 .iter()
                 .filter(|p| p.key.eq_ignore_ascii_case(&key) && (!org || Some(p.region) == own))
                 .collect();
+            // Rows the final quote swallowed are not accepted properties: OG loads
+            // them as quote text, so a write must move them before the quote or
+            // the collapse is lost on restart (GH #721 F1).
+            let swallowed = if org {
+                Vec::new()
+            } else {
+                crate::swallowed_rows::swallowed_lines(raw, &key)
+            };
+            let (stuck, matching): (Vec<_>, Vec<_>) = matching
+                .into_iter()
+                .partition(|p| swallowed.contains(&p.line));
+            edits.extend(stuck.iter().map(|p| (p.line, String::new())));
+            if matching.is_empty() && !stuck.is_empty() {
+                add.push((key, value));
+                continue;
+            }
             if let Some(first) = matching.first() {
                 let trailer = matches!(key.as_str(), "id" | "collapsed" | "logseq.order-list-type");
                 let region = self.property_regions[first.region];
@@ -1035,16 +1051,32 @@ impl BlockRegions {
                 (at, text)
             }
         } else {
-            let at = if trailer || self.literal_at(0) {
-                raw.len()
-            } else if let Some(r) = self
-                .property_regions
-                .iter()
-                .find(|r| r.0 == self.head_end(raw) || r.0 == 0)
-            {
-                r.1
+            // New metadata goes before a quote, never after it, where the quote
+            // swallows it as a lazy line: above a titleless quote's first line, and
+            // after the title of a block that ends in a quote (GH #721 F3).
+            let quote = if self.literal_at(0) {
+                None
             } else {
-                self.head_end(raw)
+                crate::swallowed_rows::quote_tail(raw)
+            };
+            let ends_in_quote = quote.as_ref().is_some_and(|t| t.start.is_some());
+            let at = if self.literal_at(0) || (trailer && !ends_in_quote) {
+                raw.len()
+            } else if let Some(first) = quote
+                .as_ref()
+                .and_then(|t| t.titleless)
+                .filter(|_| ends_in_quote || !trailer)
+            {
+                first
+            } else {
+                // After the head properties, but not a property region the final
+                // quote swallowed or follows.
+                let head = self.head_end(raw);
+                let limit = quote.as_ref().and_then(|t| t.start).unwrap_or(usize::MAX);
+                self.property_regions
+                    .iter()
+                    .find(|r| r.1 <= limit && (r.0 == head || r.0 == 0))
+                    .map_or(head, |r| r.1)
             };
             (at, lines.to_string())
         };

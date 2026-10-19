@@ -82,6 +82,12 @@ try {
     await browser.pause(700); // a stacking save would land here
     if (androidRows() !== expected) throw new Error(`tap ${tap}: collapsed:: rows stacked to ${androidRows()}`);
     if (await browser.execute(() => document.querySelector(".main-content").textContent.includes("collapsed::"))) throw new Error(`tap ${tap}: collapsed:: shown as text`);
+    if (tap === 1) {
+      // Follow-up F1: the first collapse moves the swallowed row before the quote, where the parser
+      // reads it, so the collapse survives a restart (a true -> true rewrite left it swallowed).
+      const expectedFile = ["- Outside", "  collapsed:: true", "  > Something", "\t- Inside", ""].join(newline);
+      await browser.waitUntil(() => fs.readFileSync(androidFile, "utf8") === expectedFile, { timeout: 15000, timeoutMsg: `tap 1: the collapse row did not move before the quote: ${JSON.stringify(fs.readFileSync(androidFile, "utf8"))}` });
+    }
   }
   const androidBytes = fs.readFileSync(androidFile, "utf8");
   if (!androidBytes.includes("Something") || !androidBytes.includes("Inside")) throw new Error("Quote or child lost");

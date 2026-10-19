@@ -213,7 +213,11 @@ pub fn render_block_html(raw: &str, is_org: bool) -> String {
     } else {
         lsdoc::Format::Md
     };
-    let blocks = lsdoc_block_parse::parse_block(raw, is_org);
+    let mut blocks = lsdoc_block_parse::parse_block(raw, is_org);
+    if !is_org {
+        // The same swallowed-row strip as the bundle the app renders (GH #721).
+        block_regions::strip_swallowed_rows(raw, &mut blocks);
+    }
     lsdoc::render_html(&blocks, &lsdoc::RenderOpts { format: rfmt })
 }
 

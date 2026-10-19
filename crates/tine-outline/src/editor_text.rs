@@ -217,7 +217,20 @@ pub fn visible_to_raw_with(
 /// Markdown appends them below the body; Org folds them into the property
 /// drawer at its canonical place. A quarantined Org parse refuses.
 pub fn join(visible: &str, hidden: &str, is_org: bool) -> Result<String, String> {
-    if hidden.is_empty() || !is_org {
+    if hidden.is_empty() {
+        return Ok(visible.to_string());
+    }
+    if !is_org {
+        // Metadata appended after a final quote is its lazy continuation, so it goes
+        // before the quote, as the window's `joinProps` places it (GH #684, #721 F3).
+        if let Some(start) = crate::swallowed_rows::quote_tail(visible).and_then(|t| t.start) {
+            let hidden = hidden.strip_suffix('\r').unwrap_or(hidden);
+            return Ok(format!(
+                "{}{hidden}\n{}",
+                &visible[..start],
+                &visible[start..]
+            ));
+        }
         return join_with(visible, hidden, is_org, &BlockRegions::default());
     }
     join_with(visible, hidden, true, &block_regions::parse(visible, true))
@@ -295,6 +308,46 @@ mod tests {
     fn roundtrip(raw: &str, is_org: bool) {
         let t = split(raw, is_org, &HidePolicy::Builtin);
         assert_eq!(join(&t.visible, &t.hidden, is_org).unwrap(), raw, "{raw:?}");
+    }
+
+    /// GH #721 follow-up F3: hidden rows rejoined to a block that ends in a quote go
+    /// before the quote (where the parser accepts them), never after it, where the
+    /// quote swallows them as lazy lines. Same placement as the window's `joinProps`.
+    #[test]
+    fn hidden_rows_rejoin_before_a_final_quote() {
+        for (raw, text, expected) in [
+            ("collapsed:: true\n> q", "> q2", "collapsed:: true\n> q2"),
+            (
+                "Title\ncollapsed:: true\n> q",
+                "T2\n> q",
+                "T2\ncollapsed:: true\n> q",
+            ),
+            (
+                "collapsed:: true\n> [!TIP]\n> helpful",
+                "> [!TIP]\n> more",
+                "collapsed:: true\n> [!TIP]\n> more",
+            ),
+            ("collapsed:: true\r\n> q", "> q2", "collapsed:: true\n> q2"),
+            // Not a trailing quote: below the body, as before.
+            ("collapsed:: true\nbody", "body2", "body2\ncollapsed:: true"),
+            (
+                "collapsed:: true\na > b",
+                "a > c",
+                "a > c\ncollapsed:: true",
+            ),
+        ] {
+            let out = set_text(raw, false, text).unwrap();
+            assert_eq!(out.replace("\r\n", "\n"), expected, "{raw:?}");
+            assert!(tine_outline_facet_collapsed(&out), "{out:?}");
+        }
+    }
+    fn tine_outline_facet_collapsed(raw: &str) -> bool {
+        crate::lsdoc_block_parse::parse_block(raw, false)
+            .iter()
+            .any(|b| {
+                matches!(b, lsdoc::ast::Block::Properties { props, .. }
+                if props.iter().any(|p| p.0 == "collapsed" && p.1 == "true"))
+            })
     }
 
     #[test]

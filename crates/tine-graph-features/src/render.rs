@@ -821,11 +821,16 @@ fn ast_plain_text(blocks: &[Block]) -> String {
 /// Parse + property/planning-filter one block body the way `render_block` does — the
 /// shared front of the render and search-index paths (one lsdoc parse per call).
 fn body_blocks(raw: &str, org: bool) -> Vec<Block> {
-    let mut blocks: Vec<_> =
-        tine_core::doc::strip_planning_lines(tine_core::render::parse_block(raw, org), raw)
-            .into_iter()
-            .filter(|b| !matches!(b, Block::Properties { .. }))
-            .collect();
+    let mut parsed = tine_core::render::parse_block(raw, org);
+    if !org {
+        // Metadata rows a final quote swallowed (GH #721): the editor hides them, so
+        // every native consumer of the body (HTML, print, search text) drops them too.
+        tine_core::block_regions::strip_swallowed_rows(raw, &mut parsed);
+    }
+    let mut blocks: Vec<_> = tine_core::doc::strip_planning_lines(parsed, raw)
+        .into_iter()
+        .filter(|b| !matches!(b, Block::Properties { .. }))
+        .collect();
     render_query_source::restore(&mut blocks, raw);
     blocks
 }
@@ -2365,6 +2370,29 @@ mod tests {
     }
     fn search_text(raw: &str) -> String {
         ast_plain_text(&body_blocks(raw, false))
+    }
+
+    /// GH #721 follow-up F2: Logseq Android writes `collapsed:: true` after a block's
+    /// final quote, where mldoc folds it into the quote. The editor hides the row, so
+    /// the native renderer (publish, print, export HTML) and the search text must
+    /// not show it as quote text either; quoted and ordinary rows stay content.
+    #[test]
+    fn a_swallowed_collapsed_row_is_not_rendered_or_indexed() {
+        for raw in [
+            "Outside\n> Something\ncollapsed:: true",
+            "Outside\n> Something\ncollapsed:: true\ncollapsed:: true",
+            "> Something\nlogseq.order-list-type:: number",
+        ] {
+            let h = render_body(raw, &no_refs());
+            assert!(h.contains("Something"), "{raw:?}: {h}");
+            assert!(!h.contains("::"), "{raw:?}: {h}");
+            let t = search_text(raw);
+            assert!(t.contains("Something") && !t.contains("::"), "{raw:?}: {t}");
+        }
+        for raw in ["> Something\n> collapsed:: true", "> Something\nfoo:: bar"] {
+            assert!(render_body(raw, &no_refs()).contains("::"), "{raw:?}");
+            assert!(search_text(raw).contains("::"), "{raw:?}");
+        }
     }
 
     #[test]
