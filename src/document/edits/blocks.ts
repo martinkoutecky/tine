@@ -1,5 +1,6 @@
 import { msg } from "../../i18n";
 import { blockWritable, pageWritable, writeCollapsed } from "./properties";
+import { queryOptionFolds, storedFold } from "./queryFoldOption";
 import { doc, docHasBlockIdentity, formatForBlock, setDoc, freshId, pageByName } from "../model";
 
 /** Reveal a search result without creating an edit, undo entry, or save. */
@@ -452,7 +453,7 @@ export function toggleCollapse(id: string) {
   const n = doc.byId[id];
   if (!n || !blockWritable(id) || !blockHasFoldableBody(id)) return;
   pushUndo("collapse", [n.page]);
-  writeCollapsed(id, !n.collapsed, blockHasPageEmbed(id));
+  writeCollapsed(id, !storedFold(id), blockHasPageEmbed(id) || queryOptionFolds(id));
   markDirty(n.page, "save-block");
 }
 
@@ -460,8 +461,9 @@ export function toggleCollapse(id: string) {
  *  already in the requested state). */
 export function setCollapsed(id: string, collapsed: boolean) {
   const n = doc.byId[id];
-  if (!n || !blockWritable(id) || !blockHasFoldableBody(id) || n.collapsed === collapsed) return;
+  if (!n || !blockWritable(id) || !blockHasFoldableBody(id) || storedFold(id) === collapsed) return;
   pushUndo("collapse", [n.page]);
-  writeCollapsed(id, collapsed, blockHasPageEmbed(id));
+  // A query authored `:collapsed? true` writes `collapsed:: false` explicitly, or the default would fold it again.
+  writeCollapsed(id, collapsed, blockHasPageEmbed(id) || queryOptionFolds(id));
   markDirty(n.page, "save-block");
 }

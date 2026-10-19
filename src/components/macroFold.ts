@@ -1,33 +1,46 @@
-import { createSignal, useContext } from "solid-js";
-import { node as docNode, setCollapsed } from "../document";
+import { createComputed, createSignal, onCleanup, useContext } from "solid-js";
+import { blockWritable, node as docNode, reportQueryFoldOption, setCollapsed, storedFold } from "../document";
 import { CollapseSurfaceContext, type CollapseSurfaceApi } from "./Block";
 
 /** Whether a macro host's own bullet is folded in this surface (the surface's
  *  fold state, else the stored `collapsed::`). Its body (a page embed's page,
  *  a query's results) folds with it. */
 export function hostFolded(surface: CollapseSurfaceApi | null, id: string): boolean {
-  const stored = docNode(id)?.collapsed ?? false;
+  const stored = storedFold(id);
   return surface?.collapsed(id, stored) ?? stored;
 }
 
-/** A query's results fold: the query's own toggle (`remembered`, written back
- *  through `remember`), its `:collapsed?` option as the default, and the host
- *  bullet. GH #619 c6: folding the bullet folds the results, as OG query.cljs
- *  `custom-query*` reads the block's `:block/collapsed?`. */
+/** A query's results fold. GH #619 Q8: for a query block this IS the bullet's
+ *  fold, one state with two controls (OG query.cljs `custom-query*` reads the
+ *  block's `:block/collapsed?`), so the query's arrow reads and writes the
+ *  bullet's `collapsed::` (or the surface's local fold in a reference or embed
+ *  surface). The `:collapsed?` option stays the default of a block that has no
+ *  `collapsed::` of its own; expanding such a block writes `collapsed:: false`.
+ *
+ *  A query with no writable host block (a journal default query, a read-only
+ *  page) has no bullet to write, so it keeps its device-local toggle
+ *  (`remembered`, written back through `remember`). */
 export function createQueryFold(remembered: boolean | null, sourceDefault: () => boolean,
   hostId: () => string | undefined, remember: (collapsed: boolean) => void) {
   const surface = useContext(CollapseSurfaceContext);
+  // Report the authored default before the first paint, so the bullet agrees.
+  createComputed(() => {
+    const id = hostId();
+    if (!id || !docNode(id) || !sourceDefault()) return;
+    onCleanup(reportQueryFoldOption(id));
+  });
+  const shared = () => { const id = hostId(); return !!id && !!docNode(id) && blockWritable(id); };
   const [override, setOverride] = createSignal(remembered);
   const bulletFolded = () => { const id = hostId(); return !!id && hostFolded(surface, id); };
-  const collapsed = () => bulletFolded() || (override() ?? sourceDefault());
+  const collapsed = () => shared() ? bulletFolded() : bulletFolded() || (override() ?? sourceDefault());
   const toggle = () => {
-    const v = !collapsed();
-    // Expanding a query whose bullet is folded unfolds the bullet, or the arrow would do nothing.
     const id = hostId();
-    if (!v && id && bulletFolded()) {
-      if (surface) surface.toggle(id, true);
-      else setCollapsed(id, false);
+    if (shared() && id) {
+      if (surface) surface.toggle(id, collapsed());
+      else setCollapsed(id, !collapsed());
+      return;
     }
+    const v = !collapsed();
     setOverride(v);
     remember(v);
   };
