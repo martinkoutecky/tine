@@ -8,9 +8,9 @@ it("the Guide explains usable journals during graph loading and the later refere
   for (const detail of ["today's journal and nearby saved days appear while the graph is still loading", "Days mentioned only by other blocks join", "keeping your place and any open editor"]) expect(journals).toContain(detail);
 });
 
-it("the Guide explains the page and block copy submenu and reference click zoom", () => {
+it("the Guide explains the page copy submenu, the block menu's top-level copy rows and reference click zoom", () => {
   const references = guide("pages-links-references-search");
-  for (const detail of ["Page and block menus", "**Copy as ▸**", "**Click a block reference to zoom in**", "including on another page"]) expect(references).toContain(detail);
+  for (const detail of ["Page menus keep reference, embed and link copying under **Copy as ▸**", "A block's menu lists **Copy block ref**, **Copy block embed** and **Copy link** directly", "**Click a block reference to zoom in**", "including on another page"]) expect(references).toContain(detail);
 });
 
 it("the Guide describes Soft's middle-range light and dark choices", () => {

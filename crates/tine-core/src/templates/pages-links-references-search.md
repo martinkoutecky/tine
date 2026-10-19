@@ -32,7 +32,7 @@ icon:: 🔗
   - A key does not have to be plain ASCII. `klíč:: hodnota` is an ordinary property: it can be added, changed, and removed again like any other.
   - A read-only page — a bundled Guide page — offers no property editing at all, rather than a form whose writes would be dropped.
 - ## Block references and embeds
-  - Page and block menus keep reference, embed and link copying under **Copy as ▸**. Open that submenu to choose the form you need.
+  - Page menus keep reference, embed and link copying under **Copy as ▸**; open that submenu to choose the form you need. A block's menu lists **Copy block ref**, **Copy block embed** and **Copy link** directly, as Logseq does.
   - Settings → **Editor** → **Click a block reference to zoom in** makes a plain reference click zoom into its source block, including on another page.
   - Fold a page embed with the host bullet's arrow or the ordinary **Collapse/Expand** keyboard commands. Only its page-name line remains; expanding restores its content. The choice is saved on the host block, never the embedded page. If the host has children, the same fold hides those too. This works in the main pane and right sidebar.
   - Hover a page link or block reference for a read-only preview. An alias shows its source page's title and page properties. Click the title to open that page in a new tab, a block bullet to open that block in a new tab, or **Open source** to open the preview's source. These actions switch to the new tab. The preview stays open while its **… → Page actions** menu is open. Editing requires opening the source. A block reference's preview also offers **Edit link** and **Remove** for that one reference, as described below.
