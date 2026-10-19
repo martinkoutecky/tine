@@ -136,13 +136,40 @@ pub fn seal(payload: &[u8], key: &[u8; 32], share_id: &[u8; 16], nonce: &[u8; 12
     b64u(&file)
 }
 
+/// A fresh share id from the OS CSPRNG whose base64url spelling is never a
+/// gist id (`[0-9a-f]{20,32}`): a pending marker `tine.share:: pending/<id>`
+/// (D-20261018-QS3) then never reads as `<login>/<gist_id>`, even for a GitHub
+/// login `pending`. An all-lowercase-hex 22-character spelling (chance
+/// (16/64)^22) is drawn again; the id is not secret.
+pub fn fresh_share_id() -> io::Result<[u8; 16]> {
+    let rng = SystemRandom::new();
+    loop {
+        let mut share_id = [0u8; 16];
+        rng.fill(&mut share_id)
+            .map_err(|_| io::Error::other("the system random source failed"))?;
+        if !looks_like_gist_id(&b64u(&share_id)) {
+            return Ok(share_id);
+        }
+    }
+}
+
+/// Whether `text` has a gist id's shape, `[0-9a-f]{20,32}`.
+pub fn looks_like_gist_id(text: &str) -> bool {
+    (20..=32).contains(&text.len()) && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 /// [`seal`] under a fresh key, share id and nonce from the OS CSPRNG.
 pub fn seal_fresh(payload: &[u8]) -> io::Result<Sealed> {
+    seal_fresh_as(payload, fresh_share_id()?)
+}
+
+/// [`seal`] under the given share id (chosen at prepare, so the share dialog
+/// can mark its query block before the upload) and a fresh key and nonce.
+pub fn seal_fresh_as(payload: &[u8], share_id: [u8; 16]) -> io::Result<Sealed> {
     let rng = SystemRandom::new();
     let mut key = [0u8; 32];
-    let mut share_id = [0u8; 16];
     let mut nonce = [0u8; 12];
-    for buf in [&mut key[..], &mut share_id[..], &mut nonce[..]] {
+    for buf in [&mut key[..], &mut nonce[..]] {
         rng.fill(buf)
             .map_err(|_| io::Error::other("the system random source failed"))?;
     }

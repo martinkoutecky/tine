@@ -5,7 +5,7 @@ import { bindingOwner, graphOwner, latestOwner, readOwned, readOwnedResource, wr
 import { dbg } from "../debug";
 import { pushToast } from "../toasts";
 import { closeQuickShare, quickShareDefinition } from "../shareState";
-import { saveShareDefinition, shareValue, type ShareDefinitionTarget } from "../quickShare/definitions";
+import { GRAPH_CHANGED, finishSharePending, markSharePending, shareValue } from "../quickShare/definitions";
 import { registerTransientLayer } from "../transientLayers";
 import type { QueryPublicationRequest } from "../types";
 import {
@@ -114,8 +114,10 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const scope = {};
   const [listing, setListing] = createSignal<QuickShareListing | null>(null);
   const [preview, setPreview] = createSignal<QuickSharePrepared["preview"] | null>(null);
-  // The prepared payload that Create uploads; cleared the moment Create consumes it.
-  const [prepareId, setPrepareId] = createSignal<string | null>(null);
+  // The prepared payload that Create uploads; cleared the moment Create consumes it. `shareId` is the record id
+  // that upload will use, which the query block carries as `tine.share:: pending/<shareId>` from the start.
+  const [prepared, setPrepared] = createSignal<{ prepareId: string; shareId: string } | null>(null);
+  const prepareId = () => prepared()?.prepareId ?? null;
   const [busy, setBusy] = createSignal<"list" | "prepare" | "create" | "check" | "copy" | null>("list");
   const [error, setError] = createSignal<string | null>(null);
   const [needsConnect, setNeedsConnect] = createSignal(false);
@@ -129,21 +131,28 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const [recorded, setRecorded] = createSignal<string | null>(null);
   let alive = true;
 
-  /** Record a live share in the graph where the share dialog said it would go. The share exists either way, so
-   *  this runs even when the dialog was closed meanwhile (a failure is then a toast), but only in the graph the
-   *  action started on: `owner` is that graph binding, never the dialog's lifetime. The caller reads `definition`
-   *  before its first await (the request is gone from a closed dialog). */
-  const record = async (login: string, gistId: string, owner: WriteOwner, definition: ShareDefinitionTarget | undefined) => {
-    if (!definition) return;
+  /** Finish the share's pending marker in the graph (D-20261018-QS3): `<login>/<gist_id>` once the gist exists,
+   *  removed (`null`) when it was not created. Found by the property wherever the block is now. The share stands
+   *  either way, so this runs even when the dialog was closed meanwhile (the outcome is then a toast), but only in
+   *  the graph the action started on: `owner` is that graph binding, never the dialog's lifetime. `markedOn` is
+   *  the page the marker was saved to at the start. */
+  const finish = async (shareId: string, next: string | null, owner: WriteOwner, markedOn: string | null) => {
+    if (!markedOn) return;
     try {
-      const page = await saveShareDefinition(definition, shareValue(login, gistId), owner);
-      if (alive) setRecorded(page);
-      else pushToast(msg("quick-share-definition-saved", { page }), "success");
+      const pages = await finishSharePending(shareId, next, owner, [markedOn]);
+      if (!owner() || next === null) return;
+      const [page] = pages;
+      if (page) { if (alive) setRecorded(page); else pushToast(msg("quick-share-definition-saved", { page }), "success"); }
+      else if (alive) setError(t("quick-share-definition-missing"));
+      else pushToast(msg("quick-share-definition-missing"), "error");
     } catch (failure) {
       const args = { error: failure instanceof Error ? failure.message : String(failure) };
-      if (alive) setError(t("quick-share-definition-failed", args)); else pushToast(msg("quick-share-definition-failed", args), "error");
+      const key = next === null ? "quick-share-pending-unmark-failed" : "quick-share-definition-failed";
+      if (alive) setError(t(key, args)); else pushToast(msg(key, args), "error");
     }
   };
+  // The page the current share's pending marker was saved to (null: no definition, so no marker).
+  let markedOn: string | null = null;
 
   const discard = (id: string) => {
     void readOwned(graphOwner(), backend().quickShareDiscard(id))
@@ -158,14 +167,14 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const prepare = async () => {
     const previous = prepareId();
     if (previous) discard(previous);
-    setPrepareId(null); setError(null); setBusy("prepare");
+    setPrepared(null); setError(null); setBusy("prepare");
     const owner = latestOwner(scope, "prepare", graphOwner(() => alive));
     try {
       // A preview nobody shows any more is discarded at once, not left to expire.
       const answer = await readOwnedResource(owner, backend().quickSharePrepare(props.request), (stale) => discard(stale.prepareId));
       if (answer.kind === "stale") return;
       setPreview(answer.value.preview);
-      setPrepareId(answer.value.prepareId);
+      setPrepared({ prepareId: answer.value.prepareId, shareId: answer.value.shareId });
     } catch (failure) {
       if (owner()) setError(quickShareErrorText(failure));
     } finally {
@@ -193,14 +202,35 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
   const connected = () => { setNeedsConnect(false); setError(null); void load(); };
 
   const create = async () => {
-    const id = prepareId();
-    if (!id || busy()) return;
-    // Create consumes the payload whatever happens: a retry needs a fresh preview (never an automatic re-upload).
-    setPrepareId(null); setError(null); setBusy("create");
+    const current = prepared();
+    if (!current || busy()) return;
+    setError(null); setBusy("create");
     // The graph bookkeeping belongs to the graph Create started on, not to this view: closing the dialog keeps
     // it, a graph switch cancels it (R4 / I-20).
     const owner = bindingOwner();
     const definition = quickShareDefinition(props.request);
+    const { prepareId: id, shareId } = current;
+    markedOn = null;
+    if (definition) {
+      // The marker is saved before anything is uploaded (D-20261018-QS3): without it a share confirmed later could
+      // not find its block. If it cannot be saved, nothing is uploaded and the preview stays for another try.
+      try {
+        markedOn = await markSharePending(definition, shareId, owner);
+      } catch (failure) {
+        const reason = failure instanceof Error ? failure.message : String(failure);
+        if (reason !== GRAPH_CHANGED && alive) setError(t("quick-share-pending-failed", { error: reason }));
+        if (alive) setBusy(null);
+        return;
+      }
+      if (!alive) {
+        // Closed while the marker was saved: the share is cancelled before it started (the dialog's cleanup
+        // discarded the payload), so the marker goes again.
+        await finish(shareId, null, owner, markedOn);
+        return;
+      }
+    }
+    // Create consumes the payload whatever happens: a retry needs a fresh preview (never an automatic re-upload).
+    setPrepared(null);
     try {
       const answer = await writeOwned(owner, backend().quickShareCreate(id));
       if (answer.kind === "stale") return;
@@ -209,10 +239,12 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
         setCopied(answer.value.copied);
         if (!answer.value.copied) setError(t("quick-share-copy-failed"));
       }
-      await record(answer.value.login, answer.value.gistId, owner, definition);
+      await finish(shareId, shareValue(answer.value.login, answer.value.gistId), owner, markedOn);
     } catch (failure) {
-      if (!alive) { pushToast(msg("quick-share-toast-failed", { error: quickShareErrorText(failure) }), "error"); return; }
       const kind = kindOf(failure);
+      // An unknown outcome keeps the marker (a later Check finishes it); any other failure made no gist.
+      if (kind !== "maybeUploaded") await finish(shareId, null, owner, markedOn);
+      if (!alive) { pushToast(msg("quick-share-toast-failed", { error: quickShareErrorText(failure) }), "error"); return; }
       if (kind === "maybeUploaded") setPending((failure as { shareId: string }).shareId);
       if (kind === "notConnected" || kind === "reconnect") setNeedsConnect(true);
       setError(quickShareErrorText(failure));
@@ -226,7 +258,6 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
     if (!shareId || busy()) return;
     setError(null); setCheckNote(null); setBusy("check");
     const owner = bindingOwner();
-    const definition = quickShareDefinition(props.request);
     try {
       const answer = await writeOwned(owner, backend().quickShareCheck(shareId));
       if (answer.kind === "stale") return;
@@ -235,7 +266,7 @@ function Dialog(props: { request: QueryPublicationRequest }): JSX.Element {
         // Check answers only the state; the gist it found is in the records.
         const listed = await readOwned(owner, backend().quickShareList());
         const row = listed.kind === "current" ? listed.value.shares.find((share) => share.shareId === shareId) : undefined;
-        if (row?.gistId) await record(row.login, row.gistId, owner, definition);
+        if (row?.gistId) await finish(shareId, shareValue(row.login, row.gistId), owner, markedOn);
       } else if (alive) setCheckNote(t("quick-share-check-not-yet"));
     } catch (failure) {
       if (alive) setError(quickShareErrorText(failure));

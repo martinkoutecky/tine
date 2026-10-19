@@ -35,7 +35,9 @@ export interface QuickSharePreview {
   payloadBytes: number;
   envelopeBytes: number;
 }
-export interface QuickSharePrepared { prepareId: string; preview: QuickSharePreview }
+/** `shareId`: the record id the create will use; the share dialog marks the query block `tine.share:: pending/<shareId>`
+ *  with it before the upload (D-20261018-QS3). Not secret (it is in the envelope header). */
+export interface QuickSharePrepared { prepareId: string; shareId: string; preview: QuickSharePreview }
 export interface QuickShareCreated { shareId: string; gistId: string; login: string; copied: boolean }
 export interface QuickShareListed {
   shareId: string;
