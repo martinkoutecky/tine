@@ -90,7 +90,7 @@ describe("what is written", () => {
     mount([block("p", "An agent wrote a phrase worth disputing here.")]);
     resetCommentAuthorNameForTests("Ada");
     const comment = createComment("p", "An agent wrote a phrase worth disputing here.", 15, 39)!;
-    expect(doc.byId[comment].raw).toBe("\nquote:: a phrase worth disputing\nauthor:: Ada");
+    expect(doc.byId[comment].raw).toBe("\nquote:: a phrase worth disputing\nquote-prefix:: An agent wrote\nquote-suffix:: here.\nauthor:: Ada");
     expect(replyOnEnter(comment, doc.byId[comment].raw, 0)).toBe(true);
     const reply = doc.byId[comment].children[0];
     expect(doc.byId[reply].raw).toBe("\nauthor:: Ada");
@@ -103,7 +103,7 @@ describe("what is written", () => {
   it("without a name nothing changes: no author:: on the comment or the reply", () => {
     mount([block("p", "An agent wrote a phrase worth disputing here.")]);
     const comment = createComment("p", "An agent wrote a phrase worth disputing here.", 15, 39)!;
-    expect(doc.byId[comment].raw).toBe("\nquote:: a phrase worth disputing");
+    expect(doc.byId[comment].raw).toBe("\nquote:: a phrase worth disputing\nquote-prefix:: An agent wrote\nquote-suffix:: here.");
     expect(replyOnEnter(comment, doc.byId[comment].raw, 0)).toBe(true);
     expect(doc.byId[doc.byId[comment].children[0]].raw).toBe("");
   });
