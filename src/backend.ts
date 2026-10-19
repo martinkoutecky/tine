@@ -110,6 +110,12 @@ class TauriBackend implements Backend {
   private bindingGeneration = 0;
   private ipcDiagnosticsUnavailable = false;
   private readonly ordered = orderedLane();
+  /** Issue order of lane searches. The native handlers reach their lane in
+   *  scheduler order, so a keystroke's older search can land after the newer
+   *  and cancel it; the lane keeps the highest order and refuses an older one.
+   *  Seeded from the clock so a reloaded WebView never restarts below a
+   *  request the native side still holds. */
+  private laneSeq = Date.now() * 1000;
 
   constructor() {
     this.ready = import("@tauri-apps/api/core").then((m) => {
@@ -494,10 +500,10 @@ class TauriBackend implements Backend {
     return this.assetCall<TrashAssetOutcome>("trash_asset", { name }, bindingGeneration);
   }
   search(query: string, limit: number, lane?: string) {
-    return this.call<RefGroup[]>("search", { query, limit, lane });
+    return this.call<RefGroup[]>("search", { query, limit, lane, laneSeq: ++this.laneSeq });
   }
   async runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope, pageMatchScope?: import("./editor/queryIr").FriendlyPageMatchScope, views?: { page: ViewSettings; block: ViewSettings }, transliteration = false) {
-    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null, transliteration });
+    const execution = await this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, laneSeq: ++this.laneSeq, explain, scope: scope ?? null, pageMatchScope: pageMatchScope ?? null, pageView: views?.page ?? null, blockView: views?.block ?? null, transliteration });
     return {
       ...execution,
       has_more: execution.has_more ?? { pages: false, blocks: false },
