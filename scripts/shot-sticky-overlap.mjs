@@ -140,6 +140,18 @@ try {
     await page.evaluate(options => window.outline(options), { outline: [tree], multiline, ...shell });
     await page.waitForTimeout(100);
     const label = `${name}-${shell.width}-${multiline ? "multi" : "single"}-${shell.sidebar ? "sidebar" : "pane"}`;
+    // The pin takes its 30 px in flow and the row pulls itself back over it: the
+    // page must lay out exactly as it does without any pin.
+    const layout = await page.evaluate(() => {
+      const root=document.querySelector("[data-probe-scroller]"), tail=root.querySelector('[data-block-id="tail-0"] > .block-main');
+      const withPins = tail.getBoundingClientRect().top, height = root.scrollHeight;
+      const holders=[...root.querySelectorAll(".sticky-ancestor")], blocks=holders.map(h=>h.parentElement);
+      holders.forEach(h=>h.remove()); blocks.forEach(b=>b.removeAttribute("data-sticky-parent"));
+      return {withPins, without: tail.getBoundingClientRect().top, height, heightWithout: root.scrollHeight};
+    });
+    assert.ok(Math.abs(layout.withPins-layout.without)<0.5 && Math.abs(layout.height-layout.heightWithout)<0.5, `pins change the layout: ${label} ${JSON.stringify(layout)}`);
+    await page.evaluate(options => window.outline(options), { outline: [tree], multiline, ...shell });
+    await page.waitForTimeout(100);
     const scrollMax = await page.evaluate(() => { const r=document.querySelector("[data-probe-scroller]"); return r.scrollHeight - r.clientHeight; });
     const positions = Array.from({length:Math.ceil(scrollMax/8)+1},(_,i)=>Math.min(i*8,scrollMax));
     positions.push(...Array.from({length:Math.ceil(scrollMax/40)+1},(_,i)=>Math.max(scrollMax-i*40,0)));
@@ -168,6 +180,7 @@ try {
         return out;
       });
       found.pins.forEach(id => pinnedSeen.add(id));
+      if (found.pushed.includes("1a") && !pushed.has("1a") && label.startsWith("reporter")) await page.screenshot({ path: `${out}/${process.env.STICKY_LABEL || "current"}-pushed-${label}.png` });
       found.pushed.forEach(id => pushed.add(id));
       if (found.violations.length) {
         overlapCount++;

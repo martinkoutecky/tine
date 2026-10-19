@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- Sticky parent bullets stay inside their own subtree: a pinned `1a` no longer covers the next row at its own level or above (its sibling `1b`, or `2`). That row now pushes the pin up and out, as a section header in a list, and a pin covers only its own descendants (GH #717).
+
 ## [0.8.0-beta.5] - 2026-10-18
 
 ### Fixed
