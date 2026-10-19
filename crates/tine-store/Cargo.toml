@@ -16,6 +16,7 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = "0.10"
 regex = "1"
+memchr = "2"
 pinyin = { version = "0.11", default-features = false, features = ["plain"] }
 libc = "0.2"
 cap-std = "4.0.2"

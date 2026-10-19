@@ -82,6 +82,11 @@ pub(crate) struct QueryPlan {
     // the frontend offer a duplicate Create row beside the existing page.
     page_exact: Option<String>,
     regexes: HashMap<u32, Regex>,
+    // Compiled `Words` predicates, so the scan builds no searcher per block.
+    // (clause id, matcher): at most two entries, scanned linearly because a
+    // hashed lookup per block would cost about as much as the match itself.
+    words: Vec<(u32, WordsMatcher)>,
+    fragments: Vec<(u32, FragmentsMatcher)>,
     remove_accents: bool,
     pub(crate) transliteration: bool,
     transliteration_queries: HashMap<u32, String>,
@@ -136,6 +141,20 @@ impl QueryPlan {
             .get(&key)?
             .score(query)
             .map(|score| (score, ObjectiveMatchClass::Transliteration))
+    }
+
+    fn words_matcher(&self, pred: &TextPredicate) -> std::borrow::Cow<'_, WordsMatcher> {
+        match self.words.iter().find(|(id, _)| *id == pred.clause_id) {
+            Some((_, matcher)) => std::borrow::Cow::Borrowed(matcher),
+            None => std::borrow::Cow::Owned(WordsMatcher::new(&pred.value)),
+        }
+    }
+
+    fn fragments_matcher(&self, pred: &TextPredicate) -> std::borrow::Cow<'_, FragmentsMatcher> {
+        match self.fragments.iter().find(|(id, _)| *id == pred.clause_id) {
+            Some((_, matcher)) => std::borrow::Cow::Borrowed(matcher),
+            None => std::borrow::Cow::Owned(FragmentsMatcher::new(&pred.value)),
+        }
     }
 
     fn fold(&self, value: &str) -> String {
@@ -230,6 +249,8 @@ impl QueryPlan {
             page_scope: None,
             page_exact: (!query.trim().is_empty()).then(|| identity_fold(query.trim())),
             regexes,
+            words: Vec::new(),
+            fragments: Vec::new(),
             remove_accents,
             transliteration: false,
             name_keys: None,
@@ -303,6 +324,8 @@ impl QueryPlan {
             page_scope: None,
             page_exact: Some(identity_fold(&value)),
             regexes: HashMap::new(),
+            words: Vec::new(),
+            fragments: Vec::new(),
             remove_accents,
             transliteration: false,
             name_keys: None,
@@ -362,6 +385,8 @@ impl QueryPlan {
             page_scope: None,
             page_exact: None,
             regexes,
+            words: Vec::new(),
+            fragments: Vec::new(),
             remove_accents,
             transliteration: false,
             name_keys: None,
@@ -374,11 +399,12 @@ impl QueryPlan {
         }
     }
 
-    /// `((` autocomplete, matching OG's `search-blocks` non-FTS leg
-    /// (`electron/search.cljs`): fold the whole query (OG's `search-normalize`
-    /// on both sides) and require its whitespace-separated fragments to occur
-    /// literally, in order, without Ctrl-K's Boolean grammar and without
-    /// scattering a fragment's letters. Blank input has no candidates.
+    /// `((` autocomplete, matching OG's `search-blocks` (`electron/search.cljs`):
+    /// fold the whole query (OG's `search-normalize` on both sides), then list
+    /// first the blocks holding the typed words as whole tokens in any order
+    /// (its FTS5 leg), then those holding the whitespace-separated pieces
+    /// literally in order (its `LIKE` leg), without Ctrl-K's Boolean grammar and
+    /// without scattering a piece's letters. Blank input has no candidates.
     pub(crate) fn block_search_literal_with_policy(
         query: &str,
         limit: usize,
@@ -389,17 +415,39 @@ impl QueryPlan {
         } else {
             literal_fold(query)
         };
+        let mut words = Vec::new();
+        let mut fragments_by_clause = Vec::new();
         let branches = if folded.split_whitespace().next().is_none() {
             Vec::new()
         } else {
+            // OG's `search-blocks` unions an FTS5 `MATCH` (whole words, any
+            // order) with `LIKE '%a%b%'` (literal pieces, in order), full-text
+            // hits first. One scan evaluates both legs per block.
+            fragments_by_clause.push((1, FragmentsMatcher::new(&folded)));
+            let fragments = QueryExpr::Text(TextPredicate {
+                clause_id: 1,
+                field: TextField::VisibleContent,
+                mode: TextMatchMode::Fragments,
+                value: folded.clone(),
+            });
+            let predicate = match words_value(&folded) {
+                Some(value) => {
+                    words.push((2, WordsMatcher::new(&value)));
+                    QueryExpr::Or(vec![
+                        QueryExpr::Text(TextPredicate {
+                            clause_id: 2,
+                            field: TextField::VisibleContent,
+                            mode: TextMatchMode::Words,
+                            value,
+                        }),
+                        fragments,
+                    ])
+                }
+                None => fragments,
+            };
             vec![QueryBranch {
                 target: QueryTarget::Blocks,
-                predicate: QueryExpr::Text(TextPredicate {
-                    clause_id: 1,
-                    field: TextField::VisibleContent,
-                    mode: TextMatchMode::Fragments,
-                    value: folded,
-                }),
+                predicate,
                 limit,
             }]
         };
@@ -409,6 +457,8 @@ impl QueryPlan {
             page_scope: None,
             page_exact: None,
             regexes: HashMap::new(),
+            words,
+            fragments: fragments_by_clause,
             remove_accents,
             transliteration: false,
             name_keys: None,
@@ -662,6 +712,10 @@ fn explain_expr(expr: &QueryExpr) -> ExplainNode {
                 TextMatchMode::Fragments => {
                     format!("contains the fragments “{}” in order", p.value)
                 }
+                TextMatchMode::Words => format!(
+                    "contains the whole words “{}” in any order",
+                    p.value.replace('\n', "”, “")
+                ),
             },
             children: Vec::new(),
         },
@@ -747,7 +801,8 @@ fn eval_expr_fast(
                 .get(&pred.clause_id)
                 .is_some_and(|regex| regex.is_match(original)),
             TextMatchMode::Fuzzy => fuzzy_name_score(lower, &pred.value).is_some(),
-            TextMatchMode::Fragments => fragments_first_offset(lower, &pred.value).is_some(),
+            TextMatchMode::Fragments => plan.fragments_matcher(pred).first_offset(lower).is_some(),
+            TextMatchMode::Words => plan.words_matcher(pred).first_offset(lower).is_some(),
         },
         QueryExpr::And(children) => children
             .iter()
@@ -790,13 +845,17 @@ fn match_text(plan: &QueryPlan, pred: &TextPredicate, original: &str) -> Option<
         }
         TextMatchMode::Fuzzy => fuzzy_evidence(pred, original, plan.remove_accents),
         TextMatchMode::Fragments => fragments_evidence(pred, original, plan.remove_accents),
+        TextMatchMode::Words => words_evidence(pred, original, plan.remove_accents),
     }
 }
 
 #[path = "query_plan/fold.rs"]
 mod fold;
-use fold::{casefold_substring_spans, fragments_evidence, fuzzy_evidence};
+use fold::{casefold_substring_spans, fragments_evidence, fuzzy_evidence, words_evidence};
 mod blocks;
+#[path = "query_plan/picker_legs.rs"]
+mod picker_legs;
+use picker_legs::{words_value, FragmentsMatcher, WordsMatcher};
 #[path = "query_plan/pages.rs"]
 mod pages;
 use blocks::{execute_blocks, text_predicate_relevance};
@@ -804,8 +863,14 @@ use blocks::{execute_blocks, text_predicate_relevance};
 use pages::best_page_match;
 use pages::execute_pages;
 
+/// The highest `BlockRelevance::leg`: the `((` picker's full-text leg.
+const TOP_LEG: u8 = 1;
+
 #[derive(Debug, Clone, Copy)]
 struct BlockRelevance {
+    /// Which OG leg listed the block: 1 for the `((` picker's full-text leg,
+    /// which OG lists before every fragment-only block; 0 everywhere else.
+    leg: u8,
     match_class: ObjectiveMatchClass,
     word_boundary: bool,
     first_offset: usize,
@@ -817,6 +882,7 @@ struct BlockRelevance {
 impl BlockRelevance {
     fn neutral() -> Self {
         Self {
+            leg: 0,
             match_class: ObjectiveMatchClass::Exact,
             word_boundary: true,
             first_offset: 0,
@@ -830,9 +896,9 @@ impl BlockRelevance {
     /// large blocks cannot collapse distinct offsets or lengths into one
     /// saturated scalar score.
     fn cmp_quality(&self, other: &Self) -> Ordering {
-        self.match_class
-            .rank()
-            .cmp(&other.match_class.rank())
+        self.leg
+            .cmp(&other.leg)
+            .then_with(|| self.match_class.rank().cmp(&other.match_class.rank()))
             .then_with(|| self.word_boundary.cmp(&other.word_boundary))
             .then_with(|| other.first_offset.cmp(&self.first_offset))
             .then_with(|| other.text_len.cmp(&self.text_len))
@@ -843,7 +909,9 @@ impl BlockRelevance {
         let offset_penalty = self.first_offset.min(50_000) as i32;
         let length_penalty = self.text_len.min(40_000) as i32;
         let occurrence_penalty = self.occurrences.saturating_sub(1).min(9_999) as i32;
-        self.match_class.rank() * 1_000_000 + i32::from(self.word_boundary) * 100_000
+        i32::from(self.leg) * 10_000_000
+            + self.match_class.rank() * 1_000_000
+            + i32::from(self.word_boundary) * 100_000
             - offset_penalty
             - length_penalty
             - occurrence_penalty
@@ -937,6 +1005,7 @@ fn block_relevance(
                 if relevance.match_class.rank() < combined.match_class.rank() {
                     combined.match_class = relevance.match_class;
                 }
+                combined.leg = combined.leg.min(relevance.leg);
                 combined.word_boundary &= relevance.word_boundary;
                 combined.first_offset =
                     combined.first_offset.saturating_add(relevance.first_offset);
@@ -958,6 +1027,11 @@ fn block_relevance(
                     .is_none_or(|current| relevance.cmp_quality(current) == Ordering::Greater)
                 {
                     best = Some(relevance);
+                }
+                if relevance.leg == TOP_LEG {
+                    // `leg` outranks every other component, so no later branch
+                    // can beat this one; skip its (second) rank-length pass.
+                    break;
                 }
             }
             best
@@ -1033,23 +1107,6 @@ fn fuzzy_name_score(lower_name: &str, lower_query: &str) -> Option<(i32, Objecti
             .all(|needle| chars.any(|candidate| candidate == needle))
             .then_some((100, ObjectiveMatchClass::Fuzzy))
     }
-}
-
-/// OG's block search leg `LIKE '%frag1%frag2%'` (`electron/search.cljs`
-/// `search-blocks`: whitespace in the query becomes `%`): every
-/// whitespace-separated fragment of the already-folded `query` occurs literally
-/// in `lower`, in order, without overlap. Greedy leftmost matching decides
-/// membership exactly. Returns the byte offset of the first fragment's leftmost
-/// occurrence; a query with no fragment matches nothing.
-fn fragments_first_offset(lower: &str, query: &str) -> Option<usize> {
-    let mut at = 0;
-    let mut first = None;
-    for fragment in query.split_whitespace() {
-        let found = at + lower[at..].find(fragment)?;
-        first.get_or_insert(found);
-        at = found + fragment.len();
-    }
-    first
 }
 
 fn walk_blocks<'a>(
@@ -1470,13 +1527,49 @@ mod tests {
             .collect::<Vec<_>>()
             .join(".*");
         let regex = regex::Regex::new(&format!("(?s){pattern}")).unwrap();
-        let query = regex;
+        // Independent oracle for OG's FTS5 leg over a token vector: barewords
+        // (ASCII alphanumerics, `_`, anything non-ASCII) are ANDed phrases;
+        // any other character makes that MATCH a syntax error and OG falls
+        // back to its quoted phrase over all tokens.
+        fn tokens(text: &str) -> Vec<String> {
+            text.split(|c: char| !c.is_alphanumeric())
+                .filter(|t| !t.is_empty())
+                .map(str::to_owned)
+                .collect()
+        }
+        let bare = fragments.iter().all(|p| {
+            p.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii())
+        });
+        let phrases: Vec<Vec<String>> = if bare {
+            fragments
+                .iter()
+                .map(|p| tokens(p))
+                .filter(|t| !t.is_empty())
+                .collect()
+        } else {
+            vec![tokens(&query)]
+                .into_iter()
+                .filter(|t| !t.is_empty())
+                .collect()
+        };
+        let query = move |text: &str| {
+            if regex.is_match(text) {
+                return true;
+            }
+            let hay = tokens(text);
+            !phrases.is_empty()
+                && phrases
+                    .iter()
+                    .all(|ph| hay.windows(ph.len()).any(|w| w == ph.as_slice()))
+        };
+        let query: &dyn Fn(&str) -> bool = &query;
         graph.with_pages(|pages| {
             let mut out = Vec::new();
             fn visit(
                 page: &str,
                 blocks: &[DocBlock],
-                query: &regex::Regex,
+                query: &dyn Fn(&str) -> bool,
                 remaining: &mut usize,
                 out: &mut Vec<(String, String)>,
             ) {
@@ -1485,7 +1578,7 @@ mod tests {
                         return;
                     }
                     let projection = block.projection();
-                    if query.is_match(block.visible_folded(true)) {
+                    if query(block.visible_folded(true)) {
                         out.push((page.to_string(), block.raw().to_owned()));
                         *remaining -= 1;
                     }
@@ -1497,7 +1590,7 @@ mod tests {
                 visit(
                     &entry.name,
                     &document.roots,
-                    &query,
+                    query,
                     &mut remaining,
                     &mut out,
                 );
@@ -2118,8 +2211,8 @@ mod tests {
         // A fragment is not an anchor: it may start or end mid-word.
         assert_eq!(picker_blocks(&graph, "oo dra"), ["foo draft"]);
         // Order matters and fragments cannot overlap.
-        assert!(picker_blocks(&graph, "draft foo").is_empty());
         assert!(picker_blocks(&graph, "foo oo ready only").is_empty());
+        assert!(picker_blocks(&graph, "oo foo").is_empty());
         // Single fragment: contiguous substring, prefix hits rank first.
         assert_eq!(
             picker_blocks(&graph, "ready"),
@@ -2128,6 +2221,94 @@ mod tests {
         // Blank and whitespace-only input has no candidates.
         assert!(picker_blocks(&graph, "").is_empty());
         assert!(picker_blocks(&graph, "  \t ").is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn picker_graph(blocks: &[&str]) -> (PathBuf, Arc<ReadSnapshot>) {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-picker-ft-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        let body: String = blocks.iter().map(|b| format!("- {b}\n")).collect();
+        fs::write(dir.join("pages").join("Ft.md"), body).unwrap();
+        let graph = snapshot_for_dir(&dir);
+        (dir, graph)
+    }
+
+    /// OG `search-blocks` full-text leg (`content MATCH ?`, FTS5): whole words
+    /// in any order, so `draft foo` finds `foo draft`.
+    #[test]
+    fn block_picker_full_text_leg_matches_whole_words_in_any_order() {
+        let (dir, graph) = fixture();
+        assert_eq!(picker_blocks(&graph, "draft foo"), ["foo draft"]);
+        assert_eq!(picker_blocks(&graph, "ready foo"), ["🧠 foo ready"]);
+        assert_eq!(picker_blocks(&graph, "ONLY   Ready"), ["ready only"]);
+        // Words are whole tokens: `dra` is not a word of "foo draft", and out of
+        // order it is not an in-order fragment either.
+        assert!(picker_blocks(&graph, "dra foo").is_empty());
+        // The in-order fragment leg still lists what the word leg cannot.
+        assert_eq!(picker_blocks(&graph, "fo dra"), ["foo draft"]);
+        // Every word must be present.
+        assert!(picker_blocks(&graph, "draft ready").is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// OG merges `[...FTS matches (bm25 order), ...LIKE matches]`, de-duplicated
+    /// and cut at the limit, so a word-leg block precedes a fragment-only block
+    /// even when the fragment-only block would rank better on its own.
+    #[test]
+    fn block_picker_lists_the_full_text_leg_before_fragment_only_blocks() {
+        let (dir, graph) = picker_graph(&["foobar tail", "xx bar yy foo"]);
+        // "foobar tail" holds `foo` then `bar` as pieces (fragment leg only, no
+        // whole word) and starts with them; "xx bar yy foo" holds both whole words.
+        assert_eq!(
+            picker_blocks(&graph, "foo bar"),
+            ["xx bar yy foo", "foobar tail"]
+        );
+        // The limit applies to the merged list: the word leg fills it first.
+        let top1 = block_fingerprint(crate::query::search(&graph, "foo bar", 1));
+        assert_eq!(top1[0].1, "xx bar yy foo");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// FTS5 barewords reject punctuation, so OG's first MATCH input errors and
+    /// only its quoted-phrase input (adjacent tokens, in order) runs.
+    #[test]
+    fn block_picker_full_text_leg_falls_back_to_a_phrase_when_the_query_has_punctuation() {
+        let (dir, graph) = picker_graph(&["foo bar draft", "draft foo-bar", "bar draft foo"]);
+        assert_eq!(picker_blocks(&graph, "foo-bar draft"), ["foo bar draft"]);
+        // Without punctuation the words are free to appear in any order.
+        let mut any_order = picker_blocks(&graph, "bar draft foo");
+        any_order.sort();
+        assert_eq!(
+            any_order,
+            ["bar draft foo", "draft foo-bar", "foo bar draft"]
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn block_picker_full_text_words_fold_case_and_accents() {
+        let (dir, graph) = picker_graph(&["Příliš žluťoučký kůň", "zelená louka"]);
+        let run = |query: &str, remove_accents: bool| {
+            QueryPlan::block_search_literal_with_policy(query, 10, remove_accents)
+                .execute(&graph, || false)
+                .hits
+                .into_iter()
+                .filter_map(|hit| match hit {
+                    QueryHit::Block { display_text, .. } => Some(display_text),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(run("KUN prilis", true), ["Příliš žluťoučký kůň"]);
+        assert_eq!(run("kůň příliš", false), ["Příliš žluťoučký kůň"]);
+        assert!(run("kun prilis", false).is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -2187,7 +2368,7 @@ mod tests {
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::write(dir.join("pages").join("Ev.md"), "- 😀 Foo bar BAZ qux\n").unwrap();
         let graph = snapshot_for_dir(&dir);
-        let plan = QueryPlan::block_search_literal_with_policy("foo baz", 10, true);
+        let plan = QueryPlan::block_search_literal_with_policy("fo baz", 10, true);
         let hits = plan.execute(&graph, || false).hits;
         let QueryHit::Block {
             evidence,
@@ -2199,6 +2380,35 @@ mod tests {
         };
         assert_eq!(*match_class, ObjectiveMatchClass::Substring);
         assert_eq!(evidence[0].mode, TextMatchMode::Fragments);
+        assert_eq!(
+            evidence[0].spans,
+            vec![
+                MatchSpan { start: 3, end: 5 },
+                MatchSpan { start: 11, end: 14 }
+            ]
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn words_evidence_marks_each_word_group_in_original_utf16_offsets() {
+        let (dir, graph) = picker_graph(&["😀 Foo bar BAZ qux"]);
+        let plan = QueryPlan::block_search_literal_with_policy("baz FOO", 10, true);
+        let hits = plan.execute(&graph, || false).hits;
+        let QueryHit::Block {
+            evidence,
+            match_class,
+            score,
+            ..
+        } = &hits[0]
+        else {
+            panic!("expected a block hit");
+        };
+        // The whole-word leg wins over the fragment leg, which cannot match
+        // out of order; both words are reported, in text order.
+        assert_eq!(*match_class, ObjectiveMatchClass::Substring);
+        assert_eq!(*score, 10_000_000 + 4_000_000 + 100_000 - 3 - 18);
+        assert_eq!(evidence[0].mode, TextMatchMode::Words);
         assert_eq!(
             evidence[0].spans,
             vec![
@@ -2219,6 +2429,10 @@ mod tests {
             "fo re",
             "o o",
             "ready foo",
+            "draft foo",
+            "foo_ready",
+            "foo-ready only",
+            "ready's foo",
             "e e e",
             "foo OR ready",
             "foo -draft",

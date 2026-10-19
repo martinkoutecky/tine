@@ -21,6 +21,7 @@ import { pageIdentityKey } from "./pageIdentity";
 import { blockRegions } from "./render/parse";
 import { blockRefsInText } from "./render/pageRefs";
 import { searchSubstringSpans } from "./editor/searchQuery";
+import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
 import { searchFold } from "./editor/searchFold";
 
 type PublishedPage = PageDto & { path: string };
@@ -225,22 +226,6 @@ function literalNeedle(query: string): { empty: boolean; folded: string } {
 
 function includesFolded(text: string, needle: string): boolean {
   return searchFold(text).includes(needle);
-}
-
-/** OG's `((` block search leg `LIKE '%a%b%'`: every whitespace-separated
- *  fragment of the folded query occurs literally, in order, without overlap. */
-function includesFragmentsInOrder(text: string, foldedQuery: string): boolean {
-  const folded = searchFold(text);
-  let at = 0;
-  let any = false;
-  for (const fragment of foldedQuery.split(/\s+/)) {
-    if (!fragment) continue;
-    const found = folded.indexOf(fragment, at);
-    if (found < 0) return false;
-    at = found + fragment.length;
-    any = true;
-  }
-  return any;
 }
 
 function firstMappedSpan(text: string, needle: string): { start: number; end: number } | null {
@@ -553,7 +538,13 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
       const snapshot = await load();
       const wanted = literalNeedle(query);
       if (wanted.empty || !wanted.folded) return [];
-      return collect(snapshot, (block) => includesFragmentsInOrder(block.raw, wanted.folded), limit);
+      // OG's `((` search: whole words in any order, then literal pieces in order.
+      const legOf = (block: BlockDto) => blockPickerLeg(searchFold(block.raw), wanted.folded);
+      return mergeBlockPickerLegs(
+        collect(snapshot, (block) => legOf(block) === "words", limit),
+        collect(snapshot, (block) => legOf(block) === "fragments", limit),
+        limit,
+      );
     },
     quickSwitch,
     async captureQuickSwitch(query: string, limit: number, _transliteration = false): Promise<PageEntry[]> {
