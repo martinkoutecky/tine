@@ -77,7 +77,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       expect(children).toHaveLength(2);
       expect(children[0]).toBe("old");
       const comment = children[1];
-      expect(docNode(comment)!.raw).toBe("\nquote:: a phrase worth disputing");
+      expect(docNode(comment)!.raw).toBe("\nquote:: a phrase worth disputing\nquote-prefix:: An agent wrote\nquote-suffix:: here.");
       expect(docNode("p")!.raw).toBe("An agent wrote a phrase worth disputing here.");
       expect(editingId()).toBe(comment);
       await Promise.resolve();
@@ -146,7 +146,7 @@ describe("Ctrl/Cmd+R creates a margin comment", () => {
       endEdit("page-navigation"); // opening the palette blurs the editor
       commentOnPaletteSelection();
       const comment = docNode("p")!.children[0];
-      expect(docNode(comment)!.raw).toBe("\nquote:: a phrase");
+      expect(docNode(comment)!.raw).toBe("\nquote:: a phrase\nquote-prefix:: Palette path for");
     } finally {
       dispose();
     }
