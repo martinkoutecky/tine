@@ -4377,6 +4377,34 @@ mod tests {
     }
 
     #[test]
+    fn priority_markers_link_to_the_priority_page_like_og() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("tine-priority-backlinks-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            "- [#A] call Alice\n- TODO [#A] call Bob\n- [#B] mid\n- see [#A] later\n- `[#A] code`\n- ordinary A word\n",
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        let a = backlinks(&graph, "A");
+        assert_eq!(a.len(), 1);
+        let raws: Vec<&str> = a[0].blocks.iter().map(|b| b.raw.as_str()).collect();
+        assert_eq!(raws, ["[#A] call Alice", "TODO [#A] call Bob"]);
+        // Page identity is case-insensitive: "a" is the same page.
+        assert_eq!(backlinks(&graph, "a")[0].blocks.len(), 2);
+        assert_eq!(backlinks(&graph, "B")[0].blocks[0].raw, "[#B] mid");
+        // The plain word "A" is an unlinked mention, never the priority block.
+        assert!(!unlinked_refs(&graph, "A")
+            .iter()
+            .flat_map(|g| &g.blocks)
+            .any(|b| b.raw.contains("[#")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn disabled_property_pages_suppress_only_key_membership() {
         use std::fs;
 

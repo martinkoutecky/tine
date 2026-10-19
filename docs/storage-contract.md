@@ -1020,8 +1020,11 @@ The watcher's re-reads of an operation's own writes (the racy re-read,
 storage spec §5.4, and on Windows also the echo event's path-scoped diff)
 are an accepted cost, on the watcher thread after publication: once the
 watcher settles they are at most the files the operation wrote plus a small
-constant (measured on 31 written pages: one read each on Linux, two on
-Windows). They are linear in the files written and do not grow with the
+constant (measured on 31 written pages: one read each on Linux when one
+watcher cycle takes all their echoes, two on Windows; two on Linux too when
+the echoes straddle two cycles, as under host load: the echo's cycle, then
+the one full diff the operation's own directory event forces while the
+own-write stamps are still racy). They are linear in the files written and do not grow with the
 graph (D-10). An echo of a page the host still holds is forwarded to the
 host, which re-reads it as an owed observation (§5); that read has the same
 cause and the same bound, whatever thread makes it. The rename cost tests
@@ -1033,13 +1036,18 @@ notifications (one watch delivers in order; checked on Linux and hosted
 Windows), and the watcher acknowledges the id the sentinel names only after
 the cycle that drained them has reconciled, store writer included. A late or
 duplicate notification of an older sentinel acknowledges only that older
-request. A due racy follow-up runs first, and then the host has no owed
+request. A sentinel written before the watch was registered (a drain
+requested while a loaded host was still starting its watcher, or across a
+re-install) raised no notification: the installed watch adopts it and
+answers it only after a full diff that began after it. A due racy follow-up
+runs first, and then the host has no owed
 observation, page, job or request left. A lost sentinel fails the test; a
 watcher blocked on the writer is never declared drained, nor is a drain
 answered by an older sentinel
 (`n3_a_watcher_blocked_on_the_writer_is_not_drained`,
 `n3_an_older_sentinel_does_not_acknowledge_a_newer_drain`,
-`n3_a_late_notification_of_a_completed_drain_acknowledges_only_it`). The
+`n3_a_late_notification_of_a_completed_drain_acknowledges_only_it`,
+`a_drain_requested_before_the_watch_is_installed_is_answered`). The
 tests bill publication only for the operation's own reads, and bound the
 settled re-reads separately: the watcher's (`watcher_reads`,
 `watcher_stamps_by_path`) and the host's re-reads of forwarded echoes
