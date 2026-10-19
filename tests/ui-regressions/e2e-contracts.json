@@ -781,7 +781,8 @@
     "scripts/e2e-touch-gestures.mjs": {
       "contracts": [
         { "class": "stateful-ux", "userOutcome": "On a phone, a left-edge swipe opens the left drawer (on iOS, with history to pop, it goes Back instead), while short, vertical or mid-screen swipes do nothing.", "blocking": true },
-        { "class": "core-operation", "userOutcome": "Swiping a block right indents it, swiping it left outdents it or opens its action menu, and the result is saved to the page file; short or vertical swipes change nothing.", "blocking": true }
+        { "class": "core-operation", "userOutcome": "Swiping a block right indents it, swiping it left outdents it or opens its action menu, and the result is saved to the page file; short or vertical swipes change nothing.", "blocking": true },
+        { "class": "stateful-ux", "userOutcome": "On a phone, holding a sidebar Favorites row still and dragging it reorders the favorites and writes the new order to config.edn; a finger that moves before the hold scrolls without reordering; a tap still opens the favorite.", "blocking": true, "authority": "D-20261019-FT1" }
       ],
       "acceptableVariations": ["Thresholds, snap-back animation, finger-tracking feel and swipe distances may evolve; blocking is that a deliberate swipe does the action and a clearly short or vertical one does not.", "The action-bar analogue may be a different menu or toolbar as long as it selects the block and offers its actions."],
       "nonRequirements": ["Exact pixel thresholds, animation timing or haptics.", "The OS delivering real touches: this journey injects synthetic touch events into the WebKitGTK webview.", "Android hardware Back, which is an OS gesture covered by unit tests and a device check."],

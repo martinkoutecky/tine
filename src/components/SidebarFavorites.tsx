@@ -50,7 +50,10 @@ function startDrag(from: number, event: PointerEvent) {
     (target) => {
       const { parent, index } = resolveFor(rows, from, target);
       moveFavoriteRow(rows[from].path, parent, index);
-    });
+    },
+    // Touch and pen: hold still to pick a row up, move first and the list scrolls
+    // (D-20261019-FT1, the Tabs list's gesture, GH #704). Mouse is unchanged.
+    { touchHold: true });
 }
 
 /** The favorites tree. `targetName` is used only for the active highlight;

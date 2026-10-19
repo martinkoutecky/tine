@@ -9,6 +9,13 @@
 // can. The binary needs the harness hook TINE_E2E_TOUCH_GESTURES (an E2E-only
 // env, src-tauri/src/lib.rs) because desktop Linux otherwise installs no touch
 // code at all; the hook never changes the reported platform.
+//
+// D-20261019-FT1 adds the sidebar Favorites touch hold: the rows take the
+// Tabs list's gesture (hold still, then drag, to reorder; a finger that moves
+// first scrolls; a tap opens). That gesture is driven by Pointer Events with
+// pointerType "touch" (the recognizer is pointer-based, not touch-event
+// based), dispatched here as synthetic PointerEvents through the page's real
+// hit test and layout; the result is read from config.edn on disk.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -24,6 +31,8 @@ const DRIVER = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(p
 const TMP = fs.mkdtempSync(path.join(process.env.TMPDIR || "/tmp", "tine-touch-gestures-e2e-"));
 const GRAPH = path.join(TMP, "graph");
 const PAGE = path.join(GRAPH, "pages", "Swipe target.md");
+const CONFIG = path.join(GRAPH, "logseq", "config.edn");
+const FAVORITES = ["Fav Alpha", "Fav Beta", "Fav Gamma"];
 const ARTIFACT = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(TMP, "artifacts"));
 const DRIVER_BASE = Number(process.env.E2E_DRIVER_PORT || 4592);
 const NATIVE_BASE = Number(process.env.E2E_NATIVE_PORT || 4593);
@@ -46,7 +55,8 @@ const PAGE_TEXT = [
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
 fs.mkdirSync(ARTIFACT, { recursive: true });
-fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"), "{}\n");
+fs.writeFileSync(CONFIG, `{:favorites [${FAVORITES.map((name) => JSON.stringify(name)).join(" ")}]}\n`);
+for (const name of FAVORITES) fs.writeFileSync(path.join(GRAPH, "pages", `${name}.md`), `- ${name} body\n`);
 fs.writeFileSync(PAGE, PAGE_TEXT);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
@@ -178,6 +188,42 @@ async function closeStartupDrawer(browser) {
 }
 const blockSel = (id) => `[data-block-ref='${id}'] .block-content`;
 
+
+// ---- Favorites touch hold (D-20261019-FT1) ---------------------------------
+const FAV_ROWS = "#sidebar-favorites-list .nav-page";
+/** The favorites in the order config.edn lists them (what Logseq reads). */
+const savedFavorites = () => {
+  const m = /:favorites\s*\[([^\]]*)\]/.exec(fs.readFileSync(CONFIG, "utf8"));
+  return m ? [...m[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => x[1].toLowerCase()) : [];
+};
+const lowered = (names) => names.map((n) => n.toLowerCase());
+const shownFavorites = (browser) => browser.execute((sel) =>
+  [...document.querySelectorAll(sel)].map((r) => r.querySelector(".nav-page-label, .sidebar-title, [class*='title']")?.textContent?.trim() ?? r.textContent.trim()), FAV_ROWS);
+const favRect = (browser, title) => browser.execute((sel, title) => {
+  const row = [...document.querySelectorAll(sel)].find((r) => r.textContent.trim().includes(title));
+  if (!row) return null;
+  const r = row.getBoundingClientRect();
+  return { x: Math.round(r.left + Math.min(40, r.width / 2)), top: r.top, height: r.height, mid: Math.round(r.top + r.height / 2) };
+}, FAV_ROWS, title);
+/** One touch-type Pointer Event: the press goes to the element under the point
+ *  (as the browser targets it), later events to the document (as the recognizer listens). */
+async function touchPointer(browser, type, x, y) {
+  const r = await browser.execute((type, x, y) => {
+    const init = { bubbles: true, cancelable: true, composed: true, pointerId: 41, pointerType: "touch", isPrimary: true, clientX: x, clientY: y, button: 0, buttons: type === "pointerup" ? 0 : 1 };
+    try {
+      (type === "pointerdown" ? document.elementFromPoint(x, y) : document).dispatchEvent(new PointerEvent(type, init));
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e) }; }
+  }, type, x, y);
+  assert(r.ok, "touch pointer dispatch failed", r);
+}
+async function fingerMove(browser, from, to, steps = 6) {
+  for (let i = 1; i <= steps; i++) {
+    await touchPointer(browser, "pointermove", from.x + ((to.x - from.x) * i) / steps, from.y + ((to.y - from.y) * i) / steps);
+    await sleep(25);
+  }
+}
+
 // ---- iOS: edge swipe (drawer pull + Back) and block swipes ------------------
 await withApp(0, "ios", async (browser) => {
   const vp = await browser.execute(() => ({ w: innerWidth, h: innerHeight, mode: document.documentElement.getAttribute("data-touch-gestures") }));
@@ -297,6 +343,45 @@ await withApp(1, "android", async (browser) => {
   await waitDrawer(browser, "left");
   assert((await currentPageTitle(browser)) === "Swipe target", "the Android edge swipe navigated instead of opening the drawer");
   note("on Android the edge swipe opens the drawer even when history exists (Back is the OS gesture)");
+
+  // D-20261019-FT1: Favorites rows take the Tabs touch hold.
+  await browser.$(FAV_ROWS).waitForExist({ timeout: 10_000 });
+  assert(JSON.stringify(savedFavorites()) === JSON.stringify(lowered(FAVORITES)), "config.edn did not start in the seeded order", savedFavorites());
+  const alpha = await favRect(browser, "Fav Alpha");
+  const gamma = await favRect(browser, "Fav Gamma");
+  assert(alpha && gamma, "favorite rows not laid out", { alpha, gamma });
+  const start = { x: alpha.x, y: alpha.mid };
+
+  // A finger that moves at once is a scroll: nothing is picked up, nothing written.
+  await touchPointer(browser, "pointerdown", start.x, start.y);
+  await fingerMove(browser, start, { x: start.x, y: gamma.mid }, 4);
+  await sleep(800); // longer than the hold: a hold that was not cancelled would pick the row up now
+  await touchPointer(browser, "pointerup", start.x, gamma.mid);
+  await sleep(500);
+  assert(JSON.stringify(savedFavorites()) === JSON.stringify(lowered(FAVORITES)), "a finger that moved at once reordered the favorites", savedFavorites());
+  assert(!(await browser.execute(() => document.documentElement.classList.contains("drag-selection-suppressed"))), "a scroll left the drag active");
+  note("a finger that moves first on a Favorites row scrolls: no reorder, nothing written");
+
+  // A still hold, then a drag to the lower half of the last row, reorders and persists.
+  await touchPointer(browser, "pointerdown", start.x, start.y);
+  await sleep(800);
+  assert(await browser.execute(() => document.documentElement.classList.contains("drag-selection-suppressed")), "the hold did not pick the row up");
+  await fingerMove(browser, start, { x: start.x, y: Math.round(gamma.top + gamma.height * 0.75) });
+  await touchPointer(browser, "pointerup", start.x, Math.round(gamma.top + gamma.height * 0.75));
+  const want = ["Fav Beta", "Fav Gamma", "Fav Alpha"];
+  await waitForFileText(CONFIG, () => JSON.stringify(savedFavorites()) === JSON.stringify(lowered(want)));
+  await browser.waitUntil(async () => JSON.stringify((await shownFavorites(browser)).map((t) => t.replace(/^\W+/, ""))) === JSON.stringify(want), { timeout: 8_000, timeoutMsg: `sidebar Favorites order did not follow: ${JSON.stringify(await shownFavorites(browser))}` });
+  note("a still hold then a drag reorders Favorites and writes config.edn :favorites in that order");
+
+  // A tap still opens the favorite (the click a tap produces, after a touch press and release).
+  const beta = await favRect(browser, "Fav Beta");
+  await touchPointer(browser, "pointerdown", beta.x, beta.mid);
+  await sleep(80);
+  await touchPointer(browser, "pointerup", beta.x, beta.mid);
+  await browser.execute((sel) => [...document.querySelectorAll(sel)].find((r) => r.textContent.includes("Fav Beta")).click(), FAV_ROWS);
+  await browser.waitUntil(async () => (await currentPageTitle(browser)) === "Fav Beta", { timeout: 8_000, timeoutMsg: "a tap did not open the favorite" });
+  assert(JSON.stringify(savedFavorites()) === JSON.stringify(lowered(want)), "a tap changed the favorites order", savedFavorites());
+  note("a tap on a Favorites row opens the favorite and reorders nothing");
 });
 
 proof.finishedAt = new Date().toISOString();
