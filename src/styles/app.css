@@ -8005,6 +8005,18 @@ html.tine-embed-shading-accent .embed-block {
   outline: 1px solid var(--link-color);
   outline-offset: 2px;
 }
+/* Settings search: mark the setting a result jumped to (GH #706). */
+.settings-jump-flash {
+  border-radius: 6px;
+  animation: settings-jump-flash 2s ease-out;
+}
+@keyframes settings-jump-flash {
+  0%, 50% { background: var(--match-mark-bg); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-jump-flash { animation: none; background: var(--match-mark-bg); }
+}
 /* Brief highlight when jumping to a block from search. */
 .block-flash > .block-main {
   animation: block-flash 1.2s ease-out;

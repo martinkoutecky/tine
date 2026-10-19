@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- Settings search: the setting a result jumps to is highlighted for about two seconds, so it is easy to spot on a long tab (GH #706).
+
 ### Fixed
 
 - **Typing in the Search tab (and the `((` block picker) can no longer end on "Search superseded by a newer request" with no results**: when the search for an earlier keystroke reached the search engine after the search for the latest one, it cancelled the latest. Each search now carries the order it was issued in, and the engine ignores one that was overtaken (REG-OG-SEARCH-LANE-ORDER).
