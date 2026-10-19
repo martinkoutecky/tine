@@ -1,6 +1,6 @@
 {
-  "lsdocTag": "v0.5.8",
-  "lsdocCommit": "32e63ef095c711d6d9947257bf5fd07d540fa59d",
+  "lsdocTag": "v0.5.9",
+  "lsdocCommit": "28b63c223f472cf4792c8b68449830ed3289fcf4",
   "mldocVersion": "1.5.9",
   "files": {
     "normalize.mjs": {
