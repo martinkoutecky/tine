@@ -30,7 +30,7 @@ icon:: 🧭
 	- **A query that would return more than 20,000 rows or 32 MiB is refused**, with a message to narrow it or add `(sample N)`. Logseq has no such limit; Tine stops instead of freezing.
 - ## Where Tine keeps things on your device instead of in the file
 	- **Clicking a table heading sorts** for as long as the page is open. Logseq writes `query-sort-by::` into the file.
-	- **Collapsing a query** is remembered on this device. Logseq writes `collapsed:: true` into the file.
+	- **Collapsing a query's results** is the block's own fold, written as `collapsed:: true` like Logseq. Only a query that is not on a block of an editable page (a default journal query, a read-only page) remembers its fold on this device instead.
 - ## Other differences
 	- **Queries are always live.** Logseq stops refreshing a query that takes longer than 50 ms and shows a refresh button; Tine keeps every query current.
 	- **`:current-page` in a split view** is the page in the pane you used last.

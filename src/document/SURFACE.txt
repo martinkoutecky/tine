@@ -147,6 +147,7 @@ replaceChildOrders
 replaceEmptyBlockWithOutline
 replayDeferredExternalReloads  # why: returning to the window replays reloads deferred mid-edit (family 10 focus refresh); batch22a
 reportPageLoadRefusal  # why: every refused load is reported the same way; batchJ1
+reportQueryFoldOption  # why: a query macro reports its authored :collapsed? default so the bullet and arrow share one fold; batch-og-query-fold-arrow
 resetStore
 resolveBlockRef
 resolveConflict  # why: one conflict resolution intent; batch03
@@ -173,6 +174,7 @@ setSelectionHeading  # why: context-menu heading applies to the whole selection 
 settleBlockRef  # why: a restored position ref becomes the block's live identity once found (GH #623); batch-nav
 splitBlock
 stopOwnNumberedListOnEmptyEnter
+storedFold  # why: the bullet's fold including a query's authored default, read by Block and the query arrow; batch-og-query-fold-arrow
 subscribeOwnerFlush  # why: the window answers its graph owner's flush before a CLI write (CLI slice 2); batch-cli-slice2
 switcherPage
 toLoadablePage
