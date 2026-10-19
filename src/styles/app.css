@@ -3512,7 +3512,13 @@ html[data-system-insets="native-viewport"] {
   position: relative;
 }
 
-.sticky-ancestor { position: sticky; height: 30px; margin-bottom: -30px; pointer-events: none; }
+/* GH #717: the pin is a sticky child of its own block, so it can never leave
+   that block's box: the next row at its level or above pushes it up and out
+   instead of being covered. The constraint rectangle is the margin box, so the
+   pin takes its full 30 px in flow and the row pulls itself back up over it
+   (a -30 px bottom margin on the pin instead let it hang 30 px below the block). */
+.sticky-ancestor { position: sticky; height: 30px; pointer-events: none; }
+[data-sticky-parent] > .block-main { margin-top: -30px; }
 .sticky-ancestor button { pointer-events: auto; display: flex; align-items: center; width: 100%; height: 30px; padding: 0; text-align: left; overflow: hidden; white-space: nowrap; border: 0; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); font: inherit; cursor: pointer; }
 .sticky-ancestor button[hidden] { display: none; }
 /* Same widths as .collapse-toggle and .bullet-container, so the pinned bullet
@@ -3524,7 +3530,7 @@ html[data-system-insets="native-viewport"] {
 .sticky-ancestor-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
 .sticky-ancestor-label * { white-space: nowrap; }
 [data-sticky-parent] > .block-main { scroll-margin-top: 30px; }
-@media print { .sticky-ancestor { display: none; } }
+@media print { .sticky-ancestor { display: none; } [data-sticky-parent] > .block-main { margin-top: 0; } }
 
 .block-main {
   display: flex;
