@@ -169,7 +169,7 @@ describe("journal feed read failures (GH #385, master d6024bac3aad)", () => {
     const mounted = mount(() => <PageView />);
     try {
       await vi.waitFor(() => expect(toasts()).toEqual([
-        expect.objectContaining({ kind: "error", message: expect.stringContaining("couldn't be read") }),
+        expect.objectContaining({ kind: "error", message: expect.stringContaining("journals/2026_01_02.md") }),
       ]));
     } finally {
       mounted.dispose();
