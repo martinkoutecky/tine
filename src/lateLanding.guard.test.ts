@@ -128,6 +128,11 @@ const DURABLE_BACKEND_METHODS = new Set([
   "saveSession", "saveWorkspaces", "setSmoothScroll", "setAppBool", "setAppString", "applySpellcheck", "setUiLocale",
   "debugLog", "diagnosticFrontendEvent", "diagnosticTimingEvent", "clearDiagnostics", "saveDiagnosticReport", "diagnosticSessionActive",
   "saveGraphVerificationReport", "addDefenderExclusion", "dismissDefenderHint",
+  // Quick share: a create uploads and records a share; Check records a found
+  // gist; Delete, Forget and Disconnect rewrite app data; Connect starts the
+  // flow that stores the account; Copy link writes the clipboard.
+  "quickShareCreate", "quickShareCheck", "quickShareDelete", "quickShareForget", "quickShareDisconnect",
+  "quickShareConnectStart", "quickShareCopyLink",
 ]);
 // All remaining Backend methods are reads, resource subscriptions, dialogs,
 // transient OS controls, or graph-binding controls. Adding a method requires
@@ -159,6 +164,10 @@ const NON_DURABLE_BACKEND_METHODS = new Set([
   "getWatchMode", "listBackups", "loadSession", "loadWorkspaces", "localClock", "gpuEnv", "getSmoothScroll",
   "getAppBool", "getAppString", "listSpellcheckDictionaries", "debugInfo",
   "diagnosticReport", "defenderHint", "appArchitecture", "watcherLatencyRecent", "takeDataHomeFallbackNotice",
+  // Quick share reads and in-memory controls: prepare keeps a payload in memory,
+  // discard and cancel drop one.
+  "quickShareList", "quickSharePrepare", "quickShareDiscard", "quickShareFind", "quickShareConnectStatus",
+  "quickShareConnectCancel",
 ]);
 // These helpers receive Owner from audited constructor call sites. Arbitrary
 // Owner parameters do not prove provenance to this syntax scan.

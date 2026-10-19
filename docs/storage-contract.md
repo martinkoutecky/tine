@@ -172,6 +172,42 @@ file by its stamp. Unit cost: one fold writes 1 page file (68 B for a
 rewrite and no work proportional to the graph. Proof:
 `crates/tine-store/src/store/fold_save_tests.rs`.
 
+The alias relation (the edge index that finds an alias class, the owner paths
+of an alias key and the alias list) is one in-memory value per generation,
+`query/alias_relation.rs`. A save that adds, drops or re-cases an alias,
+renames an aliased page or deletes one patches that value for the pages the
+save changed (`ReadSnapshot::alias_relation_after`, the same changed paths
+`RealPageNames::capture` uses) and never walks the graph: classes are not
+stored, they are a walk over the adjacency at read time, so a removal that
+splits a class needs no repair. That holds only from a warm predecessor
+relation (the previous generation's, already built or installed from the
+checkpoint); the first alias read of a generation with no relation, such as
+the first after a cold open without a checkpoint or after a rescan, builds it
+and walks every page once. Unit cost (D-20261018-M2b/M2c), scoped to the
+alias relation's page-row work: in memory only; no persisted record, file or
+transport byte per edit. Pages the relation examined to serve the first alias
+read after one edit from a warm relation, 10,000-page graph: 1 (2 for a
+rename), where the former rebuild walked 10,000. The launch checkpoint keeps
+the encoding and the meaning of the alias list and the owner map
+(`FORMAT` unchanged); which lazy slots are occupied does change, since the
+owner map is present whenever the relation is, so a checkpoint is not
+byte-identical to one written before. Proof:
+`crates/tine-store/tests/alias_edit_cost.rs`; the delta equals a rebuild after
+every step of random edit sequences (`query/alias_relation.rs`
+`delta_equals_rebuild_over_random_edit_sequences`,
+`model/index_oracle_tests.rs` `random_alias_edits_equal_a_fresh_build`).
+
+Every per-page index of a generation (this relation, the explicit-reference
+index, the candidate signatures, the name keys and the rest) is patched by the
+files its publication names plus every row the page cache changed since the
+previous capture (`Graph::take_touched`), so a generation never lacks a
+mutation its pages root contains. The case that needs the second set: a failed
+transaction caches the files it wrote and an outside writer's replacement
+together, then publishes them as an Own and an External change; the first
+capture sees both, the second reuses it. Proof:
+`model/index_oracle_tests.rs`
+`split_own_external_publication_equals_a_fresh_build`.
+
 ## Page host binding (step 3b)
 
 Every graph window binding runs a page host (step 3b P2b,
@@ -750,6 +786,7 @@ by I-9's typed failure paths.
 | `src-tauri::backup::write_snapshot` busy namespace | A concurrent honest Tine instance holds the graph's backup lock for more than 30 s: a launch snapshot is skipped (diag `backup-busy`), since that instance is backing up this graph now; a suffixed snapshot fails (`backup-failed:busy:WouldBlock`), and the rewrite that asked for it does not run. |
 | `src-tauri::backup::maintain_locked` keeper | No zip fully verifies, or settling the keeper is weak or fails (disk error, a filesystem without directory sync): delete nothing. Old snapshots stay until a keeper is settled; a disk error never turns into losing the last good snapshot. |
 | `src-tauri::backup::restore_hosted` restore stop (STEP3 §7, R7) | Only with a running page host. A drained edit whose save fails (disk error) or conflicts (external-editor race), an unretired draft, or a known draft copy whose census could not be synced (power loss, M2), at the restore stop: restore nothing, keep the host, and name the pages (today's restore aborts when its flush fails). The binding's host lock is held throughout (S8), so a writer, a retirement or another restore waits for this outcome. A fresh host that cannot start after the restore (an app-data disk error) is reported, and writers then run as with no host. Proof `src-tauri/src/backup/restore.rs` `a_restore_holds_the_host_gate_until_one_fresh_host_runs`. |
+| `src-tauri::portable` portable Windows app data (GH #719) | A disk error or a filesystem the user cannot write (a write-protected stick, a read-only share): a portable `tine-data` folder that cannot take a file stops the launch in `portable::preflight()` (first in `main` and `run`), before the debug log, CLI, settings or Tauri write anything, with a native error naming the folder and saying to move Tine somewhere writable. Refusal, not recovery: a fallback to the installed profile would split app state across two homes, and the next launch from a writable folder would silently leave the newer half behind. The graph is never touched. Portable identity (manual updates) holds either way. Portable mode never reads, moves or deletes existing `%APPDATA%` / `%LOCALAPPDATA%` state. |
 | `src-tauri::data_home::ensure_usable` app-data home (og I1a, master 8e1ea0bfd) | A disk error or a filesystem the user cannot write (a root-owned `~/.local/share`, a read-only mount): the app-data home is relocated for this launch to the first writable fallback (`~/.tine-data`, `$XDG_RUNTIME_DIR/tine-data`, `$TMPDIR/tine-data-<uid>`) and the frontend says where, once, stickily. Only when none is writable does the launch refuse: one sentence naming the `ErrorKind`, exit 1, instead of Tauri's setup panic. |
 | `src-tauri::state` graph binding | Two windows try to own overlapping roots, or a queued command carries an old binding generation, or a queued worker holds a binding a reopen has since adopted (`review_p1_late_old_slot_writer_cannot_bypass_adopted_reservation`, `review_p1_a_queued_restore_cannot_enter_after_slot_adoption`); refuse a wrong-graph write. A graph whose page host is still retiring (saving after its window closed) owns its root too: an open of an overlapping root first waits for it outside the registry lock, up to 10 s, telling the window it waits (`graph-open-waiting`), and is refused only past that bound, naming the graph still saving (`host_retirement` `a_stuck_retirement_refuses_an_overlapping_open_naming_the_saving_graph`). The same root is adopted, never waited for. |
 | `src::carry` destination day and capture destination (og I1e, og J1, master 7bd793bd0 family) | Sync-service delivery or a journal date-format change leaves two files for today (a duplicate day), and the second one is open path-pinned under today's name. Carry and capture (quick capture, `appendToTodayJournal`, capture into a page) load the file the name resolves to (`admitPageFile`): a second file holding the name with no unsaved input is replaced by it and the write lands in the real file; one WITH unsaved input (the in-scope harm: replacing it would discard that input) refuses before any block moves or is appended, naming both files. A refused capture keeps its text in the capture window. A source page whose replacement the working set declines stops carry the same way. The duplicate-day resolver folds the pair. |
@@ -984,8 +1021,11 @@ The watcher's re-reads of an operation's own writes (the racy re-read,
 storage spec §5.4, and on Windows also the echo event's path-scoped diff)
 are an accepted cost, on the watcher thread after publication: once the
 watcher settles they are at most the files the operation wrote plus a small
-constant (measured on 31 written pages: one read each on Linux, two on
-Windows). They are linear in the files written and do not grow with the
+constant (measured on 31 written pages: one read each on Linux when one
+watcher cycle takes all their echoes, two on Windows; two on Linux too when
+the echoes straddle two cycles, as under host load: the echo's cycle, then
+the one full diff the operation's own directory event forces while the
+own-write stamps are still racy). They are linear in the files written and do not grow with the
 graph (D-10). An echo of a page the host still holds is forwarded to the
 host, which re-reads it as an owed observation (§5); that read has the same
 cause and the same bound, whatever thread makes it. The rename cost tests
@@ -997,13 +1037,18 @@ notifications (one watch delivers in order; checked on Linux and hosted
 Windows), and the watcher acknowledges the id the sentinel names only after
 the cycle that drained them has reconciled, store writer included. A late or
 duplicate notification of an older sentinel acknowledges only that older
-request. A due racy follow-up runs first, and then the host has no owed
+request. A sentinel written before the watch was registered (a drain
+requested while a loaded host was still starting its watcher, or across a
+re-install) raised no notification: the installed watch adopts it and
+answers it only after a full diff that began after it. A due racy follow-up
+runs first, and then the host has no owed
 observation, page, job or request left. A lost sentinel fails the test; a
 watcher blocked on the writer is never declared drained, nor is a drain
 answered by an older sentinel
 (`n3_a_watcher_blocked_on_the_writer_is_not_drained`,
 `n3_an_older_sentinel_does_not_acknowledge_a_newer_drain`,
-`n3_a_late_notification_of_a_completed_drain_acknowledges_only_it`). The
+`n3_a_late_notification_of_a_completed_drain_acknowledges_only_it`,
+`a_drain_requested_before_the_watch_is_installed_is_answered`). The
 tests bill publication only for the operation's own reads, and bound the
 settled re-reads separately: the watcher's (`watcher_reads`,
 `watcher_stamps_by_path`) and the host's re-reads of forwarded echoes

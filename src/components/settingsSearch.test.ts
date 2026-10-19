@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { advancedMatch, rankedSettingMatches, SETTING_SEARCH, settingMatches, settingHighlight } from "./settingsSearch";
+import { advancedMatch, matchedDescription, rankedSettingMatches, SETTING_SEARCH, settingMatches, settingHighlight } from "./settingsSearch";
 import { msg, render, setActiveLocale, type Msg } from "../i18n";
 
 afterEach(() => setActiveLocale("en"));
@@ -32,21 +32,47 @@ it("matches translated and original English vocabulary after a language change",
 const text = (value: string | Msg) => typeof value === "string" ? value : render(value);
 const labelsFor = (query: string) => rankedSettingMatches(SETTING_SEARCH, query).map(entry => text(entry.label));
 
-it("a one-character query matches labels, aliases and keywords but never descriptions (GH #706)", async () => {
+it("a one-character query matches shown-language names and descriptions, not hidden English (GH #706)", async () => {
   await setActiveLocale("zh-CN");
-  // 图谱 and 拼写检查语言 contain 发 only inside their descriptions.
-  expect(labelsFor("发").sort()).toEqual([render(msg("settings-search-developer-tools")), render(msg("graph-publish-publish"))].sort());
-  expect(labelsFor("发")).toEqual(expect.arrayContaining(["开发者工具", "发布"]));
-  expect(labelsFor("发")).not.toContain("图谱");
-  expect(labelsFor("发")).not.toContain("拼写检查语言");
+  // 图谱 and 拼写检查语言 contain 发 in their descriptions: beta.5 dropped them (4 -> 2).
+  const fa = labelsFor("发");
+  expect(fa).toEqual(expect.arrayContaining(["开发者工具", "发布", "图谱", "拼写检查语言"]));
+  expect(fa.indexOf("图谱")).toBeGreaterThan(fa.indexOf("发布"));
+  // A single "S" in the Chinese interface matches only text shown in Chinese (CSS, collapsed::),
+  // not the English label of almost every setting.
+  const s = labelsFor("S");
+  expect(s).toContain("编辑全局 CSS");
+  expect(s).not.toContain("语言");
+  expect(s).not.toContain("发布");
+  expect(s).not.toContain("键盘快捷键");
+  // Longer words still match the English originals.
+  expect(labelsFor("Publish")).toContain("发布");
   await setActiveLocale("en");
   const description = { tab: "graph" as const, label: "Alpha", description: "zebra" };
-  expect(settingMatches(description, "z")).toBe(false);
+  expect(settingMatches(description, "z")).toBe(true);
   expect(settingMatches(description, "zebra")).toBe(true);
-  expect(settingMatches({ ...description, aliases: ["zulu"] }, "z")).toBe(true);
-  expect(settingMatches({ ...description, keywords: "zulu" }, "z")).toBe(true);
-  expect(settingMatches(description, "a")).toBe(true);
-  expect(settingMatches(description, "a z")).toBe(false);
+  expect(settingMatches({ ...description, keywords: "zulu" }, "u")).toBe(true);
+  expect(settingMatches({ ...description, aliases: ["quux"] }, "q")).toBe(false);
+  expect(settingMatches({ ...description, aliases: ["quux"] }, "quux")).toBe(true);
+  expect(settingMatches(description, "a z")).toBe(true);
+  expect(settingMatches(description, "a y")).toBe(false);
+});
+
+it("shows the matching description under a result only when its name does not match (GH #706)", async () => {
+  const entry = { tab: "graph" as const, label: "Alpha", description: "zebra crossing" };
+  expect(matchedDescription(entry, "zebra")).toBe("zebra crossing");
+  expect(matchedDescription(entry, "alpha")).toBeUndefined();
+  expect(matchedDescription(entry, " ")).toBeUndefined();
+  await setActiveLocale("zh-CN");
+  const graph = SETTING_SEARCH.find(entry => text(entry.label) === "图谱")!;
+  expect(matchedDescription(graph, "发")).toContain("发");
+  await setActiveLocale("en");
+  // Catalog markup is not shown or matched, and a long description is cut around its match.
+  const spell = SETTING_SEARCH.find(entry => text(entry.label) === "Spellcheck languages")!;
+  expect(matchedDescription(spell, "rescan")).toMatch(/^….*Rescan\.$/);
+  expect(matchedDescription(spell, "rescan")).not.toMatch(/<\/?[a-z]+>/);
+  expect(matchedDescription(spell, "rescan")!.length).toBeLessThanOrEqual(122);
+  expect(settingMatches(spell, "strong")).toBe(false);
 });
 
 it("lists label, keyword and alias matches before description-only matches, keeping the table order (GH #706)", () => {

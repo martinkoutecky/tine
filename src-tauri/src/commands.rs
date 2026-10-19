@@ -671,6 +671,7 @@ pub(crate) async fn run_graph_search(
     page_limit: usize,
     block_limit: usize,
     lane: Option<String>,
+    lane_seq: Option<u64>,
     explain: bool,
     scope: Option<QueryPageScope>,
     page_match_scope: Option<tine_core::query::ir::FriendlyPageMatchScope>,
@@ -686,13 +687,14 @@ pub(crate) async fn run_graph_search(
         path: scope.path,
     });
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::run_graph_search_with_transliteration(
+        tine_graph_features::search::run_graph_search_sequenced(
             &slot.store,
             &slot.block_search_lanes,
             source,
             page_limit,
             block_limit,
             lane.as_deref(),
+            lane_seq,
             explain,
             scope,
             page_match_scope,
@@ -919,16 +921,18 @@ pub(crate) async fn search(
     query: String,
     limit: usize,
     lane: Option<String>,
+    lane_seq: Option<u64>,
     state: GraphContext<'_>,
 ) -> Result<Vec<RefGroup>, String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::search::find_blocks(
+        tine_graph_features::search::find_blocks_sequenced(
             &slot.store,
             &slot.block_search_lanes,
             &query,
             limit,
             lane.as_deref(),
+            lane_seq,
         )
         .map_err(feature_search_error)
     })

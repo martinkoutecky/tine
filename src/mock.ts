@@ -8,6 +8,7 @@ import type { ConfirmOptions } from "./backendInterface";
 import { ASSET_INGRESS_MAX_BYTES } from "./clipboardImage";
 import { CONFLICT_DEMO_PAGE, conflictDemoBodies, mockConflictApi } from "./mockConflicts";
 import { mockQueryCommands } from "./mockQuery";
+import { mockQuickShareCommands } from "./mockQuickShare";
 import { mockPageHost } from "./mockPageHost";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PageInventory, PageInventoryEntry, PageModified, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup, ResolvedPage } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
@@ -16,6 +17,7 @@ import { hlsPageName } from "./pdf";
 import { lazyHeaderFacets, leadingMarker } from "./markers";
 import { fuzzyScore } from "./editor/autocomplete";
 import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
+import { blockPickerLeg, mergeBlockPickerLegs } from "./editor/blockPickerMatch";
 import { searchFold } from "./editor/searchFold";
 import { parseJournalWith } from "./journal";
 import { mockJournalFiles } from "./mockJournalFiles";
@@ -1018,6 +1020,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       return { groups: [], ran: [], ignored: [], supported: false };
     },
     ...mockQueryCommands,
+    ...mockQuickShareCommands,
     async runQuery(query: string): Promise<RefGroup[]> {
       // Simplified mock evaluator: task/todo filter or page-ref filter.
       if (/\b(todo|task)\b/i.test(query)) {
@@ -1183,24 +1186,14 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async search(query: string, limit: number): Promise<RefGroup[]> {
       const q = fold(query.trim());
       if (!q) return [];
-      let n = limit;
-      // OG's `((` leg `LIKE '%a%b%'`: fragments literal, in order, no overlap.
-      const fragments = q.split(/\s+/).filter(Boolean);
-      const groups = collect((b) => {
-        const text = fold(b.raw);
-        let at = 0;
-        for (const fragment of fragments) {
-          const found = text.indexOf(fragment, at);
-          if (found < 0) return false;
-          at = found + fragment.length;
-        }
-        return true;
-      });
-      for (const g of groups) {
-        if (g.blocks.length > n) g.blocks = g.blocks.slice(0, n);
-        n -= g.blocks.length;
-      }
-      return groups.filter((g) => g.blocks.length > 0);
+      // OG's `((` search: whole words in any order (FTS5) listed before literal
+      // pieces in order (`LIKE '%a%b%'`), cut at the limit (blockPickerMatch.ts).
+      const legOf = (b: BlockDto) => blockPickerLeg(fold(b.raw), q);
+      return mergeBlockPickerLegs(
+        collect((b) => legOf(b) === "words"),
+        collect((b) => legOf(b) === "fragments"),
+        limit,
+      );
     },
     async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope, pageMatchScope: import("./editor/queryIr").FriendlyPageMatchScope = "names", _views?: { page: import("./editor/queryIr").ViewSettings; block: import("./editor/queryIr").ViewSettings }, _transliteration = false): Promise<QueryExecution> {
       // Browser-preview approximation only (ADR 0016). Production matching,
@@ -1568,7 +1561,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
       mockWorkspaces = data; return "durable";
     },
     async gpuEnv(): Promise<GpuEnv> {
-      return { software_forced: false, appimage: false, flatpak: false, packaged: false };
+      return { software_forced: false, appimage: false, flatpak: false, packaged: false, portable: false };
     },
     async takeDataHomeFallbackNotice(): Promise<string | null> {
       return null;

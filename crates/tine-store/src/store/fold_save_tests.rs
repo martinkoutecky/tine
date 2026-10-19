@@ -99,7 +99,7 @@ fn a_fold_rebuilds_nothing_and_survives_a_warm_relaunch() {
     assert!(
         folded.graph.alias_list_built(),
         "GH #623 item 3 / I-25: a fold inherits the alias list instead of walking every page \
-         at the next read; exemplar ReadSnapshot::carry_alias_list_from"
+         at the next read; exemplar ReadSnapshot::alias_relation_after"
     );
     assert!(
         !dirty(&store),

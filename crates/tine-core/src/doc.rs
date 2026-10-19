@@ -382,10 +382,24 @@ impl DocBlock {
                 refs_page.sort();
                 refs_page.dedup();
             }
-            let refs_norm = refs_page
+            // OG `with-page-refs` also puts the block's marker and priority in its
+            // refs, so `[[A]]` / `[[TODO]]` queries find them. They stay out of
+            // `refs_page`, the virtual-page list behind `[[` autocomplete: Tine
+            // does not offer a page per marker or priority letter.
+            let mut refs_norm: Vec<String> = refs_page
                 .iter()
                 .map(|r| crate::refs::normalize(r))
                 .collect();
+            for r in reference_source
+                .explicit
+                .iter()
+                .filter(|r| r.rule == "explicit_task_marker" || r.rule == "explicit_priority")
+            {
+                let key = crate::refs::normalize(&r.name);
+                if !refs_norm.contains(&key) {
+                    refs_norm.push(key);
+                }
+            }
             let mut plain_ranges = reference_source.plain_ranges;
             plain_ranges.shrink_to_fit();
             let mut extra = ProjectionExtra {
@@ -1377,7 +1391,9 @@ mod projection_tests {
         assert!(plain.projection().extra.is_none());
         let rich = DocBlock::new("TODO [[Page]] #tag\nkey:: v");
         assert!(rich.projection().extra.is_some());
-        assert_eq!(rich.projection().refs_norm().len(), 2);
+        // page, tag, and (OG `with-page-refs`) the task marker's page "todo".
+        assert_eq!(rich.projection().refs_norm().len(), 3);
+        assert_eq!(rich.projection().refs_page().len(), 2);
         assert_eq!(rich.marker(), Some("TODO"));
     }
 

@@ -1,0 +1,789 @@
+{
+  "created_at": "2026-10-17T00:00:00Z",
+  "quick_share": 1,
+  "snapshot": {
+    "aliases": [
+      [
+        "Proj",
+        "Project"
+      ]
+    ],
+    "backlinks": {
+      "Notes ü": [
+        {
+          "blocks": [
+            {
+              "breadcrumb": [],
+              "children": [],
+              "collapsed": false,
+              "has_id": false,
+              "id": "runtime-0",
+              "raw": "Links to [[Notes ü]] and ((6512a000-0000-4000-8000-000000000002))"
+            }
+          ],
+          "evidence": [
+            {
+              "block_id": "runtime-0",
+              "occurrences": [
+                {
+                  "canonical": "Notes ü",
+                  "kind": "explicit",
+                  "matched_name": "Notes ü",
+                  "rule": "explicit_link",
+                  "span": {
+                    "end": 20,
+                    "start": 9
+                  }
+                }
+              ],
+              "total": 1
+            }
+          ],
+          "kind": "page",
+          "page": "Project"
+        }
+      ],
+      "Project": [
+        {
+          "blocks": [
+            {
+              "breadcrumb": [],
+              "children": [],
+              "collapsed": false,
+              "has_id": false,
+              "id": "runtime-1",
+              "raw": "journal note on [[Project]]"
+            }
+          ],
+          "evidence": [
+            {
+              "block_id": "runtime-1",
+              "occurrences": [
+                {
+                  "canonical": "Project",
+                  "kind": "explicit",
+                  "matched_name": "Project",
+                  "rule": "explicit_link",
+                  "span": {
+                    "end": 27,
+                    "start": 16
+                  }
+                }
+              ],
+              "total": 1
+            }
+          ],
+          "kind": "journal",
+          "page": "Oct 17th, 2026"
+        },
+        {
+          "blocks": [
+            {
+              "breadcrumb": [],
+              "children": [],
+              "collapsed": false,
+              "has_id": false,
+              "id": "runtime-2",
+              "page_property": true,
+              "properties": [
+                [
+                  "type",
+                  "note"
+                ],
+                [
+                  "related",
+                  "[[Project]]"
+                ]
+              ],
+              "raw": "type:: note\nrelated:: [[Project]]"
+            },
+            {
+              "breadcrumb": [],
+              "children": [],
+              "collapsed": false,
+              "has_id": false,
+              "id": "runtime-3",
+              "raw": "refers ((6512a000-0000-4000-8000-000000000001)) and [[Proj]]"
+            }
+          ],
+          "evidence": [
+            {
+              "block_id": "runtime-2",
+              "occurrences": [
+                {
+                  "canonical": "Project",
+                  "kind": "explicit",
+                  "matched_name": "Project",
+                  "rule": "explicit_link",
+                  "span": {
+                    "end": 33,
+                    "start": 22
+                  }
+                }
+              ],
+              "total": 1
+            },
+            {
+              "block_id": "runtime-3",
+              "occurrences": [
+                {
+                  "canonical": "Project",
+                  "kind": "explicit",
+                  "matched_name": "Proj",
+                  "rule": "explicit_link",
+                  "span": {
+                    "end": 60,
+                    "start": 52
+                  }
+                }
+              ],
+              "total": 1
+            }
+          ],
+          "kind": "page",
+          "page": "Notes ü"
+        },
+        {
+          "blocks": [
+            {
+              "breadcrumb": [],
+              "children": [],
+              "collapsed": false,
+              "has_id": false,
+              "id": "runtime-4",
+              "raw": "see [[Project]]"
+            }
+          ],
+          "evidence": [
+            {
+              "block_id": "runtime-4",
+              "occurrences": [
+                {
+                  "canonical": "Project",
+                  "kind": "explicit",
+                  "matched_name": "Project",
+                  "rule": "explicit_link",
+                  "span": {
+                    "end": 15,
+                    "start": 4
+                  }
+                }
+              ],
+              "total": 1
+            }
+          ],
+          "kind": "page",
+          "page": "Org page"
+        }
+      ]
+    },
+    "block_ref_counts": {
+      "6512a000-0000-4000-8000-000000000001": 1,
+      "6512a000-0000-4000-8000-000000000002": 1
+    },
+    "entries": [
+      {
+        "date_key": null,
+        "kind": "page",
+        "name": "Fixture share",
+        "path": ""
+      },
+      {
+        "date_key": null,
+        "kind": "page",
+        "name": "Project",
+        "path": "pages/Project.md"
+      },
+      {
+        "date_key": null,
+        "kind": "page",
+        "name": "Empty",
+        "path": "pages/Empty.md"
+      },
+      {
+        "date_key": null,
+        "kind": "page",
+        "name": "Notes ü",
+        "path": "pages/Notes ü.md"
+      },
+      {
+        "date_key": null,
+        "kind": "page",
+        "name": "Org page",
+        "path": "pages/Org page.org"
+      },
+      {
+        "date_key": null,
+        "kind": "page",
+        "name": "Dashboard",
+        "path": "pages/Dashboard.md"
+      },
+      {
+        "date_key": 20261017,
+        "kind": "journal",
+        "name": "Oct 17th, 2026",
+        "path": "journals/2026_10_17.md"
+      }
+    ],
+    "exported_at": "2026-10-17T00:00:00Z",
+    "home": "Fixture share",
+    "icons": {},
+    "name": "Fixture share",
+    "pages": [
+      {
+        "activation": null,
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "id": "published-page:0",
+            "raw": "[[Project]]"
+          },
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "id": "published-page:1",
+            "raw": "[[Empty]]"
+          },
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "id": "published-page:2",
+            "raw": "[[Notes ü]]"
+          },
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "id": "published-page:3",
+            "raw": "[[Org page]]"
+          },
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "id": "published-page:4",
+            "raw": "[[Dashboard]]"
+          },
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "id": "published-page:5",
+            "raw": "[[Oct 17th, 2026]]"
+          }
+        ],
+        "format": "md",
+        "guide": false,
+        "kind": "page",
+        "name": "Fixture share",
+        "path": "",
+        "pre_block": null,
+        "read_only": true,
+        "rev": null,
+        "title": "Fixture share"
+      },
+      {
+        "activation": null,
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": true,
+            "id": "ad618eca-5d97-819f-b100-4fe0600ac80f",
+            "marker": "TODO",
+            "properties": [
+              [
+                "id",
+                "6512a000-0000-4000-8000-000000000001"
+              ]
+            ],
+            "raw": "TODO first task\nid:: 6512a000-0000-4000-8000-000000000001"
+          },
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-0",
+            "raw": "Links to [[Notes ü]] and ((6512a000-0000-4000-8000-000000000002))"
+          },
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-5",
+            "raw": "{{query (task TODO)}} and again {{query (task TODO)}}"
+          },
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-6",
+            "properties": [
+              [
+                "a.b",
+                "dotted"
+              ],
+              [
+                "dup",
+                "one"
+              ],
+              [
+                "dup",
+                "two"
+              ]
+            ],
+            "raw": "odd keys\na.b:: dotted\ndup:: one\ndup:: two"
+          }
+        ],
+        "format": "md",
+        "guide": false,
+        "kind": "page",
+        "name": "Project",
+        "path": "pages/Project.md",
+        "pre_block": "alias:: Proj\nstatus:: active",
+        "read_only": true,
+        "rev": null,
+        "title": "Project"
+      },
+      {
+        "activation": null,
+        "blocks": [],
+        "format": "md",
+        "guide": false,
+        "kind": "page",
+        "name": "Empty",
+        "path": "pages/Empty.md",
+        "pre_block": null,
+        "read_only": true,
+        "rev": null,
+        "title": "Empty"
+      },
+      {
+        "activation": null,
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": true,
+            "id": "4a2a93e7-6d56-8bfa-9d10-c56ffc0e5523",
+            "properties": [
+              [
+                "id",
+                "6512a000-0000-4000-8000-000000000002"
+              ]
+            ],
+            "raw": "block with an id\nid:: 6512a000-0000-4000-8000-000000000002"
+          },
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-3",
+            "raw": "refers ((6512a000-0000-4000-8000-000000000001)) and [[Proj]]"
+          }
+        ],
+        "format": "md",
+        "guide": false,
+        "kind": "page",
+        "name": "Notes ü",
+        "path": "pages/Notes ü.md",
+        "pre_block": "type:: note\nrelated:: [[Project]]",
+        "read_only": true,
+        "rev": null,
+        "title": "Notes ü"
+      },
+      {
+        "activation": null,
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-7",
+            "marker": "TODO",
+            "raw": "TODO org task"
+          },
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-4",
+            "raw": "see [[Project]]"
+          }
+        ],
+        "format": "org",
+        "guide": false,
+        "kind": "page",
+        "name": "Org page",
+        "path": "pages/Org page.org",
+        "pre_block": "#+title: Org page",
+        "read_only": true,
+        "rev": null,
+        "title": "Org page"
+      },
+      {
+        "activation": null,
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-8",
+            "raw": "tasks here: {{query (task TODO)}}"
+          }
+        ],
+        "format": "md",
+        "guide": false,
+        "kind": "page",
+        "name": "Dashboard",
+        "path": "pages/Dashboard.md",
+        "pre_block": "description:: {{query (page-property type note)}}",
+        "read_only": true,
+        "rev": null,
+        "title": "Dashboard"
+      },
+      {
+        "activation": null,
+        "blocks": [
+          {
+            "breadcrumb": [],
+            "children": [],
+            "collapsed": false,
+            "has_id": false,
+            "id": "runtime-1",
+            "raw": "journal note on [[Project]]"
+          }
+        ],
+        "format": "md",
+        "guide": false,
+        "kind": "journal",
+        "name": "Oct 17th, 2026",
+        "path": "journals/2026_10_17.md",
+        "pre_block": null,
+        "read_only": true,
+        "rev": null,
+        "title": "Oct 17th, 2026"
+      }
+    ],
+    "queries": [
+      {
+        "argument": "(task TODO)",
+        "context": {
+          "current_page": "Project"
+        },
+        "dialect": "macro_query",
+        "executed_context": {
+          "current_page": "Project"
+        },
+        "host": "Project",
+        "parsed": {
+          "query": {
+            "anchor": "block",
+            "diagnostics": [],
+            "filter": {
+              "kind": "leaf",
+              "leaf": {
+                "attr": "task",
+                "kind": "attr",
+                "op": "in",
+                "value": {
+                  "items": [
+                    {
+                      "kind": "text",
+                      "text": "TODO"
+                    }
+                  ],
+                  "kind": "list"
+                }
+              }
+            },
+            "source": {
+              "kind": "og",
+              "og_options": "",
+              "original": "(task TODO)"
+            }
+          },
+          "view": {
+            "aggregates": [],
+            "columns": [],
+            "sort": []
+          }
+        },
+        "properties": [],
+        "result": {
+          "anchor": "block",
+          "diagnostics": [],
+          "exceeded": false,
+          "groups": [
+            {
+              "blocks": [
+                {
+                  "breadcrumb": [],
+                  "children": [],
+                  "collapsed": false,
+                  "has_id": false,
+                  "id": "runtime-7",
+                  "marker": "TODO",
+                  "raw": "TODO org task"
+                }
+              ],
+              "kind": "page",
+              "page": "Org page"
+            },
+            {
+              "blocks": [
+                {
+                  "breadcrumb": [],
+                  "children": [],
+                  "collapsed": false,
+                  "has_id": true,
+                  "id": "ad618eca-5d97-819f-b100-4fe0600ac80f",
+                  "marker": "TODO",
+                  "properties": [
+                    [
+                      "id",
+                      "6512a000-0000-4000-8000-000000000001"
+                    ]
+                  ],
+                  "raw": "TODO first task\nid:: 6512a000-0000-4000-8000-000000000001"
+                }
+              ],
+              "kind": "page",
+              "page": "Project"
+            }
+          ],
+          "matched_total": 2,
+          "report": {
+            "ignored": [],
+            "ran": [],
+            "supported": true
+          },
+          "total": 2
+        },
+        "view": {
+          "aggregates": [],
+          "columns": [],
+          "sort": [],
+          "view": "list"
+        }
+      },
+      {
+        "argument": "(task TODO)",
+        "context": {
+          "current_page": "Project"
+        },
+        "dialect": "macro_query",
+        "executed_context": {
+          "current_page": "Project"
+        },
+        "host": "Project",
+        "parsed": {
+          "query": {
+            "anchor": "block",
+            "diagnostics": [],
+            "filter": {
+              "kind": "leaf",
+              "leaf": {
+                "attr": "task",
+                "kind": "attr",
+                "op": "in",
+                "value": {
+                  "items": [
+                    {
+                      "kind": "text",
+                      "text": "TODO"
+                    }
+                  ],
+                  "kind": "list"
+                }
+              }
+            },
+            "source": {
+              "kind": "og",
+              "og_options": "",
+              "original": "(task TODO)"
+            }
+          },
+          "view": {
+            "aggregates": [],
+            "columns": [],
+            "sort": []
+          }
+        },
+        "properties": [],
+        "result": {
+          "anchor": "block",
+          "diagnostics": [],
+          "exceeded": false,
+          "groups": [
+            {
+              "blocks": [
+                {
+                  "breadcrumb": [],
+                  "children": [],
+                  "collapsed": false,
+                  "has_id": false,
+                  "id": "runtime-7",
+                  "marker": "TODO",
+                  "raw": "TODO org task"
+                }
+              ],
+              "kind": "page",
+              "page": "Org page"
+            },
+            {
+              "blocks": [
+                {
+                  "breadcrumb": [],
+                  "children": [],
+                  "collapsed": false,
+                  "has_id": true,
+                  "id": "ad618eca-5d97-819f-b100-4fe0600ac80f",
+                  "marker": "TODO",
+                  "properties": [
+                    [
+                      "id",
+                      "6512a000-0000-4000-8000-000000000001"
+                    ]
+                  ],
+                  "raw": "TODO first task\nid:: 6512a000-0000-4000-8000-000000000001"
+                }
+              ],
+              "kind": "page",
+              "page": "Project"
+            }
+          ],
+          "matched_total": 2,
+          "report": {
+            "ignored": [],
+            "ran": [],
+            "supported": true
+          },
+          "total": 2
+        },
+        "view": {
+          "aggregates": [],
+          "columns": [],
+          "sort": [],
+          "view": "list"
+        }
+      },
+      {
+        "argument": "(task TODO)",
+        "context": {
+          "current_page": "Dashboard"
+        },
+        "dialect": "macro_query",
+        "executed_context": {
+          "current_page": "Dashboard"
+        },
+        "host": "Dashboard",
+        "parsed": {
+          "query": {
+            "anchor": "block",
+            "diagnostics": [],
+            "filter": {
+              "kind": "leaf",
+              "leaf": {
+                "attr": "task",
+                "kind": "attr",
+                "op": "in",
+                "value": {
+                  "items": [
+                    {
+                      "kind": "text",
+                      "text": "TODO"
+                    }
+                  ],
+                  "kind": "list"
+                }
+              }
+            },
+            "source": {
+              "kind": "og",
+              "og_options": "",
+              "original": "(task TODO)"
+            }
+          },
+          "view": {
+            "aggregates": [],
+            "columns": [],
+            "sort": []
+          }
+        },
+        "properties": [],
+        "result": {
+          "anchor": "block",
+          "diagnostics": [],
+          "exceeded": false,
+          "groups": [
+            {
+              "blocks": [
+                {
+                  "breadcrumb": [],
+                  "children": [],
+                  "collapsed": false,
+                  "has_id": false,
+                  "id": "runtime-7",
+                  "marker": "TODO",
+                  "raw": "TODO org task"
+                }
+              ],
+              "kind": "page",
+              "page": "Org page"
+            },
+            {
+              "blocks": [
+                {
+                  "breadcrumb": [],
+                  "children": [],
+                  "collapsed": false,
+                  "has_id": true,
+                  "id": "ad618eca-5d97-819f-b100-4fe0600ac80f",
+                  "marker": "TODO",
+                  "properties": [
+                    [
+                      "id",
+                      "6512a000-0000-4000-8000-000000000001"
+                    ]
+                  ],
+                  "raw": "TODO first task\nid:: 6512a000-0000-4000-8000-000000000001"
+                }
+              ],
+              "kind": "page",
+              "page": "Project"
+            }
+          ],
+          "matched_total": 2,
+          "report": {
+            "ignored": [],
+            "ran": [],
+            "supported": true
+          },
+          "total": 2
+        },
+        "view": {
+          "aggregates": [],
+          "columns": [],
+          "sort": [],
+          "view": "list"
+        }
+      }
+    ],
+    "schema": 1
+  },
+  "title": "Fixture share"
+}

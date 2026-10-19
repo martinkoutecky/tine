@@ -69,7 +69,10 @@ warn the first time — here's how to get past it:
   [workaround](#macos-repeated-documents-permission-prompt) below.
 - **Windows** — run the **`.exe`** installer; if SmartScreen appears, click **More info → Run
   anyway**. Prefer no installer? Grab the portable **`Tine_*_x64-portable.zip`**, unzip, and run
-  `Tine.exe` — it needs the WebView2 runtime, which is preinstalled on Windows 10/11.
+  `Tine.exe` — it needs the WebView2 runtime, which is preinstalled on Windows 10/11. The portable
+  Tine keeps its settings and WebView2 data in the `tine-data` folder next to `Tine.exe`, not in
+  AppData, so it runs from a USB drive; to update it, quit Tine and unzip the new version into the
+  same folder.
 - **Android** — install from **[F-Droid](https://f-droid.org/packages/page.tine.app/)** for automatic
   updates, or take the signed **`Tine_*_android-arm64.apk`** from Releases.
 - **iPhone and iPad** — Tine is in public beta on **[TestFlight](https://testflight.apple.com/join/rpGGpTVW)**:
@@ -258,8 +261,9 @@ TINE_DEBUG=1 tine                 # or:  tine --debug
 TINE_DEBUG=1 ./Tine-*.AppImage    # AppImage
 ```
 
-Tine prints the log path on startup; it defaults to `/tmp/tine-debug.log` (override with
-`TINE_DEBUG_LOG=/path`). Reproduce the problem, then send that file. The log records no note content
+Tine prints the log path on startup; it defaults to `/tmp/tine-debug.log` (`%TEMP%\tine-debug.log`
+on Windows; `tine-data\<app id>\local\logs\tine-debug.log` for the portable Windows Tine; override
+with `TINE_DEBUG_LOG=/path`). Reproduce the problem, then send that file. The log records no note content
 — only startup diagnostics.
 
 **Quick capture** — at the top of the journal feed, a page-title field + a body composer: fill the

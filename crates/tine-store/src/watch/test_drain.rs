@@ -56,6 +56,28 @@ impl Barrier {
             .max()
     }
 
+    /// The newest request whose sentinel is already in the graph root, read
+    /// once right after a watch is registered. A sentinel written before the
+    /// registration (a drain requested while a loaded host was still
+    /// starting its watcher, or across a re-install) raised no notification,
+    /// so it would never be answered (REG-LOAD-FLAKY-DRAIN-BEFORE-INSTALL).
+    /// The caller answers it only after a full diff that begins after this
+    /// read, which observes every write made before the request.
+    pub(super) fn written_before_install(root: &Path) -> Option<u64> {
+        fs::read_dir(root)
+            .ok()?
+            .filter_map(|entry| {
+                entry
+                    .ok()?
+                    .file_name()
+                    .to_str()?
+                    .strip_prefix(SENTINEL)?
+                    .parse()
+                    .ok()
+            })
+            .max()
+    }
+
     /// A cycle that drained request `id` completed.
     pub(super) fn ack(&self, id: u64) {
         let mut acked = self.acked.lock().unwrap();

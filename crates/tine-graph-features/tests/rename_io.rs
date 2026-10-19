@@ -177,13 +177,22 @@ fn rename_publication_reopens_no_referrer() {
          {few:?} vs {many:?}"
     );
     // Linear in the files the operation wrote (`files_written`: each page
-    // and its draft record), never in the graph. Measured on 31 written
-    // pages: Linux re-reads each once (the racy follow-up), Windows up to
-    // twice (the echo event's path-scoped diff, then the racy follow-up;
-    // FOLLOWUPS K5). The per-request drain acknowledgement (8f2183c6d)
-    // waits for that second read, so the bound counts it.
-    let per_file = if cfg!(windows) { 2 } else { 1 };
-    for counts in [few, many] {
+    // and its draft record), never in the graph. A written page is read at
+    // most twice: by the cycle its echo lands in (path-scoped), and once
+    // more by the one full diff the operation's directory event
+    // (`Create(Folder)`, the trash) forces while its own-write stamp is still
+    // racy (§5.4). Windows always splits the two (FOLLOWUPS K5); Linux does
+    // when the echoes straddle two watcher cycles, as under host load
+    // (REG-LOAD-FLAKY-RENAME-WATCHER-READS: 59 of 33 written at load ~14; one
+    // read each when one cycle takes them all). The per-request drain
+    // acknowledgement (8f2183c6d) waits for that second read, so the bound
+    // counts it on every platform.
+    let per_file = 2;
+    // What the bound guards: a re-read that grows with the graph. The same
+    // rename in a graph ten times larger stays inside the same bound, which
+    // a single graph-wide re-read (631 pages) would exceed ninefold.
+    let large = rename_then(600, 30, true);
+    for counts in [few, many, large] {
         let bound = per_file * counts.files_written + 4;
         assert!(
             counts.watcher_reads <= bound && counts.watcher_stamps_by_path <= bound,

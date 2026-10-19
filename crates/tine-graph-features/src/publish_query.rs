@@ -226,14 +226,14 @@ fn parse_and_run(
     Ok((parsed, result))
 }
 
-struct Planned {
-    plan: QueryExportPlan,
-    parsed: ParsedQuery,
-    result: QueryResult,
-    selected: tine_core::Corpus,
+pub(crate) struct Planned {
+    pub(crate) plan: QueryExportPlan,
+    pub(crate) parsed: ParsedQuery,
+    pub(crate) result: QueryResult,
+    pub(crate) selected: tine_core::Corpus,
 }
 
-fn resolve_plan(
+pub(crate) fn resolve_plan(
     store: &Store,
     graph: &WholeGraph,
     request: &QueryExportRequest,
@@ -542,6 +542,19 @@ fn snapshot(
     home: &str,
     home_query: Option<(&QueryExportRequest, &ParsedQuery, &QueryResult)>,
 ) -> io::Result<Vec<u8>> {
+    snapshot_at(graph, corpus, name, home, home_query, &export_time()?)
+}
+
+/// [`snapshot`] stamped with a given `exported_at` (quick share stamps its
+/// share document's `created_at`).
+pub(crate) fn snapshot_at(
+    graph: &WholeGraph,
+    corpus: &tine_core::Corpus,
+    name: &str,
+    home: &str,
+    home_query: Option<(&QueryExportRequest, &ParsedQuery, &QueryResult)>,
+    exported_at: &str,
+) -> io::Result<Vec<u8>> {
     let mut pages: Vec<Value> = Vec::new();
     let mut entries: Vec<Value> = Vec::new();
     let selected: HashSet<_> = corpus
@@ -664,7 +677,7 @@ fn snapshot(
         })
         .collect();
     let block_ref_counts = corpus.block_ref_counts();
-    let snapshot = json!({ "schema": 1, "name": name, "exported_at": export_time()?,
+    let snapshot = json!({ "schema": 1, "name": name, "exported_at": exported_at,
         "home": home, "pages": pages, "entries": entries, "backlinks": backlinks,
         "block_ref_counts": block_ref_counts, "aliases": aliases, "icons": icons, "queries": queries });
     let bytes = serde_json::to_vec(&snapshot).map_err(io::Error::other)?;

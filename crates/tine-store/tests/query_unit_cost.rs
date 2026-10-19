@@ -523,6 +523,6 @@ fn a_save_that_moves_no_alias_does_not_copy_the_alias_list() {
     assert!(
         with <= without + 256 * 1024,
         "I-25: a save carrying a 10k-alias list allocated {with} bytes vs {without} without \
-         aliases; exemplar model.rs carry_alias_list_from (Arc, not clone)"
+         aliases; exemplar model.rs alias_relation_after (Arc, not clone)"
     );
 }

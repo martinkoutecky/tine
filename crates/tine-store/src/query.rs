@@ -435,46 +435,8 @@ fn sorted_alias_owners(
 mod page_names;
 pub(crate) use page_names::{real_page_names, RealPageNames};
 
-/// The alias relation of one generation, indexed once: normalized name to its
-/// alias-adjacent normalized names, and to the spellings it was written with.
-/// A component walk then costs O(component), not O(every alias in the graph)
-/// (I-25); a save that moves no alias carries the whole value by `Arc`.
-#[derive(Default)]
-pub(crate) struct AliasEdges {
-    neighbors: std::collections::HashMap<String, Vec<String>>,
-    originals: std::collections::HashMap<String, Vec<String>>,
-}
-
-impl AliasEdges {
-    pub(crate) fn new(aliases: &[(String, String)]) -> Self {
-        let mut edges = Self::default();
-        for (alias, owner) in aliases {
-            let alias_norm = refs::page_key(alias);
-            let owner_norm = refs::page_key(owner);
-            edges
-                .neighbors
-                .entry(alias_norm.clone())
-                .or_default()
-                .push(owner_norm.clone());
-            edges
-                .neighbors
-                .entry(owner_norm.clone())
-                .or_default()
-                .push(alias_norm.clone());
-            edges
-                .originals
-                .entry(alias_norm)
-                .or_default()
-                .push(alias.clone());
-            edges
-                .originals
-                .entry(owner_norm)
-                .or_default()
-                .push(owner.clone());
-        }
-        edges
-    }
-}
+mod alias_relation;
+pub(crate) use alias_relation::{AliasEdges, AliasRelation, AliasRow};
 
 /// Resolve a requested page/alias to its canonical display name, the complete
 /// alias-connected component, and the real page to exclude as self. The
@@ -492,9 +454,7 @@ fn equivalent_page_names(
         if !component.insert(name.clone()) {
             continue;
         }
-        if let Some(adjacent) = edges.neighbors.get(&name) {
-            pending.extend(adjacent.iter().cloned());
-        }
+        pending.extend(edges.neighbors(&name).cloned());
     }
 
     let canonical = component
@@ -509,8 +469,7 @@ fn equivalent_page_names(
                 .chain(
                     component
                         .iter()
-                        .filter_map(|name| edges.originals.get(name))
-                        .flatten()
+                        .flat_map(|name| edges.originals(name))
                         .map(String::as_str),
                 )
                 .min()
@@ -4346,6 +4305,34 @@ mod tests {
             .iter()
             .flat_map(|g| &g.blocks)
             .any(|b| b.marker.as_deref() == Some("TODO")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn priority_markers_link_to_the_priority_page_like_og() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("tine-priority-backlinks-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            "- [#A] call Alice\n- TODO [#A] call Bob\n- [#B] mid\n- see [#A] later\n- `[#A] code`\n- ordinary A word\n",
+        )
+        .unwrap();
+        let graph = test_snapshot(&dir);
+        let a = backlinks(&graph, "A");
+        assert_eq!(a.len(), 1);
+        let raws: Vec<&str> = a[0].blocks.iter().map(|b| b.raw.as_str()).collect();
+        assert_eq!(raws, ["[#A] call Alice", "TODO [#A] call Bob"]);
+        // Page identity is case-insensitive: "a" is the same page.
+        assert_eq!(backlinks(&graph, "a")[0].blocks.len(), 2);
+        assert_eq!(backlinks(&graph, "B")[0].blocks[0].raw, "[#B] mid");
+        // The plain word "A" is an unlinked mention, never the priority block.
+        assert!(!unlinked_refs(&graph, "A")
+            .iter()
+            .flat_map(|g| &g.blocks)
+            .any(|b| b.raw.contains("[#")));
         fs::remove_dir_all(dir).unwrap();
     }
 

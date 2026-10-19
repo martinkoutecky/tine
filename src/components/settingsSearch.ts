@@ -4,6 +4,7 @@
 import { KNOBS } from "../styleKnobs";
 import { MEDIA_EDITORS } from "../mediaEditors";
 import { msg, render, renderEnglish, type Msg } from "../i18n";
+import { richPlain } from "../i18n/Rich";
 import type { SettingsTabId } from "../ui";
 type Tab = SettingsTabId;
 
@@ -125,31 +126,72 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "diagnostics", label: msg("graph-verification-verify-synchronized-graph"), description: msg("graph-verification-compare-the-exact-markdown-and-org-file-bytes") },
   { tab: "shortcuts", label: msg("settings-search-keyboard-shortcuts"), description: msg("settings-search-key-bindings-commands-remap") },
   { tab: "about", label: msg("settings-search-about"), description: msg("settings-search-version-licenses-updates") },
+  { tab: "sharing", label: msg("quick-share-settings-account"), description: msg("settings-search-quick-share-account"), aliases: ["GitHub", "gist"] },
+  { tab: "sharing", label: msg("quick-share-settings-shares"), description: msg("settings-search-quick-share-shares") },
+  { tab: "sharing", label: msg("quick-share-settings-find"), description: msg("settings-search-quick-share-find") },
 ];
 
 function textsOf(...parts: (string | Msg | undefined)[]): string {
-  return parts.flatMap((text) => text === undefined ? [] : typeof text === "string" ? [text] : [render(text), renderEnglish(text)]).join(" ").toLowerCase();
+  return parts.flatMap((text) => text === undefined ? [] : typeof text === "string" ? [text] : [richPlain(render(text)), richPlain(renderEnglish(text))]).join(" ").toLowerCase();
 }
 
-/** A one-character term (any script) is too unspecific to match prose: a single
- * "发" occurs incidentally in many descriptions (GH #706). */
+/** A one-character term (any script) matches only text shown in the active
+ * language: label, description and keywords, not their English originals or the
+ * aliases. A single "S" would otherwise hit almost every hidden English label in
+ * the Chinese interface, while a single "发" must still find descriptions
+ * (GH #706). Longer terms match both languages. */
 const isShortTerm = (term: string) => [...term].length === 1;
 const queryTerms = (query: string) => query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+
+function shownTextsOf(...parts: (string | Msg | undefined)[]): string {
+  return parts.flatMap((text) => text === undefined ? [] : [typeof text === "string" ? text : richPlain(render(text))]).join(" ").toLowerCase();
+}
 
 /** Whether every query word hits the entry's label, keywords or aliases. */
 function nameMatches(entry: SettingSearchEntry, terms: string[]): boolean {
   const names = textsOf(entry.label, entry.keywords, ...(entry.aliases ?? []));
-  return terms.every((term) => names.includes(term));
+  const shownNames = shownTextsOf(entry.label, entry.keywords);
+  return terms.every((term) => (isShortTerm(term) ? shownNames : names).includes(term));
 }
 
 /** Match all query words against one entry's label, description, keywords and
- * aliases; a one-character word matches everything but the description.
- * O(entry text × query words), no I/O or failure. */
+ * aliases in both languages; a one-character word only against the shown
+ * language's label, description and keywords. O(entry text × query words), no
+ * I/O or failure. */
 export function settingMatches(entry: SettingSearchEntry, query: string): boolean {
   const terms = queryTerms(query);
   const haystack = textsOf(entry.label, entry.description, entry.keywords, ...(entry.aliases ?? []));
-  const names = textsOf(entry.label, entry.keywords, ...(entry.aliases ?? []));
-  return terms.every((term) => (isShortTerm(term) ? names : haystack).includes(term));
+  const shown = shownTextsOf(entry.label, entry.description, entry.keywords);
+  return terms.every((term) => (isShortTerm(term) ? shown : haystack).includes(term));
+}
+
+/** The description to show under a result whose name does not match: the
+ * shown-language text when it holds a query word, else the English original.
+ * Undefined when the name matches, so name hits stay one line (GH #706: a
+ * description match looked unrelated while the description was hidden). */
+export function matchedDescription(entry: SettingSearchEntry, query: string): string | undefined {
+  const terms = queryTerms(query);
+  if (!terms.length || nameMatches(entry, terms)) return undefined;
+  const shown = typeof entry.description === "string" ? entry.description : richPlain(render(entry.description));
+  const english = typeof entry.description === "string" ? entry.description : richPlain(renderEnglish(entry.description));
+  for (const [text, short] of [[shown, true], [english, false]] as const) {
+    const hits = terms.filter((term) => short || !isShortTerm(term)).map((term) => text.toLowerCase().indexOf(term)).filter((at) => at >= 0);
+    if (hits.length) return excerpt(text, Math.min(...hits));
+  }
+  return undefined;
+}
+
+/** About one line of `text` around position `at`, with an ellipsis where cut, so a
+ * long description shows its match instead of its opening sentences. */
+function excerpt(text: string, at: number): string {
+  const chars = [...text];
+  const index = [...text.slice(0, at)].length;
+  let start = Math.max(0, index - 40);
+  // Start at a word boundary when the text has one before the match (Latin text; CJK has none).
+  const space = chars.slice(start, index).findIndex((char) => /\s/.test(char));
+  if (start > 0 && space >= 0) start += space + 1;
+  const end = Math.min(chars.length, start + 120);
+  return `${start > 0 ? "…" : ""}${chars.slice(start, end).join("").trim()}${end < chars.length ? "…" : ""}`;
 }
 
 /** Matching entries with label/keyword/alias matches before description-only

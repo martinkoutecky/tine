@@ -6,6 +6,7 @@ update-install-update = Install update
 
 update-is-available-but-automatic-updates-are = { $product } { $version } is available, but automatic updates are not supported by this experimental 32-bit Windows build. Download the x86 package manually.
 update-is-available-the-flatpak-cannot-update = { $product } { $version } is available. The Flatpak cannot update itself: download the new .flatpak bundle and install it again with flatpak install --user.
+update-is-available-the-portable-build-cannot-update = { $product } { $version } is available. The portable build does not update itself: download the new portable ZIP, quit Tine, and extract it into the same folder. Your settings stay in its tine-data folder.
 # $error is an untranslated diagnostic from the operating system or backend.
 update-couldn-t-restart-tine-quit-and-start = Couldn't restart Tine ({ $error }). Quit and start it again.
 update-downloading = Downloading { $product } { $version }…
