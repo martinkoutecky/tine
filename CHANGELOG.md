@@ -36,6 +36,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) now keeps its first collapse after a restart: Tine moves that line above the quote, where it is read as the block's collapse state (Logseq itself opens such a block expanded). Publish, print and search no longer show the line as quote text, and the command line's property and text edits put metadata above a final quote instead of inside it (GH #721).
 - **Enter on the PDF export dialog's Cancel button cancels** instead of exporting; Enter elsewhere in the dialog still exports. On a narrow phone window, Cancel and the confirming button stay together on one row (the helper buttons wrap above them) instead of splitting across two rows.
 - Page results in Search and List show each page's properties as text under its title again, in query blocks and in the Search tab (they had been dropped by a declutter pass) (GH #619).
 - Namespace page icons now follow property edits, and image icons refresh after symlink-target or filename-case asset events; files larger than 1 MiB show no icon (GH #346).
