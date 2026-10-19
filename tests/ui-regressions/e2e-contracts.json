@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-sidebar-tabs-tree.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"In the sidebar Tabs list, dragging a row right nests it under the row above and left moves it out, a parent's triangle collapses its group in the sidebar only, Move out of group lifts a nested tab, the top strip stays a flat list in tree order, and the tree with its collapse state survives a restart, including in a window narrower than 640 px where the list is the only tab surface.","blocking":true,"authority":"GH #704"}],
+      "acceptableVariations":["Indent width, drop-line styling, drag thresholds and save latency may vary while the nesting, order and collapse outcomes hold."],
+      "nonRequirements":["Exact pixels, touch hold timing on a real Android device, cross-pane drag in the sidebar, nesting in the strip or the overview, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-page-image-icons.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A local static PNG image link in tine.icon:: (or the OG-compatible icon:: fallback; tine.icon:: wins when both exist) decodes in the page title and Favorites, follows replacement without navigation and a menu property edit saves through the guarded path; Org image links also render.","blocking":true,"authority":"GH #346"},{"class":"exact-safety-interoperability","userOutcome":"A remote image icon shows no image or raw link text in the title and Favorites, preserves its value in the visible property row and produces no network request.","blocking":true,"authority":"GH #346"}],
       "acceptableVariations":["Image proportions, navigation and watcher latency may vary within the existing emoji-sized box."],

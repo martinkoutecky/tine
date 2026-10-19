@@ -55,3 +55,47 @@
     min-height: 36px;
   }
 }
+/* GH #704 v2: the tab tree. Rows drag (pointer, or a touch hold) like the
+   Favorites rows; the disclosure column appears only once something nests. */
+#sidebar-tabs-list .nav-tab {
+  cursor: grab;
+}
+.nav-tab-toggle {
+  flex: 0 0 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  opacity: 0.6;
+  cursor: pointer;
+}
+.nav-tab-toggle:hover {
+  opacity: 1;
+}
+.nav-tab-spacer {
+  flex: 0 0 14px;
+}
+@media (hover: none) {
+  .nav-tab-toggle {
+    flex-basis: 28px;
+    min-height: 36px;
+  }
+  .nav-tab-spacer {
+    flex-basis: 28px;
+  }
+}
+/* The insertion line starts at the depth the drop would land at. */
+#sidebar-tabs-list .nav-tab.row-drop-before,
+#sidebar-tabs-list .nav-tab.row-drop-after {
+  background-image: linear-gradient(to right, transparent 0 var(--tab-drop-indent, 0px), var(--link-color) var(--tab-drop-indent, 0px));
+  background-size: 100% 2px;
+  background-repeat: no-repeat;
+}
+#sidebar-tabs-list .nav-tab.row-drop-before {
+  background-position: top left;
+}
+#sidebar-tabs-list .nav-tab.row-drop-after {
+  background-position: bottom left;
+}

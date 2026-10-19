@@ -50,3 +50,9 @@ it("the Guide explains compatible plugin updates and the complete Chinese interf
   expect(language).toContain("Simplified Chinese covers the complete interface catalog");
   expect(language).not.toContain("Translation is under way");
 });
+
+it("the Guide teaches the sidebar tab tree (GH #704)", () => {
+  const tabs = guide("keep-context-visible");
+  for (const detail of ["drag it right, under another tab, to nest it there", "hold a row still for a moment, then drag", "collapses them in the sidebar list only", "**Move out of group**", "Closing a tab never closes the tabs nested under it", "Pinned tabs stay at the top and never nest", "pins and groups included"]) expect(tabs).toContain(detail);
+  expect(guide("where-things-are")).toContain("nest one tab under another");
+});
