@@ -12,11 +12,12 @@ import { ExportModal } from "./ExportModal";
 import { PdfExportDialog } from "./PdfExportDialog";
 import { QueryExportDialog } from "./QueryExportDialog";
 import { ShareDialog } from "./ShareDialog";
+import { QuickShareDialog } from "./QuickShareDialog";
 import { GraphNamePrompt } from "./GraphNamePrompt";
 import { FailureBoundary } from "./FailureBoundary";
 import { DrawerBackground } from "./MobileDrawerShell";
 import { queryExportRequest, settingsOpen } from "../ui";
-import { shareTarget } from "../shareState";
+import { quickShareRequest, shareTarget } from "../shareState";
 import { overlayWindowId } from "../transientLayers";
 import { t } from "../i18n";
 
@@ -55,6 +56,7 @@ export function WindowOverlays(props: {
       <Show when={here()}>
         <FailureBoundary region="PDF export"><PdfExportDialog /></FailureBoundary>
         <FailureBoundary region="Share"><ShareDialog target={shareTarget} /></FailureBoundary>
+        <FailureBoundary region="Quick share"><QuickShareDialog request={quickShareRequest} /></FailureBoundary>
         <FailureBoundary region="Query export"><QueryExportDialog request={queryExportRequest} /></FailureBoundary>
         <FailureBoundary region="Graph creation"><GraphNamePrompt /></FailureBoundary>
         <FailureBoundary region={t("css-editor-title")}><CssEditor /></FailureBoundary>

@@ -252,6 +252,58 @@ pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     res
 }
 
+/// [`atomic_write_with_check`] without a check, for a file that holds secrets
+/// (quick share's account token and share keys): the temporary is created
+/// owner-only (mode 0600 at creation, not a later chmod) on the Unix-family
+/// targets and keeps that mode through fsync and rename; on Windows it
+/// inherits the per-user app-data ACL. An unknown target refuses rather than
+/// write a secret with default permissions. Only the app's `device_io` calls it.
+#[allow(dead_code)]
+pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = temp_path(
+        path,
+        WRITE_TMP_SEQ.fetch_add(1, Ordering::Relaxed),
+        ".private",
+    );
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    ))]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows"
+    )))]
+    return Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "private files are unavailable on this target",
+    ));
+    #[allow(unreachable_code)]
+    let res = (|| {
+        let mut file = options.open(&tmp).map_err(at("create temporary file"))?;
+        file.write_all(bytes).map_err(at("write temporary file"))?;
+        sync_file_handle(&file).map_err(at("fsync temporary file"))?;
+        drop(file);
+        rename_replace(&tmp, path).map_err(at("rename temporary file over target"))?;
+        super::directory_durability::sync_directory_entry(dir)
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    res
+}
+
 /// Make the bytes already at `path` durable: fsync the file, then its
 /// directory entry. A save whose bytes equal the disk reports success without
 /// a rename, and success retires the editor's crash copy, so those bytes must

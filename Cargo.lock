@@ -5056,6 +5056,7 @@ dependencies = [
  "image",
  "libc",
  "reqwest",
+ "rustls",
  "same-file",
  "serde",
  "serde_json",
@@ -5076,6 +5077,7 @@ dependencies = [
  "tine-ios-folder-picker-native",
  "tine-ios-native-integrations",
  "tine-store",
+ "tokio",
  "unicode-normalization",
  "uuid",
  "webkit2gtk",
@@ -5109,7 +5111,10 @@ dependencies = [
 name = "tine-graph-features"
 version = "0.8.0-beta.4"
 dependencies = [
+ "base64 0.22.1",
+ "flate2",
  "lsdoc",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

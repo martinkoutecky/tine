@@ -1,0 +1,279 @@
+// A quick share in the graph (D-20261018-Q1, D-20261018-QS3): starting a share writes `tine.share:: pending/<record
+// id>` onto the query block it started from, or a definition on the exports page; finishing it writes
+// `<login>/<gist_id>` (no key) in its place, or removes it; deleting or forgetting a share removes the property.
+// Asserted on the bytes that reach the (fake) disk through the document layer's normal save.
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { initParser } from "../render/parse";
+import { clearSeededFacets } from "../render/facets";
+import { backend } from "../backend";
+import * as documentLayer from "../document";
+import { flushAll, resetStore } from "../document";
+import { invalidateBinding } from "../binding";
+import { loadSingle } from "../document/workingSet";
+import { doc } from "../document/model";
+import { bindTestHost } from "../document/host/wiring.test.support";
+import { installDiskHost } from "../diskHost.test.support";
+import type { BlockDto, PageDto, PageRead } from "../types";
+import { finishSharePending, markSharePending, pendingRecordId, pendingShareMarkers, pendingValue, removeShareProperty, shareValue } from "./definitions";
+
+const ID = "Rec0rd-id_0123456789xy";
+const PENDING = `pending/${ID}`;
+
+vi.mock("../exportsPage", async (original) => ({
+  ...await original<typeof import("../exportsPage")>(),
+  ensureExportsPage: vi.fn(async () => "Exports"),
+}));
+
+let counter = 0;
+// As the backend ships them: a block's `key:: value` lines as its properties (a page read seeds facets from these).
+const blk = (raw: string, children: BlockDto[] = []): BlockDto => ({
+  id: `q${counter++}`, raw, collapsed: false, children,
+  properties: raw.split("\n").slice(1).map((line) => /^([^\s:]+):: (.*)$/.exec(line)).filter((m) => !!m).map((m) => [m![1], m![2]] as [string, string]),
+});
+const page = (name: string, blocks: BlockDto[], format: "md" | "org" = "md", preBlock: string | null = null): PageRead => ({
+  name, kind: "page", title: name, id: `pages/${name}.${format}`, rev: "r0", format, pre_block: preBlock, blocks,
+} as PageRead);
+const EXPORTS = () => page("Exports", [blk("{{query (or (property export) (property tine.share))}}")], "md", "tine/exports:: true\npublic:: false");
+
+async function bindDisk(initial: PageRead[], failing: { path?: string } = {}, retryFailed = false) {
+  const files = new Map<string, PageRead>(initial.map((dto) => [dto.id, structuredClone(dto)]));
+  let rev = 0;
+  const host = await bindTestHost();
+  installDiskHost(host, {
+    read: (path) => files.get(path) ?? null,
+    write: (path, dto) => { if (path === failing.path) throw new Error("disk full"); files.set(path, { ...structuredClone(dto), id: path, rev: `rev${++rev}` }); return `rev${rev}`; },
+  }, { retryFailed });
+  vi.spyOn(backend(), "getPage").mockImplementation(async (name: string) => structuredClone([...files.values()].find((dto) => dto.name === name) ?? null));
+  const raws = (path: string): string[] => {
+    const out: string[] = [];
+    const walk = (blocks: BlockDto[]) => { for (const b of blocks) { out.push(b.raw); walk(b.children); } };
+    walk(files.get(path)!.blocks);
+    return out;
+  };
+  return { files, raws };
+}
+
+function load(dto: PageRead): PageDto {
+  loadSingle(structuredClone(dto));
+  clearSeededFacets();
+  return dto;
+}
+const idOf = (name: string, raw: string) => Object.values(doc.byId).find((n) => n.page === name && n.raw === raw)!.id;
+
+/** The engine's `(property tine.share)` answer: the given pages' blocks as they are on disk. */
+function answerShareQuery(disk: { files: Map<string, PageRead> }, pages: string[]) {
+  vi.spyOn(backend(), "parseQuery").mockResolvedValue({ query: { anchor: "block" }, view: {} } as never);
+  vi.spyOn(backend(), "queryRun").mockImplementation(async () => ({
+    anchor: "block", total: 0, exceeded: false, report: { supported: true },
+    groups: pages.map((name) => {
+      const dto = [...disk.files.values()].find((d) => d.name === name)!;
+      const flat: BlockDto[] = [];
+      const walk = (blocks: BlockDto[]) => { for (const b of blocks) { flat.push(b); walk(b.children); } };
+      walk(dto.blocks);
+      return { page: name, kind: "page", blocks: flat.filter((b) => b.raw.includes("tine.share::")).map((b) => ({ ...b, properties: blk(b.raw).properties })) };
+    }),
+  }) as never);
+}
+
+beforeAll(() => initParser());
+beforeEach(() => { counter = 0; resetStore(); });
+afterEach(() => { vi.restoreAllMocks(); });
+
+describe("markSharePending", () => {
+  it("the value is login/gist and never carries a key; a pending marker names a record id, never a gist", () => {
+    expect(shareValue("octo-cat", "0123456789abcdef0123")).toBe("octo-cat/0123456789abcdef0123");
+    expect(pendingValue(ID)).toBe(PENDING);
+    expect(pendingRecordId(PENDING)).toBe(ID);
+    // A GitHub login `pending` sharing a gist is a share: record ids never have a gist id's shape.
+    expect(pendingRecordId("pending/0123456789abcdef012345")).toBeNull();
+    expect(pendingRecordId("octo/0123456789abcdef0123")).toBeNull();
+    expect(pendingRecordId("pending/short")).toBeNull();
+  });
+
+  it("from This page or an edited query: appends a definition with tine.share:: to the exports page and saves it", async () => {
+    const disk = await bindDisk([EXPORTS()]);
+    load(EXPORTS());
+    expect(await markSharePending({ hostBlockId: null, macro: "{{tine-query @page and name = 'Project'}}" }, ID)).toBe("Exports");
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Exports.md")).toEqual([
+      "{{query (or (property export) (property tine.share))}}",
+      `{{tine-query @page and name = 'Project'}}\ntine.share:: ${PENDING}`,
+    ]);
+  });
+
+  it("from an unchanged query block: puts tine.share:: on that block (beside an export:: it has)", async () => {
+    const notes = page("Notes", [blk("intro"), blk("{{query (task TODO)}}\nexport:: site")]);
+    const disk = await bindDisk([notes, EXPORTS()]);
+    load(notes);
+    const host = idOf("Notes", "{{query (task TODO)}}\nexport:: site");
+    expect(await markSharePending({ hostBlockId: host, macro: "{{query (task TODO)}}" }, ID)).toBe("Notes");
+    expect(disk.raws("pages/Notes.md")).toEqual(["intro", `{{query (task TODO)}}\nexport:: site\ntine.share:: ${PENDING}`]);
+    expect(disk.raws("pages/Exports.md")).toHaveLength(1);
+  });
+
+  it("a block that already names another share, or another pending one, keeps it; the new share goes to the exports page", async () => {
+    for (const other of ["octo/old", "pending/0ther-device_record_id"]) {
+      resetStore();
+      const notes = page("Notes", [blk(`{{query (task TODO)}}\ntine.share:: ${other}`)]);
+      const disk = await bindDisk([notes, EXPORTS()]);
+      load(notes);
+      load(EXPORTS());
+      const host = idOf("Notes", `{{query (task TODO)}}\ntine.share:: ${other}`);
+      expect(await markSharePending({ hostBlockId: host, macro: "{{query (task TODO)}}" }, ID)).toBe("Exports");
+      expect(await flushAll()).toBe(true);
+      expect(disk.raws("pages/Notes.md")).toEqual([`{{query (task TODO)}}\ntine.share:: ${other}`]);
+      expect(disk.raws("pages/Exports.md")[1]).toBe(`{{query (task TODO)}}\ntine.share:: ${PENDING}`);
+      vi.restoreAllMocks();
+    }
+  });
+
+  // Review r1 #3: a query edited since the dialog opened is a different query, so the share must not claim it; the
+  // share's own query goes to the exports page.
+  it("a starting block whose query changed keeps its query; the share goes to the exports page", async () => {
+    const notes = page("Notes", [blk("{{query (task DONE)}}")]);
+    const disk = await bindDisk([notes, EXPORTS()]);
+    load(notes);
+    load(EXPORTS());
+    const host = idOf("Notes", "{{query (task DONE)}}");
+    expect(await markSharePending({ hostBlockId: host, macro: "{{query (task TODO)}}" }, ID)).toBe("Exports");
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Notes.md")).toEqual(["{{query (task DONE)}}"]);
+    expect(disk.raws("pages/Exports.md")[1]).toBe(`{{query (task TODO)}}\ntine.share:: ${PENDING}`);
+  });
+
+  it("writes nothing once the graph the share started on is no longer bound", async () => {
+    const notes = page("Notes", [blk("{{query (task TODO)}}")]);
+    const disk = await bindDisk([notes, EXPORTS()]);
+    load(notes);
+    const host = idOf("Notes", "{{query (task TODO)}}");
+    await expect(markSharePending({ hostBlockId: host, macro: "{{query (task TODO)}}" }, ID, () => false)).rejects.toThrow("graph-changed");
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Notes.md")).toEqual(["{{query (task TODO)}}"]);
+    expect(disk.raws("pages/Exports.md")).toHaveLength(1);
+  });
+
+  it("spells the property for an Org exports page", async () => {
+    const org = page("Exports", [blk("{{query (or (property export) (property tine.share))}}")], "org", "#+tine/exports: true\n#+public: false");
+    const disk = await bindDisk([org]);
+    load(org);
+    await markSharePending({ hostBlockId: null, macro: "{{tine-query @page and name = 'A'}}" }, ID);
+    expect(await flushAll()).toBe(true);
+    const added = disk.raws("pages/Exports.org")[1];
+    expect(added).toContain("{{tine-query @page and name = 'A'}}");
+    expect(added).toContain(`:tine.share: ${PENDING}`);
+  });
+
+  it("an appended definition that did not reach disk is taken back out, so no later save writes it", async () => {
+    const failing: { path?: string } = { path: "pages/Exports.md" };
+    // The host retries a failed write (its save backoff): what it then writes is the page as it is now.
+    const disk = await bindDisk([EXPORTS()], failing, true);
+    load(EXPORTS());
+    await expect(markSharePending({ hostBlockId: null, macro: "{{tine-query @page and name = 'A'}}" }, ID)).rejects.toThrow("couldn't write to Exports");
+    expect(Object.values(doc.byId).some((n) => n.raw.includes(PENDING))).toBe(false);
+    failing.path = undefined;
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Exports.md")).toEqual(["{{query (or (property export) (property tine.share))}}"]);
+  });
+});
+
+describe("finishSharePending", () => {
+  it("replaces the marker wherever its block is now, on every block carrying it, loading pages that are not open", async () => {
+    const notes = page("Notes", [blk("moved here", [blk(`{{query (task DONE)}}\ntine.share:: ${PENDING}`)])]);
+    const other = page("Other", [blk(`{{query (task TODO)}}\ntine.share:: ${PENDING}`), blk("{{query (task NOW)}}\ntine.share:: pending/0ther-device_record_id")]);
+    const disk = await bindDisk([notes, other]);
+    answerShareQuery(disk, ["Notes", "Other"]);
+    expect((await finishSharePending(ID, "octo/0123456789abcdef0123")).sort()).toEqual(["Notes", "Other"]);
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Notes.md")).toEqual(["moved here", "{{query (task DONE)}}\ntine.share:: octo/0123456789abcdef0123"]);
+    expect(disk.raws("pages/Other.md")).toEqual(["{{query (task TODO)}}\ntine.share:: octo/0123456789abcdef0123",
+      "{{query (task NOW)}}\ntine.share:: pending/0ther-device_record_id"]);
+  });
+
+  it("removes it when the share was not created, and answers no page when no block carries it", async () => {
+    const notes = page("Notes", [blk(`{{query (task DONE)}}\ntine.share:: ${PENDING}`)]);
+    const disk = await bindDisk([notes]);
+    answerShareQuery(disk, ["Notes"]);
+    expect(await finishSharePending(ID, null)).toEqual(["Notes"]);
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Notes.md")).toEqual(["{{query (task DONE)}}"]);
+    answerShareQuery(disk, []);
+    expect(await finishSharePending(ID, "octo/0123456789abcdef0123")).toEqual([]);
+  });
+
+  it("lists the graph's pending markers by record id with their pages", async () => {
+    const notes = page("Notes", [blk(`{{query (task DONE)}}\ntine.share:: ${PENDING}`), blk("{{query (task NOW)}}\ntine.share:: octo/0123456789abcdef0123")]);
+    const other = page("Other", [blk(`{{query (task TODO)}}\ntine.share:: ${PENDING}`)]);
+    const disk = await bindDisk([notes, other]);
+    answerShareQuery(disk, ["Notes", "Other"]);
+    expect(await pendingShareMarkers()).toEqual({ markers: [{ shareId: ID, pages: ["Notes", "Other"] }], exceeded: false });
+  });
+
+  it("removing a share by its gist leaves pending markers alone", async () => {
+    const notes = page("Notes", [blk(`{{query (task DONE)}}\ntine.share:: ${PENDING}`)]);
+    const disk = await bindDisk([notes]);
+    answerShareQuery(disk, ["Notes"]);
+    expect(await removeShareProperty(ID)).toEqual([]);
+    expect(disk.files.get("pages/Notes.md")!.rev).toBe("r0");
+  });
+});
+
+describe("removeShareProperty", () => {
+  it("removes exactly that share's property wherever it is, loading pages that are not open, and leaves the rest", async () => {
+    const exportsPage = page("Exports", [
+      blk("{{query (or (property export) (property tine.share))}}"),
+      blk("{{tine-query @page and name = 'A'}}\ntine.share:: octo/abc"),
+      blk("{{tine-query @page and name = 'B'}}\ntine.share:: octo/abcd"),
+    ], "md", "tine/exports:: true\npublic:: false");
+    const notes = page("Notes", [blk("parent", [blk("{{query (task TODO)}}\nexport:: site\ntine.share:: octo/abc")])]);
+    const disk = await bindDisk([exportsPage, notes]);
+    answerShareQuery(disk, ["Exports", "Notes"]);
+    // Neither page is open: both are loaded into the working set first.
+    expect(doc.pages).toHaveLength(0);
+    expect((await removeShareProperty("abc")).sort()).toEqual(["Exports", "Notes"]);
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Exports.md")).toEqual([
+      "{{query (or (property export) (property tine.share))}}",
+      "{{tine-query @page and name = 'A'}}",
+      "{{tine-query @page and name = 'B'}}\ntine.share:: octo/abcd",
+    ]);
+    expect(disk.raws("pages/Notes.md")).toEqual(["parent", "{{query (task TODO)}}\nexport:: site"]);
+  });
+
+  it("a share no block names changes nothing", async () => {
+    const disk = await bindDisk([EXPORTS()]);
+    answerShareQuery(disk, []);
+    expect(await removeShareProperty("none")).toEqual([]);
+    expect(disk.files.get("pages/Exports.md")!.rev).toBe("r0");
+  });
+
+  // Review r1 #4: Find → Delete names only the gist; a reference written before an account rename carries the old login.
+  it("removes every reference to the gist whatever login prefix it carries, and no other gist", async () => {
+    const notes = page("Notes", [blk("{{query (task TODO)}}\ntine.share:: old-octo/g1"), blk("{{query (task DONE)}}\ntine.share:: new-octo/g1"),
+      blk("{{query (task NOW)}}\ntine.share:: old-octo/g10")]);
+    const disk = await bindDisk([notes]);
+    answerShareQuery(disk, ["Notes"]);
+    expect(await removeShareProperty("g1")).toEqual(["Notes"]);
+    expect(await flushAll()).toBe(true);
+    expect(disk.raws("pages/Notes.md")).toEqual(["{{query (task TODO)}}", "{{query (task DONE)}}", "{{query (task NOW)}}\ntine.share:: old-octo/g10"]);
+  });
+
+  // Review r1 #1: the loop awaits a page save; a graph switch meanwhile must not let it edit the replacement graph.
+  it("a graph switch while a page saves stops the removal before it edits the replacement graph", async () => {
+    const a = page("A", [blk("{{query (task TODO)}}\ntine.share:: octo/g1")]);
+    const b = page("B", [blk("{{query (task DONE)}}\ntine.share:: octo/g1")]);
+    const disk = await bindDisk([a, b]);
+    answerShareQuery(disk, ["A", "B"]);
+    load(a); load(b);
+    let entered!: () => void, release!: (saved: boolean) => void;
+    const atFlush = new Promise<void>((r) => { entered = r; });
+    vi.spyOn(documentLayer, "flushPage").mockImplementationOnce(() => { entered(); return new Promise((r) => { release = r; }); });
+    const removal = removeShareProperty("g1");
+    await atFlush;
+    invalidateBinding();
+    resetStore();
+    load(page("B", [blk("replacement graph\ntine.share:: octo/g1")]));
+    release(true);
+    await removal;
+    expect(Object.values(doc.byId).find((n) => n.page === "B")!.raw).toBe("replacement graph\ntine.share:: octo/g1");
+  });
+});

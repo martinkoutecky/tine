@@ -19,6 +19,7 @@ pub mod pdf;
 pub mod print;
 pub mod publish;
 pub mod publish_query;
+pub mod quick_share;
 mod render;
 mod render_query_cache;
 mod retained;

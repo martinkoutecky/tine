@@ -186,6 +186,42 @@ opens a page and toggles the theme. It then checks three things:
 
 On the pre-change og build the first check fails (Welcome, default theme).
 
+## Portable Windows (GH #719)
+
+A Windows exe is portable (`src-tauri/src/portable.rs`) only when a real
+`tine-data` directory sits beside it (read with `symlink_metadata`: no
+symlink, no junction or other reparse point), no NSIS `uninstall.exe` sits
+beside it (Tauri's NSIS template writes it into `$INSTDIR`), and the process
+has no MSIX package identity. Any missing or unanswerable probe means
+installed. The portable ZIP ships the folder; the NSIS installer and MSIX
+never do. Its state is keyed by the identifier like an
+installed build's, one level down, so a stable and a Beta exe in one folder
+stay separate:
+
+| Installed | Portable |
+| --- | --- |
+| `%APPDATA%\<identifier>` (config, data) | `tine-data\<identifier>\roaming` |
+| `%LOCALAPPDATA%\<identifier>` (local data, cache, WebView2 `EBWebView`) | `tine-data\<identifier>\local` |
+| `%LOCALAPPDATA%\<identifier>\logs` | `tine-data\<identifier>\local\logs` (also the default `--debug` log) |
+
+The layout goes to Tauri's `app > appDirectoriesOverride` before the Builder,
+so every `app.path().app_*_dir()` and the WebView2 user-data folder follow it;
+`app_identity::current_app_data_dir()` asks `portable::dirs()` first. The
+identifier migration and the Beta config seed do nothing when portable (they
+read or write the host's per-user folders). A portable build updates by
+download (`gpu_env().portable`), because the updater's NSIS installer would add
+an installed copy; installing in place needs an affirmative "not MSIX, not
+Flatpak, not portable" from one `gpu_env()` read. A portable folder that
+cannot take a file stops the launch first (`portable::preflight()`, the first
+call in `main` and `run`) with a native error naming the folder; it never
+falls back to the installed profile, which would split state across two homes.
+`host_folder_lookups_go_through_the_portable_owner` scans production code in
+`src-tauri/src` for host-folder lookups (`dirs::`, the temp dir, Tauri's
+host `BaseDirectory` variants, `APPDATA`/`LOCALAPPDATA`/`USERPROFILE`/`HOME`)
+and accepts each only at a listed call site with its reason. It is a text
+scan: a lookup spelled another way (an alias, a macro, a dependency) is not
+seen.
+
 ## Open items
 
 - **Concord ledger namespace.** og and master share `concord-ledger/<root>/`
