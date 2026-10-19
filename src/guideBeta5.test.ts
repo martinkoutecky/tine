@@ -25,11 +25,11 @@ it("the Guide says folding a query block folds its results and that Unlinked Ref
   for (const detail of ["Each mention is highlighted inside its excerpt", "also gets a numbered jump row"]) expect(references).toContain(detail);
 });
 
-it("the Guide ties the All pages journal-date column to Show journals and explains one-character Settings search (GH #706)", () => {
+it("the Guide ties the All pages journal-date column to Show journals and ranks Settings search name matches first (GH #706)", () => {
   const where = guide("where-things-are");
   for (const detail of [
     "adds the **Journal date** column",
-    "A single character matches only a setting's name and aliases, not its description",
-    "names that match come before descriptions that match",
+    "Names that match come before descriptions that match",
   ]) expect(where).toContain(detail);
+  // Beta 6 made one character match descriptions again; src/guideBeta6.test.ts pins the new sentence.
 });
