@@ -231,6 +231,19 @@ async function clickToolbar(browser, title) {
   await item.click();
 }
 
+// WebDriver's element-clear (what setValue starts with) focuses the field, clears
+// it and then BLURS it. Under a window manager that gives the Tine window focus
+// (openbox, a real desktop) that blur is a genuine "user clicked elsewhere" and
+// ends the block edit, so the editor unmounts before the keys arrive; with no
+// window manager document.hasFocus() is false and the blur is (correctly) ignored.
+// Replace the text the way a user does instead: select all in the live field and
+// type over it, keeping focus inside the editor throughout.
+async function replaceEditorText(browser, editor, text) {
+  await editor.waitForExist({ timeout: 5_000 });
+  await browser.keys(["Control", "a"]);
+  await editor.addValue(text);
+}
+
 async function shiftClick(browser, element) {
   await browser.performActions([{
     type: "key",
@@ -395,14 +408,14 @@ await withApp(0, true, async (browser) => {
   await browser.$(contentSelector).click();
   const editor = await browser.$(`.right-sidebar [data-block-ref='${EDIT_ID}'] textarea.block-editor`);
   await editor.waitForExist({ timeout: 5_000 });
-  await editor.setValue("Native plain [[Comp");
+  await replaceEditorText(browser, editor, "Native plain [[Comp");
   await browser.$(".autocomplete .ac-item").waitForExist({ timeout: 10_000 });
   await browser.keys(["Escape"]);
   await browser.$(".autocomplete").waitForExist({ timeout: 5_000, reverse: true });
   const completionEscaped = await snapshot(browser);
   assert(completionEscaped.activeDrawer === "right" && completionEscaped.active?.tag === "TEXTAREA" && completionEscaped.active?.inRight,
     "completion Escape also closed the editor/drawer", completionEscaped);
-  await editor.setValue(SAVED_TEXT);
+  await replaceEditorText(browser, editor, SAVED_TEXT);
   const composition = await browser.execute(() => {
     const textarea = document.activeElement;
     if (!(textarea instanceof HTMLTextAreaElement)) return { dispatched: false };
