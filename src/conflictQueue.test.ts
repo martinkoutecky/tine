@@ -55,7 +55,7 @@ describe("the derived conflict queue", () => {
     vi.spyOn(backend(), "conflictInventory").mockResolvedValue(inventory);
     await refreshSyncConflicts();
     expect(conflictQueue().map((c) => c.page_name)).toEqual(["A"]);
-    expect(toasts()).toEqual([expect.objectContaining({ kind: "error", message: expect.stringContaining("couldn't be read") })]);
+    expect(toasts()).toEqual([expect.objectContaining({ kind: "error", message: expect.stringContaining("pages/Bad.md") })]);
   });
 
   it("settles a resolved object at once, and an older walk cannot resurrect it", async () => {

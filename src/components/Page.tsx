@@ -1,7 +1,7 @@
 import { Rich } from "../i18n/Rich";
 import { BlockList } from "./BlockList";
 import { t, msg } from "../i18n";
-import { reportUiFailure } from "../uiFailure";
+import { reportUiFailure, reportUnreadableFiles } from "../uiFailure";
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, useContext, type JSX } from "solid-js";
 import { mainPages, pageByName, loadFeed, appendFeed, emptyPage, withToday, toLoadablePage, loadRoutedPage, setFeedExtender, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, promotePagePreamble, beginPageHeaderEdit, pageHeaderProperties, isBlockMoving, isDirty, isSaving, installPageIdentityNavigation, rekeyPageIdentityByPath, type FeedPage, node as docNode, feedNames, isLoaded, loadedPage, pinPageWhileDrafting } from "../document";
 import { resolveRouteBlock, sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, openPageTargetInNewTab, openInNewTab, type PaneRouter } from "../router";
@@ -107,7 +107,7 @@ function pageHasActiveEdit(name: string): boolean {
 /** A journal the backend skipped as unreadable is named, never silently
  *  missing from the feed (one bad file never blanks it, I-22). */
 function reportUnreadableJournals(response: JournalFeedPage): void {
-  if (response.unreadable?.length) reportUiFailure("unreadable-files", response.unreadable.join(", "));
+  if (response.unreadable?.length) reportUnreadableFiles(response.unreadable);
 }
 
 function responseMatches(day: number, response: JournalFeedPage): boolean {

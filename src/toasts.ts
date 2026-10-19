@@ -35,6 +35,9 @@ export interface Toast {
   // Optional action button (e.g. "Download"). Runs, then dismisses the toast.
   action?: ToastAction;
   onDismiss?: () => void;
+  /** What Copy puts on the clipboard when it must carry more than the bounded
+   *  `message` the toast shows (e.g. the full list behind "and N more"). */
+  copyText?: string;
 }
 let toastSeq = 0;
 export const [toasts, setToasts] = createSignal<Toast[]>([]);
@@ -50,7 +53,7 @@ export function toUiText(text: ToastText): UiText {
 export function pushToast(
   content: ToastText,
   kind: Toast["kind"] = "info",
-  opts: { sticky?: boolean; action?: ToastAction; onDismiss?: () => void } = {}
+  opts: { sticky?: boolean; action?: ToastAction; onDismiss?: () => void; copyText?: string } = {}
 ): number {
   const text = toUiText(content);
   const message = renderEnglish(text);
@@ -66,7 +69,7 @@ export function pushToast(
   }
   const id = ++toastSeq;
   const sticky = kind === "error" || opts.sticky;
-  setToasts([...toasts(), { id, text, message, key, kind, sticky, action: opts.action, onDismiss: opts.onDismiss }]);
+  setToasts([...toasts(), { id, text, message, key, kind, sticky, action: opts.action, onDismiss: opts.onDismiss, copyText: opts.copyText }]);
   if (kind === "error") errorToastRecorder?.(message);
   if (!sticky) setTimeout(() => dismissToast(id), 3200);
   return id;
@@ -76,7 +79,7 @@ export function pushToast(
 export function pushToastUnique(
   content: ToastText,
   kind: Toast["kind"],
-  opts: { sticky?: boolean; action?: ToastAction; onDismiss?: () => void } = {}
+  opts: { sticky?: boolean; action?: ToastAction; onDismiss?: () => void; copyText?: string } = {}
 ): number {
   const key = textKey(toUiText(content));
   const existing = toasts().find((toast) => toast.key === key && toast.kind === kind);
