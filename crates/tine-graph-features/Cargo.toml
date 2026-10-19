@@ -17,6 +17,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
 tempfile = "3"
+# Quick share (docs/contracts/quick-share.md): HKDF + AES-256-GCM, gzip,
+# base64url. All three were already in the lockfile.
+base64 = "0.22"
+flate2 = "1"
+ring = "0.17"
 time = { version = "0.3.49", features = ["formatting"] }
 
 [dev-dependencies]

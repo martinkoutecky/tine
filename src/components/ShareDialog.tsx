@@ -10,14 +10,14 @@ import { graphOwner, readOwned } from "../owned";
 import { readLatestOr, readOr } from "../resourceRead";
 import { dbg } from "../debug";
 import { pushToast } from "../toasts";
-import { closeShareDialog, openQueryExportThen, type ShareTarget } from "../shareState";
-import { documentOf } from "../windowRealm";
+import { closeShareDialog, openQueryExportThen, openQuickShare, type ShareTarget } from "../shareState";
 import { registerTransientLayer } from "../transientLayers";
 import type { QueryPublicationRequest } from "../types";
 import { QueryBuilder, type BuilderSession } from "./QueryBuilder";
 import { QueryLivePreview } from "./QueryLivePreview";
-import { focusableElements } from "./focusableElements";
+import { trapTab } from "./focusableElements";
 import { queryWorkspaceDsl } from "./queryWorkspaceDsl";
+import { QUICK_SHARE_OFF } from "../quickShare/commands";
 
 /** Quiet time before a changed selection is reviewed again (the live preview's own window). */
 export const SHARE_REVIEW_DEBOUNCE_MS = 250;
@@ -25,12 +25,14 @@ const LAYER_ID = "share-dialog";
 
 /** The share dialog (share step 1, SHARE-DIALOG.md §3): what to share, a review of the pages that go out, and
  *  where. Folder export reuses the query export's destination and replace flow with the reviewed request, then
- *  saves the definition (`export:: <folder>`) on the exports page, or on the query block it started from. */
+ *  saves the definition (`export:: <folder>`) on the exports page, or on the query block it started from. Link
+ *  hands the reviewed request to the quick share dialog (DESIGN §3.9), offered only where quick share is on. */
 export function ShareDialog(props: { target: Accessor<ShareTarget | null> }): JSX.Element {
   return <Show when={props.target()}>{(target) => <Dialog target={target()} />}</Show>;
 }
 
 type Mode = "page" | "query";
+type Where = "folder" | "link";
 
 function Dialog(props: { target: ShareTarget }): JSX.Element {
   const seed = props.target;
@@ -42,6 +44,10 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
   const [mode, setMode] = createSignal<Mode>(block || !contextPage ? "query" : "page");
   const [edited, setEdited] = createSignal<string | undefined>(undefined);
   const [includeQueryText, setIncludeQueryText] = createSignal(false);
+  const [where, setWhere] = createSignal<Where>("folder");
+  // Quick share is gated off in shipped builds until its viewer is deployed (DESIGN §5 phase 3).
+  const [quickShare] = createResource(() => backend().quickShareList());
+  const linkAvailable = () => readOr(quickShare, QUICK_SHARE_OFF, "quick share listing")?.enabled === true;
   let mounted = true;
   onCleanup(() => { mounted = false; });
 
@@ -139,6 +145,12 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
     const text = macro();
     if (!base || !text || !canExport()) return;
     const asBlock = unchanged() && !!hostBlockId;
+    if (where() === "link" && linkAvailable()) {
+      closeShareDialog();
+      // The created share's `tine.share::` goes where a folder export's `export::` would (D-20261018-Q1).
+      openQuickShare({ ...base, includeQueryText: includeQueryText() }, { hostBlockId: asBlock ? hostBlockId : null, macro: text });
+      return;
+    }
     const binding = captureBinding();
     const saveDefinition = async ({ folder }: { folder: string }) => {
       if (!bindingCurrent(binding)) return;
@@ -167,20 +179,11 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
     onCleanup(registerTransientLayer({ id: LAYER_ID, root: () => overlay ?? null, dismiss: () => { closeShareDialog(); return true; } }));
     queueMicrotask(() => dialog?.focus());
   });
-  const trapTab = (event: KeyboardEvent) => {
-    if (event.key !== "Tab") return;
-    const focusable = focusableElements(dialog);
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    if (!first || !last) return;
-    if (event.shiftKey && documentOf(event).activeElement === first) { event.preventDefault(); last.focus(); }
-    else if (!event.shiftKey && documentOf(event).activeElement === last) { event.preventDefault(); first.focus(); }
-  };
 
   return (
     <div class="modal-overlay" ref={overlay} onClick={closeShareDialog}>
       <div ref={dialog} class="settings-modal share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title"
-        tabIndex={-1} onClick={(event) => event.stopPropagation()} onKeyDown={trapTab}>
+        tabIndex={-1} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => trapTab(event, dialog)}>
         <div class="settings-pane">
           <div class="settings-pane-head">
             <span id="share-dialog-title">{t("share-dialog-title")}</span>
@@ -254,25 +257,31 @@ function Dialog(props: { target: ShareTarget }): JSX.Element {
             <div class="settings-section">{t("share-dialog-where")}</div>
             <div class="share-choices" role="radiogroup" aria-label={t("share-dialog-where")}>
               <label class="share-choice">
-                <input type="radio" name="share-where" value="folder" checked />
+                <input type="radio" name="share-where" value="folder" checked={where() === "folder"} onChange={() => setWhere("folder")} />
                 <span class="share-choice-label">{t("share-dialog-folder")}</span>
                 <small class="settings-hint">{t("share-dialog-folder-note")}</small>
               </label>
-              <label class="share-choice disabled" aria-disabled="true">
-                <input type="radio" name="share-where" value="link" disabled />
+              <label class="share-choice" classList={{ disabled: !linkAvailable() }} aria-disabled={linkAvailable() ? undefined : "true"}>
+                <input type="radio" name="share-where" value="link" checked={where() === "link"} disabled={!linkAvailable()}
+                  onChange={() => setWhere("link")} />
                 <span class="share-choice-label">{t("share-dialog-link")}</span>
-                <small class="settings-hint">{t("share-dialog-link-soon")}</small>
+                <small class="settings-hint">{linkAvailable() ? t("share-dialog-link-note") : t("share-dialog-link-soon")}</small>
               </label>
             </div>
-            <p class="settings-hint share-save-note">{unchanged() && hostBlockId ? t("share-dialog-saved-on-block") : t("share-dialog-saved-as-definition")}</p>
-            <Show when={unchanged() && existingFolder()}>
+            <Show when={where() === "folder"}>
+              <p class="settings-hint share-save-note">{unchanged() && hostBlockId ? t("share-dialog-saved-on-block") : t("share-dialog-saved-as-definition")}</p>
+            </Show>
+            <Show when={where() === "link" && linkAvailable()}>
+              <p class="settings-hint share-save-note">{unchanged() && hostBlockId ? t("share-dialog-link-saved-on-block") : t("share-dialog-link-saved-as-definition")}</p>
+            </Show>
+            <Show when={where() === "folder" && unchanged() && existingFolder()}>
               <p class="settings-hint share-existing">{t("share-dialog-already-exported", { folder: existingFolder()! })}</p>
             </Show>
           </div>
           <DialogActions
             class="share-foot"
             cancel={<button type="button" class="export-btn-secondary" onClick={closeShareDialog}>{t("share-dialog-cancel")}</button>}
-            primary={<button type="button" class="export-btn-primary share-export" disabled={!canExport()} onClick={exportNow}>{t("share-dialog-export")}</button>} />
+            primary={<button type="button" class="export-btn-primary share-export" disabled={!canExport()} onClick={exportNow}>{where() === "link" ? t("share-dialog-create-link") : t("share-dialog-export")}</button>} />
         </div>
       </div>
     </div>

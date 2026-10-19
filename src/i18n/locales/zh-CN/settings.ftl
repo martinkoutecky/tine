@@ -313,6 +313,7 @@ settings-ui-files = 文件
 settings-ui-backups-recovery = 备份与恢复
 
 settings-ui-graph = 图谱
+settings-ui-sharing = 分享
 
 settings-ui-plugins = 插件
 

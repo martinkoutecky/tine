@@ -1,0 +1,21 @@
+{
+  "generation": 1,
+  "writer": {
+    "pages": 200,
+    "document_bytes": 33554432,
+    "payload_bytes": 6291456,
+    "envelope_bytes": 8388608
+  },
+  "viewer": {
+    "envelope_text_bytes": 8912896,
+    "envelope_decoded_bytes": 6710886,
+    "document_bytes": 33554432,
+    "api_response_bytes": 16777216,
+    "requests": 3,
+    "depth": 512,
+    "pages": 201,
+    "blocks": 200000,
+    "queries": 256,
+    "string_bytes": 1048576
+  }
+}
