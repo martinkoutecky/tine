@@ -27,6 +27,18 @@ window.fixture = ({ depth, multiline, sidebar, scale, zoom, short }) => {
   document.documentElement.style.zoom = zoom;
   dispose = render(() => <main data-probe-scroller class={sidebar ? "right-sidebar" : "main-content pane-main-content"} style="position:relative;margin:80px 12px 0;height:450px;overflow:auto;padding:0;width:calc(100% - 24px);max-width:none;flex-shrink:0"><section style="padding:0 12px"><h1>Sticky overlap</h1><Block id={child.id} forceExpanded />{tail.map(block=><Block id={block.id}/>)}</section></main>, document.getElementById("root"));
 };
+// GH #717 (second report): an arbitrary outline, written as the reporter writes it:
+// [text, ...children]. Block ids are the texts, so they must be unique.
+window.outline = ({ outline, multiline, sidebar, scale, zoom }) => {
+  dispose?.();
+  const build = ([text, ...kids]) => ({ id: text, raw: text + (multiline && kids.length ? " has a long title that wraps on phones and keeps its following lines readable\\nSecond line of the parent\\nThird line of the parent" : ""), collapsed:false, children: kids.map(build) });
+  const roots = outline.map(build);
+  const tail = Array.from({length:40},(_,i)=>({id:"tail-"+i,raw:"Tail row "+i,collapsed:false,children:[]}));
+  loadSingle({name:"Sticky subtree",title:"Sticky subtree",kind:"page",format:"md",pre_block:null,blocks:[...roots,...tail]});
+  document.documentElement.style.fontSize = scale+"px";
+  document.documentElement.style.zoom = zoom;
+  dispose = render(() => <main data-probe-scroller class={sidebar ? "right-sidebar" : "main-content pane-main-content"} style="position:relative;margin:80px 12px 0;height:450px;overflow:auto;padding:0;width:calc(100% - 24px);max-width:none;flex-shrink:0"><section style="padding:0 12px"><h1>Sticky subtree</h1>{[...roots,...tail].map(block=><Block id={block.id}/>)}</section></main>, document.getElementById("root"));
+};
 `);
 const server = await createServer({ server: { port: 5247, strictPort: true } });
 await server.listen();
@@ -46,6 +58,7 @@ try {
     {width:390, sidebar:false, scale:16, zoom:1, short:true},
   ];
   for (const shell of shells) for (const depth of [2,3,4]) for (const multiline of [false,true]) {
+    if (process.env.STICKY_SUBTREE_ONLY) continue;
     if (process.env.STICKY_SHORT_ONLY && !shell.short) continue;
     if (shell.short && multiline) continue;
     const {width} = shell;
@@ -97,9 +110,84 @@ try {
     assert.ok(activations>=depth, `fixture never pinned every parent: ${label}`);
     results.push({label,activations,transitions,failed:failures.at(-1)?.label===label});
   }
+  if (!process.env.STICKY_SUBTREE_ONLY) {
   writeFileSync(`${out}/${process.env.STICKY_LABEL || "current"}-geometry.json`, JSON.stringify({tested,results,failures},null,2));
   assert.equal(failures.length,0, `sticky parents overlap readable rows in ${failures.length} cases; see geometry artifact`);
   console.log(`PASS: ${results.length} real-browser sticky geometry cases`);
+  }
+
+  // GH #717 second report: a sticky row stays inside its own subtree. A pin may
+  // cover only rows of its own descendants (or its ancestors, which are higher
+  // level); a row at its own level or above, outside its subtree, is pushed
+  // against, never covered, and the pin is pushed up and out in its place.
+  const outlines = {
+    reporter1: ["0", ["1", ["1a", ["1aa"]]], ["2", ["2a"]], ["3"]],
+    reporter2: ["0", ["1", ["1a", ["1aa"]], ["1b"], ["1c"], ["1d"]], ["2", ["2a"]], ["3"]],
+    deep: ["r", ["a", ["b", ["c", ["d", ["d1"], ["d2"]], ["c2"]], ["b2"]], ["a2"]], ["s", ["s1"]]],
+    twoRoots: ["p", ["p1", ["p1a", ["p1aa"], ["p1ab"]], ["p1b", ["p1ba"]]], ["p2"]],
+  };
+  const subtreeShells = [
+    {width:1100, sidebar:false, scale:16, zoom:1},
+    {width:390, sidebar:false, scale:16, zoom:1},
+    {width:1100, sidebar:true, scale:20, zoom:1},
+    {width:390, sidebar:true, scale:16, zoom:1.25},
+  ];
+  const subtreeFailures = [], subtreeResults = [];
+  // The reporter's trees are one top-level block each, so wrap the second in
+  // the same way: every outline is a list of top-level blocks.
+  for (const [name, tree] of Object.entries(outlines)) for (const shell of subtreeShells) for (const multiline of [false, true]) {
+    await page.setViewportSize({ width: shell.width, height: 700 });
+    await page.evaluate(options => window.outline(options), { outline: [tree], multiline, ...shell });
+    await page.waitForTimeout(100);
+    const label = `${name}-${shell.width}-${multiline ? "multi" : "single"}-${shell.sidebar ? "sidebar" : "pane"}`;
+    const scrollMax = await page.evaluate(() => { const r=document.querySelector("[data-probe-scroller]"); return r.scrollHeight - r.clientHeight; });
+    const positions = Array.from({length:Math.ceil(scrollMax/8)+1},(_,i)=>Math.min(i*8,scrollMax));
+    positions.push(...Array.from({length:Math.ceil(scrollMax/40)+1},(_,i)=>Math.max(scrollMax-i*40,0)));
+    let overlapCount = 0, pinnedSeen = new Set(), pushed = new Set(), sawShot = false;
+    for (const scroll of positions) {
+      await page.evaluate(scroll => document.querySelector("[data-probe-scroller]").scrollTop=scroll, scroll);
+      await page.waitForTimeout(15);
+      const found = await page.evaluate(() => {
+        const root=document.querySelector("[data-probe-scroller]"), rootTop=root.getBoundingClientRect().top;
+        const out = {violations:[], pins:[], pushed:[]};
+        const blocks=[...root.querySelectorAll("[data-block-id]")];
+        for (const button of root.querySelectorAll(".sticky-ancestor button:not([hidden])")) {
+          const holder = button.closest(".sticky-ancestor"), id = holder.dataset.stickyBlock;
+          const own = holder.parentElement, pin = button.getBoundingClientRect();
+          let depth = 0; for (let el = own.parentElement; el && el !== root; el = el.parentElement) if (el.hasAttribute("data-sticky-parent")) depth++;
+          out.pins.push(id);
+          // pushed: the pin sits above the slot its depth gives it.
+          if (pin.top < rootTop + depth * pin.height - 1) out.pushed.push(id);
+          for (const other of blocks) {
+            if (other === own || own.contains(other) || other.contains(own)) continue;
+            const row = other.querySelector(":scope > .block-main").getBoundingClientRect();
+            const overlap = Math.min(pin.bottom,row.bottom) - Math.max(pin.top,row.top);
+            if (overlap > 1 && row.bottom > rootTop && row.top < root.getBoundingClientRect().bottom) out.violations.push({pin:id, covers:other.dataset.blockId, overlap, pinTop:pin.top, pinBottom:pin.bottom, rowTop:row.top, rowBottom:row.bottom});
+          }
+        }
+        return out;
+      });
+      found.pins.forEach(id => pinnedSeen.add(id));
+      found.pushed.forEach(id => pushed.add(id));
+      if (found.violations.length) {
+        overlapCount++;
+        if (!sawShot) { sawShot = true; await page.screenshot({ path: `${out}/${process.env.STICKY_LABEL || "current"}-subtree-${label}.png` }); }
+        subtreeFailures.push({label, scroll, violations: found.violations.slice(0,3)});
+        break;
+      }
+    }
+    // The pushed-up behaviour: with a parent whose subtree ends before the next
+    // row at its level, that pin slides up out of its own slot as the next row arrives.
+    const mustPush = name === "reporter1" ? "1a" : name === "reporter2" ? "1a" : null;
+    if (mustPush && !overlapCount) {
+      assert.ok(pinnedSeen.has(mustPush), `never pinned ${mustPush}: ${label}`);
+      if (!pushed.has(mustPush)) subtreeFailures.push({label, reason: `${mustPush} was never pushed up out of its slot`});
+    }
+    subtreeResults.push({label, pins:[...pinnedSeen], pushed:[...pushed], overlapped: overlapCount > 0});
+  }
+  writeFileSync(`${out}/${process.env.STICKY_LABEL || "current"}-subtree.json`, JSON.stringify({tested, subtreeResults, subtreeFailures}, null, 2));
+  assert.equal(subtreeFailures.length, 0, `sticky pins leave their subtree in ${subtreeFailures.length} cases: ${JSON.stringify(subtreeFailures.slice(0,2))}`);
+  console.log(`PASS: ${subtreeResults.length} real-browser sticky subtree cases`);
 } catch (error) {
   const screenshot = `${out}/${process.env.STICKY_LABEL || "current"}-failure.png`;
   await page?.screenshot({path:screenshot}).catch(() => {});
