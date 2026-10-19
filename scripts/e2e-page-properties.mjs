@@ -15,6 +15,8 @@ import {
   webdriverServerArgs,
 } from "./e2e-capabilities.mjs";
 import { ensureMainWindow } from "./lib/e2e-main-window.mjs";
+import { openPageByName } from "./lib/e2e-navigation.mjs";
+import { waitForFileText } from "./e2e-file-poll.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
