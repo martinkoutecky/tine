@@ -172,6 +172,23 @@ file by its stamp. Unit cost: one fold writes 1 page file (68 B for a
 rewrite and no work proportional to the graph. Proof:
 `crates/tine-store/src/store/fold_save_tests.rs`.
 
+The alias relation (the edge index that finds an alias class, the owner paths
+of an alias key and the alias list) is one in-memory value per generation,
+`query/alias_relation.rs`. A save that adds, drops or re-cases an alias,
+renames an aliased page or deletes one patches that value for the pages the
+save changed (`ReadSnapshot::alias_relation_after`, the same changed paths
+`RealPageNames::capture` uses) and never walks the graph: classes are not
+stored, they are a walk over the adjacency at read time, so a removal that
+splits a class needs no repair. Unit cost (D-20261018-M2b/M2c): in memory
+only; no persisted record, file or transport byte per edit. The launch
+checkpoint writes the alias list and the owner map in the format it always
+had (`FORMAT` unchanged). Pages examined to serve the first alias read after
+one edit, 10,000-page graph: 1 (2 for a rename), where the former rebuild
+walked 10,000. Proof: `crates/tine-store/tests/alias_edit_cost.rs`; the delta
+equals a rebuild after every step of random edit sequences
+(`query/alias_relation.rs` `delta_equals_rebuild_over_random_edit_sequences`,
+`model/index_oracle_tests.rs` `random_alias_edits_equal_a_fresh_build`).
+
 ## Page host binding (step 3b)
 
 Every graph window binding runs a page host (step 3b P2b,

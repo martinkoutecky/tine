@@ -34,6 +34,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Launch backups are now one `.zip` per snapshot instead of a folder of about a thousand files, and a launch where nothing changed writes nothing (on a 1,075-page graph: 1 file and 4 syncs instead of 1,076 files and 1,083 syncs). Any archive tool opens a snapshot without Tine; Settings → **Backups & recovery** marks a damaged snapshot, or one from a newer Tine, and offers no restore for it. Older snapshot folders stay listed and restorable.
 - A launch that has to build the reference indexes from scratch (no launch checkpoint) is about twice as fast on large graphs, with no extra memory: on a generated 10,000-page graph 2.2 s → 1.0 s, and on a 1-million-block graph 5.2 s → 2.0 s (busy machine). Launching right after many files were written, such as after a sync or a bulk import, no longer does a check whose cost grew with the square of the number of files (GJ5).
 
+- **Editing an alias, or renaming or deleting an aliased page, no longer re-reads every page**: the alias index is patched for the pages the edit changed instead of being rebuilt by a walk over the whole graph. On a generated 10,000-page graph the first alias lookup after such an edit examines 1 page instead of 10,000 (D-20261018-M2c).
+
 ### Fixed
 
 - Repeatedly collapsing a block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) no longer stacks extra `collapsed:: true` lines or shows them as text; existing stacked lines are removed on the next collapse toggle (GH #721).

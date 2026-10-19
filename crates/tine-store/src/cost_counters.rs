@@ -17,6 +17,7 @@ static MEMO_PAGE_PROBES: AtomicU64 = AtomicU64::new(0);
 static SHARED_TREE_NODE_COPIES: AtomicU64 = AtomicU64::new(0);
 static CACHE_PAGE_COPIES: AtomicU64 = AtomicU64::new(0);
 static ICON_PAGE_PROBES: AtomicU64 = AtomicU64::new(0);
+static ALIAS_PAGE_PROBES: AtomicU64 = AtomicU64::new(0);
 static SIGNATURE_BLOCK_PROBES: AtomicU64 = AtomicU64::new(0);
 static QUERY_FACTS_COPIES: AtomicU64 = AtomicU64::new(0);
 static QUERY_FACTS_DERIVED: AtomicU64 = AtomicU64::new(0);
@@ -122,6 +123,10 @@ pub struct Counts {
     pub cache_page_copies: u64,
     /// Page slots inspected while answering icon requests.
     pub icon_page_probes: u64,
+    /// Pages examined while building or patching the alias relation: every
+    /// page for a walk (cold build, alias-spelling listing), the changed
+    /// pages only for a per-edit delta (D-20261018-M2c).
+    pub alias_page_probes: u64,
     /// Blocks inspected while constructing changed-page reference signatures.
     pub signature_block_probes: u64,
     /// Query-index facts entries copied when a generation is patched.
@@ -209,6 +214,7 @@ pub fn reset() {
         &CACHE_PAGE_COPIES,
         &SHARED_TREE_NODE_COPIES,
         &ICON_PAGE_PROBES,
+        &ALIAS_PAGE_PROBES,
         &SIGNATURE_BLOCK_PROBES,
         &QUERY_FACTS_COPIES,
         &QUERY_FACTS_DERIVED,
@@ -254,6 +260,7 @@ pub fn snapshot() -> Counts {
         cache_page_copies: CACHE_PAGE_COPIES.load(Ordering::Relaxed),
         shared_tree_node_copies: SHARED_TREE_NODE_COPIES.load(Ordering::Relaxed),
         icon_page_probes: ICON_PAGE_PROBES.load(Ordering::Relaxed),
+        alias_page_probes: ALIAS_PAGE_PROBES.load(Ordering::Relaxed),
         signature_block_probes: SIGNATURE_BLOCK_PROBES.load(Ordering::Relaxed),
         query_facts_copies: QUERY_FACTS_COPIES.load(Ordering::Relaxed),
         query_facts_derived: QUERY_FACTS_DERIVED.load(Ordering::Relaxed),
@@ -365,6 +372,9 @@ pub(crate) fn cache_page_copies(count: u64) {
 }
 pub(crate) fn icon_page_probe() {
     ICON_PAGE_PROBES.fetch_add(1, Ordering::Relaxed);
+}
+pub(crate) fn alias_page_probe() {
+    ALIAS_PAGE_PROBES.fetch_add(1, Ordering::Relaxed);
 }
 pub(crate) fn signature_block_probe() {
     SIGNATURE_BLOCK_PROBES.fetch_add(1, Ordering::Relaxed);
