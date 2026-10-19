@@ -664,9 +664,12 @@ struct Replayed {
     effective: usize,
     save_kinds: usize,
     stutters: BTreeMap<String, usize>,
+    /// Traces ended at a lifecycle divergence, and the scripted actions left.
+    truncated: Vec<String>,
+    unreplayed: usize,
 }
 
-fn replay(fixture: &Value, mutant: Option<RefusalMutant>) -> Replayed {
+fn replay(fixture: &Value, mutant: Option<(&'static str, RefusalMutant)>) -> Replayed {
     assert_eq!(fixture["model_sha256"], Oracle::model_sha());
     let mut r = Replayed::default();
     for (ti, trace) in fixture["traces"].as_array().unwrap().iter().enumerate() {
@@ -679,7 +682,8 @@ fn replay(fixture: &Value, mutant: Option<RefusalMutant>) -> Replayed {
         );
         d.refinement_schedule = true;
         d.refusal_mutant = mutant;
-        for (si, entry) in trace["states"].as_array().unwrap().iter().enumerate() {
+        let states = trace["states"].as_array().unwrap();
+        for (si, entry) in states.iter().enumerate() {
             let action = if let Some(index) = entry["a"].as_u64() {
                 &fixture["actions"][index as usize]
             } else {
@@ -703,6 +707,15 @@ fn replay(fixture: &Value, mutant: Option<RefusalMutant>) -> Replayed {
                 d.abstract_state()
             );
             r.scripted += 1;
+            if let Some(action) = d.truncated.take() {
+                r.truncated.push(format!(
+                    "truncated/{action}@{ti}:{}/{}",
+                    trace["profile"].as_str().unwrap_or_default(),
+                    trace["name"].as_str().unwrap_or("-")
+                ));
+                r.unreplayed += states.len() - 1 - si;
+                break;
+            }
         }
         r.traces += 1;
         r.actions += d.actions;
@@ -729,7 +742,7 @@ fn ratchet(r: &Replayed, expected: &str) {
 fn committed_itf_traces_through_host() {
     let fixture: Value =
         serde_json::from_str(include_str!("../../tests/fixtures/s2/traces.json")).unwrap();
-    ratchet(&replay(&fixture, None), "Replayed { traces: 32, scripted: 1280, actions: 1281, barriers: 2259, twins: 1, occupied: 0, queued: 4, effective: 0, save_kinds: 0, stutters: {\"refusal-continuation/check\": 3, \"refusal-continuation/dirSync\": 1, \"refusal-continuation/flushDel\": 3, \"refusal-continuation/observe\": 1, \"refusal-continuation/opRenamePacked\": 1, \"refusal-continuation/rename\": 2, \"refusal-continuation/wEdit\": 2, \"refusal-continuation/wRecv\": 2, \"refusal-continuation/wSend\": 1, \"twin-suffix/dirSync\": 1, \"twin-suffix/rename\": 1} }");
+    ratchet(&replay(&fixture, None), "Replayed { traces: 32, scripted: 1280, actions: 1281, barriers: 2259, twins: 1, occupied: 0, queued: 4, effective: 0, save_kinds: 0, stutters: {\"refusal-continuation/check\": 3, \"refusal-continuation/dirSync\": 1, \"refusal-continuation/flushDel\": 3, \"refusal-continuation/observe\": 1, \"refusal-continuation/opRenamePacked\": 1, \"refusal-continuation/rename\": 2, \"refusal-continuation/wEdit\": 2, \"refusal-continuation/wRecv\": 2, \"refusal-continuation/wSend\": 1, \"twin-suffix/dirSync\": 1, \"twin-suffix/rename\": 1}, truncated: [], unreplayed: 0 }");
 }
 
 fn frozen_twin_then_delete() -> Value {
@@ -744,32 +757,63 @@ fn frozen_twin_then_delete() -> Value {
 // have published is now Unsaved, and Host must refuse it without mutation.
 #[test]
 fn audit_1019_twin_then_delete_host_replay() {
-    ratchet(&replay(&frozen_twin_then_delete(), None), "Replayed { traces: 1, scripted: 29, actions: 29, barriers: 37, twins: 1, occupied: 0, queued: 0, effective: 0, save_kinds: 0, stutters: {\"twin-continuation/opDelete\": 1, \"twin-suffix/dirSync\": 1, \"twin-suffix/rename\": 1} }");
+    ratchet(&replay(&frozen_twin_then_delete(), None), "Replayed { traces: 1, scripted: 29, actions: 29, barriers: 37, twins: 1, occupied: 0, queued: 0, effective: 0, save_kinds: 0, stutters: {\"twin-continuation/opDelete\": 1, \"twin-suffix/dirSync\": 1, \"twin-suffix/rename\": 1}, truncated: [], unreplayed: 0 }");
 }
 
-// The twin continuation keeps the complete no-mutation comparison: a refusal
-// that changes any compared component fails replay of the same prefix.
-#[test]
-fn twin_continuation_rejects_a_mutating_refusal() {
-    let fixture = frozen_twin_then_delete();
-    for (mutant, component) in [
-        (RefusalMutant::State, "host state"),
-        (RefusalMutant::Files, "files"),
-        (RefusalMutant::Stable, "stable files"),
-        (RefusalMutant::Version, "the host version"),
-        (RefusalMutant::Versions, "recorded versions"),
-    ] {
-        let failure = std::panic::catch_unwind(|| replay(&fixture, Some(mutant)))
+/// Every compared component, as a deliberately mutating refusal changes it.
+const MUTANTS: [(RefusalMutant, &str); 5] = [
+    (RefusalMutant::State, "host state"),
+    (RefusalMutant::Files, "files"),
+    (RefusalMutant::Stable, "stable files"),
+    (RefusalMutant::Version, "the host version"),
+    (RefusalMutant::Versions, "recorded versions"),
+];
+
+/// A refusal of `action` that changes any compared component fails replay.
+fn mutating_refusal_fails(fixture: &Value, action: &'static str) {
+    for (mutant, component) in MUTANTS {
+        let failure = std::panic::catch_unwind(|| replay(fixture, Some((action, mutant))))
             .expect_err("a mutating refusal replayed");
         let message = failure
             .downcast_ref::<String>()
             .map(String::as_str)
             .unwrap_or_default();
         assert!(
-            message.contains(&format!("opDelete: refusal changed {component}")),
+            message.contains(&format!("{action}: refusal changed {component}")),
             "{mutant:?}: {message}"
         );
     }
+}
+
+// The twin continuation keeps the complete no-mutation comparison.
+#[test]
+fn twin_continuation_rejects_a_mutating_refusal() {
+    mutating_refusal_fails(&frozen_twin_then_delete(), "opDelete");
+}
+
+fn frozen_continuation_prefixes() -> Value {
+    serde_json::from_str(include_str!(
+        "../../tests/fixtures/s2/lane-1020-continuation-prefixes.json"
+    ))
+    .unwrap()
+}
+
+// Two valid Quint prefixes from the 10/20 lane corpus that reach a scripted
+// action the occupied/queued-refined oracle disables: a no-op external delete
+// (stutter, Host not called) and a refused switch (trace ends there, counted).
+#[test]
+fn continuation_prefixes_replay_with_counted_truncation() {
+    ratchet(&replay(&frozen_continuation_prefixes(), None), "Replayed { traces: 2, scripted: 67, actions: 66, barriers: 97, twins: 0, occupied: 1, queued: 2, effective: 0, save_kinds: 0, stutters: {\"refusal-continuation/check\": 1, \"refusal-continuation/dirSync\": 1, \"refusal-continuation/draftSync\": 1, \"refusal-continuation/extWriteD\": 1, \"refusal-continuation/flush\": 1, \"refusal-continuation/rename\": 1, \"refusal-continuation/wRecv\": 2}, truncated: [\"truncated/switchFin@1:R1/lane-1020-refused-switch\"], unreplayed: 0 }");
+}
+
+#[test]
+fn noop_external_write_rejects_a_mutation() {
+    mutating_refusal_fails(&frozen_continuation_prefixes(), "extWriteD");
+}
+
+#[test]
+fn truncation_rejects_a_mutating_refused_switch() {
+    mutating_refusal_fails(&frozen_continuation_prefixes(), "switchFin");
 }
 
 // Without a prior refinement a disabled scripted action still fails replay,
@@ -796,6 +840,8 @@ const MIN_GENERATED_TRACES: usize = 256;
 /// refusal stutters after a refinement (1.2% for the 10/19 corpus, 1.4% for the
 /// committed sample); more means the replay checks less than the corpus claims.
 const MAX_STUTTER_PERCENT: usize = 3;
+/// At most this share of generated traces may end at a lifecycle divergence.
+const MAX_TRUNCATED_PERCENT: usize = 3;
 
 #[test]
 #[ignore = "optional generated corpus: set S3_TRACE_FIXTURE=<decoded traces.json>, run with --ignored"]
@@ -826,6 +872,13 @@ fn generated_itf_traces_through_host() {
         "{stutters} of {} scripted actions replayed as stutters",
         r.scripted
     );
+    assert!(
+        r.truncated.len() * 100 <= r.traces * MAX_TRUNCATED_PERCENT,
+        "{} of {} traces truncated: {:?}",
+        r.truncated.len(),
+        r.traces,
+        r.truncated
+    );
     eprintln!("full host ITF: seeds {}; {r:?}", fixture["seeds"]);
 }
 
@@ -833,7 +886,7 @@ fn generated_itf_traces_through_host() {
 fn committed_witnesses_through_host() {
     let fixture: Value =
         serde_json::from_str(include_str!("../../tests/fixtures/s2/witnesses.json")).unwrap();
-    ratchet(&replay(&fixture, None), "Replayed { traces: 44, scripted: 8507, actions: 8507, barriers: 10771, twins: 0, occupied: 0, queued: 0, effective: 0, save_kinds: 0, stutters: {} }");
+    ratchet(&replay(&fixture, None), "Replayed { traces: 44, scripted: 8507, actions: 8507, barriers: 10771, twins: 0, occupied: 0, queued: 0, effective: 0, save_kinds: 0, stutters: {}, truncated: [], unreplayed: 0 }");
 }
 
 #[test]
@@ -846,5 +899,5 @@ fn short_witnesses_through_host() {
         .as_array_mut()
         .unwrap()
         .retain(|trace| trace["states"].as_array().unwrap().len() <= 100);
-    ratchet(&replay(&fixture, None), "Replayed { traces: 41, scripted: 498, actions: 498, barriers: 760, twins: 0, occupied: 0, queued: 0, effective: 0, save_kinds: 0, stutters: {} }");
+    ratchet(&replay(&fixture, None), "Replayed { traces: 41, scripted: 498, actions: 498, barriers: 760, twins: 0, occupied: 0, queued: 0, effective: 0, save_kinds: 0, stutters: {}, truncated: [], unreplayed: 0 }");
 }

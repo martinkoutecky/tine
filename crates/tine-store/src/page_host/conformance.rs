@@ -114,8 +114,10 @@ struct Driver<F: ConformanceIo = ModelFs> {
     /// Scripted actions accepted as no-mutation stutters, by why the refined
     /// oracle disabled them (`Driver::continuation`, F4), and action name.
     stutters: BTreeMap<String, usize>,
-    /// Negative control: the next operation refusal mutates this component.
-    refusal_mutant: Option<RefusalMutant>,
+    /// Negative control: the next refusal of this action mutates a component.
+    refusal_mutant: Option<(&'static str, RefusalMutant)>,
+    /// Set when replay must end this trace at a lifecycle divergence.
+    truncated: Option<String>,
     stepped: bool,
     prepare_operations: bool,
     effect: Option<(String, Vec<Value>, u64, u64)>,
@@ -185,6 +187,7 @@ impl<F: ConformanceIo> Driver<F> {
             twin_suffix: false,
             stutters: BTreeMap::new(),
             refusal_mutant: None,
+            truncated: None,
             stepped: false,
             prepare_operations: false,
             effect: None,
@@ -256,6 +259,7 @@ impl<F: ConformanceIo> Driver<F> {
             twin_suffix: self.twin_suffix,
             stutters: self.stutters.clone(),
             refusal_mutant: self.refusal_mutant,
+            truncated: self.truncated.clone(),
             stepped: self.stepped,
             prepare_operations: self.prepare_operations,
             effect: self.effect.clone(),
@@ -587,12 +591,13 @@ impl<F: ConformanceIo> Driver<F> {
         );
     }
 
-    /// Negative control (F4): the armed operation refusal changes one
+    /// Negative control (F4): the armed action's refusal changes one
     /// component anyway, as a host that refused but still wrote would.
-    fn mutate_refusal(&mut self) {
-        let Some(mutant) = self.refusal_mutant.take() else {
+    fn mutate_refusal(&mut self, name: &str) {
+        let Some((_, mutant)) = self.refusal_mutant.filter(|(armed, _)| *armed == name) else {
             return;
         };
+        self.refusal_mutant = None;
         let mark = || Arc::from(&b"mutant"[..]);
         match mutant {
             RefusalMutant::State => {

@@ -1203,6 +1203,17 @@ fn audit_1019_twin_then_delete_matches_quint_states() {
     assert_eq!(replay_traces(&fixture), (1, 30));
 }
 
+// The frozen lane prefixes (no-op external delete, refused switch) are valid
+// in Quint and the transcription; the host replay pairs with this.
+#[test]
+fn lane_1020_continuation_prefixes_match_quint_states() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/s2/lane-1020-continuation-prefixes.json"
+    ))
+    .unwrap();
+    assert_eq!(replay_traces(&fixture), (2, 33 + 36));
+}
+
 #[test]
 fn targeted_quint_witnesses_match_states_and_disabled_choices() {
     let fixture: Value =

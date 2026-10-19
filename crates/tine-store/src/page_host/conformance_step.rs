@@ -52,6 +52,52 @@ impl<F: ConformanceIo> Driver<F> {
         let successor = self.oracle.next(name, args);
         if successor.is_none() {
             let continuation = self.continuation();
+            if let Some(kind) = continuation.filter(|_| matches!(name, "extWrite" | "extWriteD")) {
+                // The model forbids an external write that changes nothing
+                // (`v != s.disk.get(p)`); after a refinement the refined disk
+                // may already hold the scripted value. Only that clause, never
+                // the R1 window clause, makes it a no-op: Host is not called.
+                let (p, v) = (
+                    args[0].as_u64().unwrap() as usize,
+                    args[1].as_i64().unwrap(),
+                );
+                if self.oracle.state()["s"]["disk"][p] == json!(v) {
+                    let before = self.untouched();
+                    self.mutate_refusal(name);
+                    let path = format!("graph/{}", key(p));
+                    assert_eq!(
+                        label(&self.host.fs.physical().files.get(&path).cloned()),
+                        v,
+                        "{name}: the physical page differs from the refined disk"
+                    );
+                    self.assert_untouched(&before, name);
+                    self.compare("no-op external write stutter");
+                    return self.accept_stutter(kind, name);
+                }
+            }
+            if continuation.is_some() && name == "switchFin" {
+                // Lifecycle divergence: the model's atomic switchFin is the
+                // host's ready + finish; the refused switch waits at finish
+                // and the binding aborts it. The script's remainder assumes a
+                // restarted host (its launch is disabled), so replay ends this
+                // trace here, after this state is compared, and counts it.
+                let before = self.untouched();
+                let switch = (self.host.admission_open, self.host.switch_confirmation);
+                if self.host.switch_ready(self.host.last_admitted) == Disposition::Applied {
+                    assert_eq!(self.host.switch_finish(), Disposition::Waiting);
+                    self.host.switch_abort();
+                }
+                self.mutate_refusal(name);
+                assert_eq!(
+                    (self.host.admission_open, self.host.switch_confirmation),
+                    switch,
+                    "{name}: refusal left the switch confirmation changed"
+                );
+                self.assert_untouched(&before, name);
+                self.compare("refused switch at lifecycle divergence");
+                self.truncated = Some(name.into());
+                return true;
+            }
             if continuation.is_some() && matches!(name, "flush" | "flushDel") {
                 // The host's start_save chooses payload versus deletion from
                 // its current buffer; a scripted label can become obsolete.
@@ -237,7 +283,7 @@ impl<F: ConformanceIo> Driver<F> {
                     panic!("unclassified opApply refusal: {eff:?} {plan:?} {dst}/{src}");
                 };
                 let result = self.apply_admission(name, args);
-                self.mutate_refusal();
+                self.mutate_refusal(name);
                 if matches!(result, Err(ApplyRefusal::Unsaved(_))) {
                     // The entire observed set already passed the independent
                     // dirty-or-queued predicate, including every dirty page.
@@ -261,7 +307,7 @@ impl<F: ConformanceIo> Driver<F> {
                 } else {
                     self.rename_operation(name, args)
                 };
-                self.mutate_refusal();
+                self.mutate_refusal(name);
                 assert!(
                     matches!(
                         result,
