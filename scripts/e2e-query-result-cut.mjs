@@ -27,6 +27,8 @@ const tasksFile = path.join(graph, "pages/Tasks.md");
 const legacyFile = path.join(graph, "pages/Legacy Query.md");
 const tableFile = path.join(graph, "pages/Table Query.md");
 const oldTableFile = path.join(graph, "pages/Old Table.md");
+// The reporter's file name maps to "Queries/TasksUnscheduled" under the default new-graph name format.
+fs.writeFileSync(path.join(graph, "logseq/config.edn"), "{:file/name-format :triple-lowbar}\n");
 fs.writeFileSync(reporterFile, `- ${QUERY_LINE}\n- TODO process this \n  SCHEDULED: <2026-10-13 Tue .+1m>\n- \n`);
 fs.writeFileSync(tasksFile, "- WAITING cut me from the query\n- WAITING delete me from the query\n- LATER legacy macro result\n- NOW table row result\n");
 fs.writeFileSync(legacyFile, "- {{query (task LATER)}}\n- after legacy\n");
@@ -45,18 +47,30 @@ let stage = "startup";
 const assert = (ok, message) => { if (!ok) throw new Error(message); };
 const read = (file) => fs.readFileSync(file, "utf8");
 
-/** Mark the query result row whose own text contains `text`; returns its selector. */
-async function markResult(text, part) {
-  await browser.waitUntil(() => browser.execute((text, part) => {
-    document.querySelectorAll("[data-e2e-target]").forEach((el) => el.removeAttribute("data-e2e-target"));
-    const row = [...document.querySelectorAll(".query-block .ls-block")]
+/** Real (WebDriver) right click on the LIVE query result row whose own text
+ *  contains `text`, at `part` (bullet or text). Rows re-mount when their page
+ *  loads, so locate and click by coordinates in one step, then wait for a menu. */
+async function rightClickResult(text, part) {
+  let point = null;
+  await browser.waitUntil(async () => (point = await browser.execute((text, part) => {
+    const row = [...document.querySelectorAll(".query-block .ls-block:not(.ref-block)")]
       .find((el) => el.querySelector(":scope > .block-main .block-content")?.textContent?.includes(text));
     const target = row?.querySelector(`:scope > .block-main ${part}`);
-    if (!target) return false;
-    target.setAttribute("data-e2e-target", "");
-    return true;
-  }, text, part), { timeout: 20_000, interval: 200, timeoutMsg: `query result ${JSON.stringify(text)} not rendered` });
-  return "[data-e2e-target]";
+    if (!target) return null;
+    target.scrollIntoView({ block: "center" });
+    const box = target.getBoundingClientRect();
+    return { x: Math.round(box.left + Math.min(box.width / 2, 12)), y: Math.round(box.top + box.height / 2) };
+  }, text, part)) !== null, { timeout: 20_000, interval: 200, timeoutMsg: `live query result ${JSON.stringify(text)} not rendered` });
+  await rightClickAt(point);
+}
+
+async function rightClickAt(point) {
+  await browser.performActions([{ type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions: [
+    { type: "pointerMove", duration: 0, origin: "viewport", x: point.x, y: point.y },
+    { type: "pointerDown", button: 2 }, { type: "pointerUp", button: 2 },
+  ] }]);
+  await browser.releaseActions();
+  await browser.$(".ctx-menu").waitForExist({ timeout: 10_000 });
 }
 
 async function menuItems() {
@@ -83,7 +97,7 @@ try {
 
   stage = "reporter page: right-click a {{tine-query}} result's bullet, Cut block";
   await openPageByName(browser, "Queries/TasksUnscheduled");
-  await (await browser.$(await markResult("cut me from the query", ".bullet-container"))).click({ button: "right" });
+  await rightClickResult("cut me from the query", ".bullet-container");
   await chooseFromMenu("Cut block");
   await waitForFileText(tasksFile, (text) => !text.includes("cut me from the query") && text.includes("delete me from the query"));
   assert(read(reporterFile).includes(QUERY_LINE), `query host removed or changed: ${JSON.stringify(read(reporterFile))}`);
@@ -92,7 +106,7 @@ try {
   passed.push(stage); console.log(`PASS ${stage}`);
 
   stage = "reporter page: right-click a result's text, Delete block";
-  await (await browser.$(await markResult("delete me from the query", ".block-content"))).click({ button: "right" });
+  await rightClickResult("delete me from the query", ".block-content");
   await chooseFromMenu("Delete block");
   await waitForFileText(tasksFile, (text) => !text.includes("delete me from the query"));
   assert(read(reporterFile).includes(QUERY_LINE), "query host removed by Delete");
@@ -100,7 +114,7 @@ try {
 
   stage = "{{query}} macro list result: Cut block";
   await openPageByName(browser, "Legacy Query");
-  await (await browser.$(await markResult("legacy macro result", ".bullet-container"))).click({ button: "right" });
+  await rightClickResult("legacy macro result", ".bullet-container");
   await chooseFromMenu("Cut block");
   await waitForFileText(tasksFile, (text) => !text.includes("legacy macro result"));
   assert(read(legacyFile) === "- {{query (task LATER)}}\n- after legacy\n", `legacy query page changed: ${JSON.stringify(read(legacyFile))}`);
@@ -108,15 +122,15 @@ try {
 
   stage = "table view: right-clicking a result row never offers the host's Cut/Delete";
   await openPageByName(browser, "Table Query");
-  await browser.waitUntil(() => browser.execute(() => {
+  let cellPoint = null;
+  await browser.waitUntil(async () => (cellPoint = await browser.execute(() => {
     const cell = [...document.querySelectorAll(".query-block .sheet-title-cell")].find((el) => el.textContent.includes("table row result"));
-    if (!cell) return false;
-    cell.setAttribute("data-e2e-cell", "");
-    return true;
-  }), { timeout: 20_000, interval: 200, timeoutMsg: "table row not rendered" });
-  await (await browser.$("[data-e2e-cell]")).click({ button: "right" });
+    if (!cell) return null;
+    const box = cell.getBoundingClientRect();
+    return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2) };
+  })) !== null, { timeout: 20_000, interval: 200, timeoutMsg: "table row not rendered" });
   // The row's own cell menu (or the table's sheet menu) answers; never the host's block menu.
-  await browser.$(".ctx-menu").waitForExist({ timeout: 10_000 });
+  await rightClickAt(cellPoint);
   const tableItems = await menuItems();
   assert(!tableItems.includes("Cut block") && !tableItems.includes("Delete block"), `host block menu offered in table view: ${JSON.stringify(tableItems)}`);
   await closeMenu();
