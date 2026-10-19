@@ -166,6 +166,26 @@ describe("SidebarTabs tree (GH #704 v2)", () => {
     } finally { dispose(); }
   });
 
+  it("a drag left past the rows' edge still drops on the row at that height", async () => {
+    const { host, dispose } = mountWithStrip(["Alpha", "Beta", "Gamma"]);
+    try {
+      await drag(host, "Beta", 20, ROW_H + ROW_H / 2 + 2);
+      expect(depths(host)).toEqual([0, 1, 0]);
+      layOut(host);
+      // The hit test misses left of the rows (x < 0 here), as it does in the
+      // real sidebar when an un-nest drag overshoots the row's left edge.
+      const hit = document.elementFromPoint;
+      document.elementFromPoint = ((x: number, y: number) => (x < 0 ? null : hit(x, y))) as typeof document.elementFromPoint;
+      const startY = ROW_H + ROW_H / 2;
+      rows(host)[1]!.querySelector(".nav-tab-main")!.dispatchEvent(pointer("pointerdown", 10, startY));
+      document.dispatchEvent(pointer("pointermove", 0, startY + 1));
+      document.dispatchEvent(pointer("pointermove", -14, startY + 2));
+      document.dispatchEvent(pointer("pointerup", -14, startY + 2));
+      await new Promise((r) => setTimeout(r, 0));
+      expect(depths(host)).toEqual([0, 0, 0]);
+    } finally { dispose(); }
+  });
+
   it("collapsing a parent hides its children in the sidebar only", async () => {
     const { host, strip, dispose } = mountWithStrip(["Alpha", "Beta", "Gamma"]);
     try {

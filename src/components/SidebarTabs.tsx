@@ -84,7 +84,7 @@ export function SidebarTabs(props: { onActiveNavigationComplete?: () => void }):
         const { beforeId, depth } = resolveTabDrop(snapshot, from, target);
         owner.moveTabInTree(snapshot[from].tab.id, beforeId, depth);
       },
-      { touchHold: true });
+      { touchHold: true, bandHit: true });
   };
   return (
     // One tab is not worth a section; it appears when there is something to

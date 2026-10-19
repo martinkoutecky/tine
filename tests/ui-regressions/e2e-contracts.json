@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "scenarios": {
     "scripts/e2e-sidebar-tabs-tree.mjs": {
-      "contracts": [{"class":"stateful-ux","userOutcome":"In the sidebar Tabs list, dragging a row right nests it under the row above and left moves it out, a parent's triangle collapses its group in the sidebar only, Move out of group lifts a nested tab, the top strip stays a flat list in tree order, and the tree with its collapse state survives a restart, including in a window narrower than 640 px where the list is the only tab surface.","blocking":true,"authority":"GH #704"}],
+      "contracts": [{"class":"stateful-ux","userOutcome":"In the sidebar Tabs list, dragging a row right nests it under the row above and left moves it out (even when the pointer passes the rows' left edge), a parent's triangle collapses its group in the sidebar only, Move out of group lifts a nested tab, the top strip stays a flat list in tree order, and the tree with its collapse state survives a restart, including in a viewport narrower than 640 px (interface zoom on a minimum-width window) where the list is the only tab surface.","blocking":true,"authority":"GH #704"}],
       "acceptableVariations":["Indent width, drop-line styling, drag thresholds and save latency may vary while the nesting, order and collapse outcomes hold."],
       "nonRequirements":["Exact pixels, touch hold timing on a real Android device, cross-pane drag in the sidebar, nesting in the strip or the overview, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"

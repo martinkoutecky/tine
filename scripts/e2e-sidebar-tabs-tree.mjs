@@ -2,8 +2,9 @@
 // tree. Real WebKitGTK proof: drag rows to nest two tabs (pointer drag through
 // the real hit test and layout), collapse the group, restart the app, and the
 // tree and its collapse state come back from the session file; the context
-// menu's "Move out of group" lifts a tab; then in a window narrower than 640 px
-// (where the sidebar list is the only tab surface) the restored tree is there
+// menu's "Move out of group" lifts a tab; then in a viewport narrower than 640 px
+// (interface zoom on a minimum-width window; the sidebar list is then the only
+// tab surface) the restored tree is there
 // and a drag left moves a tab out, again persisted. The top strip stays a flat
 // list in tree order throughout.
 import { spawn } from "node:child_process";
@@ -85,6 +86,10 @@ async function withApp(index, fn) {
         rows: [...document.querySelectorAll("#sidebar-tabs-list .nav-tab")].map((r) => ({ title: r.querySelector(".nav-tab-title")?.textContent, depth: r.dataset.tabDepth })),
         strip: [...document.querySelectorAll(".tab[data-tab-id] .tab-title")].map((n) => n.textContent),
         width: innerWidth,
+        dragLog: globalThis.__e2eDragLog ?? null,
+        rects: [...document.querySelectorAll("#sidebar-tabs-list .nav-tab")].map((r) => { const b = r.getBoundingClientRect(); return [r.dataset.rowIndex, Math.round(b.left), Math.round(b.top), Math.round(b.right), Math.round(b.bottom)]; }),
+        hit: (() => { const last = (globalThis.__e2eDragLog ?? []).at(-1)?.split("@")[1]?.split(",").map(Number); const el = last && document.elementFromPoint(last[0], last[1]); return el ? `${el.tagName}.${el.className}` : null; })(),
+        zoom: localStorage.getItem("logseq-claude.zoom"), dpr: devicePixelRatio,
       })).catch(() => null);
       fs.writeFileSync(path.join(RUN, `failure-${index}.json`), JSON.stringify({ journey: "sidebar-tabs-tree", run: index, error: String(error), state }, null, 2));
     }
@@ -129,23 +134,40 @@ async function expectRows(browser, want, what) {
 }
 
 /** A real pointer drag of the row titled `title` (grabbed at its title), to the
- *  upper/lower half of the row titled `onto`, `dx` px right of the grab. */
+ *  upper/lower half of the row titled `onto`, `dx` CSS px right of the grab, or
+ *  "pastLeftEdge": released left of every row (the hit test misses there).
+ *  WebKitWebDriver's pointer actions are in unzoomed viewport pixels while the
+ *  DOM reports CSS pixels, so under interface zoom every point is scaled. */
 async function dragRow(browser, title, onto, half, dx) {
   const geometry = await browser.execute((title, onto) => {
     const row = (t) => [...document.querySelectorAll("#sidebar-tabs-list .nav-tab")].find((r) => r.querySelector(".nav-tab-title")?.textContent?.trim() === t);
     const grab = row(title)?.querySelector(".nav-tab-title")?.getBoundingClientRect();
     const drop = row(onto)?.getBoundingClientRect();
-    return grab && drop ? { x: Math.round(grab.left + 8), y: Math.round(grab.top + grab.height / 2), top: drop.top, height: drop.height } : null;
+    const zoom = Number(localStorage.getItem("logseq-claude.zoom")) || 1;
+    return grab && drop ? { x: grab.left + 8, y: grab.top + grab.height / 2, top: drop.top, height: drop.height, rowLeft: drop.left, zoom } : null;
   }, title, onto);
   if (!geometry) throw new Error(`drag ${title} -> ${onto}: row not found`);
+  if (dx === "pastLeftEdge") {
+    dx = geometry.rowLeft - 4 - geometry.x;
+    if (geometry.rowLeft < 6) throw new Error(`drag ${title}: no room left of the rows (left ${geometry.rowLeft})`);
+  }
+  const at = (x, y) => ({ x: Math.round(x * geometry.zoom), y: Math.round(y * geometry.zoom) });
+  await browser.execute(() => {
+    globalThis.__e2eDragLog = [];
+    if (globalThis.__e2eDragLogged) return;
+    globalThis.__e2eDragLogged = true;
+    for (const type of ["pointerdown", "pointermove", "pointerup"]) window.addEventListener(type, (e) => {
+      globalThis.__e2eDragLog.push(`${type}@${Math.round(e.clientX)},${Math.round(e.clientY)}`);
+    }, true);
+  });
   const endY = Math.round(geometry.top + (half === "upper" ? geometry.height * 0.25 : geometry.height * 0.75));
   await browser.performActions([{
     type: "pointer", id: "sidebar-tabs-drag", parameters: { pointerType: "mouse" },
     actions: [
-      { type: "pointerMove", duration: 0, x: geometry.x, y: geometry.y },
+      { type: "pointerMove", duration: 0, ...at(geometry.x, geometry.y) },
       { type: "pointerDown", button: 0 },
-      { type: "pointerMove", duration: 60, x: geometry.x + Math.sign(dx || 1) * 6, y: geometry.y + 2 },
-      { type: "pointerMove", duration: 120, x: geometry.x + dx, y: endY },
+      { type: "pointerMove", duration: 60, ...at(geometry.x + Math.sign(dx || 1) * 6, geometry.y + 2) },
+      { type: "pointerMove", duration: 120, ...at(geometry.x + dx, endY) },
       { type: "pointerUp", button: 0 },
     ],
   }]);
@@ -180,7 +202,6 @@ await withApp(0, async (browser) => {
     { name: "Tree Beta", parent: 1, collapsed: false },
     { name: "Tree Gamma", parent: 2, collapsed: false },
   ], "after nesting and collapse");
-  await browser.saveScreenshot(path.join(RUN, "nested-collapsed.png"));
   console.log("PASS run 0: drag-nested two tabs, collapsed, session saved");
 });
 
@@ -216,22 +237,29 @@ await withApp(1, async (browser) => {
   console.log("PASS run 1: tree and collapse restored after restart; Move out of group");
 });
 
-// Run 2: a window narrower than 640 px, where the sidebar list is the only tab surface.
+// Run 2: a viewport narrower than 640 CSS px (zoomed-in minimum-width window), where the sidebar list is the only tab surface.
 await withApp(2, async (browser) => {
-  await browser.setWindowSize(600, 900);
-  await browser.waitUntil(() => browser.execute(() => innerWidth < 640), { timeout: 10_000, timeoutMsg: "window did not narrow below 640 px" });
+  // The desktop window's minimum width is 640 px, so a desktop user reaches the
+  // narrow layout through interface zoom (Ctrl +), which shrinks the CSS width.
+  await browser.setWindowSize(640, 900);
+  for (let i = 0; i < 6 && !(await browser.execute(() => innerWidth < 640)); i++) {
+    await browser.execute(() => document.activeElement instanceof HTMLElement && document.activeElement.blur());
+    await browser.keys(["Control", "="]);
+    await sleep(300);
+  }
+  await browser.waitUntil(() => browser.execute(() => innerWidth < 640), { timeout: 10_000, timeoutMsg: "viewport did not narrow below 640 CSS px" });
   await browser.waitUntil(async () => (await stripTitles(browser)).length === 0, { timeout: 5000, timeoutMsg: "the top strip still shows below 640 px" });
   await ensureLeftSidebar(browser);
   await expectRows(browser, ["Journals", "Tree Alpha", "-Tree Beta", "-Tree Gamma"], "narrow window shows the restored tree");
-  await dragRow(browser, "Tree Gamma", "Tree Gamma", "lower", -24);
-  await expectRows(browser, ["Journals", "Tree Alpha", "-Tree Beta", "Tree Gamma"], "drag left moves Gamma out");
+  // Released left of the rows' edge: still a drop on Gamma's own slot, at the root.
+  await dragRow(browser, "Tree Gamma", "Tree Gamma", "lower", "pastLeftEdge");
+  await expectRows(browser, ["Journals", "Tree Alpha", "-Tree Beta", "Tree Gamma"], "drag left (past the rows' edge) moves Gamma out");
   await waitForSavedShape([
     { name: "journals", parent: null, collapsed: false },
     { name: "Tree Alpha", parent: null, collapsed: false },
     { name: "Tree Beta", parent: 1, collapsed: false },
     { name: "Tree Gamma", parent: null, collapsed: false },
   ], "after the narrow-window drag");
-  await browser.saveScreenshot(path.join(RUN, "narrow.png"));
   console.log("PASS run 2: narrow window tree, drag left persisted");
 });
 console.log(`PASS: sidebar tab tree (artifacts ${RUN})`);

@@ -31,6 +31,10 @@ export interface RowReorderOptions {
    *  does not scroll and the hold's own context menu is swallowed. Mouse drags
    *  are unchanged. Opt-in: the sidebar Tabs list (GH #704). */
   touchHold?: boolean;
+  /** A pointer beside the rows (left or right of every row, e.g. past the
+   *  list's edge while dragging left to un-nest) still targets the row at its
+   *  height, instead of cancelling the drop. Opt-in: the sidebar Tabs list. */
+  bandHit?: boolean;
 }
 
 /** Attach a reorder drag to a row's pointerdown. `onTarget` reports the live
@@ -79,7 +83,13 @@ export function beginRowReorderDrag(
       startDragging();
     }
     dropSelection(doc); // WebKit can re-anchor a selection mid-drag
-    const row = doc.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(rowSelector);
+    let row = doc.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(rowSelector) ?? null;
+    if (!row && opts.bandHit) {
+      row = [...doc.querySelectorAll<HTMLElement>(rowSelector)].find((r) => {
+        const rect = r.getBoundingClientRect();
+        return ev.clientY >= rect.top && ev.clientY < rect.bottom;
+      }) ?? null;
+    }
     if (row?.dataset.rowIndex !== undefined) {
       const rect = row.getBoundingClientRect();
       target = { index: Number(row.dataset.rowIndex), before: ev.clientY < rect.top + rect.height / 2, dx: ev.clientX - startX, row };
