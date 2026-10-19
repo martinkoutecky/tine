@@ -25,7 +25,7 @@ ring = "0.17"
 time = { version = "0.3.49", features = ["formatting"] }
 
 [dev-dependencies]
-lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.8" }
+lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.9" }
 tine-store = { path = "../tine-store", features = ["test-faults"] }
 tine-graph-features = { path = ".", features = ["test-faults"] }
 serde_json = { workspace = true }
