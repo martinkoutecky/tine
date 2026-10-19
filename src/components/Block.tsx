@@ -18,6 +18,7 @@ import {
   withRefCompletionSpace,
   autoPairEdit,
   fullWidthRefReplace,
+  fullWidthCloserEdit,
   pageInsert,
   tagInsert,
   orderAcItems,
@@ -2035,6 +2036,16 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     ref.setSelectionRange(paired.caret, paired.caret);
     return true;
   };
+  // GH #53: a full-width closer (`】`, `）`) typed before the ASCII closer that the
+  // `【【` / `（（` conversion (or auto-pairing) left after the caret steps over it.
+  const applyFullWidthCloserThrough = () => {
+    if (ref.selectionStart !== ref.selectionEnd) return false;
+    const stepped = fullWidthCloserEdit(ref.value, ref.selectionStart, autoPairing());
+    if (!stepped) return false;
+    ref.value = stepped.value;
+    ref.setSelectionRange(stepped.caret, stepped.caret);
+    return true;
+  };
   // IMEs replace the textarea's transient composition range many times before
   // committing. Keep that range DOM-local: every setRaw() also dirties the page
   // and starts its save/reparse work. The finalized value has one canonical
@@ -2092,6 +2103,8 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       }
       if (ch === "【" || ch === "（" || ch === "〈") {
         handled = applyFullWidthRefReplace();
+      } else if (ch === "】" || ch === "）") {
+        handled = applyFullWidthCloserThrough();
       }
       // GH #413: the third backtick of a whole-block fence trigger is an EXPLICIT
       // scaffold decision, not a character to pair: insert the matching closing
@@ -2156,7 +2169,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   };
   const onCompositionEnd = () => {
     compositionActive = false;
-    applyFullWidthRefReplace();
+    if (!applyFullWidthRefReplace()) applyFullWidthCloserThrough();
     compositionEndValue = ref.value;
     commit(ref.value);
     endCompositionHold();
