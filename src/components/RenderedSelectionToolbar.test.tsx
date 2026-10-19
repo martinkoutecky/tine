@@ -10,6 +10,7 @@ import { pageByName } from "../document/model";
 import type { BlockDto } from "../types";
 import { Block } from "./Block";
 import { RenderedSelectionToolbar } from "./RenderedSelectionToolbar";
+import { setGraphMeta } from "../graphSession";
 
 // GH #375 (D-20261018-LP2): text selected in a RENDERED block is formatted in
 // place. The block never enters edit mode, so the platform keeps its own
@@ -92,6 +93,124 @@ const press = (id: string) => {
   button.click();
 };
 const selectedText = () => document.getSelection()!.toString();
+
+describe("rendered-selection toolbar: exact, owned mapping (GH #375 review r1)", () => {
+  it("never rewrites a code block when its code is selected", () => {
+    const raw = "```js\nconst answer = 42\n```";
+    load("md", blocks(raw));
+    const page = mountPage();
+    try {
+      selectText(row(page.root, "second"), "const answer = 42");
+      expect(toolbar()).toBeNull();
+      // Even a stale toolbar must not write: nothing maps byte-exactly here.
+      if (toolbar()) press("bold");
+      expect(docNode("second").raw).toBe(raw);
+    } finally { page.dispose(); }
+  });
+
+  it("never rewrites the host block when a block-level macro's output is selected", () => {
+    setGraphMeta({ macros: { m: "macro selected\n\nsecond paragraph" } } as never);
+    const raw = "prefix {{m}} suffix";
+    load("md", blocks(raw));
+    const page = mountPage();
+    try {
+      selectText(row(page.root, "second"), "selected");
+      expect(toolbar()).toBeNull();
+      if (toolbar()) press("bold");
+      expect(docNode("second").raw).toBe(raw);
+    } finally { page.dispose(); setGraphMeta({ macros: {} } as never); }
+  });
+
+  it("keeps the selection on the formatted prose, not in a macro's output", () => {
+    setGraphMeta({ macros: { m: "macro selected\n\nsecond paragraph" } } as never);
+    load("md", blocks("prefix {{m}} suffix"));
+    const page = mountPage();
+    try {
+      selectText(row(page.root, "second"), "suffix");
+      press("bold");
+      expect(docNode("second").raw).toBe("prefix {{m}} **suffix**");
+      expect(selectedText()).toBe("suffix");
+      expect(row(page.root, "second").querySelector(".macro-blocks")!.contains(document.getSelection()!.anchorNode)).toBe(false);
+    } finally { page.dispose(); setGraphMeta({ macros: {} } as never); }
+  });
+
+  it("ends editing in A when text is selected in a block B that offers no formatting", () => {
+    load("md", blocks("```js\nconst answer = 42\n```"));
+    startEditing("first", 0);
+    const page = mountPage();
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    try {
+      const editor = page.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      editor.focus();
+      editor.value = "first block edited";
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      selectText(row(page.root, "second"), "answer");
+      expect(selectedText()).toBe("answer");
+      expect(editingId()).toBeNull();
+      expect(docNode("first").raw).toBe("first block edited");
+      expect(toolbar()).toBeNull();
+    } finally { hasFocus.mockRestore(); page.dispose(); }
+  });
+
+  it("commits A's text still being composed before ending its edit", () => {
+    load("md", blocks("alpha selected omega"));
+    startEditing("first", 0);
+    const page = mountPage();
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    try {
+      const editor = page.root.querySelector<HTMLTextAreaElement>("textarea.block-editor")!;
+      editor.focus();
+      editor.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      editor.value = "draft still composing";
+      editor.dispatchEvent(new InputEvent("input", { bubbles: true, isComposing: true }));
+      expect(docNode("first").raw).toBe("first block");
+      selectText(row(page.root, "second"), "selected");
+      expect(docNode("first").raw).toBe("draft still composing");
+      expect(editingId()).toBeNull();
+      expect(selectedText()).toBe("selected");
+    } finally { hasFocus.mockRestore(); page.dispose(); }
+  });
+
+  it.each([
+    ["md", "title\nid:: 6500a1b2-0000-4000-8000-000000000001\nnext selected words", "title\nnext **selected** words\nid:: 6500a1b2-0000-4000-8000-000000000001"],
+    ["org", "title\n:PROPERTIES:\n:ID: 6500a1b2-0000-4000-8000-000000000001\n:END:\nnext selected words", "title\n:PROPERTIES:\n:ID: 6500a1b2-0000-4000-8000-000000000001\n:END:\nnext *selected* words"],
+    ["md", "title\nsecond selected words\nthird line", "title\nsecond **selected** words\nthird line"],
+    ["md", "title\n| a | b |\n|---|---|\n| x | selected |", "title\n| a | b |\n|---|---|\n| x | **selected** |"],
+  ] as const)("formats exactly the selected word (%s): %j", (format, raw, expected) => {
+    load(format, blocks(raw));
+    const page = mountPage();
+    try {
+      selectText(row(page.root, "second"), "selected");
+      expect(toolbar()).not.toBeNull();
+      press("bold");
+      expect(docNode("second").raw).toBe(expected);
+      expect(selectedText()).toBe("selected");
+      expect(editingId()).toBeNull();
+    } finally { page.dispose(); }
+  });
+
+  it("leaves no selection listener behind across capability flips and unmount", () => {
+    const add = vi.spyOn(document, "addEventListener");
+    const remove = vi.spyOn(document, "removeEventListener");
+    load("md", blocks("alpha selected omega"));
+    const page = mountPage();
+    try {
+      for (let i = 0; i < 3; i++) {
+        selectText(row(page.root, "second"), "selected");
+        expect(toolbar()).not.toBeNull();
+        capability.setTouch!(false);
+        expect(toolbar()).toBeNull();
+        capability.setTouch!(true);
+      }
+      page.dispose();
+      const added = add.mock.calls.filter(([type]) => type === "selectionchange").map(([, fn]) => fn);
+      const removed = remove.mock.calls.filter(([type]) => type === "selectionchange").map(([, fn]) => fn);
+      expect(added).toHaveLength(4);
+      expect(removed).toHaveLength(4);
+      expect(new Set(removed)).toEqual(new Set(added));
+    } finally { add.mockRestore(); remove.mockRestore(); }
+  });
+});
 
 describe("rendered-selection toolbar (GH #375)", () => {
   it.each([

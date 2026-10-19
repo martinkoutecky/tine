@@ -93,7 +93,7 @@ export function EmbedMacro(props: { body: string; blockId?: string; span?: Span 
     return id && docNode(id) ? nearestAncestors(id) : null;
   };
   return (
-    <div class="embed-block" classList={{ "embed-page": !!pageTarget() }}>
+    <div class="embed-block" data-foreign-source="embed" classList={{ "embed-page": !!pageTarget() }}>
       <Show when={!insidePeek && (editable() || source())}>
         {/* mousedown: not the host's edit gesture, and keep a touch editor's focus.
             click: an embed rendered inside a block reference must not also run

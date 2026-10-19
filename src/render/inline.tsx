@@ -1262,7 +1262,7 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
       const fmt = formatForBlock(props.blockId);
       if (parserReady() && expansionIsBlockLevel(expanded, fmt)) {
         return (
-          <div class="macro-blocks">
+          <div class="macro-blocks" data-foreign-source="macro">
             <AstBody raw={expanded} blockId={props.blockId} format={fmt} headingLevel={expansionHeadingLevel(expanded, fmt)} macroExpansion />
           </div>
         );
@@ -1367,6 +1367,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
       <span
         ref={anchorEl}
         data-block-ref={props.id}
+        data-foreign-source="block-ref"
         class="block-ref"
         classList={{ "block-ref-missing": !grp() }}
         {...(props.spanAttrs ?? {})}

@@ -8,6 +8,7 @@ import {
   RENDERED_BLOCK_ATTR,
   applyRenderedSelectionAction,
   renderedSelectionActions,
+  renderedSelectionOwner,
   renderedSelectionTarget,
   selectRenderedRange,
   type RenderedSelectionTarget,
@@ -42,14 +43,11 @@ export function RenderedSelectionToolbar(): JSX.Element {
   // The selection's own document: a workspace window owns its selections.
   const refresh = (doc: Document) => {
     let next = renderedSelectionTarget(doc.getSelection());
-    if (!next) {
-      if (!pressing) setTarget(null);
-      return;
-    }
     // D-20261018-LP2 (b): a selection in another block ends the edit in
-    // progress through the editor's own exit (blur: commit, normalize, save).
-    // Its commit may change a copy of the selected block, so read again.
-    if (editingId() !== null) {
+    // progress through the editor's own exit (blur: commit, normalize, save),
+    // whether or not that block offers formatting for it. The commit may
+    // change a copy of the selected block, so read again.
+    if (editingId() !== null && renderedSelectionOwner(doc.getSelection())) {
       const selection = doc.getSelection()!;
       const { anchorNode, anchorOffset, focusNode, focusOffset } = selection;
       if (!blurFocusedEditor()) endEdit("rendered-selection");
@@ -61,6 +59,7 @@ export function RenderedSelectionToolbar(): JSX.Element {
       }
       next = renderedSelectionTarget(selection);
     }
+    if (!next && pressing) return;
     setTarget(next);
   };
 

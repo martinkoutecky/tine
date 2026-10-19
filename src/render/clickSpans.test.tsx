@@ -327,4 +327,30 @@ describe("rendered point from editor offset (GH #375 re-selection)", () => {
       dispose();
     }
   });
+
+  it("exact selection mapping takes only the host's own plain spans; clicks keep snapping (GH #375 review)", async () => {
+    const { exactEditorOffsetFromRenderedRange } = await import("./spans");
+    // Hand-built: the parser sees "- " + raw, so host source byte 2 is raw byte 0.
+    const raw = "prefix [[Target]] tail";
+    const root = document.createElement("div");
+    root.innerHTML =
+      `<span data-so="2" data-se="9">prefix </span>` +
+      `<a data-so="9" data-sce="19">Target</a>` +
+      `<div data-foreign-source="macro"><span data-so="2" data-se="9">prefix </span></div>` +
+      `<span data-so="2" data-se="9">zzzzzz </span>`;
+    document.body.append(root);
+    const [own, link, foreign, mismatched] = Array.from(root.children);
+    const at = (el: Element, offset: number) => ({ startContainer: el.firstChild!, startOffset: offset });
+    try {
+      expect(exactEditorOffsetFromRenderedRange(root, at(own, 3), raw, BUILTIN_HIDE)).toBe(3);
+      // A coarse construct: the click snaps to an edge, the selection declines.
+      expect(editorOffsetFromRenderedRange(root, at(link, 4), raw, BUILTIN_HIDE)).toBe(raw.indexOf(" tail"));
+      expect(exactEditorOffsetFromRenderedRange(root, at(link, 4), raw, BUILTIN_HIDE)).toBeNull();
+      // Another source's spans: by its marker, and by content when unmarked.
+      expect(exactEditorOffsetFromRenderedRange(root, at(foreign.firstElementChild!, 3), raw, BUILTIN_HIDE)).toBeNull();
+      expect(exactEditorOffsetFromRenderedRange(root, at(mismatched, 3), raw, BUILTIN_HIDE)).toBeNull();
+    } finally {
+      root.remove();
+    }
+  });
 });

@@ -15,7 +15,7 @@
 // - `selectRenderedRange(...)` re-selects the result after the re-render.
 // No Solid state here; the toolbar component owns visibility.
 import { blockPageReadOnly, blockWritable, node as docNode, pageByName, setRaw } from "../document";
-import { editorOffsetFromRenderedRange, renderedPointFromEditorOffset } from "../render/spans";
+import { exactEditorOffsetFromRenderedRange, renderedPointFromEditorOffset } from "../render/spans";
 import { BUILTIN_HIDE, joinProps, splitProps } from "./properties";
 import { calcSource } from "./calc";
 import type { Edit } from "./format";
@@ -46,6 +46,17 @@ function renderedRoot(node: Node): HTMLElement | null {
   return element?.closest<HTMLElement>(`[${RENDERED_BLOCK_ATTR}]`) ?? null;
 }
 
+/** The rendered block a non-collapsed `selection` lies wholly inside, whether
+ *  or not that block offers formatting there (read-only, a code card, a macro's
+ *  output). D-20261018-LP2 (b) keys on this: selecting text in block B ends an
+ *  edit in A even when B then shows no actions. */
+export function renderedSelectionOwner(selection: Selection | null): HTMLElement | null {
+  if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return null;
+  const range = selection.getRangeAt(0);
+  const root = renderedRoot(range.startContainer);
+  return root && renderedRoot(range.endContainer) === root ? root : null;
+}
+
 /** Which rendered block `selection` lies wholly inside, with its editor range.
  *  One block's span lookup and two offset mappings; O(block bytes). */
 export function renderedSelectionTarget(selection: Selection | null): RenderedSelectionTarget | null {
@@ -63,8 +74,8 @@ export function renderedSelectionTarget(selection: Selection | null): RenderedSe
   // A calc block's editor shows the fence-stripped expressions, not this text
   // (same refusal as deleteRenderedTextSelection).
   if (calcSource(raw) !== null) return null;
-  const start = editorOffsetFromRenderedRange(root, range, raw, BUILTIN_HIDE, format);
-  const end = editorOffsetFromRenderedRange(root, { startContainer: range.endContainer, startOffset: range.endOffset }, raw, BUILTIN_HIDE, format);
+  const start = exactEditorOffsetFromRenderedRange(root, range, raw, BUILTIN_HIDE, format);
+  const end = exactEditorOffsetFromRenderedRange(root, { startContainer: range.endContainer, startOffset: range.endOffset }, raw, BUILTIN_HIDE, format);
   if (start === null || end === null || start >= end) return null;
   const direction = selection.anchorNode === range.startContainer && selection.anchorOffset === range.startOffset ? "forward" : "backward";
   return { blockId, raw, format, start, end, direction, root };

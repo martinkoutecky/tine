@@ -5,6 +5,12 @@ import type { Span, SpanMap } from "./ast";
 const UTF8 = new TextEncoder();
 const UTF8_DECODER = new TextDecoder();
 
+/** Marks an element that draws a DIFFERENT source inside a block's rendered
+ *  content: a user macro's expansion, a block reference's target text, an
+ *  embed. Span attributes below it are offsets into that other text, never into
+ *  the host block's raw, so exact host mapping stops there (GH #375 review). */
+export const FOREIGN_SOURCE_ATTR = "data-foreign-source";
+
 export interface SpanDomAttrs {
   "data-so": string;
   "data-se"?: string;
@@ -310,11 +316,65 @@ export function editorOffsetFromRenderedRange(
   return rawOffsetToVisibleOffset(raw, rawUtf16, isHidden, format);
 }
 
+/** Whether the plain span leaf `el` describes `raw`, the block `root` renders,
+ *  rather than some other source drawn inside it (a macro expansion, a block
+ *  reference's target, an embedded body), whose spans are local to that other
+ *  text (GH #375 review). Three checks:
+ *  - no element between the leaf and `root` is marked {@link FOREIGN_SOURCE_ATTR};
+ *  - every span-bearing ancestor up to `root` contains the leaf's span: a foreign
+ *    body sits inside the host construct that summons it (`{{m}}`, `((id))`),
+ *    whose host span covers only that syntax;
+ *  - the leaf's mapped text runs are byte-equal to `raw` at the mapped offsets.
+ *  O(leaf bytes + depth). */
+function plainSpanOwnedBy(root: Element, el: Element, data: Extract<SpanDomData, { kind: "plain" }>, rawBytes: Uint8Array, lead: number): boolean {
+  if (el.hasAttribute(FOREIGN_SOURCE_ATTR)) return false;
+  for (let up = el.parentElement; up && up !== root; up = up.parentElement) {
+    if (!root.contains(up) || up.hasAttribute(FOREIGN_SOURCE_ATTR)) return false;
+    const outer = spanDataFromElement(up);
+    if (!up.hasAttribute("data-so")) continue;
+    if (!outer) return false;
+    const [start, end] = outer.kind === "plain" ? outer.span : [outer.start, outer.end];
+    if (data.span[0] < start || (end != null && data.span[1] > end)) return false;
+  }
+  const text = UTF8.encode(renderedTextCaret(el, el, 0).text);
+  const segments: SpanMap = data.spanMap && data.spanMap.length > 0
+    ? data.spanMap
+    : [[0, data.span[0], data.span[1] - data.span[0]]];
+  for (const [textOff, sourceOff, len] of segments) {
+    const rawOff = sourceOff - 2 + lead;
+    if (rawOff < 0 || rawOff + len > rawBytes.length || textOff + len > text.length) return false;
+    for (let i = 0; i < len; i++) if (text[textOff + i] !== rawBytes[rawOff + i]) return false;
+  }
+  return true;
+}
+
+/** Like {@link editorOffsetFromRenderedRange}, but only for a point inside a
+ *  byte-exact (plain) span leaf that belongs to `raw` itself: no snapping to a
+ *  coarse construct's nearer edge (a fenced code card, a link) and no spans of a
+ *  foreign body drawn inside the block. A selection endpoint must be exact, a
+ *  click need not be, so the click mapping keeps its own rules. */
+export function exactEditorOffsetFromRenderedRange(
+  root: Element,
+  range: Pick<Range, "startContainer" | "startOffset">,
+  raw: string,
+  isHidden: HidePolicy,
+  format: PropFormat = "md",
+): number | null {
+  const el = closestSpanElement(root, range.startContainer);
+  const data = el && spanDataFromElement(el);
+  if (!el || !data || data.kind !== "plain") return null;
+  const rawBytes = UTF8.encode(raw);
+  const lead = rawBytes.length - utf8ByteLength(raw.trimStart());
+  if (!plainSpanOwnedBy(root, el, data, rawBytes, lead)) return null;
+  return editorOffsetFromRenderedRange(root, range, raw, isHidden, format);
+}
+
 /** The DOM point inside `root` at editor offset `offset`: the inverse of
  *  {@link editorOffsetFromRenderedRange}, used to re-select text in a block that
  *  re-rendered after an edit made without entering edit mode (GH #375).
  *
- *  Only byte-exact (plain) span leaves can hold the point; coarse constructs
+ *  Only byte-exact (plain) span leaves that belong to `raw` (not a macro
+ *  expansion or reference body drawn inside it) can hold the point; coarse constructs
  *  (links, chips) and unmapped output (code cards, macros) answer null. Every
  *  candidate is checked by mapping it forward again, so a point is returned
  *  only when the forward mapping agrees exactly. `edge` breaks the tie at a
@@ -332,11 +392,12 @@ export function renderedPointFromEditorOffset(
   const lead = rawLen - utf8ByteLength(raw.trimStart());
   // Inverse of rebulletedSourceByteToRawByte (the parser sees a "- " bullet).
   const sourceByte = visibleOffsetToRawByte(raw, offset, isHidden, format) - lead + 2;
+  const rawBytes = UTF8.encode(raw);
   const candidates: Array<{ el: Element; text: string; textByte: number; atEdge: boolean }> = [];
   for (const el of Array.from(root.querySelectorAll("[data-so]"))) {
     if (el.querySelector("[data-so]")) continue; // only leaves hold text positions
     const data = spanDataFromElement(el);
-    if (!data || data.kind !== "plain") continue;
+    if (!data || data.kind !== "plain" || !plainSpanOwnedBy(root, el, data, rawBytes, lead)) continue;
     const text = renderedTextCaret(el, el, 0).text;
     const textLength = utf8ByteLength(text);
     const segments: SpanMap = data.spanMap && data.spanMap.length > 0
@@ -353,7 +414,7 @@ export function renderedPointFromEditorOffset(
   for (const candidate of candidates) {
     const point = textPointAt(candidate.el, utf8ByteToUtf16Offset(candidate.text, candidate.textByte));
     if (!point) continue;
-    const back = editorOffsetFromRenderedRange(root, { startContainer: point.node, startOffset: point.offset }, raw, isHidden, format);
+    const back = exactEditorOffsetFromRenderedRange(root, { startContainer: point.node, startOffset: point.offset }, raw, isHidden, format);
     if (back === offset) return point;
   }
   return null;
