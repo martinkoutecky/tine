@@ -128,6 +128,12 @@ tab-bar-show-all-tabs = Show all tabs
 
 tab-bar-open-tabs = Open tabs
 
+tab-bar-move-out-of-group = Move out of group
+
+tab-bar-expand-group = Expand
+
+tab-bar-collapse-group = Collapse
+
 tab-bar-reorder = Reorder { $title }
 
 tab-bar-drag-to-reorder-alt-up-down-moves-the = Drag to reorder; Alt+Up/Down moves the focused tab

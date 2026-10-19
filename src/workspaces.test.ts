@@ -256,6 +256,29 @@ describe("named workspace switching", () => {
     ]);
   });
 
+  it("keeps the sidebar tab tree (nesting and collapse) across a workspace switch (GH #704)", async () => {
+    const tree = pages(["Group", "Child", "Grandchild", "Loose"]);
+    tree.tabs[1] = { ...tree.tabs[1], parent: 0 };
+    tree.tabs[2] = { ...tree.tabs[2], parent: 1 };
+    tree.tabs[0] = { ...tree.tabs[0], collapsed: true };
+    resetPaneLayoutToSingle(tree);
+    vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());
+    vi.spyOn(backend(), "saveWorkspaces").mockResolvedValue("durable");
+    vi.spyOn(backend(), "saveSession").mockResolvedValue();
+
+    await initializeWorkspaces();
+    await createWorkspace("Other");
+    expect(paneRouter("main").tabs().every((t) => t.parent === null)).toBe(true);
+    await switchWorkspace("default");
+
+    const tabs = paneRouter("main").snapshot().tabs;
+    expect(tabs.map((t) => [t.parent, t.collapsed])).toEqual([
+      [undefined, true],
+      [0, undefined],
+      [1, undefined],
+      [undefined, undefined],
+    ]);
+  });
   it("never calls a graph writer across save, switch, new, rename, and delete", async () => {
     resetPaneLayoutToSingle(pages(["Byte-identical page"]));
     vi.spyOn(backend(), "loadWorkspaces").mockResolvedValue(registryFromCurrent());

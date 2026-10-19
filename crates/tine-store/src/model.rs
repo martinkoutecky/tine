@@ -17,6 +17,8 @@ use persistent::{EntryList, Map as SharedMap, Pages};
 #[cfg(test)]
 mod index_oracle_tests;
 mod line_endings;
+#[cfg(test)]
+mod md_fidelity_corpus_tests;
 mod page_icons;
 mod page_identity;
 mod page_parse;
@@ -4438,8 +4440,10 @@ impl Graph {
                 let retained = existing.zip(old.as_ref()).and_then(|(source, old)| {
                     layout_retention::serialize(&doc, source, old, &opts)
                 });
+                // Retained lines carry their own terminators; only a
+                // whole-page rewrite takes the file's convention.
                 let (mut content, reparsed) = retained.unwrap_or_else(|| {
-                    let content = doc::serialize_with(&doc, &opts);
+                    let content = line_endings::restore(doc::serialize_with(&doc, &opts), existing);
                     let parsed = parse_doc(&path, &content);
                     (content, parsed)
                 });
@@ -4448,7 +4452,7 @@ impl Graph {
                         content = e.to_string(); // A5
                     }
                 }
-                (line_endings::restore(content, existing), reparsed)
+                (content, reparsed)
             }
             Format::Org => {
                 // Corruption firewall: never write a .org file Tine cannot

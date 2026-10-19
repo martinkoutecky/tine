@@ -1301,6 +1301,18 @@ impl Store {
         self.watch.drained_for_tests(timeout)
     }
 
+    /// Tests: join the background watcher, keeping explicit refresh
+    /// available. A cost test of the page host's own edit path uses it so
+    /// that the watcher's echo of the save (a held page's change reaches the
+    /// host as an observation when the watcher's cycle falls between the
+    /// save's rename and its publication, which the machine's load decides)
+    /// cannot land in the measured window; the echo is billed apart
+    /// (`watcher_reads`, `observation_reads`, contract §5.4).
+    #[cfg(feature = "test-faults")]
+    pub fn stop_watcher_for_tests(&self) {
+        self.watch.stop_background_for_test();
+    }
+
     /// Stop observation, wait for an in-flight writer, end the subscription,
     /// release load waiters, and refuse later I/O. Idempotent; no timeout.
     pub fn close(&self) {

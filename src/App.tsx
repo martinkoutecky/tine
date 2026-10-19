@@ -1384,7 +1384,9 @@ export function App(): JSX.Element {
         windowId={MAIN_WINDOW_ID}
         deepLink={<FailureBoundary region="The graph chooser"><DeepLinkGraphChoice /></FailureBoundary>}
         keyboardToolbar={<DrawerBackground class="drawer-floating-background" blockedBy="any">
-          <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar /></FailureBoundary>
+          {/* "Navigation buttons at the bottom" on: the keyboard hides that row, so the
+              editing toolbar carries the same group at its leading end (GH #598). */}
+          <FailureBoundary region="The keyboard toolbar"><MobileKeyboardToolbar navigation={navigationAtBottom() ? NavigationActions : undefined} /></FailureBoundary>
           <FailureBoundary region="The selection toolbar"><RenderedSelectionToolbar /></FailureBoundary>
         </DrawerBackground>}
         recovery={<FailureBoundary region="Unsaved recovery"><UnsavedRecovery /></FailureBoundary>}

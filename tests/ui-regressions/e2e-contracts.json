@@ -1,6 +1,12 @@
 {
   "schemaVersion": 1,
   "scenarios": {
+    "scripts/e2e-sidebar-tabs-tree.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"In the sidebar Tabs list, dragging a row right nests it under the row above and left moves it out (even when the pointer passes the rows' left edge), a parent's triangle collapses its group in the sidebar only, Move out of group lifts a nested tab, the top strip stays a flat list in tree order, and the tree with its collapse state survives a restart, including in a viewport narrower than 640 px (interface zoom on a minimum-width window) where the list is the only tab surface.","blocking":true,"authority":"GH #704"}],
+      "acceptableVariations":["Indent width, drop-line styling, drag thresholds and save latency may vary while the nesting, order and collapse outcomes hold."],
+      "nonRequirements":["Exact pixels, touch hold timing on a real Android device, cross-pane drag in the sidebar, nesting in the strip or the overview, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-page-image-icons.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"A local static PNG image link in tine.icon:: (or the OG-compatible icon:: fallback; tine.icon:: wins when both exist) decodes in the page title and Favorites, follows replacement without navigation and a menu property edit saves through the guarded path; Org image links also render.","blocking":true,"authority":"GH #346"},{"class":"exact-safety-interoperability","userOutcome":"A remote image icon shows no image or raw link text in the title and Favorites, preserves its value in the visible property row and produces no network request.","blocking":true,"authority":"GH #346"}],
       "acceptableVariations":["Image proportions, navigation and watcher latency may vary within the existing emoji-sized box."],
@@ -544,7 +550,7 @@
       "stability": "stable"
     },
     "scripts/e2e-page-properties.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "Page property actions preserve literal header structure through edit, guarded save, reload, and keyboard traversal; Enter at the start of the page properties keeps them the page header and the page saving (GH #210 F1).", "blocking": true }],
       "acceptableVariations": ["Panel layout and native form-control styling may evolve.", "Custom property and add-property controls may participate in native Tab traversal before Done; Done can be activated by keyboard."],
       "nonRequirements": ["Exact section spacing, control dimensions, or debounce timing.", "A fixed five-preset-only Tab sequence.", "Sidebar navigation or a fixed post-paint delay before opening a fixture page."],
       "stability": "stable"

@@ -994,7 +994,11 @@ candidates, worker keys, Book) at 100, 200 and 400 referrers against fixed
 per-page constants, and an edit's reconcile, draft-index and worker work does
 not grow with the pages the window holds (`rename_cost.rs`
 `rename_host_work_is_linear`, `host_edit_cost.rs`
-`an_edit_among_many_held_pages_visits_what_changed`). Named remaining
+`an_edit_among_many_held_pages_visits_what_changed`). That test measures with
+the background watcher stopped: when the watcher's cycle falls between the
+save's rename and its publication (the machine's load decides), its echo of the
+save reaches the host as one more observation round (measured once: two more reconcile and six more worker-key visits at 400
+held pages), so an exact count cannot include it. Named remaining
 dimensions, walked per step and not bounded by these proofs: the window's
 subscribed pages S (retirement candidates per poll, quiet notices per
 collection), queued requests Q (checked per retirement candidate), surfaced

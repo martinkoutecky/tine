@@ -61,3 +61,6 @@ journey (`scripts/e2e-*.mjs`), not here.
   `block.full` 18→19, `block.multi` 13→14, `block.readonly` 5→6, `page.link` 11→12, `page.header.page` 14→15,
   `page.header.journal` 14→15. The mobile census now runs as a touch-first device (`touchPrimary`), since
   touch surfaces such as the keyboard toolbar follow input capability, not the OS name.
+- 2026-10-19, D-20261019-N2 (GH #598): new surface `mobile.keyboardToolbar.withNavigation` (19 = the 15 keyboard-toolbar
+  buttons plus Sidebar, Search, Back, Forward). With Navigation buttons at the bottom on, the keyboard toolbar carries the
+  four navigation buttons at its leading end while the keyboard is up. `mobile.keyboardToolbar` (setting off) stays 15.

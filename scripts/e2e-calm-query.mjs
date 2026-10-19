@@ -60,6 +60,7 @@ async function session(run, journey) {
       capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: app } } });
     await ensureMainWindow(browser);
     await browser.$(".ls-block, .page-title").waitForExist({ timeout: 30_000 });
+    await dismissToasts(browser);
     await journey(browser);
     await browser.saveScreenshot(`${out}/accepted-${run}.png`);
     await sleep(1500);
@@ -91,6 +92,19 @@ async function markQuery(browser, title) {
   }, title), { timeout: 20_000, interval: 200, timeoutMsg: `query ${title} absent` });
 }
 const active = '[data-calm-query="active"]';
+// A restart after the journey's own SIGTERM raises the sticky "did not close cleanly" toast
+// (and the first-run Guide toast) at the bottom-right, exactly where the editor's Done button sits.
+// Overlaying it is the toast's job; a user dismisses it, so the journey does too before clicking.
+async function dismissToasts(browser) {
+  await browser.execute(() => document.querySelectorAll(".toast-stack .toast-close").forEach(button => button.click()));
+}
+// Query results mount lazily once their group is visible inside the page scroller. Layout above the
+// query (tables, boards) can still grow after markQuery scrolled to it, which leaves the group just
+// below the fold; a user scrolls on, so waits for results scroll the marked query into view again.
+const showsResults = (browser, test) => browser.waitUntil(async () => {
+  await browser.execute(selector => document.querySelector(selector)?.scrollIntoView({ block: "center" }), active);
+  return browser.execute(test, active);
+}, { timeout: 20_000, timeoutMsg: "query results never appeared in view" });
 // Result actions refuse ("results changed since the query ran") until a graph
 // save has re-run the answer; the query block is aria-busy until then.
 async function resultsCurrent(browser) {
@@ -132,6 +146,7 @@ async function textEdit(browser, text) {
 }
 async function closeEditor(browser) {
   if (await browser.$(`${active} .qc-done`).isExisting()) {
+    await dismissToasts(browser);
     await browser.$(`${active} .qc-done`).click();
     assert.ok(await browser.execute(selector => document.activeElement === document.querySelector(`${selector} .qc-actions > summary`), active),
       "Done returns focus to the query actions");
@@ -282,10 +297,10 @@ await session(1, async browser => {
   await markQuery(browser, "Task table"); await closeEditor(browser);
   phase = "planning comparisons through Rust";
   await markQuery(browser, "Planning query");
-  await browser.waitUntil(() => browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Overdue journey task"), active), { timeout: 20_000 });
+  await showsResults(browser, selector => document.querySelector(selector)?.textContent?.includes("Overdue journey task"));
   assert.ok(!await browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Upcoming journey task"), active));
   await textEdit(browser, "@block and scheduled > today");
-  await browser.waitUntil(() => browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector)?.textContent?.includes("Overdue journey task"), active), { timeout: 20_000 });
+  await showsResults(browser, selector => !!document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector).textContent.includes("Overdue journey task"));
   await closeEditor(browser);
   phase = "TQL Open in Search and selected copy";
   await action(browser, "Open in Search");
@@ -325,7 +340,7 @@ await session(1, async browser => {
 await session(2, async browser => {
   phase = "persisted query and task after restart, board navigation";
   await openPageByName(browser, "Queries"); await markQuery(browser, "Planning query");
-  await browser.waitUntil(() => browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector)?.textContent?.includes("Overdue journey task"), active), { timeout: 20_000 });
+  await showsResults(browser, selector => !!document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector).textContent.includes("Overdue journey task"));
   assert.ok(fs.readFileSync(`${graph}/pages/Tasks.md`, "utf8").includes("DONE [#A] First journey task"));
   phase = "saved planning comparison reopens without changing its answer";
   await action(browser, "Edit");
@@ -335,7 +350,7 @@ await session(2, async browser => {
   assert.equal(await browser.$('[aria-label="Date"]').getValue(), "today");
   await browser.execute(() => document.querySelector(".qs-value-editor .qs-commit")?.click());
   await closeEditor(browser);
-  await browser.waitUntil(() => browser.execute(selector => document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector)?.textContent?.includes("Overdue journey task"), active), { timeout: 20_000 });
+  await showsResults(browser, selector => !!document.querySelector(selector)?.textContent?.includes("Upcoming journey task") && !document.querySelector(selector).textContent.includes("Overdue journey task"));
   await markQuery(browser, "Task board");
   await browser.$(`${active} .sheet-board-card`).waitForExist({ timeout: 20_000 });
   phase = "board last column access, drag save and genuine click navigation";

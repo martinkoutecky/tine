@@ -4129,6 +4129,39 @@ html[data-system-insets="native-viewport"] {
   pointer-events: auto;
 }
 
+/* GH #598: the App's navigation group, pinned at the leading end outside the
+   scrolling strip (so it never scrolls away), with a hairline before the strip. */
+.mobile-keyboard-toolbar-nav {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding-right: 4px;
+  border-right: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+}
+.mobile-keyboard-toolbar-nav .navigation-actions {
+  display: flex;
+  gap: 2px;
+}
+.mobile-keyboard-toolbar-nav .icon-btn {
+  width: 36px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-primary);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-keyboard-toolbar-nav .nav-icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  color: inherit;
+}
+.mobile-keyboard-toolbar-nav .icon-btn:active {
+  background: var(--bg-tertiary);
+}
+
 .mobile-keyboard-toolbar-strip {
   min-width: 0;
   flex: 1 1 auto;
