@@ -393,30 +393,90 @@ impl HostIo for NativeFs {
     }
 }
 
-fn excluded(program: &Value) -> bool {
-    if let Some(values) = program.as_array() {
-        if values.first().and_then(Value::as_str) == Some("fail") {
-            let probe = &values[1];
-            return !(probe.as_array().is_some_and(|ops| ops.len() == 1)
-                && probe[0][0] == "action"
-                && matches!(
-                    probe[0][1].as_str(),
-                    Some("opApply" | "planCreate" | "opDelete" | "opRename")
-                ));
-        }
-        if values.first().and_then(Value::as_str) == Some("action")
-            && values
-                .get(1)
-                .and_then(Value::as_str)
-                .is_some_and(|name| name.starts_with("power"))
-        {
-            return true;
-        }
-        values.iter().any(excluded)
-    } else {
-        false
+/// Why a scenario stays ModelFs-only: native has no power cut (`power`
+/// panics) and cannot fork a speculative probe other than a single refusal.
+fn excluded(program: &Value) -> Option<&'static str> {
+    let values = program.as_array()?;
+    if values.first().and_then(Value::as_str) == Some("fail") {
+        let probe = &values[1];
+        return (!(probe.as_array().is_some_and(|ops| ops.len() == 1)
+            && probe[0][0] == "action"
+            && matches!(
+                probe[0][1].as_str(),
+                Some("opApply" | "planCreate" | "opDelete" | "opRename")
+            )))
+        .then_some("fork-probe");
     }
+    if values.first().and_then(Value::as_str) == Some("action")
+        && values
+            .get(1)
+            .and_then(Value::as_str)
+            .is_some_and(|name| name.starts_with("power"))
+    {
+        return Some("power");
+    }
+    values.iter().find_map(excluded)
 }
+
+// F9 ledger: a scenario leaving native coverage, or ending at a declared
+// refinement instead of its full outcome, must be added here deliberately.
+/// ModelFs-only scenarios, with the `excluded` reason.
+const NATIVE_MODELFS_ONLY: &[&str] = &[
+    "mMDE:power",
+    "mMLS:power",
+    "mMQ:power",
+    "mMRE:power",
+    "mMTS:power",
+    "ownApplyRename:fork-probe",
+    "ownDeleteRevertedByPower:power",
+    "ownDeleteTrashPower:power",
+    "ownLoadRenameTargetPower0:power",
+    "ownLoadRenameTargetPower1:power",
+    "ownLoadRenameTargetPower2:power",
+    "ownLoadRenameTargetPower3:power",
+    "ownLoadRenameTargetPower4:power",
+    "ownLoadRenameTargetPower5:power",
+    "ownLoadRenameTargetPower6:power",
+    "ownLoadRenameTargetPower7:power",
+    "ownMergeSrcWaits:fork-probe",
+    "ownMergeSrcWaitsUncertain:fork-probe",
+    "ownOrderFailingDstKeepsSrc:fork-probe",
+    "ownOrderRefWaitsForDst:fork-probe",
+    "ownOrderSrcWaitsForDst:fork-probe",
+    "ownOrderSrcWaitsForRef:fork-probe",
+    "ownOrderUncertainDstHolds:fork-probe",
+    "ownRenamePower:power",
+    "ownSlotPowerKeepsClaim:power",
+    "qBareRenameDraftDiscarded:power",
+    "qCrashForgetsUncertain:power",
+    "qCrashForgetsUncertainCold:power",
+    "qDiscardAfterExemptCrash:power",
+    "qDiscardDuringUncertainKeepsPromise:power",
+    "qDiscardOverVolatileResaves:power",
+    "qDiscardOverVolatileRestored:power",
+    "qMovePowerAfterSrc:power",
+    "qR1DeleteUncertainDiscard:power",
+    "qSavedWatermark:power",
+    "qUncertainDiscardPower:power",
+];
+
+/// Profile runs that end at a named refinement branch.
+const NATIVE_REFINEMENTS: &[&str] = &[
+    "base/ownRenameRefusedDirtyRef:effective-rename-refinement",
+    "R1/ownRenameRefusedDirtyRef:effective-rename-refinement",
+    "weak/ownRenameRefusedDirtyRef:effective-rename-refinement",
+    "all/ownRenameRefusedDirtyRef:effective-rename-refinement",
+    "R1/ownRenameTargetR1:native-create-refinement",
+    "all/ownRenameTargetR1:native-create-refinement",
+    "base/ownRenameWaitsForSave:effective-rename-refinement",
+    "R1/ownRenameWaitsForSave:effective-rename-refinement",
+    "weak/ownRenameWaitsForSave:effective-rename-refinement",
+    "all/ownRenameWaitsForSave:effective-rename-refinement",
+    "base/ownSlotClaimAfterAdmission:twin-saveFail-refinement",
+    "R1/ownSlotClaimAfterAdmission:twin-saveFail-refinement",
+    "weak/ownSlotClaimAfterAdmission:twin-saveFail-refinement",
+    "all/ownSlotClaimAfterAdmission:twin-saveFail-refinement",
+];
 
 #[test]
 fn s35_native_creation_positive_control() {
@@ -445,8 +505,8 @@ fn native_committed_scenarios_in_four_profiles() {
     let mut queued = 0;
     let mut effective = 0;
     for (name, program) in fixture["scenarios"].as_object().unwrap() {
-        if excluded(program) {
-            skipped.push(name.as_str());
+        if let Some(reason) = excluded(program) {
+            skipped.push(format!("{name}:{reason}"));
             continue;
         }
         for oracle in fixture["oracles"]
@@ -459,20 +519,20 @@ fn native_committed_scenarios_in_four_profiles() {
             let mut driver = Driver::<NativeFs>::new_with_io(profile, 3);
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
                 driver.program(program.as_array().unwrap()))).unwrap_or_else(|failure| {
-                    eprintln!("failure capsule: tested HEAD 1b040e6c7a20 plus lane diff; native {profile}/{name}; expected s3.5 scenario outcome; observed host/model state mismatch; classification=product-or-model divergence");
+                    eprintln!("failure capsule: tested revision = this checkout's HEAD; native {profile}/{name}; expected s3.5 scenario outcome; observed host/model state mismatch; classification=product-or-model divergence");
                     std::panic::resume_unwind(failure)
                 });
             twins += driver.twin_failures;
             occupied += driver.occupied_refusals;
             queued += driver.queued_refusals;
             effective += driver.effective_renames;
-            if matches!(
-                outcome,
-                Err("native-create-refinement"
-                    | "twin-saveFail-refinement"
-                    | "effective-rename-refinement")
-            ) {
-                refinements.push(format!("{profile}/{name}"));
+            if let Err(
+                reason @ ("native-create-refinement"
+                | "twin-saveFail-refinement"
+                | "effective-rename-refinement"),
+            ) = outcome
+            {
+                refinements.push(format!("{profile}/{name}:{reason}"));
                 continue;
             }
             assert_eq!(
@@ -484,7 +544,10 @@ fn native_committed_scenarios_in_four_profiles() {
         }
         ran.push(name.as_str());
     }
-    assert!(!ran.is_empty());
+    assert_eq!(skipped, NATIVE_MODELFS_ONLY, "native exclusion ledger");
+    assert_eq!(refinements, NATIVE_REFINEMENTS, "native refinement ledger");
+    assert_eq!((ran.len(), comparisons), (158, 618));
+    assert_eq!((twins, occupied, queued, effective), (4, 0, 0, 8));
     eprintln!(
         "native scenarios: {} selected, {comparisons} profile outcomes; {twins} twin saveFail / {occupied} occupied stutters / {queued} queued stutters / {effective} effective renames; ran={ran:?}; ModelFs-only={skipped:?}; refinement={refinements:?}", ran.len()
     );

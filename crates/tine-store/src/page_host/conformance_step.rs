@@ -51,9 +51,8 @@ impl<F: ConformanceIo> Driver<F> {
         }
         let successor = self.oracle.next(name, args);
         if successor.is_none() {
-            let refused_schedule = self.refinement_schedule
-                && (self.queued_refusals > 0 || self.occupied_refusals > 0);
-            if refused_schedule && matches!(name, "flush" | "flushDel") {
+            let continuation = self.continuation();
+            if continuation.is_some() && matches!(name, "flush" | "flushDel") {
                 // The host's start_save chooses payload versus deletion from
                 // its current buffer; a scripted label can become obsolete.
                 let current_kind = if name == "flush" { "flushDel" } else { "flush" };
@@ -63,8 +62,8 @@ impl<F: ConformanceIo> Driver<F> {
                     return true;
                 }
             }
-            if refused_schedule
-                && matches!(
+            if let Some(kind) = continuation.filter(|_| {
+                matches!(
                     name,
                     "flush"
                         | "flushDel"
@@ -78,15 +77,11 @@ impl<F: ConformanceIo> Driver<F> {
                         | "wOp"
                         | "wOpTo"
                 )
-            {
+            }) {
                 for q in named(name, args) {
                     self.register(q);
                 }
-                let before = self.abstract_state();
-                let files = self.host.fs.physical().files.clone();
-                let stable = self.host.fs.physical().stable.clone();
-                let version = self.host.version;
-                let versions = self.versions.clone();
+                let before = self.untouched();
                 let page = key(args[0].as_u64().unwrap_or(0) as usize);
                 if matches!(name, "wOp" | "wOpTo") {
                     let p = args[0].as_u64().unwrap() as usize;
@@ -143,14 +138,9 @@ impl<F: ConformanceIo> Driver<F> {
                         "{name}: host accepted disabled save after admission stutter: {result:?}"
                     );
                 }
-                assert_eq!(self.abstract_state(), before);
-                assert_eq!(self.host.fs.physical().files, files);
-                assert_eq!(self.host.fs.physical().stable, stable);
-                assert_eq!(self.host.version, version);
-                assert_eq!(self.versions, versions);
+                self.assert_untouched(&before, name);
                 self.compare("refused operation save schedule stutter");
-                self.actions += 1;
-                return true;
+                return self.accept_stutter(kind, name);
             }
             if name == "opRename" {
                 // R5/A-W1: oracle refs describe actual effects, whereas the
@@ -200,31 +190,23 @@ impl<F: ConformanceIo> Driver<F> {
                     return true;
                 }
             }
-            if (self.twin_suffix || refused_schedule)
-                && self.host.job.is_none()
-                && matches!(name, "check" | "rename" | "dirSync" | "saveFail")
-            {
-                let before = self.abstract_state();
-                let files = self.host.fs.physical().files.clone();
-                let stable = self.host.fs.physical().stable.clone();
-                let version = self.host.version;
-                let versions = self.versions.clone();
+            let suffix = if self.twin_suffix {
+                Some("twin-suffix")
+            } else {
+                continuation
+            };
+            if let Some(kind) = suffix.filter(|_| {
+                self.host.job.is_none()
+                    && matches!(name, "check" | "rename" | "dirSync" | "saveFail")
+            }) {
+                let before = self.untouched();
                 assert_eq!(self.host.advance_save(), Disposition::Disabled);
-                assert_eq!(self.abstract_state(), before);
-                assert_eq!(self.host.fs.physical().files, files);
-                assert_eq!(self.host.fs.physical().stable, stable);
-                assert_eq!(self.host.version, version);
-                assert_eq!(self.versions, versions);
+                self.assert_untouched(&before, name);
                 self.compare("terminated twin save suffix stutter");
-                self.actions += 1;
-                return true;
+                return self.accept_stutter(kind, name);
             }
             if matches!(name, "opApply" | "opApplyPacked") {
-                let before = self.abstract_state();
-                let version = self.host.version;
-                let files = self.host.fs.physical().files.clone();
-                let stable = self.host.fs.physical().stable.clone();
-                let versions = self.versions.clone();
+                let before = self.untouched();
                 let (eff, plan, dst, src) = apply_args(name, args);
                 let oracle = self.oracle.state();
                 let dirty = eff.keys().find(|&&p| {
@@ -255,6 +237,7 @@ impl<F: ConformanceIo> Driver<F> {
                     panic!("unclassified opApply refusal: {eff:?} {plan:?} {dst}/{src}");
                 };
                 let result = self.apply_admission(name, args);
+                self.mutate_refusal();
                 if matches!(result, Err(ApplyRefusal::Unsaved(_))) {
                     // The entire observed set already passed the independent
                     // dirty-or-queued predicate, including every dirty page.
@@ -266,30 +249,19 @@ impl<F: ConformanceIo> Driver<F> {
                         "{name}: host must refuse oracle-disabled input"
                     );
                 }
-                assert_eq!(
-                    self.abstract_state(),
-                    before,
-                    "{name}: refusal changed host state"
-                );
-                assert_eq!(self.host.version, version);
-                assert_eq!(self.host.fs.physical().files, files);
-                assert_eq!(self.host.fs.physical().stable, stable);
-                assert_eq!(self.versions, versions);
+                self.assert_untouched(&before, name);
             } else if matches!(
                 name,
                 "opDelete" | "opRename" | "opRenamePacked" | "opRenameRaw"
             ) {
-                let before = self.abstract_state();
-                let files = self.host.fs.physical().files.clone();
-                let stable = self.host.fs.physical().stable.clone();
-                let version = self.host.version;
-                let versions = self.versions.clone();
+                let before = self.untouched();
                 let result = if name == "opDelete" {
                     self.host
                         .delete_loaded(&key(args[0].as_u64().unwrap() as usize))
                 } else {
                     self.rename_operation(name, args)
                 };
+                self.mutate_refusal();
                 assert!(
                     matches!(
                         result,
@@ -297,15 +269,7 @@ impl<F: ConformanceIo> Driver<F> {
                     ),
                     "{name}: host accepted oracle-disabled operation: {result:?}"
                 );
-                assert_eq!(
-                    self.abstract_state(),
-                    before,
-                    "{name}: refusal changed host state"
-                );
-                assert_eq!(self.host.fs.physical().files, files);
-                assert_eq!(self.host.fs.physical().stable, stable);
-                assert_eq!(self.host.version, version);
-                assert_eq!(self.versions, versions);
+                self.assert_untouched(&before, name);
                 self.compare("operation refusal stutter");
             } else if name == "planCreate" {
                 let p = args[0].as_u64().unwrap() as usize;
@@ -314,8 +278,8 @@ impl<F: ConformanceIo> Driver<F> {
                     Some(ApplyRefusal::Changed)
                 );
             }
-            if refused_schedule
-                && matches!(
+            if let Some(kind) = continuation.filter(|_| {
+                matches!(
                     name,
                     "opApply"
                         | "opApplyPacked"
@@ -324,18 +288,13 @@ impl<F: ConformanceIo> Driver<F> {
                         | "opRenamePacked"
                         | "opRenameRaw"
                 )
-            {
-                self.actions += 1;
-                return true;
+            }) {
+                return self.accept_stutter(kind, name);
             }
             return false;
         }
         if matches!(name, "opApply" | "opApplyPacked") {
-            let before = self.abstract_state();
-            let files = self.host.fs.physical().files.clone();
-            let stable = self.host.fs.physical().stable.clone();
-            let version = self.host.version;
-            let versions = self.versions.clone();
+            let before = self.untouched();
             let result = self.apply_admission(name, args);
             if let Err(refusal) = result {
                 let (eff, plan, _, _) = apply_args(name, args);
@@ -349,7 +308,7 @@ impl<F: ConformanceIo> Driver<F> {
                         eff.iter().any(|(p, t)| {
                             *t != ABSENT
                                 && plan.get(p) == Some(&ABSENT)
-                                && (files.contains_key(&format!("graph/{}", key(*p)))
+                                && (before.files.contains_key(&format!("graph/{}", key(*p)))
                                     || self.claims().contains(p))
                         }),
                         "{name}: refusal without physical expected-ABSENT occupancy"
@@ -369,22 +328,14 @@ impl<F: ConformanceIo> Driver<F> {
                     );
                     self.occupied_refusals += 1;
                 }
-                assert_eq!(
-                    self.abstract_state(),
-                    before,
-                    "{name}: refusal changed state"
-                );
-                assert_eq!(self.host.fs.physical().files, files);
-                assert_eq!(self.host.fs.physical().stable, stable);
-                assert_eq!(self.host.version, version);
-                assert_eq!(self.versions, versions);
+                self.assert_untouched(&before, name);
                 self.compare("admission refusal stutter");
                 self.actions += 1;
                 return true;
             }
             assert_eq!(result, Ok(Disposition::Pending));
             self.compare("apply pending");
-            self.drain(name, args, self.host.incarnation, version);
+            self.drain(name, args, self.host.incarnation, before.version);
             return true;
         }
         for q in named(name, args) {

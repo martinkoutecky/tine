@@ -111,6 +111,11 @@ struct Driver<F: ConformanceIo = ModelFs> {
     save_kind_refinements: usize,
     refinement_schedule: bool,
     twin_suffix: bool,
+    /// Scripted actions accepted as no-mutation stutters, by why the refined
+    /// oracle disabled them (`Driver::continuation`, F4), and action name.
+    stutters: BTreeMap<String, usize>,
+    /// Negative control: the next operation refusal mutates this component.
+    refusal_mutant: Option<RefusalMutant>,
     stepped: bool,
     prepare_operations: bool,
     effect: Option<(String, Vec<Value>, u64, u64)>,
@@ -119,6 +124,25 @@ struct Driver<F: ConformanceIo = ModelFs> {
     /// The next saveFail lands after this many system calls of its HostIo
     /// call instead of before the call (REVIEW-2b-r2 R1).
     cut: Option<usize>,
+}
+
+/// Everything a refusal must leave untouched.
+struct Untouched {
+    state: Value,
+    files: BTreeMap<String, Arc<[u8]>>,
+    stable: BTreeMap<String, Arc<[u8]>>,
+    version: u64,
+    versions: BTreeMap<(u64, u64), i64>,
+}
+
+/// The component a deliberately mutating refusal changes (negative control).
+#[derive(Clone, Copy, Debug)]
+enum RefusalMutant {
+    State,
+    Files,
+    Stable,
+    Version,
+    Versions,
 }
 
 impl Clone for Driver<ModelFs> {
@@ -159,6 +183,8 @@ impl<F: ConformanceIo> Driver<F> {
             save_kind_refinements: 0,
             refinement_schedule: false,
             twin_suffix: false,
+            stutters: BTreeMap::new(),
+            refusal_mutant: None,
             stepped: false,
             prepare_operations: false,
             effect: None,
@@ -228,6 +254,8 @@ impl<F: ConformanceIo> Driver<F> {
             save_kind_refinements: self.save_kind_refinements,
             refinement_schedule: self.refinement_schedule,
             twin_suffix: self.twin_suffix,
+            stutters: self.stutters.clone(),
+            refusal_mutant: self.refusal_mutant,
             stepped: self.stepped,
             prepare_operations: self.prepare_operations,
             effect: self.effect.clone(),
@@ -492,6 +520,102 @@ impl<F: ConformanceIo> Driver<F> {
                         "A4 hole: power keep={keep:?} cut={cut:?} loses trash {t} of page {p}"
                     );
                 }
+            }
+        }
+    }
+
+    /// Why a scripted action the oracle disables may still replay as a
+    /// stutter in which Host refuses and changes nothing (F4). Only a random
+    /// trace (`refinement_schedule`) whose oracle already took a declared
+    /// alternative qualifies: its script was generated for the unrefined
+    /// successor, so a later action can be disabled in the refined one (a
+    /// twin saveFail leaves the page dirty and unpublished, so the script's
+    /// later delete of it is Unsaved). Before any alternative the oracle
+    /// equals the Quint trace (`page_state::tests`), so there a disabled
+    /// action fails replay. Callers accept only listed action kinds, after
+    /// the host's own refusal and `assert_untouched`.
+    fn continuation(&self) -> Option<&'static str> {
+        if !self.refinement_schedule {
+            None
+        } else if self.queued_refusals > 0 || self.occupied_refusals > 0 {
+            Some("refusal-continuation")
+        } else if self.twin_failures > 0 {
+            Some("twin-continuation")
+        } else {
+            None
+        }
+    }
+
+    fn accept_stutter(&mut self, kind: &str, name: &str) -> bool {
+        *self.stutters.entry(format!("{kind}/{name}")).or_default() += 1;
+        self.actions += 1;
+        true
+    }
+
+    fn untouched(&self) -> Untouched {
+        Untouched {
+            state: self.abstract_state(),
+            files: self.host.fs.physical().files.clone(),
+            stable: self.host.fs.physical().stable.clone(),
+            version: self.host.version,
+            versions: self.versions.clone(),
+        }
+    }
+
+    fn assert_untouched(&self, before: &Untouched, context: &str) {
+        assert_eq!(
+            self.abstract_state(),
+            before.state,
+            "{context}: refusal changed host state"
+        );
+        let physical = self.host.fs.physical();
+        assert_eq!(
+            physical.files, before.files,
+            "{context}: refusal changed files"
+        );
+        assert_eq!(
+            physical.stable, before.stable,
+            "{context}: refusal changed stable files"
+        );
+        assert_eq!(
+            self.host.version, before.version,
+            "{context}: refusal changed the host version"
+        );
+        assert_eq!(
+            self.versions, before.versions,
+            "{context}: refusal changed recorded versions"
+        );
+    }
+
+    /// Negative control (F4): the armed operation refusal changes one
+    /// component anyway, as a host that refused but still wrote would.
+    fn mutate_refusal(&mut self) {
+        let Some(mutant) = self.refusal_mutant.take() else {
+            return;
+        };
+        let mark = || Arc::from(&b"mutant"[..]);
+        match mutant {
+            RefusalMutant::State => {
+                let page = self.host.pages.values_mut().next().expect("a held page");
+                page.risk = !page.risk;
+            }
+            RefusalMutant::Files => {
+                self.host
+                    .fs
+                    .physical_mut()
+                    .files
+                    .insert("mutant".into(), mark());
+            }
+            RefusalMutant::Stable => {
+                self.host
+                    .fs
+                    .physical_mut()
+                    .stable
+                    .insert("mutant".into(), mark());
+            }
+            RefusalMutant::Version => self.host.version += 1,
+            RefusalMutant::Versions => {
+                self.versions.insert((u64::MAX, u64::MAX), 0);
             }
         }
     }
