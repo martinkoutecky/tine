@@ -21,7 +21,7 @@ import { registerPaneFocusSetter } from "./ui";
 import { setCellSel } from "./sheet/selection";
 import { clearSelection, pageByName, registerPaneRouteProvider, installHistoryRouteContextAdapter, node as docNode, feedNames } from "./document";
 import { journalTitle, appNow } from "./journal";
-import { isSinglePaneShell } from "./nativeChrome";
+import { isSinglePaneShell, pdfTakesOverPane } from "./viewportClass";
 import {
   nearestPane,
   nearestPaneInDirection,
@@ -111,7 +111,19 @@ export function togglePaneMaximize(paneId = focusedPaneId()): boolean {
   return true;
 }
 
-function commitLayout(node: LayoutNode, windowId: string) {
+// Counts the USER's actions on the MAIN window's pane tree: a user split, a
+// close, a dock or tab-to-split move, a session restore and a layout reset
+// (graph switch). session.ts uses it to know whether the retained saved layout
+// of a single-pane start is still the user's: only such an action releases the
+// kept panes. Automatic pane creation (a PDF companion, an "open in other
+// pane" that had no other pane) and a divider resize do not, so the kept panes
+// are written back around whatever the live tree has grown into
+// (D-20261018-W1, review r2).
+let mainLayoutEpochValue = 0;
+export const mainLayoutEpoch = () => mainLayoutEpochValue;
+
+function commitLayout(node: LayoutNode, windowId: string, change: "user" | "automatic" = "user") {
+  if (windowId === MAIN_WINDOW_ID && change === "user") mainLayoutEpochValue++;
   const id = maximizedPanes()[windowId];
   if (id && !layoutPaneIds(node).includes(id)) setMaximizedPaneId(windowId, null);
   setLayouts({ ...layouts(), [windowId]: node });
@@ -311,7 +323,7 @@ function snapshotFromAdoptedTab(tab: AdoptedTab): PaneSnapshot {
 export function splitPane(
   paneId = focusedPaneId(),
   dir: "row" | "col" = "row",
-  opts: { focusNew?: boolean; position?: "before" | "after"; snapshot?: PaneSnapshot } = {}
+  opts: { focusNew?: boolean; position?: "before" | "after"; snapshot?: PaneSnapshot; automatic?: boolean } = {}
 ): string | null {
   if (isSinglePaneShell()) return null;
   const windowId = windowOfPane(paneId);
@@ -320,7 +332,7 @@ export function splitPane(
   const source = paneRouter(paneId);
   const router = paneRouter(newPaneId);
   router.restoreSnapshot(opts.snapshot ?? splitSnapshotForNewPane(source));
-  commitLayout(splitLayoutNodeAt(layoutRoot(windowId), paneId, dir, newPaneId, opts.position ?? "after"), windowId);
+  commitLayout(splitLayoutNodeAt(layoutRoot(windowId), paneId, dir, newPaneId, opts.position ?? "after"), windowId, opts.automatic ? "automatic" : "user");
   if (opts.focusNew !== false) focusPane(newPaneId);
   focusedRouter().scheduleSessionSave();
   return newPaneId;
@@ -550,7 +562,8 @@ export function setSplitRatio(path: number[], ratio: number, windowId = currentL
         : [node.children[0], update(node.children[1], depth + 1)],
     };
   };
-  commitLayout(update(layoutRoot(windowId), 0), windowId);
+  // A divider drag moves no pane in or out of the tree: it never releases kept panes.
+  commitLayout(update(layoutRoot(windowId), 0), windowId, "automatic");
   focusedRouter().scheduleSessionSave();
 }
 
@@ -584,7 +597,7 @@ export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId(
   const ids = layoutPaneIds(root);
   let target = nearestPane(root, sourcePaneId) ?? ids.find((id) => id !== sourcePaneId) ?? null;
   const created = !target;
-  if (!target) target = splitPane(sourcePaneId, "row", { focusNew: false });
+  if (!target) target = splitPane(sourcePaneId, "row", { focusNew: false, automatic: true });
   if (!target) return null;
   const router = paneRouter(target);
   if (created) {
@@ -652,7 +665,7 @@ export function openPdf(filename: string, label: string, page?: number,
   if (options.anotherView) return null;
   const route = makePdfRoute(filename, label, { page });
   publishPdfNavigationIntent(route.viewId, { page, highlightId });
-  if (isSinglePaneShell() || options.inPlace) {
+  if (pdfTakesOverPane() || options.inPlace) {
     paneRouter(sourcePaneId).openPdf(route);
     return route;
   }
@@ -662,7 +675,7 @@ export function openPdf(filename: string, label: string, page?: number,
     if (!options.background) focusPane(companion);
     return route;
   }
-  const created = splitPane(sourcePaneId, "row", { focusNew: !options.background,
+  const created = splitPane(sourcePaneId, "row", { focusNew: !options.background, automatic: true,
     snapshot: { tabs: [{ history: [route], pos: 0, pinned: false }], activeIndex: 0, scrolls: [null] } });
   return created ? route : null;
 }
@@ -670,7 +683,7 @@ export function openPdf(filename: string, label: string, page?: number,
 /** Open a PDF's notes in the companion pane, reusing its existing page tab.
  * On mobile the notes enter the current route history. Cost O(open tabs). */
 export function openPdfNotes(sourcePaneId: string, notesPage: string, block?: string): string | null {
-  if (isSinglePaneShell()) {
+  if (pdfTakesOverPane()) {
     const router = paneRouter(sourcePaneId);
     if (block) router.openPageAtBlock(notesPage, "page", block);
     else router.openPage(notesPage, "page");

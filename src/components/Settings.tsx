@@ -20,7 +20,8 @@ import { locateSectionsPages } from "../journalSections";
 import { pushToast } from "../toasts";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
-import { isMac, isMobilePlatform, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
+import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
+import { touchPrimary } from "../inputCapability";
 import {
   copyIncludeSubtree,
   setCopyIncludeSubtree,
@@ -107,6 +108,7 @@ const TABS: { id: SettingsTabId; label: Msg }[] = [
 ];
 /** How long a search result waits for an async-mounted target before giving up. */
 const SEARCH_SCROLL_WAIT_MS = 1000;
+const SETTINGS_FLASH_MS = 2000;
 export function Settings(): JSX.Element {
   const [tab, setTab] = createSignal<SettingsTabId>("appearance");
   const [settingsQuery, setSettingsQuery] = createSignal("");
@@ -134,7 +136,7 @@ export function Settings(): JSX.Element {
     (entry.id !== "plugins" || pluginsAvailable()) && (entry.id !== "sharing" || sharingAvailable())));
   const matches = createMemo(() => {
     const query = settingsQuery();
-    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && (isMobilePlatform || !entry.mobileOnly)), query) : [];
+    return query.trim() ? rankedSettingMatches(SETTING_SEARCH.filter((entry) => availableTabs().some((tab) => tab.id === entry.tab) && (touchPrimary() || !entry.touchOnly)), query) : [];
   });
   // A setting whose field mounts after an async load (Developer tools waits for
   // the platform probe) is not in the DOM when the tab opens, so the lookup is
@@ -155,7 +157,15 @@ export function Settings(): JSX.Element {
       if (run !== scrollRun) return;
       const target = findTarget();
       if (first) searchInput?.focus({ preventScroll: true });
-      if (target) target.scrollIntoView({ block: "center" });
+      if (target) {
+        target.scrollIntoView({ block: "center" });
+        // Mark where the jump landed for 2 s, so the eye finds the setting (GH #706).
+        const row = target.closest<HTMLElement>(".settings-field, .settings-row, .settings-section") ?? target;
+        row.classList.remove("settings-jump-flash");
+        void row.offsetWidth;
+        row.classList.add("settings-jump-flash");
+        setTimeout(() => row.classList.remove("settings-jump-flash"), SETTINGS_FLASH_MS);
+      }
       else if (Date.now() < deadline) (typeof requestAnimationFrame === "function" ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 16))(() => attempt(false));
     };
     queueMicrotask(() => attempt(true));
@@ -503,9 +513,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
         </div>
       </Field>
 
-      {/* GH #716: the phone/tablet app keeps Sidebar, Search, Back and Forward in
+      {/* GH #716: a touch-first device (phone/tablet) keeps Sidebar, Search, Back and Forward in
           the top bar; this opt-in restores the GH #598 bottom row. */}
-      <Show when={isMobilePlatform}>
+      <Show when={touchPrimary()}>
         <Field label={render(msg("settings-mobile-navigation-label"))} hint={render(msg("settings-mobile-navigation-hint"))}>
           <Toggle on={mobileNavigationAtBottom()} onClick={() => setMobileNavigationAtBottom(!mobileNavigationAtBottom())} />
         </Field>

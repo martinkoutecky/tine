@@ -18,7 +18,9 @@ import { openPageAtBlock } from "../router";
 import { areaHighlightPosition, hlsPageName, rectInPageSpace, rectWithSourceSpace, type PdfPageDimensions } from "../pdf";
 import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
 import type { Highlight, Rect } from "../types";
-import { isMac, isMobilePlatform } from "../nativeChrome";
+import { isMac } from "../nativeChrome";
+import { touchCapable } from "../inputCapability";
+import { pdfTakesOverPane } from "../viewportClass";
 import { dismissOnOutsidePointer, registerTransientLayer } from "../transientLayers";
 import { createPdfHighlightState } from "./pdfHighlightState";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
@@ -1074,13 +1076,13 @@ export function PdfViewer(props: {
   };
   const onMouseUp = (e: MouseEvent) => captureTextSelection(e.target, { x: e.clientX, y: e.clientY });
   const onTouchSelectionEnd = (e: TouchEvent) => {
-    if (!isMobilePlatform) return;
+    if (!touchCapable()) return;
     const touch = e.changedTouches?.[0];
     queueMicrotask(() => captureTextSelection(e.target,
       touch ? { x: touch.clientX, y: touch.clientY } : undefined));
   };
   onMount(() => {
-    if (!isMobilePlatform) return;
+    if (!touchCapable()) return;
     let timer: number | undefined;
     const selectionChanged = () => {
       clearTimeout(timer);
@@ -1318,11 +1320,12 @@ export function PdfViewer(props: {
   });
   const { findOpen, findQuery, findCount, findCur, findTruncated,
     scheduleFind, nextMatch, openFind, closeFind } = findController;
-  // Mobile renders this viewer as the full-width PDF takeover. It is a parent
-  // transient so Find, settings, outline, and highlight popovers still peel
-  // first; once they are gone, either Android Back or Escape closes the pane.
+  // A single-pane shell renders this viewer as the full-width PDF takeover. It
+  // is a parent transient so Find, settings, outline, and highlight popovers
+  // still peel first; once they are gone, either Android Back or Escape closes
+  // the pane.
   createEffect(() => {
-    if (!isMobilePlatform) return;
+    if (!pdfTakesOverPane()) return;
     const unregister = registerTransientLayer({
       id: props.onClose ? surfaceLayerId : "pdf-pane",
       root: () => viewerRootEl ?? null,

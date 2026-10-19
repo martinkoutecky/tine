@@ -6,7 +6,7 @@ import { parseBlockPos, type QueryRoute } from "./routeTypes";
 import { blockPositionRef } from "./document";
 import { bindingOwner, readOwned, writeOwned, type WriteOwner } from "./owned";
 import { dismissToast, pushToastUnique } from "./toasts";
-import { isSinglePaneShell } from "./nativeChrome";
+import { isSinglePaneShell } from "./viewportClass";
 import {
   installSessionPersistence,
   mintPdfViewId,
@@ -24,6 +24,7 @@ import {
   layoutPaneIds,
   layoutRoot,
   layoutWindowIds,
+  mainLayoutEpoch,
   mainRouter,
   paneRouter,
   resetPaneLayoutToSingle,
@@ -407,12 +408,88 @@ function parseWindows(raw: unknown, claimed: Set<string>, seenViewIds: Set<strin
   return windows;
 }
 
+/** A single-pane start PRESENTS one saved pane but RETAINS the rest (the other
+ * panes, their tabs and the saved focus, and the saved workspace windows), so
+ * a narrow or touch start never shrinks what the next session writes: the
+ * presentation is temporary, the saved layout is not (D-20261018-W1, review
+ * r1). The presented pane's live tabs replace its saved ones on each write.
+ * The retained layout is released only by the USER acting on the main pane
+ * tree since the restore (`epoch`, see panes.ts mainLayoutEpoch): a split, a
+ * close, a dock, a restore or a reset. Panes the app itself adds (a PDF
+ * companion) do not release it: the live tree then replaces the presented
+ * leaf, so the kept panes are written around it (review r2). */
+type RetainedLayout = {
+  layout: LayoutNode;
+  snapshots: Map<string, PaneSnapshot>;
+  presentedId: string;
+  focusedPaneId: string;
+  windows: ParsedWindow[];
+};
+let retained: (RetainedLayout & { epoch: number }) | null = null;
+
+function serializeParsedLayout(node: LayoutNode, snapshots: Map<string, PaneSnapshot>, live?: { id: string; snapshot: PaneSnapshot }): PersistedLayoutNode {
+  if (node.kind === "pane") {
+    const snapshot = live && live.id === node.paneId ? live.snapshot : snapshots.get(node.paneId);
+    return { kind: "pane", paneId: node.paneId, ...(snapshot ? persistedSnapshot(snapshot) : {}) } as PersistedLayoutNode;
+  }
+  return {
+    kind: "split",
+    dir: node.dir,
+    ratio: node.ratio,
+    children: [serializeParsedLayout(node.children[0], snapshots, live), serializeParsedLayout(node.children[1], snapshots, live)],
+  };
+}
+
+function retainedForWrite(): RetainedLayout | null {
+  if (!retained) return null;
+  const ids = layoutPaneIds(layoutRoot(MAIN_WINDOW_ID));
+  if (retained.epoch !== mainLayoutEpoch() || !ids.includes("main")) { retained = null; return null; }
+  return retained;
+}
+
+/** The retained layout with the live main tree standing where the presented
+ * pane was. Live pane ids are kept unless they collide with a kept pane; the
+ * presented pane keeps its saved id. */
+function serializeRetained(keep: RetainedLayout): PersistedLayoutNode {
+  const live = layoutRoot(MAIN_WINDOW_ID);
+  if (live.kind === "pane") {
+    return serializeParsedLayout(keep.layout, keep.snapshots, { id: keep.presentedId, snapshot: mainRouter().snapshot() });
+  }
+  const taken = new Set(layoutPaneIds(keep.layout));
+  const rename = new Map<string, string>([["main", keep.presentedId]]);
+  let n = 0;
+  for (const id of layoutPaneIds(live)) {
+    if (rename.has(id)) continue;
+    let next = id;
+    while (taken.has(next)) next = `pane-r${n++}`;
+    taken.add(next);
+    rename.set(id, next);
+  }
+  const liveTree = (node: LayoutNode): PersistedLayoutNode =>
+    node.kind === "pane"
+      ? { kind: "pane", paneId: rename.get(node.paneId) ?? node.paneId, ...persistedSnapshot(paneRouter(node.paneId).snapshot()) }
+      : { kind: "split", dir: node.dir, ratio: node.ratio, children: [liveTree(node.children[0]), liveTree(node.children[1])] };
+  const walk = (node: LayoutNode): PersistedLayoutNode =>
+    node.kind === "pane"
+      ? node.paneId === keep.presentedId
+        ? liveTree(live)
+        : serializeParsedLayout(node, keep.snapshots)
+      : { kind: "split", dir: node.dir, ratio: node.ratio, children: [walk(node.children[0]), walk(node.children[1])] };
+  return walk(keep.layout);
+}
+
 export function buildPersistedSession(): PersistedSession {
   const ids = layoutPaneIds(layoutRoot(MAIN_WINDOW_ID));
   const focused = focusedPaneId(MAIN_WINDOW_ID);
   const mirrorId = feedPaneId(MAIN_WINDOW_ID) ?? (ids.includes(focused) ? focused : ids[0]) ?? "main";
   const mirror = persistedSnapshot(paneRouter(mirrorId).snapshot());
-  const windows = persistedWindows();
+  const keep = retainedForWrite();
+  const liveWindows = persistedWindows();
+  const windows = liveWindows.length || !keep ? liveWindows : keep.windows.map((w) => ({
+    layout: serializeParsedLayout(w.layout, w.snapshots),
+    focusedPaneId: w.focusedPaneId,
+    ...(w.geometry ? { geometry: w.geometry } : {}),
+  }));
   return {
     ...mirror,
     ...(currentWorkspaceId ? { workspaceId: currentWorkspaceId } : {}),
@@ -421,8 +498,10 @@ export function buildPersistedSession(): PersistedSession {
     rightSidebarItems: rightSidebar().map(persistedSidebarItem),
     favoritesSectionExpanded: favoritesSectionExpanded(),
     recentSectionExpanded: recentSectionExpanded(),
-    layout: serializeLayout(layoutRoot(MAIN_WINDOW_ID)),
-    focusedPaneId: focused,
+    layout: keep
+      ? serializeRetained(keep)
+      : serializeLayout(layoutRoot(MAIN_WINDOW_ID)),
+    focusedPaneId: keep ? keep.focusedPaneId : focused,
     recentPages: recentPages(),
     ...(windows.length ? { windows } : {}),
   };
@@ -435,6 +514,8 @@ export function parsePersistedSession(raw: string): {
   sidebar: SidebarSessionState;
   recent: RecentItem[];
   windows: ParsedWindow[];
+  /** Set by a single-pane start that presented fewer panes than were saved. */
+  retained?: RetainedLayout;
 } | null {
   try {
     const s = JSON.parse(raw) as PersistedSession;
@@ -470,13 +551,25 @@ export function parsePersistedSession(raw: string): {
           [...snapshots].find(([, snap]) =>
             sameRoute(currentRoute(snap.tabs[snap.activeIndex]), { kind: "journals" })
           )?.[0] ?? [...snapshots.keys()][0];
+        const savedWindows = parseWindows(s.windows, new Set(layoutPaneIds(parsed)), seenViewIds);
         return {
           layout: { kind: "pane", paneId: "main" },
           snapshots: new Map([["main", snapshots.get(feedId)!]]),
           focusedPaneId: "main",
           sidebar,
           recent,
-          windows: [], // the single-pane (phone) shell has no workspace windows
+          windows: [], // the single-pane shell opens no workspace windows now
+          ...(snapshots.size > 1 || savedWindows.length
+            ? {
+                retained: {
+                  layout: parsed,
+                  snapshots,
+                  presentedId: feedId,
+                  focusedPaneId: typeof s.focusedPaneId === "string" && snapshots.has(s.focusedPaneId) ? s.focusedPaneId : feedId,
+                  windows: savedWindows,
+                },
+              }
+            : {}),
         };
       }
     }
@@ -489,6 +582,14 @@ export function parsePersistedSession(raw: string): {
       sidebar,
       recent,
       windows: singlePane ? [] : parseWindows(s.windows, new Set(["main"]), seenViewIds),
+      ...(singlePane
+        ? (() => {
+            const savedWindows = parseWindows(s.windows, new Set(["main"]), seenViewIds);
+            return savedWindows.length
+              ? { retained: { layout: { kind: "pane", paneId: "main" } as LayoutNode, snapshots: new Map([["main", legacy]]), presentedId: "main", focusedPaneId: "main", windows: savedWindows } }
+              : {};
+          })()
+        : {}),
     };
   } catch {
     return null;
@@ -514,6 +615,7 @@ export function applyParsedSession(parsed: NonNullable<ReturnType<typeof parsePe
     restorePaneLayout(parsed.layout, parsed.snapshots, parsed.focusedPaneId);
   }
   windowSession?.open(parsed.windows);
+  retained = parsed.retained ? { ...parsed.retained, epoch: mainLayoutEpoch() } : null;
 }
 
 let sessionSaveFailure: { id: number; message: string } | null = null;

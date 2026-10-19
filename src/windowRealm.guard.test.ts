@@ -48,15 +48,15 @@ const REALM_ALLOW: Record<string, string> = {
   "src/publishedBackend.ts *":
     "The published static export runs in a browser tab with no Tauri and therefore no workspace windows.",
   "src/components/MobileKeyboardToolbar.tsx *":
-    "Renders only when isMobilePlatform; workspace windows are desktop-only (absent on Android/iOS).",
+    "Mounted only in the main window's overlay layer (App.tsx passes it as WindowOverlays keyboardToolbar); workspace windows host no editing dock.",
   "src/edgeSwipe.ts *":
     "Installed only on touch platforms (App.tsx returns on platform === 'desktop'); workspace windows are desktop-only.",
   "src/sessionActivity.ts *":
     "installSessionActivity returns immediately unless deps.isMobile; workspace windows are desktop-only.",
-  "src/nativeChrome.ts window.innerWidth":
-    "isTabletViewport classifies the mobile shell of the main window; workspace windows are desktop-only.",
-  "src/nativeChrome.ts window.innerHeight":
-    "isTabletViewport classifies the mobile shell of the main window; workspace windows are desktop-only.",
+  "src/viewportClass.ts *":
+    "Classifies the main window's shell (single-pane layout, tab-strip room, D-20261018-W1); a workspace window has no sidebars or restored layout of its own to classify.",
+  "src/inputCapability.ts *":
+    "Pointer capability (pointer/any-pointer media features) is a device-wide fact asked of the main window; a workspace window shares the same input devices.",
   "src/themePreference.ts window.matchMedia":
     "prefers-color-scheme is an OS-wide preference; the resulting theme attributes are mirrored into workspace windows centrally.",
   "src/lsShim.ts document.getElementById":

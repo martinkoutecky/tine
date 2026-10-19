@@ -20,7 +20,7 @@ import { queryMacroExtent, type MacroExtent } from "../editor/queryMacro";
 import { isQuarantined, parseBlock, parserReady, soleBlockMacro } from "../render/parse";
 import { isQueryMacroName } from "../editor/queryMacro";
 import { beginEditGesture, renderedClickOffset, registerRenderedSelection } from "./blockGestures";
-import { isMobilePlatform } from "../nativeChrome";
+import { touchCapable } from "../inputCapability";
 import { startEditing } from "../editorController";
 import { editorOffsetFromRenderedRange } from "../render/spans";
 import { BUILTIN_HIDE, HIDE_ALL, splitProps } from "../editor/properties";
@@ -106,7 +106,7 @@ export function Rendered(props: {
   // keeps the old end-of-block behavior.
   let contentRef: HTMLDivElement | undefined;
   onMount(() => {
-    if (!isMobilePlatform || !contentRef) return;
+    if (!touchCapable() || !contentRef) return;
     const owner = contentRef.ownerDocument;
     const transferSelection = () => {
       if (readOnly() || !contentRef?.isConnected) return;

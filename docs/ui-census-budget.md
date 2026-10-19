@@ -57,4 +57,7 @@ journey (`scripts/e2e-*.mjs`), not here.
 
 ## Raised budgets
 
-None yet (baseline 2026-10-19).
+- 2026-10-19, D-20261018-W1 (Martin: "Open in new tab" back on mobile): `mobile.menu.block.plain` 14→15,
+  `block.full` 18→19, `block.multi` 13→14, `block.readonly` 5→6, `page.link` 11→12, `page.header.page` 14→15,
+  `page.header.journal` 14→15. The mobile census now runs as a touch-first device (`touchPrimary`), since
+  touch surfaces such as the keyboard toolbar follow input capability, not the OS name.

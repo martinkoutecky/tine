@@ -4,7 +4,7 @@ import { codeWrapping } from "../codeDisplay";
 import { stickyParents } from "../stickyParents";
 import { StickyAncestor } from "./StickyAncestor";
 import { AstBody } from "../render/body";
-import { codeFences } from "../editor/fences";
+import { codeFences, caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { LineGutter } from "../render/LineGutter";
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, on, untrack, onMount, onCleanup, type JSX } from "solid-js";
 import { autocompleteFacets, backend } from "../backend";
@@ -93,6 +93,7 @@ import { MEDIA_EDITORS } from "../mediaEditors";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
+import { touchPrimary } from "../inputCapability";
 import { openJournalDatePicker, runJournalSlash } from "../journalSlash";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { youtubeTimestampMacroFor } from "./Macro";
@@ -127,7 +128,6 @@ import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, caretOnPropertyLin
 import { propertyEditorSession } from "../editor/propertySession";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
 import { normalizePlanning } from "../editor/planning";
-import { caretInFence, caretOnOpeningFence, caretInDisplayMath } from "../editor/fences";
 import { createCodeBodyEditor } from "../editor/codeBodyEditor";
 import { codeBodyExitTrim, codeBodyProjection, codeFenceOnly } from "../editor/codeFence";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
@@ -3358,7 +3358,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         </div>
       </Show>
       <Show when={hasSel()}>
-        <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": isMobilePlatform }} data-mobile-selection-toolbar={isMobilePlatform ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
+        <div class="sel-toolbar" classList={{ "sel-toolbar-mobile": touchPrimary() }} data-mobile-selection-toolbar={touchPrimary() ? "" : undefined} onMouseDown={(e) => e.preventDefault()}>
           <For each={essentialSelectionActions}>{(action) => (
             <button
               classList={{ "sel-action-page-link": action.id === "page-link" }}

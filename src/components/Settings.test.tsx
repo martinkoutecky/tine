@@ -85,6 +85,8 @@ describe("Settings progressive disclosure and search", () => {
     expect(search.value).toBe("");
     expect(scroll).toHaveBeenCalled();
     expect((scroll.mock.contexts.at(-1) as HTMLElement).querySelector('[role="switch"]')).not.toBeNull();
+    // The setting it landed on is marked for a moment (GH #706).
+    expect((scroll.mock.contexts.at(-1) as HTMLElement).closest(".settings-jump-flash")).not.toBeNull();
     expect(document.activeElement).toBe(search);
     scroll.mockRestore();
     dispose();

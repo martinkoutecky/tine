@@ -1,0 +1,57 @@
+/* The sidebar's Tabs section (GH #704 v1): rows are ordinary `.nav-page`
+   rows whose title and close are two real buttons. */
+.nav-tab {
+  gap: 4px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.nav-tab-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.nav-tab-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-tab-close {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.nav-tab:hover .nav-tab-close,
+.nav-tab.active .nav-tab-close,
+.nav-tab-close:focus-visible {
+  opacity: 1;
+}
+.nav-tab-close:hover {
+  background: var(--bg-secondary, var(--bg-tertiary));
+  color: var(--text-primary);
+}
+/* No hover on a touch screen: keep the close target visible and finger-sized. */
+@media (hover: none) {
+  .nav-tab-close {
+    opacity: 1;
+    min-width: 36px;
+    min-height: 36px;
+  }
+}

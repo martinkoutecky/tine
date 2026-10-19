@@ -17,11 +17,12 @@ import { allPageNames, navigationName } from "../pageIndex";
 import { SidebarTitle } from "./SidebarTitle";
 import { NamespaceTree } from "./Namespace";
 import { SidebarFavorites } from "./SidebarFavorites";
+import { SidebarTabs } from "./SidebarTabs";
 import { favoriteCount } from "../favorites";
 import type { PageKind } from "../types";
 import { registerTransientLayer } from "../transientLayers";
 import { writeClipboardText } from "../clipboard";
-import { isMobilePlatform } from "../nativeChrome";
+import { canRevealInFileManager } from "../nativeChrome";
 import { graphRowMenuActions } from "./graphRowMenu";
 import { readOr } from "../resourceRead";
 import { ResourceFailure } from "./ResourceFailure";
@@ -122,6 +123,8 @@ export function Sidebar(props: {
           <JournalsIcon />
           <span>{t("sidebar-journals")}</span>
         </div>
+
+        <SidebarTabs onActiveNavigationComplete={props.onActiveNavigationComplete} />
 
         <Show when={favoriteCount() > 0}>
           <div class="nav-section">
@@ -331,7 +334,7 @@ export function GraphSwitcher(props: {
                       const result = await writeOwned(ownedWhen(() => alive), backend().forgetKnownGraph(path));
                       if (result.kind === "current") await refetch();
                     },
-                    desktop: !isMobilePlatform,
+                    desktop: canRevealInFileManager(),
                     isCurrent: graph.path === graphMeta()?.root,
                   }));
                 }}

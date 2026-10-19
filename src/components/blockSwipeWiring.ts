@@ -5,7 +5,7 @@ import { pageRefsInText } from "../render/pageRefs";
 import { canIndentBlock, childIds, pageRoots, nextVisible, clearSelection, indentSelection, node as docNode, outdentSelection, pageByName, selectBlock } from "../document";
 import type { OutlineScope } from "../document";
 import { dispatchFocusedEditorCommand, focusedEditorCommandBridge } from "../editorCommandBridge";
-import { touchGesturePlatform } from "../nativeChrome";
+import { touchGestures } from "../inputCapability";
 import { openContextMenu } from "../ui";
 
 export interface BlockRowSwipeDeps {
@@ -28,10 +28,10 @@ export interface BlockRowSwipeDeps {
  *  the kernel's indent verb (canIndentBlock) for indent, parent/scope-root for
  *  outdent. The first revealed indent cue costs O(page blocks + visible scope);
  *  cached for that gesture.
- *  Returns the cleanup; a no-op off touch platforms. */
+ *  Returns the cleanup; a no-op without a touch input. */
 export function wireBlockSwipe(row: HTMLElement, deps: BlockRowSwipeDeps): () => void {
   return attachBlockSwipe(row, {
-    platform: touchGesturePlatform(),
+    enabled: touchGestures(),
     // OG `:mobile :gestures/disabled-in-block-with-tags`, read at touchstart so
     // a config edit applies to the next touch. Refs come from the one lsdoc
     // parse of each ancestor block (never a regex over raw text).

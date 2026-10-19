@@ -8,7 +8,7 @@
 // platform's own long-press text selection. That gesture belongs to a native
 // recognizer; iOS does not fire `contextmenu` for touch at all, so there is no
 // default to prevent. Selection is refused in CSS instead
-// (`html[data-platform="ios"] :is(.page-ref, .tag)` and the `.ctx-*` rules in
+// (`@media (pointer: coarse) { :is(.page-ref, .tag) }` and the `.ctx-*` rules in
 // app.css). Dropping any range the hold already produced, below, covers the
 // window between the OS recognizer firing and our menu appearing.
 
