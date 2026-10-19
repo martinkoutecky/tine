@@ -66,6 +66,13 @@ it("shows the matching description under a result only when its name does not ma
   await setActiveLocale("zh-CN");
   const graph = SETTING_SEARCH.find(entry => text(entry.label) === "图谱")!;
   expect(matchedDescription(graph, "发")).toContain("发");
+  await setActiveLocale("en");
+  // Catalog markup is not shown or matched, and a long description is cut around its match.
+  const spell = SETTING_SEARCH.find(entry => text(entry.label) === "Spellcheck languages")!;
+  expect(matchedDescription(spell, "rescan")).toMatch(/^….*Rescan\.$/);
+  expect(matchedDescription(spell, "rescan")).not.toMatch(/<\/?[a-z]+>/);
+  expect(matchedDescription(spell, "rescan")!.length).toBeLessThanOrEqual(122);
+  expect(settingMatches(spell, "strong")).toBe(false);
 });
 
 it("lists label, keyword and alias matches before description-only matches, keeping the table order (GH #706)", () => {

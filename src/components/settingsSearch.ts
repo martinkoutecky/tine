@@ -4,6 +4,7 @@
 import { KNOBS } from "../styleKnobs";
 import { MEDIA_EDITORS } from "../mediaEditors";
 import { msg, render, renderEnglish, type Msg } from "../i18n";
+import { richPlain } from "../i18n/Rich";
 import type { SettingsTabId } from "../ui";
 type Tab = SettingsTabId;
 
@@ -131,7 +132,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
 ];
 
 function textsOf(...parts: (string | Msg | undefined)[]): string {
-  return parts.flatMap((text) => text === undefined ? [] : typeof text === "string" ? [text] : [render(text), renderEnglish(text)]).join(" ").toLowerCase();
+  return parts.flatMap((text) => text === undefined ? [] : typeof text === "string" ? [text] : [richPlain(render(text)), richPlain(renderEnglish(text))]).join(" ").toLowerCase();
 }
 
 /** A one-character term (any script) matches only text shown in the active
@@ -143,7 +144,7 @@ const isShortTerm = (term: string) => [...term].length === 1;
 const queryTerms = (query: string) => query.toLowerCase().trim().split(/\s+/).filter(Boolean);
 
 function shownTextsOf(...parts: (string | Msg | undefined)[]): string {
-  return parts.flatMap((text) => text === undefined ? [] : [typeof text === "string" ? text : render(text)]).join(" ").toLowerCase();
+  return parts.flatMap((text) => text === undefined ? [] : [typeof text === "string" ? text : richPlain(render(text))]).join(" ").toLowerCase();
 }
 
 /** Whether every query word hits the entry's label, keywords or aliases. */
@@ -171,10 +172,26 @@ export function settingMatches(entry: SettingSearchEntry, query: string): boolea
 export function matchedDescription(entry: SettingSearchEntry, query: string): string | undefined {
   const terms = queryTerms(query);
   if (!terms.length || nameMatches(entry, terms)) return undefined;
-  const shown = typeof entry.description === "string" ? entry.description : render(entry.description);
-  if (terms.some((term) => shown.toLowerCase().includes(term))) return shown;
-  const english = typeof entry.description === "string" ? entry.description : renderEnglish(entry.description);
-  return terms.some((term) => !isShortTerm(term) && english.toLowerCase().includes(term)) ? english : undefined;
+  const shown = typeof entry.description === "string" ? entry.description : richPlain(render(entry.description));
+  const english = typeof entry.description === "string" ? entry.description : richPlain(renderEnglish(entry.description));
+  for (const [text, short] of [[shown, true], [english, false]] as const) {
+    const hits = terms.filter((term) => short || !isShortTerm(term)).map((term) => text.toLowerCase().indexOf(term)).filter((at) => at >= 0);
+    if (hits.length) return excerpt(text, Math.min(...hits));
+  }
+  return undefined;
+}
+
+/** About one line of `text` around position `at`, with an ellipsis where cut, so a
+ * long description shows its match instead of its opening sentences. */
+function excerpt(text: string, at: number): string {
+  const chars = [...text];
+  const index = [...text.slice(0, at)].length;
+  let start = Math.max(0, index - 40);
+  // Start at a word boundary when the text has one before the match (Latin text; CJK has none).
+  const space = chars.slice(start, index).findIndex((char) => /\s/.test(char));
+  if (start > 0 && space >= 0) start += space + 1;
+  const end = Math.min(chars.length, start + 120);
+  return `${start > 0 ? "…" : ""}${chars.slice(start, end).join("").trim()}${end < chars.length ? "…" : ""}`;
 }
 
 /** Matching entries with label/keyword/alias matches before description-only
