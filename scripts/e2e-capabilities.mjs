@@ -92,16 +92,19 @@ export async function startWebdriverApplication(
   debuggerPort,
   session = "default",
   platform = process.platform,
+  { appOwnsUserDataFolder = false } = {},
 ) {
   if (platform !== "win32") return { env, applicationProcess: undefined, debuggerAddress: undefined };
 
-  const userDataFolder = windowsUserDataFolder(session);
+  // A journey about where the app keeps its WebView2 data (GH #719) lets the
+  // app choose; every other journey gets an isolated per-session folder.
+  const userDataFolder = appOwnsUserDataFolder ? undefined : windowsUserDataFolder(session);
   const debuggerAddress = `127.0.0.1:${debuggerPort}`;
   const applicationEnv = {
     ...env,
     TAURI_AUTOMATION: "true",
     TAURI_WEBVIEW_AUTOMATION: "true",
-    WEBVIEW2_USER_DATA_FOLDER: userDataFolder,
+    ...(userDataFolder ? { WEBVIEW2_USER_DATA_FOLDER: userDataFolder } : {}),
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: withFixedRemoteDebuggingPort(
       env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
       debuggerPort,

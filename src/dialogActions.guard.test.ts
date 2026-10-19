@@ -140,6 +140,7 @@ const NOT_A_CONFIRM_ROW: Record<string, string> = {
   // Not confirm/cancel surfaces.
   "navigation-actions": "topbar navigation buttons",
   "capture-actions": "quick capture: one Capture button",
+  "quick-share-settings-actions": "Settings > Sharing: account and per-share row actions (Copy, Check, Delete, Forget), no Cancel",
   "conflict-actions": "banner: DiskOrMineChoice or a single Review/Discard action",
   "page-conflict-foot": "hint text plus the single Apply resolution button",
   "sync-merge-toolbar-actions": "merge toolbar, not a dialog footer",

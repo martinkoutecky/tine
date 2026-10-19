@@ -22,7 +22,12 @@ pub(crate) fn app_data_dir_of(identifier: &str) -> Option<std::path::PathBuf> {
     dirs::data_dir().map(|base| base.join(identifier))
 }
 
+/// The app-data dir this process uses: the portable folder beside the exe
+/// when there is one (GH #719, `portable.rs`), else the per-user one.
 pub(crate) fn current_app_data_dir() -> Option<std::path::PathBuf> {
+    if let Some(portable) = crate::portable::dirs() {
+        return Some(portable.roaming.clone());
+    }
     app_data_dir_of(APP_IDENTIFIER)
 }
 
