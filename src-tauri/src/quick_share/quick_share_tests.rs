@@ -409,16 +409,27 @@ fn short_lived_code(access: Resp, user: Option<Duration>) -> Mock {
 /// no further poll is sent.
 #[test]
 fn a_slow_answer_that_outlives_the_code_expires_the_attempt_and_polls_no_more() {
+    // A 100 ms code (1 ms "seconds") polled after 1 ms, whose answer takes
+    // 400 ms: the first poll is sent with 99 ms to spare even on a loaded
+    // machine, and its answer outlives the code. (At a 10 ms lifetime a
+    // loaded machine sent no poll at all before the expiry.)
     let pending = json(200, serde_json::json!({ "error": "authorization_pending" }))
-        .delayed(Duration::from_millis(40));
-    let mock = short_lived_code(pending, None);
+        .delayed(Duration::from_millis(400));
+    let mock = Mock::start(move |req| match req.path.as_str() {
+        "/login/device/code" => json(
+            200,
+            serde_json::json!({ "device_code": "dc", "user_code": "AB-CD", "verification_uri": "https://github.com/login/device", "expires_in": 100, "interval": 1 }),
+        ),
+        "/login/oauth/access_token" => pending.clone(),
+        _ => resp(404, "{}"),
+    });
     let f = fixture(mock.endpoints());
     let start = block_on(f.service.connect_start()).unwrap();
     assert_eq!(
         f.wait_status(&start.attempt_id, |s| *s != ConnectStatus::Pending),
         ConnectStatus::Expired
     );
-    std::thread::sleep(Duration::from_millis(150));
+    std::thread::sleep(Duration::from_millis(600));
     assert_eq!(
         mock.count("POST", "/login/oauth/access_token"),
         1,
