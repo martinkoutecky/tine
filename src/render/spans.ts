@@ -348,17 +348,50 @@ function plainSpanOwnedBy(root: Element, el: Element, data: Extract<SpanDomData,
   return true;
 }
 
-/** Like {@link editorOffsetFromRenderedRange}, but only for a point inside a
- *  byte-exact (plain) span leaf that belongs to `raw` itself: no snapping to a
- *  coarse construct's nearer edge (a fenced code card, a link) and no spans of a
- *  foreign body drawn inside the block. A selection endpoint must be exact, a
- *  click need not be, so the click mapping keeps its own rules. */
+/** The source byte of rendered text byte `textByte` in a plain span, with no
+ *  snapping: a byte inside a mapped run maps; a byte exactly at a run's edge
+ *  maps to that edge; a byte inside an uncovered gap (a typographic glyph, a
+ *  CRLF joiner) answers null. Where one run ends and the next starts at the
+ *  same rendered byte, `edge` picks the side: a selection start takes the later
+ *  run, an end the earlier, so source that renders as nothing between them
+ *  stays outside the range. Unlike {@link sourceByteFromPlainTextByte}, which
+ *  serves clicks. O(segments). */
+export function exactSourceByteFromPlainTextByte(
+  span: Span,
+  spanMap: SpanMap | undefined,
+  textByte: number,
+  textByteLength: number,
+  edge: "start" | "end",
+): number | null {
+  if (textByte < 0 || textByte > textByteLength) return null;
+  if (!spanMap || spanMap.length === 0) {
+    const source = span[0] + textByte;
+    return source <= span[1] ? source : null;
+  }
+  let ending: number | null = null;
+  let starting: number | null = null;
+  for (const [textOff, sourceOff, len] of spanMap) {
+    if (textByte > textOff && textByte < textOff + len) return sourceOff + (textByte - textOff);
+    if (textByte === textOff + len && ending === null) ending = sourceOff + len;
+    if (textByte === textOff && starting === null) starting = sourceOff;
+  }
+  return edge === "start" ? starting ?? ending : ending ?? starting;
+}
+
+/** Like {@link editorOffsetFromRenderedRange}, but exact, for one end of a
+ *  selection the toolbar is about to rewrite (GH #375 review): the point must
+ *  lie inside a byte-exact (plain) span leaf that belongs to `raw` itself and
+ *  on a mapped position of it (see {@link exactSourceByteFromPlainTextByte}).
+ *  A coarse construct (a fenced code card, a link), another source's spans and
+ *  a mapping gap all answer null instead of snapping to the nearer edge. The
+ *  click mapping keeps its own, snapping rules. */
 export function exactEditorOffsetFromRenderedRange(
   root: Element,
   range: Pick<Range, "startContainer" | "startOffset">,
   raw: string,
   isHidden: HidePolicy,
   format: PropFormat = "md",
+  edge: "start" | "end" = "start",
 ): number | null {
   const el = closestSpanElement(root, range.startContainer);
   const data = el && spanDataFromElement(el);
@@ -366,7 +399,14 @@ export function exactEditorOffsetFromRenderedRange(
   const rawBytes = UTF8.encode(raw);
   const lead = rawBytes.length - utf8ByteLength(raw.trimStart());
   if (!plainSpanOwnedBy(root, el, data, rawBytes, lead)) return null;
-  return editorOffsetFromRenderedRange(root, range, raw, isHidden, format);
+  const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
+  if (caret == null) return null;
+  const sourceByte = exactSourceByteFromPlainTextByte(
+    data.span, data.spanMap, utf16ToUtf8ByteOffset(text, caret), utf8ByteLength(text), edge);
+  if (sourceByte == null) return null;
+  const rawByte = sourceByte - 2 + lead;
+  if (rawByte < 0 || rawByte > rawBytes.length) return null;
+  return rawOffsetToVisibleOffset(raw, utf8ByteToUtf16Offset(raw, rawByte), isHidden, format);
 }
 
 /** The DOM point inside `root` at editor offset `offset`: the inverse of
@@ -414,7 +454,7 @@ export function renderedPointFromEditorOffset(
   for (const candidate of candidates) {
     const point = textPointAt(candidate.el, utf8ByteToUtf16Offset(candidate.text, candidate.textByte));
     if (!point) continue;
-    const back = exactEditorOffsetFromRenderedRange(root, { startContainer: point.node, startOffset: point.offset }, raw, isHidden, format);
+    const back = exactEditorOffsetFromRenderedRange(root, { startContainer: point.node, startOffset: point.offset }, raw, isHidden, format, edge);
     if (back === offset) return point;
   }
   return null;

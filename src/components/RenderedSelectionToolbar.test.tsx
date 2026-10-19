@@ -11,6 +11,7 @@ import type { BlockDto } from "../types";
 import { Block } from "./Block";
 import { RenderedSelectionToolbar } from "./RenderedSelectionToolbar";
 import { setGraphMeta } from "../graphSession";
+import { setTypographyModeSig, typographyMode } from "../ui";
 
 // GH #375 (D-20261018-LP2): text selected in a RENDERED block is formatted in
 // place. The block never enters edit mode, so the platform keeps its own
@@ -209,6 +210,49 @@ describe("rendered-selection toolbar: exact, owned mapping (GH #375 review r1)",
       expect(removed).toHaveLength(4);
       expect(new Set(removed)).toEqual(new Set(added));
     } finally { add.mockRestore(); remove.mockRestore(); }
+  });
+});
+
+describe("rendered-selection toolbar: typographic glyphs (GH #375 review r2)", () => {
+  // Settings' render-time typography shows `->` as `→`: the glyph has no
+  // byte-exact source position, so a selection end beside it maps to the edge
+  // of the prose it actually covers, never across the unselected arrow.
+  const initialTypography = typographyMode();
+  afterEach(() => setTypographyModeSig(initialTypography));
+
+  it("bolds only the prose selected before an arrow, not the arrow", () => {
+    setTypographyModeSig("render");
+    load("md", blocks("alpha -> selected omega"));
+    const page = mountPage();
+    try {
+      expect(row(page.root, "second").textContent).toContain("alpha → selected omega");
+      selectText(row(page.root, "second"), "alpha ");
+      press("bold");
+      expect(docNode("second").raw).toBe("**alpha** -> selected omega");
+    } finally { page.dispose(); }
+  });
+
+  it("includes a selected arrow in the formatted range", () => {
+    setTypographyModeSig("render");
+    load("md", blocks("alpha -> selected omega"));
+    const page = mountPage();
+    try {
+      selectText(row(page.root, "second"), "→ selected");
+      press("bold");
+      expect(docNode("second").raw).toBe("alpha **-> selected** omega");
+    } finally { page.dispose(); }
+  });
+
+  it("bolds only the prose selected after an arrow", () => {
+    setTypographyModeSig("render");
+    load("md", blocks("alpha -> selected omega"));
+    const page = mountPage();
+    try {
+      selectText(row(page.root, "second"), "selected");
+      press("bold");
+      expect(docNode("second").raw).toBe("alpha -> **selected** omega");
+      expect(selectedText()).toBe("selected");
+    } finally { page.dispose(); }
   });
 });
 

@@ -353,4 +353,24 @@ describe("rendered point from editor offset (GH #375 re-selection)", () => {
       root.remove();
     }
   });
+
+  it("exact source mapping declines a rendered gap that a click snaps across (GH #375 review r2)", async () => {
+    const { exactSourceByteFromPlainTextByte, sourceByteFromPlainTextByte } = await import("./spans");
+    // `alpha -> x` rendered `alpha → x`: runs "alpha " (text 0..6 → source 10..16)
+    // and " x" (text 9..11 → source 18..20); the glyph's 3 bytes are uncovered.
+    const span: [number, number] = [10, 20];
+    const map: [number, number, number][] = [[0, 10, 6], [9, 18, 2]];
+    expect(exactSourceByteFromPlainTextByte(span, map, 3, 11, "start")).toBe(13);
+    expect(exactSourceByteFromPlainTextByte(span, map, 6, 11, "end")).toBe(16);
+    expect(exactSourceByteFromPlainTextByte(span, map, 6, 11, "start")).toBe(16);
+    expect(exactSourceByteFromPlainTextByte(span, map, 9, 11, "start")).toBe(18);
+    expect(exactSourceByteFromPlainTextByte(span, map, 7, 11, "end")).toBeNull();
+    // The click mapper snaps the same gap forward, past the arrow.
+    expect(sourceByteFromPlainTextByte(span, map, 7, 11)).toBe(18);
+    expect(sourceByteFromPlainTextByte(span, map, 6, 11)).toBe(18);
+    // Adjacent runs with hidden source between: a start takes the later run, an end the earlier.
+    const joined: [number, number, number][] = [[0, 10, 3], [3, 15, 3]];
+    expect(exactSourceByteFromPlainTextByte([10, 18], joined, 3, 6, "start")).toBe(15);
+    expect(exactSourceByteFromPlainTextByte([10, 18], joined, 3, 6, "end")).toBe(13);
+  });
 });

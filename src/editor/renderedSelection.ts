@@ -74,8 +74,8 @@ export function renderedSelectionTarget(selection: Selection | null): RenderedSe
   // A calc block's editor shows the fence-stripped expressions, not this text
   // (same refusal as deleteRenderedTextSelection).
   if (calcSource(raw) !== null) return null;
-  const start = exactEditorOffsetFromRenderedRange(root, range, raw, BUILTIN_HIDE, format);
-  const end = exactEditorOffsetFromRenderedRange(root, { startContainer: range.endContainer, startOffset: range.endOffset }, raw, BUILTIN_HIDE, format);
+  const start = exactEditorOffsetFromRenderedRange(root, range, raw, BUILTIN_HIDE, format, "start");
+  const end = exactEditorOffsetFromRenderedRange(root, { startContainer: range.endContainer, startOffset: range.endOffset }, raw, BUILTIN_HIDE, format, "end");
   if (start === null || end === null || start >= end) return null;
   const direction = selection.anchorNode === range.startContainer && selection.anchorOffset === range.startOffset ? "forward" : "backward";
   return { blockId, raw, format, start, end, direction, root };
