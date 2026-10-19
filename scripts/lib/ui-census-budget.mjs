@@ -67,7 +67,7 @@ export const SURFACES = Object.freeze({
   "menu.page.header.page": { env: "desktop", budget: 16, what: "rows, page header menu of an ordinary page (file actions, icon, rename, delete)", source: "ContextMenu page kind, fileActions true" },
   "menu.page.header.nested": { env: "desktop", budget: 2, what: "submenu entries inside the page header menu (Copy as)", source: "ContextMenu .ctx-submenu-menu rows" },
   "menu.page.header.journal": { env: "desktop", budget: 16, what: "rows, page header menu of a past journal day (carry, delete journal)", source: "ContextMenu journal kind, fileActions true, a day that is not today" },
-  "menu.blockref": { env: "desktop", budget: 7, what: "rows, block-reference menu on a reference occurrence", source: "ContextMenu blockref kind with an occurrence (edit and remove-reference rows)" },
+  "menu.blockref": { env: "desktop", budget: 9, what: "rows, block-reference menu on a reference occurrence", source: "ContextMenu blockref kind with an occurrence (edit, remove-reference, replace-with-text and replace-with-embed rows; +2 OG Replace with text / embed, D-20261019-QC(5))" },
   "menu.query": { env: "desktop", budget: 8, what: "rows, query block menu (editable, with results and fold)", source: "QueryActions disclosure opened with every action offered" },
   "menu.query.readonly": { env: "desktop", budget: 5, what: "rows, query block menu on a read-only query", source: "QueryActions with editable false" },
   "menu.rsHeader": { env: "desktop", budget: 3, what: "rows, right sidebar header menu", source: "RightSidebar header ⋯ menu" },
@@ -95,7 +95,7 @@ export const SURFACES = Object.freeze({
   "mobile.menu.page.header.page": mobileMenu("page.header.page", 15), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.page.header.nested": mobileMenu("page.header.nested", 2),
   "mobile.menu.page.header.journal": mobileMenu("page.header.journal", 15), // +1 Open in new tab, D-20261018-W1
-  "mobile.menu.blockref": mobileMenu("blockref", 7),
+  "mobile.menu.blockref": mobileMenu("blockref", 9), // +2 Replace with text / embed, D-20261019-QC(5)
 });
 
 /**

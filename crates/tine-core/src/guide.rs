@@ -384,6 +384,9 @@ mod journal_guide_tests {
             "Block embed breadcrumbs",
             // GH #417/#418: per-occurrence actions on references and embeds.
             "**Edit link** and **Remove reference**",
+            // D-20261019-QC(5): OG's Replace with text / embed on a block reference.
+            "**Replace with text**, **Replace with embed**, **Edit link** and **Remove reference**",
+            "a labelled reference `[label](((id)))` is replaced whole, label included",
             "Hover an embed to show **Edit link**, **Open source** and **Remove**",
             "never the embedded page or block, and **Undo** brings it back",
             "the same buttons appear while you edit a block inside the embed",

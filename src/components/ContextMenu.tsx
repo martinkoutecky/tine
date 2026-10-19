@@ -25,7 +25,7 @@ import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
 import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
-import { editOccurrence, removeOccurrence, type OwnedOccurrence } from "../refOccurrence";
+import { editOccurrence, removeOccurrence, replaceOccurrenceWithEmbed, replaceOccurrenceWithTargetText, type OwnedOccurrence } from "../refOccurrence";
 import { commentOnRenderedSelection, renderedSelectionIn } from "../commentActions";
 import { favoriteBlock } from "../favorites";
 import { t, msg, render as renderUiText, type UiText, type Msg } from "../i18n";
@@ -661,8 +661,8 @@ function SheetMenu(props: {
 // Right-click (touch: long-press) menu for an INLINE block ref `((uuid))`. Most
 // items act on the referenced (target) block: open it in the sidebar, jump to it,
 // or copy a ref/embed. Edit link and Remove reference act on this one occurrence
-// in the containing block (GH #417; OG `delete-current-ref!`). OG's "Replace with
-// text / embed" are not offered.
+// in the containing block (GH #417; OG `delete-current-ref!`), as do Replace with
+// text / Replace with embed (OG `replace-ref-with-text!` / `-embed!`).
 function BlockRefMenu(props: {
   uuid: string;
   page: string;
@@ -690,6 +690,8 @@ function BlockRefMenu(props: {
     ...(o ? [
       { label: msg("ref-occurrence-edit"), run: () => void editOccurrence(o, o.owner) },
       { label: msg("ref-occurrence-remove-ref"), run: () => void removeOccurrence(o) },
+      { label: msg("ref-occurrence-replace-text"), run: () => void replaceOccurrenceWithTargetText(o, props.uuid) },
+      { label: msg("ref-occurrence-replace-embed"), run: () => void replaceOccurrenceWithEmbed(o, props.uuid) },
     ] : []),
   ];
   return (

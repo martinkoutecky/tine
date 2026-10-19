@@ -90,3 +90,9 @@ ref-occurrence-remove-ref-title = 从此块中移除这个引用。被引用的�
 ref-occurrence-remove-ref = 移除引用
 
 ref-occurrence-changed = 此块在显示后已更改，因此未做任何编辑。请重试。
+
+ref-occurrence-replace-text = 替换为文本
+
+ref-occurrence-replace-embed = 替换为嵌入
+
+ref-occurrence-target-unreadable = 无法读取被引用的块，因此没有做任何更改。
