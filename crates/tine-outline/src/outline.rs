@@ -17,6 +17,9 @@ use crate::editor_text::{self, js_blank, HidePolicy};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
+mod header;
+use header::header_root_kept;
+
 /// The deepest outline the kernel builds (the window's `OUTLINE_MAX_DEPTH`,
 /// the store's `PARSE_INPUT_MAX_DEPTH`): a root is depth 0, so the deepest
 /// block sits at depth 127.
@@ -351,6 +354,7 @@ pub fn apply(pages: &[OutlinePage], verb: &Verb, keys: &KeySource) -> Result<Cha
         } => move_up_down(&mut cx, keys, *up, *within_siblings)?,
         Verb::InsertEmptyChild { parent, at } => insert_empty_child(&mut cx, parent, *at)?,
     }
+    header_root_kept(&cx, verb)?;
     Ok(cx.finish())
 }
 
@@ -830,6 +834,12 @@ fn split(
     let before = &et.visible[..split_before];
     let after = &et.visible[split_after..];
     let head = js_blank(before) && !js_blank(after);
+    // The page header is one text field (GH #210 F1; `header::newline_in_header`).
+    let is_header = header::is_first_root_header(&cx.txs[t], key);
+    if is_header && (head || !js_blank(after)) {
+        return header::newline_in_header(cx, t, key, &et, offset, format);
+    }
+    let force_child = force_child && !is_header;
     let has_visible_children = !node.children.is_empty() && children_visible;
     let child_split = if head {
         keep_start_in_scope
@@ -1926,5 +1936,180 @@ mod tests {
             keys: vec!["b".into()],
         };
         assert_eq!(run(&[p], indent), Err(Reason::HeaderRoot));
+    }
+
+    /// GH #210 F1: a page whose first root is its materialized page header.
+    fn header_page() -> OutlinePage {
+        let mut p = page(
+            "P",
+            &[
+                ("h", "alias:: a\ntags:: b", &[]),
+                ("b", "body", &["c"]),
+                ("c", "child", &[]),
+            ],
+            &["h", "b"],
+        );
+        p.header_root = Some("h".into());
+        p
+    }
+
+    fn split_at(key: &str, raw_offset: usize, force_child: bool) -> Verb {
+        Verb::Split {
+            key: key.into(),
+            raw_offset,
+            force_child,
+            children_visible: true,
+            keep_start_in_scope: false,
+        }
+    }
+
+    /// GH #210 F1: Enter inside the page header never moves it below a new
+    /// block or carries a property out of it: it is OG's in-field newline
+    /// (`dwim-in-properties`). Before the fix offset 0 put an empty block above
+    /// the header and offset 10 moved `tags:: b` into the outline, which the
+    /// store refuses to save.
+    #[test]
+    fn enter_inside_the_page_header_is_a_newline_in_it() {
+        for (offset, raw, caret) in [
+            (0, "\nalias:: a\ntags:: b", 1),
+            (3, "ali\nas:: a\ntags:: b", 4),
+            (9, "alias:: a\n\ntags:: b", 10),
+            (10, "alias:: a\n\ntags:: b", 11),
+        ] {
+            let change = run(&[header_page()], split_at("h", offset, false)).unwrap();
+            let patch = &change.pages[0];
+            assert_eq!(patch.roots, None, "offset {offset}: no block is added");
+            assert_eq!(patch.upserts.len(), 1, "offset {offset}");
+            assert_eq!(patch.upserts[0].key, "h");
+            assert_eq!(patch.upserts[0].raw, raw, "offset {offset}");
+            assert!(patch.upserts[0].children.is_empty());
+            assert_eq!(
+                change.focus,
+                Some(Focus {
+                    key: "h".into(),
+                    raw_offset: Some(caret)
+                })
+            );
+        }
+    }
+
+    /// Enter at the very end of the header leaves it, into a new block below,
+    /// and never a child of it (GH #638), whatever the caller asked.
+    #[test]
+    fn enter_at_the_end_of_the_page_header_adds_a_block_below_it() {
+        for force_child in [false, true] {
+            let change = run(&[header_page()], split_at("h", 18, force_child)).unwrap();
+            let patch = &change.pages[0];
+            assert_eq!(
+                patch.roots.as_deref(),
+                Some(&["h".to_string(), "n0".to_string(), "b".to_string()][..])
+            );
+            let h = patch.upserts.iter().find(|u| u.key == "h").unwrap();
+            assert_eq!(h.raw, "alias:: a\ntags:: b");
+            assert!(h.children.is_empty());
+        }
+    }
+
+    /// A hidden property of the header stays hidden and in place; the caret
+    /// lands after the inserted newline.
+    #[test]
+    fn enter_in_a_header_with_hidden_properties_keeps_them() {
+        let mut p = header_page();
+        p.blocks.get_mut("h").unwrap().raw = "alias:: a\ncollapsed:: true".into();
+        let change = run(&[p], split_at("h", 0, false)).unwrap();
+        let h = &change.pages[0].upserts[0];
+        assert_eq!(h.raw, "\nalias:: a\ncollapsed:: true");
+        assert_eq!(change.focus.unwrap().raw_offset, Some(1));
+    }
+
+    /// No verb puts a block above the page header or moves it: each would
+    /// leave page properties in the outline, which the store refuses to save
+    /// (GH #210 F1). Before the fix all of these applied.
+    #[test]
+    fn no_verb_puts_a_block_above_the_page_header_or_under_it() {
+        let verbs = [
+            Verb::MoveUpDown {
+                keys: vec!["b".into()],
+                up: true,
+                within_siblings: false,
+            },
+            Verb::MoveUpDown {
+                keys: vec!["b".into()],
+                up: true,
+                within_siblings: true,
+            },
+            Verb::MoveUpDown {
+                keys: vec!["h".into()],
+                up: false,
+                within_siblings: false,
+            },
+            Verb::MoveTo {
+                keys: vec!["b".into()],
+                to: Place::Before { key: "h".into() },
+                inherit_from: None,
+            },
+            Verb::MoveTo {
+                keys: vec!["c".into()],
+                to: Place::Slot {
+                    parent: None,
+                    page: "P".into(),
+                    index: 0,
+                },
+                inherit_from: None,
+            },
+        ];
+        for verb in verbs {
+            assert_eq!(
+                run(&[header_page()], verb.clone()),
+                Err(Reason::HeaderRoot),
+                "{verb:?}"
+            );
+        }
+        // Ordinary edits below the header, and deleting it, still apply.
+        for verb in [
+            Verb::Outdent {
+                keys: vec!["c".into()],
+                logical: false,
+            },
+            Verb::MoveTo {
+                keys: vec!["c".into()],
+                to: Place::After { key: "h".into() },
+                inherit_from: None,
+            },
+            Verb::Delete {
+                keys: vec!["h".into()],
+            },
+            split_at("b", 0, false),
+        ] {
+            assert!(run(&[header_page()], verb.clone()).is_ok(), "{verb:?}");
+        }
+    }
+
+    /// A header already pushed below another block (an older build's state) is
+    /// not held in place, so the user can repair the page by moving or deleting.
+    #[test]
+    fn a_header_that_is_no_longer_first_is_not_held() {
+        let mut p = page(
+            "P",
+            &[("e", "", &[]), ("h", "alias:: a", &[]), ("b", "b", &[])],
+            &["e", "h", "b"],
+        );
+        p.header_root = Some("h".into());
+        assert!(run(
+            &[p.clone()],
+            Verb::Delete {
+                keys: vec!["e".into()]
+            }
+        )
+        .is_ok());
+        assert!(run(
+            &[p],
+            Verb::MoveUpDown {
+                keys: vec!["h".into()],
+                up: true,
+                within_siblings: false
+            }
+        )
+        .is_ok());
     }
 }

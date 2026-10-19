@@ -5,8 +5,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { initParser } from "../../render/parse";
 import { clearSeededFacets } from "../../render/facets";
-import { beginPageHeaderEdit, finishPageHeaderEdit, flushPage, insertEmptyChildBlock, markDirty, readPageProperties, resetStore, setBlockProperty, setPageProperty, setRaw, splitBlock } from "..";
-import { doc } from "../model";
+import { beginPageHeaderEdit, finishPageHeaderEdit, flushPage, insertEmptyChildBlock, markDirty, readPageProperties, resetStore, setBlockProperty, setPageProperty, setRaw } from "..";
+import { doc, setDoc } from "../model";
 import { loadSingle } from "../workingSet";
 import { pageToDto } from "../convert";
 import { bindTestHost } from "../host/wiring.test.support";
@@ -37,6 +37,13 @@ async function openJournal(blocks: PageDto["blocks"]) {
   return { writes };
 }
 const block = (id: string, raw: string) => ({ id, raw, collapsed: false, children: [] });
+/** An older build's state: Enter at the head of the header put an empty block
+ * above it. No edit produces it since GH #210 F1, so it is built directly. */
+function pushBelowAnEmptyBlock(id: string) {
+  const page = doc.byId[id].page;
+  setDoc("byId", "pushed-e0", { id: "pushed-e0", raw: "", collapsed: false, parent: null, page, children: [] });
+  setDoc("pages", (p) => p.name === page, "roots", (roots) => ["pushed-e0", ...roots]);
+}
 const headerToasts = () => toasts().filter((t) => /page propert|Page-header/i.test(t.message));
 
 describe("GH #210: a block that is not the page header never raises the header toast", () => {
@@ -61,14 +68,16 @@ describe("GH #210: a block that is not the page header never raises the header t
 
   // The in-memory host here has no storage firewall. In the app the store refuses
   // to save such a page ("refusing to move page-header property into outline
-  // content", GH #163): that refusal is a separate follow-up (F1), not this toast.
+  // content", GH #163). Since GH #210 F1 no edit reaches this state (Enter at the
+  // head is a newline in the header, pageHeaderHeadEnter.test.ts); an older build
+  // reached it with Enter, so it is built directly here.
   it("a block the header was pushed below is no longer the header: leaving it raises no header toast", async () => {
     const { writes } = await openJournal([block("h1", "alias:: book")]);
     expect(await flushPage(NAME)).toBe(true);
     expect(writes[0].pre_block).toBe("alias:: book"); // the fold adopted h1 as the live header
     expect(doc.byId.h1.originatedFromPageHeader).toBe(true);
 
-    splitBlock("h1", 0); // Enter at the head puts an empty block above it
+    pushBelowAnEmptyBlock("h1"); // what Enter at the head did before GH #210 F1
     const first = doc.pages[0].roots[0];
     expect(first).not.toBe("h1");
     setRaw("h1", "alias:: book\nmore text");
@@ -175,7 +184,7 @@ describe("GH #210 R2: at most one header toast per page", () => {
     setRaw("h1", "alias:: book\nprose");
     finishPageHeaderEdit("h1");
     expect(toasts()).toHaveLength(1);
-    splitBlock("h1", 0);
+    pushBelowAnEmptyBlock("h1");
     finishPageHeaderEdit("h1");
     expect(toasts()).toEqual([]);
   });
