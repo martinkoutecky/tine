@@ -70,11 +70,11 @@ export function QuickShareSettings(): JSX.Element {
       if (alive) setBusy(null);
     }
   };
-  const confirmed = async (message: string, action: "delete" | "forget", owner: WriteOwner) => {
+  const confirmed = async (message: string, action: "delete" | "forget" | "marker-remove", owner: WriteOwner) => {
     const answer = await readOwned(
       ownedWhen(() => alive, owner),
       backend().confirm(message, {
-        okLabel: t(action === "delete" ? "quick-share-settings-delete" : "quick-share-settings-forget"),
+        okLabel: t(`quick-share-settings-${action}`),
         cancelLabel: t("confirm-cancel"),
       }),
     );
@@ -153,7 +153,7 @@ export function QuickShareSettings(): JSX.Element {
    *  record is gone), after the user confirmed. */
   const removeMarker = async (marker: PendingShareMarker) => {
     const owner = bindingOwner();
-    if (busy() || !(await confirmed(t("quick-share-settings-marker-remove-confirm"), t("quick-share-settings-marker-remove"), owner))) return;
+    if (busy() || !(await confirmed(t("quick-share-settings-marker-remove-confirm"), "marker-remove", owner))) return;
     setBusy(`marker:${marker.shareId}`); setError(null);
     try {
       await finishSharePending(marker.shareId, null, owner);
