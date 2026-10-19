@@ -36,7 +36,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- Repeatedly collapsing a block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) no longer stacks extra `collapsed:: true` lines or shows them as text; existing stacked lines are removed on the next collapse toggle (GH #721).
 - **Enter on the PDF export dialog's Cancel button cancels** instead of exporting; Enter elsewhere in the dialog still exports. On a narrow phone window, Cancel and the confirming button stay together on one row (the helper buttons wrap above them) instead of splitting across two rows.
 - Page results in Search and List show each page's properties as text under its title again, in query blocks and in the Search tab (they had been dropped by a declutter pass) (GH #619).
 - Namespace page icons now follow property edits, and image icons refresh after symlink-target or filename-case asset events; files larger than 1 MiB show no icon (GH #346).
@@ -44,8 +43,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Journals shows today's body and nearby saved days while the graph loads, then merges referenced days without losing an open editor or your place (GF4).
 
 - The `((` block picker matches like Logseq: a block is listed when each space-separated piece of what you typed occurs in its text, in that order, ignoring case and accents. Before, any block containing your letters in order matched, however far apart (`fdr` found "foo draft"), which made results feel scattered. Search (Ctrl+K), the page switcher and `[[` are unchanged (UI-BLOCK-PICKER-OG-FRAGMENTS).
-- Linux: middle-click pasting text selected in a block into a rich-text app (Tuta, Anki, ...) now pastes only the selection. Before, selecting the last line of a block (a one-line block, or Select All) also pasted the editor's own markup (`<div contenteditable="plaintext-only">`), the selection toolbar's button labels and the text of the blocks below (GH #530).
+- Query exports leave out pages marked `public:: false` and the exports page, as every other export already did; the review lists the pages left out and notes when the export includes the page the query is written on. The published export no longer carries the query itself unless **Include the query text** is ticked (REG-QUERY-EXPORT-PRIVATE-PAGES).
+- Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.
+
+## [0.8.0-beta.5] - 2026-10-18
+
+### Fixed
+
 - A table, grid or board block that is the first block of a page and has its view set but no title yet is no longer rewritten as page properties when the page saves, so typing its title or adding rows no longer raises "Page-header properties must contain only valid key:: value lines" (often twice) or leaves the page unsaved. When that message is shown for a real page-properties block it now names the first line that is not a `key:: value` property (or says the block has child blocks), appears once however often you leave the editor, and is no longer shown for a block that is not the page's first block (GH #210). Choosing "Show children as: Outline" on such a block (which leaves its column-width settings behind) keeps it a block too, and setting an alias, icon or filter on that page no longer writes into the table block.
+- Repeatedly collapsing a block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) no longer stacks extra `collapsed:: true` lines or shows them as text; existing stacked lines are removed on the next collapse toggle (GH #721).
+- Linux: middle-click pasting text selected in a block into a rich-text app (Tuta, Anki, ...) now pastes only the selection. Before, selecting the last line of a block (a one-line block, or Select All) also pasted the editor's own markup (`<div contenteditable="plaintext-only">`), the selection toolbar's button labels and the text of the blocks below (GH #530).
 - Queries: folding a query block's bullet now folds its results too, as in Logseq, also when the block has no children (GH #619).
 - Queries on Windows: one click on a query's title starts the rename with the caret in the field; before, every rename after the first needed a second click. The same fix applies to the other fields that open focused (query builder values, table and board cells, context menu search) (GH #619).
 - Queries: the options in **Find blocks ▾** and the other builder menus stay on one line instead of wrapping word by word, and a menu opened in one query is no longer drawn under the query below it (GH #619).
@@ -60,8 +67,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - All pages: the header no longer shows a lone "JOURNAL DATE" line under PAGE, and a "—" no longer strikes through the first letter of the next row (the journal-date cell had no grid column). The journal-date column now appears only while "Show journals" is on, and its checkbox is drawn from the theme instead of a white native box on dark surfaces (UI-ALL-PAGES-GRID-001).
 - Settings search no longer lists unrelated settings for a one-character query such as "发" (a single character now matches only a setting's name, keywords and aliases, not its description), puts settings whose name matches before those matching only their description, and scrolls to a result whose control appears a moment after the tab opens, such as Developer tools (GH #706).
 - Org graphs: a page you create from Search (Ctrl+K), with **Customize** for Today's sections, or by opening a page or journal that has no file yet is now edited as Org from the start. Before, until Tine next read the file, a property added to it (a block id from **Copy block ref**, a page property, a collapsed or heading flag) was written Markdown-style (`id:: …`) into the `.org` file, where Logseq and Tine show it as text instead of reading it as a property (ORG-CREATED-FORMAT).
-- Query exports leave out pages marked `public:: false` and the exports page, as every other export already did; the review lists the pages left out and notes when the export includes the page the query is written on. The published export no longer carries the query itself unless **Include the query text** is ticked (REG-QUERY-EXPORT-PRIVATE-PAGES).
-- Typing on large pages no longer rebuilds outline windows or scans their descendants, including large sections and folded archives.
 - Unlinked References show every mention that fits the excerpt as a highlight again, and the numbered circles come back only for mentions past the excerpt, as before 0.8.0-beta.1 (GH #200; GH #556's one-highlight-at-a-time change is reverted, its bullet that opens the source block stays).
 
 ## [0.8.0-beta.4] - 2026-10-17
