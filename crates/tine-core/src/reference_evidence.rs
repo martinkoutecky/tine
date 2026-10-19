@@ -114,6 +114,7 @@ pub mod reference_rule {
         "explicit_embed",
         "explicit_property_key",
         "explicit_task_marker",
+        "explicit_priority",
         "implicit_linkable_property",
     ];
     pub fn serialize<S: Serializer>(value: &&'static str, s: S) -> Result<S::Ok, S::Error> {
@@ -699,33 +700,58 @@ pub fn project_with_config(
     let mut projection = ReferenceSourceProjection::default();
     let mapper = SpanMapper::block(raw);
     walk_blocks(blocks, mapper, raw, is_org, &mut projection);
-    // OG 0.10.9 graph-parser/block.cljs `with-page-refs` includes the BLOCK's
-    // marker, not task-looking headings nested in its body. The first parser
-    // header owns that marker, just as it owns the DTO's task facet.
+    // OG graph-parser/block.cljs `with-page-refs` (0.10.9 and 1.0.0) concatenates
+    // `[marker priority]` into the BLOCK's refs, not task-looking headings
+    // nested in its body. The first parser header owns both, just as it owns the
+    // DTO's task and priority facets. A priority `[#A]` references the page "A"
+    // (OG lowercases to `:block/name "a"`), as TODO references the page "todo".
     if let Some(
         Block::Heading {
-            marker: Some(marker),
+            marker,
+            priority,
             span: Some(span),
             ..
         }
         | Block::Bullet {
-            marker: Some(marker),
+            marker,
+            priority,
             span: Some(span),
             ..
         },
     ) = blocks.first()
     {
-        if let Some(range) = mapper.map(&Span(span.0.max(mapper.prefix), span.1), raw.len()) {
-            let header = raw[range.clone()].lines().next().unwrap_or_default();
-            if let Some(offset) = header.find(marker) {
-                let start = range.start + offset;
-                push_explicit_range(
-                    &mut projection,
-                    marker.to_owned(),
-                    start..start + marker.len(),
-                    raw.len(),
-                    "explicit_task_marker",
-                );
+        if marker.is_some() || priority.is_some() {
+            if let Some(range) = mapper.map(&Span(span.0.max(mapper.prefix), span.1), raw.len()) {
+                let header = raw[range.clone()].lines().next().unwrap_or_default();
+                let mut after_marker = 0;
+                if let Some(marker) = marker {
+                    if let Some(offset) = header.find(marker.as_str()) {
+                        let start = range.start + offset;
+                        push_explicit_range(
+                            &mut projection,
+                            marker.to_owned(),
+                            start..start + marker.len(),
+                            raw.len(),
+                            "explicit_task_marker",
+                        );
+                        after_marker = offset + marker.len();
+                    }
+                }
+                if let Some(priority) = priority {
+                    // The parser's accepted header token is `[#P]`; it follows
+                    // the marker, so search from there.
+                    let token = format!("[#{priority}]");
+                    if let Some(offset) = header[after_marker..].find(&token) {
+                        let start = range.start + after_marker + offset;
+                        push_explicit_range(
+                            &mut projection,
+                            priority.to_owned(),
+                            start..start + token.len(),
+                            raw.len(),
+                            "explicit_priority",
+                        );
+                    }
+                }
             }
         }
     }
@@ -1187,6 +1213,39 @@ mod tests {
         assert!(own.iter().any(|hit| hit.kind == ReferenceKind::Explicit));
         let body = evidence("ordinary body\n# TODO a secondary heading", &["TODO"]);
         assert!(body.iter().all(|hit| hit.kind != ReferenceKind::Explicit));
+    }
+
+    #[test]
+    fn priority_reference_belongs_to_the_blocks_own_header() {
+        // OG graph-parser `with-page-refs`: `[marker priority]` join the refs.
+        for raw in ["[#A] call Alice", "TODO [#A] call Alice", "## [#A] heading"] {
+            let own = evidence(raw, &["A"]);
+            let hit = own
+                .iter()
+                .find(|hit| hit.kind == ReferenceKind::Explicit)
+                .unwrap_or_else(|| panic!("{raw}: no explicit hit"));
+            assert_eq!(hit.rule, "explicit_priority");
+            let start = raw.find("[#A]").unwrap();
+            assert_eq!((hit.span.start, hit.span.end), (start, start + 4));
+        }
+        // Page identity folds case: a lowercase `[#a]` (accepted by the parser,
+        // like OG's mldoc) names the same page "A".
+        assert!(evidence("TODO [#a] x", &["A"])
+            .iter()
+            .any(|hit| hit.kind == ReferenceKind::Explicit));
+        // Not a priority: mid-text, inline code, a nested heading, after the title.
+        for raw in [
+            "see [#A] later",
+            "`[#A] code`",
+            "ordinary body\n# [#A] secondary heading",
+            "TODO task [#A] later",
+        ] {
+            let got = evidence(raw, &["A"]);
+            assert!(
+                got.iter().all(|hit| hit.kind != ReferenceKind::Explicit),
+                "{raw}: {got:?}"
+            );
+        }
     }
 
     #[test]

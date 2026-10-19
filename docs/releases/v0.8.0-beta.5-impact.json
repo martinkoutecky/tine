@@ -576,6 +576,75 @@
         "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
         "refs": []
       }
+    },
+    {
+      "section": "Fixed",
+      "text": "A table, grid or board block that is the first block of a page and has its view set but no title yet is no longer rewritten as page properties when the page saves, so typing its title or adding rows no longer raises \"Page-header properties must contain only valid key:: value lines\" (often twice) or leaves the page unsaved. When that message is shown for a real page-properties block it now names the first line that is not a `key:: value` property (or says the block has child blocks), appears once however often you leave the editor, and is no longer shown for a block that is not the page's first block (GH #210). Choosing \"Show children as: Outline\" on such a block (which leaves its column-width settings behind) keeps it a block too, and setting an alias, icon or filter on that page no longer writes into the table block.",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH210-HEADER-TOAST"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH210-HEADER-TOAST (fail-before proven on 4e389bcfe: the render journey and the Rust test write the table block into the page preamble). Linux real-app journey e2e-page-properties.mjs; Windows/macOS/Android unverified.",
+        "refs": [
+          "src/components/pageHeaderToast.test.tsx",
+          "src/document/edits/pageHeaderToast.test.ts",
+          "crates/tine-store/tests/gh210_sheet_first_bullet.rs",
+          "scripts/e2e-page-properties.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores saving of a page whose first block is a table; the Guide never described the toast or the promotion, and no sentence becomes wrong.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
+    },
+    {
+      "section": "Fixed",
+      "text": "Repeatedly collapsing a block whose `collapsed:: true` line follows a quote (as Logseq on Android writes it) no longer stacks extra `collapsed:: true` lines or shows them as text; existing stacked lines are removed on the next collapse toggle (GH #721).",
+      "userVisible": true,
+      "regressions": [
+        "UI-GH721-COLLAPSED-TRAILER"
+      ],
+      "regressionEvidence": {
+        "status": "current",
+        "reason": "Catalog coverage: UI-GH721-COLLAPSED-TRAILER (fail-before proven in jsdom on release/0.8); the Linux native journey e2e-editor-bugs.mjs is the control.",
+        "refs": [
+          "src/components/Block.collapsedTrailer.test.tsx",
+          "crates/tine-core/tests/block_regions.rs",
+          "scripts/e2e-editor-bugs.mjs"
+        ]
+      },
+      "docs": {
+        "status": "not-applicable",
+        "reason": "Restores the expected collapse of a block; no Guide page describes where collapsed:: is written.",
+        "refs": []
+      },
+      "website": {
+        "status": "not-applicable",
+        "reason": "website/demo follows master, not og (Martin 2026-10-03, b5c376247); og does not regenerate it. The app's bundled Guide is cited under docs.",
+        "refs": [
+          "website/demo/index.html"
+        ]
+      },
+      "blog": {
+        "status": "not-applicable",
+        "reason": "A Beta release: notes live in CHANGELOG.md and the GitHub prerelease; no blog entry for Beta builds.",
+        "refs": []
+      }
     }
   ]
 }

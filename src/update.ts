@@ -431,9 +431,13 @@ async function offeredVersion(): Promise<string | null> {
 }
 
 /** Schedule the one launch check after loading the device preference. OFF or an
- * unreadable preference schedules nothing. O(1) plus settings/platform I/O;
- * returned cleanup cancels the timer and retires a pending load. */
+ * unreadable preference schedules nothing, and neither does a window driven by
+ * WebDriver: no person is there to install, and an offer that depends on what
+ * is published would cover the controls an end-to-end journey clicks. O(1) plus
+ * settings/platform I/O; returned cleanup cancels the timer and retires a
+ * pending load. */
 export function scheduleAutomaticUpdateCheck(): () => void {
+  if (typeof navigator !== "undefined" && navigator.webdriver) return () => {};
   let alive = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
   void (async () => {

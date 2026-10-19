@@ -56,7 +56,10 @@ const MAGIC: &[u8; 8] = b"TINECKPT";
 /// candidate indexes and cached backlinks; old disposable caches rebuild.
 /// 15 (GH #699): parser-token extraction separates stored page tag facets and
 /// aliases; older combined names in derived indexes and answers must rebuild.
-pub(crate) const FORMAT: u32 = 15;
+/// 16 (card BqlaU, D-20261018-M2 Q6): a header priority `[#A]` joins the explicit
+/// reference projection, and the marker and priority join `refs_norm`, so cached
+/// projections, candidate indexes and backlink/query answers rebuild.
+pub(crate) const FORMAT: u32 = 16;
 /// The lsdoc release tine-core parses with (`crates/tine-core/Cargo.toml`;
 /// `checkpoint_tests::the_parser_tag_matches_the_lsdoc_pin` keeps them equal).
 pub(crate) const PARSER: &str = "lsdoc v0.5.8";

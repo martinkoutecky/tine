@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createSignal, type JSX } from "solid-js";
-import { Block } from "./Block";
+import { Block, CollapseSurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
@@ -353,6 +353,95 @@ describe("QueryMacro sheet integration", () => {
       expect(doc.byId.query.collapsed).toBe(false);
       expect(doc.byId.query.raw).not.toContain("collapsed::");
       expect(row().querySelector(".query-group")).not.toBeNull();
+    } finally { dispose(); }
+  });
+  it.each([false, true])("the query's own arrow is the bullet's fold: one state, two controls (child block: %s, GH #619 Q8)", async (withChild) => {
+    loadQueryDoc("{{query (task TODO)}}");
+    if (withChild) {
+      setDoc("byId", "hi", node("hi", "Hi", "query"));
+      setDoc("byId", "query", "children", ["hi"]);
+    }
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      const row = () => root.querySelector<HTMLElement>(":scope > .ls-block > .block-main")!;
+      const arrow = () => row().querySelector<HTMLElement>(".query-collapse")!;
+      const bulletClosed = () => row().querySelector(".bullet-closed") !== null;
+      expect(arrow().classList.contains("collapsed")).toBe(false);
+      expect(bulletClosed()).toBe(false);
+      // The arrow writes the bullet's ordinary fold, as OG does.
+      arrow().click();
+      await settleQuery();
+      expect(doc.byId.query.collapsed).toBe(true);
+      expect(doc.byId.query.raw).toContain("collapsed:: true");
+      expect(arrow().classList.contains("collapsed")).toBe(true);
+      expect(bulletClosed()).toBe(true);
+      expect(row().querySelector(".query-group")).toBeNull();
+      // The bullet expands it again, and the arrow shows it.
+      row().querySelector<HTMLElement>(".collapse-toggle")!.click();
+      await settleQuery();
+      expect(doc.byId.query.collapsed).toBe(false);
+      expect(doc.byId.query.raw).not.toContain("collapsed::");
+      expect(arrow().classList.contains("collapsed")).toBe(false);
+      expect(bulletClosed()).toBe(false);
+      expect(row().querySelector(".query-group")).not.toBeNull();
+      // And the arrow never keeps a fold of its own: nothing is stored on the device.
+      expect(localStorage.getItem("logseq-claude.queryCollapsed")).toBeNull();
+    } finally { dispose(); }
+  });
+  it.each(["md", "org"] as const)("a query authored :collapsed? true starts folded on the bullet too, and either control unfolds it for good (%s, GH #619 Q8)", async (format) => {
+    loadQueryDoc("{{query (task TODO) {:collapsed? true}}}");
+    setDoc("pages", 0, "format", format);
+    const written = (value: string) => new RegExp(format === "md" ? `collapsed:: ${value}` : `:collapsed: ${value}`);
+    const first = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      const row = () => first.root.querySelector<HTMLElement>(":scope > .ls-block > .block-main")!;
+      expect(row().querySelector(".query-collapse")!.classList.contains("collapsed")).toBe(true);
+      expect(row().querySelector(".bullet-closed")).not.toBeNull();
+      expect(row().querySelector(".query-group")).toBeNull();
+      // The bullet unfolds it. The unfold is written, or the default would fold it again.
+      row().querySelector<HTMLElement>(".collapse-toggle")!.click();
+      await settleQuery();
+      expect(doc.byId.query.raw).toMatch(written("false"));
+      expect(row().querySelector(".query-collapse")!.classList.contains("collapsed")).toBe(false);
+      expect(row().querySelector(".bullet-closed")).toBeNull();
+      expect(row().querySelector(".query-group")).not.toBeNull();
+      // The arrow folds it again as an ordinary `collapsed:: true`.
+      row().querySelector<HTMLElement>(".query-collapse")!.click();
+      await settleQuery();
+      expect(doc.byId.query.raw).toMatch(written("true"));
+      expect(row().querySelector(".bullet-closed")).not.toBeNull();
+      row().querySelector<HTMLElement>(".query-collapse")!.click();
+      await settleQuery();
+      expect(doc.byId.query.raw).toMatch(written("false"));
+    } finally { first.dispose(); }
+    document.body.innerHTML = "";
+    const second = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      expect(second.root.querySelector(".query-collapse")!.classList.contains("collapsed")).toBe(false);
+      expect(second.root.querySelector(".query-group")).not.toBeNull();
+    } finally { second.dispose(); }
+  });
+  it("in a reference surface the arrow follows that surface's fold and never writes the source (GH #619 Q8)", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    const [local, setLocal] = createSignal<boolean | undefined>(undefined);
+    const surface: CollapseSurfaceApi = {
+      collapsed: (_id, stored) => local() ?? stored,
+      toggle: (_id, current) => setLocal(!current),
+      setMany: () => {},
+    };
+    const { root, dispose } = mount(() => <CollapseSurfaceContext.Provider value={surface}><Block id="query" /></CollapseSurfaceContext.Provider>);
+    try {
+      await settleQuery();
+      const row = () => root.querySelector<HTMLElement>(":scope > .ls-block > .block-main")!;
+      row().querySelector<HTMLElement>(".query-collapse")!.click();
+      await settleQuery();
+      expect(local()).toBe(true);
+      expect(row().querySelector(".bullet-closed")).not.toBeNull();
+      expect(row().querySelector(".query-group")).toBeNull();
+      expect(doc.byId.query.raw).not.toContain("collapsed::");
     } finally { dispose(); }
   });
   it("starts a rename with the caret in the title field after one click (GH #619 c6)", async () => {
