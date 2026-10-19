@@ -571,7 +571,6 @@ query-query-result-parts-page-results-grouped = 已分组的页面结果
 
 query-query-result-parts-no-value = 无值
 
-query-query-result-parts-clear-grouping = 清除分组
 
 query-query-result-parts-a-row-with-several-tags-appears-in-every-matching-group = 一行若有多个标签，会出现在每个匹配的分组中，因此分组计数之和可能大于结果数。
 

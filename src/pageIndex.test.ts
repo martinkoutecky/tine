@@ -268,4 +268,7 @@ it("keeps readable names and reports unreadable files once when a file name can'
   const errors = toasts().filter((t) => t.kind === "error");
   expect(errors).toHaveLength(1);
   expect(errors[0].message).toContain("couldn't be read");
+  // GH #727: the toast itself names the file, and does not point at the opt-in debug log.
+  expect(errors[0].message).toContain("pages/Bad.md");
+  expect(errors[0].message).not.toContain("debug log");
 });

@@ -47,6 +47,12 @@
       "nonRequirements": ["Exact pixels, DOM structure, animation or non-Linux native certification."],
       "stability": "burn-in"
     },
+    "scripts/e2e-unreadable-files-toast.mjs": {
+      "contracts":[{"class":"stateful-ux","userOutcome":"Opening a graph with a page file that cannot be read (invalid UTF-8) shows a red toast that names the file by its graph-relative path (pages/Bad.md) and does not point at the opt-in debug log (GitHub discussion #727).","blocking":true}],
+      "acceptableVariations":["Toast wording around the file list, the reason text after the path, styling and timing may vary while the path is named and no absolute host path or debug-log pointer appears."],
+      "nonRequirements":["The more-than-five truncation and the Copy contents (unit-tested), and native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sidebar-crumbs.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A nested block opened in the right sidebar is titled with its page, an ellipsis and its nearest three ancestors rendered inline; clicking an ancestor crumb swaps that card to the ancestor without writing the page.","blocking":true},{"class":"stateful-ux","userOutcome":"With Block embed breadcrumbs on, a block embed shows its page and nearest three ancestors in a muted, smaller trail that starts at the embedded bullet (GH #440).","blocking":true}],
       "acceptableVariations":["Separator glyphs, truncation and styling may vary while the page, ancestor order and swap agree."],
@@ -138,7 +144,7 @@
       "stability":"burn-in"
     },
     "scripts/e2e-ref-embed-actions.mjs": {
-      "contracts": [{"class":"core-operation","userOutcome":"Hovering a block embed shows Edit link, Open source and Remove in the main pane, a split pane and the right sidebar; Edit link opens only that surface's editor for the containing block with the embed selected; Remove and a block reference's Remove reference change only the containing page's file and Undo restores it byte for byte; the referenced page's file never changes; Open source goes to the source page; a keyboard-focused toolbar button keeps the toolbar visible without hover and Tab moves to the next action.","blocking":true}],
+      "contracts": [{"class":"core-operation","userOutcome":"Hovering a block embed shows Edit link, Open source and Remove in the main pane, a split pane and the right sidebar; Edit link opens only that surface's editor for the containing block with the embed selected; Remove and a block reference's Remove reference change only the containing page's file and Undo restores it byte for byte; the referenced page's file never changes; Open source goes to the source page; a keyboard-focused toolbar button keeps the toolbar visible without hover and Tab moves to the next action; a block reference's Replace with text rewrites that one occurrence to the target's plain content (properties dropped) and Replace with embed to {{embed ((id))}}, each in the containing page's file only, and Undo restores it.","blocking":true}],
       "acceptableVariations":["Toolbar styling and placement, menu order and save latency may vary while the saved bytes, the selected text and the routed page agree. Hover screenshots are best-effort evidence (WebKitWebDriver screenshot GETs can stall) and never decide the verdict."],
       "nonRequirements":["Touch (focus-within) visibility and nested-embed precedence, which scripts/shot-embed-actions.mjs and component tests cover; Org graphs (E2E_FORMAT=org runs the same journey); native certification outside Linux WebKitGTK."],
       "stability":"burn-in"

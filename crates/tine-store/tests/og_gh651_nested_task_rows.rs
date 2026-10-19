@@ -172,3 +172,58 @@ fn suppression_is_per_immediate_parent_at_every_depth() {
     let gap = rows(&graph, "(and (task TODO) \"Grandchild\")", &table);
     assert_eq!(gap, vec!["TODO Grandchild of a done task".to_string()]);
 }
+
+/// An advanced query over the TODO blocks, with `option` (possibly empty) in its map.
+fn advanced(option: &str) -> String {
+    format!("{{:query [:find (pull ?b [*]) :where [?b :block/marker \"TODO\"]] {option}}}")
+}
+
+/// OG `components/query/result.cljs` `get-query-result`:
+/// `(get query-m :remove-block-children? true)` gates `tree/filter-top-level-blocks`, so an advanced
+/// query that sets it false lists every matching block, children of matching parents included. OG's
+/// own `result_test.cljs` `get-query-result-with-remove-block-children-option` pins both values.
+/// Fail-before: og ignored the key, so the `false` case answered the top-level rows (no `Child task A1`).
+#[test]
+fn remove_block_children_false_keeps_children_of_matching_parents() {
+    let _integration_guard = crate::integration_lock();
+    let (_dir, graph) = graph();
+    let top_level = names(&[
+        "TODO Parent task A",
+        "TODO Child task B1",
+        "TODO Parent task C",
+        "TODO Sibling task D",
+        "TODO Child of a note",
+        "TODO Child of a done task",
+    ]);
+    // The default, and an explicit `true`, are OG's top-level rule.
+    for option in ["", ":remove-block-children? true"] {
+        let shown = rows(&graph, &advanced(option), &[]);
+        assert_eq!(sorted(shown.clone()), top_level, "`{option}`: {shown:?}");
+    }
+    // `false` (and `nil`, which `get` returns as stored and `cond->` reads as false) keeps every match.
+    let every_match = names(&[
+        "TODO Parent task A",
+        "TODO Child task A1",
+        "TODO Child task B1",
+        "TODO Parent task C",
+        "TODO Sibling task D",
+        "TODO Child of a note",
+        "TODO Child of a done task",
+        "TODO Grandchild of a done task",
+    ]);
+    for option in [
+        ":remove-block-children? false",
+        ":remove-block-children? nil",
+    ] {
+        for props in [&[][..], &[("tine.view", "table")][..]] {
+            let shown = rows(&graph, &advanced(option), props);
+            assert_eq!(
+                sorted(shown.clone()),
+                every_match,
+                "`{option}` {props:?}: {shown:?}"
+            );
+        }
+    }
+    // The option belongs to advanced queries: the simple DSL keeps its rule.
+    assert_eq!(sorted(rows(&graph, "(task TODO)", &[])), top_level);
+}

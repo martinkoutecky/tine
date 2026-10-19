@@ -56,18 +56,18 @@ export const SURFACES = Object.freeze({
   "settings.about.open": settingsOpen("about", 8),
 
   // --- Context menus (top-level rows; submenu entries are counted apart) ----
-  "menu.block.plain": { env: "desktop", budget: 15, what: "text rows, block bullet menu, one writable block", source: "ContextMenu mounted on a plain block" },
+  "menu.block.plain": { env: "desktop", budget: 17, what: "text rows, block bullet menu, one writable block", source: "ContextMenu mounted on a plain block" },
   "menu.block.colors": { env: "desktop", budget: 8, what: "background-colour swatches in the block menu", source: "ContextMenu ctx-color buttons" },
   "menu.block.headings": { env: "desktop", budget: 8, what: "heading buttons in the block menu", source: "ContextMenu ctx-h buttons" },
-  "menu.block.full": { env: "desktop", budget: 19, what: "text rows, block bullet menu with every conditional row present", source: "ContextMenu on a block with children, a template property, a trailing pipe table and selected rendered words" },
-  "menu.block.full.nested": { env: "desktop", budget: 6, what: "submenu entries inside the full block menu (Copy as, Show children as)", source: "ContextMenu .ctx-submenu-menu rows of the full block" },
-  "menu.block.multi": { env: "desktop", budget: 14, what: "text rows, block menu on a two-block selection", source: "ContextMenu with two plain blocks selected" },
+  "menu.block.full": { env: "desktop", budget: 21, what: "text rows, block bullet menu with every conditional row present", source: "ContextMenu on a block with children, a template property, a trailing pipe table and selected rendered words" },
+  "menu.block.full.nested": { env: "desktop", budget: 3, what: "submenu entries inside the full block menu (Show children as)", source: "ContextMenu .ctx-submenu-menu rows of the full block" },
+  "menu.block.multi": { env: "desktop", budget: 16, what: "text rows, block menu on a two-block selection", source: "ContextMenu with two plain blocks selected" },
   "menu.block.readonly": { env: "desktop", budget: 6, what: "text rows, block menu on a block of a read-only page", source: "ContextMenu on a read-only page" },
   "menu.page.link": { env: "desktop", budget: 14, what: "rows, page menu from a link, sidebar row or title (no file actions)", source: "ContextMenu page kind, fileActions false, icon set so Remove page icon is present" },
   "menu.page.header.page": { env: "desktop", budget: 16, what: "rows, page header menu of an ordinary page (file actions, icon, rename, delete)", source: "ContextMenu page kind, fileActions true" },
   "menu.page.header.nested": { env: "desktop", budget: 2, what: "submenu entries inside the page header menu (Copy as)", source: "ContextMenu .ctx-submenu-menu rows" },
   "menu.page.header.journal": { env: "desktop", budget: 16, what: "rows, page header menu of a past journal day (carry, delete journal)", source: "ContextMenu journal kind, fileActions true, a day that is not today" },
-  "menu.blockref": { env: "desktop", budget: 7, what: "rows, block-reference menu on a reference occurrence", source: "ContextMenu blockref kind with an occurrence (edit and remove-reference rows)" },
+  "menu.blockref": { env: "desktop", budget: 9, what: "rows, block-reference menu on a reference occurrence", source: "ContextMenu blockref kind with an occurrence (edit, remove-reference, replace-with-text and replace-with-embed rows; +2 OG Replace with text / embed, D-20261019-QC(5))" },
   "menu.query": { env: "desktop", budget: 8, what: "rows, query block menu (editable, with results and fold)", source: "QueryActions disclosure opened with every action offered" },
   "menu.query.readonly": { env: "desktop", budget: 5, what: "rows, query block menu on a read-only query", source: "QueryActions with editable false" },
   "menu.rsHeader": { env: "desktop", budget: 3, what: "rows, right sidebar header menu", source: "RightSidebar header ⋯ menu" },
@@ -86,16 +86,16 @@ export const SURFACES = Object.freeze({
   "mobile.keyboardToolbar": { env: "mobile", budget: 15, what: "buttons in the mobile keyboard toolbar (with Hide keyboard)", source: "MobileKeyboardToolbar mounted by the app shell on an Android build" },
   "mobile.keyboardToolbar.withNavigation": { env: "mobile", budget: 19, what: "buttons in the keyboard toolbar while the keyboard is up with Navigation buttons at the bottom on (the 15 above plus Sidebar, Search, Back, Forward; GH #598, D-20261019-N2)", source: "MobileKeyboardToolbar with the App's navigation group, keyboard simulated up" },
   "mobile.bottomBar": { env: "mobile", budget: 4, what: "buttons in the bottom navigation row (Navigation buttons at the bottom on)", source: "App .mobile-navigation-toolbar" },
-  "mobile.menu.block.plain": mobileMenu("block.plain", 15), // +1 Open in new tab, D-20261018-W1
-  "mobile.menu.block.full": mobileMenu("block.full", 19), // +1 Open in new tab, D-20261018-W1
-  "mobile.menu.block.full.nested": mobileMenu("block.full.nested", 6),
-  "mobile.menu.block.multi": mobileMenu("block.multi", 14), // +1 Open in new tab, D-20261018-W1
+  "mobile.menu.block.plain": mobileMenu("block.plain", 17), // +1 Open in new tab, D-20261018-W1; +2 copy rows out of Copy as, GH #725
+  "mobile.menu.block.full": mobileMenu("block.full", 21), // +1 Open in new tab, D-20261018-W1; +2 copy rows out of Copy as, GH #725
+  "mobile.menu.block.full.nested": mobileMenu("block.full.nested", 3), // Copy as left the block menu, GH #725
+  "mobile.menu.block.multi": mobileMenu("block.multi", 16), // +1 Open in new tab, D-20261018-W1; +2 copy rows out of Copy as, GH #725
   "mobile.menu.block.readonly": mobileMenu("block.readonly", 6), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.page.link": mobileMenu("page.link", 12), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.page.header.page": mobileMenu("page.header.page", 15), // +1 Open in new tab, D-20261018-W1
   "mobile.menu.page.header.nested": mobileMenu("page.header.nested", 2),
   "mobile.menu.page.header.journal": mobileMenu("page.header.journal", 15), // +1 Open in new tab, D-20261018-W1
-  "mobile.menu.blockref": mobileMenu("blockref", 7),
+  "mobile.menu.blockref": mobileMenu("blockref", 9), // +2 Replace with text / embed, D-20261019-QC(5)
 });
 
 /**

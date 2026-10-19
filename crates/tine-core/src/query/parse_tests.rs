@@ -843,3 +843,35 @@ fn explaining_an_empty_result_is_linear_in_a_hostile_conjunct_count() {
     assert_eq!(hostile.probes.len(), 1);
     assert_eq!(count_leaves(&hostile), 2_000, "one probe, every leaf once");
 }
+
+/// OG `result.cljs` `(get query-m :remove-block-children? true)`: only the literals `false` and `nil`
+/// turn the top-level rule off, and only an advanced source can carry the key.
+#[test]
+fn remove_block_children_is_off_only_for_a_false_or_nil_advanced_option() {
+    let vector = r#"[:find (pull ?b [*]) :where [?b :block/marker "TODO"]]"#;
+    let removes = |source: &str, input| {
+        let (query, _) =
+            super::parse_query_input(source, input, TODAY, super::registry::Registry::none());
+        query.removes_block_children()
+    };
+    let advanced = |option: &str| {
+        removes(
+            &format!("{{:query {vector} {option}}}"),
+            super::QueryInput::Advanced,
+        )
+    };
+    assert!(advanced(""));
+    assert!(advanced(":remove-block-children? true"));
+    assert!(advanced(":remove-block-children? 1"));
+    assert!(
+        advanced(r#":title ":remove-block-children? false""#),
+        "a string is not an option"
+    );
+    assert!(
+        advanced(":remove-block-children? false :remove-block-children? true"),
+        "duplicates are unreadable"
+    );
+    assert!(!advanced(":remove-block-children? false"));
+    assert!(!advanced(":remove-block-children? nil"));
+    assert!(removes("(task TODO)", super::QueryInput::Og));
+}

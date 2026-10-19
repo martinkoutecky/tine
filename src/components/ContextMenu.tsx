@@ -22,12 +22,12 @@ import { setPageProperty } from "../document";
 import { carryDay } from "../carry";
 import { journalTitle, appNow } from "../journal";
 import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
-import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, node as docNode } from "../document";
+import { blockSubtreeMarkdown, deleteBlock, deleteSelection, selectionMarkdown, withUndoUnit, setBlockProperty, toggleBlockProperty, toggleOwnNumberedList, blockProperty, setSelectionHeading, blockWritable, setCollapsedDeep, flushPage, deletePage, restoreTodayJournalInFeed, reportPageLoadRefusal, selectedIds, blockPageReadOnly, pageByName, buildClipboardPayload, insertOutlineBefore, blockExternalId, node as docNode } from "../document";
 import { renameOrMergePage, renameOutcomeMessage } from "../graph";
 import { openDurableBlock } from "../blockRefActions";
-import { editOccurrence, removeOccurrence, type OwnedOccurrence } from "../refOccurrence";
+import { editOccurrence, removeOccurrence, replaceOccurrenceWithEmbed, replaceOccurrenceWithTargetText, type OwnedOccurrence } from "../refOccurrence";
 import { commentOnRenderedSelection, renderedSelectionIn } from "../commentActions";
-import { favoriteBlock } from "../favorites";
+import { favoriteBlock, isFavoriteBlock, unfavoriteBlock } from "../favorites";
 import { t, msg, render as renderUiText, type UiText, type Msg } from "../i18n";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
@@ -397,7 +397,6 @@ function BlockMenu(props: { id: string; x: number; y: number; close: () => void 
 
       <For each={blockActions(props.id, props.x, props.y, commentSelection)}>
         {(it) => (
-          <Show when={it.children} fallback={
           <div
             class="ctx-item"
             classList={{ danger: !!it.danger }}
@@ -405,7 +404,6 @@ function BlockMenu(props: { id: string; x: number; y: number; close: () => void 
           >
             {renderUiText(it.label)}
           </div>
-          }>{children => <CopyAsSubmenu items={children()} close={props.close} />}</Show>
         )}
       </For>
 
@@ -661,8 +659,8 @@ function SheetMenu(props: {
 // Right-click (touch: long-press) menu for an INLINE block ref `((uuid))`. Most
 // items act on the referenced (target) block: open it in the sidebar, jump to it,
 // or copy a ref/embed. Edit link and Remove reference act on this one occurrence
-// in the containing block (GH #417; OG `delete-current-ref!`). OG's "Replace with
-// text / embed" are not offered.
+// in the containing block (GH #417; OG `delete-current-ref!`), as do Replace with
+// text / Replace with embed (OG `replace-ref-with-text!` / `-embed!`).
 function BlockRefMenu(props: {
   uuid: string;
   page: string;
@@ -690,6 +688,8 @@ function BlockRefMenu(props: {
     ...(o ? [
       { label: msg("ref-occurrence-edit"), run: () => void editOccurrence(o, o.owner) },
       { label: msg("ref-occurrence-remove-ref"), run: () => void removeOccurrence(o) },
+      { label: msg("ref-occurrence-replace-text"), run: () => void replaceOccurrenceWithTargetText(o, props.uuid) },
+      { label: msg("ref-occurrence-replace-embed"), run: () => void replaceOccurrenceWithEmbed(o, props.uuid) },
     ] : []),
   ];
   return (
@@ -1124,6 +1124,15 @@ function RenamePage(props: {
   );
 }
 
+/** Add the block to Favorites, or remove it when it already is one (GH #725).
+ *  Membership is the durable id's: a block without an `id::` yet is not a favorite. */
+function favoriteAction(id: string): MenuAction {
+  const durable = blockExternalId(id);
+  return durable && isFavoriteBlock(durable)
+    ? { label: msg("favorites-block-remove-action"), run: () => unfavoriteBlock(durable) }
+    : { label: msg("favorites-block-action"), run: () => void favoriteBlock(id) };
+}
+
 function blockActions(id: string, x: number, y: number, commentSelection: ReturnType<typeof renderedSelectionIn> = null): MenuAction[] {
   const selected = selectedIds();
   const multi = selected.length > 1 && selected.includes(id);
@@ -1175,12 +1184,12 @@ function blockActions(id: string, x: number, y: number, commentSelection: Return
         if (inserted) startEditing(inserted, 0);
       },
     },
-    { label: msg("context-menu-ui-copy-as"), children: [
-      { label: multi ? msg("context-menu-ui-copy-block-refs") : msg("context-menu-ui-copy-block-ref"), run: () => void copyBlockLink(ids, "ref") },
-      { label: multi ? msg("context-menu-ui-copy-block-embeds") : msg("context-menu-ui-copy-block-embed"), run: () => void copyBlockLink(ids, "embed") },
-      { label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ blocks: ids }) },
-    ] },
-    ...(!multi ? [{ label: msg("favorites-block-action"), run: () => void favoriteBlock(id) }] : []),
+    // OG lists these as top-level rows (content.cljs block-context-menu-content:
+    // Copy block ref, Copy block embed, Copy block URL), not behind a submenu (GH #725).
+    { label: multi ? msg("context-menu-ui-copy-block-refs") : msg("context-menu-ui-copy-block-ref"), run: () => void copyBlockLink(ids, "ref") },
+    { label: multi ? msg("context-menu-ui-copy-block-embeds") : msg("context-menu-ui-copy-block-embed"), run: () => void copyBlockLink(ids, "embed") },
+    { label: msg("context-menu-ui-copy-link"), run: () => void copyTineLink({ blocks: ids }) },
+    ...(!multi ? [favoriteAction(id)] : []),
     { label: msg("context-menu-ui-copy", { count: ids.length }), run: copy },
     // Open the export modal for the whole selection (if this block is part of a
     // multi-selection) or just this block's subtree — preview + indent/remove opts.

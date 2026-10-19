@@ -120,9 +120,12 @@ export function setFavorites(items: FavItem[]): void {
 function commit(next: FavLayout): void {
   writeGraphSignal("favorites", layout, setLayout, next, persistArrangement, "favorites");
 }
+/** The tree without the rows `hit` selects; their children move up. */
+const dropRows = (nodes: FavNode[], hit: (node: FavNode) => boolean): FavNode[] => nodes.flatMap((node) =>
+  hit(node) ? dropRows(node.children, hit) : [{ ...node, children: dropRows(node.children, hit) }]);
 /** The tree without the favorite(s) matching `key`; their children move up. */
-const without = (nodes: FavNode[], key: string): FavNode[] => nodes.flatMap((node) =>
-  node.target !== null && nodeKey(node) === key ? without(node.children, key) : [{ ...node, children: without(node.children, key) }]);
+const without = (nodes: FavNode[], key: string): FavNode[] =>
+  dropRows(nodes, (node) => node.target !== null && nodeKey(node) === key);
 
 /** Every favorites mutator below (toggleFavorite, forgetDeletedFavorite,
  *  renameFavorite and the arrangement edits) applies to the tree at once and
@@ -144,6 +147,12 @@ export function toggleFavorite(name: string, kind: PageKind = "page"): void {
   const key = favoriteKey(name, kind);
   if (isFavoriteKey(key)) commit(without(layout(), key));
   else commit([...layout(), favoriteNode(name, kind)]);
+}
+
+/** Remove a block favorite (the block's durable id); a row's children move up,
+ *  as in `toggleFavorite`. A block that is not a favorite is a no-op. */
+export function unfavoriteBlock(id: string): void {
+  if (isFavoriteBlock(id)) commit(dropRows(layout(), (node) => node.blockId === id));
 }
 
 /** A page or journal was deleted: drop exactly that kind's favorite. */

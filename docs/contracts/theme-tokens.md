@@ -157,8 +157,24 @@ table; the table's rows are the contract, the Guide page names each one.
 - **Safe mode** (K4): **Disable custom CSS** empties `#tine-knobs` and removes
   the knob classes for the session.
 
+## 6. Transient state classes
+
+Classes a stylesheet cannot derive from the page's state, promised to theme
+authors (D-20261019-QC(6), discussion #714). `src/justToggled.ts` is the only
+writer.
+
+- **`just-toggled`** on a task's `.block-task-checkbox` and `.block-marker` for
+  `JUST_TOGGLED_MS` (700 ms) after the USER pressed that checkbox or marker word
+  (the outline row, and the checkbox of a task shown in a block reference). It
+  is never present on load, on a virtualized row's remount, or after a change
+  from sync or an external editor: it is put on the pressed elements, not
+  computed from the task's state. A second press inside the window restarts it.
+  Tine ships no animation of its own on it; a theme writes
+  `.block-task-checkbox.just-toggled { animation: ... }`.
+
 ## Tests
 
+- src/components/justToggled.test.tsx (the `just-toggled` class: absent on load and remount, present on a user toggle, removed after the window)
 - src/themeTokens.guard.test.ts (the token tables against the shipped CSS, the code and the Guide page)
 - src/styleKnobs.test.ts and src/styleKnobs.render.test.tsx (the knob table, what reaches CSS, the order of #tine-knobs, safe mode, the Settings control)
 - src/customCss.test.tsx (live reload, transient read failures keep the last sheet, latest read wins, safe mode, the palette command, the Settings affordances)

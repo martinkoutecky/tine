@@ -4,7 +4,8 @@
 //!
 //! Semantics are master's (walk + results, production comparison mode):
 //! - block rows: OG top-level roots per page (a match whose immediate parent
-//!   matched is dropped), base order journal day newest first (non-journal pages
+//!   matched is dropped, unless an advanced query sets
+//!   `:remove-block-children? false`), base order journal day newest first (non-journal pages
 //!   last), then page name, kind rank and physical path, document order within a
 //!   page;
 //! - `sort-by` is global over single blocks, re-coalescing adjacent same-page
@@ -51,6 +52,12 @@ use super::{result_dto, shallow_dto_estimated_bytes, BoundedGroups, Construction
 #[path = "exec_candidates.rs"]
 mod candidates;
 
+#[path = "exec_sample.rs"]
+mod sample;
+#[cfg(test)]
+pub(crate) use sample::pin_sample_seed;
+use sample::take_random_subset;
+
 #[cfg(test)]
 #[path = "exec_scope_tests.rs"]
 mod scope_tests;
@@ -64,6 +71,10 @@ pub(crate) struct Plan {
     /// queries). A `@page` query the legacy bridge lists block-wise answers
     /// with the page's outline blocks, as before.
     page_property_rows: bool,
+    /// Whether a block row whose immediate parent also matched is absorbed
+    /// (OG `tree/filter-top-level-blocks`). False only for an advanced query
+    /// with `:remove-block-children? false`.
+    top_level_only: bool,
     filter: Filter,
     compiled: CompiledLeaves,
     track: bool,
@@ -81,6 +92,7 @@ pub(crate) struct Plan {
 pub(crate) struct PlanCheckpointParts<'a> {
     pub(crate) anchor: Anchor,
     pub(crate) page_property_rows: bool,
+    pub(crate) top_level_only: bool,
     pub(crate) filter: &'a Filter,
     pub(crate) track: bool,
     pub(crate) today: JournalDate,
@@ -158,6 +170,7 @@ impl Plan {
         Plan {
             anchor,
             page_property_rows: query.anchor == Anchor::Block,
+            top_level_only: query.removes_block_children(),
             compiled: CompiledLeaves::for_query(&filter),
             track: eval::uses_path_refs(&filter),
             filter,
@@ -178,6 +191,7 @@ impl Plan {
         let Plan {
             anchor,
             page_property_rows,
+            top_level_only,
             filter,
             compiled: _,
             track,
@@ -189,6 +203,7 @@ impl Plan {
         PlanCheckpointParts {
             anchor: *anchor,
             page_property_rows: *page_property_rows,
+            top_level_only: *top_level_only,
             filter,
             track: *track,
             today: *today,
@@ -204,6 +219,7 @@ impl Plan {
         let PlanCheckpointParts {
             anchor,
             page_property_rows,
+            top_level_only,
             filter,
             track,
             today,
@@ -214,6 +230,7 @@ impl Plan {
         Plan {
             anchor,
             page_property_rows,
+            top_level_only,
             compiled: CompiledLeaves::for_query(filter),
             track,
             filter: filter.clone(),
@@ -407,7 +424,8 @@ impl Plan {
     }
 
     /// The block rows of one page: every matching block whose immediate parent
-    /// did not match (OG `tree/filter-top-level-blocks`), in document order.
+    /// did not match (OG `tree/filter-top-level-blocks`; every matching block
+    /// when the query sets `:remove-block-children? false`), in document order.
     /// The header page-property block comes first: OG stores it as the page's
     /// first block (`:block/pre-block? true`, `:block/properties` of the page
     /// header), so `property`, `page`, `between`, page-ref and full-text
@@ -430,6 +448,7 @@ impl Plan {
             }
         }
         struct Roots<'a, 'o, 'c, 'data> {
+            top_level_only: bool,
             filter: &'c Filter,
             ctx: &'c EvalCtx<'data>,
             matched: Vec<bool>,
@@ -438,7 +457,7 @@ impl Plan {
         impl<'a> PathRefVisitor<'a, DocBlock> for Roots<'a, '_, '_, '_> {
             fn enter(&mut self, block: &'a DocBlock, ancestors: &PathRefCounts) {
                 let hit = eval::eval_block(self.filter, block, ancestors, self.ctx);
-                if hit && !self.matched.last().copied().unwrap_or(false) {
+                if hit && !(self.top_level_only && self.matched.last().copied().unwrap_or(false)) {
                     self.out.push(Hit::Block(block));
                 }
                 self.matched.push(hit);
@@ -448,6 +467,7 @@ impl Plan {
             }
         }
         let mut visitor = Roots {
+            top_level_only: self.top_level_only,
             filter: &self.filter,
             ctx,
             matched: vec![false],
@@ -655,76 +675,6 @@ fn cost(filter: &Filter) -> u8 {
         },
         _ => 0,
     }
-}
-
-thread_local! {
-    /// A test's pinned `sample` seed (see [`pin_sample_seed`]); `None` draws a
-    /// fresh seed per execution, as OG's `shuffle` does.
-    static SAMPLE_SEED: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
-}
-
-/// Pin the seed every `sample` on THIS thread draws from, until the guard
-/// drops. A seed is the only randomness in query execution, so a test that
-/// pins it gets a reproducible subset.
-#[cfg(test)]
-pub(crate) fn pin_sample_seed(seed: u64) -> SampleSeedGuard {
-    SAMPLE_SEED.with(|cell| cell.set(Some(seed)));
-    SampleSeedGuard
-}
-
-#[cfg(test)]
-pub(crate) struct SampleSeedGuard;
-
-#[cfg(test)]
-impl Drop for SampleSeedGuard {
-    fn drop(&mut self) {
-        SAMPLE_SEED.with(|cell| cell.set(None));
-    }
-}
-
-fn fresh_sample_seed() -> u64 {
-    if let Some(seed) = SAMPLE_SEED.with(|cell| cell.get()) {
-        return seed;
-    }
-    static DRAWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
-    nanos
-        ^ DRAWS
-            .fetch_add(0x9E37_79B9_7F4A_7C15, std::sync::atomic::Ordering::Relaxed)
-            .rotate_left(17)
-}
-
-/// Keep a uniformly random subset of `items` of at most `n` elements, in their
-/// current relative order (a partial Fisher-Yates over the indices, splitmix64
-/// as the generator). Cost O(len).
-fn take_random_subset<T>(items: &mut Vec<T>, n: usize) {
-    if items.len() <= n {
-        return;
-    }
-    let mut state = fresh_sample_seed();
-    let mut next = move || {
-        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    };
-    let mut order: Vec<usize> = (0..items.len()).collect();
-    for at in 0..n {
-        let pick = at + (next() % (order.len() - at) as u64) as usize;
-        order.swap(at, pick);
-    }
-    let mut keep = vec![false; items.len()];
-    for &index in &order[..n] {
-        keep[index] = true;
-    }
-    let mut index = 0;
-    items.retain(|_| {
-        index += 1;
-        keep[index - 1]
-    });
 }
 
 /// The recency axis (Unix seconds): a journal by the day it represents, any
