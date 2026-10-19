@@ -168,3 +168,32 @@ pub(super) fn fragments_evidence(
         score: Some(if first == 0 { 1000 } else { 500 }),
     })
 }
+
+/// Evidence for `TextMatchMode::Words`: one UTF-16 span per group.
+pub(super) fn words_evidence(
+    pred: &TextPredicate,
+    original: &str,
+    remove_accents: bool,
+) -> Option<MatchEvidence> {
+    let (hay, map) = folded_with_map(original, remove_accents);
+    let folded: String = hay.iter().collect();
+    let ranges = WordsMatcher::new(&pred.value).ranges(&folded)?;
+    let char_at = |byte: usize| folded[..byte].chars().count();
+    let first = ranges.iter().map(|r| r.0).min()?;
+    let spans = ranges.iter().map(|&(start, end)| {
+        let (a, b) = (char_at(start), char_at(end));
+        MatchSpan {
+            start: map[a].start,
+            end: map[b - 1].end,
+        }
+    });
+    let mut spans: Vec<MatchSpan> = spans.collect();
+    spans.sort_by_key(|span| (span.start, span.end));
+    Some(MatchEvidence {
+        clause_id: pred.clause_id,
+        field: pred.field,
+        mode: pred.mode,
+        spans: merge_spans(spans),
+        score: Some(if first == 0 { 1000 } else { 500 }),
+    })
+}

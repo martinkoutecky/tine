@@ -188,6 +188,9 @@ mod query_owner_context;
 #[path = "query_publication.rs"]
 mod query_publication;
 
+#[path = "quick_share.rs"]
+mod quick_share;
+
 #[path = "share_selector.rs"]
 mod share_selector;
 

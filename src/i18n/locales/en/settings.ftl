@@ -236,6 +236,7 @@ settings-ui-journals = Journals
 settings-ui-files = Files
 settings-ui-backups-recovery = Backups & recovery
 settings-ui-graph = Graph
+settings-ui-sharing = Sharing
 settings-ui-plugins = Plugins
 settings-ui-help-diagnostics = Help & diagnostics
 settings-ui-keyboard-shortcuts = Keyboard shortcuts

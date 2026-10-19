@@ -13,6 +13,23 @@ export interface ResolvedPublishedPermalink {
   block?: string;
 }
 
+/** In a quick share viewer, `<login>/<gist>/<key>`: the part of the fragment
+ *  the reader never changes. Permalinks are written and read after it. */
+let sharePrefix: string | null = null;
+
+/** Set by the snapshot loader once a share opened; null outside share mode. */
+export function setQuickSharePrefix(prefix: string | null): void {
+  sharePrefix = prefix;
+}
+
+/** The fragment as the public permalink grammar sees it: a share's own
+ *  prefix removed, so `#<prefix>/page/x` reads as `#/page/x`. */
+function permalinkPart(hash: string): string {
+  if (sharePrefix === null) return hash;
+  const own = `#${sharePrefix}`;
+  return hash === own ? "" : hash.startsWith(`${own}/`) ? `#${hash.slice(own.length)}` : "";
+}
+
 const PAGE_PREFIX = "#/page/";
 const BLOCK_PREFIX = "#/block/";
 
@@ -94,6 +111,7 @@ export function openPublishedPermalink(
   hash: string,
   router: PaneRouter,
 ): OpenPublishedPermalinkResult {
+  hash = permalinkPart(hash);
   if (!hash) return { status: "ignored" };
   const target = parsePublishedPermalinkHash(hash);
   if (!target) return { status: "invalid" };
@@ -128,7 +146,8 @@ export function replacePublishedPermalink(
   target: PublishedPermalinkTarget | null,
   browser: Pick<Window, "location" | "history"> = window,
 ): void {
-  const nextHash = target ? publishedPermalinkHash(target) : "";
+  const permalink = target ? publishedPermalinkHash(target) : "";
+  const nextHash = sharePrefix === null ? permalink : `#${sharePrefix}${permalink.slice(1)}`;
   if (browser.location.hash === nextHash) return;
   const url = new URL(browser.location.href);
   url.hash = nextHash ? nextHash.slice(1) : "";

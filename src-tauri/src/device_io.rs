@@ -391,6 +391,14 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     atomic_file::atomic_write_with_check(path, bytes, || Ok(()), || {}, || {}, || {})
 }
 
+/// [`atomic_write`] for an app-data file that holds secrets: the temporary is
+/// owner-only from creation (0600 on Unix-family targets), so neither it nor
+/// the renamed file is ever readable by others (quick share records, DESIGN
+/// §1.5).
+pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    atomic_file::atomic_write_private(path, bytes)
+}
+
 /// Read–modify–write a small text file (config.edn, device settings) under a lock,
 /// committed via [`atomic_write`]. The ONE guarded path every settings writer goes
 /// through, so the discipline is uniform rather than re-derived per call site:

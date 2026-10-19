@@ -94,8 +94,10 @@ export const PERSISTED_FORMATS = Object.freeze([
   "share-inbox",
   // ADR 0074 (Martin 2026-10-11, "for now do full zips"; ADR acceptance pending).
   "backup-zip-snapshot",
+  // Martin 2026-10-18 (D-20261018-Q1 S1: Rule 8 approval of quick share's device-local records); docs/adr/0076.
+  "quick-share-records-json", "quick-share-account-json",
 ]);
-export const PINNED_FORMAT_COUNT = 31;
+export const PINNED_FORMAT_COUNT = 33;
 // Writer sites Martin approved after the base, each with its ADR. Only an
 // approved format may add sites here; the count is exact, not a budget.
 export const APPROVED_WRITER_SITES = Object.freeze({
@@ -112,7 +114,13 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   "crates/tine-store/src/transaction/move_file.rs": { sites: 1, approval: "graph text via the audited save path; 3a40f0ca1 crash-durable rewritten moves" },
   // Not a new format: rename_replace's one rename gained a Windows arm
   // (MoveFileExW with WRITE_THROUGH, falling back to std's rename; REVIEW-2b F10).
-  "crates/tine-store/src/atomic_file.rs": { sites: 1, approval: "storage s3 step 2b (Martin 2026-10-08/09 delegation); same graph-text rename, per-platform arm" },
+  // Plus the private writer (create_new owner-only temporary + write_all, then fsync + rename) of the two quick
+  // share records, the only caller (src-tauri/src/quick_share/records.rs via device_io::atomic_write_private).
+  "crates/tine-store/src/atomic_file.rs": { sites: 3, approval: "storage s3 step 2b (Martin 2026-10-08/09 delegation); same graph-text rename, per-platform arm. +2: atomic_write_private, Martin 2026-10-18 D-20261018-Q1 S1; docs/adr/0076" },
+  // Not a persisted format: the share's private build graph, a copy of the selected pages and config.edn in a
+  // tempdir under app cache that is removed before prepare returns (DESIGN §3.1), plus the in-memory gzip of the
+  // share document. Martin 2026-10-18 D-20261018-Q1 S1; docs/adr/0076.
+  "crates/tine-graph-features/src/quick_share.rs": { sites: 3, approval: "Martin 2026-10-18 D-20261018-Q1 S1 (scratch build graph removed before prepare returns, in-memory gzip); docs/adr/0076" },
   // Bench-only NDJSON event log: written only when TINE_BENCH_EVENTS names a
   // path, never read back by Tine, absent in normal use (docs/bench-storage-ab.md
   // on og-storage-perf-ab). Not a persisted format.
