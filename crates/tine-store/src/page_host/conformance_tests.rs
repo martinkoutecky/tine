@@ -681,7 +681,13 @@ fn replay(fixture: &Value) -> (usize, usize, usize) {
                     eprintln!("failure capsule: HEAD 1b040e6c7a20 + lane diff; profile {:?}; trace {ti} {:?}/{si}/{action}; expected enabled model step; observed host/model mismatch; classification=product-or-model divergence",trace["profile"],trace["name"]);
                     std::panic::resume_unwind(failure)
                 });
-            assert!(result, "trace {:?}/{si}/{name}", trace["name"]);
+            assert!(
+                result,
+                "trace {ti} profile {:?} name {:?}/{si}/{name}; twin={} occupied={} queued={} effective={}; action={action}; observed={}",
+                trace["profile"], trace["name"], d.twin_failures,
+                d.occupied_refusals, d.queued_refusals, d.effective_renames,
+                d.abstract_state()
+            );
         }
         traces += 1;
         actions += d.actions;
@@ -703,6 +709,18 @@ fn committed_itf_traces_through_host() {
     let (traces, actions, barriers) = replay(&fixture);
     assert_eq!(traces, 32);
     eprintln!("host ITF: {traces} traces / {actions} actions / {barriers} barriers");
+}
+
+// Audit reproducer: a valid Quint trace continues after the permitted twin
+// saveFail refinement. This intentionally fails until replay accounts for the
+// resulting disabled delete; it is not evidence that Host accepted a bad write.
+#[test]
+fn audit_1019_twin_then_delete_host_replay() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/s2/audit-1019-twin-then-delete.json"
+    ))
+    .unwrap();
+    assert_eq!(replay(&fixture).0, 1);
 }
 
 #[test]

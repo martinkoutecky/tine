@@ -1192,6 +1192,17 @@ fn committed_random_traces_match_every_state() {
     assert!(states >= traces);
 }
 
+// The frozen audit prefix is valid in Quint and the Rust transcription; paired
+// with the host replay reproducer, this isolates the refinement continuation.
+#[test]
+fn audit_1019_twin_then_delete_matches_quint_states() {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/s2/audit-1019-twin-then-delete.json"
+    ))
+    .unwrap();
+    assert_eq!(replay_traces(&fixture), (1, 30));
+}
+
 #[test]
 fn targeted_quint_witnesses_match_states_and_disabled_choices() {
     let fixture: Value =
