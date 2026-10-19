@@ -336,7 +336,8 @@ mod tests {
                 "a > c\ncollapsed:: true",
             ),
         ] {
-            let out = set_text(raw, false, text).unwrap();
+            // og names this `set_text`; release/0.8 has no such helper.
+            let out = join(text, &split(raw, false, &HidePolicy::Builtin).hidden, false).unwrap();
             assert_eq!(out.replace("\r\n", "\n"), expected, "{raw:?}");
             assert!(tine_outline_facet_collapsed(&out), "{out:?}");
         }
