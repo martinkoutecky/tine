@@ -82,6 +82,8 @@ mod legacy_graph_writer_guard_tests;
 pub mod model;
 #[cfg(test)]
 mod outside_roots_tests;
+#[cfg(test)]
+mod upcoming_query_tests;
 pub use file_kind::{is_asset_sidecar, is_graph_text};
 pub use model::{parse_input_depth_within_limit, PARSE_INPUT_MAX_BYTES};
 mod asset_watch;

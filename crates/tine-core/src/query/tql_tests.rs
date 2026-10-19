@@ -1327,3 +1327,162 @@ fn every_function_refuses_sql_function_modifiers() {
         ok(&format!("@page and {call}"));
     }
 }
+
+/// Card BhkrU: "blocks mentioning a day after today" is the reference element's
+/// `day`, quantified over the block's own references (OG `:block/ref-pages` +
+/// `:block/journal-day`, the NEXT query's join). The printer already spells the
+/// IR this way for an advanced NEXT query; the parser must read it back.
+#[test]
+fn direct_refs_quantifier_reads_the_reference_elements_day() {
+    let day_after_today = Filter::rel(
+        Rel::DirectRefs,
+        Quant::Any,
+        Filter::attr(Attr::Day, CmpOp::Gt, Value::date("today")),
+    );
+    let window = Filter::rel(
+        Rel::DirectRefs,
+        Quant::Any,
+        Filter::attr(
+            Attr::Day,
+            CmpOp::Between,
+            Value::List {
+                items: vec![Value::date("tomorrow"), Value::date("+7d")],
+            },
+        ),
+    );
+    let cases: &[(&str, Filter, &str)] = &[
+        (
+            "any(direct_refs, day > today)",
+            day_after_today.clone(),
+            "any(direct_refs, day > today)",
+        ),
+        (
+            "task = 'TODO' and any(direct_refs, day > today)",
+            Filter::and(vec![
+                Filter::attr(Attr::Task, CmpOp::Eq, Value::text("TODO")),
+                day_after_today.clone(),
+            ]),
+            "task = 'TODO' and any(direct_refs, day > today)",
+        ),
+        (
+            "any(direct_refs, day between 'tomorrow' and '+7d')",
+            window,
+            "any(direct_refs, day between 'tomorrow' and '+7d')",
+        ),
+        (
+            "none(direct_refs, journal = true)",
+            Filter::rel(
+                Rel::DirectRefs,
+                Quant::None,
+                Filter::attr(Attr::Journal, CmpOp::Eq, Value::Bool { value: true }),
+            ),
+            "none(direct_refs, journal = true)",
+        ),
+        (
+            "any(direct_refs, name = 'Project' or day = today)",
+            Filter::rel(
+                Rel::DirectRefs,
+                Quant::Any,
+                Filter::or(vec![
+                    Filter::attr(Attr::Name, CmpOp::Eq, Value::text("Project")),
+                    Filter::attr(Attr::Day, CmpOp::Eq, Value::date("today")),
+                ]),
+            ),
+            "any(direct_refs, name = 'Project' or day = today)",
+        ),
+    ];
+    for (source, filter, printed) in cases {
+        assert_eq!(&ok(source), filter, "{source}");
+        let text = crate::query::print::print_tql(&parse(source));
+        assert_eq!(text, *printed, "{source}");
+        assert_eq!(&ok(&text), filter, "{text}");
+    }
+}
+
+/// The element vocabulary is exactly what the evaluator answers for a
+/// reference (`name =`, `journal`, `day`); anything else is a diagnostic,
+/// never a leaf that silently matches nothing (I-22).
+#[test]
+fn direct_refs_element_rejects_what_a_reference_does_not_have() {
+    for source in [
+        "any(direct_refs, task = 'TODO')",
+        "any(direct_refs, content like '%x%')",
+        "any(direct_refs, name like 'Pro%')",
+        "any(direct_refs, name != 'Project')",
+        "any(direct_refs, name in ('a', 'b'))",
+        "any(direct_refs, page.name = 'x')",
+        "any(direct_refs, prop('k') = 'v')",
+        "any(direct_refs, any(children, true))",
+        "any(direct_refs, [[x]])",
+        "any(direct_refs, day like '2026%')",
+        "@page and any(direct_refs, day > today)",
+    ] {
+        let diagnostics = rejected(source);
+        assert!(!diagnostics.is_empty(), "{source}");
+    }
+}
+
+/// The Guide's spelling, `{{tine-query any(direct_refs, day > today)}}`, is a
+/// complete macro argument: block anchor by default, no options.
+#[test]
+fn direct_refs_condition_is_a_complete_tine_query_macro_argument() {
+    for text in [
+        "any(direct_refs, day > today)",
+        "@block and any(direct_refs, day > today)",
+        "task = 'TODO' and any(direct_refs, day between today and '+7d')",
+    ] {
+        let (query, _) = crate::query::parse_query_input(
+            text,
+            crate::query::QueryInput::MacroTql,
+            crate::date::JournalDate::today(),
+            crate::query::registry::Registry::none(),
+        );
+        assert!(!query.is_invalid(), "{text}: {:?}", query.diagnostics);
+        assert_eq!(query.anchor, Anchor::Block, "{text}");
+    }
+}
+
+/// Sibling path (card BhkrU): Logseq's older NEXT query (`:block/ref-pages` +
+/// `:block/journal-day`, gh690) lowers to `any(direct_refs, …)`. Its query
+/// text, as the text pane prints it, must read back as the same condition;
+/// before this card the printed text was a TQL diagnostic.
+#[test]
+fn advanced_next_query_prints_query_text_that_reads_back() {
+    let today = crate::date::JournalDate {
+        year: 2026,
+        month: 10,
+        day: 19,
+    };
+    let (advanced, _) = crate::query::parse_query_input(
+        r#"{:query [:find (pull ?h [*]) :in $ ?start ?next :where
+        [?h :block/ref-pages ?p] [?p :block/journal? true] [?p :block/journal-day ?d]
+        [(> ?d ?start)] [(< ?d ?next)]] :inputs [:today :14d-after]}"#,
+        crate::query::QueryInput::MacroQuery,
+        today,
+        crate::query::registry::Registry::none(),
+    );
+    // An advanced source lowers against the execution's day.
+    let resolved = crate::query::resolve_for_execution(
+        &advanced,
+        &crate::query::ir::ExecutionContext::none(),
+        today,
+    );
+    let advanced = resolved.query();
+    assert!(!advanced.is_invalid(), "{:?}", advanced.diagnostics);
+    let printed = crate::query::print::print_tql(advanced);
+    assert!(printed.contains("any(direct_refs, "), "{printed}");
+    // It reads back. The day bounds come back as date literals ('20261019')
+    // rather than the advanced input's numbers, which `compare_day` resolves
+    // to the same day; from there the text is a fixed point.
+    let reread = parse(&printed);
+    assert!(!reread.is_invalid(), "{printed}: {:?}", reread.diagnostics);
+    let canonical = crate::query::print::print_tql(&reread);
+    assert_eq!(
+        canonical,
+        "any(direct_refs, journal = true and day is not null and day > '20261019' and day < '20261102')"
+    );
+    assert_eq!(
+        crate::query::print::print_tql(&parse(&canonical)),
+        canonical
+    );
+}
