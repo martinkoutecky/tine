@@ -346,6 +346,19 @@ pub(crate) fn option_value<'a>(source: &'a str, key: &str) -> Option<&'a str> {
     found
 }
 
+/// Whether OG's top-level-result rule applies to an advanced query's block rows:
+/// `components/query/result.cljs` `get-query-result` runs
+/// `tree/filter-top-level-blocks` only `(get query-m :remove-block-children? true)`.
+/// `get` returns a stored value as written and `cond->` tests its truthiness, so
+/// exactly the literals `false` and `nil` turn the rule off; any other value, an
+/// absent key and a duplicated key (unreadable as a map) keep it on. O(source bytes).
+pub fn removes_block_children(source: &str) -> bool {
+    !matches!(
+        option_value(source, ":remove-block-children?"),
+        Some("false" | "nil")
+    )
+}
+
 /// Whether an authored advanced-query source *declares* the option `key`
 /// (for example `:result-transform`): either as a direct entry of a map form
 /// (`{:query [..] :result-transform (fn ..)}`) or as a top-level keyword

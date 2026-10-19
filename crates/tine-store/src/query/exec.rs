@@ -4,7 +4,8 @@
 //!
 //! Semantics are master's (walk + results, production comparison mode):
 //! - block rows: OG top-level roots per page (a match whose immediate parent
-//!   matched is dropped), base order journal day newest first (non-journal pages
+//!   matched is dropped, unless an advanced query sets
+//!   `:remove-block-children? false`), base order journal day newest first (non-journal pages
 //!   last), then page name, kind rank and physical path, document order within a
 //!   page;
 //! - `sort-by` is global over single blocks, re-coalescing adjacent same-page
@@ -64,6 +65,10 @@ pub(crate) struct Plan {
     /// queries). A `@page` query the legacy bridge lists block-wise answers
     /// with the page's outline blocks, as before.
     page_property_rows: bool,
+    /// Whether a block row whose immediate parent also matched is absorbed
+    /// (OG `tree/filter-top-level-blocks`). False only for an advanced query
+    /// with `:remove-block-children? false`.
+    top_level_only: bool,
     filter: Filter,
     compiled: CompiledLeaves,
     track: bool,
@@ -81,6 +86,7 @@ pub(crate) struct Plan {
 pub(crate) struct PlanCheckpointParts<'a> {
     pub(crate) anchor: Anchor,
     pub(crate) page_property_rows: bool,
+    pub(crate) top_level_only: bool,
     pub(crate) filter: &'a Filter,
     pub(crate) track: bool,
     pub(crate) today: JournalDate,
@@ -158,6 +164,7 @@ impl Plan {
         Plan {
             anchor,
             page_property_rows: query.anchor == Anchor::Block,
+            top_level_only: query.removes_block_children(),
             compiled: CompiledLeaves::for_query(&filter),
             track: eval::uses_path_refs(&filter),
             filter,
@@ -178,6 +185,7 @@ impl Plan {
         let Plan {
             anchor,
             page_property_rows,
+            top_level_only,
             filter,
             compiled: _,
             track,
@@ -189,6 +197,7 @@ impl Plan {
         PlanCheckpointParts {
             anchor: *anchor,
             page_property_rows: *page_property_rows,
+            top_level_only: *top_level_only,
             filter,
             track: *track,
             today: *today,
@@ -204,6 +213,7 @@ impl Plan {
         let PlanCheckpointParts {
             anchor,
             page_property_rows,
+            top_level_only,
             filter,
             track,
             today,
@@ -214,6 +224,7 @@ impl Plan {
         Plan {
             anchor,
             page_property_rows,
+            top_level_only,
             compiled: CompiledLeaves::for_query(filter),
             track,
             filter: filter.clone(),
@@ -407,7 +418,8 @@ impl Plan {
     }
 
     /// The block rows of one page: every matching block whose immediate parent
-    /// did not match (OG `tree/filter-top-level-blocks`), in document order.
+    /// did not match (OG `tree/filter-top-level-blocks`; every matching block
+    /// when the query sets `:remove-block-children? false`), in document order.
     /// The header page-property block comes first: OG stores it as the page's
     /// first block (`:block/pre-block? true`, `:block/properties` of the page
     /// header), so `property`, `page`, `between`, page-ref and full-text
@@ -430,6 +442,7 @@ impl Plan {
             }
         }
         struct Roots<'a, 'o, 'c, 'data> {
+            top_level_only: bool,
             filter: &'c Filter,
             ctx: &'c EvalCtx<'data>,
             matched: Vec<bool>,
@@ -438,7 +451,7 @@ impl Plan {
         impl<'a> PathRefVisitor<'a, DocBlock> for Roots<'a, '_, '_, '_> {
             fn enter(&mut self, block: &'a DocBlock, ancestors: &PathRefCounts) {
                 let hit = eval::eval_block(self.filter, block, ancestors, self.ctx);
-                if hit && !self.matched.last().copied().unwrap_or(false) {
+                if hit && !(self.top_level_only && self.matched.last().copied().unwrap_or(false)) {
                     self.out.push(Hit::Block(block));
                 }
                 self.matched.push(hit);
@@ -448,6 +461,7 @@ impl Plan {
             }
         }
         let mut visitor = Roots {
+            top_level_only: self.top_level_only,
             filter: &self.filter,
             ctx,
             matched: vec![false],

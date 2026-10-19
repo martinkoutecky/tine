@@ -1156,6 +1156,17 @@ impl Query {
         }
     }
 
+    /// Whether block rows keep only the top-level matches (a match whose
+    /// immediate parent also matched is absorbed), OG's rule for every block
+    /// result. Only an advanced query can turn it off, with
+    /// `:remove-block-children? false` (see [`crate::query_edn::removes_block_children`]).
+    pub fn removes_block_children(&self) -> bool {
+        match &self.source {
+            Source::Advanced { original, .. } => crate::query_edn::removes_block_children(original),
+            _ => true,
+        }
+    }
+
     /// The filter as the walk and the lowering evaluate it: `Off` removed
     /// bottom-up (§3.5), and for an OG-dialect source OG's dropped clauses too
     /// (D-18).

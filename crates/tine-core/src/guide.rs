@@ -1723,6 +1723,7 @@ mod og_20d_guide_tests {
             "`(task)` with no markers",
             "no datalog engine",
             "`:view` and `:result-transform` never run",
+            "`:remove-block-children? false`",
             "Advanced-query shapes that run",
             "Tagged-page name results",
             "numeric `yyyymmdd` inputs",
