@@ -132,6 +132,28 @@ fn priority_accepts_the_vector_form_like_og() {
     }
 }
 
+/// card BqlaU / D-20261018-M2 Q6: OG `graph-parser/block.cljs` `with-page-refs`
+/// concatenates `[marker priority]` into the block's refs (since 2021-05-12), so a
+/// header `[#A]` references the page "A" (`:block/name "a"`) and `[[A]]` / `[[a]]`
+/// find the block through `:block/path-refs`. A mid-text `[#A]` is no priority.
+#[test]
+fn a_priority_marker_is_a_page_reference_in_queries_like_og() {
+    let _integration_guard = crate::integration_lock();
+    let (_dir, graph) = fixture();
+    let a: BTreeSet<String> = ["[#A] urgent", "[#A] other urgent"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(set(&graph, "[[A]]"), a);
+    assert_eq!(set(&graph, "[[a]]"), a);
+    assert_eq!(set(&graph, "(and [[A]] (priority A))"), a);
+    let b: BTreeSet<String> = ["[#B] mid"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(set(&graph, "[[B]]"), b);
+    // The marker is the sibling half of the same `[marker priority]` concat.
+    let todo: BTreeSet<String> = ["TODO open"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(set(&graph, "(and [[TODO]] [[Work]])"), todo);
+}
+
 #[test]
 fn task_accepts_the_vector_form_like_og() {
     let _integration_guard = crate::integration_lock();
