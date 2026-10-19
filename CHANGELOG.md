@@ -37,6 +37,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Sticky parent bullets stay inside their own subtree: a pinned `1a` no longer covers the next row at its own level or above (its sibling `1b`, or `2`). That row now pushes the pin up and out, as a section header in a list, and a pin covers only its own descendants (GH #717).
 - **Enter on the PDF export dialog's Cancel button cancels** instead of exporting; Enter elsewhere in the dialog still exports. On a narrow phone window, Cancel and the confirming button stay together on one row (the helper buttons wrap above them) instead of splitting across two rows.
 - Page results in Search and List show each page's properties as text under its title again, in query blocks and in the Search tab (they had been dropped by a declutter pass) (GH #619).
 - Namespace page icons now follow property edits, and image icons refresh after symlink-target or filename-case asset events; files larger than 1 MiB show no icon (GH #346).
