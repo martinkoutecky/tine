@@ -52,6 +52,7 @@ impl RegistryParts {
 struct PlanParts {
     anchor: Anchor,
     page_property_rows: bool,
+    top_level_only: bool,
     filter: String,
     track: bool,
     today: i64,
@@ -173,6 +174,7 @@ impl Serialize for MemoState {
                     Some(PlanParts {
                         anchor: parts.anchor,
                         page_property_rows: parts.page_property_rows,
+                        top_level_only: parts.top_level_only,
                         filter: to_json(parts.filter)?,
                         track: parts.track,
                         today: parts.today.ordinal_key(),
@@ -234,6 +236,7 @@ impl<'de> Deserialize<'de> for MemoState {
                     Some(Arc::new(Plan::from_checkpoint_parts(PlanCheckpointParts {
                         anchor: plan.anchor,
                         page_property_rows: plan.page_property_rows,
+                        top_level_only: plan.top_level_only,
                         filter: &filter,
                         track: plan.track,
                         today: JournalDate::from_ordinal(plan.today),

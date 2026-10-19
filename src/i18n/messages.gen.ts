@@ -1740,7 +1740,6 @@ export interface MessageArgs {
   "query-query-live-preview-page": {};
   "query-query-live-preview-running": {};
   "query-query-result-parts-a-row-with-several-tags-appears-in-every-matching-group": {};
-  "query-query-result-parts-clear-grouping": {};
   "query-query-result-parts-edit-page-properties": {};
   "query-query-result-parts-edit-properties-of": { "value1": string | number };
   "query-query-result-parts-no-value": {};
