@@ -1741,6 +1741,22 @@ mod og_20d_guide_tests {
         assert!(page("Features/Queries").contains("[[Reference/Tine query model]]"));
     }
 
+    /// Card BhkrU: the Queries page teaches the "mentions a day after today"
+    /// condition, what counts as a mention, and its element fields.
+    #[test]
+    fn queries_document_the_future_day_mention_condition() {
+        let queries = page("Features/Queries");
+        for detail in [
+            "`{{tine-query any(direct_refs, day > today)}}`",
+            "whether or not that day has a journal file yet",
+            "Only the block's own links count",
+            "a `SCHEDULED:` or `DEADLINE:` date is not a mention",
+            "`name`, `journal` (true for a journal day) and `day`",
+        ] {
+            assert!(queries.contains(detail), "Queries page lost: {detail}");
+        }
+    }
+
     /// GH #422, D-18: a bare `(task)` / `(priority)` adds no condition, as in
     /// OG Logseq, and the on-query note's three rewrites are documented with
     /// the open-task rule they write. The retired claim (bare `(task)` means

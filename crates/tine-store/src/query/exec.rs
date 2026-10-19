@@ -466,7 +466,8 @@ impl Plan {
         facts: &PageFacts,
         config: &ParseConfig,
     ) -> bool {
-        if self.skips(entry, facts) {
+        let atoms = EvalCache::default();
+        if self.skips(entry, facts, config, &atoms) {
             return false;
         }
         #[cfg(feature = "test-faults")]
@@ -479,7 +480,6 @@ impl Plan {
             }
             count(&doc.roots);
         }
-        let atoms = EvalCache::default();
         let ctx = self.ctx(entry, doc, facts, config, &atoms, LinkAnswers::none());
         match self.anchor {
             Anchor::Page => eval::eval_page(&self.filter, &ctx),
@@ -492,10 +492,31 @@ impl Plan {
     }
 
     /// Candidate narrowing: a block-anchored filter that REQUIRES one of a set
-    /// of page refs can skip every page that references none of them.
-    fn skips(&self, entry: &PageEntry, facts: &PageFacts) -> bool {
+    /// of page refs can skip every page that references none of them, and one
+    /// that requires a block's own reference to a journal day in a window
+    /// (`any(direct_refs, day > today)`, card BhkrU) can skip every page none
+    /// of whose references denotes such a day. Both read only the page's
+    /// reference set ([`PageFacts::refs`]); the day test parses only
+    /// digit-bearing names, once per name per execution (`cache`).
+    fn skips(
+        &self,
+        entry: &PageEntry,
+        facts: &PageFacts,
+        config: &ParseConfig,
+        cache: &EvalCache,
+    ) -> bool {
         self.anchor == Anchor::Block
-            && required_refs(&self.filter).is_some_and(|names| !facts.may_reference(entry, &names))
+            && (required_refs(&self.filter)
+                .is_some_and(|names| !facts.may_reference(entry, &names))
+                || required_reference_days(&self.filter).is_some_and(|preds| {
+                    !facts.refs().iter().any(|name| {
+                        let day = cache.reference_day(name, config);
+                        day.is_some()
+                            && preds.iter().any(|pred| {
+                                eval::reference_date_pred(pred, day, self.today) == Some(true)
+                            })
+                    })
+                }))
     }
 }
 
@@ -554,6 +575,34 @@ fn required_refs(filter: &Filter) -> Option<Vec<String>> {
         Filter::Or { items } if !items.is_empty() => items
             .iter()
             .map(required_refs)
+            .collect::<Option<Vec<_>>>()
+            .map(|sets| sets.concat()),
+        _ => None,
+    }
+}
+
+/// Day conditions one of which some reference AUTHORED ON every matching block
+/// must satisfy: `any(direct_refs, P)` where `P` reads only `journal` / `day`
+/// and is false for a reference that is no journal day. Such a reference's
+/// name has a digit ([`eval::reference_day`]), so it is in the page's
+/// reference set; markers and priorities, which the walk adds to
+/// `direct_refs`, never are. `None` when the filter requires no such day.
+fn required_reference_days(filter: &Filter) -> Option<Vec<&Filter>> {
+    match filter {
+        Filter::Leaf {
+            leaf:
+                Leaf::Rel {
+                    rel: Rel::DirectRefs,
+                    quant: Quant::Any,
+                    pred,
+                },
+            // A reference that is no day answers the same on every day.
+        } => (eval::reference_date_pred(pred, None, JournalDate::today()) == Some(false))
+            .then(|| vec![pred.as_ref()]),
+        Filter::And { items } => items.iter().find_map(required_reference_days),
+        Filter::Or { items } if !items.is_empty() => items
+            .iter()
+            .map(required_reference_days)
             .collect::<Option<Vec<_>>>()
             .map(|sets| sets.concat()),
         _ => None,
@@ -922,7 +971,7 @@ pub(crate) fn execute_cancellable(
                         return Ok(());
                     }
                     let facts = candidates.facts(entry, doc);
-                    if plan.skips(entry, &facts) {
+                    if plan.skips(entry, &facts, config, &atoms) {
                         continue;
                     }
                     let mut hits = Vec::new();
@@ -1166,7 +1215,7 @@ fn count(graph: &ReadSnapshot, plan: &Plan, cancelled: &dyn Fn() -> bool) -> Opt
                 return None;
             }
             let facts = candidates.facts(entry, doc);
-            if plan.skips(entry, &facts) {
+            if plan.skips(entry, &facts, config, &atoms) {
                 continue;
             }
             let ctx = plan.ctx(entry, doc, &facts, config, &atoms, &links);

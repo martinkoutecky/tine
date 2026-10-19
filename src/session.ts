@@ -207,20 +207,50 @@ function validRoute(r: unknown, seenViewIds: Set<string>): Route | null {
   };
 }
 
+/** A saved tab's parent link (GH #704): an index of an EARLIER tab of the same
+ * snapshot, else none. Anything else is device input from another build or a
+ * sync tool and makes the tab a root; it never refuses the session. */
+function savedParentIndex(raw: unknown, index: number): number | undefined {
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= 0 && raw < index ? raw : undefined;
+}
+
+/** Keep the tabs `kept` marks (aligned with the saved array; null = dropped),
+ * re-pointing every parent link at the kept tab's new index. A child of a
+ * dropped tab moves up to the dropped tab's own parent, as a closed parent's
+ * children do; the router re-checks the tree (T1/T2) when it restores. */
+function compactTabs(saved: readonly (Partial<SerializedTab> | null | undefined)[], kept: readonly (SerializedTab | null)[]): SerializedTab[] {
+  const out: SerializedTab[] = [];
+  const newIndex: (number | undefined)[] = [];
+  const effective: (number | undefined)[] = []; // new index a child of saved tab i points at
+  kept.forEach((tab, i) => {
+    const p = savedParentIndex(saved[i]?.parent, i);
+    const parent = p === undefined ? undefined : effective[p];
+    if (tab) {
+      const { parent: _old, collapsed, ...base } = tab;
+      newIndex[i] = out.length;
+      out.push({ ...base, ...(parent !== undefined ? { parent } : {}), ...(collapsed === true ? { collapsed: true as const } : {}) });
+    }
+    effective[i] = newIndex[i] ?? parent;
+  });
+  return out;
+}
+
 function parseSnapshotValue(raw: unknown, seenViewIds: Set<string>): PaneSnapshot | null {
   const s = raw as Partial<PaneSnapshot> | null | undefined;
   if (!s || !Array.isArray(s.tabs)) return null;
-  const tabs: SerializedTab[] = [];
-  for (const t of s.tabs as Partial<SerializedTab>[]) {
-    if (!t || !Array.isArray(t.history) || !t.history.length) continue;
+  const saved = s.tabs as (Partial<SerializedTab> | null | undefined)[];
+  const kept = saved.map((t): SerializedTab | null => {
+    if (!t || !Array.isArray(t.history) || !t.history.length) return null;
     const history = t.history.map((route) => validRoute(route, seenViewIds)).filter((route): route is Route => !!route);
-    if (!history.length) continue;
-    tabs.push({
+    if (!history.length) return null;
+    return {
       history,
       pos: Math.min(Math.max(0, t.pos ?? 0), history.length - 1),
       pinned: !!t.pinned,
-    });
-  }
+      ...(t.collapsed === true ? { collapsed: true as const } : {}),
+    };
+  });
+  const tabs = compactTabs(saved, kept);
   if (!tabs.length) return null;
   return {
     tabs,
@@ -247,10 +277,11 @@ function previousPageRoute(t: SerializedTab): Route | null {
 }
 
 function sanitizeJournals(snapshot: PaneSnapshot, journalsSeen: { value: boolean }): PaneSnapshot | null {
-  const tabs: SerializedTab[] = [];
+  const kept: (SerializedTab | null)[] = [];
   const scrolls: (number | null)[] = [];
   let activeIndex = 0;
   snapshot.tabs.forEach((tab, i) => {
+    kept.push(null);
     const active = currentRoute(tab);
     let next = tab;
     if (active.kind === "journals") {
@@ -264,10 +295,11 @@ function sanitizeJournals(snapshot: PaneSnapshot, journalsSeen: { value: boolean
         journalsSeen.value = true;
       }
     }
-    if (i === snapshot.activeIndex) activeIndex = tabs.length;
-    tabs.push(next);
+    if (i === snapshot.activeIndex) activeIndex = scrolls.length;
+    kept[i] = next;
     scrolls.push(snapshot.scrolls?.[i] ?? null);
   });
+  const tabs = compactTabs(snapshot.tabs, kept);
   if (!tabs.length) return null;
   return { tabs, activeIndex: Math.min(activeIndex, tabs.length - 1), scrolls };
 }

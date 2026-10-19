@@ -171,6 +171,40 @@ try {
       await page.locator(".switcher-overlay").waitFor();
       await page.keyboard.press("Escape");
       console.log(`${label}: after the keyboard closes with the editor focused, the bottom row is unobscured and Search opens`);
+      // GH #598 (D-20261019-N2): the keyboard hides that row, so with the setting on the editing
+      // toolbar carries the same four buttons at its leading end. Tapping one ends the edit through
+      // the normal save, then navigates.
+      await page.locator(".main-content .ls-block .block-content").filter({ hasText: "Reads the same markdown graph", visible: true }).first().tap();
+      await page.locator("textarea.block-editor").waitFor();
+      await ime(true);
+      await page.setViewportSize({ width, height: height - 300 });
+      await dock.waitFor();
+      const group = dock.locator(".mobile-keyboard-toolbar-nav");
+      await group.waitFor();
+      for (const title of ["Toggle sidebar (t l)", "Go back", "Go forward"]) {
+        const button = group.locator(`[title="${title}"]`);
+        const box = await button.boundingBox();
+        assert.ok(box && box.x >= 0 && box.x + box.width <= width && box.y >= 0 && box.y + box.height <= height - 300, `${label}: ${title} is in the toolbar on screen; observed ${JSON.stringify(box)}`);
+        assert.ok(await page.evaluate(([x, y, t]) => document.elementFromPoint(x, y)?.closest("button")?.title === t, [box.x + box.width / 2, box.y + box.height / 2, title]), `${label}: nothing covers ${title} in the toolbar`);
+      }
+      assert.equal(await group.locator("[data-search-trigger]").count(), 1, `${label}: Search is in the toolbar group`);
+      const groupBox = await group.boundingBox();
+      const outdent = await dock.locator('.mobile-keyboard-toolbar-strip [aria-label="Outdent"]').boundingBox();
+      assert.ok(outdent && outdent.x >= groupBox.x + groupBox.width, `${label}: the formatting strip starts after the navigation group`);
+      await dock.locator(".mobile-keyboard-toolbar-strip").evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+      assert.equal(Math.round((await group.boundingBox()).x), Math.round(groupBox.x), `${label}: the group stays put when the strip scrolls`);
+      await dock.locator(".mobile-keyboard-toolbar-strip").evaluate((el) => { el.scrollLeft = 0; });
+      await page.screenshot({ path: `${out}/${label}-editing-toolbar-navigation.png` });
+      await page.keyboard.type(" SHOT598");
+      await group.locator('[title="Go back"]').tap();
+      await page.waitForFunction(async () => (await import("/src/router.ts")).route().kind === "journals");
+      assert.equal(await page.locator("textarea.block-editor").count(), 0, `${label}: the edit ended`);
+      await ime(false);
+      await page.setViewportSize({ width, height });
+      await page.locator(".mobile-navigation-toolbar [title=\"Go forward\"]").tap();
+      await page.waitForFunction(async () => (await import("/src/router.ts")).route().name === "Tine");
+      await page.locator(".main-content .ls-block .block-content").filter({ hasText: "SHOT598", visible: true }).first().waitFor();
+      console.log(`${label}: the editing toolbar carries the navigation group; Back saved the typed text and left the edit`);
     }
     await page.close();
   }

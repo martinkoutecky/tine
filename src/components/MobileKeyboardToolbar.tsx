@@ -1,5 +1,6 @@
 import { msg, t, render, type Msg } from "../i18n";
-import { For, Show, createEffect, createSignal, onCleanup, untrack, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, untrack, type Component, type JSX } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { dispatchFocusedEditorCommand, blurFocusedEditor, focusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
 import { runGlobalCommand } from "../keybindings";
 import { touchPrimary } from "../inputCapability";
@@ -117,7 +118,15 @@ function Icon(props: { name: ToolbarIcon }): JSX.Element {
   }
 }
 
-export function MobileKeyboardToolbar(): JSX.Element {
+export interface MobileKeyboardToolbarProps {
+  /** The App's Sidebar / Search / Back / Forward group, shown at the toolbar's
+   *  leading end when "Navigation buttons at the bottom" is on (GH #598,
+   *  D-20261019-N2). The toolbar only hosts it: a tap ends the edit through the
+   *  editor's normal blur save, then runs the group's own handler. */
+  navigation?: Component;
+}
+
+export function MobileKeyboardToolbar(props: MobileKeyboardToolbarProps = {}): JSX.Element {
   let toolbarRef: HTMLDivElement | undefined;
   const [dockTop, setDockTop] = createSignal(typeof window !== "undefined" ? window.innerHeight : 0);
   const [keyboardVisible, setKeyboardVisible] = createSignal(false);
@@ -350,6 +359,49 @@ export function MobileKeyboardToolbar(): JSX.Element {
   // that handler and borrows only the completion half of tapActivation.
   const hideTap = tapActivation(endHideGesture);
 
+  // GH #598: the navigation group is the App's own buttons (their onClick is the
+  // action), so activation is delegated: take the tap like tapActivation does
+  // (pointer-up first, the trailing click swallowed), then click the button. The
+  // capture-phase click listener below ends the edit BEFORE that handler runs, for
+  // every route in (tap, keyboard, assistive technology): blur is the editor's
+  // normal save path, so the text is committed before the page changes.
+  let navPointer: number | null = null;
+  const navButtonOf = (e: Event): HTMLButtonElement | null => {
+    const button = (e.target as Element | null)?.closest?.("button");
+    return button && !button.disabled ? button : null;
+  };
+  const navTap = {
+    onPointerDown(e: PointerEvent) {
+      const button = navButtonOf(e);
+      if (!button) return;
+      e.preventDefault(); // keep the editor focused until the tap completes
+      if (!e.isPrimary || e.button !== 0) return;
+      navPointer = e.pointerId;
+      button.setPointerCapture?.(e.pointerId);
+    },
+    onPointerUp(e: PointerEvent) {
+      const button = navButtonOf(e);
+      if (!button || navPointer !== e.pointerId) return;
+      navPointer = null;
+      completedPointer = e.pointerId;
+      const box = button.getBoundingClientRect();
+      const off =
+        (box.width > 0 || box.height > 0) &&
+        (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom);
+      if (!off) button.click();
+    },
+    onPointerCancel(e: PointerEvent) {
+      if (navPointer === e.pointerId) navPointer = null;
+    },
+  };
+  const endEditBeforeNavigation = (e: MouseEvent) => {
+    if (navButtonOf(e)) blurFocusedEditor();
+  };
+  const navRef = (el: HTMLDivElement) => {
+    el.addEventListener("click", endEditBeforeNavigation, true);
+    onCleanup(() => el.removeEventListener("click", endEditBeforeNavigation, true));
+  };
+
   return (
     // The toolbar belongs to the mobile shell, not a particular editor DOM node.
     // Preserve its buttons and horizontal scroll through bridge handoffs; only
@@ -364,6 +416,18 @@ export function MobileKeyboardToolbar(): JSX.Element {
         hidden={!visible()}
         style={{ ...style(), display: visible() ? undefined : "none" }}
       >
+        <Show when={props.navigation && visible()}>
+          <div
+            ref={navRef}
+            class="mobile-keyboard-toolbar-nav"
+            onPointerDown={navTap.onPointerDown}
+            onPointerUp={navTap.onPointerUp}
+            onPointerCancel={navTap.onPointerCancel}
+            onMouseDown={keepEditorFocus}
+          >
+            <Dynamic component={props.navigation} />
+          </div>
+        </Show>
         <div class="mobile-keyboard-toolbar-strip" data-lenis-prevent>
           <For each={ACTIONS}>
             {(action) => {

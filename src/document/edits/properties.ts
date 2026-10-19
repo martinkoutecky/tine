@@ -9,7 +9,7 @@ import { propertyKeyNorm } from "../../render/block";
 import { pushUndo } from "../history";
 import { orgRawWithProperty } from "./identity";
 import { markDirty, noteTitleIdentityIntent, pageFrozen } from "../host/wiring";
-import { isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
+import { canonicalPageHeaderDraft, withoutLeadingBlankLines, isPropertiesOnly, splitPagePreamble, isPageHeaderPropertiesOnly, pageHeaderBadLine, splitProps, joinProps, BUILTIN_HIDE, hideKeys, pagePropertyEntries, pagePartsWithProperty } from "../../editor/properties";
 import { produce } from "solid-js/store";
 import { type Format } from "../../types";
 import { graphRewriteFrozen } from "../graphRewriteState";
@@ -95,7 +95,10 @@ type PropertyPart = { kind: "preBlock"; text: string } | { kind: "root"; id: str
 function pagePropertyParts(page: ReadonlyFeedPage, exclude: string | null): PropertyPart[] {
   const first = page.format === "md" ? doc.byId[page.roots[0]] : undefined;
   const root = first && first.id !== exclude && (first.originatedFromPageHeader || isPropertiesOnly(first.raw)) ? first : null;
-  const rootPart: PropertyPart[] = root ? [{ kind: "root", id: root.id, text: root.raw }] : [];
+  // A header draft's leading blank lines (Enter at its start) are not part of
+  // it, as the save drops them (`canonicalPageHeaderDraft`, GH #210 F1).
+  const text = root?.originatedFromPageHeader ? withoutLeadingBlankLines(root.raw) : root?.raw ?? "";
+  const rootPart: PropertyPart[] = root ? [{ kind: "root", id: root.id, text }] : [];
   if (root?.originatedFromPageHeader) return rootPart;
   return page.preBlock || !root ? [{ kind: "preBlock", text: page.preBlock ?? "" }, ...rootPart] : rootPart;
 }
@@ -209,6 +212,7 @@ export function beginPageHeaderEdit(pageName: string): string | null {
  * reaching native persistence. */
 export function finishPageHeaderEdit(id: string): void {
   reportInvalidPageHeaderOnExit(id);
+  dropHeaderLeadingBlankLines(id);
   const node = doc.byId[id];
   if (!node?.originatedFromPageHeader || node.raw !== "" || node.children.length > 0 || graphRewriteFrozen()) return;
   // Only the page's first root is its header; a marked node pushed below another
@@ -223,6 +227,17 @@ export function finishPageHeaderEdit(id: string): void {
   );
 }
 
+/** On leaving the header editor, drop the blank lines Enter left at its start
+ * (GH #210 F1), as OG's save does (`string/triml`). The file text does not
+ * change (the save already drops them), so this is neither an undo step nor
+ * an edit to save. Only the page's first root is its header. */
+function dropHeaderLeadingBlankLines(id: string): void {
+  const node = doc.byId[id];
+  if (!node?.originatedFromPageHeader || pageByName(node.page)?.roots[0] !== id) return;
+  const raw = withoutLeadingBlankLines(node.raw);
+  if (raw !== node.raw) setDoc("byId", id, "raw", raw);
+}
+
 /** Why a marked header root cannot be written as the page's preamble, or null
  * when it can: the one rule `pageToDto` refuses a draft by and the exit toast
  * explains, so the toast never says less than the refusal (GH #210). Enter's
@@ -234,7 +249,7 @@ export type PageHeaderDraftProblem =
 export function pageHeaderDraftProblem(node: Node): PageHeaderDraftProblem | null {
   if (node.children.length > 0) return { kind: "children" };
   if (node.raw === "") return null;
-  const canonicalRaw = node.raw.replace(/\n+$/, "");
+  const canonicalRaw = canonicalPageHeaderDraft(node.raw);
   if (isPageHeaderPropertiesOnly(canonicalRaw)) return null;
   const bad = pageHeaderBadLine(canonicalRaw);
   return bad ? { kind: "line", ...bad } : { kind: "invalid" };
