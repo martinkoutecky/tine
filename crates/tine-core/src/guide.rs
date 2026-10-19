@@ -1616,6 +1616,9 @@ mod customize_look_guide_tests {
             "**Links to the web or a file**",
             "**Links to pages that do not exist yet**",
             "style.knobs.v1",
+            // Discussion #714: the transient toggle class for theme animations.
+            "`just-toggled`",
+            "never there when a page loads",
             // GH #583: arrows render as typed unless the user opts in.
             "**Typographic replacements**",
             "It is **Off** by default",
