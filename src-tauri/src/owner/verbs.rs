@@ -233,9 +233,9 @@ pub(crate) fn answer_verb(slot: &GraphSlot, request: &Request) -> Result<Value, 
         #[cfg(desktop)]
         "run.show" => super::git_run::run_show(slot, args),
         #[cfg(desktop)]
-        "run.end" => super::git_run::run_end(slot, args),
+        "run.end" => super::git_run::serialized(|| super::git_run::run_end(slot, args)),
         #[cfg(desktop)]
-        "run.revert" => super::git_run::run_revert(slot, args),
+        "run.revert" => super::git_run::serialized(|| super::git_run::run_revert(slot, args)),
         other => Err(ErrorBody::new(
             "unknown-verb",
             format!("this owner does not know `{other}`; it may be an older Tine"),
@@ -253,11 +253,14 @@ fn in_run(
 ) -> Result<Value, ErrorBody> {
     #[cfg(desktop)]
     {
-        let run = super::git_run::run_of(args)?;
-        if run.is_some() {
+        let Some(run) = super::git_run::run_of(args)? else {
+            return verb();
+        };
+        // The save and its commits as one step, in save order (CL1).
+        super::git_run::serialized(|| {
             super::git_run::check_repository(slot)?;
-        }
-        super::write::in_run(run, subject, verb)
+            super::write::in_run(Some(run), subject, verb)
+        })
     }
     #[cfg(not(desktop))]
     {

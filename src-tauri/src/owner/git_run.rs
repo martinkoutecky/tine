@@ -25,7 +25,7 @@
 //! (CL4: not a storage mode). libgit2 runs with GIT_OPT_ENABLE_FSYNC_GITDIR.
 
 use std::path::{Path, PathBuf};
-use std::sync::Once;
+use std::sync::{Mutex, Once};
 
 use git2::{ErrorCode, Oid, Repository, RepositoryState, Signature};
 use libgit2_sys::init as libgit2_init;
@@ -47,13 +47,25 @@ const WALK_LIMIT: usize = 20_000;
 /// Compare-and-swap attempts before a commit gives up.
 const CAS_ATTEMPTS: usize = 4;
 
+/// Held across a run write's save and its commits, and across `run end` and
+/// `run revert`, so the commits follow the order of the saves (CL1: "under
+/// the page lock"). Two run writes racing on one page would otherwise commit
+/// in the other order, or snapshot an agent's bytes under the user's name.
+static RUN_LOCK: Mutex<()> = Mutex::new(());
+
+/// Run `f` holding [`RUN_LOCK`].
+pub(crate) fn serialized<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = RUN_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    f()
+}
+
 /// The run a write belongs to, and who the agent is.
 #[derive(Debug, Clone)]
 pub(crate) struct RunCtx {
     pub(crate) id: RunId,
     pub(crate) author: String,
-    /// `Tine-Run` for the run's own writes, `Tine-Run-Revert` for a revert's.
-    trailer: &'static str,
+    /// For a revert's writes: the run they undo (`Tine-Run-Revert`).
+    reverts: Option<RunId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,7 +125,7 @@ pub(crate) fn run_of(args: &Value) -> Result<Option<RunCtx>, ErrorBody> {
     Ok(Some(RunCtx {
         id,
         author: author_of(args),
-        trailer: TRAILER,
+        reverts: None,
     }))
 }
 
@@ -153,7 +165,16 @@ fn git_failed(error: git2::Error) -> ErrorBody {
 /// Refuse a run's write before it changes anything when its commits could
 /// not be made (no repository, a merge in progress, a detached HEAD).
 pub(crate) fn check_repository(slot: &GraphSlot) -> Result<(), ErrorBody> {
-    open_repo(slot).map(|_| ())
+    let repo = open_repo(slot)?;
+    // Another git process holds the index (git-sync DESIGN §3.1: retry later).
+    if repo.repo.path().join("index.lock").exists() {
+        return Err(super::write::refused(
+            "git-busy",
+            None,
+            "another git command holds the repository's index (index.lock); try again when it is done",
+        ));
+    }
+    Ok(())
 }
 
 /// The graph's repository, opened and checked for commits (git-sync DESIGN
@@ -319,13 +340,38 @@ impl Repo {
     }
 
     /// Point the index entry of `path` at what was committed, so `git status`
-    /// shows the file clean when the working tree still has those bytes. A
-    /// held index lock skips this (status then shows a spurious change until
-    /// the next index refresh); the commit itself never needs the index.
-    fn sync_index(&self, path: &str, bytes: Option<&[u8]>, mode: u32) -> bool {
-        let attempt = || -> Result<(), git2::Error> {
+    /// shows the file clean when the working tree still has those bytes.
+    ///
+    /// The index is the user's: an entry staged with other content than
+    /// `HEAD` had (`tip`) or the commit's base (`old`, kept in the snapshot)
+    /// is left alone, so nothing staged is lost. A held index lock, a
+    /// conflict, or an index another process rewrote meanwhile skips the
+    /// update too; status then shows a spurious change until git refreshes.
+    fn sync_index(
+        &self,
+        path: &str,
+        bytes: Option<&[u8]>,
+        mode: u32,
+        tip: Option<Oid>,
+        old: Option<Oid>,
+    ) -> IndexSync {
+        let stamp = || {
+            let file = self.repo.path().join("index");
+            std::fs::metadata(&file)
+                .ok()
+                .map(|m| (m.len(), m.modified().ok()))
+        };
+        let attempt = || -> Result<IndexSync, git2::Error> {
+            let before = stamp();
             let mut index = self.repo.index()?;
-            index.read(false)?;
+            index.read(true)?;
+            if index.has_conflicts() {
+                return Ok(IndexSync::Busy);
+            }
+            let staged = index.get_path(Path::new(path), 0).map(|e| e.id);
+            if staged != tip && staged != old {
+                return Ok(IndexSync::StagedKept);
+            }
             match bytes {
                 Some(bytes) => {
                     let entry = git2::IndexEntry {
@@ -348,9 +394,35 @@ impl Repo {
                     let _ = index.remove_path(Path::new(path));
                 }
             }
-            index.write()
+            // libgit2 locks only for the write itself: a `git add` that
+            // rewrote the index since it was read would be overwritten.
+            if stamp() != before {
+                return Ok(IndexSync::Busy);
+            }
+            index.write()?;
+            Ok(IndexSync::Synced)
         };
-        attempt().is_ok()
+        attempt().unwrap_or(IndexSync::Busy)
+    }
+}
+
+/// What became of the index entry of a committed file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IndexSync {
+    Synced,
+    /// The user had other content staged for the file; it stays staged.
+    StagedKept,
+    /// The index was locked, conflicted or changing; it was not touched.
+    Busy,
+}
+
+impl IndexSync {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Synced => "synced",
+            Self::StagedKept => "staged-kept",
+            Self::Busy => "busy",
+        }
     }
 }
 
@@ -358,7 +430,7 @@ impl Repo {
 pub(crate) struct Committed {
     snapshot: Option<Oid>,
     agent: Oid,
-    index_synced: bool,
+    index: IndexSync,
 }
 
 impl Committed {
@@ -367,7 +439,7 @@ impl Committed {
             "committed": true,
             "commit": self.agent.to_string(),
             "snapshot": self.snapshot.map(|o| o.to_string()),
-            "index": self.index_synced,
+            "index": self.index.code(),
         })
     }
 }
@@ -389,7 +461,7 @@ pub(crate) fn commit_write(
         old,
         new,
         &snapshot_message(page, run.id.as_str()),
-        &agent_message(summary, page, run.trailer, run.id.as_str()),
+        &agent_message(summary, page, run),
         &run.author,
     )
 }
@@ -401,8 +473,16 @@ fn snapshot_message(page: &PageId, id: &str) -> String {
     )
 }
 
-fn agent_message(summary: &str, page: &PageId, trailer: &str, id: &str) -> String {
-    format!("{summary}: {}\n\n{trailer}: {id}\n", page.as_str())
+fn agent_message(summary: &str, page: &PageId, run: &RunCtx) -> String {
+    let mut message = format!(
+        "{summary}: {}\n\n{TRAILER}: {}\n",
+        page.as_str(),
+        run.id.as_str()
+    );
+    if let Some(undone) = &run.reverts {
+        message.push_str(&format!("{REVERT_TRAILER}: {}\n", undone.as_str()));
+    }
+    message
 }
 
 fn commit_pair(
@@ -472,11 +552,17 @@ fn commit_pair(
             .advance(tip.as_ref().map(|c| c.id()), oid, "tine run: commit")
             .map_err(git_failed)?
         {
-            let index_synced = repo.sync_index(&path, new, mode as u32);
+            let index = repo.sync_index(
+                &path,
+                new,
+                mode as u32,
+                repo.blob_at(tip_tree.as_ref(), &path),
+                old_blob,
+            );
             return Ok(Committed {
                 snapshot,
                 agent: oid,
-                index_synced,
+                index,
             });
         }
     }
@@ -502,11 +588,14 @@ pub(crate) fn run_begin(slot: &GraphSlot) -> Result<Value, ErrorBody> {
     ))
 }
 
+/// The commit carries `trailer: id` in its trailer block (git's own parse,
+/// as `git interpret-trailers --parse`), not merely somewhere in its prose.
 fn has_trailer(commit: &git2::Commit<'_>, trailer: &str, id: &str) -> bool {
-    let want = format!("{trailer}: {id}");
-    commit
-        .message_raw()
-        .is_ok_and(|m| m.lines().any(|l| l.trim_end() == want))
+    let Ok(message) = commit.message_raw() else {
+        return false;
+    };
+    git2::message_trailers_strs(message)
+        .is_ok_and(|t| t.iter().any(|(k, v)| k == trailer && v.trim() == id))
 }
 
 /// First-parent history from the tip back to just before the run began.
@@ -725,85 +814,125 @@ pub(crate) fn revert_plan(slot: &GraphSlot, id: &RunId) -> Result<Vec<PageSteps>
     Ok(pages)
 }
 
-/// `run.revert`: undo the run's agent commits, newest first, one guarded
-/// write per page (D-20261019-CL3). A block the user changed since keeps the
-/// user's text and is listed; each page's revert is committed with a
-/// `Tine-Run-Revert` trailer, so it is not part of the run.
+/// `run.revert`: undo the run's agent commits, newest first (D-20261019-CL3).
+/// A block the user changed since keeps the user's text and is listed.
+///
+/// The revert is itself a run with a new id (its commits carry `Tine-Run:
+/// <new id>` and `Tine-Run-Revert: <undone id>`), so `run revert <new id>`
+/// undoes the whole revert in one command. Every page is merged before any is
+/// written: a page the merge refuses refuses the revert, with nothing changed.
 pub(crate) fn run_revert(slot: &GraphSlot, args: &Value) -> Result<Value, ErrorBody> {
     use tine_graph_features::run_revert::{revert_page, RevertStep};
     let id = id_arg(args)?;
-    let ctx = RunCtx {
-        id: id.clone(),
-        author: author_of(args),
-        trailer: REVERT_TRAILER,
-    };
     let plan = revert_plan(slot, &id)?;
-    let mut pages = Vec::new();
-    for entry in &plan {
-        let texts: Vec<(String, String)> = entry
-            .steps
-            .iter()
-            .map(|(before, after)| (text_of(before.as_deref()), text_of(after.as_deref())))
-            .collect();
-        let steps: Vec<RevertStep<'_>> = texts
-            .iter()
-            .map(|(before, after)| RevertStep { before, after })
-            .collect();
-        let mut kept = Vec::new();
-        let mut unchanged = false;
-        let result = super::write::in_run(Some(ctx.clone()), "Revert agent run", || {
-            super::write::write_page_from_bytes(
-                slot,
-                &entry.page,
-                tine_store::EditKind::ReplacePage,
-                None,
-                false,
-                |_, page, bytes| {
-                    let current = std::str::from_utf8(bytes).map_err(|_| {
-                        super::write::refused("store", Some(page), "the page is not UTF-8 text")
-                    })?;
-                    let reverted = revert_page(&slot.store, page, current, &steps)
-                        .map_err(|e| super::write::refused("merge", Some(page), e.to_string()))?;
-                    kept = reverted.kept;
-                    if !reverted.changed {
-                        unchanged = true;
-                        return Err(ErrorBody::new(UNCHANGED, "", false));
+    let ctx = RunCtx {
+        id: RunId::mint(chrono::Utc::now().timestamp()),
+        author: author_of(args),
+        reverts: Some(id.clone()),
+    };
+    let texts: Vec<Vec<(String, String)>> = plan
+        .iter()
+        .map(|entry| {
+            entry
+                .steps
+                .iter()
+                .map(|(before, after)| (text_of(before.as_deref()), text_of(after.as_deref())))
+                .collect()
+        })
+        .collect();
+    // One pass over the pages: `write` false merges and stops before saving.
+    let pass = |write: bool, outcome: &mut Vec<Value>| -> Vec<(String, ErrorBody)> {
+        let mut refused = Vec::new();
+        for (entry, texts) in plan.iter().zip(&texts) {
+            let steps: Vec<RevertStep<'_>> = texts
+                .iter()
+                .map(|(before, after)| RevertStep { before, after })
+                .collect();
+            let mut kept = Vec::new();
+            let mut unchanged = false;
+            let mut merged = false;
+            let compute = |_: &_, page: &PageId, bytes: &[u8]| {
+                let current = std::str::from_utf8(bytes).map_err(|_| {
+                    super::write::refused("store", Some(page), "the page is not UTF-8 text")
+                })?;
+                let reverted = revert_page(&slot.store, page, current, &steps)
+                    .map_err(|e| super::write::refused("merge", Some(page), e.to_string()))?;
+                kept = reverted.kept;
+                merged = true;
+                if !reverted.changed {
+                    unchanged = true;
+                    return Err(ErrorBody::new(UNCHANGED, "", false));
+                }
+                if !write {
+                    return Err(ErrorBody::new(DRY_RUN, "", false));
+                }
+                Ok(super::write::Planned {
+                    doc: reverted.doc,
+                    changed: Vec::new(),
+                })
+            };
+            let result = super::write::in_run(Some(ctx.clone()), "Revert agent run", || {
+                super::write::write_page_from_bytes(
+                    slot,
+                    &entry.page,
+                    tine_store::EditKind::ReplacePage,
+                    None,
+                    false,
+                    compute,
+                )
+            });
+            if !write {
+                if let Err(error) = result {
+                    if !merged {
+                        refused.push((entry.page.as_str().to_string(), error));
                     }
-                    Ok(super::write::Planned {
-                        doc: reverted.doc,
-                        changed: Vec::new(),
-                    })
-                },
-            )
-        });
-        let kept: Vec<Value> = kept
-            .iter()
-            .map(|k| json!({ "text": k.text, "reason": k.reason.code() }))
-            .collect();
-        pages.push(match result {
-            Ok(reply) => json!({
-                "page": entry.page.as_str(),
-                "reverted": true,
-                "rev": reply.get("rev"),
-                "git": reply.get("git"),
-                "kept": kept,
-            }),
-            Err(_) if unchanged => json!({
-                "page": entry.page.as_str(),
-                "reverted": false,
-                "kept": kept,
-            }),
-            Err(error) => json!({
-                "page": entry.page.as_str(),
-                "reverted": false,
-                "error": reason_of(&error),
-                "message": error.message,
-            }),
-        });
+                }
+                continue;
+            }
+            let kept: Vec<Value> = kept
+                .iter()
+                .map(|k| json!({ "text": k.text, "reason": k.reason.code() }))
+                .collect();
+            outcome.push(match result {
+                Ok(reply) => json!({
+                    "page": entry.page.as_str(),
+                    "reverted": true,
+                    "rev": reply.get("rev"),
+                    "git": reply.get("git"),
+                    "kept": kept,
+                }),
+                Err(_) if unchanged => json!({
+                    "page": entry.page.as_str(),
+                    "reverted": false,
+                    "kept": kept,
+                }),
+                Err(error) => json!({
+                    "page": entry.page.as_str(),
+                    "reverted": false,
+                    "error": reason_of(&error),
+                    "message": error.message,
+                }),
+            });
+        }
+        refused
+    };
+    let refused = pass(false, &mut Vec::new());
+    if let Some((page, error)) = refused.into_iter().next() {
+        return Err(super::write::refused(
+            "merge",
+            None,
+            format!(
+                "{page} cannot be reverted ({}): {}; nothing was changed",
+                reason_of(&error),
+                error.message
+            ),
+        ));
     }
+    let mut pages = Vec::new();
+    pass(true, &mut pages);
     Ok(ok(
         "run-revert",
-        json!({ "run": id.as_str(), "pages": pages }),
+        json!({ "run": id.as_str(), "revert_run": ctx.id.as_str(), "pages": pages }),
     ))
 }
 
@@ -822,6 +951,8 @@ pub(crate) fn reason_of(error: &ErrorBody) -> String {
 
 /// The sentinel a revert's compute returns when the page needs no write.
 const UNCHANGED: &str = "unchanged";
+/// The sentinel a revert's checking pass returns instead of saving.
+const DRY_RUN: &str = "dry-run";
 
 fn text_of(bytes: Option<&[u8]>) -> String {
     bytes

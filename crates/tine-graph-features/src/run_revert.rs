@@ -8,7 +8,12 @@
 //!   so the agent's edit, insertion or deletion is undone;
 //! - a row the user changed since (`MineOnly`) stays as it is;
 //! - a row both changed (`BothChanged`), or one the base cannot place, keeps
-//!   the user's text and is listed in [`RevertedPage::kept`].
+//!   the user's text and is listed in [`RevertedPage::kept`];
+//! - an old block the agent's result has no partner for (Concord pairs only
+//!   close texts) is restored only when every block the agent wrote is still
+//!   on the page unchanged; otherwise "the agent deleted it" cannot be told
+//!   from "the agent rewrote it and the user deleted that", so the page stays
+//!   as the user has it and the old block is listed as `unclear`.
 //!
 //! Nothing is written here: the caller saves [`RevertedPage::doc`] through
 //! the guarded save, once per page, so the whole revert of a page is one
@@ -45,6 +50,12 @@ pub enum KeptReason {
     /// The merge base could not place the block, so the safe choice is the
     /// user's text.
     NoBase,
+    /// A block from before the agent's commit that the revert did not bring
+    /// back: the agent removed or rewrote it beyond recognition, and the
+    /// user has since changed or removed a block the agent wrote, so the
+    /// revert cannot tell whether the user meant it gone. `text` is the old
+    /// block's first line.
+    Unclear,
 }
 
 impl KeptReason {
@@ -52,6 +63,7 @@ impl KeptReason {
         match self {
             Self::ChangedSince => "changed-since",
             Self::NoBase => "no-base",
+            Self::Unclear => "unclear",
         }
     }
 }
@@ -132,6 +144,9 @@ struct Partners {
     base_of_now: HashMap<Key, Key>,
     /// Base blocks the agent's commit did not touch.
     untouched: std::collections::HashSet<Key>,
+    /// A block the agent wrote with no old partner is no longer on the page
+    /// as the agent left it.
+    agent_block_gone: bool,
 }
 
 impl Partners {
@@ -144,17 +159,36 @@ impl Partners {
                 pairs(&row.children, out);
             }
         }
+        fn base_sides(rows: &[DiffRow], out: &mut Vec<Key>) {
+            for row in rows {
+                if let Some(base) = &row.mine {
+                    out.push(key(base));
+                }
+                base_sides(&row.children, out);
+            }
+        }
+        let base_old_rows = sync_diff::diff_blocks(&base.roots, &old.roots);
         let mut base_old = Vec::new();
-        pairs(
-            &sync_diff::diff_blocks(&base.roots, &old.roots),
-            &mut base_old,
-        );
+        pairs(&base_old_rows, &mut base_old);
+        let mut base_keys = Vec::new();
+        base_sides(&base_old_rows, &mut base_keys);
         let mut base_now = Vec::new();
         pairs(
             &sync_diff::diff_blocks(&base.roots, &now.roots),
             &mut base_now,
         );
+        let paired_with_old: std::collections::HashSet<&Key> =
+            base_old.iter().map(|(b, _, _)| b).collect();
+        let intact: std::collections::HashSet<&Key> = base_now
+            .iter()
+            .filter(|(_, _, kind)| *kind == RowKind::Unchanged)
+            .map(|(b, _, _)| b)
+            .collect();
+        let agent_block_gone = base_keys
+            .iter()
+            .any(|b| !paired_with_old.contains(b) && !intact.contains(b));
         Partners {
+            agent_block_gone,
             untouched: base_old
                 .iter()
                 .filter(|(_, _, kind)| *kind == RowKind::Unchanged)
@@ -195,6 +229,13 @@ fn decide(
                     // agent's version alone; otherwise the user's state wins.
                     let old = row.theirs.as_ref().map(key);
                     match old.and_then(|old| partners.base_of_old.get(&old)) {
+                        None if partners.agent_block_gone => {
+                            let text = row.theirs.as_ref().map(|t| first_line(&t.text));
+                            kept.push(KeptBlock {
+                                text: text.unwrap_or_default(),
+                                reason: KeptReason::Unclear,
+                            });
+                        }
                         None => {
                             decisions.insert(row.id.clone(), "theirs".into());
                         }
@@ -341,12 +382,14 @@ mod tests {
         let after = "- alpha\n- beta, agent\n";
         let current = "- alpha\n- beta, agent, and then you\n";
         let (rows, _, kept) = revert(current, &[(before, after)]);
-        // Short texts this far apart are not paired by Concord, at either
-        // step, so this reads as "the agent deleted beta" and "you wrote a
-        // new block": beta comes back and your block stays. Nothing of yours
-        // is lost; the paired case below is the one that lists the block.
-        assert_eq!(rows, ["alpha", "beta, agent, and then you", "beta"]);
-        assert!(kept.is_empty());
+        // Short texts this far apart are not paired by Concord, so "the agent
+        // deleted beta" cannot be told from "the agent rewrote beta and you
+        // rewrote that": your text stays, beta is not brought back, and it is
+        // listed so nothing disappears silently.
+        assert_eq!(rows, ["alpha", "beta, agent, and then you"]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].text, "beta");
+        assert_eq!(kept[0].reason, KeptReason::Unclear);
     }
 
     #[test]
@@ -379,10 +422,37 @@ mod tests {
         let after = "- alpha\n- beta, agent\n";
         let current = "- alpha\n";
         let (rows, _, kept) = revert(current, &[(before, after)]);
-        // Unpaired (see above): the agent's insertion is gone already, its
-        // deletion of "beta" is undone.
-        assert_eq!(rows, ["alpha", "beta"]);
+        // Unpaired (see above): the user deleted the agent's version, so the
+        // old text is not restored; it is listed instead.
+        assert_eq!(rows, ["alpha"]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].text, "beta");
+        assert_eq!(kept[0].reason, KeptReason::Unclear);
+    }
+
+    #[test]
+    fn a_pure_agent_deletion_is_restored_when_the_users_edits_are_elsewhere() {
+        let before = "- alpha\n- beta\n- gamma\n";
+        let after = "- alpha\n- gamma\n";
+        let current = "- alpha typed by you\n- gamma\n";
+        let (rows, _, kept) = revert(current, &[(before, after)]);
+        assert_eq!(rows, ["alpha typed by you", "beta", "gamma"]);
         assert!(kept.is_empty());
+    }
+
+    #[test]
+    fn an_unpaired_rewrite_the_user_edited_is_kept_and_listed() {
+        let before = "- alpha\n- short\n";
+        let after = "- alpha\n- an entirely different sentence by the agent\n";
+        let current = "- alpha\n- you replaced the agent's sentence completely\n";
+        let (rows, _, kept) = revert(current, &[(before, after)]);
+        assert_eq!(
+            rows,
+            ["alpha", "you replaced the agent's sentence completely"]
+        );
+        assert!(kept
+            .iter()
+            .any(|k| k.text == "short" && k.reason == KeptReason::Unclear));
     }
 
     #[test]

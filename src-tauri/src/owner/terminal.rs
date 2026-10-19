@@ -401,14 +401,22 @@ pub(super) fn render(ok: &Value, out: &mut String) {
                 };
                 let _ = writeln!(out, "{verb} {}", text(page, "page"));
                 for kept in list(page, "kept") {
+                    let what = if text(kept, "reason") == "unclear" {
+                        "not brought back (you changed the agent's version)"
+                    } else {
+                        "kept your text"
+                    };
                     let _ = writeln!(
                         out,
-                        "  kept your text ({}): {}",
+                        "  {what} ({}): {}",
                         text(kept, "reason"),
                         first_line(text(kept, "text"))
                     );
                 }
                 git_line(page, out);
+            }
+            if let Some(again) = ok["revert_run"].as_str() {
+                let _ = writeln!(out, "undo this revert: tine run revert {again}");
             }
         }
         "deleted" => {
@@ -531,11 +539,20 @@ fn git_line(ok: &Value, out: &mut String) {
             .map(|s| format!(" (your edits first: {})", short(s)))
             .unwrap_or_default();
         let _ = writeln!(out, "committed {}{snapshot}", short(text(git, "commit")));
-        if git["index"].as_bool() == Some(false) {
-            let _ = writeln!(
-                out,
-                "warning: the git index was busy; `git status` may show the file changed"
-            );
+        match git["index"].as_str() {
+            Some("staged-kept") => {
+                let _ = writeln!(
+                    out,
+                    "note: you had other changes to this file staged; they stay staged"
+                );
+            }
+            Some("busy") => {
+                let _ = writeln!(
+                    out,
+                    "warning: the git index was busy; `git status` may show the file changed"
+                );
+            }
+            _ => {}
         }
     } else {
         let _ = writeln!(

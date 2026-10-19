@@ -296,3 +296,132 @@ fn run_revert_undoes_the_agents_edits_and_keeps_what_the_user_changed_since() {
     assert_eq!(page["kept"].as_array().map(Vec::len), Some(1), "{reverted}");
     assert_eq!(page["kept"][0]["reason"], "changed-since");
 }
+
+#[test]
+fn content_the_user_staged_stays_staged() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let repo = repo(&graph);
+    let original = disk(&graph, "pages/a.md");
+    // Stage a version of a, then put the file back as it is at HEAD: the
+    // staged version is now only in the index.
+    edit(&slot, &handle(&slot, "a", 1), "staged by Martin", None);
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new("pages/a.md")).unwrap();
+    index.write().unwrap();
+    let staged = index
+        .get_path(std::path::Path::new("pages/a.md"), 0)
+        .unwrap()
+        .id;
+    assert!(original.ends_with("\n- two\n"), "{original}");
+    edit(&slot, &handle(&slot, "a", 1), "two", None);
+    assert_eq!(disk(&graph, "pages/a.md"), original, "back to HEAD's bytes");
+
+    let run = begin(&slot);
+    let written = edit(
+        &slot,
+        &handle(&slot, "a", 1),
+        "two, by the agent",
+        Some(&run),
+    );
+    assert_eq!(written["git"]["committed"], true, "{written}");
+    assert_eq!(written["git"]["index"], "staged-kept", "{written}");
+    let mut index = repo.index().unwrap();
+    index.read(true).unwrap();
+    assert_eq!(
+        index
+            .get_path(std::path::Path::new("pages/a.md"), 0)
+            .unwrap()
+            .id,
+        staged,
+        "the staged version is still staged"
+    );
+}
+
+#[test]
+fn a_held_index_lock_refuses_the_write_before_it_changes_anything() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let repo = repo(&graph);
+    let run = begin(&slot);
+    let lock = repo.path().join("index.lock");
+    std::fs::write(&lock, "").unwrap();
+    let before = disk(&graph, "pages/a.md");
+    let tip = head(&repo).id();
+    let (code, detail) = error_code(verb(
+        &slot,
+        "block.edit",
+        json!({ "handle": handle(&slot, "a", 1), "text": "x", "run": run }),
+    ));
+    std::fs::remove_file(&lock).unwrap();
+    assert_eq!((code.as_str(), reason(&detail)), ("refused", "git-busy"));
+    assert_eq!(disk(&graph, "pages/a.md"), before);
+    assert_eq!(head(&repo).id(), tip);
+}
+
+#[test]
+fn a_run_id_quoted_in_a_users_message_does_not_make_the_commit_the_runs() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let repo = repo(&graph);
+    let run = begin(&slot);
+    edit(
+        &slot,
+        &handle(&slot, "a", 1),
+        "two, by the agent",
+        Some(&run),
+    );
+    std::fs::write(graph.root.join("pages/user.md"), "- mine\n").unwrap();
+    commit_all(
+        &repo,
+        &format!("Notes on the agent's run\n\nIt was:\nTine-Run: {run}\nand that is all I have to say.\n"),
+    );
+    let shown = verb(&slot, "run.show", json!({ "run": run })).unwrap();
+    assert_eq!(
+        shown["commits"].as_array().map(Vec::len),
+        Some(1),
+        "{shown}"
+    );
+    let reverted = verb(&slot, "run.revert", json!({ "run": run })).unwrap();
+    let pages: Vec<&str> = reverted["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["page"].as_str().unwrap())
+        .collect();
+    assert_eq!(pages, ["pages/a.md"], "{reverted}");
+    assert_eq!(disk(&graph, "pages/user.md"), "- mine\n");
+}
+
+#[test]
+fn a_revert_is_a_run_that_reverting_undoes() {
+    let graph = Graph::new();
+    let slot = graph.slot();
+    let repo = repo(&graph);
+    let run = begin(&slot);
+    edit(
+        &slot,
+        &handle(&slot, "a", 1),
+        "two, by the agent",
+        Some(&run),
+    );
+    let by_agent = disk(&graph, "pages/a.md");
+    let reverted = verb(&slot, "run.revert", json!({ "run": run })).unwrap();
+    let again = reverted["revert_run"]
+        .as_str()
+        .expect("a revert run")
+        .to_string();
+    assert_ne!(again, run);
+    let message = head(&repo).message().unwrap().to_string();
+    assert!(
+        message.contains(&format!("Tine-Run: {again}\n")),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("Tine-Run-Revert: {run}\n")),
+        "{message}"
+    );
+    assert!(!disk(&graph, "pages/a.md").contains("by the agent"));
+    verb(&slot, "run.revert", json!({ "run": again })).unwrap();
+    assert_eq!(disk(&graph, "pages/a.md"), by_agent);
+}
