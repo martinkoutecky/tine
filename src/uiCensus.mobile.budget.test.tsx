@@ -17,6 +17,7 @@ import { App } from "./App";
 import { initParser } from "./render/parse";
 import { resetMobileNavigationAtBottomForTests } from "./navSettings";
 import { isMobilePlatform } from "./nativeChrome";
+import { registerFocusedEditorCommandBridge } from "./editorCommandBridge";
 import { describeControl, controlsIn, measureContextMenus, mount, required, settled } from "./uiCensus.test.support";
 
 const counts: Record<string, number> = {};
@@ -40,6 +41,17 @@ describe("UI census budgets (mobile)", () => {
           const row = await vi.waitFor(() => required(app.root.querySelector<HTMLElement>(".mobile-navigation-toolbar"), "the bottom navigation row"));
           counts["mobile.bottomBar"] = await settled(() => controlsIn(row).length);
           labels["mobile.bottomBar"] = controlsIn(row).map(describeControl);
+          // The same setting puts the group in the keyboard toolbar while the keyboard is up (GH #598).
+          // (Seed again: App's startup preference load can land after the first seed.)
+          resetMobileNavigationAtBottomForTests(true);
+          Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
+          Object.defineProperty(window, "visualViewport", { value: { height: 520, offsetTop: 0, addEventListener() {}, removeEventListener() {} }, configurable: true });
+          const unregister = registerFocusedEditorCommandBridge({ blockId: "census", dispatch: () => true, blur() {} });
+          try {
+            const up = await vi.waitFor(() => required(app.root.querySelector<HTMLElement>("[data-mobile-keyboard-toolbar]:not([hidden])"), "the keyboard toolbar with the keyboard up"));
+            counts["mobile.keyboardToolbar.withNavigation"] = await settled(() => controlsIn(up, "button").length);
+            labels["mobile.keyboardToolbar.withNavigation"] = controlsIn(up, "button").map(describeControl);
+          } finally { unregister(); }
         }
       } finally { app.dispose(); }
     }

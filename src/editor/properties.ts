@@ -152,7 +152,26 @@ export function isPropertiesOnly(raw: string): boolean {
  * page-level `tine.table-widths::`); only an unmarked first bullet goes through
  * `isPropertiesOnly`, which keeps block-scoped keys out of the header (GH #210 F4). */
 export function rendersAsPageHeader(raw: string, originatedFromPageHeader: boolean | undefined): boolean {
-  return originatedFromPageHeader ? isPageHeaderPropertiesOnly(raw.replace(/\n+$/, "")) : isPropertiesOnly(raw);
+  return originatedFromPageHeader ? isPageHeaderPropertiesOnly(canonicalPageHeaderDraft(raw)) : isPropertiesOnly(raw);
+}
+
+/** A marked page-header draft (`beginPageHeaderEdit`) as the file holds it: the
+ * blank lines Enter leaves at its edges dropped. Trailing ones come from Enter
+ * after the last property; leading ones from Enter (or a pasted or IME newline)
+ * at the very start, which OG's page-properties editor also takes as a newline
+ * (`dwim-in-properties`) and its save then drops (`wrap-parse-block`,
+ * `string/triml`, `handler/editor.cljs:298`). GH #210 F1: without the leading
+ * trim that draft was invalid and the page stopped saving. Inner text, inner
+ * blank lines and a first line's own indentation are kept. O(raw). */
+export function canonicalPageHeaderDraft(raw: string): string {
+  return withoutLeadingBlankLines(raw).replace(/\n+$/, "");
+}
+
+/** `raw` without its leading blank lines: the part of
+ * {@link canonicalPageHeaderDraft} a header's live text may lose on exit or
+ * be read through, while its trailing newline is still the caret's line. */
+export function withoutLeadingBlankLines(raw: string): string {
+  return raw.replace(/^(?:[ \t]*\r?\n)+/, "");
 }
 
 /** Whether the textarea caret is on a complete `key:: value` line. This is

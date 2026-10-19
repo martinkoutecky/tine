@@ -2718,8 +2718,11 @@ export interface MessageArgs {
   "sticky-parents-save-error": {};
   "tab-bar-close": { "title": string | number };
   "tab-bar-close-tab": {};
+  "tab-bar-collapse-group": {};
   "tab-bar-double-click-to-pin-sticky": {};
   "tab-bar-drag-to-reorder-alt-up-down-moves-the": {};
+  "tab-bar-expand-group": {};
+  "tab-bar-move-out-of-group": {};
   "tab-bar-open-tabs": {};
   "tab-bar-pinned": {};
   "tab-bar-pinned-sticky-links-open-in-a-new-tab": {};

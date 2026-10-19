@@ -153,7 +153,7 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { blockDtoExternalId } from "../blockIdentity";
 import { SheetContainer } from "./SheetContainer";
-import { ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
+import { blockMenuOwner, ownsBlockContextMenu, shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 import { followBlockSwipe } from "./blockSwipeWiring";
 import { beginDrag, beginEditGesture, bulletDragMoved, dragId, dropInd, renderedClickOffset } from "./blockGestures";
 import { clipboardSizeAllowed } from "../clipboardImage";
@@ -366,16 +366,10 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           editing: editing(),
         }}
         onContextMenu={(e) => {
-          // GH #726: a right click inside a nested result/embed row belongs to
-          // that row (or to nobody), never to this host block.
+          // GH #726: a nested result/embed row owns its menu (contextMenuPolicy).
           if (!ownsBlockContextMenu(e.target, mainEl) || !shouldOpenBlockContextMenu(e.target)) return;
           e.preventDefault();
-          // The root row of a transparent whole-block embed is the occurrence's
-          // only handle: its menu keeps acting on the embed, as its drag does
-          // (master GH #514). Every other nested row acts on its own block.
-          const host = mainEl?.closest<HTMLElement>(".block-embed-host");
-          const menuOwner = props.dragHostId && host?.dataset.blockId === props.dragHostId ? props.dragHostId : props.id;
-          openContextMenu(e.clientX, e.clientY, menuOwner);
+          openContextMenu(e.clientX, e.clientY, blockMenuOwner(mainEl, props.id, props.dragHostId));
         }}
       >
         <Show when={!blockEmbedHost() && !bulletless()}>
