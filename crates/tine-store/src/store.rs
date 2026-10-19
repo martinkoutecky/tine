@@ -312,6 +312,8 @@ pub(crate) struct ChangeFeed {
     watch_status: Mutex<(Option<String>, Option<StatusObserver>)>,
     /// The launch checkpoint publisher, when this store keeps one.
     pub(crate) checkpoint: std::sync::OnceLock<Arc<checkpoint::Signal>>,
+    /// Publications waiting for the first complete view (`first_view.rs`).
+    deferred: Mutex<first_view::Deferred>,
     #[cfg(test)]
     pub(crate) publish_hooks: snapshot::PublishHooks,
 }
@@ -347,11 +349,15 @@ struct Snapshot {
 mod answer_changes;
 pub(crate) mod checkpoint;
 mod diagnostics;
+mod first_view;
+pub(crate) use first_view::journal_ids_from_entries;
 #[cfg(test)]
 mod fold_save_tests;
 mod inventory;
 #[cfg(any(test, feature = "test-faults"))]
 mod link_oracle;
+#[cfg(test)]
+mod loading_save_tests;
 mod name_search;
 #[cfg(test)]
 mod page_open_tests;
@@ -400,6 +406,7 @@ impl ChangeFeed {
             snapshot: RwLock::new(None),
             watch_status: Mutex::new((None, None)),
             checkpoint: std::sync::OnceLock::new(),
+            deferred: Default::default(),
             #[cfg(test)]
             publish_hooks: Default::default(),
         }
@@ -880,34 +887,6 @@ fn remove_trash_entry_counted(
     Ok(())
 }
 
-pub(crate) fn journal_ids_from_entries(
-    graph: &Graph,
-    entries: &[PageEntry],
-) -> HashMap<Day, PageId> {
-    let mut claimants: HashMap<Day, Vec<PageEntry>> = HashMap::new();
-    for entry in entries {
-        if entry.kind == PageKind::Journal {
-            if let Some(day) = entry.date_key {
-                claimants.entry(Day(day)).or_default().push(entry.clone());
-            }
-        }
-    }
-    claimants
-        .into_iter()
-        .filter_map(|(day, mut entries)| {
-            entries.sort_by(|a, b| {
-                crate::model::compare_page_claimants(
-                    a,
-                    b,
-                    &graph.current_journal_format(),
-                    graph.current_config().file_name_format,
-                )
-            });
-            entries.into_iter().next()?.rel_path.map(|id| (day, id))
-        })
-        .collect()
-}
-
 impl Store {
     #[cfg(test)]
     pub(crate) fn from_graph_for_tests(graph: Arc<Graph>) -> Self {
@@ -1231,6 +1210,7 @@ impl Store {
                     };
                     match worker_watch.launch_diff() {
                         Ok(mut deferred) => {
+                            let written = worker_changes.not_deferred(written);
                             worker_watch.announce_written_since_open(written, &mut deferred);
                             found = deferred;
                         }
@@ -1251,6 +1231,7 @@ impl Store {
                             found.pages,
                             || *worker_load.status.lock().unwrap() = LoadStatus::Ready,
                         );
+                        worker_changes.end_deferral(Some(&worker_watch));
                         worker_graph.diag.ready(publish_began);
                         let _ = worker_watch_wake.send(());
                     }
@@ -1261,6 +1242,7 @@ impl Store {
                         *status = LoadStatus::Failed("background graph load stopped".into());
                     }
                 }
+                worker_changes.end_deferral(None);
                 worker_load.ready.notify_all();
             })
             .expect("spawn graph load worker");
@@ -1342,10 +1324,10 @@ impl Store {
     /// To avoid a subscription gap,
     /// subscribe first, then acquire `whole_graph()` and ignore changes with
     /// `graph_rev <= view.rev()`. Initial load completion is an
-    /// `Origin::External` publication with no file tuples; a during-load save
-    /// has a separate `Origin::Own` publication once a complete snapshot is
-    /// available. Writer serialization orders these publications; whichever
-    /// comes first has a view containing the save.
+    /// `Origin::External` publication with no file tuples. A save made while
+    /// no view exists yet is published after it (`first_view.rs`): the
+    /// completion's view contains the save, and the save's own change
+    /// follows, in save order.
     /// A failed load is returned by `whole_graph()`, but no `Change` announces it;
     /// no page read or write publishes while it remains failed.
     /// Multi-window clients must fan this single stream out themselves. A slow
@@ -1433,11 +1415,6 @@ impl Store {
 
     pub(crate) fn is_closed(&self) -> bool {
         self.load.closed.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn refresh_journal_ids(&self) {
-        let found = journal_ids_from_entries(&self.graph, self.graph.list_pages_shared().as_ref());
-        *self.journal_ids.lock().unwrap() = found;
     }
 
     /// Return a cached canonical journal id or propose a configured path (directory,
@@ -1977,7 +1954,8 @@ impl Store {
     /// file without waiting for the index (the file-name listing below):
     /// claimant order ranks a file named for the page above any `title::`
     /// claimant: the page the index would pick. An alias or an unclaimed page waits
-    /// for the graph, never absent early; an unclaimed journal day does not (no aliases).
+    /// for the graph, never absent early; an unclaimed journal day does not (no aliases)
+    /// unless a launch checkpoint is served (`first_view_pending`).
     /// Once ready, the published index resolves the name; an alias reads its
     /// first owner. After a failed initial parse, the file-name listing
     /// answers. A closed store returns `StoreError::Closed`. A resolved file
@@ -1985,8 +1963,10 @@ impl Store {
     pub fn page_named(&self, name: &str, kind: PageKind) -> Result<Option<PageRead>, StoreError> {
         if matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading) {
             let read = self.page_named_from_files(name, kind)?;
-            if read.is_some() || kind == PageKind::Journal {
-                return Ok(read); // journal claimants are files only (BqbeQ)
+            // Journal claimants are files only (BqbeQ); a served checkpoint
+            // answers an unclaimed day itself.
+            if read.is_some() || (kind == PageKind::Journal && self.first_view_pending()) {
+                return Ok(read);
             }
         }
         let resolved = match self.whole_graph() {
@@ -2058,9 +2038,8 @@ impl Store {
     /// wait.
     /// The initial load restarts if an external edit invalidates a parse pass;
     /// continuous edits can keep this wait open indefinitely.
-    /// An own save during loading can build the first cache synchronously for
-    /// its publication; the background worker then uses that cache rather
-    /// than restarting the pass. The save can wait for that O(P + B) build.
+    /// An own save during loading builds no cache: the pass re-reads just
+    /// the pages Tine moved meanwhile instead of restarting (BqbeQ).
     /// No partial graph generation is available after failure.
     /// A launch checkpoint (ADR 0070) is served before Ready, while the launch
     /// diff reconciles edits made while closed; an operation acting on the

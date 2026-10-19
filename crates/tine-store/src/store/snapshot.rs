@@ -371,7 +371,9 @@ impl Store {
     /// pre-transition row, also when the owner's first publication fails.
     /// The caller holds the writer, under which the transitions ran.
     pub(crate) fn publish_retired(&self) {
-        if self.graph.has_retired() {
+        if self.graph.has_retired() && self.defers_publication(false) {
+            self.defer_retired();
+        } else if self.graph.has_retired() {
             self.changes
                 .publish(Origin::External, Vec::new(), false, Vec::new());
         }
@@ -418,6 +420,12 @@ impl Store {
             if journal_set_changed {
                 self.refresh_journal_ids();
             }
+            return (self.changes.rev(), None);
+        }
+        // Before the first complete view, the publication waits for it
+        // (`first_view.rs`): the current revision, no change yet.
+        if self.defers_publication(config_changed) {
+            self.defer_publication(origin, files, pages, (raced, journal_set_changed));
             return (self.changes.rev(), None);
         }
         let rev = self.changes.publish_observed(

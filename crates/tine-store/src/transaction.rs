@@ -272,11 +272,15 @@ pub enum TxOutcome {
     Committed {
         /// Results in input order.
         steps: Vec<StepResult>,
-        /// Bounded derived-answer delta of this publication; absent when unchanged.
+        /// Bounded derived-answer delta of this publication; absent when
+        /// unchanged, or when the publication waits for the first view.
         change: Option<crate::Change>,
         /// Generation publishing the disk state, or current one if unchanged.
         /// During a failed initial load this is the unchanged current revision:
-        /// no view covers the write until recovery's first view does.
+        /// no view covers the write until recovery's first view does. While
+        /// the initial load runs with no view yet, it is also the current
+        /// revision: the first complete view contains the write, and the
+        /// write's own change follows it (`store/first_view.rs`).
         graph_rev: GraphRev,
     },
     /// Disk steps applied, but at least one final file could not be read for
@@ -1781,7 +1785,12 @@ impl<'a> Transaction<'a> {
             &steps,
         );
         if changed_any && self.store.graph.cache_generation() == starting_rev {
-            self.store.graph.transaction_bump_generation();
+            let root = &self.store.graph.root;
+            let moved: Vec<PathBuf> = (published_own.iter().chain(&published_external))
+                .map(|(id, _, _)| root.join(id.as_str()))
+                .collect();
+            let moved: Vec<&Path> = moved.iter().map(PathBuf::as_path).collect();
+            self.store.graph.transaction_bump_generation(&moved);
         }
         let mut published_rev = self.store.changes.rev();
         let mut change = None;

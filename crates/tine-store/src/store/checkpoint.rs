@@ -381,13 +381,15 @@ impl ChangeFeed {
     /// an `Origin::External` publication with no file tuples), and its page
     /// cache in the graph. Returns the watcher baseline it carries, or
     /// `None` when another path filled the cache or published first (an
-    /// on-demand build during launch): the launch then completes cold.
+    /// on-demand build during launch), or a publication waits for the first
+    /// view (an own save during launch, `first_view.rs`): the launch then
+    /// completes cold.
     /// Caller holds the store writer.
     pub(crate) fn install_checkpoint(
         &self,
         loaded: Loaded,
     ) -> Option<crate::model::LaunchObservations> {
-        if self.snapshot.read().unwrap().is_some() {
+        if self.snapshot.read().unwrap().is_some() || self.deferred_any() {
             return None;
         }
         let Body {

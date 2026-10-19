@@ -494,6 +494,20 @@ pub(crate) struct Core {
 }
 
 impl Core {
+    /// Reconcile the paths an external writer raced an own write on. The
+    /// caller holds the writer.
+    pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {
+        if !paths.is_empty() {
+            let _ = self.reconcile_locked(Some(paths), true, false, DiffTrigger::WatchEvent);
+            let mut snapshot = self.snapshot.lock().unwrap();
+            for path in paths {
+                if !self.tracks_in_snapshot(path) {
+                    snapshot.remove(path);
+                }
+            }
+        }
+    }
+
     /// Record the live-notification state on the change feed, which tells
     /// its subscriber (see `ChangeFeed::set_watch_refusal`).
     fn set_refusal(&self, now: Option<String>, restored: bool) {
@@ -1050,17 +1064,7 @@ impl WatchHandle {
     }
 
     pub(crate) fn reconcile_raced(&self, paths: &HashSet<PathBuf>) {
-        if !paths.is_empty() {
-            let _ = self
-                .core
-                .reconcile_locked(Some(paths), true, false, DiffTrigger::WatchEvent);
-            let mut snapshot = self.core.snapshot.lock().unwrap();
-            for path in paths {
-                if !self.core.tracks_in_snapshot(path) {
-                    snapshot.remove(path);
-                }
-            }
-        }
+        self.core.reconcile_raced(paths);
     }
 
     /// Join the background watcher while keeping explicit refresh available.

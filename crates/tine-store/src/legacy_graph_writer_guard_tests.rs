@@ -75,6 +75,11 @@ const ALLOWED_GRAPH_UNIT_CALLS: &[(&str, &str, &str)] = &[
         "invalidate_cache",
     ),
     (
+        "crates/tine-store/src/store/loading_save_tests.rs",
+        "an_unexplained_cache_move_during_the_parse_still_rebuilds_correctly",
+        "invalidate_cache",
+    ),
+    (
         "crates/tine-store/src/model/derived_tests.rs",
         "a_removal_after_cache_eviction_unnames_the_page",
         "invalidate_cache",

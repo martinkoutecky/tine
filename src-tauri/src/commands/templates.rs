@@ -14,7 +14,8 @@ pub(super) fn early_absent_journal(
     name: &str,
     kind: PageKind,
 ) -> Option<Result<ResolvedWire, String>> {
-    if kind != PageKind::Journal {
+    // A served launch checkpoint (or the ready graph) answers at once.
+    if kind != PageKind::Journal || !store.first_view_pending() {
         return None;
     }
     match tine_graph_features::journals::absent_journal_id(store, name) {
@@ -38,6 +39,18 @@ pub(super) async fn named_template(
     enum First {
         Graph(Result<WholeGraph, tine_store::LoadError>),
         Files(std::io::Result<NamedTemplate>),
+    }
+    // A served launch checkpoint (or the ready graph) answers at once: no
+    // file lookup then.
+    if !slot.store.first_view_pending() {
+        return tauri::async_runtime::spawn_blocking(move || {
+            let view =
+                (slot.store.whole_graph()).map_err(|e| format!("graph load failed: {e:?}"))?;
+            let found = view.templates().into_iter().find(|t| t.name == name);
+            Ok(found.into_iter().collect())
+        })
+        .await
+        .map_err(|error| error.to_string())?;
     }
     let arrived = Arc::new(AtomicBool::new(false));
     let (send, answers) = std::sync::mpsc::channel();
