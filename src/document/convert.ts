@@ -2,7 +2,7 @@ import { type BlockDto, type Format, type PageDto, type RefGroup } from "../type
 import { Node, FeedPage, DocState, doc, freshId } from "./model";
 import { seedFacets, facetsFromDto } from "../render/facets";
 import { trimBlockTrailingSpace } from "../editor/format";
-import { BLOCK_SCOPED_PROPERTY_KEYS, isPropertiesOnly } from "../editor/properties";
+import { BLOCK_SCOPED_PROPERTY_KEYS, canonicalPageHeaderDraft, isPropertiesOnly } from "../editor/properties";
 import { journalTitle, appNow } from "../journal";
 import { pageHeaderDraftProblem, rawWithCollapsed } from "./edits/properties";
 import { existingBlockId, orgRawWithProperty } from "./edits/identity";
@@ -234,11 +234,11 @@ function isPromotablePageHeaderRoot(node: Node): boolean {
 export function foldMarkedPageHeader(p: FeedPage): { preBlock: string | null; rootIds: string[] } | null {
   const first = doc.byId[p.roots[0]];
   if (!first?.originatedFromPageHeader) return { preBlock: p.preBlock, rootIds: p.roots };
-  // Tolerate only Enter's authoring artifact at the disk firewall; keep the
+  // Tolerate only Enter's authoring artifacts (blank edge lines) at the disk firewall; keep the
   // strict shared display predicate and live raw intact. The exit toast reports
   // this same predicate (`pageHeaderDraftProblem`).
   if (pageHeaderDraftProblem(first)) return null;
-  const canonicalRaw = first.raw.replace(/\n+$/, "");
+  const canonicalRaw = canonicalPageHeaderDraft(first.raw);
   // Exact raw is authoritative here: ordinary toDto trimming must never eat a
   // page-header value or its separator trivia. An empty draft deletes the
   // header and emits no stray outline bullet.

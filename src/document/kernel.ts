@@ -116,6 +116,10 @@ function outlinePage(name: string, reads: readonly OutlineRead[] | null) {
     walked.add(id);
     pending.push(...byId[id].children);
   }
+  // The first root is always named when it is the header, even when the read
+  // set left it out: the kernel holds it first (GH #210 F1), and a move into
+  // root slot 0 need not read it.
+  if (headerRoot === null && page.roots.length && byId[page.roots[0]]?.originatedFromPageHeader) headerRoot = page.roots[0];
   return {
     name,
     format: page.format,

@@ -50,9 +50,10 @@ pub(super) fn convention(existing: Option<&str>) -> &'static str {
     }
 }
 
-/// Give LF `content` the existing file's convention, unless it already carries
-/// its own terminators (reused disk bytes, `layout_retention` output). A
-/// whole-page rewrite of a mixed-ending file therefore uses one convention.
+/// Give a whole-page rewrite's LF `content` the existing file's convention
+/// (one convention, even for a mixed-ending file). `layout_retention` output
+/// never comes here: its reused lines keep their own terminators, and it may
+/// hold no `\r` at all in a mixed-ending file (GH #110 fidelity gate).
 pub(super) fn restore(content: String, existing: Option<&str>) -> String {
     let ending = convention(existing);
     if ending != "\n" && !content.contains('\r') {

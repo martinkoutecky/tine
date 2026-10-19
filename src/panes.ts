@@ -304,7 +304,7 @@ function routeForJournalsDuplicate(anchor: string | null): Route {
 function splitSnapshotForNewPane(source: PaneRouter): PaneSnapshot {
   const snap = source.duplicateActiveSnapshot();
   const active = snap.tabs[0];
-  if (active && tabRoute({ id: "snapshot", history: active.history, pos: active.pos, pinned: active.pinned }).kind === "journals") {
+  if (active && tabRoute({ id: "snapshot", history: active.history, pos: active.pos, pinned: active.pinned, parent: null, collapsed: false }).kind === "journals") {
     active.history = [routeForJournalsDuplicate(takeBlockSelectionForPaneReturn())];
     active.pos = 0;
     active.pinned = false;
