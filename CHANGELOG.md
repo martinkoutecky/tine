@@ -53,6 +53,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A command-line `tine serve` now takes the same launch snapshot as the app (Settings → **Backups & recovery**) when it opens a graph; before, a graph edited only through the command line was never backed up. A failure is reported on serve's stderr.
 - One page Tine's parser chokes on no longer stops the whole graph from loading. The graph opens, every other page works, and that one file is listed as unreadable. Opening such a page, changing it in another app, or renaming it now affects only that page; before, it could leave every later save failing until Tine restarted. A rename of such a page is refused with the file left as it was.
 - Adding a property or a schedule to a Markdown block that starts with a `:LOGBOOK:` drawer (no text before it) now writes it above the drawer instead of inside the logbook, where neither app read it. For properties this is what Logseq does; for SCHEDULED and DEADLINE, Logseq still writes inside the logbook, and Tine deliberately puts them above it so the date is read. Leaving the editor also moves a SCHEDULED line found below such a logbook to above it.
 - The "Some page files couldn't be read" notice now names the files (the first five, then "and N more") instead of pointing to a debug log that is off by default, so you can find the broken file; Copy on the notice copies the full list (GitHub discussion #727).
