@@ -831,14 +831,14 @@ impl BlockRegions {
     pub fn literal_at(&self, at: usize) -> bool {
         self.literals.iter().any(|r| r.contains(at))
     }
-    fn hoist_planning(&self, raw: &str, after: &str) -> String {
+    fn hoist_planning(&self, raw: &str, org: bool, after: &str) -> String {
         let mut entries: Vec<&Planning> = self
             .planning
             .iter()
             .filter(|p| p.kind != "Closed")
             .collect();
         entries.sort_by_key(|p| if p.kind == "Scheduled" { 0 } else { 1 });
-        let at = self.title_end(raw);
+        let at = self.title_end(raw, org);
         if entries.is_empty() || entries.iter().any(|p| p.line.0 < at) {
             return raw.to_string();
         }
@@ -863,20 +863,24 @@ impl BlockRegions {
         }
         splice(raw, edits)
     }
-    fn title_end(&self, raw: &str) -> usize {
+    fn title_end(&self, raw: &str, org: bool) -> usize {
+        let lead = raw.len() - raw.trim_start().len();
         // If the first thing is a literal container, insert after it, never into it.
-        if let Some(r) = self
-            .literals
-            .iter()
-            .find(|r| r.0 == raw.len() - raw.trim_start().len())
-        {
+        if let Some(r) = self.literals.iter().find(|r| r.0 == lead) {
             whole_line(raw, *r).1
+        } else if !org && self.drawers.iter().any(|d| d.range.0 == lead) {
+            // A Markdown block that opens with a drawer (`- :LOGBOOK:`) has no
+            // title: metadata goes before the drawer, never into it. OG
+            // `frontend.util.property/insert-property` prepends when
+            // `block-content/has-title?` is false (the first AST node is a Drawer).
+            // An Org block's first line is its heading, so it stays the title.
+            raw[..lead].rfind('\n').map_or(0, |p| p + 1)
         } else {
             raw.find('\n').map_or(raw.len(), |p| p + 1)
         }
     }
-    fn head_end(&self, raw: &str) -> usize {
-        let mut at = self.title_end(raw);
+    fn head_end(&self, raw: &str, org: bool) -> usize {
+        let mut at = self.title_end(raw, org);
         loop {
             if let Some(p) = self.planning.iter().find(|p| p.line.0 == at) {
                 at = p.line.1;
@@ -887,7 +891,7 @@ impl BlockRegions {
         at
     }
     fn own_org_region(&self, raw: &str) -> Option<usize> {
-        let at = self.head_end(raw);
+        let at = self.head_end(raw, true);
         self.property_regions.iter().position(|r| {
             (r.0 == at || r.0 == 0)
                 && r.slice(raw)
@@ -970,7 +974,7 @@ impl BlockRegions {
             if let Some(first) = matching.first() {
                 let trailer = matches!(key.as_str(), "id" | "collapsed" | "logseq.order-list-type");
                 let region = self.property_regions[first.region];
-                if !org && !trailer && region.0 != 0 && region.0 != self.head_end(raw) {
+                if !org && !trailer && region.0 != 0 && region.0 != self.head_end(raw, org) {
                     // Move legacy trailing user properties to the existing head,
                     // using accepted property spans rather than a second scanner.
                     edits.extend(matching.iter().map(|p| (p.line, String::new())));
@@ -1037,7 +1041,7 @@ impl BlockRegions {
                     .ok_or("Properties drawer has no parser-owned closer")?;
                 (close.0, lines.to_string())
             } else {
-                let at = self.head_end(raw);
+                let at = self.head_end(raw, org);
                 let text = format!(":PROPERTIES:{}{lines}{}:END:", newline(raw), newline(raw));
                 // OG places accepted planning above a new drawer even when
                 // authored below body content. Literal lookalikes are absent.
@@ -1046,7 +1050,7 @@ impl BlockRegions {
                     .iter()
                     .any(|p| p.kind != "Closed" && p.line.0 >= at)
                 {
-                    return Ok(self.hoist_planning(raw, &text));
+                    return Ok(self.hoist_planning(raw, org, &text));
                 }
                 (at, text)
             }
@@ -1071,7 +1075,7 @@ impl BlockRegions {
             } else {
                 // After the head properties, but not a property region the final
                 // quote swallowed or follows.
-                let head = self.head_end(raw);
+                let head = self.head_end(raw, org);
                 let limit = quote.as_ref().and_then(|t| t.start).unwrap_or(usize::MAX);
                 self.property_regions
                     .iter()
@@ -1193,7 +1197,7 @@ impl BlockRegions {
                         );
                         splice(raw, edits)
                     } else {
-                        self.inserted(raw, self.title_end(raw), &text)
+                        self.inserted(raw, self.title_end(raw, org), &text)
                     }
                 } else {
                     splice(
@@ -1232,7 +1236,7 @@ impl BlockRegions {
                 if self.planning.is_empty() || self.literal_at(0) {
                     raw.to_string()
                 } else {
-                    self.hoist_planning(raw, "")
+                    self.hoist_planning(raw, org, "")
                         .trim_end_matches('\n')
                         .to_string()
                 }
@@ -1248,7 +1252,7 @@ impl BlockRegions {
                 {
                     self.inserted(raw, d.close, &value)
                 } else {
-                    let mut at = self.head_end(raw);
+                    let mut at = self.head_end(raw, org);
                     if let Some(r) = self.property_regions.iter().find(|r| r.0 == at) {
                         at = r.1;
                     }

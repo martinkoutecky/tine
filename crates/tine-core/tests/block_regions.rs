@@ -523,3 +523,186 @@ fn a_property_added_to_a_quote_block_goes_before_the_quote() {
         assert_eq!(doc.property(key).as_deref(), Some("1"), "{out:?}");
     }
 }
+
+/// A Markdown block that opens with a drawer (`- :LOGBOOK:` with no title).
+/// Before: the head position was "after the first line", i.e. inside the
+/// drawer, so a new property or planning line was written into the logbook
+/// (debug builds: the I-4 drawer assertion panicked; release builds and the
+/// window's wasm: the row silently became logbook text, so the property was
+/// lost on reload and the logbook gained a foreign line). OG
+/// `frontend.util.property/insert-property` prepends the property when
+/// `frontend.util.block-content/has-title?` is false (the first AST node is a
+/// Drawer, not a Paragraph/Heading): Markdown `(cons new-property-s lines)`.
+/// With a title it goes after the title (and planning), before the drawer; Org
+/// builds `[title] scheduled deadline [properties] body`. An Org block's first
+/// line is its heading (an empty heading is the leading `\n` below).
+#[test]
+fn a_property_added_to_a_block_opening_with_a_logbook_stays_outside_the_drawer() {
+    const CLOCK: &str = "CLOCK: [2026-10-01 Wed 10:00]--[2026-10-01 Wed 10:05] =>  00:05:00";
+    let lb = format!(":LOGBOOK:\n{CLOCK}\n:END:");
+    let logbook = |raw: &str, org: bool| -> Vec<String> {
+        parse(raw, org)
+            .drawers
+            .iter()
+            .map(|d| {
+                d.range
+                    .slice(raw)
+                    .trim_end_matches(['\r', '\n'])
+                    .to_string()
+            })
+            .collect()
+    };
+    let accepted = |raw: &str, org: bool, key: &str| {
+        let mut b = tine_core::DocBlock::new(raw.to_string());
+        b.set_org(org);
+        b.property(key)
+    };
+    let set = |raw: &str, org: bool, key: &str| {
+        parse(raw, org)
+            .apply(
+                raw,
+                org,
+                Edit::Property {
+                    key: key.into(),
+                    value: Some("true".into()),
+                },
+            )
+            .unwrap()
+    };
+    // (raw, org, key, expected) for LF; each also runs as CRLF.
+    let cases: Vec<(String, bool, &str, String)> = vec![
+        // Titleless Markdown: OG prepends. `id`/`collapsed` keep Tine's trailer
+        // placement (end of block), which never entered the drawer.
+        (lb.clone(), false, "foo", format!("foo:: true\n{lb}")),
+        (
+            lb.clone(),
+            false,
+            "heading",
+            format!("heading:: true\n{lb}"),
+        ),
+        (lb.clone(), false, "id", format!("{lb}\nid:: true")),
+        (
+            lb.clone(),
+            false,
+            "collapsed",
+            format!("{lb}\ncollapsed:: true"),
+        ),
+        (
+            format!("{lb}\nbody"),
+            false,
+            "foo",
+            format!("foo:: true\n{lb}\nbody"),
+        ),
+        (
+            ":LOGBOOK:\n:END:".into(),
+            false,
+            "foo",
+            "foo:: true\n:LOGBOOK:\n:END:".into(),
+        ),
+        // Titleless Org (empty heading): the drawer follows the empty title.
+        (
+            format!("\n{lb}"),
+            true,
+            "foo",
+            format!("\n:PROPERTIES:\n:foo: true\n:END:\n{lb}"),
+        ),
+        (
+            format!("\n{lb}"),
+            true,
+            "collapsed",
+            format!("\n:PROPERTIES:\n:collapsed: true\n:END:\n{lb}"),
+        ),
+        (
+            "\n:LOGBOOK:\n:END:".into(),
+            true,
+            "id",
+            "\n:PROPERTIES:\n:id: true\n:END:\n:LOGBOOK:\n:END:".into(),
+        ),
+        // Titled (the card's shape): after the title, before the drawer.
+        (
+            format!("title\n{lb}"),
+            false,
+            "foo",
+            format!("title\nfoo:: true\n{lb}"),
+        ),
+        (
+            format!("title\n{lb}"),
+            false,
+            "collapsed",
+            format!("title\n{lb}\ncollapsed:: true"),
+        ),
+        (
+            format!("title\n{lb}"),
+            true,
+            "collapsed",
+            format!("title\n:PROPERTIES:\n:collapsed: true\n:END:\n{lb}"),
+        ),
+        // Planning plus logbook: after the planning, before the drawer.
+        (
+            format!("title\nSCHEDULED: <2026-10-01 Wed>\nDEADLINE: <2026-10-02 Thu>\n{lb}"),
+            false,
+            "foo",
+            format!(
+                "title\nSCHEDULED: <2026-10-01 Wed>\nDEADLINE: <2026-10-02 Thu>\nfoo:: true\n{lb}"
+            ),
+        ),
+        (
+            format!("title\nSCHEDULED: <2026-10-01 Wed>\n{lb}"),
+            true,
+            "foo",
+            format!("title\nSCHEDULED: <2026-10-01 Wed>\n:PROPERTIES:\n:foo: true\n:END:\n{lb}"),
+        ),
+        // Logbook after existing properties: the new row joins them.
+        (
+            format!("title\nbar:: 1\n{lb}"),
+            false,
+            "foo",
+            format!("title\nbar:: 1\nfoo:: true\n{lb}"),
+        ),
+        (
+            format!("bar:: 1\n{lb}"),
+            false,
+            "foo",
+            format!("bar:: 1\nfoo:: true\n{lb}"),
+        ),
+        (
+            format!("title\n:PROPERTIES:\n:bar: 1\n:END:\n{lb}"),
+            true,
+            "foo",
+            format!("title\n:PROPERTIES:\n:bar: 1\n:foo: true\n:END:\n{lb}"),
+        ),
+    ];
+    for (raw, org, key, expected) in cases {
+        for nl in ["\n", "\r\n"] {
+            let (raw, expected) = (raw.replace('\n', nl), expected.replace('\n', nl));
+            let out = set(&raw, org, key);
+            assert_eq!(out, expected, "org={org} {raw:?} + {key}");
+            assert_eq!(
+                logbook(&out, org),
+                logbook(&raw, org),
+                "logbook bytes {out:?}"
+            );
+            assert_eq!(accepted(&out, org, key).as_deref(), Some("true"), "{out:?}");
+        }
+    }
+}
+
+/// Sibling of the drawer-first head position: a planning line (date picker,
+/// `Edit::Planning`) also goes before an opening Markdown logbook, never into it.
+#[test]
+fn planning_never_enters_an_opening_logbook() {
+    for nl in ["\n", "\r\n"] {
+        let lb = ":LOGBOOK:\nCLOCK: [2026-10-01 Wed 10:00]\n:END:".replace('\n', nl);
+        let out = parse(&lb, false)
+            .apply(
+                &lb,
+                false,
+                Edit::Planning {
+                    which: "Scheduled".into(),
+                    value: Some("<2026-10-03 Sat>".into()),
+                },
+            )
+            .unwrap();
+        assert_eq!(out, format!("SCHEDULED: <2026-10-03 Sat>{nl}{lb}"));
+    }
+}
