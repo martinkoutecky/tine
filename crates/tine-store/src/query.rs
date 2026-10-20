@@ -920,6 +920,23 @@ pub(crate) fn tagged_pages_query(
     Query::new(Anchor::Page, filter, Source::Builder)
 }
 
+/// The other names of `target`'s alias group (D-20261019-AL1/AL2) as (page
+/// key, the least spelling an `alias::` declared it with, else the key);
+/// `target` itself is not one. The group is the alias component Linked
+/// References use, without the journal-day spellings. Cost: O(component log
+/// P), with the generation's real-name table.
+pub(crate) fn alias_group_members(graph: &ReadSnapshot, target: &str) -> Vec<(String, String)> {
+    let real = real_page_names(graph);
+    let edges = graph.alias_edges();
+    let (_, component, _) = equivalent_page_names(&real, &edges, target);
+    let own = refs::page_key(target);
+    component
+        .into_iter()
+        .filter(|key| *key != own)
+        .map(|key| (key.clone(), graph.alias_spelling(&key).unwrap_or(key)))
+        .collect()
+}
+
 const BACKLINK_FILTER_MAX_BYTES: usize = 16 * 1024 * 1024;
 const BACKLINK_FILTER_MAX_TEXT_BYTES: usize = 64 * 1024;
 const BACKLINK_FILTER_MAX_FACETS: usize = 256;

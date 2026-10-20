@@ -30,9 +30,13 @@ page-ui-unfavorite = 取消收藏
 
 page-ui-add-to-favorites = 添加收藏
 
-page-ui-also-known-as-other-names-that-link-here = 别名：可链接到此页面的其他名称
+page-ui-also-called-title = 此页面的其他名称，它们没有自己的页面。点击其中一个会打开声明它的页面。
 
-page-ui-aka = 别名
+page-ui-also-called = 别名
+
+page-ui-alias-group-pages-title = 与此页面共享别名、并有自己内容的页面。每个链接都会打开对应的页面。
+
+page-ui-alias-group-pages = 同一别名组中的相关页面
 
 page-ui-tine-can-t-reproduce-this-org-file-byte-for = Tine 无法逐字节还原此 .org 文件，因此以只读方式显示，避免损坏。请在 Logseq/Emacs 中编辑。
 

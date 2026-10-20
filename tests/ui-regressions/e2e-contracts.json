@@ -377,7 +377,7 @@
       "stability": "burn-in"
     },
     "scripts/e2e-alias.mjs": {
-      "contracts": [{ "class": "core-operation", "userOutcome": "First-block aliases and page properties remain editable, persist, and resolve their page.", "blocking": true }],
+      "contracts": [{ "class": "core-operation", "userOutcome": "First-block aliases and page properties remain editable, persist, and resolve their page; the header then lists the alias group's names with no page of their own apart from its other real pages, in the main pane and the right sidebar, and a related page opens its own file while a fileless name opens the page declaring it.", "blocking": true }],
       "acceptableVariations": ["Autocomplete ranking and editor layout may evolve while the saved alias still resolves the page."],
       "nonRequirements": ["Exact picker dimensions, animation, or DOM shape."],
       "stability": "stable"

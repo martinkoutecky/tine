@@ -583,6 +583,19 @@ impl ReadSnapshot {
         self.alias_relation().owner_paths(key)
     }
 
+    /// The least spelling a page declared alias `key` with (the relation keeps
+    /// only keys), or `None` when no page declares it. O(owners of the key x
+    /// their aliases) through the per-page spelling index.
+    pub(crate) fn alias_spelling(&self, key: &str) -> Option<String> {
+        let index = self.alias_spelling_index();
+        let owners = self.alias_relation().owner_files(key);
+        owners
+            .flat_map(|path| index.get(path).into_iter().flatten())
+            .filter(|spelling| tine_core::refs::page_key(spelling) == key)
+            .min()
+            .cloned()
+    }
+
     #[cfg(test)]
     pub(crate) fn from_page_snapshot(pages: Vec<(PageEntry, Arc<Document>)>) -> Self {
         let graph = Graph::from_page_snapshot("", pages);
