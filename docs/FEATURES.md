@@ -455,8 +455,9 @@ within a column; merged cells are still v2+.
 - Command palette (`Mod+Shift+P`), favorites, recent pages, a collapsible
   **namespace tree** in the sidebar, the **`{{namespace X}}`** macro (a bold
   "Namespace" header + nested descendant tree), an automatic **"Hierarchy"** section
-  (breadcrumb paths of descendant pages) on any namespaced page, and read-only
-  **"aka" alias chips** on pages reachable by another name.
+  (breadcrumb paths of descendant pages) on any namespaced page, and the page's
+  **alias group** under its title: "Also called" names with no page of their own,
+  then the group's other real pages, each a link.
 - **Collapsible navigation sections** — Favorites and Recent fold independently and
   remember their state per graph. Right-sidebar pages/blocks also fold independently;
   a compact menu collapses, expands, or closes all items, committing active edits

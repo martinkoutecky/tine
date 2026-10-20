@@ -1238,8 +1238,10 @@ export interface MessageArgs {
   "page-ui-add-block": {};
   "page-ui-add-row": { "value1": string | number };
   "page-ui-add-to-favorites": {};
-  "page-ui-aka": {};
-  "page-ui-also-known-as-other-names-that-link-here": {};
+  "page-ui-alias-group-pages": {};
+  "page-ui-alias-group-pages-title": {};
+  "page-ui-also-called": {};
+  "page-ui-also-called-title": {};
   "page-ui-bundled-guide-page": {};
   "page-ui-carry-from-previous-day": {};
   "page-ui-carry-last-days": { "value1": string | number };

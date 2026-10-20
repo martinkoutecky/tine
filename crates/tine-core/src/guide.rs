@@ -661,6 +661,22 @@ mod parity_guide_tests {
     }
 
     #[test]
+    fn the_alias_group_rows_and_owner_rule_are_documented() {
+        // D-20261019-AL1/AL2 (card hB9Zjw): names apart from real pages, and
+        // the fixed rule an alias of several pages opens.
+        let guide = include_str!("templates/pages-links-references-search.md");
+        for phrase in [
+            "**Also called** lists the group's names that have no page file of their own",
+            "**Related pages in this alias group** lists the other names that do have their own page",
+            "Their blocks are never merged into one view",
+            "opens the page whose file path comes first in plain character order",
+            "A name with its own page file always opens that file",
+        ] {
+            assert!(guide.contains(phrase), "Guide missing {phrase}");
+        }
+    }
+
+    #[test]
     fn welcome_names_the_alias_completion_label() {
         // GH #558: an alias row in `[[` completion names the page it belongs to.
         let welcome = include_str!("templates/welcome.md");

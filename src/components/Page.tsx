@@ -25,6 +25,7 @@ import { focusPageTrailing } from "./pageTrailing";
 import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
+import { AliasGroupHeader } from "./AliasGroup";
 import { LinkedReferences } from "./LinkedReferences";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { FailureBoundary } from "./FailureBoundary";
@@ -352,7 +353,7 @@ async function completeJournalFeed(owner: JournalsFeedOwner, generation: number,
 }
 
 // Page properties NOT shown in the under-title property list: `alias` is surfaced
-// as "aka" chips above. `tine.icon` and the OG-compatible `icon` stay editable here as well as decorating the
+// as the alias group rows above (AliasGroupHeader). `tine.icon` and the OG-compatible `icon` stay editable here as well as decorating the
 // title (OG's editable-built-in-properties lists `icon`). Hide internal tag-table metadata.
 // `tine/exports` is the exports page marker (docs/contracts/export-definitions.md), not something to edit.
 const PAGE_PROPS_HIDDEN = new Set(["alias", "tine.tag-table", "tine/exports"]);
@@ -1220,17 +1221,15 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         </Show>
         </div>
       </div>
-      <Show when={aliasNamesOf(headerProperties(), props.page.format).length}>
-        <div class="page-aliases" title={t("page-ui-also-known-as-other-names-that-link-here")} onClick={editPageHeader}>
-          <span class="page-aliases-label">{t("page-ui-aka")}</span>
-          <For each={aliasNamesOf(headerProperties(), props.page.format)}>
-            {(a) => <span class="alias-chip"><PageRef name={a} alias={a} /></span>}
-          </For>
-        </div>
-      </Show>
+      <AliasGroupHeader
+        name={props.page.name}
+        declared={aliasNamesOf(headerProperties(), props.page.format)}
+        inGraph={!props.page.guide}
+        onEdit={editPageHeader}
+      />
       <Show when={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
         <div class="page-properties" onClick={editPageHeader}>
-          {/* `alias` is surfaced as chips — see PAGE_PROPS_HIDDEN. */}
+          {/* `alias` is surfaced by AliasGroupHeader — see PAGE_PROPS_HIDDEN. */}
           <For each={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
             {([key, value]) => (
               <div class="prop-row">

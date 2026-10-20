@@ -417,7 +417,7 @@ field page_host::HostRead.page
 field page_host::HostRead.bytes
 field page_host::HostRead.revision
 enum page_host::HostReadError
-## Re-exports (ceiling: 10)
+## Re-exports (ceiling: 11)
 use crate::tine_outline::edit_kind
 use crate::page_host::{ApplyRefusal,DiskToken,DraftStatus,EffectasHostEffect,ExpectedasHostExpected,HostOp,HostRead,HostReadError,Input,Opened,PageHost,PageMail,PageOperation,PageRefusal,Reloaded,RenameRefusal,Reservation,ReserveRefusal,StopMode,StopState,Stopped,}
 use crate::edit_kind::EditKind
@@ -428,3 +428,6 @@ use crate::publish::{PublishDest,PublishFailed,PublishReceipt,SiteWriter}
 use crate::restore::{RestoreFailed,RestoreFile,RestoreReport}
 use crate::store::{Area,Budget,Cancel,Change,ChangeKind,ConfigState,Day,Depth,FacetPolicy,FileEntry,FileId,FileMeta,FileRev,GraphAccessInspection,GraphRev,Inventory,InventoryEntry,InventoryScope,IrAnswer,IrRequest,Listing,LoadError,OpenError,OpenOptions,Origin,PageId,PageRead,QueryError,Resolved,SaveBase,SaveOutcome,SearchRequest,Store,StoreError,Subscription,SubscriptionEnd,TrashKind,WatchBatch,WatchMode,WholeGraph,}
 use store::tine_core::model::{FileId,PageId}
+# Card hB9Zjw: the inventory types moved beside their implementation in
+# store/inventory.rs (size ratchet seam); the same items, re-exported by store.
+use store::inventory::{Inventory,InventoryEntry,InventoryScope}

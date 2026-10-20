@@ -177,11 +177,13 @@ mod tests {
     use super::*;
     use crate::{CheckpointWrite, EditKind};
 
-    #[test]
-    fn pinyin_body_save_shares_cache_on_many_han_names() {
+    /// Name-cache work of one body-only save in a graph of `pages` Han-named
+    /// pages, and whether the save kept the key-map container. Work counts
+    /// every document the name enumeration visits plus every name it yields.
+    fn body_save_name_work(pages: usize, rewalk: bool) -> (usize, bool) {
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join("pages")).unwrap();
-        for n in 0..5000 {
+        for n in 0..pages {
             fs::write(root.path().join(format!("pages/北京{n}.md")), "- body\n").unwrap();
         }
         let store = Store::open(root.path(), Default::default()).unwrap().0;
@@ -190,28 +192,60 @@ mod tests {
         let read = store.page(&id).unwrap();
         let mut doc = read.doc;
         doc.blocks[0].raw = "changed body".into();
-        assert!(matches!(
-            store.save(
-                EditKind::ReplacePage,
-                &id,
-                SaveBase::Existing(read.rev),
-                &doc
-            ),
-            SaveOutcome::Saved(_)
-        ));
-        let after = store.whole_graph().unwrap();
-        assert_eq!(
-            after.graph.name_cache_work, 2,
-            "only the changed page's old/new Han name may be visited"
+        crate::model::REWALK_NAME_OWNERS.with(|armed| armed.set(rewalk));
+        let saved = store.save(
+            EditKind::ReplacePage,
+            &id,
+            SaveBase::Existing(read.rev),
+            &doc,
         );
+        crate::model::REWALK_NAME_OWNERS.with(|armed| armed.set(false));
+        assert!(matches!(saved, SaveOutcome::Saved(_)));
+        let after = store.whole_graph().unwrap();
+        let shared = Arc::ptr_eq(
+            &before.graph.transliteration_names,
+            &after.graph.transliteration_names,
+        );
+        let work = after.graph.name_cache_work;
+        store.close();
+        (work, shared)
+    }
+
+    /// The publication cost guard: a body save's name-cache work is the
+    /// changed page's old and new documents and names (2 + 2), the same in a
+    /// small and a large graph, and keeps the key-map container.
+    fn assert_body_save_name_work_is_bounded(rewalk: bool) {
+        let small = body_save_name_work(50, rewalk);
+        let large = body_save_name_work(5000, rewalk);
         assert!(
-            Arc::ptr_eq(
-                &before.graph.transliteration_names,
-                &after.graph.transliteration_names
-            ),
+            small.1 && large.1,
             "body edit rebuilt the Han cache container"
         );
-        store.close();
+        assert_eq!(
+            small.0, large.0,
+            "name-cache work of a body save grew with the graph"
+        );
+        assert_eq!(
+            large.0, 4,
+            "only the changed page's old/new document and Han name may be visited"
+        );
+    }
+
+    #[test]
+    fn pinyin_body_save_shares_cache_on_many_han_names() {
+        assert_body_save_name_work_is_bounded(false);
+    }
+
+    /// Re-review F4 (card hApslk): a semantically correct implementation that
+    /// rebuilds prior ownership by walking every old page keeps the same keys
+    /// and container, yet the guard above must reject it.
+    #[test]
+    fn pinyin_cost_guard_rejects_a_graph_wide_ownership_rebuild() {
+        let (work, shared) = body_save_name_work(50, true);
+        assert!(shared, "the mutant keeps the key-map container");
+        assert!(work >= 50, "the mutant's page walk is counted: {work}");
+        let caught = std::panic::catch_unwind(|| assert_body_save_name_work_is_bounded(true));
+        assert!(caught.is_err(), "the cost guard passed a graph-wide walk");
     }
 
     #[test]
@@ -286,6 +320,53 @@ mod tests {
             "closing completion releases obsolete names"
         );
         assert!(!after.graph.transliteration_names.contains_key("北京"));
+        store.close();
+    }
+
+    /// GH #151 re-review F3 (card hApslk): config and full (Rescan)
+    /// publications rebuild the evaluator without its predecessor. A completion
+    /// session acquired in a held older view and closed in the current one must
+    /// release everywhere: the session registry has one owner, the graph.
+    #[test]
+    fn pinyin_completion_session_releases_across_config_and_rescan_publications() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join("pages")).unwrap();
+        fs::create_dir(root.path().join("logseq")).unwrap();
+        fs::write(root.path().join("pages/Owner.md"), "- [[北京]]\n").unwrap();
+        let store = Store::open(root.path(), Default::default()).unwrap().0;
+        let read = store.page(&PageId::from("pages/Owner.md")).unwrap();
+        let editor = Some(("Owner", read.doc.blocks[0].id.as_str(), "[[北京]]"));
+        let sessions = |view: &WholeGraph| view.graph.completion_name_keys.lock().unwrap().len();
+        let publications: [&dyn Fn(); 2] = [
+            &|| {
+                fs::write(
+                    root.path().join("logseq/config.edn"),
+                    "{:preferred-format :org}\n",
+                )
+                .unwrap();
+                store.refresh(crate::Depth::Bytes).unwrap();
+                assert_eq!(store.config().preferred_format.ext(), "org");
+            },
+            &|| {
+                store.refresh(crate::Depth::Rebuild).unwrap();
+            },
+        ];
+        for publish in publications {
+            let held = store.whole_graph().unwrap();
+            held.complete_page_names("bj", 8, editor, true, Some("session"));
+            assert_eq!(sessions(&held), 1);
+            publish();
+            let current = store.whole_graph().unwrap();
+            assert!(!Arc::ptr_eq(&held.graph, &current.graph));
+            current.complete_page_names("bj", 8, editor, true, Some("session"));
+            current.complete_page_names("", 0, editor, false, Some("session"));
+            assert_eq!(sessions(&current), 0);
+            assert_eq!(
+                sessions(&held),
+                0,
+                "I-21: a closed session must not stay in a held pre-rebuild view"
+            );
+        }
         store.close();
     }
 

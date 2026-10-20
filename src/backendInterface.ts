@@ -120,6 +120,10 @@ export interface Backend {
   journalContentDays(): Promise<number[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<import("./types").PageRead | null>;
   resolvePage(name: string, kind: "journal" | "page"): Promise<import("./types").ResolvedPage>;
+  /** The page header's alias group of `name` (D-20261019-AL1/AL2): its other
+   *  names with no file of their own, and the other names a file claims.
+   *  O(group); waits for graph load. */
+  pageAliasGroup(name: string): Promise<import("./types").AliasGroup>;
   /** The page host (STEP3-DESIGN §3; `src-tauri/src/page_commands.rs`): the only
    * page persistence of a window. Only `src/document/host/wiring.ts` calls these
    * (I-1). Mutating commands carry the window's session and a request id and go

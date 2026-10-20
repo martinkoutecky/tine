@@ -140,7 +140,9 @@ const OWNERS: &[(&str, &str, usize, &str, &str)] = &[
         // +1 GH #616: reveal_export awaits the shared OS reveal helper.
         // -1 GH #481: moved to commands/journals_feed.rs, same awaited owner.
         // -1 UI-CENSUS-18: the unused graph_source_files command was removed.
-        37,
+        // +1 D-20261019-AL2: page_alias_group waits for the initial load like
+        // resolve_page, awaited by its command future.
+        38,
         "command future",
         "caller awaits blocking result",
     ),

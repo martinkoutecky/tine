@@ -54,6 +54,29 @@ pub(crate) struct PageInventoryEntryWire {
     target: ResolvedWire,
 }
 
+/// The page header's alias group (D-20261019-AL2): the other names with no
+/// file of their own (a link opens an owner), and the other names a file
+/// claims (a link opens that file).
+#[derive(Serialize)]
+pub(crate) struct AliasGroupWire {
+    aliases: Vec<String>,
+    pages: Vec<String>,
+}
+
+pub(super) fn alias_group_wire(view: &WholeGraph, name: &str) -> AliasGroupWire {
+    let (mut aliases, mut pages) = (Vec::new(), Vec::new());
+    for entry in &view
+        .inventory(tine_store::InventoryScope::AliasGroup(name))
+        .0
+    {
+        match entry.target {
+            Resolved::Existing { .. } => pages.push(entry.name.clone()),
+            _ => aliases.push(entry.name.clone()),
+        }
+    }
+    AliasGroupWire { aliases, pages }
+}
+
 /// Last-modified times for the All pages view: `[graph-relative path, Unix
 /// seconds]` per page file, from the times the store already holds with its
 /// page table (no stat, no file read, nothing persisted). Fetched once when the

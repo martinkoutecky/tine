@@ -17,8 +17,8 @@ use tine_store::{FacetPolicy, PageId, Resolved, StoreError, WholeGraph};
 mod discovery;
 mod templates;
 use discovery::{
-    page_inventory_wire, page_modified_wire, resolve_name, PageInventoryWire, PageModifiedWire,
-    ResolvedWire,
+    alias_group_wire, page_inventory_wire, page_modified_wire, resolve_name, AliasGroupWire,
+    PageInventoryWire, PageModifiedWire, ResolvedWire,
 };
 
 fn feature_asset_error(error: std::io::Error, slot: &GraphSlot) -> String {
@@ -334,6 +334,25 @@ pub(crate) async fn get_page(
         tine_graph_features::pages::get_page(&slot.store, &name, kind)
             .map(|read| read.map(page_dto))
             .map_err(feature_page_read_error)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// The page header's alias group of `name` (D-20261019-AL1/AL2): its other
+/// names with no file of their own and the other names a file claims.
+/// O(component log P); waits for the initial load on the blocking pool.
+#[tauri::command]
+pub(crate) async fn page_alias_group(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<AliasGroupWire, String> {
+    let slot = slot_for_context(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        slot.store
+            .whole_graph()
+            .map_err(|e| format!("graph load failed: {e:?}"))
+            .map(|view| alias_group_wire(&view, &name))
     })
     .await
     .map_err(|error| error.to_string())?
