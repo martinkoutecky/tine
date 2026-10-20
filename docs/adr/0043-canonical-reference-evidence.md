@@ -1,6 +1,6 @@
 # 0043. Canonical reference occurrences and evidence
 
-- **Status:** Accepted
+- **Status:** Accepted; superseded in part by [ADR 0077](0077-unlinked-mentions-count-code-text.md) (code and literal text now count as plain mentions)
 - **Date:** 2026-07-14
 
 ## Context
@@ -31,6 +31,10 @@ block may correctly contribute to both surfaces when it contains a link and a
 different plain mention. Code, verbatim, opaque export/comment/drawer content,
 and escaped syntax do not become plain occurrences merely because their raw
 bytes contain a page name.
+*(Superseded by [ADR 0077](0077-unlinked-mentions-count-code-text.md):
+code, verbatim and other literal text do count; escaped link syntax and
+`:LOGBOOK:` drawers still do not. Match boundaries follow Logseq's ASCII
+rule, not Unicode-alphanumeric ones.)*
 
 Linked and unlinked APIs return the same evidence-bearing group shape. Page
 property references use a synthetic stable block identity and the same engine.
