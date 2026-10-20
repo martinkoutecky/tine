@@ -937,14 +937,19 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
     let root = option_env!("TINE_HOST_REPO_ROOT")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
-    /// Whether `parent` declares the sibling `file` as a module, under
-    /// `#[cfg(test)]` when `gated`.
+    /// A `#[cfg(test)]` gate, alone or narrowed (`#[cfg(all(test, desktop))]`
+    /// keeps a desktop-only test module out of the mobile test builds).
+    fn test_gate(line: &str) -> bool {
+        line == "#[cfg(test)]" || (line.starts_with("#[cfg(all(test, ") && line.ends_with("))]"))
+    }
+    /// Whether `parent` declares the sibling `file` as a module, under a test
+    /// gate when `gated`.
     fn declares(parent: &str, file: &str, gated: bool) -> bool {
         let stem = file.trim_end_matches(".rs");
         let lines: Vec<_> = parent.lines().collect();
         lines.iter().enumerate().any(|(i, line)| {
             let named = *line == format!("mod {stem};") || *line == format!("#[path = \"{file}\"]");
-            named && (!gated || (i > 0 && lines[i - 1] == "#[cfg(test)]"))
+            named && (!gated || (i > 0 && test_gate(lines[i - 1])))
         })
     }
     /// `in_test`: `dir` is a directory module declared under `#[cfg(test)]`
@@ -1000,7 +1005,7 @@ fn host_and_oracle_stay_private_one_path_starts_a_host_and_runtime_has_no_filesy
                 if line.trim_start().starts_with("//") {
                     continue;
                 }
-                if *line == "#[cfg(test)]"
+                if test_gate(line)
                     && lines
                         .get(i + 1)
                         .is_some_and(|next| next.starts_with("mod ") && next.ends_with('{'))

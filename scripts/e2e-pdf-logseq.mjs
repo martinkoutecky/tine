@@ -1499,6 +1499,33 @@ try {
   const directReturnedZoom = await browser.$(".pdf-zoom-level").getText();
   if (directReturnedZoom !== "193%") throw new Error(`PDF A did not restore its own state after direct B: ${directReturnedZoom}`);
 
+  // The highlight target must be inside the scroller: waited for up to `waitMs`
+  // (condition-based, polled), then kept there for `holdMs` (a late scroll or a
+  // zoom settle could still move it). Resolves null when it held, else a reason.
+  const observeHighlightInView = (highlightId, { waitMs, holdMs }) => browser.executeAsync((id, wait, hold, done) => {
+    const started = performance.now();
+    let landed = null;
+    const check = () => {
+      const scroll = document.querySelector(".pdf-scroll");
+      const target = document.querySelector(`.pdf-hl-target[data-highlight-id="${id}"]`);
+      const now = performance.now();
+      if (!scroll || !target) {
+        if (landed === null && now - started < wait) return void setTimeout(check, 20);
+        return done({ reason: "missing", scroll: !!scroll, target: !!target });
+      }
+      const s = scroll.getBoundingClientRect();
+      const t = target.getBoundingClientRect();
+      if (t.bottom <= s.top || t.top >= s.bottom) {
+        if (landed === null && now - started < wait) return void setTimeout(check, 20);
+        return done({ reason: "out of view", scrollTop: scroll.scrollTop, scrollRect: [s.top, s.bottom], targetRect: [t.top, t.bottom] });
+      }
+      if (landed === null) landed = now;
+      if (now - landed < hold) setTimeout(check, 20);
+      else done(null);
+    };
+    check();
+  }, highlightId, waitMs, holdMs);
+
   const firstSecondRef = browser.$(`[data-block-ref="${SECOND_FIRST_ID}"]`);
   await firstSecondRef.waitForExist({ timeout: 10_000 });
   await browser.waitUntil(() => browser.execute((highlightId) =>
@@ -1536,6 +1563,13 @@ try {
     }));
     throw new Error(`${error.message}: ${JSON.stringify(diagnostic)}`, { cause: error });
   }
+  // Card hCAoxs: PDF B was not open, so the reader mounted for this reference. Its
+  // exact highlight (near the bottom of the first page) must be scrolled into view,
+  // not merely marked, and must stay there.
+  const coldOpenLeftView = await observeHighlightInView(SECOND_FIRST_ID, { waitMs: 10_000, holdMs: 600 });
+  if (coldOpenLeftView) {
+    throw new Error(`a backlink into a PDF that was not open yet did not scroll to its exact highlight: ${JSON.stringify(coldOpenLeftView)}`);
+  }
   const secondViewerElementId = (await browser.$(".pdf-viewer")).elementId;
   const secondZoom = await browser.$(".pdf-zoom-level").getText();
   if (secondZoom !== "125%") throw new Error(`second PDF inherited the first PDF scale: ${secondZoom}`);
@@ -1555,6 +1589,16 @@ try {
   }
   if (fs.readFileSync(secondSidecar, "utf8") !== originalSecondSidecar) {
     throw new Error("same-PDF highlight navigation rewrote the sidecar");
+  }
+
+  // GH #672 (late replay): opening a reader at a saved zoom armed a zoom-settle
+  // timer that fired ~120 ms after the mount and wrote the page-top anchor over
+  // this backlink's exact-highlight scroll (and, on a loaded machine, over the
+  // next user scroll: the rare "page input 1" failure below). The highlight must
+  // stay in view for as long as that timer could still be pending.
+  const highlightLeftView = await observeHighlightInView(SECOND_SECOND_ID, { waitMs: 0, holdMs: 600 });
+  if (highlightLeftView) {
+    throw new Error(`GH #672: the backlink's exact highlight was scrolled away after landing: ${JSON.stringify(highlightLeftView)}`);
   }
 
   // GH #672: scrolling reports a new page into the route. That report must

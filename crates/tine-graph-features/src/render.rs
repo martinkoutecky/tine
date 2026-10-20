@@ -1700,6 +1700,7 @@ fn shell(title: &str, main: &str, home_href: &str) -> String {
 <a class=\"home pages-link\" href=\"pages.html\">All pages</a>\
 <input id=\"tine-search\" type=\"search\" placeholder=\"Search\u{2026}\" autocomplete=\"off\" spellcheck=\"false\">\
 <div id=\"tine-results\" hidden></div>\
+<button class=\"pages-toggle\" type=\"button\" aria-expanded=\"false\" aria-controls=\"tine-pages\">Pages</button>\
 <nav id=\"tine-pages\"></nav>\
 </aside><main>{main}</main>\
 <script src=\"search-index.js\"></script><script src=\"fuse.min.js\"></script><script src=\"app.js\"></script><script defer src=\"enhance.js\"></script>\
@@ -2034,6 +2035,16 @@ const APP_JS: &str = r#"(function () {
         var first = results && results.querySelector('a.res');
         if (first) { ev.preventDefault(); location.href = first.getAttribute('href'); }
       }
+    });
+  }
+
+  // ---- narrow screens: the page list folds behind a toggle (style.css) ----
+  var sidebar = nav && nav.parentNode;
+  var toggle = sidebar && sidebar.querySelector('.pages-toggle');
+  if (toggle) {
+    toggle.addEventListener('click', function () {
+      var open = sidebar.classList.toggle('pages-open');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
     });
   }
 
