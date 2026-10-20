@@ -1308,6 +1308,16 @@ pub struct QueryResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub statistics: Option<QueryStatistics>,
     pub exceeded: bool,
+    /// The local day (`yyyymmdd`) the answer's relative dates were resolved
+    /// against, present only when the query reads one
+    /// (`ResolvedQuery::reads_today`). A caller still showing it after the
+    /// local date moves re-asks; an answer without it is day-independent
+    /// (card hB3Lv8). Stamped per call by the store's IR run, outside its
+    /// memo. In memory only: no serializer writes it (memo checkpoint, quick
+    /// share snapshot, CLI payload); the app's `query_run` command carries it
+    /// to the frontend beside the result.
+    #[serde(skip)]
+    pub as_of_day: Option<i64>,
 }
 
 /// The runtime inputs an execution binds against (SPEC §4.4, §7.1, R5).

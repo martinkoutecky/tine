@@ -516,6 +516,7 @@ mod tests {
             total: 0,
             matched_total: None,
             exceeded: true,
+            as_of_day: None,
             statistics: Some(QueryStatistics {
                 count: 10_000,
                 aggregates: Vec::new(),

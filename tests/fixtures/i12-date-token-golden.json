@@ -1,5 +1,5 @@
 {
-  "comment": "Date-token grammar golden (I-12). Rust: advanced_patterns::resolve_date_token (authoritative). TS: src/editor/dateExpr.ts resolveDateToken. Both suites read this file; ordinal is yyyy*10000+mm*100+dd of the resolved date, null when the token does not resolve.",
+  "comment": "Date-token grammar golden (I-12). Rust: date_token::resolve_date_token (authoritative). TS: src/editor/dateExpr.ts resolveDateToken. Both suites read this file; ordinal is yyyy*10000+mm*100+dd of the resolved date, null when the token does not resolve.",
   "cases": [
     {"today": 20260616, "token": "today", "ordinal": 20260616},
     {"today": 20260616, "token": "now", "ordinal": 20260616},

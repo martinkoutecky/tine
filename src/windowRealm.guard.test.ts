@@ -77,7 +77,7 @@ const REALM_ALLOW: Record<string, string> = {
     "The left sidebar and its resizer exist only in the main window (workspace windows render no sidebars).",
   "src/App.tsx mainWindow.removeEventListener":
     "The left sidebar and its resizer exist only in the main window (workspace windows render no sidebars).",
-  "src/components/Macro.tsx mainWindow.document.getElementById":
+  "src/components/MediaMacros.tsx mainWindow.document.getElementById":
     "The YouTube IFrame API is one process-wide script loaded once into the main realm's <head>.",
   "src/components/MobileDrawerShell.tsx mainWindow.document.querySelector":
     "Mobile drawers classify and contain focus in the main window's sidebars; workspace windows are desktop-only and have no sidebars.",

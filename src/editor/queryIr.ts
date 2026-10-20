@@ -293,6 +293,9 @@ export type QueryResult = {
   /** Exact complete count when the backend proved one for this row kind. */
   matched_total?: number;
   exceeded: boolean;
+  /** The local day (yyyymmdd) a day-relative query was resolved for; absent
+   *  when the answer does not depend on the date (card hB3Lv8). */
+  as_of_day?: number;
 } & (
   | { anchor: "block"; groups: RefGroup[] }
   | { anchor: "page"; pages: PageRow[] }

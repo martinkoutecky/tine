@@ -58,6 +58,7 @@ fn ir_refusal_uses_the_complete_count_or_total_and_preserves_small_answers() {
         total: 2,
         matched_total,
         exceeded,
+        as_of_day: None,
     };
     for (matched_total, count) in [(Some(43), 43), (None, 2)] {
         let error = QueryResult::try_from(IrAnswer::Result(Box::new(result(matched_total, true))))

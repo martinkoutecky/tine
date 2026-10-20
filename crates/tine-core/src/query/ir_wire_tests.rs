@@ -388,6 +388,9 @@ fn the_query_result_wire_format_is_tagged_by_anchor() {
             total: 1,
             matched_total: None,
             exceeded: false,
+            // In memory only (card hB3Lv8): the persisted and CLI forms of a
+            // result never carry the day stamp, so this golden is unchanged.
+            as_of_day: Some(20260729),
         },
     );
     golden_encoding(
@@ -427,6 +430,7 @@ fn the_query_result_wire_format_is_tagged_by_anchor() {
             total: 2,
             matched_total: Some(7),
             exceeded: true,
+            as_of_day: None,
         },
     );
 }

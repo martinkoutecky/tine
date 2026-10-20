@@ -6,14 +6,16 @@
 // page the query block renders on (og 14 Q2 follow-up; master binds the
 // focused pane's page the same way).
 import { configuredHomePage } from "./homePage";
-import { journalTitle, appNow } from "./journal";
+import { journalTitle, currentDayKey, localDateFromDayKey } from "./journal";
 import { focusedRouter } from "./panes";
 
-/** OG's `current-page-fn`: focused pane's routed page → default home → today. */
+/** OG's `current-page-fn`: focused pane's routed page → default home → today.
+ *  "Today" is the reactive day, so a query bound to it moves to the new
+ *  journal when the date changes (card hB3Lv8). */
 export function queryCurrentPage(): string {
   const route = focusedRouter().route();
   if (route.kind === "page" && route.name.trim()) return route.name;
-  return configuredHomePage() ?? journalTitle(appNow());
+  return configuredHomePage() ?? journalTitle(localDateFromDayKey(currentDayKey()));
 }
 
 // Recognize the typed Logseq input without treating an example in a string or

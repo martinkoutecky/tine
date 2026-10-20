@@ -509,6 +509,14 @@ mod journal_guide_tests {
             .contains("other than Logseq's default priority sort"));
     }
 
+    /// Card hB3Lv8 (Martin 2026-10-19): day-relative queries follow the date.
+    #[test]
+    fn day_relative_queries_following_the_date_are_documented() {
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("runs again by itself when the date changes"));
+        assert!(queries.contains("A query with no such date is not run again."));
+    }
+
     #[test]
     fn sidebar_and_direct_search_actions_are_documented() {
         let tips = include_str!("templates/tips.md");
