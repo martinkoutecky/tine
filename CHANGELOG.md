@@ -53,6 +53,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A Markdown file with a quote whose first line is a `#+NAME: VALUE` line followed by a `key::` line no longer crashes Tine when the graph loads (the parser recursed until the stack overflowed; lsdoc v0.5.10).
 - The "Some page files couldn't be read" notice now names the files (the first five, then "and N more") instead of pointing to a debug log that is off by default, so you can find the broken file; Copy on the notice copies the full list (GitHub discussion #727).
 - An advanced query with `:remove-block-children? false` now lists every matching block, including children of matching parents, as Logseq does (OG `components/query/result.cljs` `get-query-result`); without the option, or with `true`, a match directly under another match still shows only inside its parent. The simple `{{query}}` text keeps that rule. Saved query answers from earlier builds are rebuilt once.
 - Right-clicking a block in a query's results and choosing Cut or Delete now removes that block from its own page, as in Logseq, instead of removing the query block itself. The same holds for blocks inside a block embed (the embed's first row still acts on the embed). A right click in a query table no longer offers the query block's Cut or Delete (GH #726).
