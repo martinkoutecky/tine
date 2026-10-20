@@ -123,10 +123,45 @@ fn bundled_guide_explains_legacy_precedence_and_weekday_choices() {
         "yyyy年MM月dd日",
         "abbreviated weekdays",
         "legacy setting untouched",
+        "Tine does not support",
+        "renames and rewrites nothing",
     ] {
         assert!(
             page.markdown.contains(phrase),
             "Guide must explain {phrase}"
         );
     }
+}
+
+/// Card g4czVA: a graph whose journal patterns use parts Tine does not
+/// support opens with a visible diagnostic in its `GraphMeta`, and opening
+/// rewrites neither `config.edn` nor the journal file.
+#[test]
+fn unsupported_journal_pattern_is_diagnosed_without_touching_files() {
+    let _integration_guard = crate::integration_lock();
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("logseq")).unwrap();
+    fs::create_dir_all(dir.path().join("journals")).unwrap();
+    let cfg = dir.path().join("logseq/config.edn");
+    let file = dir.path().join("journals/2024_01_05.md");
+    let edn = "{:journal/page-title-format \"yyyy-MM-dd 'w'ww-E\"}\n";
+    fs::write(&cfg, edn).unwrap();
+    fs::write(&file, "- existing bullet\n").unwrap();
+    let (store, meta, _) = Store::open(dir.path(), Default::default()).unwrap();
+    assert_eq!(meta.journal_config_diagnostics.len(), 1);
+    let diagnostic = &meta.journal_config_diagnostics[0];
+    for part in [
+        ":journal/page-title-format",
+        "\"yyyy-MM-dd 'w'ww-E\"",
+        "'w' (quote marks kept",
+        "ww (written as literal text)",
+        "renames and rewrites nothing",
+    ] {
+        assert!(diagnostic.contains(part), "{diagnostic}");
+    }
+    let feed = journals::feed_page(&store, 10, None).unwrap();
+    assert_eq!(feed.pages.len(), 1);
+    store.close();
+    assert_eq!(fs::read_to_string(&cfg).unwrap(), edn);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "- existing bullet\n");
 }

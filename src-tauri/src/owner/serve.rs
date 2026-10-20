@@ -129,18 +129,43 @@ pub(crate) fn serve_graph(graph: &Path) -> Result<(), ServeFailure> {
         return Err("cannot open the command endpoint".into());
     }
     eprintln!("tine serve: owning {}", root.display());
-    serve_until_stop(&slot, &gate, lease, stopped, IDLE_EXIT);
+    serve_until_stop(&slot, &gate, lease, stopped, IDLE_EXIT, &app_data);
     eprintln!("tine serve: released {}", root.display());
     Ok(())
 }
 
+/// Settle the binding's launch warm once the graph has loaded, as the app's
+/// warm does (`graph::warm_cache_async`); there is no window to tell. The
+/// launch backup waits on it. A panicking read still settles it.
+fn settle_warm(slot: &Arc<GraphSlot>) {
+    struct Settle(Arc<GraphSlot>, u64);
+    impl Drop for Settle {
+        fn drop(&mut self) {
+            self.0.finish_startup_warm(self.1);
+        }
+    }
+    let settle = Settle(slot.clone(), slot.begin_startup_warm());
+    std::thread::spawn(move || {
+        let _ = settle.0.store.whole_graph();
+        drop(settle);
+    });
+}
+
+/// Answer until a stop. The launch backup the app takes (journal
+/// D-20261019-QC item 3) starts once the endpoint answers, after the same
+/// warm and quiet; the stop cancels it, and once the lease is released (the
+/// app that asked for the graph does not wait) the worker is joined, so the
+/// process never exits in the middle of a publication.
 pub(super) fn serve_until_stop(
-    slot: &GraphSlot,
+    slot: &Arc<GraphSlot>,
     gate: &Gate,
     lease: lease::Lease,
     stopped: mpsc::Receiver<Stop>,
     idle: Duration,
+    app_data: &Path,
 ) {
+    settle_warm(slot);
+    let backup = crate::backup::launch_backup_headless(slot.clone(), app_data.to_owned());
     let yielder = loop {
         match stopped.recv_timeout(Duration::from_secs(5)) {
             Ok(stop) => break stop.yielder,
@@ -161,11 +186,17 @@ pub(super) fn serve_until_stop(
         }
     };
     stop_sequence(slot, gate, lease, yielder);
+    if let Some(backup) = backup {
+        let _ = backup.join();
+    }
 }
 
 fn stop_sequence(slot: &GraphSlot, gate: &Gate, lease: lease::Lease, yielder: Option<YieldHandle>) {
     gate.set_progress("finishing requests");
     gate.settle(usize::from(yielder.is_some()));
+    // Admitted requests have settled: stop the launch backup (and any
+    // other background work) before the host and the Store go.
+    slot.cancel_background();
     stop_host(slot, gate);
     lease.seal(yielder.as_ref().map(|yielder| yielder.id));
     if let Some(yielder) = yielder {
