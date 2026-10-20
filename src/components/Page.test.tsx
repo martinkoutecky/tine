@@ -13,7 +13,7 @@ import { type FeedPage, type Node as StoreNode } from "../document/model";
 import { doc, setDoc } from "../document/model";
 import { loadSingle, pinPageWhileDrafting, reloadPageIfStillSafe } from "../document/workingSet";
 import { editingId, editingOwner, activeSurface, endEdit, startEditing } from "../editorController";
-import { journalTitle } from "../journal";
+import { journalTitle, localDayKey, resyncCurrentDayForTest, setBackendClock, setCurrentDayKeyForTest } from "../journal";
 import type { JournalFeedPage, PageDto, PageRead, RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
@@ -33,11 +33,13 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
-  // The feed owns a local-midnight timeout. Clear any timer a failed/early-
-  // disposed render left behind before handing control back to the next render
-  // test; otherwise `tick()` can inherit fake timers and never resolve.
+  // The shared day signal (journal.ts) owns a local-midnight timeout. Clear
+  // any fake timer a failed/early-disposed render left behind before handing
+  // control back to the next render test (otherwise `tick()` can inherit fake
+  // timers and never resolve), then re-arm the day timer on the real clock.
   vi.clearAllTimers();
   vi.useRealTimers();
+  resyncCurrentDayForTest();
   vi.restoreAllMocks();
   endEdit("blur");
   closeContextMenu();
@@ -391,9 +393,10 @@ describe("Journals feed generation lifecycle", () => {
     }
   });
 
-  it("arms one local-calendar timer and cleans it up when the Journals surface disposes", async () => {
+  it("refreshes at local midnight through the shared day timer and stops when the Journals surface disposes", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2030, 6, 15, 23, 59, 59, 990));
+    resyncCurrentDayForTest();
     const call = vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () =>
       feedResponse([journalDto("timer-day")])
     );
@@ -417,6 +420,30 @@ describe("Journals feed generation lifecycle", () => {
     const afterDispose = call.mock.calls.length;
     vi.advanceTimersByTime(24 * 60 * 60 * 1000);
     expect(call.mock.calls.length).toBe(afterDispose);
+  });
+
+  it("rolls the Journals list over through the shared day signal: a resume only the clock sample notices (hB3Lv8)", async () => {
+    // One owner of the date change (journal.ts currentDayKey): the feed has no
+    // timer of its own, so a resume no focus or visibility event announces is
+    // caught by the ten-minute backend clock sample, as query blocks are.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2030, 6, 15, 23, 0));
+    setCurrentDayKeyForTest(localDayKey());
+    const api = vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () =>
+      feedResponse([journalDto(`day-${localDayKey()}`)], { as_of_day: localDayKey() })
+    );
+    const mounted = mount(() => <PageView />);
+    try {
+      await vi.waitFor(() => expect(doc.feed).toContain("day-20300715"));
+      expect(api).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(new Date(2030, 6, 16, 8, 0));
+      const now = Date.now();
+      setBackendClock({ offset_minutes: -new Date(now).getTimezoneOffset(), unix_ms: now });
+      await vi.waitFor(() => expect(doc.feed).toContain("day-20300716"));
+      expect(api).toHaveBeenCalledTimes(2);
+    } finally {
+      mounted.dispose();
+    }
   });
 
   it("does not let an unrelated sidebar/page editor defer the visible feed refresh", async () => {

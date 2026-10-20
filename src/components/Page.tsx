@@ -37,7 +37,7 @@ import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
 import { aliasNamesOf, visibleBody } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
-import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay, appNow, parseJournalTitle } from "../journal";
+import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
 import type { JournalFeedPage, PageRead, RefGroup } from "../types";
 import { tagRef } from "../tags";
@@ -631,34 +631,30 @@ export function PageView(): JSX.Element {
     }
   };
 
-  // Local calendar rollover is a one-shot revalidation.  Calendar construction
-  // (rather than 24h arithmetic) remains correct on DST transitions.
+  // Local calendar rollover follows the app's one date-change signal,
+  // currentDayKey() (journal.ts: the midnight timer, re-armed on every
+  // focus/visibility return and backend clock sample; card hB3Lv8, I-12).
+  // A return also retries a pending refresh or a feed answered for another
+  // day, unless the day change of that same return already started one.
   createEffect(() => {
     const route = currentRoute();
     if (route.kind !== "journals") return;
     const owner = journalOwner(route);
-    let timer: number | undefined;
-    let disposed = false;
-    const restart = () => { void refreshJournalFeedForCurrentDay(owner); };
-    const arm = () => {
-      if (disposed || !ownerIsLive(owner)) return;
-      const now = appNow();
-      timer = window.setTimeout(() => {
-        // One-shot rather than 24h arithmetic (DST-safe).  Re-arm after every
-        // trigger, including a deferred/error response, while this owner lives.
-        void refreshJournalFeedForCurrentDay(owner).finally(() => { if (!disposed && ownerIsLive(owner)) arm(); });
-      }, localDayRolloverDelay(now));
-    };
-    arm();
-    const onFocus = () => {
-      if (journalAsOfDay !== localDayKey() || pendingFeedRestart) restart();
-    };
-    const stopReturn = onAppReturn(onFocus);
-    onCleanup(() => {
-      disposed = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-      stopReturn();
+    let dayRefresh: Promise<unknown> | null = null;
+    let day = untrack(currentDayKey);
+    createEffect(() => {
+      const today = currentDayKey();
+      if (today === day) return;
+      day = today;
+      const refresh = dayRefresh = refreshJournalFeedForCurrentDay(owner)
+        .finally(() => { if (dayRefresh === refresh) dayRefresh = null; });
     });
+    const onFocus = () => {
+      if (!dayRefresh && (journalAsOfDay !== untrack(currentDayKey) || pendingFeedRestart)) {
+        void refreshJournalFeedForCurrentDay(owner);
+      }
+    };
+    onCleanup(onAppReturn(onFocus));
   });
 
   // A deferred watcher/midnight refresh is retried only when the existing edit

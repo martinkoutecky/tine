@@ -101,6 +101,10 @@ let dayTimer: number | undefined;
  * rollover timer; the real clock is unchanged. */
 export function setCurrentDayKeyForTest(key: number): void { setDayKey(key); }
 
+/** Test-only: resynchronize the day signal and re-arm its midnight timer from
+ * the current (possibly fake) clock, as a wake does. */
+export function resyncCurrentDayForTest(): void { currentDayKey(); resyncDay(); }
+
 /** Re-read the local day and re-arm the next-midnight timer from now. Sleep
  * pauses timers and a zone change moves midnight, so every wake/focus/
  * visibility return and every backend clock sample comes through here, not
