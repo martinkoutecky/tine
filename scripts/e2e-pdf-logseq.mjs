@@ -1557,6 +1557,31 @@ try {
     throw new Error("same-PDF highlight navigation rewrote the sidecar");
   }
 
+  // GH #672 (late replay): opening a reader at a saved zoom armed a zoom-settle
+  // timer that fired ~120 ms after the mount and wrote the page-top anchor over
+  // this backlink's exact-highlight scroll (and, on a loaded machine, over the
+  // next user scroll: the rare "page input 1" failure below). The highlight must
+  // stay in view for as long as that timer could still be pending.
+  const highlightLeftView = await browser.executeAsync((highlightId, done) => {
+    const started = performance.now();
+    const check = () => {
+      const scroll = document.querySelector(".pdf-scroll");
+      const target = document.querySelector(`.pdf-hl-target[data-highlight-id="${highlightId}"]`);
+      if (!scroll || !target) return done({ reason: "missing", scroll: !!scroll, target: !!target });
+      const s = scroll.getBoundingClientRect();
+      const t = target.getBoundingClientRect();
+      if (t.bottom <= s.top || t.top >= s.bottom) {
+        return done({ reason: "out of view", scrollTop: scroll.scrollTop, scrollRect: [s.top, s.bottom], targetRect: [t.top, t.bottom] });
+      }
+      if (performance.now() - started < 600) setTimeout(check, 20);
+      else done(null);
+    };
+    check();
+  }, SECOND_SECOND_ID);
+  if (highlightLeftView) {
+    throw new Error(`GH #672: the backlink's exact highlight was scrolled away after landing: ${JSON.stringify(highlightLeftView)}`);
+  }
+
   // GH #672: scrolling reports a new page into the route. That report must
   // not replay the backlink intent, while clicking the same ref again must.
   await browser.execute(() => {
