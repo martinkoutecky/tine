@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.8.0-beta.7] - 2026-10-21
+
 ### Fixed
 
 - **A query export no longer publishes pages marked `public:: false`**, as every other export already did: when the query matches such a page, the page, its results and its share of the result count stay out of the export, and the review lists only the pages that are exported. A query that matches only such pages is refused (REG-QUERY-EXPORT-PRIVATE-PAGES).
