@@ -98,7 +98,12 @@ try {
     const platforms = Object.fromEntries(Object.entries(spec.platforms).map(([platform, [asset, signatureAsset]]) => [platform, { asset, signature: fs.readFileSync(path.join(dir, signatureAsset), "utf8").trim() }]));
     fs.writeFileSync(path.join(dir, "release-fragment.json"), JSON.stringify({ version, commit, channel, lane, assets, platforms }));
   }
-  assembleCandidate({ input, output, version, commit, repository: "owner/repo", channel });
+  // Release notes come from a synthetic changelog: between cuts the live
+  // version has no section yet (D-20261020-BZ7).
+  const notesRoot = path.join(temp, "notes");
+  fs.mkdirSync(notesRoot, { recursive: true });
+  fs.writeFileSync(path.join(notesRoot, "CHANGELOG.md"), `# Changelog\n\n## [${version}] - 2026-01-01\n\n### Fixed\n\n- synthetic\n`);
+  assembleCandidate({ input, output, version, commit, repository: "owner/repo", channel, notesRoot });
   assert.deepEqual(candidateProblems(output, version, channel), []);
   const updater = JSON.parse(fs.readFileSync(path.join(output, "latest.json"), "utf8"));
   for (const entry of Object.values(updater.platforms)) assert.ok(entry.url.includes(updaterRoute), entry.url);
