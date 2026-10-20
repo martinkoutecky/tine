@@ -350,7 +350,7 @@ mod answer_changes;
 pub(crate) mod checkpoint;
 mod diagnostics;
 mod first_view;
-pub(crate) use first_view::journal_ids_from_entries;
+pub(crate) use first_view::{contain_index_publication, journal_ids_from_entries};
 #[cfg(test)]
 mod fold_save_tests;
 mod inventory;
@@ -1226,7 +1226,7 @@ impl Store {
                 if matches!(completed, Ok(true)) {
                     if matches!(*worker_load.status.lock().unwrap(), LoadStatus::Loading) {
                         let publish_began = std::time::Instant::now();
-                        let published = first_view::contain_first_publication(
+                        let published = first_view::contain_index_publication(
                             &worker_graph,
                             &worker_load,
                             || {

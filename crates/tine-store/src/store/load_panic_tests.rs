@@ -177,6 +177,18 @@ fn an_index_build_panic_fails_the_load_instead_of_hanging_it() {
         "an index-stage panic ends the load as Failed"
     );
     assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
+    // A retry (the window refreshes on every focus; Settings rescans)
+    // rebuilds the same indexes and fails the same way, through the same
+    // containment: still Failed, never a poisoned writer.
+    for depth in [Depth::Stamps, Depth::Bytes, Depth::Rebuild] {
+        let retried =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| store.refresh(depth)));
+        assert!(
+            matches!(retried, Ok(Err(LoadError::Failed { .. }))),
+            "{depth:?}: the retry fails without unwinding"
+        );
+        assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
+    }
     // Pages still open from their files, and the writer lock is not poisoned.
     let good = store.page(&PageId::from("pages/Good.md")).unwrap();
     assert!(matches!(edit_good(&store, &good), SaveOutcome::Saved(_)));
@@ -391,4 +403,47 @@ fn a_checkpoint_launch_contains_a_bad_page_created_while_closed() {
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_file(&cp);
     }
+}
+
+/// A Settings rescan (`Depth::Rebuild`) of a Ready graph rebuilds every
+/// index from the whole cache (`publish_rebuilt`). An index-stage panic
+/// there fails the graph instead of poisoning the writer, and the next
+/// retry goes through the recovery publication's containment.
+#[test]
+fn a_rescan_whose_index_build_panics_fails_the_graph_and_keeps_the_writer() {
+    let root = graph_with_bad_page("rescan-index", "- fine for now\n", 2);
+    let store = Store::open(&root, Default::default()).unwrap().0;
+    assert!(matches!(settled(&store), Ok(true)));
+    let canonical = fs::canonicalize(&root).unwrap();
+    crate::model::TEST_FULL_INDEX_PANIC_ROOTS
+        .lock()
+        .unwrap()
+        .push(canonical.clone());
+    let rescanned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        store.refresh(Depth::Rebuild)
+    }));
+    assert!(
+        matches!(rescanned, Ok(Err(LoadError::Failed { .. }))),
+        "the rescan fails without unwinding: {rescanned:?}"
+    );
+    assert!(matches!(store.whole_graph(), Err(LoadError::Failed { .. })));
+    let retried = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        store.refresh(Depth::Stamps)
+    }));
+    assert!(
+        matches!(retried, Ok(Err(LoadError::Failed { .. }))),
+        "{retried:?}"
+    );
+    let good = store.page(&PageId::from("pages/Good.md")).unwrap();
+    assert!(matches!(edit_good(&store, &good), SaveOutcome::Saved(_)));
+    assert!(fs::read_to_string(root.join("pages/Good.md"))
+        .unwrap()
+        .contains("edited after the load"));
+    // The fault cleared, a retry recovers the graph.
+    (crate::model::TEST_FULL_INDEX_PANIC_ROOTS.lock().unwrap()).retain(|r| *r != canonical);
+    assert!(matches!(store.refresh(Depth::Stamps), Ok(_)));
+    assert!(matches!(settled(&store), Ok(true)));
+    assert_rest_of_graph_answers(&store, "rescan-index", 3);
+    drop(store);
+    let _ = fs::remove_dir_all(&root);
 }

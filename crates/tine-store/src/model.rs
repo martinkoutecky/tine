@@ -1886,6 +1886,13 @@ impl SnapshotExplicitIndex {
             }
         };
         let rows: Vec<&(PageEntry, Arc<Document>)> = pages.iter().collect();
+        #[cfg(test)]
+        if rows.iter().any(|(entry, _)| {
+            (TEST_FULL_INDEX_PANIC_ROOTS.lock().unwrap().iter())
+                .any(|root| entry.path.starts_with(root))
+        }) {
+            panic!("deterministic test sentinel for a full graph index build panic");
+        }
         let workers = page_cache_worker_count();
         if workers <= 1 || rows.len() < 64 {
             insert(&rows);
@@ -4728,6 +4735,12 @@ pub(crate) const TEST_PAGE_PARSE_PANIC_SENTINEL: &str = "__TINE_TEST_PAGE_PARSE_
 /// page move runs under the writer lock (og-gh644 F3).
 #[cfg(test)]
 pub(crate) const TEST_TITLE_READ_PANIC_SENTINEL: &str = "__TINE_TEST_TITLE_READ_PANIC__";
+/// Test-only: graph roots whose next whole-graph explicit-reference index
+/// build (not an incremental update) panics, so a test can fail exactly the
+/// full rebuild a Settings rescan publishes (`publish_rebuilt`).
+#[cfg(test)]
+pub(crate) static TEST_FULL_INDEX_PANIC_ROOTS: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
 /// Test-only: a block containing this panics in a graph-wide index build
 /// (the reference-candidate signatures), after the page parse.
 #[cfg(test)]

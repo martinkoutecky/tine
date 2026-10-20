@@ -70,8 +70,19 @@ impl WatchHandle {
         self.core
             .graph
             .replace_unreadable_walk_errors(&HashMap::new(), &walk_errors);
-        self.core.changes.publish_rebuilt(Vec::new());
+        // Rebuilt indexes from the whole cache: contained as the first
+        // publication is (an index-stage panic fails the graph, never
+        // poisons the writer).
+        let published =
+            crate::store::contain_index_publication(&self.core.graph, &self.core.load, || {
+                self.core.changes.publish_rebuilt(Vec::new())
+            });
         drop(writer);
+        if !published {
+            return Err(LoadError::Failed {
+                reason: "graph publication stopped: an index build panicked".into(),
+            });
+        }
         self.core.observe_assets(&HashSet::new(), true);
         let _ = self.wake.send(());
         Ok(())

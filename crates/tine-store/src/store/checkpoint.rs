@@ -714,7 +714,7 @@ pub(crate) fn launch_from(
     let found = watch.launch_diff().unwrap_or_default();
     let publish_began = Instant::now();
     // The cold load's containment backstop (`first_view`).
-    let published = super::first_view::contain_first_publication(graph, load, || {
+    let published = super::first_view::contain_index_publication(graph, load, || {
         changes.publish_with(
             Origin::External,
             found.files,

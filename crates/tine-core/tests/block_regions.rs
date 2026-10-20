@@ -704,5 +704,40 @@ fn planning_never_enters_an_opening_logbook() {
             )
             .unwrap();
         assert_eq!(out, format!("SCHEDULED: <2026-10-03 Sat>{nl}{lb}"));
+        // Read back as the block's schedule (inside the drawer it was not).
+        let block = tine_core::doc::DocBlock::new(out.replace("\r\n", "\n"));
+        assert!(
+            block
+                .scheduled()
+                .is_some_and(|date| date.contains("2026-10-03")),
+            "{:?}",
+            block.scheduled()
+        );
+    }
+}
+
+/// The edit-exit planning tidy-up (`Block.tsx` runs `normalizePlanning`
+/// whenever editing ends) moves a SCHEDULED line written after a leading
+/// logbook to above the drawer, where it is read, never into the logbook.
+#[test]
+fn edit_exit_planning_tidy_up_hoists_above_an_opening_logbook() {
+    for nl in ["\n", "\r\n"] {
+        let lb = ":LOGBOOK:\nCLOCK: [2026-10-01 Wed 10:00]\n:END:".replace('\n', nl);
+        let raw = format!("{lb}{nl}SCHEDULED: <2026-10-03 Sat>");
+        let out = parse(&raw, false)
+            .apply(&raw, false, Edit::NormalizePlanning)
+            .unwrap();
+        assert_eq!(out, format!("SCHEDULED: <2026-10-03 Sat>{nl}{lb}"));
+        let block = tine_core::doc::DocBlock::new(out.replace("\r\n", "\n"));
+        assert!(block
+            .scheduled()
+            .is_some_and(|date| date.contains("2026-10-03")));
+        // A fixed point: tidying again changes nothing.
+        assert_eq!(
+            parse(&out, false)
+                .apply(&out, false, Edit::NormalizePlanning)
+                .unwrap(),
+            out
+        );
     }
 }

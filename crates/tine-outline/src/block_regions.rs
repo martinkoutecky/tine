@@ -870,9 +870,14 @@ impl BlockRegions {
             whole_line(raw, *r).1
         } else if !org && self.drawers.iter().any(|d| d.range.0 == lead) {
             // A Markdown block that opens with a drawer (`- :LOGBOOK:`) has no
-            // title: metadata goes before the drawer, never into it. OG
-            // `frontend.util.property/insert-property` prepends when
-            // `block-content/has-title?` is false (the first AST node is a Drawer).
+            // title: metadata goes before the drawer, never into it. Properties
+            // follow OG `frontend.util.property/insert-property`, which prepends
+            // when `block-content/has-title?` is false (the first AST node is a
+            // Drawer). Planning deliberately differs from OG: OG
+            // `frontend.util.text/add-timestamp` always inserts SCHEDULED /
+            // DEADLINE after the first line, here inside the logbook, where
+            // neither app reads it; Tine puts it before the drawer so the
+            // schedule is read (data safety over byte parity).
             // An Org block's first line is its heading, so it stays the title.
             raw[..lead].rfind('\n').map_or(0, |p| p + 1)
         } else {

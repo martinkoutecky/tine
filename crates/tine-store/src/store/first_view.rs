@@ -193,15 +193,18 @@ pub(crate) fn journal_ids_from_entries(
         .collect()
 }
 
-/// Run the initial load's first publication (`publish`, which builds the
-/// graph-wide indexes and sets Ready) as a containment backstop: page
-/// parses are isolated per file before it, so a panic here is a graph-wide
-/// index stage's. It ends the load `Failed`, which `whole_graph` reports and
-/// `refresh()` retries, instead of killing the load thread with the store
-/// still Loading so every waiter hangs. The caller holds the writer guard,
-/// so catching here keeps the writer lock unpoisoned for later saves.
-/// True when the publication completed.
-pub(super) fn contain_first_publication(
+/// Run a publication that builds the graph-wide indexes from the whole page
+/// cache (`publish`: the initial load's first publication, which sets
+/// Ready; a failed load's recovery in `refresh()`; a Settings rescan) as a
+/// containment backstop. Page parses are isolated per file before it, so a
+/// panic here is a graph-wide index stage's, and deterministic for the same
+/// bytes: it ends the load `Failed`, which `whole_graph` reports and a later
+/// `refresh()` retries (through this same door), instead of killing the
+/// load thread with the store still Loading (every waiter hangs) or
+/// unwinding through the writer. The caller holds the writer guard, so
+/// catching here keeps the writer lock unpoisoned for later saves. A closed
+/// store stays closed. True when the publication completed.
+pub(crate) fn contain_index_publication(
     graph: &Graph,
     load: &LoadState,
     publish: impl FnOnce(),
@@ -211,8 +214,10 @@ pub(super) fn contain_first_publication(
     }
     graph.diag.load_stopped();
     let mut status = load.status.lock().unwrap();
-    if matches!(*status, LoadStatus::Loading) {
+    if !matches!(*status, LoadStatus::Closed) {
         *status = LoadStatus::Failed("graph publication stopped: an index build panicked".into());
     }
+    drop(status);
+    load.ready.notify_all();
     false
 }
