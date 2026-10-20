@@ -312,7 +312,7 @@ impl Graph {
             query_index,
             transliteration_names: Arc::new(NameKeyMap::new()),
             transliteration_owners: SharedMap::new(),
-            completion_name_keys: Default::default(),
+            completion_name_keys: Arc::clone(&self.completion_name_keys),
             #[cfg(test)]
             name_cache_work: 0,
             #[cfg(test)]

@@ -444,7 +444,13 @@ pub(crate) struct Graph {
     /// Lock order is ALWAYS page_lock → cache → disk_revs; never the reverse.
     page_locks:
         std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
+    /// Open editor completions' supplemental name keys, by session. The one
+    /// owner across every published view (incremental, config, Rescan,
+    /// checkpoint install), so a close releases the session everywhere.
+    pub(crate) completion_name_keys: CompletionSessions,
 }
+
+pub(crate) type CompletionSessions = Arc<std::sync::Mutex<HashMap<String, Arc<NameKeyMap>>>>;
 
 /// The immutable page and index input for one published generation. Evaluators
 /// borrow this value; write helpers and filesystem capabilities are absent.
@@ -481,9 +487,9 @@ pub(crate) struct ReadSnapshot {
     query_index: crate::query::index::QueryIndexSlot,
     pub(crate) transliteration_names: Arc<NameKeyMap>,
     pub(crate) transliteration_owners: SharedMap<String, usize>,
-    // Only open editor completions own supplemental keys. Shared across
-    // publications, released explicitly on close (including stale IPC replies).
-    pub(crate) completion_name_keys: Arc<std::sync::Mutex<HashMap<String, Arc<NameKeyMap>>>>,
+    // Only open editor completions own supplemental keys: the graph's one
+    // registry, released explicitly on close (including stale IPC replies).
+    pub(crate) completion_name_keys: CompletionSessions,
     #[cfg(test)]
     pub(crate) name_cache_work: usize,
     #[cfg(test)]
@@ -493,6 +499,12 @@ pub(crate) struct ReadSnapshot {
 }
 
 pub(crate) type NameKeyMap = SharedMap<String, Arc<crate::transliteration::NameKeys>>;
+
+#[cfg(test)]
+thread_local! {
+    /// Arms the graph-wide ownership rebuild mutant in `build_name_keys`.
+    pub(crate) static REWALK_NAME_OWNERS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
 impl ReadSnapshot {
     fn build_name_keys(&mut self, old: Option<&Self>, changed_paths: &[String]) -> Arc<NameKeyMap> {
@@ -507,6 +519,10 @@ impl ReadSnapshot {
         // names allocates nothing per block here. Eligibility is the same for
         // every spelling of one page key, so this is the set the former
         // collect-then-filter produced.
+        // The cost guard counts at the primitive: every document this
+        // enumeration visits and every name it yields (re-review F4).
+        #[cfg(test)]
+        let work = std::cell::Cell::new(0usize);
         let names = |page: &PageEntry, doc: &Document| -> std::collections::BTreeSet<String> {
             let mut names: std::collections::BTreeSet<String> = std::iter::once(page.name.clone())
                 .chain(crate::query::document_alias_spellings(doc))
@@ -517,10 +533,26 @@ impl ReadSnapshot {
                     names.insert(key);
                 }
             });
+            #[cfg(test)]
+            work.set(work.get() + 1 + names.len());
             names
         };
         let mut delta: std::collections::BTreeMap<String, isize> = Default::default();
         if let Some(old) = old {
+            #[cfg(test)]
+            if REWALK_NAME_OWNERS.with(std::cell::Cell::get) {
+                // Mutant for the cost guard's own test: recompute prior
+                // ownership from every old page. Same keys and results,
+                // O(pages) work the guard must report.
+                let mut owners = SharedMap::new();
+                for (page, doc) in old.pages.iter() {
+                    for name in names(page, doc) {
+                        let count = owners.get(&name).copied().unwrap_or(0) + 1;
+                        owners.insert(name, count);
+                    }
+                }
+                self.transliteration_owners = owners;
+            }
             // Only publication paths are inspected. Counts are page ownership,
             // so repeated aliases/references within one document count once.
             for path in changed_paths {
@@ -530,10 +562,6 @@ impl ReadSnapshot {
                 let after = snapshot_page_by_rel(&self.pages, None, path)
                     .map(|(page, doc)| names(page, doc))
                     .unwrap_or_default();
-                #[cfg(test)]
-                {
-                    self.name_cache_work += before.len() + after.len();
-                }
                 for name in before.difference(&after) {
                     *delta.entry(name.clone()).or_default() -= 1;
                 }
@@ -544,13 +572,13 @@ impl ReadSnapshot {
         } else {
             for (page, doc) in self.pages.iter() {
                 for name in names(page, doc) {
-                    #[cfg(test)]
-                    {
-                        self.name_cache_work += 1;
-                    }
                     *delta.entry(name).or_default() += 1;
                 }
             }
+        }
+        #[cfg(test)]
+        {
+            self.name_cache_work += work.get();
         }
         let mut keys = old
             .map(|old| Arc::clone(&old.transliteration_names))
@@ -759,9 +787,7 @@ impl ReadSnapshot {
             query_index,
             transliteration_names: Arc::new(NameKeyMap::new()),
             transliteration_owners: SharedMap::new(),
-            completion_name_keys: old
-                .map(|old| Arc::clone(&old.completion_name_keys))
-                .unwrap_or_default(),
+            completion_name_keys: Arc::clone(&graph.completion_name_keys),
             #[cfg(test)]
             name_cache_work: 0,
             #[cfg(test)]
@@ -2796,6 +2822,7 @@ impl Graph {
             opened_at: std::time::SystemTime::now(),
             recent_writes: std::sync::Mutex::new(std::collections::HashMap::new()),
             page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
+            completion_name_keys: Default::default(),
         }
     }
 
