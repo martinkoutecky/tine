@@ -61,6 +61,7 @@ pub(super) struct Serving {
     pub(super) gate: Arc<Gate>,
     lease: super::super::lease::Lease,
     stopped: mpsc::Receiver<super::super::endpoint::Stop>,
+    app_data: PathBuf,
 }
 
 impl Serving {
@@ -87,6 +88,7 @@ impl Serving {
             gate,
             lease,
             stopped,
+            app_data: graph.app_data.clone(),
         }
     }
 
@@ -99,6 +101,7 @@ impl Serving {
                 self.lease,
                 self.stopped,
                 Duration::from_secs(1800),
+                &self.app_data,
             );
             done.send(()).unwrap();
         });

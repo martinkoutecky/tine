@@ -114,14 +114,42 @@ fn wait_launch_backup(slot: &GraphSlot) -> bool {
 }
 
 pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
+    let data_dir = app.path().app_data_dir().ok();
+    let report_slot = slot.clone();
+    launch_backup(slot, data_dir, move |outcome| {
+        report_launch_failure(&app, &report_slot, outcome)
+    });
+}
+
+/// The headless owner's launch backup (`tine serve`, journal D-20261019-QC
+/// item 3): the app's policy, with stderr (serve's start log) and the
+/// diagnostic log as the only report. The handle lets serve wait for a
+/// cancelled backup to stop before the process exits.
+#[cfg(desktop)]
+pub(crate) fn launch_backup_headless(
+    slot: Arc<GraphSlot>,
+    app_data: PathBuf,
+) -> Option<std::thread::JoinHandle<()>> {
+    launch_backup(slot, Some(app_data), report_launch_outcome)
+}
+
+/// Validate the source at launch, then copy it on a detached worker once the
+/// binding's warm has settled (`wait_launch_backup`), one copy at a time
+/// process-wide. A revoked binding (`background_cancelled`) skips or stops
+/// the copy and reports nothing. `None`: the source failed and was reported.
+fn launch_backup(
+    slot: Arc<GraphSlot>,
+    data_dir: Option<PathBuf>,
+    report: impl Fn(&BackupOutcome) + Send + 'static,
+) -> Option<std::thread::JoinHandle<()>> {
     let source = match BackupSource::from_store(&slot.store, &slot.root_key) {
         Ok(source) => source,
         Err((kind, _)) => {
-            report_launch_failure(&app, &slot, &BackupOutcome::failed(0, "source", kind));
-            return;
+            report(&BackupOutcome::failed(0, "source", kind));
+            return None;
         }
     };
-    std::thread::spawn(move || {
+    Some(std::thread::spawn(move || {
         if !wait_launch_backup(&slot) {
             return;
         }
@@ -134,13 +162,13 @@ pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
         if slot.background_cancelled.load(Ordering::Acquire) {
             return;
         }
-        let outcome = do_backup_source_cancellable(&app, &slot.store, source, "", &|| {
+        let outcome = backup_into(data_dir.as_deref(), &slot.store, source, "", &|| {
             slot.background_cancelled.load(Ordering::Acquire)
         });
         if !slot.background_cancelled.load(Ordering::Acquire) {
-            report_launch_failure(&app, &slot, &outcome);
+            report(&outcome);
         }
-    });
+    }))
 }
 
 pub(crate) fn backup_graph_now(
@@ -518,7 +546,8 @@ fn do_backup_source(
         .get_or_init(|| std::sync::Mutex::new(()))
         .lock()
         .unwrap();
-    do_backup_source_cancellable(app, store, source, suffix, &|| false)
+    let data_dir = app.path().app_data_dir().ok();
+    backup_into(data_dir.as_deref(), store, source, suffix, &|| false)
 }
 
 /// What a capture may still hold (D3): the archive's payload limit (the
@@ -644,8 +673,10 @@ fn count_store_text(store: &Store, area: Area) -> Result<usize, ErrorKind> {
         .count())
 }
 
-fn do_backup_source_cancellable(
-    app: &tauri::AppHandle,
+/// Write one snapshot into `<data_dir>/backups/<id>`, keeping the count set
+/// in `<data_dir>`'s settings. `None`: the process has no app-data directory.
+fn backup_into(
+    data_dir: Option<&std::path::Path>,
     store: &Store,
     source: BackupSource,
     suffix: &str,
@@ -654,7 +685,7 @@ fn do_backup_source_cancellable(
     if cancelled() {
         return BackupOutcome::failed(0, "cancelled", ErrorKind::Interrupted);
     }
-    let Ok(data_dir) = app.path().app_data_dir() else {
+    let Some(data_dir) = data_dir else {
         return BackupOutcome::failed(0, "app-data", ErrorKind::NotFound);
     };
     let base = data_dir.join("backups").join(root_backup_id(&source.root));
@@ -664,7 +695,7 @@ fn do_backup_source_cancellable(
         source,
         suffix,
         cancelled,
-        backup_keep(app),
+        backup_keep_at(&crate::settings::settings_path_in(data_dir)),
         BACKUP_LOCK_WAIT,
     )
 }
@@ -1225,8 +1256,12 @@ fn prune_now(base: &std::path::Path, keep: usize, lock_wait: std::time::Duration
 }
 
 fn backup_keep(app: &tauri::AppHandle) -> usize {
-    settings_path(app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
+    settings_path(app).map_or(BACKUP_KEEP_DEFAULT, |path| backup_keep_at(&path))
+}
+
+fn backup_keep_at(settings: &std::path::Path) -> usize {
+    std::fs::read_to_string(settings)
+        .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v.get("backup_keep").and_then(|x| x.as_u64()))
         .map(|n| (n as usize).max(1))

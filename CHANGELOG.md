@@ -53,6 +53,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- A Markdown file with a quote whose first line is a `#+NAME: VALUE` line followed by a `key::` line no longer crashes Tine when the graph loads (the parser recursed until the stack overflowed; lsdoc v0.5.10).
+- A command-line `tine serve` now takes the same launch snapshot as the app (Settings → **Backups & recovery**) when it opens a graph; before, a graph edited only through the command line was never backed up. A failure is reported on serve's stderr (REG-OG-SERVE-LAUNCH-BACKUP).
 - Opening a PDF no longer pulls the reader back to the top of the page about a tenth of a second later: following a backlink to a highlight of a PDF that was not open yet, or scrolling right after opening one, could be undone by a leftover zoom adjustment from opening (GH #672).
 - Following a backlink or block reference to a highlight of a PDF that was not open yet now scrolls to that highlight, as Logseq does, instead of opening the PDF with the highlight marked but off-screen. The scroll waits for the page to finish drawing, happens once, and is dropped if you scroll yourself first (card hCAoxs).
 - One page Tine's parser chokes on no longer stops the whole graph from loading. The graph opens, every other page works, and that one file is listed as unreadable. Opening such a page, changing it in another app, or renaming it now affects only that page; before, it could leave every later save failing until Tine restarted. A rename of such a page is refused with the file left as it was.
