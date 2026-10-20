@@ -212,6 +212,9 @@ blocks-outline-is-too-deep-to-merge = Outline is too deep to merge
 
 moves-outline-is-too-deep-to-move = Outline is too deep to move
 
+# Shown when a move, drop, paste or indent would put a block above (or under) a page's properties (GH #210).
+kernel-page-properties-stay-at-the-top-of-the-page = Page properties stay at the top of the page
+
 paste-pasted-outline-is-too-deep = Pasted outline is too deep
 
 paste-pasted-as-a-copy-references-to-these-blocks = Pasted as a copy; references to these blocks will not follow.

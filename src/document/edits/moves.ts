@@ -7,16 +7,19 @@ import { createSignal } from "solid-js";
 import { nextVisible } from "../tree";
 import { topSelected } from "./selection";
 import { pushToast } from "../../toasts";
-import { applyOutlineChange, markOutlineDirty, outlineChange, outlineChangePages, type OutlineChange, type OutlineRefusal, type OutlinePlace } from "../kernel";
+import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange, type OutlineRefusal, type OutlinePlace } from "../kernel";
 
 /** Run a computed move: a refusal stops before the undo entry (only the depth
- *  cap is the user's to learn about, as a toast); a move between pages first
+ *  cap and the page header are the user's to learn about, as a toast); a move between pages first
  *  checks that neither page holds an unresolved conflict (STEP3 §8). Resolves
  *  true when applied, false on the depth cap or a conflict, undefined on a
  *  silent refusal (a no-op gesture or stale ids). */
 function commitMove(change: OutlineChange | { refused: OutlineRefusal }, undoKind: string): boolean | undefined {
   if ("refused" in change) {
-    if (change.refused !== "depth_cap") return undefined;
+    if (change.refused !== "depth_cap") {
+      noteOutlineRefusal(change.refused);
+      return undefined;
+    }
     pushToast(msg("moves-outline-is-too-deep-to-move"), "error");
     return false;
   }
@@ -120,7 +123,10 @@ function applyStep(id: string, dir: 1 | -1): true | OutlineRefusal {
   const node = doc.byId[id];
   if (!node) return "incomplete";
   const change = outlineChange({ verb: "move_up_down", keys: [id], up: dir === -1 }, [node.page]);
-  if ("refused" in change) return change.refused;
+  if ("refused" in change) {
+    noteOutlineRefusal(change.refused);
+    return change.refused;
+  }
   pushUndo("move-item", [node.page]);
   applyOutlineChange(change);
   markOutlineDirty(change);
@@ -196,7 +202,10 @@ async function crossDayMove(
   // The kernel refuses a read-only or frozen page.
   const to: OutlinePlace = { at: "slot", parent: null, page: target, index: dir === -1 ? (pageByName(target)?.roots.length ?? 0) : 0 };
   const change = outlineChange({ verb: "move_to", keys: ids, to }, [from, target]);
-  if ("refused" in change) return false;
+  if ("refused" in change) {
+    noteOutlineRefusal(change.refused);
+    return false;
+  }
   if (refuseConflictedMove([from, target])) return false;
   if (!bindingCurrent(binding)) return false;
   pushUndo(undoKind, [from, target]);
@@ -260,7 +269,10 @@ export async function moveSelectionItems(dir: 1 | -1) {
     markOutlineDirty(change);
     return;
   }
-  if (change.refused !== "no_outline_step") return;
+  if (change.refused !== "no_outline_step") {
+    noteOutlineRefusal(change.refused);
+    return;
+  }
   // Boundary: cross the whole group into the adjacent day (only if every
   // selected block is a root block on the same feed day).
   const page = pages[0];

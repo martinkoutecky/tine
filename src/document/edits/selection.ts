@@ -3,7 +3,7 @@ import { revealOutlineBlock } from "../../outlineViewport";
 import { prepareReferenceChangeNotice } from "./blocks";
 import { OutlineScope, scopedVisibleOrder, visibleData, visibleOrder, pageVisibleOrder, nextVisible, prevVisible, rootsOf } from "../tree";
 import { doc, setDoc, bumpCollapseEpochs } from "../model";
-import { applyOutlineChange, markOutlineDirty, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
+import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, outlineChangePages, type OutlineChange } from "../kernel";
 import { createSignal, createRoot, createMemo } from "solid-js";
 import { endEdit, editingId } from "../../editorController";
 import { installClearOutlineSelection, notifyOutlineSelectionStarted } from "../../modeHooks";
@@ -299,6 +299,7 @@ export function indentSelection() {
   const change = outlineChange({ verb: "indent", keys: same }, [destPage]);
   if ("refused" in change) {
     if (change.refused === "depth_cap") pushToast(msg("selection-outline-is-too-deep-to-indent"), "error");
+    else noteOutlineRefusal(change.refused);
     return;
   }
   commitSelectionChange(change, "indent-sel");

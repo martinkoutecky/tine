@@ -187,6 +187,8 @@ blocks-outline-is-too-deep-to-merge = 大纲层级过深，无法合并
 
 moves-outline-is-too-deep-to-move = 大纲层级过深，无法移动
 
+kernel-page-properties-stay-at-the-top-of-the-page = 页面属性始终保留在页面顶部
+
 paste-pasted-outline-is-too-deep = 粘贴的大纲层级过深
 
 paste-pasted-as-a-copy-references-to-these-blocks = 已粘贴为副本；指向这些块的引用不会随之更新。

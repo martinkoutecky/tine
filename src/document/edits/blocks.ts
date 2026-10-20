@@ -12,7 +12,7 @@ import { timetrackingEnabled, logbookWithSecondSupport, logicalOutdenting, remov
 import { pushRawUndo, pushUndo, undo, undoTopTag } from "../history";
 import { markDirty, noteTitleIdentityIntent } from "../host/wiring";
 import { produce } from "solid-js/store";
-import { applyOutlineChange, markOutlineDirty, outlineChange, type OutlineChange, type OutlinePlace } from "../kernel";
+import { applyOutlineChange, markOutlineDirty, noteOutlineRefusal, outlineChange, type OutlineChange, type OutlinePlace } from "../kernel";
 import { outlineMaxDepth, outlineDepth, type OutlineNode } from "../../editor/outline";
 import { splitProps, BUILTIN_HIDE, isPropertiesOnly, readPropertyValue, visibleOffsetToRawByte } from "../../editor/properties";
 import { startEditing, editingId, endEdit, type EditorSelection } from "../../editorController";
@@ -214,7 +214,10 @@ export function indentBlock(id: string, caretOffset: number | EditorSelection, e
   // The kernel refuses the first sibling, a page-header parent (GH #638) and
   // the outline cap; only the cap is reported to the caller.
   const change = outlineChange({ verb: "indent", keys: [id] }, [pageName]);
-  if ("refused" in change) return change.refused === "depth_cap" ? false : undefined;
+  if ("refused" in change) {
+    noteOutlineRefusal(change.refused);
+    return change.refused === "depth_cap" ? false : undefined;
+  }
   pushUndo("indent", [pageName]);
   // Reparenting remounts the editor. Publish its selection and ownership in the
   // same reactive flush as the tree change, before the replacement can focus.
@@ -349,7 +352,10 @@ function insertOutlineBeside(
   // (Phase-6 review finding, validated).
   if (!blockWritable(anchorId) || !outlineFits(anchorId, nodes)) return null;
   const change = importedOutlineChange(anchorId, nodes, { at: side, key: anchorId });
-  if ("refused" in change) return null;
+  if ("refused" in change) {
+    noteOutlineRefusal(change.refused);
+    return null;
+  }
   pushUndo(undoLabel, [doc.byId[anchorId].page]);
   applyOutlineChange(change);
   markOutlineDirty(change);

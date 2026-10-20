@@ -1118,6 +1118,7 @@ export interface MessageArgs {
   "journals-prose-task-summary": { "progress": string | number; "tasks": string | number };
   "journals-prose-tasks-today": { "count": number };
   "journals-upcoming": {};
+  "kernel-page-properties-stay-at-the-top-of-the-page": {};
   "launcher-ranking-could-not-load-adaptive-launcher-ranking-preference": {};
   "link-depth-embed-depth-is-too-deep": {};
   "links-copy-title": {};

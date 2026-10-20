@@ -61,9 +61,12 @@ fs.writeFileSync(`${GRAPH}/pages/Property table.md`, `- ${tableConfig}\n- Other 
 // GH #210 F1: Enter at the start of a page's properties.
 const headEnter = "tags:: reading\nicon:: 📚\n\n- Body block\n";
 fs.writeFileSync(`${GRAPH}/pages/Property head enter.md`, headEnter);
+// GH #210 F1 follow-up (D-20261019-H210F2): a keyboard move above the page properties.
+const moveAbove = "tags:: reading\nicon:: 📚\n\n- First block\n- Second block\n";
+fs.writeFileSync(`${GRAPH}/pages/Property move above.md`, moveAbove);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n- [[Property deletion]]\n- [[Property table]]\n- [[Property head enter]]\n");
+fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n- [[Property deletion]]\n- [[Property table]]\n- [[Property head enter]]\n- [[Property move above]]\n");
 
 const env = {
   ...process.env,
@@ -636,6 +639,61 @@ try {
   if (headToasts.length) throw new Error(`Enter at the start of the page properties raised an error toast: ${JSON.stringify(headToasts)}`);
   if ((await browser.$$(".page-properties .prop-row")).length !== 2) {
     throw new Error("the page properties no longer render as the page header after Enter at their start");
+  }
+  // GH #210 F1 follow-up (D-20261019-H210F2): Alt+Shift+Up on the first block
+  // under the page properties is refused (it would put a block above them, which
+  // the store refuses to save). The refusal says so with a plain info toast,
+  // leaves the file alone, and the page still saves a later edit.
+  await openPageByName(browser, "Property move above", { entry: process.platform === "win32" ? "button" : "shortcut" });
+  const openFirst = await browser.execute(() => {
+    const block = [...document.querySelectorAll(".page-blocks .ls-block")]
+      .find((element) => element.textContent?.includes("First block"));
+    const content = block?.querySelector(".block-content");
+    if (!content) return false;
+    content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  if (!openFirst) throw new Error("missing first block on the move-above page");
+  const firstEditor = await browser.$(".page-blocks textarea.block-editor");
+  await firstEditor.waitForExist({ timeout: 5_000 });
+  await browser.releaseActions();
+  await browser.performActions([{
+    type: "key",
+    id: "page-properties-move-up",
+    actions: [
+      { type: "keyDown", value: "" },
+      { type: "keyDown", value: "" },
+      { type: "keyDown", value: "" },
+      { type: "keyUp", value: "" },
+      { type: "keyUp", value: "" },
+      { type: "keyUp", value: "" },
+    ],
+  }]);
+  await browser.releaseActions();
+  await browser.waitUntil(async () => (await browser.$$(".toast-info .toast-msg")).length > 0, {
+    timeout: 5_000,
+    timeoutMsg: "no toast after moving a block above the page properties",
+  });
+  const moveToasts = await browser.execute(() => [...document.querySelectorAll(".toast .toast-msg")].map((node) => ({
+    text: node.textContent ?? "",
+    kind: node.closest(".toast")?.className ?? "",
+  })));
+  const whyToasts = moveToasts.filter((toast) => toast.text === "Page properties stay at the top of the page");
+  if (whyToasts.length !== 1 || !whyToasts[0].kind.includes("toast-info") || moveToasts.some((toast) => toast.kind.includes("toast-error"))) {
+    throw new Error(`moving a block above the page properties did not raise the plain info toast: ${JSON.stringify(moveToasts)}`);
+  }
+  const moveProps = (await browser.$$(".page-properties .prop-row")).length;
+  if (moveProps !== 2) throw new Error(`the page properties are no longer the page header after the refused move (${moveProps} rows)`);
+  await browser.keys(["Control", "End"]);
+  await browser.keys(" edited");
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  const moveSaved = await waitForFileText(
+    `${GRAPH}/pages/Property move above.md`,
+    (text) => text.includes("- First block edited"),
+    { timeoutMs: 10_000 },
+  );
+  if (moveSaved !== "tags:: reading\nicon:: 📚\n\n- First block edited\n- Second block\n") {
+    throw new Error(`the refused move above the page properties changed the page: ${JSON.stringify(moveSaved)}`);
   }
   console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, and real-app reopen are canonical`);
 } finally {

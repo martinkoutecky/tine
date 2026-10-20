@@ -12,6 +12,8 @@ import { outlineApply, outlineReads } from "../render/parse";
 import { graphRewriteFrozen } from "./graphRewriteState";
 import { capturePages, markDirty, pageFrozen, persistTransfer } from "./host/wiring";
 import { doc, keySource, keysUsed, pageByName, setDoc } from "./model";
+import { msg } from "../i18n";
+import { pushToastUnique } from "../toasts";
 
 /** Why a verb did nothing (`outline::Reason`). */
 export type OutlineRefusal =
@@ -157,6 +159,18 @@ export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): 
     keysUsed: change.keys_used,
     transfers: change.transfers ?? [],
   };
+}
+
+/** Tell the user why a verb did nothing, when the refusal is theirs to learn
+ *  about and no caller has a more specific message. Today that is the page
+ *  header (GH #210 F1, D-20261019-H210F2): a move, drop, paste or indent that
+ *  would leave the page properties anywhere but first on their page is refused
+ *  with a plain info toast, never silently. Every entry path that can hit
+ *  `header_root` calls this, so they all speak with one voice. The toast is
+ *  unique while it shows (key repeat on Alt+Shift+Up shows it once). A refusal
+ *  is not a write: the document is untouched. */
+export function noteOutlineRefusal(refused: OutlineRefusal): void {
+  if (refused === "header_root") pushToastUnique(msg("kernel-page-properties-stay-at-the-top-of-the-page"), "info");
 }
 
 /** The pages a change edits, for undo snapshots and conflict checks. */
