@@ -32,9 +32,10 @@ pub(crate) mod window;
 pub(crate) mod wire;
 pub(crate) mod write;
 
-#[cfg(test)]
+// Both exercise `serve`, `client` and `terminal`, which are desktop only.
+#[cfg(all(test, desktop))]
 mod output_tests;
-#[cfg(test)]
+#[cfg(all(test, desktop))]
 mod owner_tests;
 
 /// A failure to reach or become the owner (PROTOCOL §2.3, client-side codes).
@@ -78,6 +79,65 @@ impl std::fmt::Display for OwnerError {
             | Self::Mismatch(m) => f.write_str(m),
             Self::Unsupported => {
                 f.write_str("the command line cannot reach a graph's owner on this platform yet")
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod platform_gate_tests {
+    use std::path::Path;
+
+    /// A test module that reaches a desktop-only owner module is itself
+    /// desktop only, else `cargo check --tests` fails for Android and iOS.
+    #[test]
+    fn test_modules_that_use_desktop_only_modules_are_desktop_gated() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/owner");
+        let source = include_str!("mod.rs");
+        let mut cfg = "";
+        let mut desktop_only = Vec::new();
+        let mut test_modules = Vec::new();
+        for line in source.lines().map(str::trim) {
+            if line.starts_with("#[cfg") {
+                cfg = line;
+                continue;
+            }
+            let Some(name) = line
+                .strip_prefix("pub(crate) mod ")
+                .or_else(|| line.strip_prefix("mod "))
+                .and_then(|rest| rest.strip_suffix(';'))
+            else {
+                cfg = "";
+                continue;
+            };
+            if cfg == "#[cfg(desktop)]" {
+                desktop_only.push(name);
+            } else if cfg.contains("test") {
+                test_modules.push((name, cfg));
+            }
+            cfg = "";
+        }
+        assert!(desktop_only.contains(&"serve"), "{desktop_only:?}");
+        assert!(test_modules.iter().any(|(name, _)| *name == "owner_tests"));
+        for (name, cfg) in test_modules {
+            let mut text =
+                std::fs::read_to_string(dir.join(format!("{name}.rs"))).unwrap_or_default();
+            if let Ok(entries) = std::fs::read_dir(dir.join(name)) {
+                for entry in entries.flatten() {
+                    if entry.path().extension().is_some_and(|ext| ext == "rs") {
+                        text += &std::fs::read_to_string(entry.path()).unwrap();
+                    }
+                }
+            }
+            assert!(!text.is_empty(), "{name}: no source found");
+            let uses = desktop_only
+                .iter()
+                .find(|module| text.contains(&format!("{module}::")));
+            if let Some(module) = uses {
+                assert!(
+                    cfg.contains("desktop"),
+                    "owner::{name} uses the desktop-only `{module}` but is gated `{cfg}`"
+                );
             }
         }
     }
