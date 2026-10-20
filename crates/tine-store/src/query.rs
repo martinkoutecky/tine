@@ -1466,7 +1466,7 @@ pub(crate) fn templates(graph: &ReadSnapshot) -> Vec<TemplateDto> {
     graph.with_pages(|pages| {
         let mut out: Vec<TemplateDto> = Vec::new();
         for (entry, doc) in pages {
-            tine_core::template::templates_in(&doc.roots, &mut |name, blocks| {
+            tine_core::template::templates_in_document(doc, &mut |name, blocks| {
                 out.push(TemplateDto {
                     name,
                     blocks,
