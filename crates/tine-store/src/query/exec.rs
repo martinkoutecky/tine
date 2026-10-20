@@ -881,6 +881,7 @@ pub(crate) fn execute_cancellable(
         matched_total: (plan.anchor == Anchor::Page).then_some(0),
         statistics: None,
         exceeded: false,
+        as_of_day: None,
     };
     // §3.5: an invalid query returns nothing plus its diagnostics. A filter
     // that is constantly false (OG's nil query: `{{query }}`, or one whose
@@ -1280,10 +1281,17 @@ fn query_ir_on_day_cancellable(
     }) else {
         return Ok(None);
     };
+    // The day stamp is per call, outside the memo: a memo entry is filed
+    // under its own day already, and the checkpoint keeps no extra bytes.
+    let as_of_day = resolved
+        .reads_today()
+        .then(|| resolved.today().ordinal_key());
     match answer {
-        Answer::Result(result) => {
-            result.map(|result| Some(crate::IrAnswer::Result(Box::new(result.as_ref().clone()))))
-        }
+        Answer::Result(result) => result.map(|result| {
+            let mut result = result.as_ref().clone();
+            result.as_of_day = as_of_day;
+            Some(crate::IrAnswer::Result(Box::new(result)))
+        }),
         _ => unreachable!("R keys hold IR results"),
     }
 }

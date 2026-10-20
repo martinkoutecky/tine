@@ -146,6 +146,15 @@ export interface RenameTouchedPage {
   moved: boolean;
 }
 
+/** `page_alias_group`: the other members of one page's alias group
+ *  (D-20261019-AL1/AL2), each list sorted case-insensitively. */
+export interface AliasGroup {
+  /** Names with no file of their own; a link opens the declaring page. */
+  aliases: string[];
+  /** Names a file claims; a link opens that file. */
+  pages: string[];
+}
+
 export type ResolvedPage =
   | { kind: "existing"; id: string; others: string[] }
   | { kind: "alias"; owners: string[] }

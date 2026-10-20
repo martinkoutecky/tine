@@ -25,6 +25,7 @@ import { focusPageTrailing } from "./pageTrailing";
 import { ensureJournalTemplateForDay, renameOrMergePage, renameOutcomeMessage, switchGraph } from "../graph";
 import { Block, OutlineScopeContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
+import { AliasGroupHeader } from "./AliasGroup";
 import { LinkedReferences } from "./LinkedReferences";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import { FailureBoundary } from "./FailureBoundary";
@@ -37,7 +38,7 @@ import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
 import { aliasNamesOf, visibleBody } from "../render/block";
 import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
-import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, localDayRolloverDelay, appNow, parseJournalTitle } from "../journal";
+import { journalTitle, currentDayKey, localDateFromDayKey, localDayKey, appNow, parseJournalTitle } from "../journal";
 import { editingId, endEditForSurface, startEditing } from "../editorController";
 import type { JournalFeedPage, PageRead, RefGroup } from "../types";
 import { tagRef } from "../tags";
@@ -352,7 +353,7 @@ async function completeJournalFeed(owner: JournalsFeedOwner, generation: number,
 }
 
 // Page properties NOT shown in the under-title property list: `alias` is surfaced
-// as "aka" chips above. `tine.icon` and the OG-compatible `icon` stay editable here as well as decorating the
+// as the alias group rows above (AliasGroupHeader). `tine.icon` and the OG-compatible `icon` stay editable here as well as decorating the
 // title (OG's editable-built-in-properties lists `icon`). Hide internal tag-table metadata.
 // `tine/exports` is the exports page marker (docs/contracts/export-definitions.md), not something to edit.
 const PAGE_PROPS_HIDDEN = new Set(["alias", "tine.tag-table", "tine/exports"]);
@@ -631,34 +632,30 @@ export function PageView(): JSX.Element {
     }
   };
 
-  // Local calendar rollover is a one-shot revalidation.  Calendar construction
-  // (rather than 24h arithmetic) remains correct on DST transitions.
+  // Local calendar rollover follows the app's one date-change signal,
+  // currentDayKey() (journal.ts: the midnight timer, re-armed on every
+  // focus/visibility return and backend clock sample; card hB3Lv8, I-12).
+  // A return also retries a pending refresh or a feed answered for another
+  // day, unless the day change of that same return already started one.
   createEffect(() => {
     const route = currentRoute();
     if (route.kind !== "journals") return;
     const owner = journalOwner(route);
-    let timer: number | undefined;
-    let disposed = false;
-    const restart = () => { void refreshJournalFeedForCurrentDay(owner); };
-    const arm = () => {
-      if (disposed || !ownerIsLive(owner)) return;
-      const now = appNow();
-      timer = window.setTimeout(() => {
-        // One-shot rather than 24h arithmetic (DST-safe).  Re-arm after every
-        // trigger, including a deferred/error response, while this owner lives.
-        void refreshJournalFeedForCurrentDay(owner).finally(() => { if (!disposed && ownerIsLive(owner)) arm(); });
-      }, localDayRolloverDelay(now));
-    };
-    arm();
-    const onFocus = () => {
-      if (journalAsOfDay !== localDayKey() || pendingFeedRestart) restart();
-    };
-    const stopReturn = onAppReturn(onFocus);
-    onCleanup(() => {
-      disposed = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-      stopReturn();
+    let dayRefresh: Promise<unknown> | null = null;
+    let day = untrack(currentDayKey);
+    createEffect(() => {
+      const today = currentDayKey();
+      if (today === day) return;
+      day = today;
+      const refresh = dayRefresh = refreshJournalFeedForCurrentDay(owner)
+        .finally(() => { if (dayRefresh === refresh) dayRefresh = null; });
     });
+    const onFocus = () => {
+      if (!dayRefresh && (journalAsOfDay !== untrack(currentDayKey) || pendingFeedRestart)) {
+        void refreshJournalFeedForCurrentDay(owner);
+      }
+    };
+    onCleanup(onAppReturn(onFocus));
   });
 
   // A deferred watcher/midnight refresh is retried only when the existing edit
@@ -1224,17 +1221,15 @@ function PageSection(props: { page: FeedPage; children?: JSX.Element }): JSX.Ele
         </Show>
         </div>
       </div>
-      <Show when={aliasNamesOf(headerProperties(), props.page.format).length}>
-        <div class="page-aliases" title={t("page-ui-also-known-as-other-names-that-link-here")} onClick={editPageHeader}>
-          <span class="page-aliases-label">{t("page-ui-aka")}</span>
-          <For each={aliasNamesOf(headerProperties(), props.page.format)}>
-            {(a) => <span class="alias-chip"><PageRef name={a} alias={a} /></span>}
-          </For>
-        </div>
-      </Show>
+      <AliasGroupHeader
+        name={props.page.name}
+        declared={aliasNamesOf(headerProperties(), props.page.format)}
+        inGraph={!props.page.guide}
+        onEdit={editPageHeader}
+      />
       <Show when={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
         <div class="page-properties" onClick={editPageHeader}>
-          {/* `alias` is surfaced as chips — see PAGE_PROPS_HIDDEN. */}
+          {/* `alias` is surfaced by AliasGroupHeader — see PAGE_PROPS_HIDDEN. */}
           <For each={headerProperties().filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
             {([key, value]) => (
               <div class="prop-row">

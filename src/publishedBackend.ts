@@ -446,6 +446,11 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
         ? { kind: "existing" as const, id: page.path, others: [] }
         : { kind: "absent" as const, id: "" };
     },
+    // A snapshot carries no alias relation: the page header shows the page's
+    // own declared names, sorted by the snapshot's inventory.
+    async pageAliasGroup() {
+      return { aliases: [], pages: [] };
+    },
     async getPage(name: string, kind: "journal" | "page") {
       const snapshot = await load();
       const page = pageByName(snapshot, name);
@@ -932,6 +937,7 @@ export const PUBLISHED_ANSWERED_METHODS = [
   "pageModified",
   "pageBacklinkCounts",
   "resolvePage",
+  "pageAliasGroup",
   "loadGraph",
   "inspectGraphAccess",
   "startupGraphPath",

@@ -5,7 +5,7 @@
 //! no graph, no SQL. Execution (results, statistics, explain-empty runs)
 //! consumes a [`ResolvedQuery`] and lives outside this module.
 
-use super::advanced_patterns::advanced_pred;
+use super::advanced_patterns::{advanced_pred_inner, LoweringDay};
 use super::ir::{self, Anchor, Filter, Query, Source, ViewSettings};
 use super::{
     is_advanced, macro_text, og, query_nesting_within_limit, query_source_within_limit, registry,
@@ -350,6 +350,7 @@ pub struct ResolvedQuery {
     query: Query,
     report: ir::QueryReport,
     today: JournalDate,
+    reads_today: bool,
 }
 
 impl ResolvedQuery {
@@ -368,6 +369,15 @@ impl ResolvedQuery {
     /// The one execution-day snapshot every leaf in this execution reads.
     pub fn today(&self) -> JournalDate {
         self.today
+    }
+
+    /// Whether this answer depends on [`Self::today`]: the query resolves a
+    /// relative date (`today`, `-7d`, a `:today` input, a `now`/`-2h`
+    /// timestamp bound). A caller showing it re-asks once the local date moves;
+    /// a query that reads no relative date is never re-asked for a new day
+    /// (card hB3Lv8). O(1); computed once at binding.
+    pub fn reads_today(&self) -> bool {
+        self.reads_today
     }
 
     /// Whether this execution may be evaluated: `false` when the advanced
@@ -389,7 +399,7 @@ impl ResolvedQuery {
 /// an advanced placeholder to interpret on its own.
 ///
 /// For [`Source::Advanced`] it calls the ONE existing lowerer,
-/// [`advanced_pred`], with the AUTHORED source (`Source::Advanced.original`,
+/// [`advanced_pred_inner`], with the AUTHORED source (`Source::Advanced.original`,
 /// `:query`/`:inputs` and all), the caller's current page, and this execution's
 /// day, and carries its `ran`/`ignored` report through verbatim. The
 /// provisional inspection diagnostic is removed; static (size/depth)
@@ -418,6 +428,11 @@ pub fn resolve_for_execution(
     use ir::{Diagnostic, DiagnosticKind};
 
     let Source::Advanced { original, .. } = &query.source else {
+        // OG and TQL keep their date literals unresolved in the IR (`Value::Date`),
+        // so the tree itself says whether the answer reads the day.
+        let reads_today = query.filter.any_leaf(
+            &mut |leaf| matches!(leaf, ir::Leaf::Attr { value, .. } if value_reads_today(value)),
+        );
         return ResolvedQuery {
             query: query.clone(),
             report: ir::QueryReport {
@@ -426,6 +441,7 @@ pub fn resolve_for_execution(
                 supported: true,
             },
             today,
+            reads_today,
         };
     };
 
@@ -441,7 +457,11 @@ pub fn resolve_for_execution(
         .cloned()
         .collect();
 
-    let (lowered, ran, ignored) = advanced_pred(original, context.current_page.as_deref(), today);
+    // The advanced lowering bakes resolved ordinals into the IR; it records
+    // whether it read the day while resolving them.
+    let day = LoweringDay::new(today);
+    let (lowered, ran, ignored) =
+        advanced_pred_inner(original, context.current_page.as_deref(), &day, false);
     let mut bound = Query {
         anchor: lowered.as_ref().map_or(query.anchor, |q| q.anchor),
         filter: lowered
@@ -476,5 +496,15 @@ pub fn resolve_for_execution(
             supported,
         },
         today,
+        reads_today: day.was_read(),
+    }
+}
+
+/// Whether an unresolved operand names a day relative to the execution day.
+fn value_reads_today(value: &ir::Value) -> bool {
+    match value {
+        ir::Value::Date { literal } => super::date_token::date_literal_reads_today(literal),
+        ir::Value::List { items } => items.iter().any(value_reads_today),
+        _ => false,
     }
 }

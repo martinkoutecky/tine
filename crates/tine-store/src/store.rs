@@ -354,6 +354,7 @@ pub(crate) use first_view::{contain_index_publication, journal_ids_from_entries}
 #[cfg(test)]
 mod fold_save_tests;
 mod inventory;
+pub use inventory::{Inventory, InventoryEntry, InventoryScope};
 #[cfg(any(test, feature = "test-faults"))]
 mod link_oracle;
 #[cfg(test)]
@@ -2453,7 +2454,7 @@ pub enum Resolved {
     /// Name belongs to pages that declare it as an alias. Navigation can choose
     /// an owner; saving requires an actual owner's `PageId`, not the alias.
     Alias {
-        /// Alias owners in deterministic file order; no owner is chosen for you.
+        /// Alias owners in plain text order of graph-relative paths (AL2 opens the first).
         owners: Vec<PageId>,
     },
     /// No claimant; this is the id a new page would use.
@@ -2461,37 +2462,6 @@ pub enum Resolved {
         /// Proposed file identity.
         id: PageId,
     },
-}
-/// Physical names, aliases, and names that occur only in references, sorted by
-/// the graph's page identity key. A physical page has one entry per decoded
-/// spelling, and each entry's target is exactly what [`WholeGraph::resolve`]
-/// returns for that name: the canonical claimant, then every other file
-/// claiming the same normalized name.
-pub struct InventoryEntry {
-    /// Decoded file name, alias, or referenced name.
-    pub name: String,
-    /// Current claimant or proposed identity.
-    pub target: Resolved,
-    /// Whether this entry represents a journal.
-    pub is_journal: bool,
-    /// Parsed journal day, if any.
-    pub day: Option<Day>,
-}
-
-/// Graph inventory entries in page-key order.
-pub struct Inventory(pub Vec<InventoryEntry>);
-
-/// Which names a [`WholeGraph::inventory`] lists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InventoryScope<'a> {
-    /// Every name: file-claimed names, aliases and reference-only names.
-    All,
-    /// Referenced journal dates, including dates without a file, once per day.
-    /// Uses the explicit-reference index; excludes ordinary date-page identity.
-    ReferencedJournals,
-    /// Only the file-claimed names whose page key is this key or lies under
-    /// `key/` (a page and its namespace descendants): what a rename moves.
-    FilesAtOrUnder(&'a str),
 }
 /// Inputs for the query-plan graph search.
 pub struct SearchRequest {

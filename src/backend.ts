@@ -304,6 +304,9 @@ class TauriBackend implements Backend {
   resolvePage(name: string, kind: "journal" | "page") {
     return this.call<import("./types").ResolvedPage>("resolve_page", { name, kind });
   }
+  pageAliasGroup(name: string) {
+    return this.call<import("./types").AliasGroup>("page_alias_group", { name });
+  }
   pageWindowReloaded() {
     return this.call<{ session: number; nextId: number }>("page_window_reloaded");
   }

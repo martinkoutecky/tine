@@ -79,6 +79,17 @@ pub(crate) fn parse(
     ))
 }
 
+/// `query_run`'s answer on the wire: the result plus, for a day-relative
+/// query, the day it was resolved for (`QueryResult::as_of_day`, card hB3Lv8),
+/// which the result's own serde form never writes.
+#[derive(serde::Serialize)]
+pub(crate) struct QueryRunAnswer {
+    #[serde(flatten)]
+    result: QueryResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    as_of_day: Option<i64>,
+}
+
 pub(crate) fn run(
     graph: &WholeGraph,
     query: &Query,
@@ -216,10 +227,13 @@ pub(crate) async fn query_run(
     view: ViewSettings,
     context: Option<ExecutionContext>,
     state: GraphContext<'_>,
-) -> Result<QueryResult, String> {
+) -> Result<QueryRunAnswer, String> {
     let context = context.unwrap_or_default();
     on_graph(&state, move |graph, cancel| {
-        run(graph, &query, &view, &context, cancel)
+        run(graph, &query, &view, &context, cancel).map(|result| QueryRunAnswer {
+            as_of_day: result.as_of_day,
+            result,
+        })
     })
     .await
 }
@@ -290,6 +304,54 @@ mod tests {
             tine_store::Store::open(dir.path(), tine_store::OpenOptions::default()).unwrap();
         let graph = store.whole_graph().unwrap();
         (dir, graph)
+    }
+
+    /// Card hB3Lv8: the app's `query_run` answer names the day a day-relative
+    /// result was resolved for, and nothing for a date-free one, while the
+    /// result's own serde form (quick share, CLI, memo checkpoint) stays
+    /// without it.
+    #[test]
+    fn query_run_answer_carries_the_day_of_a_day_relative_result_only() {
+        let (_dir, graph) = graph_with(&[
+            ("logseq/config.edn", "{}\n"),
+            (
+                "pages/Plans.md",
+                "- TODO plan\n  SCHEDULED: <2000-01-03 Mon>\n",
+            ),
+        ]);
+        let answer = |text: &str| {
+            let parsed = parse(&graph, text, QueryTextDialect::Tql, &[]).unwrap();
+            assert!(!parsed.query.is_invalid(), "{:?}", parsed.query.diagnostics);
+            let result = run(
+                &graph,
+                &parsed.query,
+                &parsed.view,
+                &ExecutionContext::none(),
+                &Cancel::default(),
+            )
+            .unwrap();
+            let bare = serde_json::to_value(&result).unwrap();
+            assert!(bare.get("as_of_day").is_none(), "{bare}");
+            serde_json::to_value(QueryRunAnswer {
+                as_of_day: result.as_of_day,
+                result,
+            })
+            .unwrap()
+        };
+        let today = tine_core::date::JournalDate::today().ordinal_key();
+        let relative = answer("scheduled between '-30d' and today");
+        // A run straddling midnight may name the next day; never another one.
+        let day = relative["as_of_day"]
+            .as_i64()
+            .expect("day-relative answer is stamped");
+        assert!(day >= today, "{day} vs {today}");
+        assert!(
+            relative.get("anchor").is_some(),
+            "the result stays flattened"
+        );
+        let fixed = answer("scheduled between '2000-01-01' and '2000-01-31'");
+        assert!(fixed.get("as_of_day").is_none(), "{fixed}");
+        assert_eq!(fixed["total"], 1);
     }
 
     fn parse_and_run(graph: &WholeGraph, text: &str, dialect: QueryTextDialect) -> Vec<String> {

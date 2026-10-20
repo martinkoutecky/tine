@@ -1,6 +1,41 @@
 //! Name inventory of a whole-graph view: file-claimed names, aliases and
-//! reference-only names, and the file-claimed subset a page rename needs.
+//! reference-only names, the file-claimed subset a page rename needs, and the
+//! members of one alias group.
 use super::*;
+
+/// Physical names, aliases, and names that occur only in references, sorted by
+/// the graph's page identity key. A physical page has one entry per decoded
+/// spelling, and each entry's target is exactly what [`WholeGraph::resolve`]
+/// returns for that name: the canonical claimant, then every other file
+/// claiming the same normalized name.
+pub struct InventoryEntry {
+    /// Decoded file name, alias, or referenced name.
+    pub name: String,
+    /// Current claimant or proposed identity.
+    pub target: Resolved,
+    /// Whether this entry represents a journal.
+    pub is_journal: bool,
+    /// Parsed journal day, if any.
+    pub day: Option<Day>,
+}
+
+/// Graph inventory entries in page-key order.
+pub struct Inventory(pub Vec<InventoryEntry>);
+
+/// Which names a [`WholeGraph::inventory`] lists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InventoryScope<'a> {
+    /// Every name: file-claimed names, aliases and reference-only names.
+    All,
+    /// Referenced journal dates, including dates without a file, once per day.
+    /// Uses the explicit-reference index; excludes ordinary date-page identity.
+    ReferencedJournals,
+    /// Only the file-claimed names whose page key is this key or lies under
+    /// `key/` (a page and its namespace descendants): what a rename moves.
+    FilesAtOrUnder(&'a str),
+    /// The other members of this name's alias group (D-20261019-AL1), as `All` lists them.
+    AliasGroup(&'a str),
+}
 
 impl WholeGraph {
     /// Names and file claimants in this view. Physical twins with the same
@@ -35,6 +70,14 @@ impl WholeGraph {
     /// configured journal title. Uses published reference/alias keys, not
     /// document scans; O(R log D + indexed alias lookups), R reference names,
     /// D distinct dates. Ordinary date-named pages retain ordinary identity.
+    ///
+    /// [`InventoryScope::AliasGroup`] lists the other names of this name's
+    /// alias group (the transitive closure of `alias::` declarations, AL1),
+    /// each as `All` lists it: a name a file claims has an `Existing` target,
+    /// a name with no file `Alias { owners }`. A name in no group lists
+    /// nothing. The page header shows them (D-20261019-AL2). Cost
+    /// O(component log P) over the snapshot's alias edges and real-name
+    /// table; no parse and no disk access.
     pub fn inventory(&self, scope: InventoryScope<'_>) -> Arc<Inventory> {
         match scope {
             InventoryScope::All => self.full_inventory(),
@@ -58,6 +101,7 @@ impl WholeGraph {
             InventoryScope::FilesAtOrUnder(key) => {
                 Arc::new(Inventory(self.page_files_at_or_under(key)))
             }
+            InventoryScope::AliasGroup(name) => Arc::new(Inventory(self.alias_group(name))),
         }
     }
 
@@ -149,6 +193,28 @@ impl WholeGraph {
                 continue;
             }
             entries.extend(self.claimed_entries(page, page_key));
+        }
+        sort_inventory(&mut entries);
+        entries
+    }
+
+    /// [`InventoryScope::AliasGroup`]'s entries; see [`Self::inventory`].
+    fn alias_group(&self, name: &str) -> Vec<InventoryEntry> {
+        let mut entries = Vec::new();
+        for (key, spelling) in crate::query::alias_group_members(&self.graph, name) {
+            let claimant = [false, true].into_iter().find_map(|journal| {
+                let claimants = self.claimants.get(&(journal, key.clone()))?;
+                claimants.first().cloned()
+            });
+            match claimant {
+                Some(page) => entries.extend(self.claimed_entries(&page, key)),
+                None => entries.push(InventoryEntry {
+                    target: self.resolve(&spelling, false),
+                    name: spelling,
+                    is_journal: false,
+                    day: None,
+                }),
+            }
         }
         sort_inventory(&mut entries);
         entries

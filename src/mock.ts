@@ -22,6 +22,7 @@ import { searchFold } from "./editor/searchFold";
 import { parseJournalWith } from "./journal";
 import { mockJournalFiles } from "./mockJournalFiles";
 import { marginRegressionPages } from "./mockMarginPages";
+import { mockAliases } from "./mockAliases";
 
 /** Mock feed membership must use a Logseq journal-title parser, never the
  * host's permissive/non-portable Date string parser. Keep the same explicit
@@ -425,6 +426,14 @@ function bigPageBlocks(n: number): BlockDto[] {
 if (typeof location !== "undefined" && /[?&]big\b/.test(location.search)) {
   NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(Math.min(5000, Math.max(1, Number(new URLSearchParams(location.search).get("blocks")) || 2000))).map((v, i) => new URLSearchParams(location.search).has("long") ? { ...v, raw: `Paragraph ${i}: ` + "Long prose with ordinary words and wrapping lines. ".repeat(80) } : v) });
 }
+// D-20261019-AL2 screenshots (`?aliasgroups`): one alias group with two real
+// pages and three names with no file of their own.
+if (typeof location !== "undefined" && /[?&]aliasgroups\b/.test(location.search)) {
+  NAMED.push(
+    { name: "Germany", kind: "page", title: "Germany", pre_block: "alias:: DE, Deutschland, Bundesrepublik", blocks: [b("Country notes")] },
+    { name: "Bundesrepublik", kind: "page", title: "Bundesrepublik", pre_block: "alias:: BRD", blocks: [b("Federal politics notes")] },
+  );
+}
 if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)) {
   NAMED.push(
     {
@@ -667,15 +676,12 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
   const fold = (text: string) => searchFold(text, removeAccents);
   const find = (name: string) =>
     all.find((p) => identity(p.name) === identity(name)) ?? null;
+  const { aliasOwners, pageAliasGroup } = mockAliases(all, identity, mockPagePath);
   const mockResolve = (name: string, kind: "journal" | "page"): ResolvedPage => {
     const page = all.find((p) => p.kind === kind && identity(p.name) === identity(name));
     if (page) return { kind: "existing", id: mockPagePath(page), others: [] };
-    if (kind === "page") {
-      const owners = all.filter((p) => p.pre_block?.split(/\n/).some((line) =>
-        /^alias::\s*/i.test(line) && line.replace(/^alias::\s*/i, "").split(",").some((alias) => identity(alias.trim()) === identity(name))
-      )).map(mockPagePath).sort();
-      if (owners.length) return { kind: "alias", owners };
-    }
+    const owners = kind === "page" ? aliasOwners(name) : [];
+    if (owners.length) return { kind: "alias", owners };
     return { kind: "absent", id: mockPagePath({ name, kind, title: name, pre_block: null, blocks: [] }) };
   };
 
@@ -888,6 +894,7 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async resolvePage(name: string, kind: "journal" | "page") {
       return mockResolve(name, kind);
     },
+    pageAliasGroup,
     graphBindingGeneration: () => 1,
     ...mockPageHost((path) => all.find((p) => mockPagePath(p) === path) ?? null, (name, kind) => mockResolve(name, kind)),
     async guidePages(): Promise<GuidePage[]> {

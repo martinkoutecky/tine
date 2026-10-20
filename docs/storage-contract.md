@@ -236,6 +236,13 @@ every step of random edit sequences (`query/alias_relation.rs`
 `delta_equals_rebuild_over_random_edit_sequences`,
 `model/index_oracle_tests.rs` `random_alias_edits_equal_a_fresh_build`).
 
+A page's alias group (the page header's rows, `InventoryScope::AliasGroup`,
+D-20261019-AL2) is the class walk at read time; nothing is stored for it. The
+owners of an alias key are read in plain text order of their graph-relative
+paths, and every resolver opens the first (the owner rule); the stored owner
+map and its checkpoint encoding are unchanged. Proof:
+`crates/tine-store/tests/alias_groups.rs`.
+
 Every per-page index of a generation (this relation, the explicit-reference
 index, the candidate signatures, the name keys and the rest) is patched by the
 files its publication names plus every row the page cache changed since the

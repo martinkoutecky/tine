@@ -59,7 +59,7 @@ describe("resolveDateToken", () => {
   });
 });
 
-// I-12: `resolve_date_token` in Rust (advanced_patterns.rs) is the one grammar;
+// I-12: `resolve_date_token` in Rust (date_token.rs) is the one grammar;
 // this preview reads the SAME golden file as its Rust test, so the two cannot
 // drift (OG-C5 mess dateExpr twin: `-7D`, `2026_01_05`, the 10,000-year bound
 // and the year-0 leap clamp all used to disagree).

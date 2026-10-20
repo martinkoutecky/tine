@@ -27,6 +27,8 @@ pub mod atom;
 mod columns_resolution_tests;
 #[cfg(test)]
 mod conformance;
+#[allow(missing_docs)]
+mod date_token;
 #[cfg(test)]
 mod grouping_resolution_tests;
 #[allow(missing_docs)]
@@ -66,7 +68,7 @@ pub mod view;
 #[allow(missing_docs)]
 pub mod wire_parse;
 
-pub use advanced_patterns::{
+pub use date_token::{
     is_timestamp_token, resolve_date_token, resolve_timestamp_token, DateToken, DateUnit,
     MAX_DATE_OFFSET_YEARS,
 };

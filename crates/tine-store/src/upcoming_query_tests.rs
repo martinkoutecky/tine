@@ -188,3 +188,42 @@ fn bhkru_where_the_condition_and_upcoming_differ() {
     );
     store.close();
 }
+
+/// Card hB3Lv8: `query_run` stamps a day-relative answer with the day it was
+/// resolved for, from the memo as from a fresh run, so a window left open
+/// overnight knows to re-ask it; a date-free answer carries no stamp and is
+/// never re-asked for a new day.
+#[test]
+fn hb3lv8_a_day_relative_answer_names_its_day_and_a_date_free_one_does_not() {
+    let temp = tempfile::tempdir().unwrap();
+    fixture(temp.path());
+    let (store, _, _) = Store::open(temp.path(), Default::default()).unwrap();
+    let graph = store.whole_graph().unwrap();
+    let as_of = |tql: &str, today: JournalDate| {
+        let (query, view) = parse_query_input(tql, QueryInput::Tql, today, Registry::none());
+        let IrAnswer::Result(result) = crate::query::exec::query_ir_on_day(
+            &graph.graph,
+            IrRequest::Run {
+                query: &query,
+                view: &view,
+                context: &ExecutionContext::none(),
+            },
+            today,
+        )
+        .unwrap() else {
+            panic!("run must return query rows")
+        };
+        result.as_of_day
+    };
+    let upcoming = "any(direct_refs, day > today)";
+    assert_eq!(as_of(upcoming, TODAY), Some(20261019));
+    // Served from the memo the second time: still stamped.
+    assert_eq!(as_of(upcoming, TODAY), Some(20261019));
+    let tomorrow = TODAY.add_days(1);
+    assert_eq!(as_of(upcoming, tomorrow), Some(20261020));
+    assert_eq!(as_of("task = 'TODO'", TODAY), None);
+    assert_eq!(
+        as_of("scheduled between '2026-10-01' and '2026-10-31'", TODAY),
+        None
+    );
+}

@@ -3370,7 +3370,9 @@ html[data-system-insets="native-viewport"] {
   opacity: 0.7;
 }
 
-/* "aka" chips — a page's aliases (other names that link here), read-only. */
+/* The page header's alias group (AliasGroup.tsx): "Also called" chips are the
+   names with no page of their own; the second row lists the group's other real
+   pages as ordinary links, so names and pages read differently. */
 .page-aliases {
   display: flex;
   flex-wrap: wrap;
@@ -3383,6 +3385,9 @@ html[data-system-insets="native-viewport"] {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
+}
+.alias-group-page {
+  font-size: 13px;
 }
 .alias-chip {
   font-size: 12.5px;

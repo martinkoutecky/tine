@@ -1,6 +1,9 @@
 // Real-app regression for GH #62/#86/#138/#139. A first bullet becomes syntactically a
 // page-property block as soon as the second ':' in `alias::` is typed. The page
 // must not hide/unmount its textarea at that intermediate point.
+// D-20261019-AL2 (card hB9Zjw): the header then tells the alias group's names with
+// no file of their own from its other real pages, in the main pane and the right
+// sidebar, and each link opens the right page.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -20,6 +23,8 @@ fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/pages/Books.md`, "- \n");
+// Library declares Books (a real page) and a fileless name: one alias group.
+fs.writeFileSync(`${GRAPH}/pages/Library.md`, "alias:: Reading room, Books\n\n- Library notes\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Books]]\n- A singular #book reference\n");
@@ -113,7 +118,37 @@ try {
   if (!(await browser.$(".page-aliases").getText()).includes("book")) {
     throw new Error("reopened page did not parse the authored header as metadata");
   }
-  console.log("PASS: first-bullet properties stay in one editor, persist unbulleted, and reopen as page metadata");
+  console.log("first-bullet properties stay in one editor, persist unbulleted, and reopen as page metadata");
+
+  const row = (scope, attr) => browser.execute((scopeSel, attrSel) =>
+    [...document.querySelectorAll(`${scopeSel} [${attrSel}] a.page-ref`)].map((a) => a.textContent.trim()), scope, attr);
+  const expectRows = async (scope, names, pages, what) => {
+    await browser.waitUntil(async () =>
+      JSON.stringify(await row(scope, "data-alias-names")) === JSON.stringify(names)
+      && JSON.stringify(await row(scope, "data-alias-group-pages")) === JSON.stringify(pages), {
+      timeout: 10_000,
+      timeoutMsg: `${what}: expected names ${JSON.stringify(names)} and pages ${JSON.stringify(pages)}, saw ${JSON.stringify(await row(scope, "data-alias-names"))} / ${JSON.stringify(await row(scope, "data-alias-group-pages"))}`,
+    });
+  };
+  const click = (scope, attr, text, shiftKey = false) => browser.execute((scopeSel, attrSel, label, shift) =>
+    [...document.querySelectorAll(`${scopeSel} [${attrSel}] a.page-ref`)].find((a) => a.textContent.trim() === label)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, shiftKey: shift })), scope, attr, text, shiftKey);
+  const MAIN = ".page-section";
+  await expectRows(MAIN, ["book", "Reading room"], ["Library"], "Books header");
+  await browser.saveScreenshot(`${TMP}/alias-group-books.png`);
+  await click(MAIN, "data-alias-group-pages", "Library");
+  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()) === "Library", {
+    timeout: 10_000, timeoutMsg: "a related page did not open its own file",
+  });
+  await expectRows(MAIN, ["book", "Reading room"], ["Books"], "Library header");
+  await click(MAIN, "data-alias-names", "book");
+  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()) === "Books", {
+    timeout: 10_000, timeoutMsg: "a fileless name did not open the page declaring it",
+  });
+  await click(MAIN, "data-alias-group-pages", "Library", true);
+  await expectRows(".rs-item-body", ["book", "Reading room"], ["Books"], "Library in the right sidebar");
+  await browser.saveScreenshot(`${TMP}/alias-group-sidebar.png`);
+  console.log("PASS: first-bullet properties persist; alias group rows tell names from real pages and navigate (main + sidebar)");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

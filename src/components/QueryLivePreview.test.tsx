@@ -12,6 +12,7 @@ import { pageRefFilter, taskFilter } from "../editor/queryBuilder";
 import { blockRunResult } from "../tests/queryReadingsTestkit";
 import type { Filter, QueryResult } from "../editor/queryIr";
 import { PREVIEW_DEBOUNCE_MS } from "./QueryLivePreview";
+import { currentDayKey, localDayKey, setCurrentDayKeyForTest } from "../journal";
 
 function session(filter: Filter): BuilderSession {
   return { query: { anchor: "block", filter, source: { kind: "builder" } }, view: {} };
@@ -167,5 +168,40 @@ describe("live results in Pages and blocks mode", () => {
       expect(sentence).toMatch(/Pages and blocks/);
       expect(sentence).not.toMatch(/^Blocks where/);
     } finally { dispose(); }
+  });
+});
+
+// Card hB3Lv8: a sheet left open across midnight re-asks a day-relative preview
+// (the backend stamped its answer with the day), and only such a preview.
+describe("live results across a date change", () => {
+  const nextDay = (key: number) => localDayKey(new Date(Math.floor(key / 10_000), Math.floor((key % 10_000) / 100) - 1, key % 100 + 1));
+  afterEach(() => setCurrentDayKeyForTest(localDayKey()));
+
+  it("re-asks a day-relative preview once the date changes, and not a date-free one", async () => {
+    setCurrentDayKeyForTest(localDayKey());
+    let backendDay = currentDayKey();
+    let dayRelative = true;
+    const run = vi.spyOn(backend(), "queryRun").mockImplementation(async () => {
+      const result = groupOf(`due as of ${backendDay}`);
+      return dayRelative ? { ...result, as_of_day: backendDay } : result;
+    });
+    const view = mountBuilder(NARROW);
+    try {
+      await vi.waitFor(() => expect(view.live()?.textContent).toContain(`due as of ${backendDay}`));
+      const before = run.mock.calls.length;
+      backendDay = nextDay(backendDay);
+      setCurrentDayKeyForTest(backendDay);
+      await vi.waitFor(() => expect(view.live()?.textContent).toContain(`due as of ${backendDay}`));
+      expect(run.mock.calls.length).toBe(before + 1);
+      // A date-free answer is not re-asked for the next day.
+      dayRelative = false;
+      view.setSession(session(WIDE));
+      await vi.waitFor(() => expect(run.mock.calls.length).toBe(before + 2));
+      await settled();
+      const quiet = run.mock.calls.length;
+      setCurrentDayKeyForTest(nextDay(backendDay));
+      await settled();
+      expect(run.mock.calls.length).toBe(quiet);
+    } finally { view.dispose(); }
   });
 });

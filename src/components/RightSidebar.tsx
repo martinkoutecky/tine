@@ -13,7 +13,7 @@ import { FloatingPortal } from "./FloatingPortal";
 import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
 import { openPageTarget, openPageAtBlock, openPageTargetInNewTab, openInNewTab } from "../router";
 import { InlineText } from "../render/inline";
-import { visibleBody } from "../render/block";
+import { aliasNamesOf, visibleBody } from "../render/block";
 import { nearestAncestors } from "../render/blockTrail";
 import { openRouteInOtherPane } from "../panes";
 import { internalLinkAuxClick, internalLinkDest, internalLinkMouseDown } from "../linkGesture";
@@ -21,9 +21,10 @@ import { EmojiText } from "../render/emoji";
 import { pageIcon } from "../pageIconBatch";
 import { PageIcon } from "./PageIcon";
 import { backend } from "../backend";
-import { ensurePageLoaded, pageByName, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
+import { ensurePageLoaded, pageByName, readPageProperties, pageLoadRefusalMessage, resolveBlockRef, settleBlockRef, whenPageReplaceable, formatForBlock, blockRef, blockPositionRef, node as docNode } from "../document";
 import { Block, OutlineScopeContext, SurfaceContext } from "./Block";
 import { TaggedPages } from "./TaggedPages";
+import { AliasGroupHeader } from "./AliasGroup";
 import { LinkedReferences } from "./LinkedReferences";
 import { PageTypingTarget } from "./Page";
 import { UnlinkedReferences } from "./UnlinkedReferences";
@@ -432,6 +433,13 @@ function PageItem(props: {
       <Show when={!props.collapsed}>
         <Show when={page()} fallback={<div id={bodyId} class="rs-item-body rs-item-loading">{loadError() ?? ""}</div>}>
           <div id={bodyId} class="rs-item-body">
+            {/* The page's alias group, as in the main pane's header (AL2). The
+                sidebar keeps its properties block, so a click here edits nothing. */}
+            <AliasGroupHeader
+              name={page()!.name}
+              declared={aliasNamesOf(readPageProperties(page()!.name), page()!.format)}
+              inGraph={!page()!.guide}
+            />
             <BlockList ids={page()!.roots} />
             {/* The same producer the main pane uses: a page opened only here still
                 gets its phantom empty bullet and a trailing target (GH #483). */}

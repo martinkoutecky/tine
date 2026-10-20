@@ -266,16 +266,28 @@ impl AliasRelation {
         Arc::clone(&self.edges)
     }
 
-    /// Relative paths of the pages declaring `key`, in path order, once per
-    /// declaration.
+    /// Relative paths of the pages declaring `key`, once per declaration, in
+    /// plain text order of the relative path: the owner rule
+    /// (D-20261019-AL2), the order the name inventory lists owners in, so
+    /// the first owner is the same for every resolver. (The map's own order
+    /// compares paths folder by folder: `a/x.md` before `a b.md`.)
     pub(crate) fn owner_paths(&self, key: &str) -> Option<Vec<String>> {
         let by_path = self.owners.get(key)?;
-        Some(
-            by_path
-                .values()
-                .flat_map(|(rel, n)| std::iter::repeat_n(rel.clone(), *n as usize))
-                .collect(),
-        )
+        let mut paths: Vec<String> = by_path
+            .values()
+            .flat_map(|(rel, n)| std::iter::repeat_n(rel.clone(), *n as usize))
+            .collect();
+        paths.sort();
+        Some(paths)
+    }
+
+    /// Absolute paths of the pages declaring `key` (keys of the per-page
+    /// indexes), in map order.
+    pub(crate) fn owner_files(&self, key: &str) -> impl Iterator<Item = &PathBuf> {
+        self.owners
+            .get(key)
+            .into_iter()
+            .flat_map(|by_path| by_path.iter().map(|(path, _)| path))
     }
 
     /// The alias list: `(alias key, owner name, owner rel path)` in path

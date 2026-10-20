@@ -509,6 +509,14 @@ mod journal_guide_tests {
             .contains("other than Logseq's default priority sort"));
     }
 
+    /// Card hB3Lv8 (Martin 2026-10-19): day-relative queries follow the date.
+    #[test]
+    fn day_relative_queries_following_the_date_are_documented() {
+        let queries = include_str!("templates/queries.md");
+        assert!(queries.contains("runs again by itself when the date changes"));
+        assert!(queries.contains("A query with no such date is not run again."));
+    }
+
     #[test]
     fn sidebar_and_direct_search_actions_are_documented() {
         let tips = include_str!("templates/tips.md");
@@ -649,6 +657,22 @@ mod parity_guide_tests {
             "hover a result to copy it",
         ] {
             assert!(tips.contains(phrase), "Tips missing {phrase}");
+        }
+    }
+
+    #[test]
+    fn the_alias_group_rows_and_owner_rule_are_documented() {
+        // D-20261019-AL1/AL2 (card hB9Zjw): names apart from real pages, and
+        // the fixed rule an alias of several pages opens.
+        let guide = include_str!("templates/pages-links-references-search.md");
+        for phrase in [
+            "**Also called** lists the group's names that have no page file of their own",
+            "**Related pages in this alias group** lists the other names that do have their own page",
+            "Their blocks are never merged into one view",
+            "opens the page whose file path comes first in plain character order",
+            "A name with its own page file always opens that file",
+        ] {
+            assert!(guide.contains(phrase), "Guide missing {phrase}");
         }
     }
 

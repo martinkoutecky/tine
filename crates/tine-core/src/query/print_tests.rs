@@ -1165,7 +1165,7 @@ fn a_page_property_under_a_block_anchor_prints_as_page_property() {
 /// range that contains every journal date, and prints back as the same OG text.
 #[test]
 fn the_wide_journal_range_resolves_around_every_journal_date() {
-    use crate::query::advanced_patterns::resolve_date_token;
+    use crate::query::resolve_date_token;
     let today = JournalDate::from_ordinal(20261003);
     let low = resolve_date_token("-2000y", today).expect("low bound resolves");
     let high = resolve_date_token("+2000y", today).expect("high bound resolves");
