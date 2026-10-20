@@ -1879,6 +1879,11 @@ mod og_20d_guide_tests {
             vec!["id::", "uuid", "descendants"],
             vec!["--namespace", "existing", "pages"],
             vec!["app", "automatically", "tine serve", "30", "idle"],
+            vec![
+                "tine serve",
+                "launch snapshot",
+                "files, external edits, and backups",
+            ],
             vec!["handover", "60", "timeout", "--stop"],
             vec!["windows", "unsupported", "exit 5", "app", "opens"],
             vec!["android", "ios", "no command-line"],
