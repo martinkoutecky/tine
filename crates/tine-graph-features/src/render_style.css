@@ -33,11 +33,20 @@ main{flex:1 1 0;min-width:0;max-width:740px;margin:0 auto;padding:48px 24px 96px
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #tine-pages a:hover{background:var(--code)}
 #tine-pages a.active{background:var(--code);font-weight:650;color:var(--link)}
+/* Below 720px the sidebar stacks above the page, so the full page list would
+   push the page itself below the fold: it folds behind the Pages toggle. */
+.pages-toggle{display:none}
 @media (max-width:720px){
   body{flex-direction:column}
   .sidebar{position:static;height:auto;width:100%;flex-basis:auto;align-self:auto;
-    border-right:none;border-bottom:1px solid var(--line)}
-  main{padding:24px 18px 64px}
+    border-right:none;border-bottom:1px solid var(--line);padding:14px 16px}
+  main{padding:24px 16px 64px}
+  .pages-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;margin-top:10px;
+    padding:7px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg);
+    font:inherit;font-size:.9rem;cursor:pointer}
+  .pages-toggle::after{content:"\25BE";color:var(--muted)}
+  .sidebar.pages-open .pages-toggle::after{content:"\25B4"}
+  .sidebar:not(.pages-open) #tine-pages{display:none}
 }
 h1.page{font-size:1.9rem;font-weight:700;letter-spacing:-.02em;margin:.4rem 0 1.4rem}
 h1.page .cal{color:var(--muted);margin-right:.45rem;vertical-align:-3px;opacity:.7}

@@ -129,6 +129,10 @@ fn publish_emits_sidebar_search_and_block_anchors() {
         "sidebar present"
     );
     assert!(alpha.contains("id=\"tine-search\""), "search box present");
+    assert!(
+        alpha.contains("class=\"pages-toggle\"") && alpha.contains("aria-controls=\"tine-pages\""),
+        "narrow screens fold the page list behind a toggle"
+    );
     assert!(alpha.contains("src=\"app.js\""), "app.js linked");
 
     // index lists public pages, excludes the private one, and uses the shell.
