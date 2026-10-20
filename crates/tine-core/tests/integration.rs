@@ -48,6 +48,9 @@ mod og_dupf05;
 #[path = "og_gh644_property_blank_line.rs"]
 mod og_gh644_property_blank_line;
 
+#[path = "og_gh644_f2_quote_property_group.rs"]
+mod og_gh644_f2_quote_property_group;
+
 #[path = "og_k1_content.rs"]
 mod og_k1_content;
 

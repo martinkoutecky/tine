@@ -12,7 +12,7 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 sha2 = "0.10"
 ammonia = "4"
-lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.9" }
+lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.10" }
 tine-outline = { path = "../tine-outline" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 regex = "1"
