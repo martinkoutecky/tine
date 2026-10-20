@@ -1564,6 +1564,73 @@ describe("PdfViewer OG state and reference behavior", () => {
     }
   });
 
+  // Card hCAoxs: a backlink into a PDF that is not open yet opened it and marked
+  // the highlight but left it off-screen. The navigation's own raster of the target
+  // page is superseded by the observer's request for the same page (the page scrolls
+  // into view), so its `await renderPage` returned before the overlay was painted
+  // and the exact-highlight scroll was skipped.
+  async function mountUnopenedWithSupersededRaster(pageNumber: number, userScroll?: (scroll: HTMLElement) => void) {
+    const id = "33333333-3333-4333-8333-333333333333";
+    const rect = { top: 500, left: 20, width: 80, height: 12 };
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({
+      highlights: [{ id, page: pageNumber, position: { page: pageNumber, bounding: rect, rects: [rect] },
+        color: "yellow", text: "target", image: null }],
+      page: 1, scale: 1,
+    });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const pdf = documentWithPages([page(612, 792), page(612, 792), page(612, 792)]);
+    const resolvers: Array<() => void> = [];
+    const realGetPage = pdf.getPage.getMockImplementation()!;
+    // Page 1 is measured immediately; every later request waits, so the
+    // observer's request can arrive while the navigation's raster is in flight.
+    let first = true;
+    pdf.getPage.mockImplementation((number: number) => {
+      if (first) { first = false; return realGetPage(number); }
+      return new Promise((resolve) => { resolvers.push(() => resolve(realGetPage(number))); });
+    });
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(pdf) });
+    const initial = makePdfRoute("paper.pdf", "Paper", { page: pageNumber });
+    publishPdfNavigationIntent(initial.viewId, { page: pageNumber, highlightId: id });
+    const calls: string[] = [];
+    vi.mocked(HTMLElement.prototype.scrollIntoView).mockImplementation(function (this: HTMLElement) {
+      calls.push(this.classList.contains("pdf-hl") ? `hl:${this.dataset.highlightId}` : `page:${this.dataset.page}`);
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <OwnedKeyedPdfViewer route={() => initial} owner={testPdfOwner} />, host);
+    await flush();
+    const target = host.querySelector(`.pdf-page[data-page="${pageNumber}"]`)!;
+    TestIntersectionObserver.instances[0].show(target);
+    await flush();
+    if (userScroll) userScroll(host.querySelector(".pdf-scroll") as HTMLElement);
+    while (resolvers.length) resolvers.shift()!();
+    await flush();
+    return { id, host, calls, dispose };
+  }
+
+  it.each([1, 3])("scrolls to the highlight on page %i of a PDF that was not open yet", async (pageNumber) => {
+    const { id, host, calls, dispose } = await mountUnopenedWithSupersededRaster(pageNumber);
+    try {
+      expect(host.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id")).toBe(id);
+      expect(calls.filter((call) => call === `hl:${id}`)).toHaveLength(1);
+      // Scrolled once: a later raster of the same page does not scroll again.
+      TestIntersectionObserver.instances[0].show(host.querySelector(`.pdf-page[data-page="${pageNumber}"]`)!);
+      await flush();
+      expect(calls.filter((call) => call === `hl:${id}`)).toHaveLength(1);
+    } finally { dispose(); }
+  });
+
+  it("does not pull the reader back to a pending highlight after they scrolled away", async () => {
+    const { id, host, calls, dispose } = await mountUnopenedWithSupersededRaster(1, (scroll) => {
+      scroll.dispatchEvent(new WheelEvent("wheel", { deltaY: 200, bubbles: true }));
+    });
+    try {
+      expect(calls).not.toContain(`hl:${id}`);
+      expect(host.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id")).toBe(id);
+    } finally { dispose(); }
+  });
+
   it("keeps one PDF mounted and scrolls repeated references to the exact highlight", async () => {
     const firstId = "11111111-1111-4111-8111-111111111111";
     const secondId = "22222222-2222-4222-8222-222222222222";

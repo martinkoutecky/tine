@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Following a backlink or block reference to a highlight of a PDF that was not open yet now scrolls to that highlight, as Logseq does, instead of opening the PDF with the highlight marked but off-screen. The scroll waits for the page to finish drawing, happens once, and is dropped if you scroll yourself first (card hCAoxs).
 - Opening a PDF no longer pulls the reader back to the top of the page about a tenth of a second later: following a backlink to a highlight of a PDF that was not open yet, or scrolling right after opening one, could be undone by a leftover zoom adjustment from opening (GH #672).
 
 ## [0.8.0-beta.11] - 2026-10-24
