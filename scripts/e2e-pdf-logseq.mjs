@@ -620,10 +620,22 @@ function assertNear(actual, expected, label, tolerance = 1.25) {
 async function chooseGtkFile(source) {
   if (process.platform !== "linux") throw new Error("literal GTK file chooser automation is Linux-only");
   let raw;
-  try {
-    raw = xdo("search", "--sync", "--onlyvisible", "--name", "^Choose a file$");
-  } catch (error) {
-    throw new Error(`GTK chooser did not appear for ${source}: ${error?.stderr?.toString().trim() || error?.message || error}`);
+  // xdotool walks the whole window tree; a transient window that vanishes
+  // during the walk aborts it with X BadWindow (seen on the hosted release
+  // gate, 2026-10-20). That says nothing about the chooser: search again
+  // until the deadline.
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    try {
+      raw = xdo("search", "--sync", "--onlyvisible", "--name", "^Choose a file$");
+      break;
+    } catch (error) {
+      const detail = error?.stderr?.toString().trim() || error?.message || String(error);
+      if (!/BadWindow/.test(detail) || Date.now() > deadline) {
+        throw new Error(`GTK chooser did not appear for ${source}: ${detail}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
   }
   const ids = raw.split(/\s+/).filter(Boolean);
   const id = ids.at(-1);
