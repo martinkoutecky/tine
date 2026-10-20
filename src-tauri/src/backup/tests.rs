@@ -1484,6 +1484,65 @@ fn launch_backup_read_failure_reaches_diagnostic_adapter() {
     g.close();
 }
 
+/// Journal D-20261019-QC item 3: `tine serve`'s launch backup is the app's.
+/// After the warm and the quiet turn it publishes one verified zip under the
+/// app data it was given; a binding revoked first (serve's stop) publishes
+/// nothing and its worker ends, so serve can wait for it before exiting.
+#[cfg(desktop)]
+#[test]
+fn a_headless_launch_backup_is_one_verified_zip_and_a_stop_cancels_it() {
+    let root = scratch("headless-launch-backup");
+    let graph = root.join("graph");
+    write(&graph.join("pages/A.md"), "- a\n");
+    let app_data = root.join("app");
+    let open = |graph: &std::path::Path| {
+        let slot = Arc::new(GraphSlot::new(
+            Store::open(graph, Default::default()).unwrap().0,
+            graph.to_path_buf(),
+        ));
+        slot.finish_startup_warm(slot.begin_startup_warm());
+        slot
+    };
+    let base = |slot: &GraphSlot| {
+        app_data
+            .join("backups")
+            .join(root_backup_id(&slot.root_key))
+    };
+
+    let slot = open(&graph);
+    launch_backup_headless(slot.clone(), app_data.clone())
+        .expect("a readable graph starts the worker")
+        .join()
+        .unwrap();
+    let names: Vec<_> = list_backups_from_base(&base(&slot), &slot.root_key)
+        .into_iter()
+        .filter(|info| info.status == "ok")
+        .collect();
+    assert_eq!(names.len(), 1, "one launch zip: {names:?}");
+    let zip = newest_zip_in(&base(&slot), &slot.root_key);
+    assert!(verified(&zip)
+        .manifest
+        .files
+        .iter()
+        .any(|f| f.path == "pages/A.md"));
+    slot.store.close();
+
+    let stopped = root.join("stopped");
+    write(&stopped.join("pages/B.md"), "- b\n");
+    let slot = open(&stopped);
+    slot.cancel_background();
+    launch_backup_headless(slot.clone(), app_data.clone())
+        .unwrap()
+        .join()
+        .unwrap();
+    assert!(
+        !zip_base(&base(&slot)).exists(),
+        "a stopped owner's backup publishes nothing"
+    );
+    slot.store.close();
+    let _ = std::fs::remove_dir_all(root);
+}
+
 #[test]
 fn backup_root_ids_do_not_conflate_punctuation() {
     let root = scratch("backup-root-id");

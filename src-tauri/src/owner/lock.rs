@@ -4,7 +4,7 @@
 //! stale owner. The file is never unlinked or recreated (a contender may
 //! hold an open handle to it); its content is diagnostic only.
 
-use std::fs::{File, OpenOptions, TryLockError};
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -36,10 +36,12 @@ impl OwnerLock {
                 .truncate(false)
                 .open(path)
                 .map_err(|e| OwnerError::Lock(format!("cannot open {}: {e}", path.display())))?;
-            match file.try_lock() {
-                Ok(()) => {}
-                Err(TryLockError::WouldBlock) => return Ok(None),
-                Err(TryLockError::Error(e)) => {
+            // `file_lock`'s arm per target: std's `try_lock` answers
+            // `Unsupported` on Android.
+            match crate::file_lock::try_lock_file(&file) {
+                Ok(true) => {}
+                Ok(false) => return Ok(None),
+                Err(e) => {
                     return Err(OwnerError::Lock(format!(
                         "cannot lock {}: {e}",
                         path.display()
@@ -77,6 +79,14 @@ impl OwnerLock {
             std::process::id(),
             env!("CARGO_PKG_VERSION")
         );
+    }
+}
+
+/// Unlock explicitly: a descriptor a spawned child inherited mid-exec must
+/// not keep the lock (as `file_lock::FileLock`).
+impl Drop for OwnerLock {
+    fn drop(&mut self) {
+        crate::file_lock::unlock_file(&self.file);
     }
 }
 
