@@ -292,6 +292,26 @@ fn resolve_plan(
     selected
         .pages
         .sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+    // A page marked public:: false stays out of every export, a query export
+    // included, and so does its part of the published answer and row count.
+    let before = selected.pages.len();
+    selected
+        .pages
+        .retain(|page| render::page_public_flag(page) != Some(false));
+    if selected.pages.len() != before {
+        if selected.pages.is_empty() {
+            return Err(refusal(
+                "every page this query selects is marked public:: false",
+            ));
+        }
+        let paths: HashSet<&str> = selected.pages.iter().map(|p| p.id.as_str()).collect();
+        let names: HashSet<_> = selected
+            .pages
+            .iter()
+            .map(|p| (p.kind, p.name.to_lowercase()))
+            .collect();
+        result = close_query_result(result, &paths, &names);
+    }
     let pages: Vec<ExportPage> = selected
         .pages
         .iter()

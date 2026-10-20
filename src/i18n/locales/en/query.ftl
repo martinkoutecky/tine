@@ -199,7 +199,7 @@ crossing-notice-changed-block = The block now reads: <code>{ $text }</code>
 query-export-dialog-summary = { $results } results on { $pages } complete pages
 query-export-dialog-existing = An export named <code>{ $folder }</code> already exists.
 query-export-dialog-separate = Create a separate export as <code>{ $folder }</code>
-query-export-dialog-path = Destination: <code>{ $path }</code>. This exports these pages regardless of their public setting as a static site and read-only app. It is not uploaded. Unsaved edits are not included.
+query-export-dialog-path = Destination: <code>{ $path }</code>. This exports these pages as a static site and read-only app; pages marked public:: false are left out. It is not uploaded. Unsaved edits are not included.
 query-page-results-alias = matched alias { $alias }
 query-result-sections-more-matches =
     { $kind ->

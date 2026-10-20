@@ -542,3 +542,69 @@ fn query_leaf_assets_survive_a_move_and_budget_refusal_leaves_old_output() {
     );
     store.close();
 }
+
+fn todo_request(argument: &str, current_page: Option<&str>, name: &str) -> QueryExportRequest {
+    QueryExportRequest {
+        argument: argument.into(),
+        dialect: QueryTextDialect::MacroQuery,
+        properties: vec![],
+        current_page: current_page.map(Into::into),
+        name: name.into(),
+        host_block_id: None,
+        folder: None,
+        replace: false,
+        asset_budget_bytes: None,
+    }
+}
+
+/// REG-QUERY-EXPORT-PRIVATE-PAGES: a query export publishes the pages its query
+/// selects minus `public:: false` pages (Markdown or Org), and neither the
+/// published answer nor the row count carries their rows.
+#[test]
+fn query_export_leaves_out_private_pages() {
+    let _integration_guard = crate::integration_lock();
+    let (graph, _output, store) = fixture();
+    fs::write(
+        graph.join("pages/Private.md"),
+        "public:: false\n- TODO private text\n",
+    )
+    .unwrap();
+    fs::write(
+        graph.join("pages/Org private.org"),
+        "#+public: false\n* TODO private org\n",
+    )
+    .unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    let request = todo_request("(task TODO)", Some("Public"), "All TODOs");
+    let plan = plan_query(&store, &request).unwrap();
+    let names: Vec<_> = plan.pages.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["Public"]);
+    assert_eq!(plan.row_count, 1, "private rows are not counted");
+    publish_query(&store, &request, &plan.fingerprint, &bundle()).unwrap();
+    let text =
+        fs::read_to_string(graph.join("published-queries/all-todos/app/snapshot.json")).unwrap();
+    assert!(text.contains("TODO selected"));
+    for leaked in ["private text", "private org"] {
+        assert!(!text.contains(leaked), "{leaked} was published");
+    }
+    let pages = fs::read_to_string(graph.join("published-queries/all-todos/pages.html")).unwrap();
+    for name in ["Private", "Org private"] {
+        assert!(!pages.contains(name), "{name} is listed: {pages}");
+    }
+    store.close();
+}
+
+#[test]
+fn query_export_refuses_when_every_selected_page_is_private() {
+    let _integration_guard = crate::integration_lock();
+    let (graph, _output, store) = fixture();
+    fs::write(
+        graph.join("pages/Private.md"),
+        "public:: false\n- DONE only private\n",
+    )
+    .unwrap();
+    store.refresh(tine_store::Depth::Stamps).unwrap();
+    let error = plan_query(&store, &todo_request("(task DONE)", None, "Done")).unwrap_err();
+    assert!(error.to_string().contains("public:: false"), "{error}");
+    store.close();
+}
