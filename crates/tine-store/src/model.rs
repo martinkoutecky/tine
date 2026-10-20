@@ -32,7 +32,9 @@ pub(crate) use page_identity::{
     graph_text_directory_scannable, graph_text_eligible, graph_text_relative_eligible,
     graph_text_watch_relevant,
 };
-use page_parse::{carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content};
+use page_parse::{
+    carry_saved_runtime_ids, isolate_page_parse, page_dto, parse_page_content, prime_projections,
+};
 
 use crate::path_identity::canonical_existing_path;
 use std::collections::HashMap;
@@ -90,6 +92,20 @@ impl std::fmt::Display for ParseInputTooLarge {
     }
 }
 impl std::error::Error for ParseInputTooLarge {}
+
+/// A read whose parse (or a projection the indexes read) panicked: the page
+/// is unreadable to Tine, not undecodable. A page open reports it as
+/// `StoreError::Unparseable` for that page only.
+#[derive(Debug)]
+pub(crate) struct ParserPanicked;
+
+impl std::fmt::Display for ParserPanicked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("page parser panicked during sync")
+    }
+}
+
+impl std::error::Error for ParserPanicked {}
 
 /// Why a graph with no `logseq/config.edn` must not take the defaults, if it
 /// must not. An iCloud placeholder (`logseq/.config.edn.icloud`) means the
@@ -1492,6 +1508,10 @@ fn reference_signatures(entry: &PageEntry, doc: &Document) -> Arc<Vec<BlockSigna
         for block in blocks {
             #[cfg(feature = "test-faults")]
             crate::cost_counters::signature_block_probe();
+            #[cfg(test)]
+            if block.raw().contains(TEST_INDEX_PANIC_SENTINEL) {
+                panic!("deterministic test sentinel for a graph index panic");
+            }
             out.push(BlockSignature::of_text(block.raw()));
             add_blocks(out, &block.children);
         }
@@ -1866,6 +1886,13 @@ impl SnapshotExplicitIndex {
             }
         };
         let rows: Vec<&(PageEntry, Arc<Document>)> = pages.iter().collect();
+        #[cfg(test)]
+        if rows.iter().any(|(entry, _)| {
+            (TEST_FULL_INDEX_PANIC_ROOTS.lock().unwrap().iter())
+                .any(|root| entry.path.starts_with(root))
+        }) {
+            panic!("deterministic test sentinel for a full graph index build panic");
+        }
         let workers = page_cache_worker_count();
         if workers <= 1 || rows.len() < 64 {
             insert(&rows);
@@ -4190,10 +4217,7 @@ impl Graph {
             Err(_) => {
                 self.invalidate_cache();
                 self.record_index_failure(path);
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "page parser panicked during sync",
-                ))
+                Err(io::Error::new(io::ErrorKind::InvalidData, ParserPanicked))
             }
         }
     }
@@ -4705,7 +4729,22 @@ fn page_cache_worker_count() -> usize {
 }
 
 #[cfg(test)]
-const TEST_PAGE_PARSE_PANIC_SENTINEL: &str = "__TINE_TEST_PAGE_PARSE_PANIC__";
+pub(crate) const TEST_PAGE_PARSE_PANIC_SENTINEL: &str = "__TINE_TEST_PAGE_PARSE_PANIC__";
+/// Test-only: a page holding this text panics the rename path's own-title
+/// read (`transaction::validation::rewrite_move`), the lsdoc outline parse a
+/// page move runs under the writer lock (og-gh644 F3).
+#[cfg(test)]
+pub(crate) const TEST_TITLE_READ_PANIC_SENTINEL: &str = "__TINE_TEST_TITLE_READ_PANIC__";
+/// Test-only: graph roots whose next whole-graph explicit-reference index
+/// build (not an incremental update) panics, so a test can fail exactly the
+/// full rebuild a Settings rescan publishes (`publish_rebuilt`).
+#[cfg(test)]
+pub(crate) static TEST_FULL_INDEX_PANIC_ROOTS: std::sync::Mutex<Vec<PathBuf>> =
+    std::sync::Mutex::new(Vec::new());
+/// Test-only: a block containing this panics in a graph-wide index build
+/// (the reference-candidate signatures), after the page parse.
+#[cfg(test)]
+pub(crate) const TEST_INDEX_PANIC_SENTINEL: &str = "__TINE_TEST_INDEX_PANIC__";
 
 /// Collapse journal entries that resolve to the SAME date down to one (the
 /// canonical `yyyy_MM_dd` file) — a leftover title-named duplicate must not show

@@ -40,9 +40,22 @@ impl<'a> Transaction<'a> {
         let mut allocated = HashSet::new();
         let mut prepared = Vec::new();
         for (index, step) in self.steps.iter().enumerate() {
-            let next = self
-                .preflight(step, &allocated)
-                .map_err(|why| (index, why))?;
+            // Preflight reads and computes, writing nothing, under the writer
+            // lock: a page's own-title read and reference rewrite parse it with
+            // lsdoc. A parser panic on one malformed page (an external editor,
+            // sync delivery or an import wrote bytes lsdoc cannot take) refuses
+            // this transaction and leaves the file untouched; unwound, it would
+            // poison the writer lock and fail every later save and read of the
+            // graph until restart (og-gh644 F3).
+            let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.preflight(step, &allocated)
+            }))
+            .unwrap_or_else(|_| {
+                Err(Why::Refused(Refusal::ReadOnly(
+                    "page could not be parsed; Tine will not rewrite it".into(),
+                )))
+            })
+            .map_err(|why| (index, why))?;
             if matches!(step, Step::Unique { .. }) {
                 allocated.insert(next.src.clone());
             }

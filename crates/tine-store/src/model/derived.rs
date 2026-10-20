@@ -1171,6 +1171,13 @@ impl Graph {
     /// holds ((G)): a held page keeps its owner's row, and an unindexed or
     /// unknown one has none.
     pub(super) fn cache_upsert(&self, entry: PageEntry, mut doc: Document, disk: DiskObs) {
+        // Every lsdoc parse the snapshot's indexes read runs here, before
+        // any lock is taken or state moves: a parser panic then unwinds into
+        // the caller's per-page isolation (sync and transaction publication
+        // both catch it and record this one page as an index failure)
+        // instead of escaping later from the capture under the writer lock,
+        // which would poison it (one bad file must never stop the graph).
+        prime_projections(&doc);
         // Fill runtime ids for any block that lacks one (e.g. PDF-highlight
         // writes) from this physical owner. Blocks saved from the frontend
         // already carry live ids, which the in-memory save path keeps.

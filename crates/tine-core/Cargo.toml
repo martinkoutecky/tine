@@ -26,6 +26,9 @@ sqlparser = { version = "0.62", features = ["visitor"] }
 [features]
 # Exposes allocation counters to downstream crates' tests (tine-store).
 test-counters = []
+# Test-only fault hooks for downstream crates' tests (tine-store); a shipped
+# build never enables it.
+test-faults = []
 
 [dev-dependencies]
 libc = "0.2"

@@ -189,6 +189,11 @@ fn page_dto(
             StoreError::Unparseable(reason)
         })?
         .map_err(|error| {
+            if let Some(panicked) = (error.get_ref())
+                .and_then(|inner| inner.downcast_ref::<crate::model::ParserPanicked>())
+            {
+                return StoreError::Unparseable(panicked.to_string());
+            }
             if error.kind() == std::io::ErrorKind::InvalidData
                 && error
                     .get_ref()

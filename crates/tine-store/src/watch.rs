@@ -928,13 +928,29 @@ impl WatchHandle {
                     *status = LoadStatus::Failed(format!("{error:?}"));
                     return Err(error);
                 }
-                self.core.changes.publish_with(
-                    Origin::External,
-                    Vec::new(),
-                    false,
-                    Vec::new(),
-                    || *self.core.load.status.lock().unwrap() = LoadStatus::Ready,
+                // The recovery publication rebuilds every index: the same
+                // containment as the first publication, so an index-stage
+                // panic the load already failed on fails this retry too
+                // instead of poisoning the writer (the window refreshes on
+                // every focus).
+                let published = crate::store::contain_index_publication(
+                    &self.core.graph,
+                    &self.core.load,
+                    || {
+                        self.core.changes.publish_with(
+                            Origin::External,
+                            Vec::new(),
+                            false,
+                            Vec::new(),
+                            || *self.core.load.status.lock().unwrap() = LoadStatus::Ready,
+                        );
+                    },
                 );
+                if !published {
+                    return Err(LoadError::Failed {
+                        reason: "graph publication stopped: an index build panicked".into(),
+                    });
+                }
                 self.core.load.ready.notify_all();
                 let _ = self.wake.send(());
                 // A stylesheet edited while the load was failed was never seen.

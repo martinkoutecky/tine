@@ -298,6 +298,11 @@ impl Clone for DocBlock {
     }
 }
 
+/// Test-only: a block whose raw text contains this panics in
+/// [`DocBlock::projection`] (feature `test-faults`, never in a shipped build).
+#[cfg(feature = "test-faults")]
+pub const TEST_PROJECTION_PANIC_SENTINEL: &str = "__TINE_TEST_PROJECTION_PANIC__";
+
 impl DocBlock {
     pub fn new(raw: impl Into<String>) -> Self {
         DocBlock {
@@ -344,6 +349,12 @@ impl DocBlock {
     /// [`Self::set_raw`] clears this cache when the body changes.
     pub fn projection(&self) -> &BlockProjection {
         self.proj.get_or_init(|| {
+            // Test-only fault: a block projection (the lsdoc parse every index
+            // reads) that panics, for the load's one-bad-file isolation tests.
+            #[cfg(feature = "test-faults")]
+            if self.raw.contains(TEST_PROJECTION_PANIC_SENTINEL) {
+                panic!("deterministic test sentinel for a block projection panic");
+            }
             // ONE lsdoc parse of the block body yields every header facet (marker,
             // heading level, properties, scheduled/deadline) AND the visible text —
             // so `doc.rs`, the TS `blockView`, and lsdoc can no longer disagree

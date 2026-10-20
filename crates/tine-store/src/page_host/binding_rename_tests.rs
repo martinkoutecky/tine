@@ -75,6 +75,46 @@ fn a_host_rename_rewrites_referrers_and_leaves_marked_ones() {
     live.host.stop();
 }
 
+/// og-gh644 F3: the host rename reads the moving page's own title with
+/// lsdoc. A parser panic there makes that one rename `Unwritable` with every
+/// file untouched, and the host keeps serving: a later rename completes.
+#[test]
+fn a_title_read_panic_makes_one_host_rename_unwritable() {
+    let bad = format!(
+        "title:: Old\n\n- {}\n",
+        crate::model::TEST_TITLE_READ_PANIC_SENTINEL
+    );
+    let live = Live::new(&[
+        ("pages/Old.md", bad.as_str()),
+        ("pages/r.md", "- see [[Old]] and [[Other]]\n"),
+        ("pages/Other.md", "- other\n"),
+    ]);
+    let renamed = rename(
+        &live,
+        &PageId::from("pages/Old.md"),
+        &PageId::from("pages/New.md"),
+        &[PageId::from("pages/r.md")],
+        &map("Old", "New"),
+    );
+    assert_eq!(
+        renamed,
+        Err(RenameRefusal::Unwritable(PageId::from("pages/Old.md")))
+    );
+    assert_eq!(live.disk("pages/Old.md"), bad);
+    assert!(!live.root.join("pages/New.md").exists());
+    assert_eq!(live.disk("pages/r.md"), "- see [[Old]] and [[Other]]\n");
+    let renamed = rename(
+        &live,
+        &PageId::from("pages/Other.md"),
+        &PageId::from("pages/Else.md"),
+        &[PageId::from("pages/r.md")],
+        &map("Other", "Else"),
+    );
+    assert_eq!(renamed, Ok((vec![PageId::from("pages/r.md")], vec![])));
+    assert_eq!(live.disk("pages/r.md"), "- see [[Old]] and [[Else]]\n");
+    live.host.stop();
+}
+
 /// OG-RULES Rule 8 (A-K1): a host operation declares its edit kind. Every
 /// page a host rename writes publishes with `RenamePage`, and a host
 /// delete's page with `DeletePage`, through the per-page kinds a submit
