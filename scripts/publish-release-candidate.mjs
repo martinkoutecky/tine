@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { candidateProblems, releaseLayout, releaseNotes } from "./release-layout.mjs";
+import { candidateProblems, releaseLayout } from "./release-layout.mjs";
 
 import { IDENTITY } from "./lib/app-identity.mjs";
 import { publicationPlan, releaseTag } from "./release-policy.mjs";
@@ -47,7 +47,11 @@ if (!release) {
   try {
     const notesPath = path.join(temporary, "notes.md");
     const fallback = `Download an installer for your platform below. Windows and Linux ship both x64 and ARM64 builds (match your CPU). Windows users who prefer no installer can grab the portable \`${layout.lanes["windows-x64"].assets.find((name) => name.endsWith("-portable.zip"))}\` for their architecture. Windows builds are currently unsigned, so Windows may show a warning on first launch. The macOS build is signed and notarized. On macOS, if Tine repeatedly asks to access Documents, see the workaround in the README.`;
-    fs.writeFileSync(notesPath, `${releaseNotes(root, version)}\n\n---\n\n${fallback}\n`);
+    // The notes are the ones the assembler put into the verified candidate's
+    // latest.json (releaseNotes of this version), so publish and updater agree.
+    const notes = JSON.parse(fs.readFileSync(path.join(candidate, "latest.json"), "utf8")).notes;
+    if (typeof notes !== "string" || !notes.trim()) throw new Error("candidate latest.json has no release notes");
+    fs.writeFileSync(notesPath, `${notes}\n\n---\n\n${fallback}\n`);
     gh("release", "create", tag, "--draft", `--prerelease=${plan.prerelease}`, "--latest=false", "--target", commit, "--title", `${IDENTITY.productName} ${version}`, "--notes-file", notesPath);
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });

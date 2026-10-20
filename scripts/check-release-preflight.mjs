@@ -68,7 +68,15 @@ try {
   problems.push(error.message);
 }
 
-if (!new RegExp(`^## \\[${expected.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\d{2}$`, "m").test(changelog)) {
+// Between cuts og already carries the next version (PROCEDURES channel model,
+// D-20261020-BZ7), which has no dated heading yet. A development check
+// (TINE_PREFLIGHT_DEVELOPMENT=1, never on a tag) accepts that while the
+// changelog still has its [Unreleased] section; the release workflow does not
+// set it, so a tag always needs the dated heading.
+const developmentTree = process.env.TINE_PREFLIGHT_DEVELOPMENT === "1"
+  && !process.env.GITHUB_REF?.startsWith("refs/tags/")
+  && /^## \[Unreleased\]$/m.test(changelog);
+if (!developmentTree && !new RegExp(`^## \\[${expected.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\d{2}$`, "m").test(changelog)) {
   problems.push(`CHANGELOG.md has no dated [${expected}] release heading`);
 }
 
