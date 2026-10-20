@@ -38,7 +38,7 @@ pub(super) fn initial_build_image(graph: &Graph) -> String {
 /// the query index through queries, backlinks and unlinked references for
 /// `probes` and the first pages). Forcing them is what lets a later
 /// publication inherit them by per-file deltas.
-pub(super) fn snapshot_image(snapshot: &ReadSnapshot, probes: &[&str]) -> String {
+pub(crate) fn snapshot_image(snapshot: &ReadSnapshot, probes: &[&str]) -> String {
     let config = snapshot.config.clone();
     let mut out = String::new();
     let mut rel_by_slot = HashMap::new();
@@ -384,7 +384,7 @@ fn name_keys_equal_collecting_then_filtering() {
 }
 
 /// The first line where two images differ, for a readable mismatch.
-fn first_difference(live: &str, other: &str) -> Option<String> {
+pub(crate) fn first_difference(live: &str, other: &str) -> Option<String> {
     if live == other {
         return None;
     }

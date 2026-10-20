@@ -15,7 +15,7 @@ mod layout_retention;
 pub(crate) mod persistent;
 use persistent::{EntryList, Map as SharedMap, Pages};
 #[cfg(test)]
-mod index_oracle_tests;
+pub(crate) mod index_oracle_tests;
 mod line_endings;
 #[cfg(test)]
 mod md_fidelity_corpus_tests;

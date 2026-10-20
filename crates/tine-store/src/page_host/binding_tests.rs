@@ -215,6 +215,15 @@ impl Live {
 
     /// `checkpoint`: the store keeps a launch checkpoint in the app dir.
     fn with(files: &[(&str, &str)], checkpoint: bool) -> Self {
+        Self::build(files, checkpoint, crate::WatchMode::Notify)
+    }
+
+    /// A store observing the graph in `watch` mode.
+    fn watching(files: &[(&str, &str)], watch: crate::WatchMode) -> Self {
+        Self::build(files, false, watch)
+    }
+
+    fn build(files: &[(&str, &str)], checkpoint: bool, watch: crate::WatchMode) -> Self {
         let dir = match std::env::var_os("TINE_HOST_FS_ROOT") {
             Some(base) => tempfile::tempdir_in(base).unwrap(),
             None => tempfile::tempdir().unwrap(),
@@ -224,6 +233,7 @@ impl Live {
             fs::create_dir_all(graph.join(area)).unwrap();
         }
         for (path, body) in files {
+            fs::create_dir_all(graph.join(path).parent().unwrap()).unwrap();
             fs::write(graph.join(path), body).unwrap();
         }
         let app = dir.path().join("app");
@@ -234,6 +244,7 @@ impl Live {
         let given = graph.join("pages").join("..");
         let options = crate::OpenOptions {
             launch_checkpoint: checkpoint.then(|| app.join("checkpoint.bin")),
+            watch,
             ..Default::default()
         };
         let store = Arc::new(Store::open(&given, options).unwrap().0);
@@ -1667,6 +1678,9 @@ mod apply_tests;
 
 #[path = "binding_order_tests.rs"]
 mod order;
+
+#[path = "binding_fresh_tests.rs"]
+mod fresh;
 
 /// REVIEW-3a V4, amendment A-V4: while a host holds a page, its publication
 /// consumer is the page's only index writer. The reviewer's schedule: the
