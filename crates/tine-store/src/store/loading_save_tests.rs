@@ -350,6 +350,11 @@ fn a_save_deferred_before_a_launch_checkpoint_loads_declines_the_checkpoint() {
     // The checkpoint lacks the page and the watcher's baseline carries the
     // save's own stamp, so serving it would hide the page until restart.
     assert_once(&store, "New", "before the checkpoint");
+    assert_eq!(
+        store.diagnostics()["checkpoint"]["load"]["outcome"],
+        "deferred",
+        "the diagnostics name why the checkpoint was declined"
+    );
     store.close();
 }
 

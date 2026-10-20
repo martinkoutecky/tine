@@ -925,7 +925,7 @@ impl Graph {
         *self.derived.launch_listing.write().unwrap() = Some((gen, named));
     }
 
-    /// Install a loaded checkpoint's page cache: false when a cache exists
+    /// Install a loaded checkpoint's page cache: refused when a cache exists
     /// or any page is held. A checkpoint's rows, indexes and claimants carry
     /// no owner provenance, so a held page makes the launch a full build
     /// (R2): the whole checkpoint is declined. The caller holds the store
@@ -937,11 +937,15 @@ impl Graph {
         failures: Vec<String>,
         (disk_revs, vcs_anchored): (Vec<(PathBuf, String)>, Vec<PathBuf>),
         (cache_generation, list): (u64, Arc<Vec<PageEntry>>),
-    ) -> bool {
+    ) -> Result<(), crate::store::checkpoint::Fallback> {
+        use crate::store::checkpoint::Fallback;
         let index = build_page_cache_index(pages);
         let mut guard = self.derived.cache.write().unwrap();
-        if guard.is_some() || !self.held.is_empty() {
-            return false;
+        if guard.is_some() {
+            return Err(Fallback::CacheBuilt);
+        }
+        if !self.held.is_empty() {
+            return Err(Fallback::PageHeld);
         }
         *guard = Some(Arc::clone(pages));
         *self.derived.observed_mtimes.write().unwrap() = Arc::clone(observed_mtimes);
@@ -956,7 +960,7 @@ impl Graph {
         self.forget_cold_moves();
         *self.derived.page_list_cache.write().unwrap() = Some((cache_generation, list));
         drop(guard);
-        true
+        Ok(())
     }
 
     /// The cache rows a checkpoint captures with `pages`, the published

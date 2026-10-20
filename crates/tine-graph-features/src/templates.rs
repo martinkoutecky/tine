@@ -95,7 +95,7 @@ pub fn named_template_from_files(
             // Also a file over the parse cap (TooLarge, review F4): the graph answers.
             Err(_) => return Ok(NamedTemplate::Unsettled),
         };
-        if !may_define_template(&bytes) {
+        if !tine_core::template::may_define_template(&bytes) {
             continue;
         }
         let text = match crate::parsed_text::read(store, &entry.id) {
@@ -104,7 +104,7 @@ pub fn named_template_from_files(
         };
         let doc = crate::conflicts::parse(&text, crate::conflicts::format(&entry.id));
         let mut here = Vec::new();
-        tine_core::template::templates_in(&doc.roots, &mut |found_name, blocks| {
+        tine_core::template::templates_in_document(&doc, &mut |found_name, blocks| {
             if found_name == name {
                 here.push(blocks);
             }
@@ -135,20 +135,6 @@ pub fn named_template_from_files(
         page: read.doc.name,
         kind: read.doc.kind,
     })))
-}
-
-/// Whether these bytes can hold a block that defines a template: a property
-/// key folds to `template` only by ASCII lowercasing, so its bytes contain
-/// `template` in some ASCII case. O(bytes), no allocation.
-fn may_define_template(bytes: &[u8]) -> bool {
-    const NEEDLE: &[u8] = b"template";
-    // `b | 0x20 == b't'` holds exactly for `t` and `T`: a cheap first byte.
-    bytes.iter().enumerate().any(|(at, &b)| {
-        b | 0x20 == b't'
-            && bytes
-                .get(at..at + NEEDLE.len())
-                .is_some_and(|window| window.eq_ignore_ascii_case(NEEDLE))
-    })
 }
 
 #[cfg(test)]

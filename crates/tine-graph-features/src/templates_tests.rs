@@ -244,3 +244,93 @@ fn copy_tree(from: &Path, to: &Path) {
         }
     }
 }
+
+/// GH discussion #729 (OG parity): a `template::` in a page's property header
+/// (the leading properties block of a Markdown page, the `#+KEY:` / head-drawer
+/// header of an Org page) defines a template, as OG's `get-all-templates` /
+/// `get-template-by-name` match any entity with `:block/properties :template`,
+/// the page's pre-block included. The listing and the file lookup agree.
+#[test]
+fn a_page_property_header_template_is_listed_and_found_from_files() {
+    let root = graph(&[
+        (
+            "pages/Usual note.md",
+            "tags::  \nlink:: \ncreate-date:: <% today %>\ntemplate:: Usual note\n",
+        ),
+        (
+            "pages/With rows.md",
+            "template:: Page with rows\nicon:: x\n\n- first row\n- second row\n",
+        ),
+        (
+            "pages/Parentless.md",
+            "template:: No parent\ntemplate-including-parent:: false\n\n- row\n",
+        ),
+        (
+            "pages/Org header.org",
+            "#+TITLE: Org header\n#+TEMPLATE: Org page template\n\n* Row\n",
+        ),
+        (
+            "pages/Org drawer.org",
+            ":PROPERTIES:\n:template: Org drawer template\n:END:\n#+TITLE: Org drawer\n\n* Row\n",
+        ),
+        ("pages/Empty.md", "template::\n\n- row\n"),
+    ]);
+    let store = Store::open(root.path(), OpenOptions::default()).unwrap().0;
+    let all = store.whole_graph().unwrap().templates();
+    let mut names: Vec<&str> = all.iter().map(|t| t.name.as_str()).collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "No parent",
+            "Org drawer template",
+            "Org page template",
+            "Page with rows",
+            "Usual note"
+        ]
+    );
+    for name in &names {
+        assert_eq!(
+            json(&settled(&store, name)),
+            json(&discovered(&store, name)),
+            "{name}"
+        );
+    }
+    let usual = discovered(&store, "Usual note").unwrap();
+    assert_eq!(usual.page, "Usual note");
+    assert_eq!(usual.blocks.len(), 1);
+    // The header block, `template::` stripped; the dynamic variable is left for
+    // the insertion step (the frontend expands `<% today %>`).
+    assert_eq!(
+        usual.blocks[0].raw,
+        "tags:: \nlink:: \ncreate-date:: <% today %>"
+    );
+    // OG's `get-template-by-name` resolves a page-header template to the
+    // pre-block entity, which has no children: only the header is inserted.
+    let rows = discovered(&store, "Page with rows").unwrap();
+    assert_eq!(rows.blocks.len(), 1);
+    assert_eq!(rows.blocks[0].raw, "icon:: x");
+    assert!(rows.blocks[0].children.is_empty());
+    // `template-including-parent:: false` drops the root: nothing remains.
+    assert!(discovered(&store, "No parent").unwrap().blocks.is_empty());
+    store.close();
+}
+
+/// The bullet forms of the same report already worked; they stay pinned: a
+/// bulleted first block with an empty property line before `template::`.
+#[test]
+fn a_bulleted_first_block_with_an_empty_property_line_is_a_template() {
+    let root = graph(&[
+        ("pages/Bullet.md", "- tags::  \n  template:: Bulleted\n"),
+        (
+            "pages/Empty first.md",
+            "- hello\n  tags::  \n  template:: Empty first\n  - child\n",
+        ),
+    ]);
+    let store = Store::open(root.path(), OpenOptions::default()).unwrap().0;
+    for name in ["Bulleted", "Empty first"] {
+        let found = discovered(&store, name).unwrap_or_else(|| panic!("{name} not listed"));
+        assert_eq!(json(&Some(found)), json(&settled(&store, name)), "{name}");
+    }
+    store.close();
+}
