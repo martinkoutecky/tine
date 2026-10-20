@@ -1441,12 +1441,17 @@ fn a_checkpoint_is_declined_whole_while_a_page_is_held() {
         }
         let body = decode(&bytes, &header.root, &header.config_key).unwrap();
         let config = (*graph.current_config()).clone();
-        graph.checkpoint_install(body.graph, config).is_some()
+        graph.checkpoint_install(body.graph, config).err()
     };
-    assert!(installs(None), "control: nothing held");
-    assert!(!installs(Some(None)), "R2: installed while a page is held");
-    assert!(
-        !installs(Some(Some("- owner\n"))),
+    assert_eq!(installs(None), None, "control: nothing held");
+    assert_eq!(
+        installs(Some(None)),
+        Some(Fallback::PageHeld),
+        "R2: installed while a page is held"
+    );
+    assert_eq!(
+        installs(Some(Some("- owner\n"))),
+        Some(Fallback::PageHeld),
         "R2: installed while a held page is indexed"
     );
 }

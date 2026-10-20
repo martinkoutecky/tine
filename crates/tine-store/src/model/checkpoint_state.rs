@@ -231,7 +231,7 @@ impl Graph {
         &self,
         state: GraphState<PagesIn>,
         config: Config,
-    ) -> Option<(Arc<ReadSnapshot>, Arc<EntryList>)> {
+    ) -> Result<(Arc<ReadSnapshot>, Arc<EntryList>), crate::store::checkpoint::Fallback> {
         let root = &self.root;
         let fix = |entry: &mut PageEntry| {
             if entry.rel_path.is_some() {
@@ -264,15 +264,13 @@ impl Graph {
             derived.query_index,
             &pages.positions,
         );
-        if !self.install_checkpoint_rows(
+        self.install_checkpoint_rows(
             &pages,
             &state.observed_mtimes,
             state.failures,
             (state.disk_revs, state.vcs_anchored),
             (state.cache_generation, list.materialize()),
-        ) {
-            return None;
-        }
+        )?;
         // The alias list names its owners by relative path; the owner map is
         // the same rows keyed the other way and is not read back. A row naming
         // a page the cache lacks leaves the relation unbuilt: the first alias
@@ -321,7 +319,7 @@ impl Graph {
             referenced_name_full_builds: std::sync::atomic::AtomicUsize::new(0),
         };
         read.transliteration_names = read.build_name_keys(None, &[]);
-        Some((Arc::new(read), list))
+        Ok((Arc::new(read), list))
     }
 }
 

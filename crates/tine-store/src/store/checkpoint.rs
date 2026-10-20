@@ -104,7 +104,9 @@ struct Body<P> {
 }
 
 /// Why a checkpoint was not loaded; every one falls back to the initial build.
-/// Closed tokens for diagnostics.
+/// Closed tokens for diagnostics. The first ten are about the file; the rest
+/// are launch races: something reached the graph before the install, under
+/// the writer, and serving the checkpoint would hide it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Fallback {
     Missing,
@@ -116,23 +118,49 @@ pub(crate) enum Fallback {
     Length,
     Checksum,
     Decode,
-    Raced,
+    /// The load ended (closed, failed) before the install.
+    NotLoading,
+    /// Another path published the first generation.
+    Published,
+    /// A publication waits for the first view (`first_view.rs`): an own
+    /// save during launch, or rows a page hold retired.
+    Deferred,
+    /// Another path built the page cache (an on-demand build).
+    CacheBuilt,
+    /// A page was held (a page host opened it) before the install (R2).
+    PageHeld,
 }
 
+/// Prefix of the one line a launch that tried the checkpoint prints when it
+/// declines it; the rest is the closed token.
+const DECLINED: &str = "tine launch checkpoint declined: ";
+/// The line a launch served from its checkpoint prints.
+const SERVED: &str = "tine launch checkpoint served";
+
 impl Fallback {
-    pub(crate) fn token(self) -> &'static str {
+    /// The line a launch that declined for this reason prints (one per
+    /// launch, `diag_line`; a closed token, I-5).
+    fn line(self) -> &'static str {
         match self {
-            Self::Missing => "missing",
-            Self::Unreadable => "unreadable",
-            Self::Format => "format",
-            Self::Parser => "parser",
-            Self::Root => "root",
-            Self::Config => "config",
-            Self::Length => "length",
-            Self::Checksum => "checksum",
-            Self::Decode => "decode",
-            Self::Raced => "raced",
+            Self::Missing => "tine launch checkpoint declined: missing",
+            Self::Unreadable => "tine launch checkpoint declined: unreadable",
+            Self::Format => "tine launch checkpoint declined: format",
+            Self::Parser => "tine launch checkpoint declined: parser",
+            Self::Root => "tine launch checkpoint declined: root",
+            Self::Config => "tine launch checkpoint declined: config",
+            Self::Length => "tine launch checkpoint declined: length",
+            Self::Checksum => "tine launch checkpoint declined: checksum",
+            Self::Decode => "tine launch checkpoint declined: decode",
+            Self::NotLoading => "tine launch checkpoint declined: not_loading",
+            Self::Published => "tine launch checkpoint declined: published",
+            Self::Deferred => "tine launch checkpoint declined: deferred",
+            Self::CacheBuilt => "tine launch checkpoint declined: cache_built",
+            Self::PageHeld => "tine launch checkpoint declined: page_held",
         }
+    }
+
+    pub(crate) fn token(self) -> &'static str {
+        &self.line()[DECLINED.len()..]
     }
 }
 
@@ -382,18 +410,21 @@ pub(crate) fn load(path: &Path, root: &Path, config_key: &[u8; 32]) -> Result<Lo
 impl ChangeFeed {
     /// Install a loaded checkpoint as this feed's first generation (rev 1,
     /// an `Origin::External` publication with no file tuples), and its page
-    /// cache in the graph. Returns the watcher baseline it carries, or
-    /// `None` when another path filled the cache or published first (an
-    /// on-demand build during launch), or a publication waits for the first
-    /// view (an own save during launch, `first_view.rs`): the launch then
-    /// completes cold.
+    /// cache in the graph. Returns the watcher baseline it carries, or why
+    /// not: another path filled the cache or published first (an on-demand
+    /// build during launch), a page is held, or a publication waits for the
+    /// first view (an own save during launch, `first_view.rs`); the launch
+    /// then completes cold.
     /// Caller holds the store writer.
     pub(crate) fn install_checkpoint(
         &self,
         loaded: Loaded,
-    ) -> Option<crate::model::LaunchObservations> {
-        if self.snapshot.read().unwrap().is_some() || self.deferred_any() {
-            return None;
+    ) -> Result<crate::model::LaunchObservations, Fallback> {
+        if self.snapshot.read().unwrap().is_some() {
+            return Err(Fallback::Published);
+        }
+        if self.deferred_any() {
+            return Err(Fallback::Deferred);
         }
         let Body {
             graph,
@@ -438,7 +469,7 @@ impl ChangeFeed {
             state.queue.push_back(change);
             self.ready.notify_all();
         }
-        Some(crate::model::LaunchObservations {
+        Ok(crate::model::LaunchObservations {
             stamps: stamps.into_iter().collect(),
             racy: racy.into_iter().collect(),
             announce: Vec::new(),
@@ -675,27 +706,28 @@ pub(crate) fn launch_from(
     // file against the same revision, so a checkpoint loaded under it is
     // reconciled as if it had been built under it.
     let key = config_key(&changes.config.read().unwrap().config);
+    let declined = |reason: Fallback, bytes| {
+        graph
+            .diag
+            .checkpoint_load(reason.token(), began.elapsed(), bytes);
+        tine_core::diag_line::diagnostic_line(reason.line());
+        false
+    };
     let loaded = match self::load(path, &graph.root, &key) {
         Ok(loaded) => loaded,
-        Err(reason) => {
-            graph
-                .diag
-                .checkpoint_load(reason.token(), began.elapsed(), 0);
-            return false;
-        }
+        Err(reason) => return declined(reason, 0),
     };
     let bytes = loaded.file_bytes;
     let _writer = writer.lock().unwrap();
     if !matches!(*load.status.lock().unwrap(), LoadStatus::Loading) {
-        return false;
+        return declined(Fallback::NotLoading, bytes);
     }
-    let Some(observed) = changes.install_checkpoint(loaded) else {
-        graph
-            .diag
-            .checkpoint_load(Fallback::Raced.token(), began.elapsed(), bytes);
-        return false;
+    let observed = match changes.install_checkpoint(loaded) {
+        Ok(observed) => observed,
+        Err(reason) => return declined(reason, bytes),
     };
     graph.diag.checkpoint_load("loaded", began.elapsed(), bytes);
+    tine_core::diag_line::diagnostic_line(SERVED);
     if let Some(signal) = changes.checkpoint.get() {
         signal.loaded(lazy_marks(changes));
     }
