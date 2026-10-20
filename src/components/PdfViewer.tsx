@@ -779,7 +779,13 @@ export function PdfViewer(props: {
   }
 
   function onZoom() {
-    if (!pdfDoc) return;
+    // The saved/fit scale is applied before the page layout exists, and the
+    // layout is then built at that scale: nothing to resize, re-anchor or
+    // settle. Arming the settle timer here made it fire 120 ms later (or later
+    // still on a loaded machine) and write the page-top anchor over the
+    // backlink's exact-highlight scroll or over the reader's own scrolling
+    // (GH #672).
+    if (!pdfDoc || !pageEls[1]) return;
     const s = scale();
     if (!zoomSettling) {
       const anchor = curPage();

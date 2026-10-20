@@ -1519,6 +1519,51 @@ describe("PdfViewer OG state and reference behavior", () => {
     }
   });
 
+  // GH #672 late replay: opening a reader at a saved zoom arms the zoom-settle
+  // timer (the scale signal starts at a placeholder). That pending settle used to
+  // write the zoom anchor (the top of the page) 120 ms later, over the backlink's
+  // exact-highlight scroll or over the reader's own scrolling.
+  it.each(["highlight scroll", "reader scroll"] as const)("a mount-time zoom settle does not move the reader after the %s", async (kind) => {
+    vi.useFakeTimers();
+    const id = "11111111-1111-4111-8111-111111111111";
+    const rect = { top: 500, left: 20, width: 80, height: 12 };
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({
+      highlights: [{ id, page: 1, position: { page: 1, bounding: rect, rects: [rect] },
+        color: "yellow", text: "target", image: null }],
+      page: 1, scale: 1.25,
+    });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792), page(612, 792)])) });
+    const initial = makePdfRoute("paper.pdf", "Paper", { page: 1 });
+    publishPdfNavigationIntent(initial.viewId, { page: 1, highlightId: id });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <OwnedKeyedPdfViewer route={() => initial} owner={testPdfOwner} />, host);
+    try {
+      const scroll = () => host.querySelector(".pdf-scroll") as HTMLElement;
+      // The exact-highlight scroll lands mid-page, as a real browser would do.
+      vi.mocked(HTMLElement.prototype.scrollIntoView).mockImplementation(function (this: HTMLElement) {
+        if (this.classList.contains("pdf-hl")) scroll().scrollTop = 514;
+      });
+      await flush();
+      for (const [index, element] of [...host.querySelectorAll(".pdf-page")].entries()) {
+        Object.defineProperty(element, "offsetTop", { configurable: true, value: 80 + index * 1006 });
+      }
+      expect(scroll().scrollTop).toBe(514);
+      if (kind === "reader scroll") {
+        scroll().scrollTop = 1086;
+        scroll().dispatchEvent(new Event("scroll"));
+      }
+      await vi.advanceTimersByTimeAsync(400);
+      await flush();
+      expect(scroll().scrollTop).toBe(kind === "highlight scroll" ? 514 : 1086);
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps one PDF mounted and scrolls repeated references to the exact highlight", async () => {
     const firstId = "11111111-1111-4111-8111-111111111111";
     const secondId = "22222222-2222-4222-8222-222222222222";
