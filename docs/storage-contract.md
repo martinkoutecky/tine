@@ -111,14 +111,26 @@ Ready publication does not announce their files as outside writes. A
 publication that does not wait while changes still do (a config write during
 loading, which publishes a view early) publishes the waiting changes first, so
 own changes keep save order; their files stay unannounced by the Ready
-publication and the launch checkpoint stays declined. A deferred
-save declines a launch checkpoint not yet installed: the checkpoint lacks the
-save, and the watcher's baseline already holds the save's own stamp, so no
-diff would correct it. A config write never defers. If the load stops, the
+publication and the launch checkpoint stays declined. A watcher
+observation in that window defers the same way: a page opened and closed while
+the graph loads (a click into a block at first paint, then Escape) releases
+its hold, and the release rereads the page's file, but its publication waits
+for the first view instead of building the whole graph under the writer (card
+hB0p3s). A deferred save or observation declines a launch checkpoint not yet
+installed: the checkpoint lacks it, and the watcher's baseline already holds
+its stamp, so no diff would correct it. The load worker asks the install's
+race checks (a publication deferred or published, a page held, a cache built,
+the store closed) before it reads the checkpoint and while it decodes it, and
+stops at once on one, so a race costs the decode done before it plus a cold
+launch, never the whole decode and then a cold launch. A config write or a config change never defers. If the load stops, the
 deferred changes are dropped and the recovery's first view covers their
 writes. The page host's `wait_published` means durable and indexed, as after
 Ready; it does not wait for the Ready view. Proof:
-`crates/tine-store/src/store/loading_save_tests.rs`,
+`crates/tine-store/src/store/loading_save_tests.rs` (for the release and
+the race, `a_page_opened_and_closed_while_loading_builds_no_graph_under_the_writer`,
+`a_page_opened_and_closed_before_a_launch_checkpoint_loads_costs_no_decode`),
+`crates/tine-store/src/store/checkpoint_tests.rs`
+`a_race_during_the_decode_stops_it`,
 `crates/tine-store/tests/loading_own_save.rs`.
 
 `Store::refresh(Depth)` is the one refresh door. `Depth::Stamps` trusts a file

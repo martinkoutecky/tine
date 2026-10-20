@@ -925,6 +925,20 @@ impl Graph {
         *self.derived.launch_listing.write().unwrap() = Some((gen, named));
     }
 
+    /// Why a checkpoint's rows would not install now (the checks
+    /// [`Self::install_checkpoint_rows`] makes under the cache lock), or
+    /// None. Asked early, without the writer (`ChangeFeed::launch_race`).
+    pub(crate) fn checkpoint_race(&self) -> Option<crate::store::checkpoint::Fallback> {
+        use crate::store::checkpoint::Fallback;
+        if self.cache_built() {
+            Some(Fallback::CacheBuilt)
+        } else if !self.held.is_empty() {
+            Some(Fallback::PageHeld)
+        } else {
+            None
+        }
+    }
+
     /// Install a loaded checkpoint's page cache: refused when a cache exists
     /// or any page is held. A checkpoint's rows, indexes and claimants carry
     /// no owner provenance, so a held page makes the launch a full build

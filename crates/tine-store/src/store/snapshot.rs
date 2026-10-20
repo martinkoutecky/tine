@@ -425,7 +425,8 @@ impl Store {
         // Before the first complete view, the publication waits for it
         // (`first_view.rs`): the current revision, no change yet.
         if self.defers_publication(config_changed) {
-            self.defer_publication(origin, files, pages, (raced, journal_set_changed));
+            self.changes
+                .defer_publication(origin, files, pages, (raced, journal_set_changed));
             return (self.changes.rev(), None);
         }
         // A publication that does not wait while changes still do (a config

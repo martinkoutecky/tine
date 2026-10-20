@@ -11,6 +11,15 @@
 //! holding the writer after the Ready publication, publishes each deferred
 //! change in order. So the first complete view contains every deferred
 //! write, and each save's own change follows it.
+//!
+//! A watcher observation before the first view defers the same way
+//! (`watch/reconcile.rs`): a page opened and closed while the graph loads
+//! (a click into a block at first paint, then Escape) releases its hold,
+//! and the release rereads the page's file (card hB0p3s). Its publication
+//! used to capture a view at once, building the whole graph under the
+//! writer, which also published the first generation ahead of a launch
+//! checkpoint still decoding: the launch paid for the decode and then
+//! for a cold build after the on-demand one.
 use super::*;
 use std::collections::HashSet;
 
@@ -50,33 +59,7 @@ impl Store {
     /// `page_named` answers an unclaimed journal day from the files only
     /// then; with a served checkpoint the view answers.
     pub(crate) fn first_view_pending(&self) -> bool {
-        matches!(*self.load.status.lock().unwrap(), LoadStatus::Loading)
-            && self.changes.snapshot.read().unwrap().is_none()
-    }
-
-    /// Defer a transaction's publication (see the module doc). A journal
-    /// file created or removed updates the day index from the journal
-    /// directory's file names (no file opened), so `journal_id` names it
-    /// before the first view.
-    pub(super) fn defer_publication(
-        &self,
-        origin: Origin,
-        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
-        pages: Vec<(FileId, PageKind, String)>,
-        (raced, journal_set_changed): (HashSet<PathBuf>, bool),
-    ) {
-        if journal_set_changed {
-            *self.journal_ids.lock().unwrap() =
-                journal_ids_from_entries(&self.graph, &self.graph.scan_journal_names());
-        }
-        let mut deferred = self.changes.deferred.lock().unwrap();
-        deferred.any = true;
-        deferred.changes.push(DeferredChange {
-            origin,
-            files,
-            pages,
-            raced,
-        });
+        self.changes.first_view_pending(&self.load)
     }
 
     /// Note that rows an ownership transition retired wait for the first
@@ -92,6 +75,39 @@ impl Store {
 }
 
 impl ChangeFeed {
+    /// [`Store::first_view_pending`], for the watcher, which holds the
+    /// feed and the load state but not the store.
+    pub(crate) fn first_view_pending(&self, load: &LoadState) -> bool {
+        matches!(*load.status.lock().unwrap(), LoadStatus::Loading)
+            && self.snapshot.read().unwrap().is_none()
+    }
+
+    /// Defer a publication (see the module doc): a transaction's, or a
+    /// watcher observation's. A journal file created or removed updates the
+    /// day index from the journal directory's file names (no file opened),
+    /// so `journal_id` names it before the first view. The caller holds the
+    /// writer.
+    pub(crate) fn defer_publication(
+        &self,
+        origin: Origin,
+        files: Vec<(FileId, ChangeKind, Option<FileRev>)>,
+        pages: Vec<(FileId, PageKind, String)>,
+        (raced, journal_set_changed): (HashSet<PathBuf>, bool),
+    ) {
+        if journal_set_changed {
+            *self.journal_ids.lock().unwrap() =
+                journal_ids_from_entries(&self.graph, &self.graph.scan_journal_names());
+        }
+        let mut deferred = self.deferred.lock().unwrap();
+        deferred.any = true;
+        deferred.changes.push(DeferredChange {
+            origin,
+            files,
+            pages,
+            raced,
+        });
+    }
+
     /// Whether a publication was deferred since open: a launch checkpoint,
     /// which lacks its write, must not be served (the watcher's baseline
     /// already holds the write's own stamp, so no diff would correct it).

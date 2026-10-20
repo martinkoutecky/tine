@@ -477,7 +477,7 @@ fn rewrite_body(cp: &Path, root: &Path, edit: impl FnOnce(&mut Body<PagesOut>)) 
     let bytes = fs::read(cp).unwrap();
     let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
     let header: Header = postcard::from_bytes(&bytes[16..16 + len]).unwrap();
-    let body = decode(&bytes, &header.root, &header.config_key).unwrap();
+    let body = decode(&bytes, &header.root, &header.config_key, &|| None).unwrap();
     let mut body = Body {
         graph: body
             .graph
@@ -655,7 +655,7 @@ fn a_racy_stamp_persists_and_forces_a_reread_after_reload() {
     let bytes = fs::read(&cp).unwrap();
     let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
     let header: Header = postcard::from_bytes(&bytes[16..16 + len]).unwrap();
-    let body = decode(&bytes, &header.root, &header.config_key).unwrap();
+    let body = decode(&bytes, &header.root, &header.config_key, &|| None).unwrap();
     assert!(
         body.racy.contains(&path),
         "storage spec §5.4: the racy flag is persisted"
@@ -1439,7 +1439,7 @@ fn a_checkpoint_is_declined_whole_while_a_page_is_held() {
                 assert!(graph.publish_owned("pages/A.md", bytes, None).is_ok());
             }
         }
-        let body = decode(&bytes, &header.root, &header.config_key).unwrap();
+        let body = decode(&bytes, &header.root, &header.config_key, &|| None).unwrap();
         let config = (*graph.current_config()).clone();
         graph.checkpoint_install(body.graph, config).err()
     };
@@ -1453,5 +1453,57 @@ fn a_checkpoint_is_declined_whole_while_a_page_is_held() {
         installs(Some(Some("- owner\n"))),
         Some(Fallback::PageHeld),
         "R2: installed while a held page is indexed"
+    );
+}
+
+/// Card hB0p3s: a race that arrives while the body decodes (a page held at
+/// first paint) stops the decode at the next look and names the reason, so
+/// the launch goes cold at once instead of after the whole decode (about
+/// 0.6 s on a 10k graph) and the drop of what it built.
+#[test]
+fn a_race_during_the_decode_stops_it() {
+    let root = graph();
+    let dir = tempfile::tempdir().unwrap();
+    let cp = dir.path().join("graph.bin");
+    write_checkpoint(root.path(), &cp);
+    let bytes = fs::read(&cp).unwrap();
+    let len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let header: Header = postcard::from_bytes(&bytes[16..16 + len]).unwrap();
+    let looks = std::cell::Cell::new(0);
+    let full = || {
+        looks.set(looks.get() + 1);
+        None
+    };
+    assert!(decode(&bytes, &header.root, &header.config_key, &full).is_ok());
+    let whole = looks.get();
+    assert!(whole > 3, "the test body spans several looks ({whole})");
+    looks.set(0);
+    let held_on_the_second_look = || {
+        looks.set(looks.get() + 1);
+        (looks.get() >= 2).then_some(Fallback::PageHeld)
+    };
+    assert_eq!(
+        decode(
+            &bytes,
+            &header.root,
+            &header.config_key,
+            &held_on_the_second_look
+        )
+        .err(),
+        Some(Fallback::PageHeld),
+        "the decode names the race, not a damaged file"
+    );
+    assert_eq!(
+        looks.get(),
+        2,
+        "the decode stopped at the look that saw the race"
+    );
+    assert_eq!(
+        decode(&bytes, &header.root, &header.config_key, &|| Some(
+            Fallback::Deferred
+        ))
+        .err(),
+        Some(Fallback::Deferred),
+        "a race known before the body decodes stops it before it starts"
     );
 }

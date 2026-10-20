@@ -38,11 +38,17 @@ fn graph() -> tempfile::TempDir {
 
 /// A store whose load worker waits until [`go`] (the test pause file).
 fn held_open(root: &Path) -> Arc<Store> {
+    held_open_with(
+        root,
+        OpenOptions {
+            watch: WatchMode::Poll,
+            ..Default::default()
+        },
+    )
+}
+
+fn held_open_with(root: &Path, options: OpenOptions) -> Arc<Store> {
     fs::write(root.join(".tine-test-pause-load"), "").unwrap();
-    let options = OpenOptions {
-        watch: WatchMode::Poll,
-        ..Default::default()
-    };
     Arc::new(Store::open(root, options).unwrap().0)
 }
 
@@ -590,5 +596,92 @@ fn closing_with_deferred_saves_then_reopening_keeps_them() {
     let _ = fs::remove_file(root.path().join(".tine-test-pause-load"));
     let (store, _, _) = Store::open(root.path(), Default::default()).unwrap();
     assert_once(&store, "New", "durable");
+    store.close();
+}
+
+/// Hold and release `pages/A.md` while the graph loads, as a page host does
+/// for a click into a block at first paint and Escape (card hB0p3s): open
+/// (`hold_current`) and close (`release_hold`), each in its own writer
+/// section followed by the transition's publication.
+fn open_and_close_a(store: &Store) {
+    store
+        .graph
+        .held
+        .spellings()
+        .spell("pages/A.md", "pages/A.md");
+    for open in [true, false] {
+        let _writer = store.writer.lock().unwrap();
+        if open {
+            store.watch.hold_current("pages/A.md".into());
+        } else {
+            store.watch.release_hold("pages/A.md");
+        }
+        store.publish_retired();
+    }
+}
+
+#[test]
+fn a_page_opened_and_closed_while_loading_builds_no_graph_under_the_writer() {
+    let root = graph();
+    let store = held_open(root.path());
+    let feed = store.subscribe();
+    open_and_close_a(&store);
+    assert!(
+        !store.graph.cache_built() && on_demand_builds(&store) == 0,
+        "card hB0p3s: the release's reread published at once, building the whole graph \
+         under the writer while the graph loaded (on a 10k graph a click at first paint \
+         then Escape made Ready ~1 s later than a cold launch); it waits for the first view"
+    );
+    go(root.path());
+    assert_once(&store, "A", "old A");
+    assert_eq!(declined_passes(&store), Vec::<String>::new());
+    assert_eq!(on_demand_builds(&store), 0);
+    assert_eq!(store.graph.warm_passes.load(Ordering::Relaxed), 1);
+    let ready = feed.recv().unwrap();
+    assert_eq!(ready.origin, Origin::External, "the first view comes first");
+    assert!(
+        !store.watch.holds(&root.path().join("pages/A.md")),
+        "the page is back with the watcher"
+    );
+    store.close();
+}
+
+#[test]
+fn a_page_opened_and_closed_before_a_launch_checkpoint_loads_costs_no_decode() {
+    let root = graph();
+    let dir = tempfile::tempdir().unwrap();
+    let checkpoint = dir.path().join("graph.bin");
+    let options = || OpenOptions {
+        watch: WatchMode::Poll,
+        launch_checkpoint: Some(checkpoint.clone()),
+        ..Default::default()
+    };
+    let store = Store::open(root.path(), options()).unwrap().0;
+    store.whole_graph_reconciled().unwrap();
+    assert!(matches!(
+        store.write_checkpoint_now(),
+        Some(super::checkpoint::CheckpointWrite::Written { .. })
+    ));
+    store.close();
+    drop(store);
+    let store = held_open_with(root.path(), options());
+    open_and_close_a(&store);
+    go(root.path());
+    assert_once(&store, "A", "old A");
+    let load = &store.diagnostics()["checkpoint"]["load"];
+    assert_eq!(
+        load["outcome"], "deferred",
+        "card hB0p3s: the release published the first generation with an on-demand \
+         build under the writer, so the checkpoint was declined `published` after it \
+         waited for that build"
+    );
+    assert_eq!(
+        load["bytes"], 0,
+        "card hB0p3s: a launch whose checkpoint is already declined must not read and \
+         decode it (about 1 s on a 10k graph) before the cold build"
+    );
+    assert_eq!(on_demand_builds(&store), 0);
+    assert_eq!(declined_passes(&store), Vec::<String>::new());
+    assert_eq!(store.graph.warm_passes.load(Ordering::Relaxed), 1);
     store.close();
 }

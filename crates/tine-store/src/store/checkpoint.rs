@@ -336,14 +336,81 @@ fn encode(
     Ok((file, raw_len))
 }
 
+/// Body bytes decoded between two looks at whether the launch still wants
+/// the checkpoint (`launch_from`'s race check, a few uncontended lock
+/// reads). The body decode is most of a load: 0.3 to 0.6 s of 0.4 to 0.75 s
+/// for the 160 MB body of a 10k-page graph (12 cores), against 0.12 s to
+/// read, check and decompress the file. A race stops it within a few
+/// milliseconds; the looks cost about 3% of the decode.
+/// Tests look every 64 bytes, so their small bodies are stopped mid-decode.
+const LOOK_EVERY: usize = if cfg!(test) { 64 } else { 1 << 20 };
+
+/// The body's postcard source: the file's bytes, ending the decode once
+/// `stop` names a reason to decline (card hB0p3s), which it records in
+/// `stopped`.
+struct Stoppable<'de, 's> {
+    bytes: postcard::de_flavors::Slice<'de>,
+    left: usize,
+    stop: &'s dyn Fn() -> Option<Fallback>,
+    stopped: &'s std::cell::Cell<Option<Fallback>>,
+}
+
+impl Stoppable<'_, '_> {
+    fn spend(&mut self, bytes: usize) -> postcard::Result<()> {
+        if let Some(left) = self.left.checked_sub(bytes) {
+            self.left = left;
+            return Ok(());
+        }
+        self.left = LOOK_EVERY;
+        match (self.stop)() {
+            Some(reason) => {
+                self.stopped.set(Some(reason));
+                Err(postcard::Error::DeserializeUnexpectedEnd)
+            }
+            None => Ok(()),
+        }
+    }
+}
+
+impl<'de, 's: 'de> postcard::de_flavors::Flavor<'de> for Stoppable<'de, 's> {
+    type Remainder = &'de [u8];
+    type Source = &'de [u8];
+
+    // Single bytes (varints, tags) are not counted: a check per byte cost
+    // about 15% of the decode. Text is most of a body, so taken runs alone
+    // bring a look about every `LOOK_EVERY` bytes.
+    fn pop(&mut self) -> postcard::Result<u8> {
+        self.bytes.pop()
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        self.bytes.size_hint()
+    }
+
+    fn try_take_n(&mut self, count: usize) -> postcard::Result<&'de [u8]> {
+        self.spend(count)?;
+        self.bytes.try_take_n(count)
+    }
+
+    fn finalize(self) -> postcard::Result<&'de [u8]> {
+        self.bytes.finalize()
+    }
+}
+
 /// Validate and decode a checkpoint file's bytes for `root` under the config
 /// key `config_key`. Every check names what it defends: a torn or
 /// truncated write (crash, power loss: length, checksum), a disk error (a
 /// flipped byte: checksum, decode), another Tine build (format, parser), a
 /// moved or different graph (root), or a config edited while Tine was closed
 /// in a setting the build reads (config: the generation was built under other
-/// settings).
-fn decode(bytes: &[u8], root: &Path, config_key: &[u8; 32]) -> Result<Body<PagesIn>, Fallback> {
+/// settings). The decode stops, returning its reason, as soon as `stop`
+/// names one (the launch would decline the result anyway).
+fn decode(
+    bytes: &[u8],
+    root: &Path,
+    config_key: &[u8; 32],
+    stop: &dyn Fn() -> Option<Fallback>,
+) -> Result<Body<PagesIn>, Fallback> {
     // Probed with `get`: a truncated file (torn write) is a fallback, never
     // a panic.
     let word = |at: usize| {
@@ -381,7 +448,17 @@ fn decode(bytes: &[u8], root: &Path, config_key: &[u8; 32]) -> Result<Body<Pages
     if raw.len() as u64 != header.raw_len {
         return Err(Fallback::Length);
     }
-    postcard::from_bytes(&raw).map_err(|_| Fallback::Decode)
+    let stopped = std::cell::Cell::new(stop());
+    if let Some(reason) = stopped.get() {
+        return Err(reason);
+    }
+    let mut body = postcard::Deserializer::from_flavor(Stoppable {
+        bytes: postcard::de_flavors::Slice::new(&raw),
+        left: LOOK_EVERY,
+        stop,
+        stopped: &stopped,
+    });
+    Body::deserialize(&mut body).map_err(|_| stopped.get().unwrap_or(Fallback::Decode))
 }
 
 /// What the load worker installs from a checkpoint.
@@ -390,9 +467,15 @@ pub(crate) struct Loaded {
     pub(crate) file_bytes: u64,
 }
 
-/// Read and validate the checkpoint at `path` (one read of one file). No lock
-/// is held; nothing is installed.
-pub(crate) fn load(path: &Path, root: &Path, config_key: &[u8; 32]) -> Result<Loaded, Fallback> {
+/// Read and validate the checkpoint at `path` (one read of one file),
+/// stopping as soon as `stop` names a reason (see [`decode`]). No lock is
+/// held; nothing is installed.
+pub(crate) fn load(
+    path: &Path,
+    root: &Path,
+    config_key: &[u8; 32],
+    stop: &dyn Fn() -> Option<Fallback>,
+) -> Result<Loaded, Fallback> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -400,7 +483,7 @@ pub(crate) fn load(path: &Path, root: &Path, config_key: &[u8; 32]) -> Result<Lo
         }
         Err(_) => return Err(Fallback::Unreadable),
     };
-    let body = decode(&bytes, root, config_key)?;
+    let body = decode(&bytes, root, config_key, stop)?;
     Ok(Loaded {
         body,
         file_bytes: bytes.len() as u64,
@@ -408,6 +491,22 @@ pub(crate) fn load(path: &Path, root: &Path, config_key: &[u8; 32]) -> Result<Lo
 }
 
 impl ChangeFeed {
+    /// Why a launch checkpoint not yet installed would be declined now, or
+    /// None: the install's own race checks, in its order. The load worker
+    /// asks before and while it decodes (card hB0p3s), without the writer,
+    /// so a race costs no decode; the install asks again under the writer,
+    /// and `Graph::install_checkpoint_rows` asks the last two again under
+    /// the cache lock, atomically with the install.
+    pub(crate) fn launch_race(&self) -> Option<Fallback> {
+        if self.snapshot.read().unwrap().is_some() {
+            return Some(Fallback::Published);
+        }
+        if self.deferred_any() {
+            return Some(Fallback::Deferred);
+        }
+        self.graph.checkpoint_race()
+    }
+
     /// Install a loaded checkpoint as this feed's first generation (rev 1,
     /// an `Origin::External` publication with no file tuples), and its page
     /// cache in the graph. Returns the watcher baseline it carries, or why
@@ -420,11 +519,8 @@ impl ChangeFeed {
         &self,
         loaded: Loaded,
     ) -> Result<crate::model::LaunchObservations, Fallback> {
-        if self.snapshot.read().unwrap().is_some() {
-            return Err(Fallback::Published);
-        }
-        if self.deferred_any() {
-            return Err(Fallback::Deferred);
+        if let Some(reason) = self.launch_race() {
+            return Err(reason);
         }
         let Body {
             graph,
@@ -713,7 +809,22 @@ pub(crate) fn launch_from(
         tine_core::diag_line::diagnostic_line(reason.line());
         false
     };
-    let loaded = match self::load(path, &graph.root, &key) {
+    // A race (a page held, a publication deferred or published, the store
+    // closed) declines the checkpoint whenever it comes before the install;
+    // asked before the read and while decoding, it also stops the decode,
+    // so a race costs no more than a cold launch (card hB0p3s).
+    let race = || {
+        // The status guard drops with the condition: no lock is nested.
+        if matches!(*load.status.lock().unwrap(), LoadStatus::Loading) {
+            changes.launch_race()
+        } else {
+            Some(Fallback::NotLoading)
+        }
+    };
+    if let Some(reason) = race() {
+        return declined(reason, 0);
+    }
+    let loaded = match self::load(path, &graph.root, &key, &race) {
         Ok(loaded) => loaded,
         Err(reason) => return declined(reason, 0),
     };
