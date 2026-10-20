@@ -645,6 +645,19 @@ try {
   // the store refuses to save). The refusal says so with a plain info toast,
   // leaves the file alone, and the page still saves a later edit.
   await openPageByName(browser, "Property move above", { entry: process.platform === "win32" ? "button" : "shortcut" });
+  // The properties become the page's first block once they have been opened for
+  // editing (before that they are not part of the outline and there is nothing
+  // above the first block to move past).
+  const openedProps = await browser.execute(() => {
+    const row = [...document.querySelectorAll(".page-properties .prop-row")]
+      .find((element) => element.querySelector(".prop-key")?.textContent?.trim() === "tags");
+    if (!row) return false;
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  if (!openedProps) throw new Error("missing rendered page-properties row on the move-above page");
+  await (await browser.$(".page-blocks textarea.block-editor")).waitForExist({ timeout: 5_000 });
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
   const openFirst = await browser.execute(() => {
     const block = [...document.querySelectorAll(".page-blocks .ls-block")]
       .find((element) => element.textContent?.includes("First block"));
@@ -670,7 +683,8 @@ try {
     ],
   }]);
   await browser.releaseActions();
-  await browser.waitUntil(async () => (await browser.$$(".toast-info .toast-msg")).length > 0, {
+  await browser.waitUntil(async () => browser.execute(() => [...document.querySelectorAll(".toast-info .toast-msg")]
+    .some((node) => node.textContent === "Page properties stay at the top of the page")), {
     timeout: 5_000,
     timeoutMsg: "no toast after moving a block above the page properties",
   });
