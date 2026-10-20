@@ -1446,12 +1446,18 @@ pub(crate) fn search_cancellable_result(
 
 /// Scan all graph blocks for templates and return insertion DTOs; do not insert.
 /// Include roots unless template-including-parent is false; strip id properties
-/// and included roots' template property. O(graph blocks plus copied subtrees).
+/// and included roots' template property. A page's property header (the
+/// document pre-block) counts as a block, first, as OG's `get-all-templates`
+/// matches any entity whose `:block/properties` has `:template`, the
+/// pre-block included (GH discussion #729); it has no children, so with
+/// `template-including-parent:: false` it inserts nothing, as in OG. The header
+/// is projected only when its text can hold the key. O(graph blocks plus
+/// copied subtrees).
 pub(crate) fn templates(graph: &ReadSnapshot) -> Vec<TemplateDto> {
     graph.with_pages(|pages| {
         let mut out: Vec<TemplateDto> = Vec::new();
         for (entry, doc) in pages {
-            walk(&doc.roots, &mut |b| {
+            let mut each = |b: &DocBlock| {
                 let Some(name) = b.property("template") else {
                     return;
                 };
@@ -1471,7 +1477,19 @@ pub(crate) fn templates(graph: &ReadSnapshot) -> Vec<TemplateDto> {
                     page: entry.name.clone(),
                     kind: entry.kind,
                 });
+            };
+            // A property key folds to `template` only by ASCII lowercasing.
+            let header_may_define = doc.pre_block.as_deref().is_some_and(|pre| {
+                pre.as_bytes()
+                    .windows(b"template".len())
+                    .any(|w| w.eq_ignore_ascii_case(b"template"))
             });
+            if header_may_define {
+                if let Some(header) = document_page_property_block(doc) {
+                    each(&header);
+                }
+            }
+            walk(&doc.roots, &mut |b| each(b));
         }
         out
     })
@@ -2374,6 +2392,115 @@ mod tests {
             .to_ascii_lowercase()
             .contains("template::"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn header_templates(name: &str, files: &[(&str, &str)]) -> Vec<(String, Vec<BlockDto>)> {
+        let dir = std::env::temp_dir().join(format!("tine-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        for (path, text) in files {
+            std::fs::write(dir.join(path), text).unwrap();
+        }
+        let mut found: Vec<_> = templates(&test_snapshot(&dir))
+            .into_iter()
+            .map(|t| (t.name, t.blocks))
+            .collect();
+        found.sort_by(|a, b| a.0.cmp(&b.0));
+        let _ = std::fs::remove_dir_all(dir);
+        found
+    }
+
+    fn raws(blocks: &[BlockDto]) -> Vec<&str> {
+        blocks.iter().map(|b| b.raw.as_str()).collect()
+    }
+
+    /// GH discussion #729 (OG parity): a `template::` in a page's property
+    /// header (the leading properties block of a Markdown page, the `#+KEY:` /
+    /// head-drawer header of an Org page) defines a template, as OG's
+    /// `get-all-templates` matches any entity with `:block/properties
+    /// :template`, the page's pre-block included. Only the header is inserted.
+    #[test]
+    fn a_page_property_header_template_is_listed() {
+        let found = header_templates(
+            "gh729-header",
+            &[
+                // The report's header, verbatim, and a block template below it.
+                (
+                    "pages/Usual note.md",
+                    "tags::  \nlink:: \ncreate-date:: <% today %>\ntemplate:: Usual note\n\n- row\n  template:: In a block\n",
+                ),
+                (
+                    "pages/With rows.md",
+                    "template:: Page with rows\nicon:: x\n\n- first row\n- second row\n",
+                ),
+                (
+                    "pages/Parentless.md",
+                    "template:: No parent\ntemplate-including-parent:: false\n\n- row\n",
+                ),
+                (
+                    "pages/Org header.org",
+                    "#+TITLE: Org header\n#+TEMPLATE: Org page template\n\n* Row\n",
+                ),
+                (
+                    "pages/Org drawer.org",
+                    ":PROPERTIES:\n:template: Org drawer template\n:END:\n\n* Row\n",
+                ),
+                // Only parser-owned property lines of the header count: not an
+                // empty value, another key's value, prose, or a fenced line.
+                ("pages/Empty.md", "template::\n\n- row\n"),
+                ("pages/Value.md", "status:: template\n"),
+                ("pages/Prose.md", "intro with template:: Prose\n\n- row\n"),
+                ("pages/Fenced.md", "```\ntemplate:: Fenced\n```\n\n- row\n"),
+            ],
+        );
+        let names: Vec<&str> = found.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "In a block",
+                "No parent",
+                "Org drawer template",
+                "Org page template",
+                "Page with rows",
+                "Usual note"
+            ]
+        );
+        let blocks = |name: &str| &found.iter().find(|(n, _)| n == name).unwrap().1;
+        // The header block, `template::` stripped; `<% today %>` is left for
+        // the insertion step (the frontend expands it).
+        assert_eq!(
+            raws(blocks("Usual note")),
+            ["tags:: \nlink:: \ncreate-date:: <% today %>"]
+        );
+        assert_eq!(raws(blocks("In a block")), ["row"]);
+        // The header has no children: the page's rows are not inserted, and
+        // `template-including-parent:: false` leaves nothing (OG drops the
+        // only block of the one-block tree).
+        assert_eq!(raws(blocks("Page with rows")), ["icon:: x"]);
+        assert!(blocks("Page with rows")[0].children.is_empty());
+        assert!(blocks("No parent").is_empty());
+        assert_eq!(
+            raws(blocks("Org page template")),
+            [":PROPERTIES:\n:title: Org header\n:END:"]
+        );
+        assert_eq!(raws(blocks("Org drawer template")), [""]);
+    }
+
+    /// The bulleted forms of the same report already worked; they stay pinned.
+    #[test]
+    fn a_bulleted_first_block_with_an_empty_property_line_is_a_template() {
+        let found = header_templates(
+            "gh729-bullets",
+            &[
+                ("pages/Bullet.md", "- tags::  \n  template:: Bulleted\n"),
+                (
+                    "pages/Empty first.md",
+                    "- hello\n  tags::  \n  template:: Empty first\n  - child\n",
+                ),
+            ],
+        );
+        let names: Vec<&str> = found.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["Bulleted", "Empty first"]);
     }
 
     fn test_snapshot(dir: &std::path::Path) -> std::sync::Arc<crate::model::ReadSnapshot> {

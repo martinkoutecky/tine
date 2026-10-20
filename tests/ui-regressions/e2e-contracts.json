@@ -209,6 +209,12 @@
       "nonRequirements":["Exact pixels, certification beyond Linux WebKitGTK, or changing source Move Up/Down semantics."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh729-page-template.mjs": {
+      "contracts": [{"class":"core-operation","userOutcome":"A page whose property header carries template:: is listed by the slash menu (/template and by name) and inserts its header block with the template property stripped and <% today %> expanded, leaving the source page unchanged (discussion 729).","blocking":true}],
+      "acceptableVariations":["Menu order, focus, styling and save latency may vary while the listing and the saved copy are right."],
+      "nonRequirements":["Ctrl+K template search (OG's command search does not list templates); Org header forms (unit-tested); platforms other than Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-template-collapse.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Inserting a template hides children of blocks saved collapsed, shows children of expanded blocks, and preserves that state and all children after save and cold reopen.","blocking":true}],
       "acceptableVariations":["Focus, styling and save latency may vary while the saved collapse state controls child visibility."],

@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - **A query export no longer publishes pages marked `public:: false`**, as every other export already did: when the query matches such a page, the page, its results and its share of the result count stay out of the export, and the review lists only the pages that are exported. A query that matches only such pages is refused (REG-QUERY-EXPORT-PRIVATE-PAGES).
 - A Markdown file with a quote whose first line is a `#+NAME: VALUE` line followed by a `key::` line no longer crashes Tine when the graph loads (the parser recursed until the stack overflowed; lsdoc v0.5.10, REG-OG-GH644-F2-QUOTE-PROPERTY-GROUP).
+- A page marked `template::` in its own property header (the lines at the top of the page, before the first bullet, or an Org page's `#+TEMPLATE:` line or head drawer) is now listed as a template, as in Logseq: `/` shows it as **Template: Name** and typing `/template` lists it with the others, and choosing it inserts the page's property lines as one block, without the `template::` line and with `<% today %>` and the like filled in. Before, only a `template::` on a block counted, so a page that Logseq listed as a template was missing from Tine (discussion #729, UI-GH729-PAGE-PROPERTY-TEMPLATE). The template is the property header only, not the page's blocks below it; `template-including-parent:: false` on a header therefore inserts nothing. Ctrl+K never listed templates in Logseq either.
 
 ## [0.8.0-beta.6] - 2026-10-19
 
