@@ -1539,3 +1539,55 @@ fn block_show_charges_projected_properties_against_the_byte_bound() {
     assert_eq!(block["truncated"], 1, "{}", block["group"]["page"]);
     assert_eq!(block["group"]["blocks"].as_array().unwrap().len(), 0);
 }
+
+/// The zips `tine serve`'s launch backup published for `graph`.
+fn launch_zips(graph: &Graph) -> Vec<String> {
+    let mut zips = graph
+        .app_data
+        .join("backups")
+        .join(crate::backup::root_backup_id(&graph.root));
+    zips.as_mut_os_string().push(".zips");
+    let mut names: Vec<String> = std::fs::read_dir(zips)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".zip"))
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn serve_takes_the_apps_launch_backup_once_it_has_gone_quiet() {
+    // Journal D-20261019-QC item 3: a graph only `tine serve` opens is backed
+    // up like one the app opens (one zip, after the warm and a quiet turn).
+    let graph = Graph::new();
+    let finished = lifecycle::Serving::new(&graph).run();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while launch_zips(&graph).is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "serve took no launch backup"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut yielding = graph.connect();
+    assert!(yielding.call("owner.yield", Value::Null).is_ok());
+    finished.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(launch_zips(&graph).len(), 1);
+}
+
+#[test]
+fn a_stop_during_the_quiet_wait_ends_serves_backup_before_it_returns() {
+    let graph = Graph::new();
+    let finished = lifecycle::Serving::new(&graph).run();
+    let mut yielding = graph.connect();
+    assert!(yielding.call("owner.yield", Value::Null).is_ok());
+    // Inside the 5 s quiet turn: returning means the worker was joined.
+    finished.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert!(
+        launch_zips(&graph).is_empty(),
+        "a stopped serve published a backup"
+    );
+}

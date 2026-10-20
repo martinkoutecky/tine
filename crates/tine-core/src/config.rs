@@ -20,7 +20,8 @@ pub struct Config {
     /// OG agenda horizon (signed integers are accepted by OG). None when
     /// config.edn omits it: the device's Settings value (default 7) applies.
     pub scheduled_future_days: Option<i32>,
-    /// Visible diagnostics for malformed journal configuration values.
+    /// Visible diagnostics for malformed journal configuration values and
+    /// journal date patterns with parts Tine does not support.
     pub journal_config_diagnostics: Vec<String>,
     /// Configured journal directory, relative to the graph root.
     pub journals_dir: String,
@@ -265,7 +266,8 @@ impl Default for LogbookSettings {
 
 impl Config {
     /// Parse supported EDN keys independently, defaulting missing or malformed
-    /// values. This does not report a validation error for a bad format string.
+    /// values. A journal date pattern with parts Tine does not support keeps its
+    /// value and adds a `journal_config_diagnostics` entry (card g4czVA).
     pub fn parse(edn: &str) -> Config {
         // Locate only direct root entries, as the graph-feature setters do.
         // Arbitrary unrelated forms need not fit the small sidecar value model.
@@ -322,11 +324,28 @@ impl Config {
         cfg.quick_capture_template_media = nested_string(edn, ":quick-capture-templates", ":media");
         cfg.favorites_page =
             string_value(edn, ":tine/favorites-page").filter(|s| !s.trim().is_empty());
-        cfg.journal_file_name_format =
-            string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
-        cfg.journal_page_title_format = string_value(edn, ":journal/page-title-format")
-            .filter(|s| !s.is_empty())
-            .or_else(|| string_value(edn, ":date-formatter").filter(|s| !s.is_empty()));
+        let file_format = string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
+        let title_format = [":journal/page-title-format", ":date-formatter"]
+            .into_iter()
+            .find_map(|key| {
+                string_value(edn, key)
+                    .filter(|s| !s.is_empty())
+                    .map(|v| (key, v))
+            });
+        for (key, pattern) in [
+            file_format
+                .as_deref()
+                .map(|p| (":journal/file-name-format", p)),
+            title_format.as_ref().map(|(key, p)| (*key, p.as_str())),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            cfg.journal_config_diagnostics
+                .extend(unsupported_journal_pattern_diagnostic(key, pattern));
+        }
+        cfg.journal_file_name_format = file_format;
+        cfg.journal_page_title_format = title_format.map(|(_, v)| v);
         // OG stores `:preferred-format "Markdown"|"Org"` (a capitalized string), but
         // its schema also accepts the keyword form `:preferred-format :org` — read
         // both so a keyword-configured graph isn't silently treated as markdown.
@@ -613,6 +632,36 @@ fn journal_title(value: &crate::edn::Edn) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Card g4czVA: the visible warning for a journal date pattern with parts
+/// Tine does not support. Detection only; Tine renders the pattern as before.
+fn unsupported_journal_pattern_diagnostic(key: &str, pattern: &str) -> Option<String> {
+    use crate::date::UnsupportedHandling;
+    let mut parts: Vec<String> = Vec::new();
+    for token in crate::date::unsupported_tokens(pattern) {
+        let effect = match token.handling {
+            UnsupportedHandling::Literal => "written as literal text",
+            UnsupportedHandling::ShorterFields => "read as shorter date fields",
+            UnsupportedHandling::Quoted => "quote marks kept, letters inside read as date fields",
+        };
+        let part = format!("{} ({effect})", token.text);
+        if !parts.contains(&part) {
+            parts.push(part);
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let what = if key == ":journal/file-name-format" {
+        "file names"
+    } else {
+        "titles"
+    };
+    Some(format!(
+        "{key} \"{pattern}\" uses date pattern parts Tine does not support: {}. Tine may write and recognize journal {what} differently from Logseq; it renames and rewrites nothing.",
+        parts.join(", ")
+    ))
 }
 
 /// The three Logseq journal keys, returned rather than written into a `Config`
@@ -1151,6 +1200,53 @@ mod tests {
             title.default_journal_queries[0].title.as_deref(),
             Some("Count 2")
         );
+    }
+
+    /// Card g4czVA: an unsupported journal pattern part is a visible
+    /// diagnostic naming the key that supplied the pattern; the configured
+    /// value itself is kept unchanged.
+    #[test]
+    fn unsupported_journal_pattern_parts_are_diagnosed() {
+        let cfg = Config::parse(
+            r#"{:journal/file-name-format "yyyy-MM-dd-ww" :journal/page-title-format "yyyy-MM-dd 'w'ww-E"}"#,
+        );
+        assert_eq!(
+            cfg.journal_config_diagnostics,
+            vec![
+                ":journal/file-name-format \"yyyy-MM-dd-ww\" uses date pattern parts Tine does not support: ww (written as literal text). Tine may write and recognize journal file names differently from Logseq; it renames and rewrites nothing.".to_string(),
+                ":journal/page-title-format \"yyyy-MM-dd 'w'ww-E\" uses date pattern parts Tine does not support: 'w' (quote marks kept, letters inside read as date fields), ww (written as literal text). Tine may write and recognize journal titles differently from Logseq; it renames and rewrites nothing.".to_string(),
+            ]
+        );
+        assert_eq!(
+            cfg.journal_file_name_format.as_deref(),
+            Some("yyyy-MM-dd-ww")
+        );
+        assert_eq!(
+            cfg.journal_page_title_format.as_deref(),
+            Some("yyyy-MM-dd 'w'ww-E")
+        );
+        // The legacy key is named when it supplies the title pattern; a
+        // repeated part is listed once.
+        let legacy = Config::parse(r#"{:date-formatter "yyyy dddd dddd"}"#);
+        assert_eq!(
+            legacy.journal_config_diagnostics,
+            vec![":date-formatter \"yyyy dddd dddd\" uses date pattern parts Tine does not support: dddd (read as shorter date fields). Tine may write and recognize journal titles differently from Logseq; it renames and rewrites nothing.".to_string()]
+        );
+        // A shadowed legacy pattern is not used, so it is not diagnosed.
+        let shadowed = Config::parse(
+            r#"{:journal/page-title-format "EEEE, dd.MM.yyyy" :date-formatter "ww"}"#,
+        );
+        assert!(shadowed.journal_config_diagnostics.is_empty());
+        for edn in [
+            "{}",
+            r#"{:journal/file-name-format "yyyy_MM_dd" :journal/page-title-format "MMM do, yyyy"}"#,
+            r#"{:journal/page-title-format "yyyy年MM月dd日"}"#,
+        ] {
+            assert!(
+                Config::parse(edn).journal_config_diagnostics.is_empty(),
+                "{edn}"
+            );
+        }
     }
 
     #[test]
