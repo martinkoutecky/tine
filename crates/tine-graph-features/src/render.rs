@@ -2127,7 +2127,7 @@ pub(crate) fn page_is_exports_page(page: &CorpusPage) -> bool {
 /// parse-non-string-property-value). An explicit `false` wins over any other
 /// entry. The entries are the parser's page properties (`block_regions`), so a
 /// fenced or drawer-body example is never a flag (I-12).
-fn page_public_flag(page: &CorpusPage) -> Option<bool> {
+pub(crate) fn page_public_flag(page: &CorpusPage) -> Option<bool> {
     let org = Format::from_path(page.id.as_str().as_ref()) == Format::Org;
     let pre = page.document.pre_block.as_deref()?;
     let regions = tine_core::block_regions::parse_document(pre, org);

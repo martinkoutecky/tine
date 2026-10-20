@@ -2102,6 +2102,11 @@ mod og_20d_guide_tests {
         assert!(files.contains("`:publishing/all-pages-public? true`"));
         let queries = include_str!("templates/queries.md");
         assert!(queries.contains("it still leaves out pages marked `public:: false`"));
+        // REG-QUERY-EXPORT-PRIVATE-PAGES: a query export leaves them out too.
+        assert!(files.contains(
+            "Pages marked `public:: false` and the exports page stay out even when the query matches them"
+        ));
+        assert!(!files.contains("whatever their `public::` setting"));
     }
 }
 

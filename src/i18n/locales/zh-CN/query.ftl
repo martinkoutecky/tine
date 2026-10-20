@@ -227,7 +227,7 @@ query-export-dialog-existing = 名为 <code>{ $folder }</code> 的导出已存�
 
 query-export-dialog-separate = 另建导出：<code>{ $folder }</code>
 
-query-export-dialog-path = 目标位置：<code>{ $path }</code>。将这些页面导出为静态网站和只读应用，不受公开设置限制。不会上传，不包含未保存的编辑。
+query-export-dialog-path = 目标位置：<code>{ $path }</code>。将这些页面导出为静态网站和只读应用；标记为 public:: false 的页面不会导出。不会上传，不包含未保存的编辑。
 
 query-page-results-alias = 匹配别名 { $alias }
 
