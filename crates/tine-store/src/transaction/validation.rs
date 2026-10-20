@@ -57,6 +57,10 @@ pub(crate) fn rewrite_move(
     };
     let destination_name = tine_core::model::decode_page_name(stem, name_format);
     let source = std::str::from_utf8(old).map_err(|_| Why::Refused(Refusal::Undecodable))?;
+    #[cfg(test)]
+    if source.contains(crate::model::TEST_TITLE_READ_PANIC_SENTINEL) {
+        panic!("deterministic test sentinel for a rename title-read panic");
+    }
     let Some(title) = tine_core::model::page_title_from_preamble(source, format) else {
         return Ok(rewritten);
     };

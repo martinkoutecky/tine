@@ -192,3 +192,27 @@ pub(crate) fn journal_ids_from_entries(
         })
         .collect()
 }
+
+/// Run the initial load's first publication (`publish`, which builds the
+/// graph-wide indexes and sets Ready) as a containment backstop: page
+/// parses are isolated per file before it, so a panic here is a graph-wide
+/// index stage's. It ends the load `Failed`, which `whole_graph` reports and
+/// `refresh()` retries, instead of killing the load thread with the store
+/// still Loading so every waiter hangs. The caller holds the writer guard,
+/// so catching here keeps the writer lock unpoisoned for later saves.
+/// True when the publication completed.
+pub(super) fn contain_first_publication(
+    graph: &Graph,
+    load: &LoadState,
+    publish: impl FnOnce(),
+) -> bool {
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(publish)).is_ok() {
+        return true;
+    }
+    graph.diag.load_stopped();
+    let mut status = load.status.lock().unwrap();
+    if matches!(*status, LoadStatus::Loading) {
+        *status = LoadStatus::Failed("graph publication stopped: an index build panicked".into());
+    }
+    false
+}

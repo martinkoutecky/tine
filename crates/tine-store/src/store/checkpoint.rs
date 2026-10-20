@@ -713,19 +713,24 @@ pub(crate) fn launch_from(
     watch.install_launch_baseline(observed);
     let found = watch.launch_diff().unwrap_or_default();
     let publish_began = Instant::now();
-    changes.publish_with(
-        Origin::External,
-        found.files,
-        found.config_changed,
-        found.pages,
-        || {
-            let mut status = load.status.lock().unwrap();
-            if matches!(*status, LoadStatus::Loading) {
-                *status = LoadStatus::Ready;
-            }
-        },
-    );
-    graph.diag.ready(publish_began);
+    // The cold load's containment backstop (`first_view`).
+    let published = super::first_view::contain_first_publication(graph, load, || {
+        changes.publish_with(
+            Origin::External,
+            found.files,
+            found.config_changed,
+            found.pages,
+            || {
+                let mut status = load.status.lock().unwrap();
+                if matches!(*status, LoadStatus::Loading) {
+                    *status = LoadStatus::Ready;
+                }
+            },
+        );
+    });
+    if published {
+        graph.diag.ready(publish_began);
+    }
     load.ready.notify_all();
     let _ = wake.send(());
     true

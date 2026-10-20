@@ -357,6 +357,8 @@ mod inventory;
 #[cfg(any(test, feature = "test-faults"))]
 mod link_oracle;
 #[cfg(test)]
+mod load_panic_tests;
+#[cfg(test)]
 mod loading_save_tests;
 mod name_search;
 #[cfg(test)]
@@ -1224,16 +1226,24 @@ impl Store {
                 if matches!(completed, Ok(true)) {
                     if matches!(*worker_load.status.lock().unwrap(), LoadStatus::Loading) {
                         let publish_began = std::time::Instant::now();
-                        worker_changes.publish_with(
-                            Origin::External,
-                            found.files,
-                            found.config_changed,
-                            found.pages,
-                            || *worker_load.status.lock().unwrap() = LoadStatus::Ready,
+                        let published = first_view::contain_first_publication(
+                            &worker_graph,
+                            &worker_load,
+                            || {
+                                worker_changes.publish_with(
+                                    Origin::External,
+                                    found.files,
+                                    found.config_changed,
+                                    found.pages,
+                                    || *worker_load.status.lock().unwrap() = LoadStatus::Ready,
+                                );
+                            },
                         );
-                        worker_changes.end_deferral(Some(&worker_watch));
-                        worker_graph.diag.ready(publish_began);
-                        let _ = worker_watch_wake.send(());
+                        if published {
+                            worker_changes.end_deferral(Some(&worker_watch));
+                            worker_graph.diag.ready(publish_began);
+                            let _ = worker_watch_wake.send(());
+                        }
                     }
                 } else {
                     worker_graph.diag.load_stopped();

@@ -37,7 +37,7 @@ tine-graph-features = { path = "../tine-graph-features", features = ["test-fault
 syn = { version = "2", features = ["full", "visit"] }
 quote = "1"
 proc-macro2 = "1"
-tine-core = { path = "../tine-core", features = ["test-counters"] }
+tine-core = { path = "../tine-core", features = ["test-counters", "test-faults"] }
 # Fault injection for tests/transaction.rs runs in the ordinary workspace test gate.
 tine-store = { path = ".", features = ["test-faults"] }
 pretty_assertions = "1"

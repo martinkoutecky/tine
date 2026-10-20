@@ -53,6 +53,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- One page Tine's parser chokes on no longer stops the whole graph from loading. The graph opens, every other page works, and that one file is listed as unreadable. Opening such a page, changing it in another app, or renaming it now affects only that page; before, it could leave every later save failing until Tine restarted. A rename of such a page is refused with the file left as it was.
 - Adding a property or a schedule to a Markdown block that starts with a `:LOGBOOK:` drawer (no text before it) now writes it above the drawer, as Logseq does, instead of inside the logbook, where neither app read it.
 - The "Some page files couldn't be read" notice now names the files (the first five, then "and N more") instead of pointing to a debug log that is off by default, so you can find the broken file; Copy on the notice copies the full list (GitHub discussion #727).
 - An advanced query with `:remove-block-children? false` now lists every matching block, including children of matching parents, as Logseq does (OG `components/query/result.cljs` `get-query-result`); without the option, or with `true`, a match directly under another match still shows only inside its parent. The simple `{{query}}` text keeps that rule. Saved query answers from earlier builds are rebuilt once.

@@ -390,15 +390,27 @@ impl PageHost {
                     let Some(old) = bytes else { return Ok(None) };
                     let spelling = &spellings[key];
                     let path = root.join(spelling);
-                    let rewritten = if moving {
-                        rewrite_move(old, &destination, &map, format)
-                    } else if let Some(new) =
-                        prepared(&PageId::from(spelling.as_str()), old, format)
-                    {
-                        reuse_rewrite(old, new, &path)
-                    } else {
-                        rewrite_refs(old, &path, &map, format)
-                    };
+                    // A parser panic on one malformed page (an external
+                    // editor, sync delivery or an import; og-gh644 F3)
+                    // makes that page unwritable for this rename, as a
+                    // refusal does, instead of unwinding through the
+                    // host's state and locks.
+                    let rewritten = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        if moving {
+                            rewrite_move(old, &destination, &map, format)
+                        } else if let Some(new) =
+                            prepared(&PageId::from(spelling.as_str()), old, format)
+                        {
+                            reuse_rewrite(old, new, &path)
+                        } else {
+                            rewrite_refs(old, &path, &map, format)
+                        }
+                    }))
+                    .unwrap_or_else(|_| {
+                        Err(crate::Why::Refused(crate::Refusal::ReadOnly(
+                            "page could not be parsed; Tine will not rewrite it".into(),
+                        )))
+                    });
                     let mut record = record.lock().unwrap();
                     let Ok(new) = rewritten else {
                         record.unwritable = Some(spelling.clone());

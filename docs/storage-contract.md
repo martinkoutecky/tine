@@ -35,7 +35,17 @@ nonempty preamble `title::` (or Org title directive) is its logical name;
 without one, the configured filename decoder supplies the name. A file whose
 title cannot be read (the title reader panics on malformed imported
 Markdown/Org) keeps its decoded filename name and is listed as unreadable;
-it never stops the initial load or another page's lookup (GH #644). Name lookup,
+it never stops the initial load or another page's lookup (GH #644). The same
+holds for a page whose parse, or any block or page-property projection the
+graph indexes read, panics (og-gh644 F1): every such parse runs inside that
+page's isolation (the load's per-page parse, and `cache_upsert` for a sync,
+rescan, page open or own save), so the page is listed as unreadable, a page
+open answers `StoreError::Unparseable` for it alone, and the writer lock is
+never unwound through. A panic in a pure graph-wide index stage after the
+parses ends the initial load `Failed` (`refresh()` retries) rather than
+leaving it `Loading`. A transaction whose preflight parse panics is refused
+(`transaction.rs::prepare_steps::ReadOnly`), and a host rename treats that
+page as unwritable (F3). Name lookup,
 the published inventory, references, and direct page reads use that one
 effective name. A file named for a logical page wins over a second file that
 claims the same name through `title::`. Editing a title rekeys the published
@@ -757,6 +767,7 @@ ordinary sync, external editors, user actions, malformed files, or graph lifecyc
 | `transaction.rs::rewrite::Undecodable` | 1 | Sync makes a referrer invalid UTF-8 before rename rewrite; keep that file and refuse the rename. |
 | `transaction.rs::rewrite_move::Undecodable` | 2 | Sync leaves a title-owned move source or its rewritten bytes invalid UTF-8; refuse the rename before moving the file or publishing a new title. |
 | `transaction.rs::refuse_read_only_org::ReadOnly` | 1 | An Org referrer is not round-trip editable (malformed imported Org); keep its bytes instead of rewriting it, whether preflight computes the rewrite or reuses one prepared by the rename planner (GH #623). |
+| `transaction.rs::prepare_steps::ReadOnly` | 1 | Malformed input (og-gh644 F3): an external editor, sync delivery or an import left a page whose bytes panic the parser while a transaction's preflight reads it (a moved page's own-title read, a referrer's rewrite). Refuse that transaction before any write, keep the file's bytes, and keep the writer lock usable for every other operation, instead of letting the panic unwind through the writer guard and poison it. |
 | `transaction.rs::rewrite_move::ReadOnly` | 1 | An imported Org page named by `#+TITLE:` or a `:title:` drawer is not round-trip editable; refuse the rename rather than rebind its title in bytes Tine cannot reproduce. |
 | `transaction.rs::content_refusal::Undecodable` | 1 | An existing or imported page has invalid UTF-8; refuse the write without reporting a transient I/O failure. |
 | `transaction.rs::content_refusal::InvalidTarget` | 1 | Existing or serialized page content exceeds the byte or nesting parse bound; refuse while retaining unsaved edits. |
