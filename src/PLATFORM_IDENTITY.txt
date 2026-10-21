@@ -37,6 +37,7 @@ src/components/Welcome.tsx platform-literal x1  # why: native-api; iOS opens gra
 src/components/Welcome.tsx platformKind x1  # why: native-api; iOS opens graphs only inside the app's own containers
 src/components/WindowChrome.tsx isMobilePlatform x1  # why: window-chrome; mobile hosts have no window frame to drag or resize
 src/components/pdfFind.ts isMobilePlatform x1  # why: memory-cap; find-text cache bytes
+src/components/pdfRenderQueue.ts isMobilePlatform x1  # why: memory-cap; prefetched page canvases
 src/components/pdfTiles.ts isMobilePlatform x1  # why: memory-cap; tile count cap
 src/components/pdfViewerPrimitives.ts isMobilePlatform x3  # why: memory-cap; canvas pixel, cache and page caps
 src/components/pdfViewerView.tsx isMac x1  # why: os-convention; the area-highlight modifier hint names the OS key

@@ -258,8 +258,10 @@ function rawQueryMacro(s: MacroInline, blockId?: string): MacroExtent | undefine
   return extent ?? undefined;
 }
 
-const PEEK_OPEN_MS = 350;
-const PEEK_CLOSE_MS = 150;
+// OG 0.10.9 page-preview-trigger / block-ref tippy: `:delay [1000, 100]` (ms open, close).
+// GH #735: a quicker open puts the popup over the reference you meant to click.
+const PEEK_OPEN_MS = 1000;
+const PEEK_CLOSE_MS = 100;
 const PEEK_BLOCK_CAP = 50;
 
 function createPeekBridge(disabled: () => boolean) {

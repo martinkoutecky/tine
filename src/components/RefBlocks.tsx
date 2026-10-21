@@ -4,12 +4,13 @@ import { t } from "../i18n";
 // Visits at most 64 ancestor levels per branch and shows a message below that;
 // cost is O(rendered blocks), bounded by the supplied result tree.
 
-import { For, Show, createMemo, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import type { BlockDto } from "../types";
 import { pageProperties, visibleBody } from "../render/block";
 import { effectiveHeadingLevel, facetsFromDto } from "../render/facets";
 import { taskCheckboxState } from "../markers";
 import { InlineText } from "../render/inline";
+import { AstBody } from "../render/body";
 import { formatForPage } from "../document";
 import { openBlockInSidebar } from "../ui";
 import { openInNewTab, type Route } from "../router";
@@ -37,6 +38,10 @@ export function RefBlocks(props: {
   onEditPageProperties?: (event: MouseEvent) => void;
   queryResult?: boolean;
   readOnly?: boolean;
+  /** GH #735: render each block body through the page renderer (code fences,
+   *  callouts, quotes) and honor `collapsed::` with a local-only fold, as the hover
+   *  preview of a page does. Absent: the flat line rendering of reference panels. */
+  pageBody?: boolean;
   onOpenBlock?: (id: string) => void;
 }): JSX.Element {
   return <RefBlocksAtDepth {...props} treeDepth={1} />;
@@ -50,6 +55,7 @@ function RefBlocksAtDepth(props: {
   depth?: number;
   onEditPageProperties?: (event: MouseEvent) => void;
   readOnly?: boolean;
+  pageBody?: boolean;
   onOpenBlock?: (id: string) => void;
   treeDepth: number;
   queryResult?: boolean;
@@ -65,6 +71,7 @@ function RefBlocksAtDepth(props: {
           path={props.path}
           onEditPageProperties={props.onEditPageProperties}
           readOnly={props.readOnly}
+          pageBody={props.pageBody}
           onOpenBlock={props.onOpenBlock}
           depth={props.depth ?? b.breadcrumb?.length ?? 0}
           treeDepth={props.treeDepth}
@@ -81,6 +88,7 @@ function RefBlock(props: {
   path?: string;
   onEditPageProperties?: (event: MouseEvent) => void;
   readOnly?: boolean;
+  pageBody?: boolean;
   onOpenBlock?: (id: string) => void;
   depth: number;
   treeDepth: number;
@@ -107,6 +115,11 @@ function RefBlock(props: {
   const properties = createMemo(() =>
     props.block.page_property ? pageProperties(props.block.raw, format()) : []
   );
+  // GH #735: a preview shows the page's own folds. The reader may open one, but
+  // only locally: the preview never writes `collapsed::` back to its source.
+  const [foldOpened, setFoldOpened] = createSignal(false);
+  const hasKids = () => props.block.children.length > 0;
+  const folded = () => !!props.pageBody && props.block.collapsed && hasKids() && !foldOpened();
   const refTarget = () => ({
     uuid: blockDtoExternalId(props.block),
     page: props.page ?? "",
@@ -122,12 +135,24 @@ function RefBlock(props: {
       class="ls-block ref-block"
       data-block-id={props.block.id}
       data-block-ref={blockDtoExternalId(props.block)}
-      classList={{ "page-property-reference": !!props.block.page_property }}
+      classList={{ "page-property-reference": !!props.block.page_property, collapsed: folded() }}
     >
       <div class="block-main" classList={{ [`bullet-h${headingLevel()}`]: headingLevel() != null }}>
         <div class="block-controls">
+          <Show when={props.pageBody}>
+            <span
+              class="collapse-toggle"
+              classList={{ "has-children": hasKids() }}
+              onClick={(e) => { e.stopPropagation(); if (hasKids()) setFoldOpened((v) => !v); }}
+            >
+              <Show when={hasKids()}>
+                <svg viewBox="0 0 24 24" class="triangle"><path d="M8 5l8 7-8 7z" /></svg>
+              </Show>
+            </span>
+          </Show>
           <span
             class="bullet-container"
+            classList={{ "bullet-closed": folded() }}
             title={props.block.page_property ? t("macro-ref-blocks-page-property-reference") : t("macro-ref-blocks-shift-click-sidebar-ctrl-cmd-click-or-middle-click-new")}
             onMouseDown={(e) => {
               // GH #207's other half: suppress shift-range selection and
@@ -191,6 +216,7 @@ function RefBlock(props: {
                 <Show
                   when={beginQuery()}
                   fallback={
+                    <Show when={!props.pageBody} fallback={<AstBody raw={props.block.raw} format={format()} headingLevel={headingLevel()} />}>
                     <For each={lines()}>
                       {(line, i) => (
                         <>
@@ -208,6 +234,7 @@ function RefBlock(props: {
                         </>
                       )}
                     </For>
+                    </Show>
                   }
                 >
                   {(match) => <BeginQuery match={match()} currentPage={props.page} />}
@@ -233,18 +260,18 @@ function RefBlock(props: {
           </div>
         </div>
       </div>
-      <Show when={props.block.children.length && props.treeDepth < MAX_REF_BLOCK_DEPTH}>
+      <Show when={props.block.children.length && props.treeDepth < MAX_REF_BLOCK_DEPTH && !folded()}>
         <div class="block-children-container">
           <div class="block-children">
             <RefBlocksAtDepth blocks={props.block.children} page={props.page} pageKind={props.pageKind} path={props.path}
               queryResult={props.queryResult}
               onEditPageProperties={props.onEditPageProperties}
-              readOnly={props.readOnly} onOpenBlock={props.onOpenBlock}
+              readOnly={props.readOnly} pageBody={props.pageBody} onOpenBlock={props.onOpenBlock}
               depth={props.depth + 1} treeDepth={props.treeDepth + 1} />
           </div>
         </div>
       </Show>
-      <Show when={props.block.children.length && props.treeDepth >= MAX_REF_BLOCK_DEPTH}>
+      <Show when={props.block.children.length && props.treeDepth >= MAX_REF_BLOCK_DEPTH && !folded()}>
         <div class="ref-block-depth-warning">{t("macro-ref-blocks-more-nested-blocks-are-available-on-the-page")}</div>
       </Show>
     </div>

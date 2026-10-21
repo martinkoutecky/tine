@@ -5,6 +5,7 @@
 // store and are keyboard-wired; this only adds the pointer entry point.
 
 import { selectBlock, extendSelectionTo } from "./document";
+import { scrollHome, startEdgeAutoscroll, viewportPoint, type EdgeAutoscroll } from "./edgeAutoscroll";
 import { documentOf, onEachWindow } from "./windowRealm";
 
 // Interactive chrome whose drags mean something else (bullet = reorder handle,
@@ -26,10 +27,19 @@ export function installBlockSelectionDrag(): () => void {
   let armed = false; // a potential drag started inside a block's content
   let startId: string | null = null;
   let startPaneId: string | null = null;
+  let startHome: HTMLElement | null = null;
   let converting = false; // crossed a boundary → now in block-selection mode
+  // Edge autoscroll (GH #731): only once converted. Until then the drag is a
+  // native text selection and the browser scrolls it itself.
+  let autoscroll: EdgeAutoscroll | null = null;
+  const stopAutoscroll = () => {
+    autoscroll?.stop();
+    autoscroll = null;
+  };
 
   const onMouseDown = (e: MouseEvent) => {
     armed = false;
+    stopAutoscroll();
     converting = false;
     startId = null;
     startPaneId = null;
@@ -39,33 +49,51 @@ export function installBlockSelectionDrag(): () => void {
     if (target.closest(SHEET_INTERNAL)) return;
     const block = target.closest("[data-block-id]");
     if (!block) return; // not in the outline (sidebar, title, dialogs, …)
+    startHome = scrollHome(target);
     startId = block.getAttribute("data-block-id");
     startPaneId = block.closest("[data-pane-id]")?.getAttribute("data-pane-id") ?? null;
     armed = !!startId;
+  };
+
+  // One step of the gesture at a hit point: the pointer's, or the one the
+  // autoscroll reports after it scrolled the content under a still pointer.
+  const follow = (doc: Document, x: number, y: number): boolean => {
+    if (startId === null) return false;
+    const overId = blockIdAt(doc, x, y, startPaneId);
+    if (overId === null) return false; // off the outline — keep current selection
+    // Still inside the start block and haven't crossed yet: leave the native
+    // in-textarea text selection alone (this is the "select part of a bullet" case).
+    if (!converting && overId === startId) return false;
+    if (!converting) {
+      converting = true;
+      selectBlock(startId); // exits editing (commits via blur), anchor = focus = start
+    }
+    extendSelectionTo(overId);
+    doc.getSelection()?.removeAllRanges(); // drop the half-formed text highlight
+    return true;
   };
 
   const onMouseMove = (e: MouseEvent) => {
     if (!armed || startId === null) return;
     if (e.buttons === 0) {
       armed = false; // button was released without a mouseup reaching us
+      stopAutoscroll();
       return;
     }
-    const overId = blockIdAt(documentOf(e), e.clientX, e.clientY, startPaneId);
-    if (overId === null) return; // off the outline — keep current selection
-    // Still inside the start block and haven't crossed yet: leave the native
-    // in-textarea text selection alone (this is the "select part of a bullet" case).
-    if (!converting && overId === startId) return;
+    const doc = documentOf(e);
+    const p = viewportPoint(doc, e.clientX, e.clientY);
     if (!converting) {
-      converting = true;
-      selectBlock(startId); // exits editing (commits via blur), anchor = focus = start
+      if (!follow(doc, p.x, p.y)) return;
+      autoscroll = startEdgeAutoscroll(doc, (x, y) => follow(doc, x, y), startHome);
     }
-    extendSelectionTo(overId);
-    documentOf(e).getSelection()?.removeAllRanges(); // drop the half-formed text highlight
+    const hit = autoscroll?.update(e.clientX, e.clientY, e.buttons) ?? p;
+    follow(doc, hit.x, hit.y);
     e.preventDefault();
   };
 
   const onMouseUp = (e: MouseEvent) => {
     armed = false;
+    stopAutoscroll();
     startPaneId = null;
     if (!converting) return;
     converting = false;
@@ -90,6 +118,7 @@ export function installBlockSelectionDrag(): () => void {
     doc.addEventListener("mousemove", onMouseMove, true);
     doc.addEventListener("mouseup", onMouseUp, true);
     return () => {
+      stopAutoscroll();
       doc.removeEventListener("mousedown", onMouseDown, true);
       doc.removeEventListener("mousemove", onMouseMove, true);
       doc.removeEventListener("mouseup", onMouseUp, true);

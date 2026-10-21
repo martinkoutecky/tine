@@ -211,7 +211,8 @@ describe("block reference actions (GH #417)", () => {
       await tick();
       const ref = root.querySelector(".block-ref")!;
       ref.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false, pointerType: "mouse", isPrimary: true }));
-      await new Promise(r => setTimeout(r, 450));
+      // The hover dwell is Logseq's 1000 ms (GH #735); wait for the popup, not a fixed delay.
+      await vi.waitFor(() => expect(document.querySelector(".peek-popup .peek-ref-remove")).not.toBeNull(), { timeout: 4000, interval: 50 });
       await tick();
       const remove = document.querySelector<HTMLButtonElement>(".peek-popup .peek-ref-remove");
       expect(document.querySelector(".peek-popup .peek-ref-edit")).not.toBeNull();
