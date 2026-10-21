@@ -674,6 +674,7 @@ pub(crate) fn load_graph_for_label(
     ));
     crate::watcher::start_slot_events(app.clone(), window_label.to_string(), &slot);
     backup_async(app.clone(), slot.clone());
+    crate::git_settings::bound(app, &slot);
     // The graph is bound above; a settings write that fails (disk full, EIO)
     // must not return early, or `open_graph_window` skips its cleanup and the
     // graph stays owned by a window that never existed (master graph.rs:629).

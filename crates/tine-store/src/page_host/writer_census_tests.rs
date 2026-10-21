@@ -59,6 +59,14 @@ const EXEMPT: &[(&str, &str)] = &[
         "git2 `Repository::commit(None, ..)` writes the squash commit object under .git; no page (D-20261019-CL4)",
     ),
     (
+        "src-tauri/src/owner/git_autocommit.rs::commit_locked",
+        "git2 `Repository::commit(None, ..)` writes the autocommit object under .git; the page bytes were saved by the host before (ADR 0078, D-20261018-G2); no page",
+    ),
+    (
+        "src-tauri/src/owner/git_autocommit.rs::stage",
+        "git2 `BlobWriter::commit` writes a blob object under .git from the saved file; no page (ADR 0078)",
+    ),
+    (
         "crates/tine-graph-features/src/config.rs::update",
         "writes config.edn; no page",
     ),

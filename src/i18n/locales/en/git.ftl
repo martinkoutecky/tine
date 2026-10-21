@@ -1,0 +1,16 @@
+git-settings-label = Commit changes to git
+git-settings-policy-off = Off
+git-settings-policy-commit = Commit automatically
+git-settings-interval = At most every
+git-settings-interval-aria = Minutes between autocommits
+git-settings-minutes = minutes
+git-settings-hint = When the graph is in a git repository, Tine commits the graph's changes after a minute without edits, at most once per interval, and before and after a rename, merge, delete or backup restore. Files git ignores are left out. Tine never pushes or pulls.
+git-settings-not-available = Git is not available on this device yet.
+git-settings-not-a-repository = This graph isn't in a git repository. Run “git init” in the graph folder to use this.
+git-settings-branch = Branch: { $branch }
+git-settings-unusable = Tine can't commit here: { $message }
+git-settings-last-commit = Last commit { $commit } at { $time }.
+git-settings-last-refused = Last attempt failed: { $message }
+git-settings-stale-lock = { $path } has been held for over 30 minutes; a git program may have crashed. Remove it once no git command is running. Tine will not remove it.
+git-settings-load-failed = Couldn't load git settings: { $error }
+git-settings-save-failed = Couldn't change git settings: { $error }

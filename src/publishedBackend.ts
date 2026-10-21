@@ -809,6 +809,9 @@ export function publishedBackend(load: () => Promise<PublishedSnapshot> = loadPu
     async takeDataHomeFallbackNotice() {
       return null;
     },
+    async gitAutocommitStatus() {
+      return { available: false };
+    },
     async getBackupKeep() {
       return 0;
     },
@@ -1018,6 +1021,7 @@ export const PUBLISHED_CONSTANT_METHODS = [
   "printQuery",
   "takeIdentifierMigrationNotice",
   "takeDataHomeFallbackNotice",
+  "gitAutocommitStatus",
   "getBackupKeep",
   "listBackups",
   "getCaptureEnterFiles",
@@ -1161,6 +1165,7 @@ export const PUBLISHED_REFUSED_METHODS = [
   "savePdfAreaImage",
   "rollbackPdfAreaImage",
   "setBackupKeep",
+  "setGitAutocommit",
   "setCaptureEnterFiles",
   "setWatchMode",
   "restoreBackup",

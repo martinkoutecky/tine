@@ -142,6 +142,10 @@ export const APPROVED_WRITER_SITES = Object.freeze({
   // (create_new lock + write_all + rename, with a scratch copy for libgit2 to
   // read). Git's format in .git, not a Tine format; never a graph file.
   "src-tauri/src/owner/git_run.rs": { sites: 4, approval: "Martin 2026-10-19 D-20261019-CL4 (runs write .git objects, not a storage mode)" },
+  // Git autocommit (ADR 0078 slice 1): the chunked copy of a staged file into
+  // libgit2's blob writer, i.e. a git object in .git (git's format, not Tine's;
+  // never a graph file). Same category as git_run's CL4 entry.
+  "src-tauri/src/owner/git_autocommit.rs": { sites: 1, approval: "Martin 2026-10-18/19 D-20261018-G2/G5, D-20261019-G8/G9 (Tine commits the graph to git); docs/adr/0078" },
   "src-tauri/src/youtube_identity.rs": { sites: 1, approval: "Martin's OG-QBY native YouTube identity task; temporary bundled WebProcess module, no new persisted format" },
 });
 

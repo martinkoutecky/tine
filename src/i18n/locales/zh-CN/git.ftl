@@ -1,0 +1,16 @@
+git-settings-label = 将更改提交到 git
+git-settings-policy-off = 关闭
+git-settings-policy-commit = 自动提交
+git-settings-interval = 最多每隔
+git-settings-interval-aria = 两次自动提交之间的分钟数
+git-settings-minutes = 分钟
+git-settings-hint = 当图谱位于 git 仓库中时，Tine 会在一分钟没有编辑后提交图谱的更改（每个间隔最多一次），并在重命名、合并、删除或恢复备份的前后各提交一次。git 忽略的文件不会被提交。Tine 从不推送或拉取。
+git-settings-not-available = 本设备暂不支持 git。
+git-settings-not-a-repository = 此图谱不在 git 仓库中。在图谱文件夹中运行“git init”即可使用此功能。
+git-settings-branch = 分支：{ $branch }
+git-settings-unusable = Tine 无法在此提交：{ $message }
+git-settings-last-commit = 上次提交 { $commit }，时间 { $time }。
+git-settings-last-refused = 上次尝试失败：{ $message }
+git-settings-stale-lock = { $path } 已被占用超过 30 分钟，可能有 git 程序崩溃了。确认没有 git 命令在运行后请删除它。Tine 不会删除它。
+git-settings-load-failed = 无法加载 git 设置：{ $error }
+git-settings-save-failed = 无法更改 git 设置：{ $error }

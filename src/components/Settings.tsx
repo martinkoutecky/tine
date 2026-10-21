@@ -61,6 +61,7 @@ import { TraySettings } from "./TraySettings";
 import { AlwaysAskSetting } from "./AlwaysAskSetting";
 import { ContentWidthFields } from "./ContentWidthFields";
 import { QueryExportLimitSetting } from "./QueryExportLimitSetting";
+import { GitAutocommitSetting } from "./GitAutocommitSetting";
 import { GraphPublish } from "./GraphPublish";
 import { HomePageSetting } from "./HomePageSetting";
 import { LanguageSetting } from "./LanguageSetting";
@@ -329,6 +330,7 @@ export function Settings(): JSX.Element {
                 <GraphFolderSetting />
                 <HomePageSetting />
                 <GraphPublish /><QueryExportLimitSetting />
+                <GitAutocommitSetting />
               </Show>
               <Show when={tab() === "sharing" && sharingAvailable()}>
                 <QuickShareSettings />
