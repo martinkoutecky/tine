@@ -898,11 +898,8 @@ pub(crate) async fn set_journal_title_format(
     state: GraphContext<'_>,
 ) -> Result<Vec<String>, String> {
     with_config_store(&state, move |store| {
-        tine_graph_features::config::set_journal_page_title_format(store, &format)
-            .map_err(|error| error.to_string())?;
-        // Own config writes reload before returning, but do not emit the
-        // external-config event. Return the same diagnostics as graph meta.
-        Ok(store.config().config.journal_config_diagnostics.clone())
+        tine_graph_features::config::set_journal_page_title_format_with_diagnostics(store, &format)
+            .map_err(|error| error.to_string())
     })
     .await
 }
