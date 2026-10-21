@@ -1,6 +1,6 @@
 # 0078 — Git graphs: Tine autocommits, and syncs fast-forward only through the page host
 
-- **Status:** Proposed (design accepted by Martin 2026-10-18/19: D-20261018-G1…G7, D-20261019-G8/G9; the unit-cost
+- **Status:** Proposed, rev 1 (data-safety review folded in: `tine-agents/subagent-tasks/notes/review-adr-0078-git.md`; design accepted by Martin 2026-10-18/19: D-20261018-G1…G7, D-20261019-G8/G9; the unit-cost
   line below awaits his acceptance)
 - **Date:** 2026-10-21
 
@@ -48,13 +48,20 @@ choice, and the G9 interval, are device settings in the existing `tine-settings.
 webview hands them to the graph's binding when it binds and on every change. Nothing is written to the repository
 or its config. Refused with a reason in Settings: bare repository, merge/rebase/cherry-pick in progress, detached
 HEAD (commit only, no sync), eol/filter conversion of graph text files (`core.autocrlf`, `.gitattributes`
-`text`/`eol`/`filter`: git's bytes would differ from Tine's). A held `index.lock` is "busy, retry", not an error.
+`text`/`eol`/`filter`: git's bytes would differ from Tine's), sparse checkout (`core.sparseCheckout` or any
+skip-worktree entry under the graph root: libgit2's add would commit the excluded files as deleted), and on macOS
+and iOS a repository without `core.precomposeunicode = true` (decomposed names would commit every diacritic page as
+a delete plus an add). A held `index.lock` is "busy, retry"; after three busy cycles spanning 30 minutes Settings
+names the file and says to remove it if no git command is running (a crash can leave it; Tine never deletes it).
 Sync additionally needs the graph root to be the work tree root: a fast-forward of a bigger repository changes
 files outside the graph, which Tine does not own.
 
 ### 2. What an autocommit is
-Every change git sees under the graph root (pathspec = the graph root), honouring `.gitignore`: Tine's saves,
-other programs' edits, deletions. It is built on a private copy of the index taken while Tine holds
+Every change git sees under the graph root, honouring `.gitignore`: Tine's saves, other programs' edits,
+deletions. The graph root is matched as a literal path prefix in the staging callback, never as a pathspec pattern
+(a folder named `Notes [work]` is a glob). Skipped: Tine's own in-flight temp files (`atomic_file::temp_path`'s
+shape) and untracked nested repositories (never added as gitlinks). Like `git commit -a`, an intermediate staged
+version of a file is replaced by the working tree's. It is built on a private copy of the index taken while Tine holds
 `index.lock` (the protocol `git_run.rs` already uses): stage the graph root's changes into the copy, write its
 tree, take only the graph root's subtree into `HEAD`'s tree (a user's staged changes outside the graph are never
 committed), commit, move the branch by compare-and-swap, then rename the copy over the index. Author and
@@ -68,39 +75,54 @@ structural operation (rename, merge, delete or move of a page, restore from back
 first, run the operation, then commit its files with its verb (`Rename page "A" to "B"`). A failed operation
 leaves only the first commit. Autocommits take the CLI runs' lock, so they never fall between a run write's
 snapshot and its agent commit; a run whose tip an autocommit moved is not squashed (CL1 already refuses a moved
-tip), and the reply says so.
+tip), and the reply says so. Pulls and structural brackets hold the same lock from their first commit to their
+last ref move. At bind, `tine-index-*.tmp` files a crash left in `.git` are removed.
 
 All git work runs on one dedicated thread per graph binding, never an async worker (spike finding: libgit2
 blocks, and a push cannot be cancelled). libgit2 runs with `GIT_OPT_ENABLE_FSYNC_GITDIR`. After 50 loose
-commits the thread repacks with libgit2's pack builder, skipped while `gc.pid` or a `*.lock` it would replace
-exists.
+commits the thread repacks: libgit2's pack builder writes a pack of everything reachable from refs, the pack and
+its index are fsynced, and then only loose objects contained in that pack are deleted (git's `prune-packed`).
+Unreachable loose objects are never deleted: they may be the user's `git add`, stash or reflog history, or a
+concurrent `git commit`'s objects before its ref moves. Skipped while `gc.pid` or a lock it would replace exists.
 
 ### 4. Applying a pull (the one-way door)
-Sync = fetch, then fast-forward, then push. The fast-forward never runs git's checkout. For each path changed
-between `HEAD` and the fetched commit, inside the graph root:
+Sync = fetch, then fast-forward, then push. The fast-forward never runs git's checkout. Let `H` be `HEAD` and `U`
+the fetched upstream tip (the remote-tracking ref, which fetch already persists), with `U` a strict descendant of
+`H`. The changed paths between `H` and `U` inside the graph root are applied in this order:
 
-- a page (anything the page host owns) goes into one `HostOp` with `Effect::Write(new blob)` or `Delete`,
-  `Expected::Bytes(HEAD blob)` or `Absent`, `Input::Refuse`. The host admits it only if every page still holds
-  exactly the `HEAD` bytes and none has unsaved input;
-- any other file (assets, `logseq/config.edn`, files Tine does not parse) is written by the store's checked
-  atomic writer (temp, fsync, rename, directory sync, with the pre-rename check that the file still holds the
-  `HEAD` blob), a new site in the write-protocol census.
+1. **Pre-check.** Every changed entry is a regular file (mode 100644/100755, no mode-only change) and every
+   non-page file still holds its `H` blob (or is absent). A symlink, gitlink, file↔directory change, mode-only
+   change or an ignored local file in the way refuses the pull by name before anything is written.
+2. **Pages** (anything the page host owns) go through `HostOp`s with `Effect::Write(new blob)` or `Delete`,
+   `Expected::Bytes(H blob)` or `Absent`, `Input::Refuse`, and a new `EditKind::GitPull`. Each upstream rename
+   (git's rename detection) is its own op with `moved`, as the host allows one move per op; case-only renames
+   follow the #609 contract. The remaining pages are one op. The host admits an op only if every page still holds
+   exactly the `H` bytes and none has unsaved input.
+3. **Other files** (assets, files Tine does not parse) are written by the store's checked atomic writer (temp,
+   fsync, rename, directory sync, pre-rename check against the `H` blob), parents created as needed; deletions by
+   a checked delete. `logseq/config.edn` goes through the config writer's own lock and live publication. All are
+   new write-protocol census sites. The watcher reports these as outside changes, which is what they are.
+4. **Ref and index**, holding `index.lock` (no lock, no ref move): the branch moves from `H` to `U` by
+   compare-and-swap, then the index entries of the changed paths move to `U`'s blobs under `git_run.rs`'s
+   staged-kept rule. A stale index under a moved `HEAD` would let the user's next plain `git commit` record a
+   reversion of the pull, which Tine would push.
 
-Only when every path has landed do the branch ref (compare-and-swap from the old tip) and the index move. A
-crash or refusal part-way leaves some files at the new version and the ref at the old one: `git status` shows
-them as changes, and the next pull skips every file already at its new blob, so the pull is idempotent. Because
-an autocommit runs first, the working tree is clean at the start; a change that appears after that autocommit is
-caught by the `Expected` check.
+**Resume.** A crash, an `Uncertain`/`Unwritten` answer or a refusal after step 2 leaves some paths at `U` and the
+ref at `H`. Before the pre-pull autocommit, if `U` is a strict descendant of `H` and every path that differs from
+`H` holds its `U` blob, the autocommit is skipped and the pull resumes; paths already at their `U` blob are
+skipped. Otherwise (a genuine local change) the autocommit runs and the pull ends as `diverged`: nothing is lost.
 
 Refusals (contract refusal table rows, each with its in-scope threat):
 
 | Refusal | In-scope threat | Recovery |
 | --- | --- | --- |
 | `pull-held: unsaved` (a pulled page has unsaved input) | concurrent edit in a window | retried at the next sync once the page saves; nothing written |
-| `pull-held: changed` (a file no longer holds its `HEAD` bytes) | an external editor or Syncthing changed it after the autocommit | the next cycle autocommits it, then usually diverges |
+| `pull-held: changed` (a file no longer holds its `H` bytes; HostOp `Changed`) | an external editor or Syncthing changed it after the autocommit | the next cycle autocommits it, then diverges |
+| `pull-held: busy` (HostOp `Busy`, `index.lock`, `gc.pid`) | other work holds the pages, or another git command runs | retried later; the stale-lock notice after 30 min (§1) |
+| `pull-incomplete` (HostOp `Unwritten`, `Superseded`, `Uncertain`, `DraftFailed`, a failed non-page write) | disk error, full disk, a page edited back before it published | the ref stays at `H`; the resume rule finishes it |
+| `pull-refused: <path> <reason>` (symlink, submodule, type or mode change, ignored local file in the way) | the user's repository content | Settings names the path; the user resolves it in git |
 | `diverged` (the remote is not a descendant of `HEAD`, or a push is rejected) | multi-device divergence | phase 1 stops and says so; nothing in the graph changes; phase 2 merges with Concord |
-| `busy` (`index.lock`, `gc.pid`) | another git command at work | retried later |
-| `refused: conversion` / bare / detached / mid-merge | user's repository configuration | Settings explains; commit-only where possible |
+| `refused: conversion / sparse / precompose / bare / detached / mid-merge` | user's repository configuration | Settings explains; commit-only where possible |
 
 Push never forces and never rebases.
 
