@@ -424,7 +424,16 @@ B1/R3 cases beside them, `src/document/host/wiring.publicationDebt.test.ts`
 **Trash custody durability (A4, RO3 (a), Martin 2026-10-11).** A deletion
 makes the trash *name* durable: the custody marker, then the move, then a sync
 of `pages/` and each existing ancestor up to the graph root, then the source
-directory. It does not sync the trashed file's data: Tine's own saves synced
+directory. The ancestors are synced only until one deletion has synced them all
+durably in this host's run while their modification times were at least 2 s old;
+after that, while no ancestor's device, inode or modification time has changed
+(any entry added, removed or renamed in it moves the time), a deletion syncs
+`pages/` alone (GH3 step 2, Martin 2026-10-11 and 2026-10-21; ModelFs
+`chain_witnessed`; proof
+`page_host::production_tests::trash_ancestors_are_synced_once_per_incarnation`). On
+Windows, where a directory sync is a no-op and so cannot order a marker before
+the move, no custody marker file is written (D-20261021-GQ3; proof
+`page_host::production_tests::without_marker_files_a_deletion_leaves_no_custody_file`). It does not sync the trashed file's data: Tine's own saves synced
 those bytes already. Residual R-UNFLUSHED: bytes another program wrote into
 the page without flushing them may be lost at a power cut after Tine deletes
 the page, even though the trash name survives. That includes an unflushed
@@ -645,12 +654,12 @@ receipt, 2026-10-11).
 | Android | `fsync` | as Linux | as Linux |
 | macOS | `F_FULLFSYNC` (std `sync_all`) | `renameatx_np(RENAME_EXCL)`; fallback as Linux | `F_FULLFSYNC` on the directory |
 | iOS | as macOS | as macOS | as macOS |
-| Windows | `FILE_FLAG_WRITE_THROUGH` + `FlushFileBuffers` | `MoveFileExW(MOVEFILE_WRITE_THROUGH)`, no `REPLACE_EXISTING` | none |
+| Windows | `FlushFileBuffers` (std `sync_all`) | `MoveFileExW(MOVEFILE_WRITE_THROUGH)`, no `REPLACE_EXISTING` | none |
 
 The rename is the shared `no_replace` primitive (GH #538): storage that
 refuses the flag (NFS, Android shared-storage FUSE) gets an absence check
 and a plain rename, which the namespace lock keeps race-free among Tine
-writers. On Windows there is no directory flush: the write-through file and the
+writers. On Windows there is no directory flush: the flushed file and the
 write-through move on NTFS's metadata journal are the accepted substitute
 (the same recipe as page saves). A directory sync the filesystem does not
 offer (the shared tolerated set, `directory_durability::sync_directory_witness`
@@ -1057,9 +1066,12 @@ pages once; it still reloads only clean rewritten pages and discards moved pages
 
 Unit cost (step 3b P2b, a single page's rename through the page host, Q-P2b-2;
 re-measured after RENAME-COST 2026-10-11): the 1-/60-block referrer fixtures
-write 4 files and 300/4,137 bytes with 16 syncs: the operation draft, the
-referrer, the destination page and the source's custody marker (17 before
-RO3 (a), which stopped syncing the trashed source's data). The
+write 4 files and 300/4,137 bytes with 15 syncs for the rename itself: the operation draft, the
+referrer, the destination page and the source's custody marker (16 before
+RO3 (a), which stopped syncing the trashed source's data). The probe counts 20: one more is the
+host launch's draft sync, and four are the fresh graph's first deletion creating the trash chain
+and the custody directory (each created directory's parent sync, counted since 2026-10-21). On
+Windows the custody marker is not written (D-20261021-GQ3), so a rename writes 3 files. The
 referrer's old and new payloads are each written once into the operation
 draft, and the new one into the page (three payload copies). Each extra page
 of an operation adds one file (its page) and two syncs (the file and its

@@ -204,9 +204,13 @@ fn rename_unit_cost_is_the_same_full_payload_on_one_and_sixty_blocks() {
         assert_eq!(cost.files_written, 4);
         assert_eq!(cost.bytes_written, bytes);
         // RO3 (a) (Martin 2026-10-11): 17 -> 16, the source's trash payload
-        // is no longer file-synced.
+        // is no longer file-synced. Of the 20 counted now: 15 are the rename,
+        // 1 is launch's draft sync (the counters reset before `hosted` starts
+        // the host), and 4 are this fresh graph's first deletion creating its
+        // directories (the trash chain's three parent syncs and the custody
+        // directory's), which the counter missed before GH4 (2026-10-21).
         assert_eq!(
-            cost.fsyncs, 16,
+            cost.fsyncs, 20,
             "file, directory and draft syncs of one rename: {cost:?}"
         );
         assert_eq!(

@@ -61,6 +61,10 @@ pub(super) struct ModelFs {
     pub spellings: BTreeMap<String, String>,
     /// Draft I/O is down (M2): every draft effect fails untouched.
     pub down: bool,
+    /// The adapter's trash-chain witness: every ancestor was synced durably by
+    /// a `trash_sync` in this incarnation, so later ones sync only the trash
+    /// directory (production `trash_chain`, GH3 step 2). Lost at a crash.
+    pub chain_witnessed: bool,
 }
 
 /// One power outcome for readable trash names that are not yet durable.
@@ -205,6 +209,7 @@ impl ModelFs {
         self.owed.clear();
         self.spellings.clear();
         self.down = false;
+        self.chain_witnessed = false;
     }
 
     /// The least surviving outcome: only forced trash names, with their data.
@@ -509,9 +514,12 @@ impl HostIo for ModelFs {
             // durable, up to the graph root.
             fs.call()?;
             fs.sync_entry(&key);
-            for dir in CHAIN.iter().rev() {
-                fs.call()?;
-                fs.sync_entry(dir);
+            if !fs.chain_witnessed {
+                for dir in CHAIN.iter().rev() {
+                    fs.call()?;
+                    fs.sync_entry(dir);
+                }
+                fs.chain_witnessed = !fs.weak_graph;
             }
             Ok(if fs.weak_graph {
                 Witness::Unsupported

@@ -2256,3 +2256,90 @@ fn gh685_unreadable_os_ancestor_keeps_drafts_on() {
     );
     assert!(app.join("drafts-v2/g").is_dir());
 }
+
+/// Backdate every trash ancestor's modification time past `SETTLED`, each to
+/// a distinct time so a later entry change always moves it.
+#[cfg(feature = "test-faults")]
+fn settle(f: &Fixture) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static AGE: AtomicU64 = AtomicU64::new(3_600);
+    for dir in chain(f).iter().skip(1) {
+        let age = AGE.fetch_add(1, Ordering::Relaxed);
+        let time = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
+        fs::File::open(dir).unwrap().set_modified(time).unwrap();
+    }
+}
+
+/// GH3 step 2 (Martin 2026-10-11 "redundant post-move ancestor syncs"): once a
+/// deletion has synced every trash ancestor durably in this incarnation, later
+/// deletions sync only the trash directory. A failed chain sync, a recreated
+/// chain directory and a relaunch each sync the whole chain again.
+#[cfg(feature = "test-faults")]
+#[test]
+fn trash_ancestors_are_synced_once_per_incarnation() {
+    use crate::directory_durability::{take_synced_directories, SYNC_ERROR};
+    let f = &mut Fixture::new();
+    for name in ["p1", "p2", "p3", "p4", "p5"] {
+        fs::write(f.trash.join(name), name).unwrap();
+    }
+    let whole = chain(f);
+    assert_eq!(whole.len(), 4, "{whole:?}");
+    // Fresh modification times witness nothing (a same-tick change is invisible).
+    take_synced_directories();
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    settle(f);
+    // A failed ancestor sync witnesses nothing.
+    take_synced_directories();
+    SYNC_ERROR.with(|error| error.set(Some(io::ErrorKind::Other)));
+    assert!(f.host.fs.trash_sync("a.md", "p1").is_err());
+    take_synced_directories();
+    assert_eq!(f.host.fs.trash_sync("a.md", "p1"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), whole);
+    assert_eq!(f.host.fs.trash_sync("b.md", "p2"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), vec![f.trash.clone()]);
+    // Another program recreates the trash directory: a new entry to make durable.
+    fs::remove_dir_all(&f.trash).unwrap();
+    fs::create_dir(&f.trash).unwrap();
+    fs::write(f.trash.join("p3"), "p3").unwrap();
+    settle(f); // even with every time settled, the parent's time moved
+    assert_eq!(f.host.fs.trash_sync("a.md", "p3"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), chain(f));
+    assert_eq!(f.host.fs.trash_sync("a.md", "p3"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), vec![f.trash.clone()]);
+    // A new incarnation trusts no earlier witness.
+    relaunch(f);
+    fs::write(f.trash.join("p4"), "p4").unwrap();
+    take_synced_directories();
+    assert_eq!(f.host.fs.trash_sync("a.md", "p4"), Ok(Witness::Durable));
+    assert_eq!(take_synced_directories(), chain(f));
+}
+
+/// D-20261021-GQ3: with marker files off (the Windows setting) a deletion
+/// writes and unlinks no custody marker, and still publishes with the payload
+/// in the trash.
+#[test]
+fn without_marker_files_a_deletion_leaves_no_custody_file() {
+    let mut f = Fixture::new();
+    f.host.fs.marker_files = false;
+    f.send("a.md", RequestKind::Open);
+    assert_eq!(f.host.delete("a.md"), Disposition::Pending);
+    f.drain();
+    reset_syncs();
+    assert_eq!(f.host.start_save("a.md"), Disposition::Pending);
+    f.host.advance_save(); // guard
+    f.host.advance_save(); // marker (named, not written)
+    assert_eq!(markers(&mut f), 0);
+    f.host.advance_save(); // move
+    assert!(!f.graph.join("a.md").exists());
+    assert_eq!(markers(&mut f), 0);
+    while f.host.job.is_some() {
+        f.host.advance_save();
+    }
+    assert_eq!(syncs(), 0, "no marker temp fsync");
+    assert_eq!(markers(&mut f), 0);
+    assert!(f.host.fs.unwritten.is_empty(), "retired");
+    assert!(trash_holds(&f, b"A"));
+}

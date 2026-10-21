@@ -47,6 +47,22 @@ pub(super) struct ProductionIo {
     /// Unreadable vehicles launch could not quarantine: left in place, and
     /// every later effect on one but Retry's quarantine fails untouched (§4).
     untouchable: std::collections::BTreeSet<String>,
+    /// The trash directory's ancestors' states (`chain_ids`) as of the last
+    /// `trash_sync` that synced every ancestor durably in this incarnation.
+    /// While they are unchanged the ancestors' entries are durable, so a later
+    /// deletion syncs only the trash directory itself (Martin 2026-10-11
+    /// "redundant post-move ancestor syncs", 2026-10-21 GH3 step 2). Any entry
+    /// change in an ancestor (a recreated directory) syncs the chain again;
+    /// launch's best-effort syncs are not witnesses (REVIEW-2b F2).
+    trash_chain: Option<Vec<ChainId>>,
+    /// Whether custody markers are written to disk. Not on Windows
+    /// (D-20261021-GQ3): there directory syncs are no-ops, so a marker cannot be
+    /// ordered before the move it guards and protects nothing; it cost a flush,
+    /// a write-through move and an unlink per deletion.
+    pub(super) marker_files: bool,
+    /// Markers named but not written (`marker_files` off): their retirement
+    /// has nothing to unlink.
+    pub(super) unwritten: std::collections::BTreeSet<String>,
     #[cfg(any(test, feature = "test-faults"))]
     pub faults: BTreeMap<super::io::Phase, std::collections::VecDeque<io::ErrorKind>>,
     /// Slow every call of the phase by this much: a long operation that
@@ -88,6 +104,9 @@ impl ProductionIo {
             marks: None,
             down: None,
             untouchable: Default::default(),
+            trash_chain: None,
+            marker_files: !cfg!(windows),
+            unwritten: Default::default(),
             #[cfg(any(test, feature = "test-faults"))]
             faults: ATTACH_FAULTS.with(|faults| faults.take()),
             #[cfg(test)]
@@ -183,7 +202,11 @@ impl ProductionIo {
     /// The custody directory, created with the strict app-data recipe.
     fn custody(&self) -> io::Result<PathBuf> {
         let dir = self.drafts.join(CUSTODY);
-        durability::create_dir_all_with_sync(&dir, durability::sync_private_directory)?;
+        durability::create_dir_all_with_sync(&dir, |dir| {
+            #[cfg(feature = "test-faults")]
+            crate::cost_counters::fsync();
+            durability::sync_private_directory(dir)
+        })?;
         Ok(dir)
     }
 
@@ -191,7 +214,12 @@ impl ProductionIo {
         self.directories
             .entry(dir.to_path_buf())
             .or_insert_with(|| durability::DirectoryCreation::new(dir))
-            .finish(durability::sync_directory_entry)
+            .finish(|dir| {
+                // Each created directory's parent sync counts (I-25).
+                #[cfg(feature = "test-faults")]
+                crate::cost_counters::fsync();
+                durability::sync_directory_entry(dir)
+            })
             .map_err(failure)?;
         self.directories.remove(dir);
         Ok(())
@@ -254,6 +282,43 @@ fn list(drafts: &Path) -> io::Result<BTreeMap<String, (PathBuf, Vec<u8>)>> {
 fn chain<'a>(graph: &'a Path, dir: &'a Path) -> impl Iterator<Item = &'a Path> {
     dir.ancestors()
         .take_while(move |dir| dir.starts_with(graph))
+}
+
+/// An ancestor's state: device, inode and modification time. Adding, removing
+/// or renaming an entry in a directory moves its modification time, so while
+/// every ancestor's state is unchanged, each ancestor's entry for the next
+/// directory down is the one its last sync made durable. (An inode number
+/// alone is not enough: a recreated directory can reuse it.)
+type ChainId = (u64, u64, i64, i64);
+
+/// How recent a modification time may be and still witness anything: a change
+/// within the same timestamp tick after the sync would not move it (the
+/// "racy" timestamp rule git uses for its index).
+const SETTLED: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The states of the trash directory's ancestors (`chain` minus the trash
+/// directory itself, whose own sync always runs). `None` when one cannot be
+/// read, is too recent to trust, or the platform has no inode identity; then
+/// every ancestor is synced (as on Windows, where a directory sync is a no-op).
+fn chain_ids(graph: &Path, dir: &Path) -> Option<Vec<ChainId>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let now = std::time::SystemTime::now();
+        chain(graph, dir)
+            .skip(1)
+            .map(|dir| {
+                let meta = fs::metadata(dir).ok()?;
+                let settled = now.duration_since(meta.modified().ok()?).ok()? >= SETTLED;
+                settled.then(|| (meta.dev(), meta.ino(), meta.mtime(), meta.mtime_nsec()))
+            })
+            .collect()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (graph, dir);
+        None
+    }
 }
 
 /// Unlink; an already absent file is the requested state.
@@ -585,7 +650,15 @@ impl HostIo for ProductionIo {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Witness::Durable),
             Err(error) => return Err(failure(error)),
         }
-        chain(&self.graph, &self.trash).try_fold(Witness::Durable, |result, dir| {
+        let ids = chain_ids(&self.graph, &self.trash);
+        let witnessed = ids.is_some() && ids == self.trash_chain;
+        // The trash directory itself always: it holds the new payload name.
+        let dirs: Vec<&Path> = if witnessed {
+            chain(&self.graph, &self.trash).take(1).collect()
+        } else {
+            chain(&self.graph, &self.trash).collect()
+        };
+        let result = dirs.into_iter().try_fold(Witness::Durable, |result, dir| {
             #[cfg(feature = "test-faults")]
             crate::cost_counters::fsync();
             let synced = durability::sync_directory_witness(dir).map_err(sync_failure)?;
@@ -595,11 +668,19 @@ impl HostIo for ProductionIo {
             } else {
                 result
             })
-        })
+        });
+        if !witnessed && matches!(result, Ok(Witness::Durable)) {
+            self.trash_chain = ids;
+        }
+        result
     }
 
     fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
         self.before(super::io::Phase::CustodyWrite)?;
+        if !self.marker_files {
+            self.unwritten.insert(name.to_owned());
+            return Ok(());
+        }
         let dir = self.custody().map_err(failure)?;
         temp(&dir.join(name), bytes)
             .and_then(|prepared| prepared.publish(true))
@@ -613,6 +694,9 @@ impl HostIo for ProductionIo {
 
     fn custody_retire(&mut self, name: &str) -> IoResult<()> {
         self.before(super::io::Phase::CustodyRetire)?;
+        if self.unwritten.remove(name) {
+            return Ok(());
+        }
         let dir = self.drafts.join(CUSTODY);
         remove_present(&dir.join(name)).map_err(failure)?;
         #[cfg(feature = "test-faults")]
