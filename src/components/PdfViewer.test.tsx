@@ -210,6 +210,42 @@ describe("PdfViewer resource safety", () => {
     }
   });
 
+  it("inverts high-zoom tiles in the dark theme like the page canvas", async () => {
+    localStorage.setItem("ls-pdf-viewer-theme", "dark");
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 4 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="large.pdf" label="Large" />, host);
+    try {
+      await flush();
+      const scroller = host.querySelector<HTMLElement>(".pdf-scroll")!;
+      const wrapper = host.querySelector<HTMLElement>(".pdf-page")!;
+      const box = (width: number, height: number) => ({ left: 0, top: 0, right: width,
+        bottom: height, width, height, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+      vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(box(900, 800));
+      vi.spyOn(wrapper, "getBoundingClientRect").mockReturnValue(box(2448, 3168));
+      TestIntersectionObserver.instances.at(-1)!.show(wrapper);
+      await vi.waitFor(() => expect(wrapper.querySelectorAll(".pdf-tile-layer canvas").length).toBeGreaterThan(0));
+      // Every rule that inverts page pixels in the dark theme, applied the way the cascade would.
+      const css = readFileSync("src/styles/pdf-workspace.css", "utf8");
+      const inverting = [...css.matchAll(/([^{}]+)\{[^}]*filter:\s*invert\(1\)[^}]*\}/g)].map((m) => m[1].trim());
+      const inverted = (el: Element) => {
+        for (let node: Element | null = el; node; node = node.parentElement) {
+          if (inverting.some((selector) => node!.matches(selector))) return true;
+        }
+        return false;
+      };
+      expect(inverted(wrapper.querySelector("canvas:not(.pdf-tile-layer canvas)")!)).toBe(true);
+      for (const tile of wrapper.querySelectorAll(".pdf-tile-layer canvas")) expect(inverted(tile)).toBe(true);
+    } finally {
+      dispose();
+      localStorage.removeItem("ls-pdf-viewer-theme");
+    }
+  });
+
   it("keeps the outline usable when PDF metadata is deeply nested", async () => {
     vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
     vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
@@ -2378,7 +2414,7 @@ describe("PdfViewer released-OG themes and outline", () => {
     expect(css).not.toMatch(/\.pdf-viewer\[data-theme="dark"\][^{]*\{[^}]*filter:[^}]*\bhue-rotate\b/s);
     expect(css).toMatch(/\.pdf-page \{[^}]*background: var\(--pdf-page-bg\);/s);
     expect(css).toContain('.pdf-viewer[data-theme="dark"] {\n  --pdf-container-bg: #202124;');
-    expect(css).toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-page > :is\(canvas, \.textLayer\) \{[^}]*filter: invert\(1\);/s);
+    expect(css).toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-page > :is\(canvas, \.textLayer, \.pdf-tile-layer\) \{[^}]*filter: invert\(1\);/s);
     expect(css).toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-hl \{[^}]*mix-blend-mode: screen/s);
     expect(css).not.toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-hl-layer \{[^}]*filter:/s);
   });

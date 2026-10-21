@@ -828,6 +828,25 @@ async function proveNativeUploadsThemesAndHighlights() {
   try { await browser.saveScreenshot(path.join(ARTIFACTS, "pdf-theme-dark-colour-proof.png")); } catch {}
   await browser.keys(["Escape"]);
   await browser.$(".pdf-settings-menu").waitForExist({ reverse: true, timeout: 5_000 });
+  // UI-PDF-DARK-TILES: past 300% the reader draws high-resolution tiles over
+  // the page canvas. In the dark theme they must be inverted like the page,
+  // or the page turns light on zoom (Martin 2026-10-21).
+  for (let i = 0; i < 30; i++) {
+    const zoom = Number((await browser.$(".pdf-zoom-level").getText()).replace("%", ""));
+    if (zoom > 320) break;
+    await nativeClickSelector('button[title="Zoom in"]', `pdf-dark-tiles-zoom-${i}`);
+  }
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelectorAll(".pdf-page .pdf-tile-layer canvas").length > 0), {
+    timeout: 15_000,
+    timeoutMsg: "zooming past 300% drew no high-resolution tiles",
+  });
+  const darkTiles = await browser.execute(() => [...document.querySelectorAll(".pdf-page .pdf-tile-layer")]
+    .map((layer) => getComputedStyle(layer).filter));
+  if (!darkTiles.length || darkTiles.some((filter) => !/invert\(1\)/.test(filter))) {
+    throw new Error(`dark PDF theme left high-zoom tiles un-inverted: ${JSON.stringify(darkTiles)}`);
+  }
+  try { await browser.saveScreenshot(path.join(ARTIFACTS, "pdf-dark-tiles.png")); } catch {}
 
   // This is deliberately stronger than the later PdfViewer remount check: end
   // the WebDriver session and the actual app/driver process tree, then start a

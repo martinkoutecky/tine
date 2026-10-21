@@ -4,6 +4,7 @@
 // one entry with node's zlib; it shares no code with Tine's writer, so a
 // journey that passes proves the zip opens in an ordinary reader.
 import fs from "node:fs";
+import path from "node:path";
 import zlib from "node:zlib";
 
 const EOCD = 0x06054b50;
@@ -42,7 +43,11 @@ export function zipEntries(file) {
 export function zipEntry(file, name) {
   const entry = zipEntries(file).find((e) => e.name === name);
   if (!entry) return undefined;
-  const buf = fs.readFileSync(file);
+  return entryBytes(file, fs.readFileSync(file), entry);
+}
+
+function entryBytes(file, buf, entry) {
+  const { name } = entry;
   const at = entry.offset;
   if (buf.readUInt32LE(at) !== LOCAL) throw new Error(`${file}: bad local header for ${name}`);
   const start = at + 30 + buf.readUInt16LE(at + 26) + buf.readUInt16LE(at + 28);
@@ -52,6 +57,19 @@ export function zipEntry(file, name) {
     : (() => { throw new Error(`${file}: ${name} uses method ${entry.method}`); })();
   if (bytes.length !== entry.size) throw new Error(`${file}: ${name} inflated to ${bytes.length}, expected ${entry.size}`);
   return bytes;
+}
+
+/** Extract every entry of `file` under `destDir` (refuses entries that would escape it). */
+export function zipExtractAll(file, destDir) {
+  const buf = fs.readFileSync(file);
+  const root = path.resolve(destDir);
+  for (const entry of zipEntries(file)) {
+    const out = path.resolve(root, entry.name);
+    if (out !== root && !out.startsWith(root + path.sep)) throw new Error(`${file}: entry ${entry.name} escapes ${destDir}`);
+    if (entry.name.endsWith("/")) { fs.mkdirSync(out, { recursive: true }); continue; }
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, entryBytes(file, buf, entry));
+  }
 }
 
 /** Every `*.zip` under `dir` (recursively) whose file name contains `marker`. */
