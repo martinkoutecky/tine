@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Typing `DOING` no longer sends the rest of your text to the end of the block, and a stray `CLOCK:` line no longer blanks the page.** The clock-in that Tine writes under a task (the `:LOGBOOK:` lines) moved the caret to the end of the block, so the next characters you typed landed after `:END:`; the caret now stays on the task line. Typing on after `DOING` also no longer adds a second clock-in line. A `CLOCK:` line that is not inside a complete `:LOGBOOK:` drawer (for example `:END:  test`) used to make the page show "This page could not be displayed" (`TypeError: Cannot read properties of undefined (reading 'year')`); it now renders as a time stamp, and any other time stamp shape Tine does not know renders as nothing instead of failing (GH #741, UI-GH741-DOING-CLOCK-IN). This happened on stable 0.7.x too.
 - **On a long page with images, pressing Enter, Backspace or another structural key no longer throws the view back down or loses the block you were editing (most visible on Windows)**: the edit briefly re-lays out the blocks around it, and the editor no longer lets the webview scroll to that interim position; the view now moves only as far as showing the caret needs, and not at all while it is already visible, below any pinned parent rows. Not new in 0.8 (GH #745).
 
 ## [0.8.0-beta.7] - 2026-10-21

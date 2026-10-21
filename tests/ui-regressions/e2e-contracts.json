@@ -221,6 +221,12 @@
       "nonRequirements":["Ctrl+K template search (OG's command search does not list templates); Org header forms (unit-tested); platforms other than Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh741-doing-clockin.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Typing DOING with real key events keeps the rest of the typed text on the task line and clocks in once, and a page whose block holds a CLOCK line outside a complete :LOGBOOK: drawer (text or a backtick after :END:) still renders its blocks instead of 'This page could not be displayed' (GH 741).","blocking":true}],
+      "acceptableVariations":["Focus, styling and save latency may vary while the typed text, the single clock-in and the rendered page are right."],
+      "nonRequirements":["Hiding the logbook from the edit buffer (OG does; Tine still shows it)","platforms other than Linux WebKitGTK"],
+      "stability":"burn-in"
+    },
     "scripts/e2e-template-collapse.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Inserting a template hides children of blocks saved collapsed, shows children of expanded blocks, and preserves that state and all children after save and cold reopen.","blocking":true}],
       "acceptableVariations":["Focus, styling and save latency may vary while the saved collapse state controls child visibility."],
