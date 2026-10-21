@@ -888,6 +888,22 @@ export function PdfViewer(props: {
     if (!visible.has(n) || r === undefined || textScale[n] !== undefined || textBuildScale[n] === r) return;
     void buildTextLayer(n, r);
   }
+  // A text layer's spans size themselves from --scale-factor. Each layer pins
+  // the scale it was laid out at, and a zoom only stretches it with a
+  // transform, so a zoom step costs no text relayout (pdf.js cssTransform).
+  function pinTextScale(n: number, atScale: number) {
+    const layer = textLayers[n];
+    if (!layer) return;
+    layer.style.setProperty("--scale-factor", String(atScale));
+    layer.dataset.scale = String(atScale);
+    layer.style.transform = "";
+  }
+  function fitTextLayer(n: number) {
+    const layer = textLayers[n];
+    const at = Number(layer?.dataset.scale);
+    if (!layer || !at) return;
+    layer.style.transform = at === scale() ? "" : `scale(${scale() / at})`;
+  }
   function cancelInflightText(n: number) {
     textInflight[n]?.cancel?.();
     delete textInflight[n];
@@ -916,6 +932,7 @@ export function PdfViewer(props: {
     const existing = textLayerObjs[n];
     if (existing) {
       try {
+        pinTextScale(n, atScale);
         await existing.update({ viewport });
         if (!buildCurrent()) return;
         textScale[n] = atScale;
@@ -937,6 +954,7 @@ export function PdfViewer(props: {
     if (!buildCurrent()) return;
     const tl = textLayers[n];
     tl.innerHTML = "";
+    pinTextScale(n, atScale);
     const layer = new (pdfjs as any).TextLayer({ textContentSource: textContent, container: tl, viewport });
     textInflight[n] = layer;
     try {
@@ -1008,6 +1026,7 @@ export function PdfViewer(props: {
     highestPriority = null;
     pdfTiles.reset();
     scrollRef.style.setProperty("--scale-factor", String(s));
+    for (const key of Object.keys(textLayerObjs)) fitTextLayer(Number(key));
     for (const key of Object.keys(inflight)) {
       const n = Number(key);
       if (inflight[n].scale !== s) tasks[n]?.cancel();
@@ -1554,7 +1573,9 @@ export function PdfViewer(props: {
   const onScroll = () => {
     const top = scrollRef.scrollTop;
     if (top !== lastScrollTop) {
-      scrollingDown = top > lastScrollTop;
+      // A move of more than a viewport is a jump (outline, page field, link,
+      // scrollbar drag), not a scroll direction: the reader reads on downward.
+      scrollingDown = Math.abs(top - lastScrollTop) > scrollRef.clientHeight || top > lastScrollTop;
       lastScrollTop = top;
     }
     if (scale() > 3) for (const n of visible) {
