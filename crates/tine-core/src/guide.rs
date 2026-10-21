@@ -616,6 +616,7 @@ mod pdf_workspace_guide_tests {
             "tab in a companion pane",
             "same one-pane history",
             "page and zoom are restored",
+            "zooms around the pointer",
             "visible page regions",
             "long-press a highlight",
             "use **Back**",

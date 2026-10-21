@@ -315,6 +315,107 @@ describe("PdfViewer resource safety", () => {
     } finally { dispose(); }
   });
 
+  function deferredRender() {
+    let resolve = () => {};
+    const promise = new Promise<void>((done) => { resolve = done; });
+    const task: { promise: Promise<void>; cancel: ReturnType<typeof vi.fn>; onContinue?: (cont: () => void) => void } =
+      { promise, cancel: vi.fn() };
+    return { task, resolve };
+  }
+
+  it("keeps a page's raster on screen while a zoom re-renders it, then swaps in the new one", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const pdfPage = page(612, 792);
+    const rerender = deferredRender();
+    pdfPage.render
+      .mockReturnValueOnce({ promise: Promise.resolve(), cancel: vi.fn() })
+      .mockReturnValueOnce(rerender.task);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([pdfPage])) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="zoom.pdf" label="Zoom" />, host);
+    try {
+      await flush();
+      const wrapper = host.querySelector<HTMLElement>(".pdf-page")!;
+      TestIntersectionObserver.instances.at(-1)!.show(wrapper);
+      await flush();
+      const shown = wrapper.querySelector("canvas")!;
+      const shownWidth = shown.width;
+      expect(shownWidth).toBeGreaterThan(0);
+      (host.querySelector('button[title="Zoom in"]') as HTMLButtonElement).click();
+      await vi.advanceTimersByTimeAsync(400);
+      await flush();
+      expect(pdfPage.render).toHaveBeenCalledTimes(2);
+      // While the new raster paints, the old one is still the page's canvas, intact.
+      expect(wrapper.querySelector("canvas")).toBe(shown);
+      expect(shown.width).toBe(shownWidth);
+      rerender.resolve();
+      await flush();
+      const swapped = wrapper.querySelector("canvas")!;
+      expect(swapped).not.toBe(shown);
+      expect(swapped.width).toBeGreaterThan(shownWidth);
+      expect(shown.width).toBe(0);
+    } finally {
+      dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("pauses a page render that scrolled away so the page now in view paints first", async () => {
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const pages = Array.from({ length: 6 }, () => page(612, 792));
+    const passed = deferredRender();
+    const current = deferredRender();
+    pages[0].render.mockReturnValueOnce(passed.task);
+    pages[3].render.mockReturnValueOnce(current.task);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages(pages)) });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="fast.pdf" label="Fast" />, host);
+    try {
+      await flush();
+      const wrappers = host.querySelectorAll<HTMLElement>(".pdf-page");
+      const observer = TestIntersectionObserver.instances.at(-1)!;
+      observer.show(wrappers[0]);
+      await flush();
+      observer.hide(wrappers[0]);
+      observer.show(wrappers[3]);
+      await flush();
+      expect(pages[3].render).toHaveBeenCalledOnce();
+      const resumePassed = vi.fn();
+      passed.task.onContinue!(resumePassed);
+      expect(resumePassed, "the passed page yields at its next chunk").not.toHaveBeenCalled();
+      const continueCurrent = vi.fn();
+      current.task.onContinue!(continueCurrent);
+      expect(continueCurrent, "the page in view keeps painting").toHaveBeenCalledOnce();
+      current.resolve();
+      passed.resolve();
+      await flush();
+    } finally { dispose(); }
+  });
+
+  it("zooms one step for a run of small Ctrl+wheel deltas, not one step per event", async () => {
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([page(612, 792)])) });
+    vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="wheel.pdf" label="Wheel" />, host);
+    try {
+      await flush();
+      const scroller = host.querySelector<HTMLElement>(".pdf-scroll")!;
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", ctrlKey: true }));
+      for (let i = 0; i < 10; i++) {
+        scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -3, deltaMode: 0, ctrlKey: true, bubbles: true, cancelable: true }));
+      }
+      await flush();
+      expect(host.querySelector(".pdf-zoom-level")?.textContent).toBe("110%");
+    } finally { dispose(); }
+  });
+
   it("keeps a typed page jump when Enter blurs the page field", async () => {
     vi.spyOn(backend(), "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
     vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
