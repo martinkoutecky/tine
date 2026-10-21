@@ -40,6 +40,7 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const load1 = () => os.loadavg()[0];
 const loads = () => os.loadavg().map((x) => Math.round(x * 100) / 100);
 
+let current = null; // the running session's process group
 let binaries = prior?.binaries, sessions = prior?.sessions ?? [], baseNoProbe = prior?.baseNoProbe ?? false, abort = prior?.abort ?? null;
 const started = Date.now();
 if (!prior) {
@@ -54,8 +55,15 @@ for (const [label, bin] of [["base", BASE], ["candidate", CAND]]) {
   try { fs.accessSync(bin, fs.constants.X_OK); } catch { problems.push(`${label} binary is not executable: ${bin}`); }
 }
 // One harness session per machine: a second one shares the CPUs and driver ports.
-const other = spawnSync("pgrep", ["-f", "perf-pdf/run.mjs"], { encoding: "utf8" }).stdout.trim();
-if (other) problems.push(`another harness session is running (pids ${other.split("\n").join(", ")})`);
+// Match argv, not the command text: `pgrep -f` also matches any shell whose
+// command line merely mentions the script.
+const other = fs.readdirSync("/proc").filter((pid) => /^\d+$/.test(pid)).filter((pid) => {
+  try {
+    const argv = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+    return path.basename(argv[0]) === "node" && argv.slice(1).some((a) => a.endsWith("perf-pdf/run.mjs"));
+  } catch { return false; }
+});
+if (other.length) problems.push(`another harness session is running (pids ${other.join(", ")})`);
 // pgrep cannot see a second gate that is still waiting for a quiet machine; the lock can.
 const LOCK = path.join(os.tmpdir(), "tine-pdf-perf-gate.lock");
 const lockHolder = () => { try { const pid = Number(fs.readFileSync(path.join(LOCK, "pid"), "utf8")); process.kill(pid, 0); return pid; } catch { return null; } };
@@ -67,7 +75,12 @@ if (!problems.length) {
   }
   if (!problems.length) {
     fs.writeFileSync(path.join(LOCK, "pid"), String(process.pid));
-    process.on("exit", () => { if (lockHolder() === process.pid) fs.rmSync(LOCK, { recursive: true, force: true }); });
+    process.on("exit", () => {
+      if (current) try { process.kill(-current.pid, "SIGTERM"); } catch {}
+      if (lockHolder() === process.pid) fs.rmSync(LOCK, { recursive: true, force: true });
+    });
+    // Stopping the gate stops its session too and releases the lock.
+    for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(2));
   }
 }
 if (problems.length) { for (const p of problems) console.error(p); process.exit(2); }
@@ -103,9 +116,14 @@ function runSession(side, dpr, rep) {
   const t0 = Date.now(), loadStart = loads();
   return new Promise((resolve) => {
     const child = spawn(cmd[0], cmd.slice(1), { cwd: ROOT, env, stdio: ["ignore", logFd, logFd], detached: true });
-    const timer = setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch {} }, SESSION_TIMEOUT_MS);
+    current = child;
+    const timer = setTimeout(() => {
+      try { process.kill(-child.pid, "SIGTERM"); } catch {}
+      setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch {} }, 10_000).unref();
+    }, SESSION_TIMEOUT_MS);
     child.on("exit", (code, signal) => {
       clearTimeout(timer);
+      current = null;
       fs.closeSync(logFd);
       resolve({ tag, side, dpr, rep, exit: code ?? `signal ${signal}`, wallS: Math.round((Date.now() - t0) / 1000), loadStart, loadEnd: loads() });
     });

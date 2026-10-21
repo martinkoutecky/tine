@@ -46,6 +46,9 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const { server, port } = await startStaticServer(DIST, CORPUS);
 const app = await launchApp({ corpus: CORPUS, pdfs: PDFS, dpr: DPR, tmp: TMP, driverPort: PORT_BASE + DPR, nativePort: PORT_BASE + 10 + DPR, cpus: CPUS });
 const b = app.browser;
+// The driver (and the app under it) runs in its own process group; a stopped
+// session must not leave it running.
+process.on("SIGTERM", () => { try { process.kill(-app.driverPid, "SIGKILL"); } catch {} process.exit(143); });
 let viewer = "ours";
 let cal = null;
 const ourScales = {}; // scale (CSS px / pt) reached in ours, reused for stock

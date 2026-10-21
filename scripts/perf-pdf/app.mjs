@@ -161,7 +161,7 @@ export async function launchApp({ corpus, pdfs, dpr, tmp, driverPort, nativePort
     try { process.kill(-td.pid, "SIGKILL"); } catch {}
     await sleep(500);
   };
-  return { browser, appPid, stop, graph, env };
+  return { browser, appPid, stop, graph, env, driverPid: td.pid };
 }
 
 /** Find the app's X window and size it to w x h CSS px (device px = css*dpr). */
