@@ -445,7 +445,8 @@ try {
       if (viewer === "ours" && pdf !== S1) ourScales[`fit:${pdf}`] = await currentScale();
       const g = await pageGeom(1);
       if (!wheelPx) { await wheelStep(g); await scrollToXY(0, 0); await sleep(1000); await settle(20000); }
-      log(viewer, pdf, "viewport", g.vw, "x", g.vh, "page", g.w, "x", g.h, "scale", await currentScale(), "open", JSON.stringify(open.openSettledMs));
+      log(viewer, pdf, "viewport", g.vw, "x", g.vh, "page", g.w, "x", g.h, "scale", await currentScale(), "open", JSON.stringify(open.openSettledMs),
+        "theme", await exec(() => document.querySelector(".pdf-viewer")?.getAttribute("data-theme") ?? (getComputedStyle(document.querySelector(".pdfViewer .page canvas") || document.body).filter || "-")));
       for (const [s, fn] of list) {
         try { await fn(pdf); } catch (e) { log("SCENARIO ERROR", viewer, s, String(e).slice(0, 300)); }
       }
