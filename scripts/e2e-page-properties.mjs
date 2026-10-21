@@ -738,7 +738,15 @@ try {
   await browser.waitUntil(async () => (await notes()).some(n => n.includes(":journal/file-name-format") && n.includes("ww")), {
     timeout: 15_000, timeoutMsg: "Settings did not update the file format note after an external config edit",
   });
-  console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, and real-app reopen are canonical`);
+  console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, real-app reopen, distinct Tab refusal, and live Settings journal pattern notes`);
+} catch (error) {
+  const artifacts = process.env.E2E_ARTIFACT_DIR || TMP;
+  try { await browser?.saveScreenshot(path.join(artifacts, "page-properties-failure.png")); } catch {}
+  try {
+    const body = await browser?.execute(() => document.body.innerText);
+    fs.writeFileSync(path.join(artifacts, "page-properties-failure.txt"), `${error}\n\n${body ?? "No webview body available"}\n`);
+  } catch {}
+  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   if (process.platform === "win32") {

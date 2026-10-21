@@ -1156,8 +1156,8 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async setPreferredFormat(): Promise<void> {
       // no-op in the browser mock
     },
-    async setJournalTitleFormat(): Promise<void> {
-      // no-op in the browser mock
+    async setJournalTitleFormat(): Promise<string[]> {
+      return [];
     },
     async setDefaultJournalTemplate(): Promise<void> {
       // no-op in the browser mock

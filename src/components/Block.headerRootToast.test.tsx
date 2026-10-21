@@ -50,7 +50,7 @@ describe("keys that would put a block above or under the page properties", () =>
     const { header, editor, dispose } = mount();
     try {
       editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
-      expect(toasts().map((t) => [t.kind, t.message])).toEqual([["info", WHY]]);
+      expect(toasts().map((t) => [t.kind, t.message])).toEqual([["info", "A block can't be indented under the page properties"]]);
       expect(pageByName("Reading list")!.roots).toEqual([header, "o1", "o2"]);
       expect(doc.byId[header].children).toEqual([]);
     } finally { dispose(); }
