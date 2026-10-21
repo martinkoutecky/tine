@@ -31,7 +31,9 @@ const fmt = (xs) => {
 function table(title, select, cols) {
   const groups = new Map();
   for (const r of rows.filter(select)) {
-    const k = `${r.scenario} ${r.name}|${r.dpr}|${r.theme}|${r.viewer}`;
+    // S1c's three in/out cycles pool into one cell (n = 3 cycles x sessions).
+    const name = r.scenario === "S1c" ? r.name.replace(/-\d+$/, "") : r.name;
+    const k = `${r.scenario} ${name}|${r.dpr}|${r.theme}|${r.viewer}`;
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(r);
   }

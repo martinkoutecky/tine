@@ -36,12 +36,12 @@ run() { # tag dpr args...
 }
 if [ "$PHASE" = docs ]; then
   for r in $(seq "$REPS"); do
-    run "docs-dpr1-r$r" 1 --scenarios S2,S3
-    run "docs-dpr2-r$r" 2 --scenarios S2,S3
+    run "${DOCS_TAG:-docs}-dpr1-r$r" 1 --scenarios S2,S3
+    run "${DOCS_TAG:-docs}-dpr2-r$r" 2 --scenarios S2,S3
   done
   for r in $(seq "$REPS"); do
-    run "mem3-dpr1-r$r" 1 --viewers stock --scenarios S3
-    run "mem3-dpr2-r$r" 2 --viewers stock --scenarios S3
+    run "${MEM_TAG:-mem3}-dpr1-r$r" 1 --viewers stock --scenarios S3
+    run "${MEM_TAG:-mem3}-dpr2-r$r" 2 --viewers stock --scenarios S3
   done
   exit 0
 fi
