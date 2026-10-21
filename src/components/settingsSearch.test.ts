@@ -44,6 +44,21 @@ it("explains matches outside the visible label, including keyword and alias hits
   expect(matchedDescription({ tab: "graph", label: "Alpha", description: "Elsewhere", aliases: ["quux"] }, "quux")).toBe("quux");
 });
 
+it("explains every hidden query term even when matches are far apart in one source (GH #706)", async () => {
+  await setActiveLocale("zh-CN");
+  const entry = { tab: "graph" as const, label: "Alpha", description: `父${"中".repeat(200)}末`, keywords: "hidden zebra", aliases: ["quux"] };
+  const query = "alpha 父 末 zebra quux";
+  expect(settingMatches(entry, query)).toBe(true);
+  const evidence = matchedDescription(entry, query)!;
+  for (const term of ["父", "末", "zebra", "quux"]) expect(evidence).toContain(term);
+  // A long word must also remain visible in full so the result can highlight it.
+  const word = "z".repeat(130);
+  expect(matchedDescription({ ...entry, description: word }, word)).toContain(word);
+  const unicode = { ...entry, description: `${"İ".repeat(60)} ${"😀".repeat(60)} zebra` };
+  expect(matchedDescription(unicode, "zebra")).toContain("zebra");
+  expect(matchedDescription(entry, "父")).not.toMatch(/<\/?[a-z]+>/);
+});
+
 it("a one-character query matches shown-language names and descriptions, not hidden English (GH #706)", async () => {
   await setActiveLocale("zh-CN");
   // 图谱 and 拼写检查语言 contain 发 in their descriptions: beta.5 dropped them (4 -> 2).

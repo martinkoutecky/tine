@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { QuickSwitcher } from "./QuickSwitcher";
-import { closeSwitcher, openSwitcher, rightSidebar, setRecentPages, setRightSidebar, setRightSidebarOpen } from "../ui";
+import { closeSwitcher, openCommandPalette, openSwitcher, rightSidebar, setRecentPages, setRightSidebar, setRightSidebarOpen } from "../ui";
 import { pageInventoryRev } from "../graphSession";
 import { toasts } from "../toasts";
 import { activeId, closeTab, route, tabRoute, tabs } from "../router";
@@ -32,13 +32,13 @@ describe("QuickSwitcher search syntax help", () => {
     document.body.append(root);
     const dispose = render(() => <QuickSwitcher />, root);
     try {
-      openSwitcher({ mode: "commands" });
+      openCommandPalette();
       const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
       for (const query of ["搜索", "Search"]) {
         input.value = query;
         input.dispatchEvent(new InputEvent("input", { bubbles: true }));
         await vi.waitFor(() => expect([...root.querySelectorAll(".switcher-row")]
-          .some(row => row.textContent?.includes("搜索 / 快速切换"))).toBe(true));
+          .some(row => row.textContent?.includes("打开搜索标签页"))).toBe(true));
       }
     } finally { dispose(); await setActiveLocale("en"); }
   });
