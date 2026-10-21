@@ -103,7 +103,7 @@
   --pdf-local-text: #e8eaed;
 }
 
-.pdf-viewer[data-theme="dark"] .pdf-page > :is(canvas, .textLayer) {
+.pdf-viewer[data-theme="dark"] .pdf-page > :is(canvas, .textLayer, .pdf-tile-layer) {
   filter: invert(1);
 }
 
