@@ -29,12 +29,14 @@ const TMP = process.env.PERF_TMP || path.join("/tmp", `tine-pdf-perf-${process.p
 const S1 = "arikan-0807.3917v5.pdf", S2 = "bv_cvxbook.pdf", S3 = "sourcebookinmath1929smit.pdf";
 const PDFS = [S1, S2, S3].filter((p) => fs.existsSync(path.join(CORPUS, p)));
 const FAST = 7000, MODERATE = 2000;
+// Driver ports; override when another harness copy runs on this machine.
+const PORT_BASE = Number(process.env.PERF_PORT_BASE || 4720);
 fs.mkdirSync(OUT, { recursive: true });
 const rowsFile = path.join(OUT, `${TAG}.jsonl`);
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
 const { server, port } = await startStaticServer(DIST, CORPUS);
-const app = await launchApp({ corpus: CORPUS, pdfs: PDFS, dpr: DPR, tmp: TMP, driverPort: 4720 + DPR, nativePort: 4730 + DPR, cpus: CPUS });
+const app = await launchApp({ corpus: CORPUS, pdfs: PDFS, dpr: DPR, tmp: TMP, driverPort: PORT_BASE + DPR, nativePort: PORT_BASE + 10 + DPR, cpus: CPUS });
 const b = app.browser;
 let viewer = "ours";
 let cal = null;
@@ -79,6 +81,9 @@ async function settle(timeout = 15000) { return P(`return await P.waitSettled(${
 
 async function openDoc(name) {
   if (viewer === "ours") {
+    // Per-document probe state: closing a PDF emits no "free" events, so drop
+    // the previous document's page/tile states and scale before the new one.
+    await P("P.pages.clear(); P.tiles.clear(); P.curScale = null; P._pl = null;");
     await P("P.start()");
     const t0 = await exec((n) => {
       const link = [...document.querySelectorAll(".pdf-link")].find((a) => (a.textContent || "").includes(n));

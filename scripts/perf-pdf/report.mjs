@@ -1,14 +1,23 @@
 // Aggregate harness JSONL rows into markdown tables: median [min–max] over reps.
-//   node scripts/perf-pdf/report.mjs <rawDir> [tagPrefixFilter] > tables.md
+//   node scripts/perf-pdf/report.mjs <rawDir> [prefix,prefix] [dropRegex] > tables.md
 import fs from "node:fs";
 import path from "node:path";
 
 const dir = process.argv[2];
-const filter = process.argv[3] || "";
+// argv[3]: comma-separated tag prefixes to include; argv[4]: regex over
+// "<tag> <scenario> <name>" for rows to drop (e.g. superseded trials).
+const filters = (process.argv[3] || "").split(",");
+const drop = process.argv[4] ? new RegExp(process.argv[4]) : null;
 const rows = [];
 for (const f of fs.readdirSync(dir)) {
-  if (!f.endsWith(".jsonl") || !f.startsWith(filter)) continue;
-  for (const line of fs.readFileSync(path.join(dir, f), "utf8").split("\n")) if (line.trim()) rows.push(JSON.parse(line));
+  if (!f.endsWith(".jsonl") || !filters.some((x) => f.startsWith(x))) continue;
+  for (const line of fs.readFileSync(path.join(dir, f), "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    const r = JSON.parse(line);
+    // PERF_LOADMAX: keep only trials whose 1-min load at start was <= it.
+    const loadMax = Number(process.env.PERF_LOADMAX || Infinity);
+    if ((!drop || !drop.test(`${r.tag} ${r.scenario} ${r.name}`)) && !(r.load?.[0]?.[0] > loadMax)) rows.push(r);
+  }
 }
 const get = (o, p) => p.split(".").reduce((a, k) => (a == null ? a : a[k]), o);
 const med = (xs) => { const s = xs.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b); return s.length ? s[(s.length - 1) >> 1] : null; };

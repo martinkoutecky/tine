@@ -130,10 +130,14 @@ export async function launchApp({ corpus, pdfs, dpr, tmp, driverPort, nativePort
     XDG_DATA_HOME: path.join(tmp, "xdg", "data"),
     XDG_CONFIG_HOME: path.join(tmp, "xdg", "config"),
     XDG_CACHE_HOME: path.join(tmp, "xdg", "cache"),
-    WEBKIT_DISABLE_DMABUF_RENDERER: "1",
-    WEBKIT_DISABLE_COMPOSITING_MODE: "1",
-    LIBGL_ALWAYS_SOFTWARE: "1",
-    GDK_BACKEND: "x11",
+    // Xvfb has no GPU: software GL, no accelerated compositing. PERF_HOST_GL=1
+    // (a real desktop session) keeps the host's own WebKit rendering path.
+    ...(process.env.PERF_HOST_GL === "1" ? {} : {
+      WEBKIT_DISABLE_DMABUF_RENDERER: "1",
+      WEBKIT_DISABLE_COMPOSITING_MODE: "1",
+      LIBGL_ALWAYS_SOFTWARE: "1",
+    }),
+    GDK_BACKEND: "x11", // xdotool input needs an X11 (or XWayland) window
     ...(dpr === 2 ? { GDK_SCALE: "2" } : {}),
   };
   const log = fs.openSync(path.join(tmp, "tauri-driver.log"), "w");
