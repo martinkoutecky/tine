@@ -55,7 +55,8 @@ fs.writeFileSync(`${GRAPH}/pages/Property detailed.md`, detailed);
 fs.writeFileSync(`${GRAPH}/pages/Property simple.md`, simple);
 const filterPage = "filters:: {}\nowner:: Reader\n\n- Body\n";
 fs.writeFileSync(`${GRAPH}/pages/Property filters.md`, filterPage);
-fs.writeFileSync(`${GRAPH}/pages/Property filters___Child.md`, "- Child body\n");
+// The graph uses the legacy file-name format ({} config), so the namespace comes from title::.
+fs.writeFileSync(`${GRAPH}/pages/Property filters child.md`, "title:: Property filters/Child\n\n- Child body\n");
 fs.writeFileSync(`${GRAPH}/pages/Property deletion.md`, deletion);
 // GH #210: a table block whose view is set before its title is typed, first on a
 // page with no page properties.

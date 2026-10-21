@@ -1,6 +1,6 @@
 import { PageIcon } from "./PageIcon";
 import { t } from "../i18n";
-import { For, Show, createEffect, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Show, createComputed, createMemo, createSignal, type JSX } from "solid-js";
 import { ReferenceDisclosure } from "./ReferenceDisclosure";
 import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { pageIdentityKey } from "../pageIdentity";
@@ -281,7 +281,7 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
   // on nav, but with zero IPC and no whole-graph deserialize per nav.
   const rows = createMemo(() => namespaceHierarchyRows(allPageNames(), props.name));
   const [collapsed, setCollapsed] = createSignal(false);
-  createEffect(() => setCollapsed(sectionOverride("hierarchy", props.name) ?? false));
+  createComputed(() => setCollapsed(sectionOverride("hierarchy", props.name) ?? false));
   const toggle = () => {
     const next = !collapsed();
     setSectionOverride("hierarchy", props.name, next);

@@ -23,6 +23,7 @@ pub const RENDER_HIDDEN: &[&str] = &[
     "logseq.order-list-type",
     "heading",
     "title",
+    "filters",
     "created-at",
     "updated-at",
     "last-modified-at",
