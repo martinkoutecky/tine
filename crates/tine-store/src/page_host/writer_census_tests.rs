@@ -657,7 +657,8 @@ fn every_production_page_writer_runs_under_a_host_reservation() {
     }
     // The census (STEP3 §7) reaches the host.
     for writer in [
-        "crates/tine-graph-features/src/pages.rs::rename_page_after_inventory",
+        // A rename of several pages is one host operation (S2).
+        "crates/tine-graph-features/src/pages.rs::multi_rename",
         "crates/tine-graph-features/src/pages.rs::host_rename",
         "crates/tine-graph-features/src/pages.rs::merge_pages",
         "crates/tine-graph-features/src/pages.rs::rename_file_to_page",

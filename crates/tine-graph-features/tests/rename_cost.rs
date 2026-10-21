@@ -483,3 +483,91 @@ fn probe_rename_wall_time() {
         );
     }
 }
+
+/// I-25 (host-only-writer S2): a namespace rename's unit cost. `Ns` with
+/// two children and one referrer, on 1-block and 60-block pages: files and
+/// bytes written and fsyncs, measured on the host's instrumented I/O from
+/// the call through the host's cleanup.
+#[test]
+fn namespace_rename_unit_cost_on_one_and_sixty_blocks() {
+    let _integration_guard = crate::integration_lock();
+    let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for blocks in [1, 60] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("graph");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        let body = |text: &str| format!("- {text}\n").repeat(blocks);
+        fs::write(root.join("pages/Ns.md"), body("ns")).unwrap();
+        fs::write(root.join("pages/Ns%2Fa.md"), body("a")).unwrap();
+        fs::write(root.join("pages/Ns%2Fb.md"), body("b")).unwrap();
+        fs::write(root.join("pages/Ref.md"), body("links [[Ns/a]]")).unwrap();
+        let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        store.whole_graph().unwrap();
+        let host = tine_store::PageHost::start_for_tests(&store, &temp.path().join("app")).unwrap();
+        let started = std::time::Instant::now();
+        while !host.quiescent_for_tests() {
+            assert!(started.elapsed().as_secs() < 30);
+            std::thread::yield_now();
+        }
+        let source_bytes: usize = ["Ns.md", "Ns%2Fa.md", "Ns%2Fb.md", "Ref.md"]
+            .iter()
+            .map(|name| fs::read(root.join("pages").join(name)).unwrap().len())
+            .sum();
+        cost_counters::reset();
+        pages::rename_page_expected(&store, &host, "Ns", "Space", None).unwrap();
+        let renamed = std::time::Instant::now();
+        while !host.quiescent_for_tests() {
+            assert!(renamed.elapsed().as_secs() < 60);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let cost = cost_counters::snapshot();
+        eprintln!("S2 namespace rename, {blocks} blocks, {source_bytes} source bytes: {cost:?}");
+        assert_eq!(
+            fs::read_to_string(root.join("pages/Space%2Fa.md")).unwrap(),
+            body("a")
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("pages/Ref.md")).unwrap(),
+            body("links [[Space/a]]")
+        );
+        assert!(!root.join("pages/Ns%2Fb.md").exists());
+        store.close();
+    }
+}
+
+#[test]
+#[ignore]
+fn namespace_rename_cost_scale_probe() {
+    let _integration_guard = crate::integration_lock();
+    let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    for children in [2usize, 22] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("graph");
+        fs::create_dir_all(root.join("pages")).unwrap();
+        fs::write(root.join("pages/Ns.md"), "- ns\n").unwrap();
+        for i in 0..children {
+            fs::write(root.join(format!("pages/Ns%2Fc{i:03}.md")), "- child\n").unwrap();
+        }
+        fs::write(root.join("pages/Ref.md"), "- links [[Ns/c000]]\n").unwrap();
+        let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        store.whole_graph().unwrap();
+        let host = tine_store::PageHost::start_for_tests(&store, &temp.path().join("app")).unwrap();
+        while !host.quiescent_for_tests() {
+            std::thread::yield_now();
+        }
+        cost_counters::reset();
+        let t = std::time::Instant::now();
+        pages::rename_page_expected(&store, &host, "Ns", "Space", None).unwrap();
+        let call = t.elapsed();
+        while !host.quiescent_for_tests() {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let c = cost_counters::snapshot();
+        eprintln!(
+            "SCALE children={children} call={call:?} files={} bytes={} fsyncs={}",
+            c.files_written, c.bytes_written, c.fsyncs
+        );
+        assert!(root.join("pages/Space%2Fc001.md").exists());
+        store.close();
+    }
+}

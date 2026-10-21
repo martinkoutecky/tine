@@ -387,8 +387,10 @@ pub fn rename_page_expected(
 /// References and namespace descendants are renamed as by
 /// [`rename_page_expected`], and the source goes to graph trash in the last
 /// step, so a crash never leaves a reference to a name with no live page. A
-/// retry after a crash between the survivor write and the trash appends the
-/// moved blocks again: visible duplicates, never loss (see `merged_survivor`).
+/// crash between the survivor write and the trash completes from the host
+/// operation's draft at relaunch, as `merge_pages` does; a retry of a merge
+/// whose draft was lost appends the moved blocks again: visible duplicates,
+/// never loss (see `merged_survivor`).
 /// An `old` with no file only repoints its references at the survivor. It
 /// refuses before any write when, for an `old` with a file, a page other than
 /// `merge_into` claims the new name (`AlreadyExists`); when `merge_into` no
@@ -407,13 +409,12 @@ pub fn rename_page_expected(
 /// because rewriting it would turn those edits into a conflict against bytes
 /// the user never saw. Pages it does not touch need not be saved. `WouldBlock`
 /// also reports giving up after pages kept changing under repeated replans.
-/// The page host (`host`) decides by its own unsaved input instead for a
-/// single page's rename, which is the host's operation; every other rename
-/// is a retained writer of the pages it touches (STEP3 §7), one `tine-store`
-/// transaction: all steps are checked before the first write and a failure
-/// rolls back; only a failed rollback or publication leaves partial state,
-/// and its error says to inspect disk. The host's rename moves
-/// `config.edn`'s home page in its own transaction after it.
+/// The page host (`host`) decides by its own unsaved input as well: a single
+/// page's rename is the host's rename; every other rename is one host
+/// operation of every page it writes (host-only-writer S2), checked before
+/// the first write and completed from its draft after a crash. Either moves
+/// `config.edn`'s home page in its own transaction after it; a failure there
+/// leaves the home setting on the old name and is reported.
 pub fn rename_or_merge_page(
     store: &Store,
     host: &PageHost,
@@ -471,26 +472,79 @@ fn rename_page_after_inventory(
         if let Some(pair) = first.single(store)? {
             return host_rename(store, host, pair, first, &plan, unsaved_paths);
         }
-        // A retained writer (STEP3 §7) of every page the plan writes, planned
-        // again under the reservation: flush first, except an interrupted
-        // title completion, which refuses unsaved input as today.
-        let input = first.input();
-        let last = std::cell::Cell::new(None);
-        let discover = || {
+        // One host operation of every page the plan writes (host-only-writer
+        // S2, DESIGN §3.1, §3.5), planned again until the host applies it:
+        // flush first, except an interrupted title completion, which refuses
+        // unsaved input as today. `config.edn`'s home page is a post step.
+        multi_rename(store, host, old, first, &plan, unsaved_paths)
+    })
+}
+
+/// A rename of several pages (a namespace, a merge, a reference-only
+/// rename) as one host operation, then the home page in `config.edn` as its
+/// own transaction once the operation applied (DESIGN §3.4: skipped when it
+/// is uncertain). A plan that turned into a single page's rename, or into
+/// another unsaved-input policy, replans (`Ok(None)`).
+fn multi_rename(
+    store: &Store,
+    host: &PageHost,
+    old: &str,
+    mut first: RenamePlan,
+    plan: &dyn Fn() -> io::Result<RenamePlan>,
+    unsaved_paths: &[String],
+) -> io::Result<Option<RenameReport>> {
+    let input = first.input();
+    let expected = first.pages(store)?;
+    let refused = |page: &str| unsaved_error(&first.graph, page);
+    let built = std::cell::RefCell::new(None);
+    let replan = std::cell::Cell::new(false);
+    crate::retained::operation(
+        host,
+        input,
+        &expected,
+        "the rename",
+        "page changed repeatedly during rename",
+        refused,
+        || {
+            built.replace(None);
             let mut plan = plan()?;
-            let pages = plan.pages(store)?;
-            last.set(Some(plan));
-            Ok(pages)
-        };
-        let refused = |page: &str| unsaved_error(&first.graph, page);
-        crate::retained::reserved(host, input, discover, refused, |_| {
-            let plan = last.take().expect("planned under the reservation");
             if plan.single(store)?.is_some() || plan.input() != input {
+                replan.set(true);
                 return Ok(None);
             }
-            commit_rename(store, old, plan, unsaved_paths)
-        })
-    })
+            // The commit decides on the bytes `pages` read.
+            plan.pages(store)?;
+            match rename_transaction(store, old, plan, unsaved_paths)? {
+                RenameTransaction::Unchanged(report) => {
+                    built.replace(Some((report, None)));
+                    Ok(None)
+                }
+                RenameTransaction::Writes {
+                    tx,
+                    report,
+                    merge,
+                    home,
+                } => {
+                    let mut op = crate::retained::plan(tx)?;
+                    // A merge's survivor holds the source's blocks: a move's
+                    // order, as `merge_pages` declares it.
+                    if let Some((src, dst)) = merge {
+                        op.moves.push((dst, src));
+                    }
+                    built.replace(Some((report, Some(home))));
+                    Ok(Some(op))
+                }
+            }
+        },
+    )?;
+    if replan.get() {
+        return Ok(None);
+    }
+    let (mut report, home) = built.into_inner().expect("planned before the operation");
+    if let Some((lookup, merged_old)) = home {
+        report.home_page = commit_home(store, &lookup, merged_old.as_ref())?;
+    }
+    Ok(Some(report))
 }
 
 /// What one rename attempt writes, planned from one refreshed view and the
@@ -764,13 +818,55 @@ fn plan_rename(
 }
 
 /// The rename as one store transaction (`unsaved_paths`: see
-/// [`rename_or_merge_page`]).
+/// [`rename_or_merge_page`]), `config.edn`'s home page its last step: a
+/// case-only respell of a single page (W1b). A stale plan is `Ok(None)`.
 fn commit_rename(
     store: &Store,
     old: &str,
     plan: RenamePlan,
     unsaved_paths: &[String],
 ) -> io::Result<Option<RenameReport>> {
+    let (mut tx, mut report, (lookup, merged_old)) =
+        match rename_transaction(store, old, plan, unsaved_paths)? {
+            RenameTransaction::Unchanged(report) => return Ok(Some(report)),
+            RenameTransaction::Writes {
+                tx, report, home, ..
+            } => (tx, report, home),
+        };
+    let home = home_after(store, &lookup, merged_old.as_ref());
+    if let Some((id, rev, bytes, _)) = &home {
+        tx.replace(id, rev.clone(), bytes.clone());
+    }
+    report.home_page = home.map(|(_, _, _, name)| name);
+    Ok(crate::commit_retry(tx.commit())?.then_some(report))
+}
+
+/// What a rename writes, as a store transaction of its page steps.
+enum RenameTransaction<'s> {
+    /// Nothing to write (every referrer already reads the new name, or
+    /// carries VCS conflict markers).
+    Unchanged(RenameReport),
+    Writes {
+        tx: tine_store::Transaction<'s>,
+        /// Without the home page: `config.edn` is written after the pages.
+        report: RenameReport,
+        /// A merge's `(source, survivor)`.
+        merge: Option<(PageId, PageId)>,
+        /// What the home page step needs: the rename's lookup, and the
+        /// merged source, whose home `merge-pages!` keeps.
+        home: (HashMap<String, String>, Option<String>),
+    },
+}
+
+/// The rename's page steps in crash order (I-2): the survivor, the referrer
+/// rewrites, the namespace descendant moves, then the source trash; the
+/// caller writes `config.edn` LAST.
+fn rename_transaction<'s>(
+    store: &'s Store,
+    old: &str,
+    plan: RenamePlan,
+    unsaved_paths: &[String],
+) -> io::Result<RenameTransaction<'s>> {
     let RenamePlan {
         graph,
         config,
@@ -884,7 +980,7 @@ fn commit_rename(
         RenameOutcome::Renamed
     };
     if edits.is_empty() && merged.is_none() {
-        return Ok(Some(RenameReport {
+        return Ok(RenameTransaction::Unchanged(RenameReport {
             skipped_conflicted_referrers: skipped,
             ..RenameReport::unchanged()
         }));
@@ -909,13 +1005,12 @@ fn commit_rename(
         return Err(unsaved_error(&graph, &blocked.path));
     }
     let merged_old = (merge.is_some() || ref_merge).then(|| refs::normalize(old));
-    let home = home_after(store, &lookup, merged_old.as_ref());
     // Crash order (I-2), continued: the survivor and the referrer
     // rewrites are queued above; namespace descendant moves, then the
-    // source trash, then config.edn LAST. A crash before the config step
-    // leaves home naming the old page. Every boundary leaves `[[Old]]`
-    // resolving to the still-live source, and a retry finds the survivor
-    // already holding the source payload (see `merged_survivor`).
+    // source trash, then config.edn LAST (the caller's). A crash before the
+    // config step leaves home naming the old page. Every boundary leaves
+    // `[[Old]]` resolving to the still-live source, and a retry finds the
+    // survivor already holding the source payload (see `merged_survivor`).
     for (id, rev, rewrite) in edits
         .into_iter()
         .filter(|(id, _, _)| moves.contains_key(id))
@@ -925,15 +1020,17 @@ fn commit_rename(
     if let (Some((src, _)), Some(survivor)) = (&merge, merged) {
         tx.trash(&src.file(), survivor.src_rev, tine_store::TrashIf::Any);
     }
-    if let Some((id, rev, bytes, _)) = &home {
-        tx.replace(id, rev.clone(), bytes.clone());
-    }
-    Ok(crate::commit_retry(tx.commit())?.then_some(RenameReport {
-        outcome,
-        touched,
-        skipped_conflicted_referrers: skipped,
-        home_page: home.map(|(_, _, _, name)| name),
-    }))
+    Ok(RenameTransaction::Writes {
+        tx,
+        report: RenameReport {
+            outcome,
+            touched,
+            skipped_conflicted_referrers: skipped,
+            home_page: None,
+        },
+        merge,
+        home: (lookup, merged_old),
+    })
 }
 
 /// A single page's rename with a host (STEP3 §7, F10): one host operation
@@ -1066,16 +1163,21 @@ fn host_rename(
         outcome: RenameOutcome::Renamed,
         touched,
         skipped_conflicted_referrers: skipped.iter().map(|id| id.as_str().to_owned()).collect(),
-        home_page: commit_home(store, &first.lookup)?,
+        home_page: commit_home(store, &first.lookup, None)?,
     }))
 }
 
-/// A host rename's `:default-home` move: `logseq/config.edn` (the meta area,
+/// A rename's `:default-home` move: `logseq/config.edn` (the meta area,
 /// never a page file) in its own transaction after the host's operation,
-/// so no page reservation applies. The new home name, if it moved.
-fn commit_home(store: &Store, lookup: &HashMap<String, String>) -> io::Result<Option<String>> {
+/// so no page reservation applies; a merged source (`merged_old`) keeps it
+/// (`home_after`). The new home name, if it moved.
+fn commit_home(
+    store: &Store,
+    lookup: &HashMap<String, String>,
+    merged_old: Option<&String>,
+) -> io::Result<Option<String>> {
     crate::retry_on_conflict("config.edn changed repeatedly during rename", || {
-        let Some((id, rev, bytes, name)) = home_after(store, lookup, None) else {
+        let Some((id, rev, bytes, name)) = home_after(store, lookup, merged_old) else {
             return Ok(Some(None));
         };
         let mut tx = store.transaction(None);

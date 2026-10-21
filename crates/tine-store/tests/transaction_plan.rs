@@ -304,3 +304,38 @@ fn independent_save_and_trash_do_not_infer_a_transfer() {
     tx.trash(&src.file(), source.rev, TrashIf::Any);
     assert!(tx.plan().unwrap().moves.is_empty());
 }
+
+/// B2 (S2): a host operation planned under `expect_view` is admitted only
+/// in that view. A config delivery between the plan and the apply (a sync
+/// service or an external editor) refuses it `Changed` with nothing
+/// written, so the feature replans; planned again, it applies.
+#[test]
+fn a_view_bound_operation_refuses_after_a_config_delivery() {
+    let _integration_guard = crate::integration_lock();
+    let (dir, store) = graph();
+    fs::create_dir(dir.path().join("logseq")).unwrap();
+    fs::write(dir.path().join("logseq/config.edn"), "{}\n").unwrap();
+    store.refresh(tine_store::Depth::Bytes).unwrap();
+    let app = tempfile::tempdir().unwrap();
+    let host = PageHost::start_for_tests(&store, app.path()).unwrap();
+    let page = PageId::from("pages/B.md");
+    let plan = || {
+        let view = store.whole_graph().unwrap();
+        let mut tx = store.transaction(Some(EditKind::RenamePage));
+        tx.expect_view(&view);
+        tx.create(&page.file(), Content::Bytes(b"- b\n".to_vec()));
+        tx.plan().unwrap()
+    };
+    let stale = plan();
+    fs::write(
+        dir.path().join("logseq/config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    store.refresh(tine_store::Depth::Bytes).unwrap();
+    store.whole_graph().unwrap();
+    assert_eq!(host.apply(stale), Err(tine_store::ApplyRefusal::Changed));
+    assert!(!dir.path().join(page.as_str()).exists());
+    host.apply(plan()).unwrap();
+    assert_eq!(fs::read(dir.path().join(page.as_str())).unwrap(), b"- b\n");
+}

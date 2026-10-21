@@ -54,6 +54,7 @@ fn op(pages: Vec<(&str, Effect, Expected)>, policy: Input) -> HostOp {
         kinds: vec![EditKind::InsertBlocks],
         policy,
         moves: Vec::new(),
+        view: None,
     }
 }
 

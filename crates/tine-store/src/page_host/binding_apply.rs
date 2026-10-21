@@ -46,6 +46,11 @@ pub struct HostOp {
     /// move source. In-memory admission metadata; no persisted format changes.
     /// Hand-built operations use an empty vector and the raw-create checks.
     pub(crate) creation_checks: Vec<(PageId, Option<String>, Option<crate::FileId>)>,
+    /// The planner's view (`Transaction::expect_view`, B2): admitted only
+    /// while no publication or config delivery has happened since, else the
+    /// feature replans (in-scope scenario: a sync service or an external
+    /// editor changed a page or `config.edn` since the plan). In memory only.
+    pub(crate) view: Option<(crate::GraphRev, Arc<tine_core::config::Config>)>,
 }
 
 /// Why a host operation did not apply, or did not finish.
@@ -181,10 +186,16 @@ impl PageHost {
             let shared = shared.clone();
             let store = store.clone();
             let creations = creations.clone();
+            let view = op.view.clone();
             let admit = move |state: &mut HostState| {
                 let host = &state.progress.host;
                 if !host.alive {
                     return Wait::Ready(Err(ApplyRefusal::Refused));
+                }
+                if let Some((rev, config)) = &view {
+                    if store.changes.rev() != *rev || !Arc::ptr_eq(&store.config().config, config) {
+                        return Wait::Ready(Err(ApplyRefusal::Changed));
+                    }
                 }
                 let unsaved = retained::unsaved(host, &keys);
                 if !unsaved.is_empty() {

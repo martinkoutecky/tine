@@ -30,6 +30,7 @@ impl Transaction<'_> {
             policy: Input::Refuse,
             moves: Vec::new(),
             creation_checks: Vec::new(),
+            view: self.view.clone(),
         };
         for (step, prepared) in self.steps.iter().zip(prepared) {
             let page = self.store.as_page(&prepared.src);
