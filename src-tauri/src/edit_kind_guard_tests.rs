@@ -101,7 +101,7 @@ fn every_tauri_page_writer_reaches_a_kind_taking_store_entry() {
         ),
         (
             "set_journal_title_format",
-            "tine_graph_features::config::set_journal_page_title_format",
+            "tine_graph_features::config::store_journal_page_title_format",
         ),
         (
             "trash_journal_file",

@@ -225,6 +225,7 @@ export function changeJournalTitleFormat(fmt: string) {
   void writeOwned(owner, backend().setJournalTitleFormat(next, ["rename-page"]))
     .then((result) => {
       if (result.kind === "stale") return;
+      setGraphMeta({ ...graphMeta()!, journal_config_diagnostics: result.value });
       bumpGraphEpoch();
       void refreshJournalConflicts(); // the queue surfaces any day the new format reveals
     })

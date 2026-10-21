@@ -73,6 +73,20 @@ async function openAndChoose(raw: string, label: string, format: "md" | "org" = 
 }
 
 describe("task-state slash commands (GH #225)", () => {
+  it("finds Table from committed Chinese slash input and inserts its literal syntax (GH #107)", async () => {
+    await setActiveLocale("zh-CN");
+    loadSingle(taskPage("/表"));
+    startEditing("task-slash-host", 2);
+    const { root, dispose } = mount(() => <Block id="task-slash-host" />);
+    try {
+      inputAt(root.querySelector("textarea.block-editor")!, "/表", 2);
+      const table = COMMANDS.find(command => command.matchLabel === "Table")!;
+      await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")]
+        .map(el => el.textContent)).toContain(table.label));
+      choose(table.label);
+      await vi.waitFor(() => expect(doc.byId["task-slash-host"].raw).toBe("tine.view:: table"));
+    } finally { dispose(); }
+  });
   it("shows English slash keywords with Chinese glosses and keeps marker insertion literal (GH #107)", async () => {
     const english = COMMANDS.map((command) => command.matchLabel ?? command.label);
     const ranking = filterCommands("TODO").map((command) => command.matchTieOrder);

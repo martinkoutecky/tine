@@ -361,6 +361,14 @@ pub fn set_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<()>
     update_scalar(store, ":journal/page-title-format", &edn_string(fmt))
 }
 
+/// [`set_journal_page_title_format`], then the reloaded config's journal
+/// pattern diagnostics (D-20261020-CH3). An own write emits no external-config
+/// event, so Settings takes the fresh notes from this result.
+pub fn store_journal_page_title_format(store: &Store, fmt: &str) -> io::Result<Vec<String>> {
+    set_journal_page_title_format(store, fmt)?;
+    Ok(store.config().config.journal_config_diagnostics.clone())
+}
+
 /// Persist the new-journal default template as `:default-templates {:journals
 /// "Name"}`. `Some` sets/replaces the `:journals` entry; `None` removes it.
 /// Other keys in `:default-templates`, the rest of the file, and comments are

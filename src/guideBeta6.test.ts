@@ -10,11 +10,11 @@ it("the Guide explains keyboard folding and the lifetime of the Hierarchy choice
   expect(where).toContain("starts expanded and remembers your choice for that page until you switch graphs");
 });
 
-it("the Guide describes one-character Settings search, the matched description and the jump highlight (GH #706)", () => {
+it("the Guide describes one-character Settings search, hidden match evidence and the jump highlight (GH #706)", () => {
   const where = guide("where-things-are");
   for (const detail of [
     "the setting is highlighted for about two seconds",
-    "a result found only through its description shows that description with the match highlighted",
+    "a result found through text outside its visible name shows the matching description, keyword, alias or English name with the match highlighted",
     "A single character matches only the text shown in your interface language",
   ]) expect(where).toContain(detail);
   expect(where).not.toContain("A single character matches only a setting's name and aliases, not its description");

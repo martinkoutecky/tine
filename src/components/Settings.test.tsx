@@ -16,6 +16,24 @@ afterEach(() => {
 });
 
 describe("Settings progressive disclosure and search", () => {
+  it("shows the highlighted keyword that found block embed breadcrumbs (zh-CN, GH #706)", async () => {
+    await setActiveLocale("zh-CN");
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    try {
+      openSettings("appearance");
+      await tick();
+      const search = root.querySelector<HTMLInputElement>(".settings-search-input")!;
+      search.value = "父";
+      search.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await tick();
+      const embed = [...root.querySelectorAll(".settings-search-result")]
+        .find(result => result.textContent?.startsWith("块嵌入面包屑"));
+      expect(embed).toBeDefined();
+      expect(embed!.querySelector(".settings-search-description mark")?.textContent).toBe("父");
+    } finally { dispose(); }
+  });
   it.each(["en", "zh-CN"] as const)("shows only matching settings and restores the tab when cleared (%s, GH #706)", async (locale) => {
     await setActiveLocale(locale);
     const root = document.createElement("div");

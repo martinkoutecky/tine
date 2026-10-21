@@ -3,6 +3,11 @@ import { expect, it } from "vitest";
 
 const guide = (page: string) => readFileSync(`crates/tine-core/src/templates/${page}.md`, "utf8");
 
+it("the Guide locates live unsupported journal pattern notes in Settings even with a sections page (GH #317)", () => {
+  const journals = guide("journals-tasks-scheduling");
+  for (const detail of ["notes also appear in Settings → **Journals**, beside **Journal date format**", "even when a Today's sections page replaces", "notes update when the format changes"]) expect(journals).toContain(detail);
+});
+
 it("the Guide describes the phone navigation row, its Appearance setting and how it returns after the keyboard closes (GH #716)", () => {
   const mobile = guide("platforms-and-mobile");
   for (const detail of [
