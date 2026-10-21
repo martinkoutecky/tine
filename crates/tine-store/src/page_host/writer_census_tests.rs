@@ -97,9 +97,9 @@ const EXEMPT: &[(&str, &str)] = &[
          non-page arm; a page's trash is its host operation); no page",
     ),
     (
-        "crates/tine-graph-features/src/guide.rs::create_if_absent",
-        "its transaction outside the host operation creates a Guide asset, which \
-         Store::as_page does not name; a Guide page is its host operation (census below); no page",
+        "crates/tine-graph-features/src/guide.rs::create_asset_if_absent",
+        "creates a Guide asset, which Store::as_page does not name; a Guide page is \
+         create_if_absent's host operation (census below); no page",
     ),
 ];
 

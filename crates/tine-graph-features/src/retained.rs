@@ -1,10 +1,11 @@
 //! Retained writers (STEP3 §7, R6): graph-features writes to page files
-//! that run outside the binding's page host. With a host, a writer reserves
-//! every page it touches, so the host neither opens, saves nor drafts them
-//! meanwhile; the host checks unsaved input under that final reservation
-//! (Q3) with the writer's own policy, the writer's transaction runs, and the
-//! pages go back to the host, which observes each. With no host the write
-//! is the plain call it was.
+//! that run outside the binding's page host. A writer reserves every page it
+//! touches, so the host neither opens, saves nor drafts them meanwhile; the
+//! host checks unsaved input under that final reservation (Q3) with the
+//! writer's own policy, the writer's transaction runs, and the pages go back
+//! to the host, which observes each. Every writer needs a running host
+//! (host-only-writer S1); only the renames (W1, W1b) still reserve, the rest
+//! are host operations (`operation`).
 //! Each refusal's in-scope scenario: `docs/storage-contract.md` I-8, row
 //! `tine-graph-features::retained`.
 
@@ -13,19 +14,15 @@ use tine_store::{ApplyRefusal, HostOp, Input, PageHost, PageId, ReserveRefusal};
 
 /// Run `write` as a retained writer of the pages `discover` names.
 /// `discover` runs again under the reservation (a grown set starts over);
-/// `write` gets the pages discovered under the final reservation, or `None`
-/// with no host. A page whose unsaved input refuses the write (`Refuse`),
+/// `write` gets the pages discovered under the final reservation. A page whose unsaved input refuses the write (`Refuse`),
 /// or whose save cannot complete (`Flush`), becomes `refused(page)`.
 pub(crate) fn reserved<T>(
-    host: Option<&PageHost>,
+    host: &PageHost,
     input: Input,
     mut discover: impl FnMut() -> io::Result<Vec<PageId>>,
     refused: impl FnOnce(&str) -> io::Error,
-    write: impl FnOnce(Option<&[PageId]>) -> io::Result<T>,
+    write: impl FnOnce(&[PageId]) -> io::Result<T>,
 ) -> io::Result<T> {
-    let Some(host) = host else {
-        return write(None);
-    };
     let mut found = Ok(Vec::new());
     let reservation = host
         .reserve(
@@ -43,7 +40,7 @@ pub(crate) fn reserved<T>(
         })?;
     // Released when it drops, on a panic's unwind too (A-R1).
     let _reservation = reservation;
-    found.and_then(|pages| write(Some(&pages)))
+    found.and_then(|pages| write(&pages))
 }
 
 /// The pages among `files`, for a writer whose key set is its arguments.
@@ -209,31 +206,6 @@ fn capitalized(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
-
-    /// With no host the write is the plain call: discovery never runs, the
-    /// write runs once with no reserved set, and its result is returned.
-    #[test]
-    fn with_no_host_a_retained_writer_is_the_plain_call() {
-        let discovered = Cell::new(0);
-        let written = Cell::new(0);
-        let result = reserved(
-            None,
-            Input::Refuse,
-            || {
-                discovered.set(discovered.get() + 1);
-                Ok(vec![PageId::from("pages/a.md")])
-            },
-            |_| unreachable!("no host refuses nothing"),
-            |pages| {
-                written.set(written.get() + 1);
-                assert!(pages.is_none());
-                Ok(7)
-            },
-        );
-        assert_eq!(result.unwrap(), 7);
-        assert_eq!((discovered.get(), written.get()), (0, 1));
-    }
 
     /// A-R1, REVIEW-3a2 R1 probe 1: a writer that panics releases its
     /// reservation on the unwind, so the next writer reserves the page.
@@ -255,7 +227,7 @@ mod tests {
         let page = PageId::from("pages/a.md");
         let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             reserved(
-                Some(&host),
+                &host,
                 Input::Flush,
                 || Ok(vec![page.clone()]),
                 |_| unreachable!("nothing unsaved"),

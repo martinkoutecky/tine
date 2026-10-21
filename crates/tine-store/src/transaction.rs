@@ -25,9 +25,6 @@ pub(crate) use faults::FaultPoint;
 mod faults;
 mod io_helpers;
 mod move_file;
-#[cfg(feature = "test-faults")]
-#[path = "../tests/support/og_k1_pause.rs"]
-mod og_k1_pause;
 mod plan;
 mod preflight;
 mod prepared;
@@ -1097,8 +1094,6 @@ impl<'a> Transaction<'a> {
                 })
             }
             Step::Save { .. } | Step::Replace { .. } | Step::Rewrite { .. } => {
-                #[cfg(feature = "test-faults")]
-                og_k1_pause::before_apply(&src);
                 let new = plan.new.as_ref().expect("prepared write");
                 let old = plan.old.as_deref();
                 if Self::final_guard_covers(step, old, new) {

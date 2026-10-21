@@ -483,7 +483,7 @@ fn rename_page_after_inventory(
             Ok(pages)
         };
         let refused = |page: &str| unsaved_error(&first.graph, page);
-        crate::retained::reserved(Some(host), input, discover, refused, |_| {
+        crate::retained::reserved(host, input, discover, refused, |_| {
             let plan = last.take().expect("planned under the reservation");
             if plan.single(store)?.is_some() || plan.input() != input {
                 return Ok(None);
@@ -986,7 +986,7 @@ fn host_rename(
                 Ok(pages)
             };
             let refused = |page: &str| unsaved_error(&first.graph, page);
-            return crate::retained::reserved(Some(host), Input::Refuse, discover, refused, |_| {
+            return crate::retained::reserved(host, Input::Refuse, discover, refused, |_| {
                 let plan = last.take().expect("planned under the reservation");
                 if plan.single(store)?.as_ref() != Some(&(source.clone(), target.clone())) {
                     return Ok(None);
@@ -1206,7 +1206,7 @@ pub enum RenameOutcome {
 
 /// Rescue a stray page or journal file into a uniquely named normal page.
 /// Its bytes are unchanged and inbound references are not rewritten, matching
-/// v0.6.5 model.rs 1779. With a host, one host operation of the source and
+/// v0.6.5 model.rs 1779. One host operation of the source and
 /// the target (DESIGN §3.1): their unsaved input is saved first. Cost O(P +
 /// source bytes) per try; four tries maximum.
 pub fn rename_file_to_page(
@@ -1286,7 +1286,7 @@ fn trash_rescue_source(store: &Store, src: &FileId, rev: FileRev) -> io::Result<
 /// but without renaming anything (aliases united, Org directives kept, through
 /// the same `merged_survivor`), then recoverably trash the source in the same
 /// commit. Org pairs must round-trip; formats must match. v0.6.5 never
-/// rewrites inbound refs in this operation. With a host, one host operation
+/// rewrites inbound refs in this operation. One host operation
 /// of both pages (DESIGN §3.1): their unsaved input is saved first. Cost O(source + survivor
 /// bytes and blocks) per try; four complete attempts maximum.
 pub fn merge_pages(store: &Store, host: &PageHost, src_rel: &str, dst_rel: &str) -> io::Result<()> {

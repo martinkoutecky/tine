@@ -54,8 +54,27 @@ pub fn create_demo_graph(
     Store::create_graph(parent, name, &seed)
 }
 
-/// A retained writer (STEP3 §7, A-K2): a page the host holds as a fileless
-/// draft is saved first, so the Guide meets it as an existing page and skips it.
+/// An asset Guide file: no page (`Store::as_page`), so its own guarded
+/// transaction with no host fence. `false` when it already exists.
+fn create_asset_if_absent(tx: tine_store::Transaction<'_>) -> io::Result<bool> {
+    let outcome = tx.commit();
+    match &outcome {
+        TxOutcome::Committed { .. } => Ok(true),
+        TxOutcome::NotCommitted {
+            why: Why::Conflict { .. } | Why::Refused(tine_store::Refusal::Twin { .. }),
+            ..
+        } => Ok(false),
+        TxOutcome::NotCommitted {
+            why: Why::Failed(error),
+            ..
+        } if error.kind == io::ErrorKind::IsADirectory => Ok(false),
+        _ => tx_error(outcome).map(|_| true),
+    }
+}
+
+/// A Guide page is one host operation (STEP3 §7, A-K2): a page the host
+/// holds as a fileless draft is saved first, so the Guide meets it as an
+/// existing page and skips it. An asset is [`create_asset_if_absent`].
 fn create_if_absent(
     store: &Store,
     host: &PageHost,
@@ -74,20 +93,7 @@ fn create_if_absent(
         tx
     };
     let Some(page) = store.as_page(&id) else {
-        // An asset: no page, so a plain store transaction with no host fence.
-        let outcome = transaction().commit();
-        return match &outcome {
-            TxOutcome::Committed { .. } => Ok(true),
-            TxOutcome::NotCommitted {
-                why: Why::Conflict { .. } | Why::Refused(tine_store::Refusal::Twin { .. }),
-                ..
-            } => Ok(false),
-            TxOutcome::NotCommitted {
-                why: Why::Failed(error),
-                ..
-            } if error.kind == io::ErrorKind::IsADirectory => Ok(false),
-            _ => tx_error(outcome).map(|_| true),
-        };
+        return create_asset_if_absent(transaction());
     };
     let mut created = false;
     let plan = || match transaction().plan() {

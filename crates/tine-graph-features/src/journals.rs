@@ -802,7 +802,7 @@ pub fn read_journal_file(store: &Store, name: &str) -> io::Result<String> {
 
 /// Trash one top-level journal with a revision guard, retrying an external
 /// conflict four times. Cost O(file bytes) per attempt.
-/// With a host, one host operation deletes the page (DESIGN §3.1); the host
+/// One host operation deletes the page (DESIGN §3.1); the host
 /// keeps the deleted bytes in graph trash. The page's unsaved input is saved
 /// first (`Input::Flush`).
 pub fn trash_journal_file(store: &Store, host: &PageHost, name: &str) -> io::Result<()> {

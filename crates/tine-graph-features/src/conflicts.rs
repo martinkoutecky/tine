@@ -708,14 +708,13 @@ pub fn resolve_sync_conflict(
 /// per the row decisions and trashed recoverably. Unsaved input in either
 /// page is refused as a change on disk would be, so the fold never drops it.
 ///
-/// With a host, one host operation (DESIGN §3.1) planned from the bytes the
+/// One host operation (DESIGN §3.1) planned from the bytes the
 /// fold read: the winner's write, and for a duplicate day the stray's
 /// deletion as a move's source (the winner's new bytes hold the stray's
 /// rows), so a crash between them completes at relaunch rather than leaving
 /// the stray to fold in again. A sync copy is no page (`Store::as_page`), so
 /// it is trashed after the operation applied, guarded by the bytes the fold
-/// read (DESIGN §3.4, post): a copy changed since is kept. With no host, one
-/// transaction under the retained-writer route, as before P3.
+/// read (DESIGN §3.4, post): a copy changed since is kept.
 #[allow(clippy::too_many_arguments)]
 fn fold_pair(
     store: &Store,

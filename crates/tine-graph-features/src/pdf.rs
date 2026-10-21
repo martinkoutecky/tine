@@ -560,7 +560,7 @@ fn sidecar_steps(
     }
 }
 
-/// With a host, the sidecar's own guarded transaction, before the
+/// The sidecar's own guarded transaction, before the
 /// annotation page's host operation (DESIGN §3.4 pre). Assets only.
 fn save_sidecar(
     store: &Store,
@@ -677,7 +677,7 @@ fn annotation_steps(
 /// Duplicate IDs are not rejected. Annotation blocks are removed only for
 /// highlights deleted by this write.
 ///
-/// With a page host (host-only-writer P3, DESIGN §3.1, §3.4): the pages'
+/// Through the page host (host-only-writer P3, DESIGN §3.1, §3.4): the pages'
 /// unsaved input is saved first (`Input::Flush`); then the sidecar, in its
 /// own guarded transaction; then the annotation page, with a migrated
 /// legacy page's deletion, as one host operation planned from the page
@@ -688,10 +688,6 @@ fn annotation_steps(
 /// blocks the next save adds, while a page ahead of its sidecar would
 /// annotate highlights that were never saved. A refused page operation
 /// returns its error with the sidecar saved; a retry merges idempotently.
-/// With no host: sidecar and annotation page are one guarded transaction,
-/// and the legacy page's trash a later best-effort one. Failure can leave
-/// disk differences if undo or publication is incomplete; retain local
-/// edits and inspect disk.
 ///
 /// After the save, crop/legacy-sidecar trash moves are best effort and do
 /// not fail this call; a failed one is reported through `diag_line` and the
