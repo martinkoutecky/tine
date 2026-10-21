@@ -22,6 +22,20 @@ export interface LogbookInfo {
 
 const EMPTY_INFO: LogbookInfo = { seconds: 0, summary: "0s", rows: [] };
 
+/** The marker the previous buffer already had. The clock-in lands right after a
+ *  bare `DOING` (the parser accepts that marker only at the end of the text), so
+ *  the buffer `DOING\n:LOGBOOK:...` reads as markerless to the parser; the next
+ *  keystroke would then look like a fresh `DOING` and clock in a second time
+ *  (GH #741). OG reads the marker off the title line (its marker pattern is
+ *  `^(#+\s+)?(MARKER)?\s?`), so a bare marker line followed by more lines
+ *  counts. */
+function previousMarker(oldRaw: string, format: Format): string | null {
+  const marker = leadingMarker(oldRaw, format);
+  if (marker !== null) return marker;
+  const newline = oldRaw.indexOf("\n");
+  return newline < 0 ? null : leadingMarker(oldRaw.slice(0, newline), format);
+}
+
 export function applyMarkerTransition(
   oldRaw: string,
   nextRaw: string,
@@ -34,7 +48,7 @@ export function applyMarkerTransition(
     return logbook_apply_marker_transition(
       nextRaw,
       format === "org",
-      leadingMarker(oldRaw, format) ?? "",
+      previousMarker(oldRaw, format) ?? "",
       leadingMarker(nextRaw, format) ?? "",
       enabled,
       withSeconds,
