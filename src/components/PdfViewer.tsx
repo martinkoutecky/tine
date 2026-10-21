@@ -26,6 +26,7 @@ import { createPdfHighlightState } from "./pdfHighlightState";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
 import { createPdfTiles, PDF_TILE_PIXEL_BUDGET } from "./pdfTiles";
+import { pdfProbe } from "./pdfProbe";
 import { createWheelZoomAccumulator, highestPriorityPage, PDF_PREFETCH_PAGES, PDF_ZOOM_SETTLE_MS } from "./pdfRenderQueue";
 import { COLOR_RGB, COLOR_RGBA, type PdfTheme } from "./pdfViewerPalette";
 export { PDF_FIND_TEXT_CACHE_BYTES, PDF_FIND_PAGE_TEXT_BYTES, PDF_FIND_MATCH_CAP } from "./pdfFind";
@@ -619,6 +620,7 @@ export function PdfViewer(props: {
     // Reserve immediately, before pdf.js's async render, so concurrent visible
     // page renders see the allocation and cannot all admit the full budget.
     canvasPixels[n] = nextPixels + keptPixels;
+    if (!swap) pdfProbe({ type: "render-start", page: n, scale: s, ratio: dpr, pixels: nextPixels });
     canvas.style.width = "100%";
     canvas.style.height = "100%";
 
@@ -644,6 +646,7 @@ export function PdfViewer(props: {
     try {
       await task.promise;
     } catch (err) {
+      pdfProbe({ type: "render-abort", page: n, scale: s });
       if (tasks[n] === task) delete tasks[n];
       abandon();
       schedulePump();
@@ -654,6 +657,7 @@ export function PdfViewer(props: {
     }
     if (tasks[n] === task) delete tasks[n];
     if (renderGeneration[n] !== generation || layoutGeneration !== layout || scale() !== s) {
+      pdfProbe({ type: "render-abort", page: n, scale: s });
       abandon();
       schedulePump();
       return;
@@ -665,6 +669,7 @@ export function PdfViewer(props: {
       delete pendingCanvas[n];
     }
     canvasPixels[n] = nextPixels;
+    pdfProbe({ type: "render-end", page: n, scale: s, ratio: dpr });
 
     // Canvas is crisp now — the page is usable. Rebuild the (expensive) text
     // layer off the hot path so it doesn't make every zoom step janky.
@@ -826,6 +831,7 @@ export function PdfViewer(props: {
     dropPendingCanvas(n);
     const canvas = pageCanvas(n);
     if (canvas) {
+      pdfProbe({ type: "free", page: n });
       // WebKit may defer freeing a detached canvas's backing store. Resizing to
       // zero releases it synchronously before the DOM node is removed.
       canvas.width = 0;
@@ -893,6 +899,7 @@ export function PdfViewer(props: {
     textBuildScale[n] = atScale;
     const layout = layoutGeneration;
     const container = textLayers[n];
+    pdfProbe({ type: "text-start", page: n, scale: atScale });
     const buildCurrent = () => !disposed && layoutGeneration === layout && textGeneration[n] === generation
       && renderedScale[n] === atScale && textLayers[n] === container;
     let page: pdfjs.PDFPageProxy;
@@ -912,6 +919,7 @@ export function PdfViewer(props: {
         await existing.update({ viewport });
         if (!buildCurrent()) return;
         textScale[n] = atScale;
+        pdfProbe({ type: "text-end", page: n, scale: atScale, update: true });
         return;
       } catch (err) {
         if (!buildCurrent()) return;
@@ -943,6 +951,7 @@ export function PdfViewer(props: {
     if (!buildCurrent()) return;
     textLayerObjs[n] = layer;
     textScale[n] = atScale;
+    pdfProbe({ type: "text-end", page: n, scale: atScale, update: false });
   }
 
   function sizeWrapper(n: number) {
@@ -995,6 +1004,7 @@ export function PdfViewer(props: {
     zoomOrigin = null;
     const anchor = zoomAnchorAt(origin);
     zoomSettling = true;
+    pdfProbe({ type: "zoom-input", page: 0, scale: s });
     highestPriority = null;
     pdfTiles.reset();
     scrollRef.style.setProperty("--scale-factor", String(s));
@@ -1016,6 +1026,7 @@ export function PdfViewer(props: {
 
   function settleZoom() {
     if (!pdfDoc) return;
+    pdfProbe({ type: "zoom-settle", page: 0, scale: scale() });
     zoomSettling = false;
     for (const k of Object.keys(prefetchRefused)) delete prefetchRefused[Number(k)];
     updateCurPage();
