@@ -1,0 +1,437 @@
+//! Autocommit against real repositories (ADR 0078 slice 1, review
+//! `tine-agents/subagent-tasks/notes/review-adr-0078-git.md`).
+
+use super::*;
+use git2::{Repository, Signature};
+use std::fs;
+
+struct Fixture {
+    _dir: tempfile::TempDir,
+    work: PathBuf,
+    repo: Repository,
+}
+
+/// A repository at `work` holding `files`, all committed by the user.
+fn fixture(files: &[(&str, &str)]) -> Fixture {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    fs::create_dir_all(&work).unwrap();
+    let repo = Repository::init(&work).unwrap();
+    {
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Martin").unwrap();
+        config.set_str("user.email", "martin@example.org").unwrap();
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        config.set_bool("core.precomposeunicode", true).unwrap();
+    }
+    for (path, text) in files {
+        write(&work, path, text);
+    }
+    let mut index = repo.index().unwrap();
+    index
+        .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+        .unwrap();
+    index.write().unwrap();
+    let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+    let me = Signature::now("Martin", "martin@example.org").unwrap();
+    repo.commit(Some("HEAD"), &me, &me, "initial", &tree, &[])
+        .unwrap();
+    drop(tree);
+    Fixture {
+        _dir: dir,
+        work,
+        repo,
+    }
+}
+
+fn write(work: &Path, path: &str, text: &str) {
+    let full = work.join(path);
+    fs::create_dir_all(full.parent().unwrap()).unwrap();
+    fs::write(full, text).unwrap();
+}
+
+fn head(repo: &Repository) -> git2::Commit<'_> {
+    repo.head().unwrap().peel_to_commit().unwrap()
+}
+
+fn at_head(repo: &Repository, path: &str) -> Option<String> {
+    let entry = head(repo).tree().unwrap().get_path(Path::new(path)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    Some(String::from_utf8(blob.content().to_vec()).unwrap())
+}
+
+/// `git status` paths that differ, as libgit2 sees them (ignored excluded).
+fn dirty(repo: &Repository) -> Vec<String> {
+    let mut options = StatusOptions::new();
+    options.include_untracked(true).recurse_untracked_dirs(true);
+    let mut out: Vec<String> = repo
+        .statuses(Some(&mut options))
+        .unwrap()
+        .iter()
+        .map(|e| e.path().unwrap().to_string())
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn an_autocommit_records_every_change_under_the_root_and_leaves_the_tree_clean() {
+    let f = fixture(&[("pages/a.md", "- a\n"), ("pages/b.md", "- b\n")]);
+    write(&f.work, "pages/a.md", "- a changed\n");
+    fs::remove_file(f.work.join("pages/b.md")).unwrap();
+    write(&f.work, "pages/c.md", "- new by another editor\n");
+    write(&f.work, "assets/x.png", "png");
+
+    let outcome = commit_now(&f.work, MESSAGE).unwrap();
+    let Outcome::Committed(oid) = outcome else {
+        panic!("{outcome:?}")
+    };
+    let commit = head(&f.repo);
+    assert_eq!(commit.id(), oid);
+    assert_eq!(commit.message().ok(), Some(MESSAGE));
+    assert_eq!(commit.author().email().ok(), Some("martin@example.org"));
+    assert_eq!(commit.parent_count(), 1);
+    assert_eq!(
+        at_head(&f.repo, "pages/a.md").as_deref(),
+        Some("- a changed\n")
+    );
+    assert_eq!(at_head(&f.repo, "pages/b.md"), None);
+    assert_eq!(
+        at_head(&f.repo, "pages/c.md").as_deref(),
+        Some("- new by another editor\n")
+    );
+    assert_eq!(at_head(&f.repo, "assets/x.png").as_deref(), Some("png"));
+    assert_eq!(
+        dirty(&f.repo),
+        Vec::<String>::new(),
+        "index and work tree match HEAD"
+    );
+    assert!(!f.repo.path().join("index.lock").exists());
+
+    assert_eq!(commit_now(&f.work, MESSAGE).unwrap(), Outcome::Clean);
+    assert_eq!(head(&f.repo).id(), oid, "nothing to commit makes no commit");
+}
+
+#[test]
+fn ignored_files_temps_and_nested_repositories_are_left_out() {
+    let f = fixture(&[(".gitignore", "logseq/bak/\n"), ("pages/a.md", "- a\n")]);
+    write(&f.work, "logseq/bak/pages/a.md", "backup");
+    write(&f.work, "pages/.a.md.4242.17.tmp", "half a save");
+    write(&f.work, "pages/.a.md.4242.18new.tmp", "half a save");
+    let nested = f.work.join("vendor/other");
+    fs::create_dir_all(&nested).unwrap();
+    Repository::init(&nested).unwrap();
+    write(&nested, "x.md", "x");
+    write(&f.work, "pages/a.md", "- a2\n");
+
+    commit_now(&f.work, MESSAGE).unwrap();
+    let tree = head(&f.repo).tree().unwrap();
+    assert!(tree.get_path(Path::new("logseq/bak")).is_err());
+    assert!(tree.get_path(Path::new("pages/.a.md.4242.17.tmp")).is_err());
+    assert!(tree
+        .get_path(Path::new("pages/.a.md.4242.18new.tmp"))
+        .is_err());
+    assert!(
+        tree.get_path(Path::new("vendor")).is_err(),
+        "no gitlink for a nested repository"
+    );
+    assert_eq!(at_head(&f.repo, "pages/a.md").as_deref(), Some("- a2\n"));
+}
+
+#[test]
+fn a_graph_inside_a_bigger_repository_commits_only_itself_even_with_glob_characters() {
+    let f = fixture(&[
+        ("Notes [work]/pages/a.md", "- a\n"),
+        ("Notes w/pages/a.md", "- sibling\n"),
+        ("src/main.rs", "fn main() {}\n"),
+    ]);
+    let root = f.work.join("Notes [work]");
+    write(&f.work, "Notes [work]/pages/a.md", "- a2\n");
+    write(&f.work, "Notes w/pages/a.md", "- sibling changed\n");
+    write(&f.work, "src/main.rs", "fn main() { staged }\n");
+    // The user staged a change outside the graph.
+    let mut index = f.repo.index().unwrap();
+    index.add_path(Path::new("src/main.rs")).unwrap();
+    index.write().unwrap();
+    let staged = index.get_path(Path::new("src/main.rs"), 0).unwrap().id;
+
+    commit_now(&root, MESSAGE).unwrap();
+    assert_eq!(
+        at_head(&f.repo, "Notes [work]/pages/a.md").as_deref(),
+        Some("- a2\n")
+    );
+    assert_eq!(
+        at_head(&f.repo, "Notes w/pages/a.md").as_deref(),
+        Some("- sibling\n")
+    );
+    assert_eq!(
+        at_head(&f.repo, "src/main.rs").as_deref(),
+        Some("fn main() {}\n")
+    );
+    let index = f.repo.index().unwrap();
+    assert_eq!(
+        index.get_path(Path::new("src/main.rs"), 0).unwrap().id,
+        staged,
+        "the user's staged change outside the graph stays staged"
+    );
+    assert_eq!(
+        dirty(&f.repo),
+        vec!["Notes w/pages/a.md".to_string(), "src/main.rs".to_string()]
+    );
+}
+
+#[test]
+fn a_held_index_lock_refuses_and_changes_nothing() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    write(&f.work, "pages/a.md", "- a2\n");
+    let lock = f.repo.path().join("index.lock");
+    fs::write(&lock, "someone else's").unwrap();
+    let before = head(&f.repo).id();
+    assert_eq!(commit_now(&f.work, MESSAGE), Err(Unusable::Busy));
+    assert_eq!(head(&f.repo).id(), before);
+    assert_eq!(
+        fs::read_to_string(&lock).unwrap(),
+        "someone else's",
+        "never touched"
+    );
+}
+
+#[test]
+fn a_content_filter_refuses() {
+    let f = fixture(&[
+        (".gitattributes", "*.md filter=crypt\n"),
+        ("pages/a.md", "- a\n"),
+    ]);
+    write(&f.work, "pages/a.md", "- secret\n");
+    let refused = commit_now(&f.work, MESSAGE).unwrap_err();
+    assert_eq!(refused.code(), "conversion", "{refused:?}");
+    assert_eq!(at_head(&f.repo, "pages/a.md").as_deref(), Some("- a\n"));
+}
+
+#[test]
+fn eol_normalisation_does_not_refuse_a_commit() {
+    let f = fixture(&[(".gitattributes", "* text=auto\n"), ("pages/a.md", "- a\n")]);
+    f.repo
+        .config()
+        .unwrap()
+        .set_str("core.autocrlf", "input")
+        .unwrap();
+    write(&f.work, "pages/a.md", "- a2\n");
+    assert!(matches!(
+        commit_now(&f.work, MESSAGE),
+        Ok(Outcome::Committed(_))
+    ));
+    assert_eq!(at_head(&f.repo, "pages/a.md").as_deref(), Some("- a2\n"));
+}
+
+/// Review R7: libgit2 reports a skip-worktree file missing from the work
+/// tree as deleted; committing that would delete it on every device.
+#[test]
+fn skip_worktree_entries_refuse_instead_of_committing_deletions() {
+    let f = fixture(&[("pages/a.md", "- a\n"), ("pages/b.md", "- b\n")]);
+    let mut index = f.repo.index().unwrap();
+    let mut entry = index.get_path(Path::new("pages/b.md"), 0).unwrap();
+    entry.flags |= 0x4000; // extended
+    entry.flags_extended |= 1 << 14; // skip-worktree
+    index.add(&entry).unwrap();
+    index.write().unwrap();
+    fs::remove_file(f.work.join("pages/b.md")).unwrap();
+    write(&f.work, "pages/a.md", "- a2\n");
+    assert_eq!(commit_now(&f.work, MESSAGE), Err(Unusable::Sparse));
+    assert_eq!(at_head(&f.repo, "pages/b.md").as_deref(), Some("- b\n"));
+
+    f.repo
+        .config()
+        .unwrap()
+        .set_bool("core.sparseCheckout", true)
+        .unwrap();
+    assert_eq!(commit_now(&f.work, MESSAGE), Err(Unusable::Sparse));
+}
+
+#[test]
+fn an_untracked_by_the_user_file_is_not_added_back() {
+    let f = fixture(&[("pages/a.md", "- a\n"), ("pages/private.md", "- p\n")]);
+    let mut index = f.repo.index().unwrap();
+    index.remove_path(Path::new("pages/private.md")).unwrap();
+    index.write().unwrap();
+    write(&f.work, "pages/a.md", "- a2\n");
+    commit_now(&f.work, MESSAGE).unwrap();
+    assert_eq!(
+        at_head(&f.repo, "pages/private.md"),
+        None,
+        "the user's `git rm --cached` stands"
+    );
+}
+
+#[test]
+fn not_a_repository_and_a_detached_head_are_named() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        commit_now(dir.path(), MESSAGE),
+        Err(Unusable::NotARepository)
+    );
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    let id = head(&f.repo).id();
+    f.repo.set_head_detached(id).unwrap();
+    assert_eq!(
+        commit_now(&f.work, MESSAGE).unwrap_err().code(),
+        "repository"
+    );
+}
+
+#[test]
+fn a_first_commit_on_an_unborn_branch_works() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = Repository::init(dir.path()).unwrap();
+    {
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Martin").unwrap();
+        config.set_str("user.email", "martin@example.org").unwrap();
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        config.set_bool("core.precomposeunicode", true).unwrap();
+    }
+    write(dir.path(), "pages/a.md", "- a\n");
+    assert!(matches!(
+        commit_now(dir.path(), MESSAGE),
+        Ok(Outcome::Committed(_))
+    ));
+    assert_eq!(head(&repo).parent_count(), 0);
+    assert_eq!(at_head(&repo, "pages/a.md").as_deref(), Some("- a\n"));
+}
+
+/// Review R4: only loose objects the new pack holds are deleted.
+#[test]
+fn repack_deletes_only_packed_loose_objects() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    for n in 0..5 {
+        write(&f.work, "pages/a.md", &format!("- a{n}\n"));
+        commit_now(&f.work, MESSAGE).unwrap();
+    }
+    // Referenced by nothing but the user's index: must survive.
+    let staged_only = f.repo.blob(b"staged only").unwrap();
+    let objects = f.repo.path().join("objects");
+    let before = loose_object_count(&objects);
+    let removed = repack(&f.repo).unwrap();
+    assert!(removed > 0 && removed < before, "{removed} of {before}");
+    let hex = staged_only.to_string();
+    assert!(
+        objects.join(&hex[..2]).join(&hex[2..]).exists(),
+        "an unreachable loose object is never deleted"
+    );
+    // Every reachable object is still readable.
+    let reopened = Repository::open(&f.work).unwrap();
+    assert_eq!(at_head(&reopened, "pages/a.md").as_deref(), Some("- a4\n"));
+    let mut walk = reopened.revwalk().unwrap();
+    walk.push_head().unwrap();
+    assert_eq!(walk.count(), 6);
+    // A second repack with nothing new loose deletes nothing more.
+    assert_eq!(repack(&reopened).unwrap(), 0);
+}
+
+#[test]
+fn repack_waits_for_a_running_git_gc() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    fs::write(f.repo.path().join("gc.pid"), "1 host").unwrap();
+    assert_eq!(repack(&f.repo).unwrap(), 0);
+    assert!(loose_object_count(&f.repo.path().join("objects")) > 0);
+}
+
+#[test]
+fn around_brackets_an_operation_with_two_commits_when_the_graph_autocommits() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    let (worker, _) = registry::get_or_insert(&f.work);
+    worker.state.lock().unwrap().settings = GitSettings {
+        policy: Policy::Commit,
+        interval: minutes(10),
+    };
+    write(&f.work, "pages/a.md", "- pending\n");
+    let before = head(&f.repo).id();
+    let result: Result<(), String> = around(
+        &f.work,
+        || "Rename page \"a\" to \"b\"".into(),
+        || {
+            fs::rename(f.work.join("pages/a.md"), f.work.join("pages/b.md")).unwrap();
+            Ok(())
+        },
+    );
+    result.unwrap();
+    let op = head(&f.repo);
+    assert_eq!(op.message().ok(), Some("Rename page \"a\" to \"b\""));
+    let snapshot = op.parent(0).unwrap();
+    assert_eq!(snapshot.message().ok(), Some(MESSAGE));
+    assert_eq!(snapshot.parent_id(0).unwrap(), before);
+    assert_eq!(
+        at_head(&f.repo, "pages/b.md").as_deref(),
+        Some("- pending\n")
+    );
+
+    // A failed operation leaves only the first commit.
+    write(&f.work, "pages/b.md", "- more\n");
+    let failed: Result<(), String> = around(
+        &f.work,
+        || "Delete page \"b\"".into(),
+        || Err("refused".into()),
+    );
+    assert!(failed.is_err());
+    assert_eq!(head(&f.repo).message().ok(), Some(MESSAGE));
+    registry::remove(&worker);
+
+    // Off: no commits at all.
+    write(&f.work, "pages/b.md", "- off\n");
+    let tip = head(&f.repo).id();
+    let _: Result<(), String> = around(&f.work, || "x".into(), || Ok(()));
+    assert_eq!(head(&f.repo).id(), tip);
+}
+
+#[test]
+fn settings_round_trip_through_the_device_settings_json() {
+    let root = Path::new("/graphs/Notes");
+    let mut json = serde_json::json!({"backup_keep": 7});
+    assert_eq!(settings_from_json(&json, root), GitSettings::default());
+    settings_into_json(
+        &mut json,
+        root,
+        GitSettings {
+            policy: Policy::Commit,
+            interval: minutes(25),
+        },
+    );
+    assert_eq!(json["backup_keep"], 7);
+    let read = settings_from_json(&json, root);
+    assert_eq!((read.policy, read.interval), (Policy::Commit, minutes(25)));
+    json[SETTINGS_KEY][settings_key(root)]["interval_minutes"] = serde_json::json!(0);
+    assert_eq!(
+        settings_from_json(&json, root).interval,
+        minutes(1),
+        "clamped"
+    );
+    json[SETTINGS_KEY][settings_key(root)]["policy"] = serde_json::json!("sync-everything");
+    assert_eq!(
+        settings_from_json(&json, root).policy,
+        Policy::Off,
+        "unknown reads as Off"
+    );
+}
+
+#[test]
+fn tine_temp_matches_only_the_atomic_save_shape() {
+    assert!(tine_temp("pages/.a.md.123.4.tmp"));
+    assert!(tine_temp(".config.edn.9.10new.tmp"));
+    assert!(!tine_temp("pages/a.md"));
+    assert!(!tine_temp("pages/notes.tmp"));
+    assert!(!tine_temp("pages/.hidden.tmp"));
+    assert!(!tine_temp("pages/a.x.y.tmp"));
+}
+
+#[test]
+fn a_crash_left_index_copy_is_removed_but_not_a_held_lock() {
+    let f = fixture(&[("pages/a.md", "- a\n")]);
+    let gitdir = f.repo.path();
+    fs::write(gitdir.join("tine-index-abc.tmp"), "x").unwrap();
+    fs::write(gitdir.join("tine-index-abc.tmp.lock"), "x").unwrap();
+    fs::write(gitdir.join("index.lock"), "x").unwrap();
+    remove_stale_copies(gitdir);
+    assert!(!gitdir.join("tine-index-abc.tmp").exists());
+    assert!(!gitdir.join("tine-index-abc.tmp.lock").exists());
+    assert!(gitdir.join("index.lock").exists());
+}

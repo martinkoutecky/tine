@@ -564,16 +564,26 @@ pub(crate) async fn rename_page(
         // A rename is the page host's (STEP3 §7): a revoked slot is the
         // stale-binding refusal, an off one refuses with no write. One
         // statement-temporary guard (A-K3, `host_slot_guard_tests.rs`).
-        tine_graph_features::pages::rename_or_merge_page(
-            &slot.store,
-            slot.host_slot()?.running().ok_or("no page host")?,
-            &old,
-            &new,
-            expected_path.as_deref(),
-            merge_into.as_deref(),
-            unsaved_paths.as_deref().unwrap_or_default(),
+        // On a git graph that autocommits, bracketed by commits (ADR 0078).
+        crate::git_settings::around(
+            &slot.root_key,
+            || match &merge_into {
+                Some(_) => format!("Merge page \"{old}\" into \"{new}\""),
+                None => format!("Rename page \"{old}\" to \"{new}\""),
+            },
+            || {
+                tine_graph_features::pages::rename_or_merge_page(
+                    &slot.store,
+                    slot.host_slot()?.running().ok_or("no page host")?,
+                    &old,
+                    &new,
+                    expected_path.as_deref(),
+                    merge_into.as_deref(),
+                    unsaved_paths.as_deref().unwrap_or_default(),
+                )
+                .map_err(|e| e.to_string())
+            },
         )
-        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2194,13 +2204,19 @@ pub(crate) async fn merge_pages(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::merge_pages(
-            &slot.store,
-            slot.host_slot()?.running(),
-            &src,
-            &dst,
+        crate::git_settings::around(
+            &slot.root_key,
+            || format!("Merge \"{src}\" into \"{dst}\""),
+            || {
+                tine_graph_features::pages::merge_pages(
+                    &slot.store,
+                    slot.host_slot()?.running(),
+                    &src,
+                    &dst,
+                )
+                .map_err(graph_write_error_to_wire)
+            },
         )
-        .map_err(graph_write_error_to_wire)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2237,13 +2253,19 @@ pub(crate) async fn rename_file_to_page(
 ) -> Result<(), String> {
     let slot = slot_for_context(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
-        tine_graph_features::pages::rename_file_to_page(
-            &slot.store,
-            slot.host_slot()?.running(),
-            &path,
-            &new_name,
+        crate::git_settings::around(
+            &slot.root_key,
+            || format!("Rename \"{path}\" to page \"{new_name}\""),
+            || {
+                tine_graph_features::pages::rename_file_to_page(
+                    &slot.store,
+                    slot.host_slot()?.running(),
+                    &path,
+                    &new_name,
+                )
+                .map_err(|error| error.to_string())
+            },
         )
-        .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?

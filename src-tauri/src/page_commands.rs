@@ -178,17 +178,23 @@ pub(crate) async fn page_delete(
 ) -> Result<PageOperation, String> {
     let slot = slot_for_context(&ctx)?;
     off_ui(move || {
-        with_host(&slot, |host| {
-            tine_graph_features::pages::delete_page_expected(
-                &slot.store,
-                host,
-                session,
-                &name,
-                kind,
-                expected_path.as_deref(),
-            )
-            .map_err(|error| error.to_string())
-        })?
+        crate::git_settings::around(
+            &slot.root_key,
+            || format!("Delete page \"{name}\""),
+            || {
+                with_host(&slot, |host| {
+                    tine_graph_features::pages::delete_page_expected(
+                        &slot.store,
+                        host,
+                        session,
+                        &name,
+                        kind,
+                        expected_path.as_deref(),
+                    )
+                    .map_err(|error| error.to_string())
+                })?
+            },
+        )
     })
     .await
 }
