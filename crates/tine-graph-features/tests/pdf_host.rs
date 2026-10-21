@@ -1,8 +1,7 @@
 //! W5 `write_highlights` with a page host (host-only-writer P3, DESIGN §3.1,
 //! §3.4, §3.7). The sidecar EDN is written first, then the annotation page
 //! (and a migrated legacy page's deletion) as one host operation. With no
-//! unsaved input the graph's bytes and the result equal the plain writer's;
-//! the page the writer actually writes, under any spelling, is the host's to
+//! unsaved input the writer makes exactly its changes; the page the writer actually writes, under any spelling, is the host's to
 //! admit; and a page that changes after the plan is never overwritten.
 
 use std::collections::BTreeMap;
@@ -101,40 +100,53 @@ fn page(pdf: &str, ids: &[(&str, &str)]) -> String {
     page
 }
 
-/// Run `write` on two copies of one graph, without and with a running host;
-/// the result and the bytes on disk are the same.
-fn same_with_a_host(
-    label: &str,
+/// Run `write` through a running host on a fresh copy of one graph; its
+/// result and the graph's changes: each path whose bytes it changed, with
+/// the new text (`None`: removed).
+fn changes_with_a_host(
     files: &[(&str, &str)],
-    write: impl Fn(&Store, Option<&PageHost>, &Path) -> std::io::Result<Vec<Highlight>>,
-) -> String {
-    let (_plain_dir, plain) = graph(files);
-    let (_hosted_dir, hosted) = graph(files);
+    write: impl Fn(&Store, &PageHost, &Path) -> std::io::Result<Vec<Highlight>>,
+) -> (String, BTreeMap<String, Option<String>>) {
+    let (_dir, root) = graph(files);
+    let original = tree(&root);
     let app_data = tempfile::tempdir().unwrap();
-    let store = open(&plain);
-    let expected = format!("{:?}", write(&store, None, &plain));
-    store.close();
-    let store = open(&hosted);
+    let store = open(&root);
     let host = PageHost::start_for_tests(&store, app_data.path()).unwrap();
-    let got = format!("{:?}", write(&store, Some(&host), &hosted));
+    let result = format!("{:?}", write(&store, &host, &root));
     drop(host);
     store.close();
-    assert_eq!(got, expected, "{label}: the result changed under a host");
-    assert_eq!(
-        tree(&hosted),
-        tree(&plain),
-        "{label}: the bytes changed under a host"
-    );
-    expected
+    let after = tree(&root);
+    let mut changes = BTreeMap::new();
+    for (rel, bytes) in &after {
+        if original.get(rel) != Some(bytes) {
+            changes.insert(
+                rel.clone(),
+                Some(String::from_utf8_lossy(bytes).into_owned()),
+            );
+        }
+    }
+    for rel in original.keys().filter(|rel| !after.contains_key(*rel)) {
+        changes.insert(rel.clone(), None);
+    }
+    (result, changes)
 }
 
-/// The writer's outcomes with a host equal the plain writer's: an addition
-/// and a recolour on a page with the user's notes, a deleted area highlight
-/// whose crop is retired, a migration from the legacy key (its sidecar
-/// retired, its page's text carried to the new name and the old page
-/// deleted), and a non-round-tripping Org page refused with nothing written.
+/// The changed paths, each with whether it still exists.
+fn changed(changes: &BTreeMap<String, Option<String>>) -> Vec<(&str, bool)> {
+    changes
+        .iter()
+        .map(|(rel, text)| (rel.as_str(), text.is_some()))
+        .collect()
+}
+
+/// The writer's outcomes with a host (pinned to the deleted no-host
+/// writer's, host-only-writer S1): an addition and a recolour on a page with
+/// the user's notes, a deleted area highlight whose crop is retired, a
+/// migration from the legacy key (its sidecar retired, its page's text
+/// carried to the new name and the old page deleted), and a
+/// non-round-tripping Org page refused with nothing written.
 #[test]
-fn highlight_writes_with_a_host_equal_the_plain_writer() {
+fn highlight_writes_with_a_host_write_their_changes() {
     let _integration_guard = crate::integration_lock();
     let paper = [
         ("assets/paper.edn", sidecar(&[(A, "aye")])),
@@ -142,11 +154,22 @@ fn highlight_writes_with_a_host_equal_the_plain_writer() {
     ];
     let paper: Vec<(&str, &str)> = paper.iter().map(|(r, t)| (*r, t.as_str())).collect();
     let loaded = vec![highlight(A, "yellow", None)];
-    let result = same_with_a_host("add", &paper, |store, host, _root| {
+    let (result, changes) = changes_with_a_host(&paper, |store, host, _root| {
         let next = vec![highlight(A, "red", None), highlight(B, "yellow", None)];
         features_pdf::write_highlights(store, host, "paper.pdf", "Paper", &next, &loaded)
     });
     assert!(result.starts_with("Ok"), "{result}");
+    assert_eq!(
+        changed(&changes),
+        [("assets/paper.edn", true), ("pages/hls__paper.md", true)]
+    );
+    let written = changes["pages/hls__paper.md"].as_deref().unwrap();
+    assert!(
+        written.contains("hl-color:: red")
+            && written.contains("my note on aye")
+            && written.contains(B),
+        "{written}"
+    );
 
     let crop = "assets/paper/1_".to_owned() + C + "_42.png";
     let area = highlight(C, "yellow", Some(42));
@@ -158,7 +181,7 @@ fn highlight_writes_with_a_host_equal_the_plain_writer() {
         ("pages/hls__paper.md", page("paper.pdf", &[])),
     ];
     let with_area: Vec<(&str, &str)> = with_area.iter().map(|(r, t)| (*r, t.as_str())).collect();
-    let result = same_with_a_host("crop", &with_area, |store, host, root| {
+    let (result, changes) = changes_with_a_host(&with_area, |store, host, root| {
         fs::create_dir_all(root.join("assets/paper")).unwrap();
         fs::write(root.join(&crop), b"png").unwrap();
         let written = features_pdf::write_highlights(
@@ -172,7 +195,14 @@ fn highlight_writes_with_a_host_equal_the_plain_writer() {
         assert!(!root.join(&crop).exists(), "the crop is retired");
         written
     });
-    assert!(result.starts_with("Ok"), "{result}");
+    assert_eq!(result, "Ok([])");
+    assert_eq!(
+        changes,
+        BTreeMap::from([(
+            "assets/paper.edn".to_owned(),
+            Some("{:highlights [] :extra {}}\n".to_owned())
+        )])
+    );
 
     let legacy = [
         ("assets/my_paper.edn", sidecar(&[(A, "aye")])),
@@ -182,7 +212,7 @@ fn highlight_writes_with_a_host_equal_the_plain_writer() {
         ),
     ];
     let legacy: Vec<(&str, &str)> = legacy.iter().map(|(r, t)| (*r, t.as_str())).collect();
-    let result = same_with_a_host("legacy", &legacy, |store, host, root| {
+    let (result, changes) = changes_with_a_host(&legacy, |store, host, root| {
         let loaded = features_pdf::read_highlights_checked(store, "My Paper.pdf").unwrap();
         let mut next = loaded.clone();
         next.push(highlight(B, "yellow", None));
@@ -198,13 +228,23 @@ fn highlight_writes_with_a_host_equal_the_plain_writer() {
         written
     });
     assert!(result.starts_with("Ok"), "{result}");
+    assert_eq!(
+        changed(&changes),
+        [
+            ("assets/My Paper.edn", true),
+            ("assets/my_paper.edn", false),
+            ("pages/hls__My Paper.md", true),
+            ("pages/hls__my_paper.md", false),
+        ]
+    );
 
     let org = [("pages/hls__paper.org", "* a\n*** skipped level\n")];
-    let result = same_with_a_host("org", &org, |store, host, _root| {
+    let (result, changes) = changes_with_a_host(&org, |store, host, _root| {
         let next = vec![highlight(A, "yellow", None)];
         features_pdf::write_highlights(store, host, "paper.pdf", "Paper", &next, &[])
     });
     assert!(result.contains("PermissionDenied"), "{result}");
+    assert!(changes.is_empty(), "{changes:#?}");
 }
 
 /// Hold `held` under another reservation while `write` runs on another
@@ -263,7 +303,7 @@ fn the_annotation_page_under_its_encoded_name_is_admitted_by_the_host() {
         &host,
         &root,
         ENCODED,
-        || features_pdf::write_highlights(&store, Some(&host), "half%.pdf", "Half", &next, &[]),
+        || features_pdf::write_highlights(&store, &host, "half%.pdf", "Half", &next, &[]),
         || {},
     );
     let written = fs::read_to_string(root.join(ENCODED)).unwrap();
@@ -293,21 +333,21 @@ fn a_page_replan_merges_the_other_savers_sidecar_again() {
         &host,
         &root,
         ENCODED,
-        || {
-            features_pdf::write_highlights(
-                &store,
-                Some(&host),
-                "half%.pdf",
-                "Half",
-                &loaded,
-                &loaded,
-            )
-        },
+        || features_pdf::write_highlights(&store, &host, "half%.pdf", "Half", &loaded, &loaded),
         || {
             let other = open(&root);
+            let other_host = crate::test_host(&other);
             let blue = vec![highlight(A, "blue", None)];
-            features_pdf::write_highlights(&other, None, "half%.pdf", "Half", &blue, &loaded)
-                .unwrap();
+            features_pdf::write_highlights(
+                &other,
+                &other_host,
+                "half%.pdf",
+                "Half",
+                &blue,
+                &loaded,
+            )
+            .unwrap();
+            drop(other_host);
             other.close();
         },
     );
@@ -321,14 +361,14 @@ fn a_page_replan_merges_the_other_savers_sidecar_again() {
 }
 
 /// A second highlight save to a PDF whose annotation page has an encoded
-/// file name updates that page, with and without a host. The page is found
+/// file name updates that page. The page is found
 /// under its encoded name only by resolving the page name, and the writer
 /// used to drop its text there, so it planned a creation over the existing
 /// file and every save after the first failed.
 #[test]
 fn a_second_highlight_save_to_an_encoded_annotation_page_succeeds() {
     let _integration_guard = crate::integration_lock();
-    let result = same_with_a_host("second save", &[], |store, host, root| {
+    let (result, changes) = changes_with_a_host(&[], |store, host, root| {
         let first = vec![highlight(A, "yellow", None)];
         features_pdf::write_highlights(store, host, "half%.pdf", "Half", &first, &[])
             .expect("the first save creates the page");
@@ -347,6 +387,10 @@ fn a_second_highlight_save_to_an_encoded_annotation_page_succeeds() {
         written
     });
     assert!(result.starts_with("Ok"), "{result}");
+    assert_eq!(
+        changed(&changes),
+        [("assets/half%.edn", true), ("pages/hls__half%25.md", true)]
+    );
 }
 
 /// The same page open in the window before it has a file (the host holds
@@ -364,8 +408,7 @@ fn a_first_highlight_save_with_its_encoded_annotation_page_open_succeeds() {
     host.open(session, id, &PageId::from(ENCODED), "hls__half%")
         .unwrap();
     let next = vec![highlight(A, "yellow", None)];
-    let saved =
-        features_pdf::write_highlights(&store, Some(&host), "half%.pdf", "Half", &next, &[]);
+    let saved = features_pdf::write_highlights(&store, &host, "half%.pdf", "Half", &next, &[]);
     assert_eq!(saved.map_err(|error| error.to_string()), Ok(next));
     let written = fs::read_to_string(root.join(ENCODED)).unwrap();
     assert!(written.contains(A), "{written}");
@@ -395,16 +438,7 @@ fn an_annotation_page_changed_after_the_plan_is_not_overwritten() {
         &host,
         &root,
         held,
-        || {
-            features_pdf::write_highlights(
-                &store,
-                Some(&host),
-                "paper.pdf",
-                "Paper",
-                &next,
-                &loaded,
-            )
-        },
+        || features_pdf::write_highlights(&store, &host, "paper.pdf", "Paper", &next, &loaded),
         || {
             // `while_held`'s timeout only proves the writer has not returned;
             // under load it may not have reached the sidecar save yet.

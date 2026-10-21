@@ -130,7 +130,7 @@ fn a_merge_over_a_running_renames_destination_waits_until_the_order_ends() {
     std::thread::scope(|scope| {
         let (done, merged) = mpsc::channel();
         scope.spawn(move || {
-            let result = pages::merge_pages(store, Some(host), "pages/y.md", "pages/z.md");
+            let result = pages::merge_pages(store, host, "pages/y.md", "pages/z.md");
             let _ = done.send(result.map_err(|error| error.to_string()));
         });
         assert_eq!(
@@ -140,7 +140,7 @@ fn a_merge_over_a_running_renames_destination_waits_until_the_order_ends() {
         );
         assert!(root.join("pages/y.md").exists());
         assert_eq!(read(&root, "pages/z.md"), "- z\n");
-        pages::merge_pages(store, Some(host), "pages/a.md", "pages/b.md")
+        pages::merge_pages(store, host, "pages/a.md", "pages/b.md")
             .expect("an unrelated writer stays available");
         assert!(!root.join("pages/a.md").exists());
 
@@ -177,10 +177,10 @@ fn a_merge_over_a_conflicted_running_rename_is_told_busy_after_the_bound() {
         let (done, merged) = mpsc::channel();
         let started = Instant::now();
         scope.spawn(move || {
-            let result = pages::merge_pages(store, Some(host), "pages/y.md", "pages/z.md");
+            let result = pages::merge_pages(store, host, "pages/y.md", "pages/z.md");
             let _ = done.send(result.map_err(|error| (error.kind(), error.to_string())));
         });
-        pages::merge_pages(store, Some(host), "pages/a.md", "pages/b.md")
+        pages::merge_pages(store, host, "pages/a.md", "pages/b.md")
             .expect("an unrelated writer stays available");
         let outcome =
             merged.recv_timeout(tine_store::host_faults::OPERATION_WAIT + Duration::from_secs(5));
@@ -212,7 +212,7 @@ fn a_merge_over_a_conflicted_running_rename_is_told_busy_after_the_bound() {
     assert!(root.join("pages/x.md").exists(), "the order still runs");
     take_disk_for_two(&f);
     until("the order ends", || !root.join("pages/x.md").exists());
-    pages::merge_pages(store, Some(host), "pages/y.md", "pages/z.md")
+    pages::merge_pages(store, host, "pages/y.md", "pages/z.md")
         .expect("nothing stayed reserved: the merge runs once the order ends");
     assert!(!root.join("pages/y.md").exists());
 }

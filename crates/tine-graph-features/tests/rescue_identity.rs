@@ -34,9 +34,10 @@ fn graph(tag: &str) -> PathBuf {
 fn assert_rescue_refused(root: &PathBuf, incumbent: &str, stray: &str, name: &str, absent: &str) {
     let incumbent_bytes = fs::read(root.join(incumbent)).unwrap();
     let stray_bytes = fs::read(root.join(stray)).unwrap();
-    let store = Store::open(root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
     let _ = store.whole_graph().unwrap();
-    let error = pages::rename_file_to_page(&store, None, stray, name).unwrap_err();
+    let error = pages::rename_file_to_page(&store, &host, stray, name).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{error}");
     assert_eq!(fs::read(root.join(incumbent)).unwrap(), incumbent_bytes);
     assert_eq!(fs::read(root.join(stray)).unwrap(), stray_bytes);
@@ -44,6 +45,7 @@ fn assert_rescue_refused(root: &PathBuf, incumbent: &str, stray: &str, name: &st
         !root.join(absent).exists(),
         "a second claimant was published"
     );
+    drop(host);
     store.close();
     let _ = fs::remove_dir_all(root);
 }
@@ -118,12 +120,14 @@ fn a_legacy_filename_for_another_name_does_not_block_a_rescue() {
     let root = graph("unrelated");
     fs::write(root.join("pages/A:B.md"), "- legacy page\n").unwrap();
     fs::write(root.join("journals/Loose.md"), "- loose journal stray\n").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
     let _ = store.whole_graph().unwrap();
-    pages::rename_file_to_page(&store, None, "journals/Loose.md", "A:C").unwrap();
+    pages::rename_file_to_page(&store, &host, "journals/Loose.md", "A:C").unwrap();
     assert!(root.join("pages/A%3AC.md").exists());
     assert!(!root.join("journals/Loose.md").exists());
     assert!(root.join("pages/A:B.md").exists());
+    drop(host);
     store.close();
     let _ = fs::remove_dir_all(&root);
 }

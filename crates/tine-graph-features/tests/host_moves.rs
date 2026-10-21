@@ -100,7 +100,7 @@ fn a_rescue_with_a_host_moves_the_file_unchanged() {
         ("journals/Loose.md", "- loose\n"),
         ("pages/Taken.md", "- taken\n"),
     ]);
-    pages::rename_file_to_page(&f.store, Some(&f.host), "journals/Loose.md", "Rescued").unwrap();
+    pages::rename_file_to_page(&f.store, &f.host, "journals/Loose.md", "Rescued").unwrap();
     assert_eq!(
         files(&f.root, "pages"),
         [
@@ -112,8 +112,8 @@ fn a_rescue_with_a_host_moves_the_file_unchanged() {
     // A name another page owns refuses and moves nothing.
     fs::write(f.root.join("journals/Other.md"), "- other\n").unwrap();
     f.store.refresh(tine_store::Depth::Stamps).unwrap();
-    let refused = pages::rename_file_to_page(&f.store, Some(&f.host), "journals/Other.md", "Taken")
-        .unwrap_err();
+    let refused =
+        pages::rename_file_to_page(&f.store, &f.host, "journals/Other.md", "Taken").unwrap_err();
     assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists, "{refused}");
     assert_eq!(
         fs::read_to_string(f.root.join("pages/Taken.md")).unwrap(),
@@ -148,7 +148,7 @@ fn a_non_page_rescue_is_published_by_the_host() {
         |_| {},
     )
     .unwrap();
-    pages::rename_file_to_page(&f.store, Some(&host), src, "Rescued").unwrap();
+    pages::rename_file_to_page(&f.store, &host, src, "Rescued").unwrap();
     let (page, kinds) = received
         .recv_timeout(Duration::from_secs(2))
         .expect("the destination must publish through the host");
@@ -162,23 +162,20 @@ fn a_non_page_rescue_is_published_by_the_host() {
 }
 
 #[test]
-fn a_non_page_rescue_preserves_invalid_utf8_with_and_without_a_host() {
+fn a_non_page_rescue_preserves_invalid_utf8() {
     let _integration_guard = crate::integration_lock();
     let src = "pages/A.sync-conflict-20261012-000000-DEVICE.md";
     let bytes = b"- imported \xff\n";
-    for hosted_path in [false, true] {
-        let f = hosted(&[]);
-        fs::write(f.root.join(src), bytes).unwrap();
-        f.store.refresh(tine_store::Depth::Bytes).unwrap();
-        assert!(f
-            .store
-            .as_page(&tine_store::FileId::from(src.to_owned()))
-            .is_none());
-        pages::rename_file_to_page(&f.store, hosted_path.then_some(&f.host), src, "Rescued")
-            .unwrap();
-        assert_eq!(fs::read(f.root.join("pages/Rescued.md")).unwrap(), bytes);
-        assert!(!f.root.join(src).exists());
-    }
+    let f = hosted(&[]);
+    fs::write(f.root.join(src), bytes).unwrap();
+    f.store.refresh(tine_store::Depth::Bytes).unwrap();
+    assert!(f
+        .store
+        .as_page(&tine_store::FileId::from(src.to_owned()))
+        .is_none());
+    pages::rename_file_to_page(&f.store, &f.host, src, "Rescued").unwrap();
+    assert_eq!(fs::read(f.root.join("pages/Rescued.md")).unwrap(), bytes);
+    assert!(!f.root.join(src).exists());
 }
 
 #[test]
@@ -186,7 +183,7 @@ fn a_rescue_planned_before_an_external_edit_moves_the_edited_bytes() {
     let _integration_guard = crate::integration_lock();
     let f = hosted(&[("journals/Loose.md", "- planned\n")]);
     edited_between_plan_and_admission(&f, "journals/Loose.md", "- edited\n", |store, host| {
-        pages::rename_file_to_page(store, Some(host), "journals/Loose.md", "Rescued")
+        pages::rename_file_to_page(store, host, "journals/Loose.md", "Rescued")
     })
     .unwrap();
     assert_eq!(
@@ -206,7 +203,7 @@ fn a_journal_migration_with_a_host_moves_each_file_unchanged() {
     ]);
     let listed = journals::journal_filename_migrations(&f.store).unwrap();
     assert_eq!(listed.len(), 2, "{listed:?}");
-    let result = journals::migrate_journal_filenames(&f.store, Some(&f.host), &listed).unwrap();
+    let result = journals::migrate_journal_filenames(&f.store, &f.host, &listed).unwrap();
     assert_eq!(
         (result.migrated, result.skipped.len()),
         (2, 0),
@@ -231,7 +228,7 @@ fn a_journal_migration_planned_before_an_external_edit_moves_the_edited_bytes() 
         "journals/Jun 19th, 2026.md",
         "- edited\n",
         |store, host| {
-            let result = journals::migrate_journal_filenames(store, Some(host), &listed)?;
+            let result = journals::migrate_journal_filenames(store, host, &listed)?;
             assert_eq!(result.migrated, 1, "{:?}", result.skipped);
             Ok(())
         },
@@ -253,7 +250,7 @@ fn a_journal_target_that_appears_after_the_listing_is_never_overwritten() {
     let listed = journals::journal_filename_migrations(&f.store).unwrap();
     assert_eq!(listed.len(), 1, "{listed:?}");
     fs::write(f.root.join("journals/2026_06_19.md"), "- delivered\n").unwrap();
-    let result = journals::migrate_journal_filenames(&f.store, Some(&f.host), &listed).unwrap();
+    let result = journals::migrate_journal_filenames(&f.store, &f.host, &listed).unwrap();
     assert_eq!(result.migrated, 0);
     let skipped: Vec<&str> = result.skipped.iter().map(|s| s.file.as_str()).collect();
     assert_eq!(skipped, ["Jun 19th, 2026.md"], "{result:?}");

@@ -64,7 +64,7 @@ fn with_a_host_the_guide_copy_creates_absent_pages_and_skips_existing_ones() {
     let _integration_guard = crate::integration_lock();
     let (name, rel) = first_copy();
     let g = hosted(&[(&rel, "- mine\n")]);
-    let copied = guide::copy_guide_into_graph(&g.store, Some(&g.host), "Tine Guide").unwrap();
+    let copied = guide::copy_guide_into_graph(&g.store, &g.host, "Tine Guide").unwrap();
     assert_eq!(copied.skipped_pages, [name]);
     assert_eq!(
         copied.created_pages.len() + 1,
@@ -84,7 +84,7 @@ fn with_a_host_the_guide_copy_creates_absent_pages_and_skips_existing_ones() {
         );
         assert!(!text.is_empty(), "{created} is empty");
     }
-    let again = guide::copy_guide_into_graph(&g.store, Some(&g.host), "Tine Guide").unwrap();
+    let again = guide::copy_guide_into_graph(&g.store, &g.host, "Tine Guide").unwrap();
     assert!(again.created_pages.is_empty(), "{again:?}");
     assert!(!again.created, "{again:?}");
     assert_eq!(
@@ -112,7 +112,7 @@ fn a_guide_page_that_appears_after_the_plan_is_never_overwritten() {
         let (done, finished) = mpsc::channel();
         let (store, host) = (&*g.store, &g.host);
         scope.spawn(move || {
-            let copied = guide::copy_guide_into_graph(store, Some(host), "Tine Guide");
+            let copied = guide::copy_guide_into_graph(store, host, "Tine Guide");
             done.send(copied.map_err(|error| error.to_string()))
                 .unwrap();
         });
@@ -144,7 +144,7 @@ fn with_a_host_a_swapped_pages_folder_refuses_the_copy() {
     let outside = tempfile::tempdir().unwrap();
     fs::remove_dir(g.root.join("pages")).unwrap();
     std::os::unix::fs::symlink(outside.path(), g.root.join("pages")).unwrap();
-    let copied = guide::copy_guide_into_graph(&g.store, Some(&g.host), "Tine Guide");
+    let copied = guide::copy_guide_into_graph(&g.store, &g.host, "Tine Guide");
     assert!(copied.is_err(), "{copied:?}");
     assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
 }
@@ -158,7 +158,7 @@ fn with_a_host_a_folder_at_a_guide_page_path_is_skipped() {
     let (name, rel) = first_copy();
     let g = hosted(&[]);
     fs::create_dir(g.root.join(&rel)).unwrap();
-    let copied = guide::copy_guide_into_graph(&g.store, Some(&g.host), "Tine Guide").unwrap();
+    let copied = guide::copy_guide_into_graph(&g.store, &g.host, "Tine Guide").unwrap();
     assert!(copied.skipped_pages.contains(&name), "{copied:?}");
     assert!(g.root.join(&rel).is_dir());
 }
@@ -167,24 +167,21 @@ fn with_a_host_a_folder_at_a_guide_page_path_is_skipped() {
 /// name. The hosted copy must preserve the transaction's refusal and leave
 /// every destination absent.
 #[test]
-fn an_unreadable_owner_refuses_the_guide_copy_with_and_without_a_host() {
+fn an_unreadable_owner_refuses_the_guide_copy() {
     let _integration_guard = crate::integration_lock();
     let (name, rel) = first_copy();
-    for running in [false, true] {
-        let g = hosted(&[]);
-        let mut owner = format!("title:: {name}\n").into_bytes();
-        owner.extend_from_slice(b"broken:: \xff\n\n- imported\n");
-        fs::write(g.root.join("pages/Other.md"), &owner).unwrap();
-        g.store.refresh(tine_store::Depth::Bytes).unwrap();
-        g.store.whole_graph().unwrap();
-        let copied =
-            guide::copy_guide_into_graph(&g.store, running.then_some(&g.host), "Tine Guide");
-        assert!(copied.is_err(), "host={running}: {copied:?}");
-        assert_eq!(copied.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
-        assert!(!g.root.join(&rel).exists(), "host={running}: created {rel}");
-        assert_eq!(fs::read(g.root.join("pages/Other.md")).unwrap(), owner);
-        assert_eq!(fs::read_dir(g.root.join("pages")).unwrap().count(), 1);
-    }
+    let g = hosted(&[]);
+    let mut owner = format!("title:: {name}\n").into_bytes();
+    owner.extend_from_slice(b"broken:: \xff\n\n- imported\n");
+    fs::write(g.root.join("pages/Other.md"), &owner).unwrap();
+    g.store.refresh(tine_store::Depth::Bytes).unwrap();
+    g.store.whole_graph().unwrap();
+    let copied = guide::copy_guide_into_graph(&g.store, &g.host, "Tine Guide");
+    assert!(copied.is_err(), "{copied:?}");
+    assert_eq!(copied.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+    assert!(!g.root.join(&rel).exists(), "created {rel}");
+    assert_eq!(fs::read(g.root.join("pages/Other.md")).unwrap(), owner);
+    assert_eq!(fs::read_dir(g.root.join("pages")).unwrap().count(), 1);
 }
 
 /// P3 review #3, DESIGN §3.1c C3: a twin delivered after planning must
@@ -204,7 +201,7 @@ fn a_guide_twin_that_arrives_after_the_plan_is_reported_skipped() {
         let (done, finished) = mpsc::channel();
         let (store, host) = (&*g.store, &g.host);
         scope.spawn(move || {
-            let copied = guide::copy_guide_into_graph(store, Some(host), "Tine Guide");
+            let copied = guide::copy_guide_into_graph(store, host, "Tine Guide");
             done.send(copied.map_err(|error| error.to_string()))
                 .unwrap();
         });

@@ -124,7 +124,9 @@ fn merge_keeps_a_fenced_preamble_line_inside_its_fence() {
                 ],
             );
             if plain {
-                pages::merge_pages(&store, None, "pages/Old.md", "pages/New.md").unwrap();
+                hosted(&store, |host| {
+                    pages::merge_pages(&store, host, "pages/Old.md", "pages/New.md").unwrap()
+                });
             } else {
                 hosted(&store, |host| {
                     pages::rename_or_merge_page(

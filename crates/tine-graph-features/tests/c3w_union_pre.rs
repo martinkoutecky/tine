@@ -41,7 +41,8 @@ fn resolve_union(ext: &str, winner: &str, copy: &str) -> (std::io::Result<()>, S
     let conf = format!("pages/A.sync-conflict-20260929-101010-ABCDEFG.{ext}");
     fs::write(root.join(&win), winner).unwrap();
     fs::write(root.join(&conf), copy).unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
     let diff = conflicts::sync_conflict_diff(&store, &win, &conf, &[])
         .unwrap()
         .unwrap();
@@ -50,7 +51,7 @@ fn resolve_union(ext: &str, winner: &str, copy: &str) -> (std::io::Result<()>, S
     all_rows(&diff.rows, &mut decisions);
     let result = conflicts::resolve_sync_conflict(
         &store,
-        None,
+        &host,
         &win,
         &conf,
         &decisions,
@@ -66,6 +67,7 @@ fn resolve_union(ext: &str, winner: &str, copy: &str) -> (std::io::Result<()>, S
         !root.join(&conf).exists(),
         "the copy is trashed exactly when the resolve succeeds"
     );
+    drop(host);
     let _ = fs::remove_dir_all(&root);
     (result, out)
 }

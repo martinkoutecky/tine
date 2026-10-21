@@ -137,8 +137,9 @@ fn future_references_are_upcoming_and_deleting_a_referenced_file_keeps_the_day()
         "alias:: 2099-01-03\n- future file\n",
     )
     .unwrap();
-    let store = Store::open(root.path(), Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(root.path(), Default::default()).unwrap().0);
     store.whole_graph().unwrap(); // Upcoming is a graph-wide referenced-day answer.
+    let host = crate::test_host(&store);
     let first = completed_feed(&store, 1, None).unwrap();
     assert_eq!(first.pages[0].doc.name, "Jan 1st, 2000");
     assert_eq!(
@@ -153,7 +154,7 @@ fn future_references_are_upcoming_and_deleting_a_referenced_file_keeps_the_day()
         .unwrap()
         .upcoming
         .is_empty());
-    journals::trash_journal_file(&store, None, "2000_01_01.md").unwrap();
+    journals::trash_journal_file(&store, &host, "2000_01_01.md").unwrap();
     let after = completed_feed(&store, 5, None).unwrap();
     assert_eq!(after.pages.len(), 1);
     assert!(after.pages[0].doc.rev.is_none());

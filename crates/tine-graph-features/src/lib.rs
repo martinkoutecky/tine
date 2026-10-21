@@ -228,3 +228,34 @@ fn trash_transaction<'a>(
 
 #[cfg(test)]
 mod error_tests;
+
+#[cfg(test)]
+use test_host::test_host;
+
+#[cfg(test)]
+mod test_host {
+    /// A running page host for `store`, the only writer of page files
+    /// (host-only-writer DESIGN §3.6), under its own app data; it derefs to
+    /// the host, so `&test_host(&store)` is a writer's `&PageHost`. Drop it
+    /// before removing the graph.
+    pub(crate) struct TestHost {
+        host: tine_store::PageHost,
+        _app_data: tempfile::TempDir,
+    }
+
+    impl std::ops::Deref for TestHost {
+        type Target = tine_store::PageHost;
+        fn deref(&self) -> &tine_store::PageHost {
+            &self.host
+        }
+    }
+
+    pub(crate) fn test_host(store: &std::sync::Arc<tine_store::Store>) -> TestHost {
+        let app_data = tempfile::tempdir().unwrap();
+        let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+        TestHost {
+            host,
+            _app_data: app_data,
+        }
+    }
+}

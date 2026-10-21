@@ -93,7 +93,8 @@ fn highlight_deletion_retires_its_crop_through_the_guarded_sidecar_path() {
     let root = std::env::temp_dir().join(format!("tine-pdf-delete-crop-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("assets")).unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
     let rect = pdf::Rect {
         top: 1.0,
         left: 1.0,
@@ -115,10 +116,11 @@ fn highlight_deletion_retires_its_crop_through_the_guarded_sidecar_path() {
         image: Some(42),
     };
     let rel = write_pdf_area_image(&store, "paper.pdf", 1, "crop-id", 42, b"png").unwrap();
-    write_highlights(&store, None, "paper.pdf", "Paper", &[area.clone()], &[]).unwrap();
+    write_highlights(&store, &host, "paper.pdf", "Paper", &[area.clone()], &[]).unwrap();
     assert!(root.join("assets").join(&rel).is_file());
-    write_highlights(&store, None, "paper.pdf", "Paper", &[], &[area]).unwrap();
+    write_highlights(&store, &host, "paper.pdf", "Paper", &[], &[area]).unwrap();
     assert!(!root.join("assets").join(&rel).exists());
+    drop(host);
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -243,16 +245,18 @@ fn a_sidecar_replaced_before_the_annotation_read_is_merged_again() {
                         .unwrap();
                 }));
             });
-            write_highlights(&store, Some(&host), "paper.pdf", "Paper", &loaded, &loaded)
+            write_highlights(&store, &host, "paper.pdf", "Paper", &loaded, &loaded)
         });
         at_read
             .recv_timeout(std::time::Duration::from_secs(20))
             .unwrap();
-        let other = Store::open(root, Default::default()).unwrap().0;
+        let other = std::sync::Arc::new(Store::open(root, Default::default()).unwrap().0);
         other.whole_graph().unwrap();
+        let other_host = crate::test_host(&other);
         let mut blue = loaded.clone();
         blue[0].color = "blue".into();
-        write_highlights(&other, None, "paper.pdf", "Paper", &blue, &loaded).unwrap();
+        write_highlights(&other, &other_host, "paper.pdf", "Paper", &blue, &loaded).unwrap();
+        drop(other_host);
         other.close();
         resume.send(()).unwrap();
         assert_eq!(saver.join().unwrap().unwrap()[0].color, "blue");
@@ -305,7 +309,7 @@ fn a_page_failure_after_the_sidecar_save_says_the_highlights_were_saved() {
     });
     let mut blue = loaded.clone();
     blue[0].color = "blue".into();
-    let error = write_highlights(&store, Some(&host), "paper.pdf", "Paper", &blue, &loaded)
+    let error = write_highlights(&store, &host, "paper.pdf", "Paper", &blue, &loaded)
         .expect_err("the twin refuses the page update");
     assert_eq!(error.kind(), io::ErrorKind::AlreadyExists, "{error}");
     assert_eq!(
@@ -362,12 +366,13 @@ fn unreadable_sidecar_entries_and_their_page_blocks_survive_a_highlight_add() {
             c3u_page(&[(A, "aye"), (B, "bee")]),
         )
         .unwrap();
-        let store = Store::open(&root, Default::default()).unwrap().0;
+        let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+        let host = crate::test_host(&store);
         let loaded = read_highlights_checked(&store, "paper.pdf").unwrap();
         assert_eq!(loaded.len(), 1, "shape {n}: fixture must be unreadable");
         let mut next = loaded.clone();
         next.push(c3u_highlight(C, "sea"));
-        write_highlights(&store, None, "paper.pdf", "Paper", &next, &loaded).unwrap();
+        write_highlights(&store, &host, "paper.pdf", "Paper", &next, &loaded).unwrap();
 
         let written = std::fs::read_to_string(root.join("assets/paper.edn")).unwrap();
         let bad_value = tine_core::edn::parse_strict(bad).unwrap();
@@ -386,6 +391,7 @@ fn unreadable_sidecar_entries_and_their_page_blocks_survive_a_highlight_add() {
         ] {
             assert!(page.contains(&needle), "shape {n}: {needle} lost:\n{page}");
         }
+        drop(host);
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -400,12 +406,13 @@ fn highlight_add_before_the_sidecar_syncs_keeps_existing_annotations() {
         c3u_page(&[(A, "aye"), (B, "bee")]),
     )
     .unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
     let loaded = read_highlights_checked(&store, "paper.pdf").unwrap();
     assert!(loaded.is_empty());
     write_highlights(
         &store,
-        None,
+        &host,
         "paper.pdf",
         "Paper",
         &[c3u_highlight(C, "sea")],
@@ -422,6 +429,7 @@ fn highlight_add_before_the_sidecar_syncs_keeps_existing_annotations() {
     ] {
         assert!(page.contains(&needle), "{needle} lost:\n{page}");
     }
+    drop(host);
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -443,16 +451,18 @@ fn deleting_a_known_highlight_still_drops_its_block_and_entry() {
         c3u_page(&[(A, "aye"), (B, "bee")]),
     )
     .unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
     let loaded = read_highlights_checked(&store, "paper.pdf").unwrap();
     assert_eq!(loaded.len(), 2);
     let keep: Vec<Highlight> = loaded.iter().filter(|h| h.id == A).cloned().collect();
-    write_highlights(&store, None, "paper.pdf", "Paper", &keep, &loaded).unwrap();
+    write_highlights(&store, &host, "paper.pdf", "Paper", &keep, &loaded).unwrap();
     let page = std::fs::read_to_string(root.join("pages/hls__paper.md")).unwrap();
     assert!(page.contains(&format!("id:: {A}")), "{page}");
     assert!(!page.contains(&format!("id:: {B}")), "{page}");
     let written = std::fs::read_to_string(root.join("assets/paper.edn")).unwrap();
     assert_eq!(c3u_entries(&written).len(), 1, "{written}");
+    drop(host);
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -472,14 +482,15 @@ fn unchanged_entries_keep_fields_og_cannot_read_across_an_unrelated_edit() {
         ),
     )
     .unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
     let loaded = read_highlights_checked(&store, "paper.pdf").unwrap();
     assert_eq!(loaded.len(), 2);
     // Recolour B (geometry untouched) and add C.
     let mut next = loaded.clone();
     next[1].color = "green".into();
     next.push(c3u_highlight(C, "sea"));
-    write_highlights(&store, None, "paper.pdf", "Paper", &next, &loaded).unwrap();
+    write_highlights(&store, &host, "paper.pdf", "Paper", &next, &loaded).unwrap();
     let written = std::fs::read_to_string(root.join("assets/paper.edn")).unwrap();
     let entries = c3u_entries(&written);
     let b = entries
@@ -504,6 +515,7 @@ fn unchanged_entries_keep_fields_og_cannot_read_across_an_unrelated_edit() {
         "symbol changed type:\n{written}"
     );
     assert!(written.contains(r#":color "green""#), "{written}");
+    drop(host);
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -516,7 +528,8 @@ fn escape_before_a_multibyte_char_is_refused_without_panicking() {
         "{:highlights [{:id \"x\" :content {:text \"caf\\é\"}}] :extra {}}",
     )
     .unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
     let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         read_highlights_checked(&store, "paper.pdf")
     }));
@@ -531,7 +544,7 @@ fn escape_before_a_multibyte_char_is_refused_without_panicking() {
     let write = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         write_highlights(
             &store,
-            None,
+            &host,
             "paper.pdf",
             "Paper",
             &[c3u_highlight(C, "sea")],
@@ -546,6 +559,7 @@ fn escape_before_a_multibyte_char_is_refused_without_panicking() {
         std::fs::read_to_string(root.join("assets/paper.edn")).unwrap(),
         "{:highlights [{:id \"x\" :content {:text \"caf\\é\"}}] :extra {}}"
     );
+    drop(host);
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -564,10 +578,11 @@ fn a_highlight_save_keeps_fenced_file_lines_in_the_page_preamble() {
         ),
     )
     .unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
     write_highlights(
         &store,
-        None,
+        &host,
         "paper.pdf",
         "Paper",
         &[c3u_highlight(C, "sea")],
@@ -586,6 +601,7 @@ fn a_highlight_save_keeps_fenced_file_lines_in_the_page_preamble() {
         1,
         "{page}"
     );
+    drop(host);
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -601,37 +617,97 @@ fn diagnostics() -> &'static std::sync::Mutex<Vec<String>> {
     &SEEN
 }
 
-/// C5 L03 B (I-9): the save committed, so it succeeds, but a leftover that
-/// could not be retired is reported instead of vanishing. `logseq/.tine-trash`
-/// being a file makes every trash move fail deterministically.
-#[test]
-fn a_leftover_that_cannot_be_retired_after_a_save_is_reported() {
-    let seen = diagnostics();
-    let root = c3u_graph("cleanup-reported");
+/// A graph with highlights under the legacy key `my_paper` whose trash
+/// location `unusable` (under `logseq/`) is a file, so every trash move
+/// into it fails deterministically.
+fn legacy_graph_with_unusable_trash(label: &str, unusable: &str) -> std::path::PathBuf {
+    let root = c3u_graph(label);
     std::fs::write(
         root.join("assets/my_paper.edn"),
         format!("{{:highlights [{}] :extra {{}}}}\n", c3u_entry(A, "aye")),
     )
     .unwrap();
     std::fs::write(root.join("pages/hls__my_paper.md"), c3u_page(&[(A, "aye")])).unwrap();
-    std::fs::create_dir_all(root.join("logseq")).unwrap();
-    std::fs::write(root.join("logseq/.tine-trash"), "not a directory").unwrap();
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let unusable = root.join("logseq").join(unusable);
+    std::fs::create_dir_all(unusable.parent().unwrap()).unwrap();
+    std::fs::write(unusable, "not a directory").unwrap();
+    root
+}
+
+/// C5 L03 B (I-9): the save committed, so it succeeds, but a legacy
+/// sidecar that could not be retired is reported instead of vanishing.
+/// Only the asset trash is unusable, so the legacy page is trashed.
+#[test]
+fn a_leftover_that_cannot_be_retired_after_a_save_is_reported() {
+    let seen = diagnostics();
+    let root = legacy_graph_with_unusable_trash("cleanup-reported", ".tine-trash/assets");
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
     let loaded = read_highlights_checked(&store, "My Paper.pdf").unwrap();
     let mut next = loaded.clone();
     next.push(c3u_highlight(C, "sea"));
-    write_highlights(&store, None, "My Paper.pdf", "Paper", &next, &loaded).unwrap();
+    write_highlights(&store, &host, "My Paper.pdf", "Paper", &next, &loaded).unwrap();
     let lines = seen.lock().unwrap().clone();
-    for expected in [LEGACY_SIDECAR_LEFT, LEGACY_PAGE_LEFT] {
-        assert!(
-            lines.iter().any(|line| line == expected),
-            "{expected}: {lines:?}"
-        );
-    }
+    assert!(
+        lines.iter().any(|line| line == LEGACY_SIDECAR_LEFT),
+        "{LEGACY_SIDECAR_LEFT}: {lines:?}"
+    );
     assert!(
         root.join("assets/my_paper.edn").is_file(),
         "the leftover stays"
     );
+    assert!(!root.join("pages/hls__my_paper.md").exists());
+    drop(host);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// C5 L03 B (I-9), the legacy page: with the host (host-only-writer S1) its
+/// deletion is part of the annotation page's host operation, not a
+/// best-effort cleanup, so a legacy page that cannot be trashed fails that
+/// operation and the save reports the partial outcome as its error: the
+/// highlights are saved under the new key, and the legacy page and sidecar
+/// stay in place, unchanged, until the operation can finish.
+#[test]
+fn a_legacy_page_that_cannot_be_trashed_is_reported_as_the_saves_error() {
+    let root = legacy_graph_with_unusable_trash("legacy-page-kept", ".tine-trash");
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
+    let loaded = read_highlights_checked(&store, "My Paper.pdf").unwrap();
+    let mut next = loaded.clone();
+    next.push(c3u_highlight(C, "sea"));
+    let legacy_page = std::fs::read(root.join("pages/hls__my_paper.md")).unwrap();
+    let legacy_sidecar = std::fs::read(root.join("assets/my_paper.edn")).unwrap();
+    let error =
+        write_highlights(&store, &host, "My Paper.pdf", "Paper", &next, &loaded).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock, "{error}");
+    assert!(
+        error
+            .to_string()
+            .starts_with("The highlights were saved, but “pages/hls__my_paper.md”"),
+        "{error}"
+    );
+    assert_eq!(
+        read_highlights_checked(&store, "My Paper.pdf").unwrap(),
+        next,
+        "the highlights are saved under the new key"
+    );
+    let page = std::fs::read_to_string(root.join("pages/hls__My Paper.md")).unwrap();
+    assert!(
+        page.contains("my note on aye") && page.contains(C),
+        "{page}"
+    );
+    assert_eq!(
+        std::fs::read(root.join("pages/hls__my_paper.md")).unwrap(),
+        legacy_page,
+        "the legacy page stays"
+    );
+    assert_eq!(
+        std::fs::read(root.join("assets/my_paper.edn")).unwrap(),
+        legacy_sidecar,
+        "the legacy sidecar stays"
+    );
+    drop(host);
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -646,12 +722,13 @@ fn a_deleted_area_highlights_unremovable_image_is_reported_and_a_missing_one_is_
     };
     // Unremovable: the trash location is a file.
     let root = c3u_graph("crop-reported");
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
     let rel = write_pdf_area_image(&store, "paper.pdf", 1, A, 42, b"png").unwrap();
-    write_highlights(&store, None, "paper.pdf", "Paper", &[area(A, 42)], &[]).unwrap();
+    write_highlights(&store, &host, "paper.pdf", "Paper", &[area(A, 42)], &[]).unwrap();
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::write(root.join("logseq/.tine-trash"), "not a directory").unwrap();
-    write_highlights(&store, None, "paper.pdf", "Paper", &[], &[area(A, 42)]).unwrap();
+    write_highlights(&store, &host, "paper.pdf", "Paper", &[], &[area(A, 42)]).unwrap();
     assert!(seen
         .lock()
         .unwrap()
@@ -661,12 +738,14 @@ fn a_deleted_area_highlights_unremovable_image_is_reported_and_a_missing_one_is_
         root.join("assets").join(&rel).is_file(),
         "the leftover stays"
     );
+    drop(host);
     drop(store);
     std::fs::remove_dir_all(&root).unwrap();
     // Missing: nothing to remove is the state we want, not a failure.
     let root = c3u_graph("crop-missing");
-    let store = Store::open(&root, Default::default()).unwrap().0;
-    write_highlights(&store, None, "paper.pdf", "Paper", &[area(B, 7)], &[]).unwrap();
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    let host = crate::test_host(&store);
+    write_highlights(&store, &host, "paper.pdf", "Paper", &[area(B, 7)], &[]).unwrap();
     let reported = |seen: &std::sync::Mutex<Vec<String>>| {
         seen.lock()
             .unwrap()
@@ -675,12 +754,13 @@ fn a_deleted_area_highlights_unremovable_image_is_reported_and_a_missing_one_is_
             .count()
     };
     let before = reported(seen);
-    write_highlights(&store, None, "paper.pdf", "Paper", &[], &[area(B, 7)]).unwrap();
+    write_highlights(&store, &host, "paper.pdf", "Paper", &[], &[area(B, 7)]).unwrap();
     assert_eq!(
         reported(seen),
         before,
         "a crop that is already gone is not a failure"
     );
+    drop(host);
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }

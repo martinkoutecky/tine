@@ -8,6 +8,31 @@ fn integration_lock() -> std::sync::MutexGuard<'static, ()> {
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// A running page host for `store`, the only writer of page files
+/// (host-only-writer DESIGN §3.6), under its own app data; it derefs to the
+/// host, so `&test_host(&store)` is a writer's `&PageHost`. Drop it before
+/// removing the graph.
+struct TestHost {
+    host: tine_store::PageHost,
+    _app_data: tempfile::TempDir,
+}
+
+impl std::ops::Deref for TestHost {
+    type Target = tine_store::PageHost;
+    fn deref(&self) -> &tine_store::PageHost {
+        &self.host
+    }
+}
+
+fn test_host(store: &std::sync::Arc<tine_store::Store>) -> TestHost {
+    let app_data = tempfile::tempdir().unwrap();
+    let host = tine_store::PageHost::start_for_tests(store, app_data.path()).unwrap();
+    TestHost {
+        host,
+        _app_data: app_data,
+    }
+}
+
 #[path = "br3_page_open_before_ready.rs"]
 mod br3_page_open_before_ready;
 

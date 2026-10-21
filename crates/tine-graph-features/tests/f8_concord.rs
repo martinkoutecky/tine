@@ -38,8 +38,8 @@ fn scratch(label: &str) -> PathBuf {
     root
 }
 
-fn open(root: &Path) -> Store {
-    Store::open(root, Default::default()).unwrap().0
+fn open(root: &Path) -> std::sync::Arc<Store> {
+    std::sync::Arc::new(Store::open(root, Default::default()).unwrap().0)
 }
 
 fn decidable(rows: &[DiffRow]) -> Vec<String> {
@@ -233,6 +233,7 @@ fn resolving_markers_keep_both_writes_sibling_blocks_and_clears_the_quarantine()
     let file = root.join("pages/Merged.md");
     fs::write(&file, DIFF3).unwrap();
     let store = open(&root);
+    let host = crate::test_host(&store);
     let id = PageId::from("pages/Merged.md");
     let read = store.page(&id).unwrap();
     assert!(
@@ -253,7 +254,7 @@ fn resolving_markers_keep_both_writes_sibling_blocks_and_clears_the_quarantine()
         .diff;
     conflicts::resolve_vcs_marker_conflict(
         &store,
-        None,
+        &host,
         "pages/Merged.md",
         &all(&diff.rows, "both"),
         &diff.base_rev,
@@ -272,6 +273,7 @@ fn resolving_markers_keep_both_writes_sibling_blocks_and_clears_the_quarantine()
     let inventory = conflicts::conflict_inventory(&store).unwrap();
     assert!(inventory.queue.is_empty() && inventory.vcs_markers.is_empty());
     assert_eq!(marker_copies(&root, "Merged.md"), vec![DIFF3.to_string()]);
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -282,6 +284,7 @@ fn resolving_markers_stages_the_preresolution_file_in_recoverable_trash() {
     let file = root.join("pages/Merged.md");
     fs::write(&file, DIFF3).unwrap();
     let store = open(&root);
+    let host = crate::test_host(&store);
     let diff = conflicts::vcs_marker_conflict_diff(&store, "pages/Merged.md")
         .unwrap()
         .unwrap()
@@ -290,7 +293,7 @@ fn resolving_markers_stages_the_preresolution_file_in_recoverable_trash() {
     // the staged recovery copy.
     conflicts::resolve_vcs_marker_conflict(
         &store,
-        None,
+        &host,
         "pages/Merged.md",
         &all(&diff.rows, "mine"),
         &diff.base_rev,
@@ -305,7 +308,7 @@ fn resolving_markers_stages_the_preresolution_file_in_recoverable_trash() {
     let store2 = open(&root2);
     let err = conflicts::resolve_vcs_marker_conflict(
         &store2,
-        None,
+        &host,
         "pages/Merged.md",
         &HashMap::new(),
         "not-the-current-rev",
@@ -314,6 +317,7 @@ fn resolving_markers_stages_the_preresolution_file_in_recoverable_trash() {
     .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
     assert!(!root2.join("logseq/.tine-trash").exists());
+    drop(host);
     let _ = fs::remove_dir_all(&root);
     let _ = fs::remove_dir_all(&root2);
 }
@@ -332,6 +336,7 @@ fn resolving_markers_can_apply_a_confirmed_merged_body() {
     let file = root.join("pages/Merged.md");
     fs::write(&file, DISJOINT).unwrap();
     let store = open(&root);
+    let host = crate::test_host(&store);
     let diff = conflicts::vcs_marker_conflict_diff(&store, "pages/Merged.md")
         .unwrap()
         .unwrap()
@@ -349,7 +354,7 @@ fn resolving_markers_can_apply_a_confirmed_merged_body() {
     let decisions = HashMap::from([(row.id.clone(), "merged".to_string())]);
     conflicts::resolve_vcs_marker_conflict(
         &store,
-        None,
+        &host,
         "pages/Merged.md",
         &decisions,
         &diff.base_rev,
@@ -361,6 +366,7 @@ fn resolving_markers_can_apply_a_confirmed_merged_body() {
         roots(&after),
         vec!["shared top", "the shared desktop machine label kk"]
     );
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -383,6 +389,7 @@ fn resolving_fossil_markers_can_apply_the_suggested_resolution() {
     let file = root.join("pages/Merged.md");
     fs::write(&file, FOSSIL).unwrap();
     let store = open(&root);
+    let host = crate::test_host(&store);
     let diff = conflicts::vcs_marker_conflict_diff(&store, "pages/Merged.md")
         .unwrap()
         .unwrap()
@@ -399,7 +406,7 @@ fn resolving_fossil_markers_can_apply_the_suggested_resolution() {
     // The stale-rev guard fires against the ORIGINAL rev first.
     let err = conflicts::resolve_vcs_marker_conflict(
         &store,
-        None,
+        &host,
         "pages/Merged.md",
         &decisions,
         "not-the-current-rev",
@@ -410,7 +417,7 @@ fn resolving_fossil_markers_can_apply_the_suggested_resolution() {
     assert_eq!(fs::read_to_string(&file).unwrap(), FOSSIL);
     conflicts::resolve_vcs_marker_conflict(
         &store,
-        None,
+        &host,
         "pages/Merged.md",
         &decisions,
         &diff.base_rev,
@@ -426,6 +433,7 @@ fn resolving_fossil_markers_can_apply_the_suggested_resolution() {
         !after.contains("jumped") && !after.contains("leaped"),
         "{after:?}"
     );
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -448,6 +456,7 @@ fn a_fossil_suggestion_equal_to_a_side_offers_nothing_and_writes_nothing() {
     let file = root.join("pages/Merged.md");
     fs::write(&file, FOSSIL).unwrap();
     let store = open(&root);
+    let host = crate::test_host(&store);
     let diff = conflicts::vcs_marker_conflict_diff(&store, "pages/Merged.md")
         .unwrap()
         .unwrap()
@@ -455,7 +464,7 @@ fn a_fossil_suggestion_equal_to_a_side_offers_nothing_and_writes_nothing() {
     assert!(diff.rows.iter().all(|r| r.merged.is_none()));
     let err = conflicts::resolve_vcs_marker_conflict(
         &store,
-        None,
+        &host,
         "pages/Merged.md",
         &all(&diff.rows, "merged"),
         &diff.base_rev,
@@ -465,6 +474,7 @@ fn a_fossil_suggestion_equal_to_a_side_offers_nothing_and_writes_nothing() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{err}");
     assert_eq!(fs::read_to_string(&file).unwrap(), FOSSIL);
     assert!(!root.join("logseq/.tine-trash").exists());
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -481,6 +491,7 @@ fn markers_without_an_ancestor_refuse_a_forged_merged_decision() {
     let file = root.join("pages/Merged.md");
     fs::write(&file, NO_BASE).unwrap();
     let store = open(&root);
+    let host = crate::test_host(&store);
     let diff = conflicts::vcs_marker_conflict_diff(&store, "pages/Merged.md")
         .unwrap()
         .unwrap()
@@ -489,7 +500,7 @@ fn markers_without_an_ancestor_refuse_a_forged_merged_decision() {
     assert!(diff.rows.iter().all(|r| r.merged.is_none()));
     let err = conflicts::resolve_vcs_marker_conflict(
         &store,
-        None,
+        &host,
         "pages/Merged.md",
         &all(&diff.rows, "merged"),
         &diff.base_rev,
@@ -498,6 +509,7 @@ fn markers_without_an_ancestor_refuse_a_forged_merged_decision() {
     .unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput, "{err}");
     assert_eq!(fs::read_to_string(&file).unwrap(), NO_BASE);
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -510,6 +522,7 @@ fn marker_resolution_is_guarded_and_never_leaves_the_file_writable() {
     fs::write(root.join("pages/Calm.md"), "- fine\n").unwrap();
     fs::write(root.join("pages/Other.md"), DIFF3).unwrap();
     let store = open(&root);
+    let host = crate::test_host(&store);
     let diff = conflicts::vcs_marker_conflict_diff(&store, "pages/Merged.md")
         .unwrap()
         .unwrap()
@@ -519,7 +532,7 @@ fn marker_resolution_is_guarded_and_never_leaves_the_file_writable() {
     // Stale base_rev → refuse without writing (the VCS moved under the UI).
     let err = conflicts::resolve_vcs_marker_conflict(
         &store,
-        None,
+        &host,
         "pages/Merged.md",
         &decisions,
         "not-the-current-rev",
@@ -538,7 +551,7 @@ fn marker_resolution_is_guarded_and_never_leaves_the_file_writable() {
     assert_eq!(
         conflicts::resolve_vcs_marker_conflict(
             &store,
-            None,
+            &host,
             "pages/Calm.md",
             &decisions,
             &calm_rev,
@@ -557,7 +570,7 @@ fn marker_resolution_is_guarded_and_never_leaves_the_file_writable() {
     // to a still-marker-bearing page are refused again.
     conflicts::resolve_vcs_marker_conflict(
         &store,
-        None,
+        &host,
         "pages/Merged.md",
         &decisions,
         &diff.base_rev,
@@ -596,6 +609,7 @@ fn marker_resolution_is_guarded_and_never_leaves_the_file_writable() {
         ),
         SaveOutcome::Saved(_)
     ));
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -606,6 +620,7 @@ fn a_sync_copy_resolve_refuses_a_forged_merged_decision() {
     fs::write(root.join("pages/Notes.md"), "- the quick brown fox\n").unwrap();
     fs::write(root.join("pages").join(COPY), "- the quick brown cat\n").unwrap();
     let store = open(&root);
+    let host = crate::test_host(&store);
     let copy = format!("pages/{COPY}");
     let diff = conflicts::sync_conflict_diff(&store, "pages/Notes.md", &copy, &[])
         .unwrap()
@@ -613,7 +628,7 @@ fn a_sync_copy_resolve_refuses_a_forged_merged_decision() {
     assert!(!diff.three_way, "a conflict copy carries no ancestor");
     let err = conflicts::resolve_sync_conflict(
         &store,
-        None,
+        &host,
         "pages/Notes.md",
         &copy,
         &all(&diff.rows, "merged"),
@@ -633,6 +648,7 @@ fn a_sync_copy_resolve_refuses_a_forged_merged_decision() {
         root.join("pages").join(COPY).exists(),
         "the copy is not trashed"
     );
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -644,12 +660,13 @@ fn a_sync_copy_resolve_against_a_marker_winner_writes_nothing() {
     let copy = "pages/Merged.sync-conflict-20260817-101010-ABCDEFG.md";
     fs::write(root.join(copy), "- copy\n").unwrap();
     let store = open(&root);
+    let host = crate::test_host(&store);
     let diff = conflicts::sync_conflict_diff(&store, "pages/Merged.md", copy, &[])
         .unwrap()
         .unwrap();
     let err = conflicts::resolve_sync_conflict(
         &store,
-        None,
+        &host,
         "pages/Merged.md",
         copy,
         &HashMap::new(),
@@ -666,6 +683,7 @@ fn a_sync_copy_resolve_against_a_marker_winner_writes_nothing() {
         DIFF3
     );
     assert!(root.join(copy).exists());
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -721,16 +739,19 @@ fn write_highlights_refuses_a_marker_bearing_hls_page() {
     let _integration_guard = crate::integration_lock();
     let root = scratch("hls-markers");
     let store = open(&root);
+    let host = crate::test_host(&store);
     let h = highlight("11111111-1111-1111-1111-111111111111", 1);
-    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, &host, "paper.pdf", "Paper", &[h.clone()], &[]).unwrap();
     let page = root.join("pages/hls__paper.md");
     let conflicted = format!(
         "<<<<<<< HEAD\n{}=======\n- the other merge side\n>>>>>>> feature\n",
         fs::read_to_string(&page).unwrap()
     );
     fs::write(&page, &conflicted).unwrap();
+    drop(host);
     store.close();
     let store = open(&root);
+    let host = crate::test_host(&store);
     assert!(conflicts::conflict_inventory(&store)
         .unwrap()
         .queue
@@ -738,10 +759,11 @@ fn write_highlights_refuses_a_marker_bearing_hls_page() {
         .any(|c| c.id == "markers:pages/hls__paper.md"));
     let before = tree(&root);
     let h2 = highlight("22222222-2222-2222-2222-222222222222", 4);
-    let err = pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h.clone(), h2], &[h])
+    let err = pdf::write_highlights(&store, &host, "paper.pdf", "Paper", &[h.clone(), h2], &[h])
         .expect_err("a highlight write to a conflicted page must refuse");
     assert!(err.to_string().contains("conflict markers"), "{err}");
     assert_eq!(tree(&root), before, "page AND sidecar stay byte-identical");
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -765,6 +787,7 @@ fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
     show("BEFORE", &before);
 
     let store = open(&root);
+    let host = crate::test_host(&store);
     let inventory = conflicts::conflict_inventory(&store).unwrap();
     assert_eq!(
         inventory
@@ -781,7 +804,7 @@ fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
         .diff;
     conflicts::resolve_vcs_marker_conflict(
         &store,
-        None,
+        &host,
         "pages/Merged.md",
         &all(&marker.rows, "both"),
         &marker.base_rev,
@@ -795,7 +818,7 @@ fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
         .unwrap();
     conflicts::resolve_sync_conflict(
         &store,
-        None,
+        &host,
         "pages/Notes.md",
         &copy,
         &all(&sync.rows, "both"),
@@ -837,6 +860,7 @@ fn end_to_end_marker_file_and_syncthing_copy_fixtures() {
     );
     let inventory = conflicts::conflict_inventory(&store).unwrap();
     assert!(inventory.queue.is_empty() && inventory.sync_conflicts.is_empty());
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -850,8 +874,9 @@ fn resaving_highlights_leaves_unchanged_files_and_hand_notes_alone() {
     let _integration_guard = crate::integration_lock();
     let root = scratch("hls-churn");
     let store = open(&root);
+    let host = crate::test_host(&store);
     let h = highlight("11111111-1111-1111-1111-111111111111", 1);
-    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, &host, "paper.pdf", "Paper", &[h.clone()], &[]).unwrap();
     let page = root.join("pages/hls__paper.md");
     let sidecar = root.join("assets/paper.edn");
     let stamp = |path: &Path| {
@@ -864,7 +889,7 @@ fn resaving_highlights_leaves_unchanged_files_and_hand_notes_alone() {
     std::thread::sleep(std::time::Duration::from_millis(30));
     pdf::write_highlights(
         &store,
-        None,
+        &host,
         "paper.pdf",
         "Paper",
         &[h.clone()],
@@ -891,12 +916,13 @@ fn resaving_highlights_leaves_unchanged_files_and_hand_notes_alone() {
     store.refresh(tine_store::Depth::Stamps).unwrap();
     let mut recoloured = h.clone();
     recoloured.color = "green".into();
-    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[recoloured], &[h]).unwrap();
+    pdf::write_highlights(&store, &host, "paper.pdf", "Paper", &[recoloured], &[h]).unwrap();
     let after = fs::read_to_string(&page).unwrap();
     assert!(
         after.contains("\n  - my own note\n    second line of it\n"),
         "the hand-written child keeps its bytes and indentation:\n{after}"
     );
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -909,8 +935,9 @@ fn resaving_highlights_leaves_a_restyled_hls_page_byte_identical() {
     let _integration_guard = crate::integration_lock();
     let root = scratch("hls-restyled");
     let store = open(&root);
+    let host = crate::test_host(&store);
     let h = highlight("11111111-1111-1111-1111-111111111111", 1);
-    pdf::write_highlights(&store, None, "paper.pdf", "Paper", &[h.clone()], &[]).unwrap();
+    pdf::write_highlights(&store, &host, "paper.pdf", "Paper", &[h.clone()], &[]).unwrap();
     let page = root.join("pages/hls__paper.md");
     let generated = fs::read_to_string(&page).unwrap();
     let restyled = format!("{}\n  - my own note\n", generated.trim_end())
@@ -918,13 +945,16 @@ fn resaving_highlights_leaves_a_restyled_hls_page_byte_identical() {
         .trim_end()
         .to_string();
     fs::write(&page, &restyled).unwrap();
+    drop(host);
     drop(store);
     let reopened = open(&root);
-    pdf::write_highlights(&reopened, None, "paper.pdf", "Paper", &[h], &[]).unwrap();
+    let host = crate::test_host(&reopened);
+    pdf::write_highlights(&reopened, &host, "paper.pdf", "Paper", &[h], &[]).unwrap();
     assert_eq!(
         fs::read_to_string(&page).unwrap(),
         restyled,
         "re-saving the same highlights must not rewrite the page"
     );
+    drop(host);
     let _ = fs::remove_dir_all(&root);
 }

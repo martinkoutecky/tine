@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tine_graph_features::journals::{self, JournalFilenameMigration};
 use tine_store::Store;
 
-fn fixture(label: &str, files: &[&str]) -> (PathBuf, Store) {
+fn fixture(label: &str, files: &[&str]) -> (PathBuf, std::sync::Arc<Store>) {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "tine-journal-migrations-{label}-{}-{}",
@@ -19,7 +19,7 @@ fn fixture(label: &str, files: &[&str]) -> (PathBuf, Store) {
     for name in files {
         fs::write(root.join("journals").join(name), format!("- {name}\n")).unwrap();
     }
-    let store = Store::open(&root, Default::default()).unwrap().0;
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
     (root, store)
 }
 
@@ -34,6 +34,7 @@ fn proposal(from: &str, to: &str) -> JournalFilenameMigration {
 fn apply_renames_only_the_confirmed_proposals() {
     let _integration_guard = crate::integration_lock();
     let (root, store) = fixture("confirmed", &["Jun 19th, 2026.md", "Jun 21st, 2026.md"]);
+    let host = crate::test_host(&store);
     let listed = journals::journal_filename_migrations(&store).unwrap();
     assert_eq!(
         listed,
@@ -47,7 +48,7 @@ fn apply_renames_only_the_confirmed_proposals() {
     fs::write(root.join("journals/Jun 22nd, 2026.md"), "- synced\n").unwrap();
     fs::remove_file(root.join("journals/Jun 21st, 2026.md")).unwrap();
     store.refresh(tine_store::Depth::Stamps).unwrap();
-    let result = journals::migrate_journal_filenames(&store, None, &listed).unwrap();
+    let result = journals::migrate_journal_filenames(&store, &host, &listed).unwrap();
     assert_eq!(result.migrated, 1);
     assert_eq!(result.skipped.len(), 1, "{:?}", result.skipped);
     assert_eq!(result.skipped[0].file, "Jun 21st, 2026.md");
@@ -58,6 +59,7 @@ fn apply_renames_only_the_confirmed_proposals() {
         "a file the user never confirmed is never renamed"
     );
     assert!(!root.join("journals/2026_06_22.md").exists());
+    drop(host);
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
@@ -78,15 +80,16 @@ fn listed_proposals_are_exactly_what_apply_performs() {
             "Jun 23rd, 2026.md",
         ],
     );
+    let host = crate::test_host(&store);
     let listed = journals::journal_filename_migrations(&store).unwrap();
     assert_eq!(listed, [proposal("Jun 23rd, 2026.md", "2026_06_23.md")]);
-    let result = journals::migrate_journal_filenames(&store, None, &listed).unwrap();
+    let result = journals::migrate_journal_filenames(&store, &host, &listed).unwrap();
     assert_eq!((result.migrated, result.skipped.len()), (1, 0));
     let stale = [
         proposal("Jun 18th, 2026.md", "2026_06_18.md"),
         proposal("Jun 20th, 2026.org", "2026_06_20.org"),
     ];
-    let result = journals::migrate_journal_filenames(&store, None, &stale).unwrap();
+    let result = journals::migrate_journal_filenames(&store, &host, &stale).unwrap();
     assert_eq!(result.migrated, 0);
     assert!(
         result
@@ -103,6 +106,7 @@ fn listed_proposals_are_exactly_what_apply_performs() {
     ] {
         assert!(root.join("journals").join(name).exists(), "{name}");
     }
+    drop(host);
     drop(store);
     fs::remove_dir_all(root).unwrap();
 }
