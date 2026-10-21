@@ -527,16 +527,23 @@ failure alike. Proof `src-tauri/src/backup/restore.rs`
 Tine snapshots a graph at launch and before a rewrite the user asked for
 (`pre-restore`, `pre-journal-rename`) into app data, outside every graph
 (`src-tauri/src/backup.rs`). A launch is the app opening the graph or a
-headless `tine serve` owning it (`launch_backup`, one policy for both: after
+headless `tine serve` owning it (`launch_backup`, both wait until after
 the binding's warm and a quiet turn, at most three minutes, one copy at a time
-per process). Serve starts it once its endpoint answers and reports a failure on
-stderr (its start log) and in the diagnostic log. Its stop cancels a copy
-that is still waiting or reading; one that has finished reading still
+per process). Serve alone skips the snapshot if the newest backup zip is less
+than six hours old (D-20261020-CF4), logging one line on stderr. It uses the
+rotation's `scan` listing and newest-last `Record::order`: the UTC timestamp in
+the zip's name, not its filesystem mtime. A future or invalid timestamp does
+not suppress a snapshot; neither do legacy folders or partial zips. The app's
+launch policy is unchanged. Serve starts its worker once its endpoint answers
+and reports a failure on stderr (its start log) and in the diagnostic log.
+Its stop cancels a copy that is still waiting or reading; one that has finished reading still
 publishes, unreported. Serve joins the worker after releasing the lease, so it
 never exits mid-publication (proofs
 `serve_takes_the_apps_launch_backup_once_it_has_gone_quiet`,
 `a_stop_during_the_quiet_wait_ends_serves_backup_before_it_returns`,
-`a_headless_launch_backup_is_one_verified_zip_and_a_stop_cancels_it`). The backups directory is private to the device:
+`a_headless_launch_backup_is_one_verified_zip_and_a_stop_cancels_it`,
+`a_headless_restart_with_a_recent_zip_preserves_the_backup_slots`, and the
+`serve_*backup*` age-boundary tests). The backups directory is private to the device:
 only Tine writes it and no sync tool delivers into it. A hand edit there is
 outside the threat model; verification still detects damage it causes.
 
