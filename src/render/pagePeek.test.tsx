@@ -9,8 +9,8 @@ import { ContextMenu } from "../components/ContextMenu";
 import { closeContextMenu, contextMenu } from "../ui";
 import { focusedRouter } from "../panes";
 
-const PEEK_OPEN_MS = 350;
-const PEEK_CLOSE_MS = 150;
+const PEEK_OPEN_MS = 1000; // OG 0.10.9 tippy :delay [1000 100]; GH #735
+const PEEK_CLOSE_MS = 100;
 
 // GH #40: hovering a [[page]] link shows a read-only hover-peek popup after a
 // short dwell. Uses the mock backend (jsdom => mockBackend), so getPage("Tine")

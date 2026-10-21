@@ -416,14 +416,15 @@ function bodyBlocks(parsed: AstBlock[], raw: string): AstBlock[] {
   );
 }
 
-function renderBody(raw: string, format: Format, blockId?: string, headingLevel?: number | null, macroExpansion = false): JSX.Element {
+function renderBody(raw: string, format: Format, blockId?: string, headingLevel?: number | null, macroExpansion = false, inPeek = false): JSX.Element {
   // One parse supplies both the visible body and its property-dependent table
   // presentation. This stays on AstBody's path, so SheetGrid cells inherit it.
   const parsed = parseBody(raw, format);
   const properties: [string, string][] = [];
   for (const b of parsed) if (b.kind === "properties") properties.push(...b.props);
   const blocks = bodyBlocks(parsed, raw);
-  const beginQuery = inspectBeginQuery(raw, format, blocks);
+  // A hover preview never mounts a live query (GH #735; same rule as inline query macros).
+  const beginQuery = inPeek ? null : inspectBeginQuery(raw, format, blocks);
   return beginQuery
     ? <BeginQuery match={beginQuery} currentPage={blockId ? docNode(blockId)?.page : undefined} />
     : <CheckboxSourceContext.Provider value={raw}>
@@ -498,7 +499,7 @@ export function AstBody(props: { raw: string; blockId?: string; format?: Format;
       }
     >
       <Show when={parserReady()} fallback={<span class="ast-fallback"><PlaceholderText raw={props.raw} /></span>}>
-        <Show when={queryRuns()} fallback={renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false)}>
+        <Show when={queryRuns()} fallback={renderBody(props.raw, props.format ?? "md", props.blockId, props.headingLevel, props.macroExpansion ?? false, insidePeek)}>
           <Index each={queryRuns()}>{(run, blockIndex) => {
             const content = <Index each={run().entries}>{entry => <Show when={!!entry().extent}
               fallback={renderInlines([entry().inline], props.blockId, true, false, props.format, props.raw)}>

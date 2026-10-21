@@ -57,6 +57,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Hover previews of page links, tags and block references no longer grow as tall as the window (GH #735): like Logseq (and 0.7.4), a preview stops at 600 pixels, or the window if that is shorter, and scrolls inside. It also opens after Logseq's one-second pause and closes a tenth of a second after the pointer leaves, instead of opening almost at once. Code blocks, callouts, quotes and a page's existing folds now show in the preview as they do on the page (a folded block can be opened in the preview without changing the page). A setting for the delay is a feature request and is not part of this fix.
 - Chinese command input keeps the `/` and `<` pickers open and finds their localized labels (GH #107). Settings search now shows the matching text for hidden keywords, aliases and English labels too, including `父` for block embed breadcrumbs (GH #706).
 - Tab on a block directly below the page properties now explains that a block cannot be indented under them; moving blocks above the properties keeps its existing explanation (GH #210).
 - Settings → Journals now shows the same unsupported journal date-pattern notes as today's journal, beside Journal date format, and updates them when the setting changes (GH #317).
