@@ -188,6 +188,7 @@ blocks-outline-is-too-deep-to-merge = 大纲层级过深，无法合并
 moves-outline-is-too-deep-to-move = 大纲层级过深，无法移动
 
 kernel-page-properties-stay-at-the-top-of-the-page = 页面属性始终保留在页面顶部
+kernel-block-cant-be-indented-under-page-properties = 不能将块缩进到页面属性下
 
 paste-pasted-outline-is-too-deep = 粘贴的大纲层级过深
 

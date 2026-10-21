@@ -299,7 +299,7 @@ export function indentSelection() {
   const change = outlineChange({ verb: "indent", keys: same }, [destPage]);
   if ("refused" in change) {
     if (change.refused === "depth_cap") pushToast(msg("selection-outline-is-too-deep-to-indent"), "error");
-    else noteOutlineRefusal(change.refused);
+    else noteOutlineRefusal(change.refused, "indent");
     return;
   }
   commitSelectionChange(change, "indent-sel");

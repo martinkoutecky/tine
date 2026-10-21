@@ -52,8 +52,8 @@ async function headerPage() {
 }
 
 /** The user outcome of a refused gesture: the toast, an untouched outline, no write pending. */
-function toldWhyAndUntouched(roots: string[], writes: PageDto[], name = "Reading list") {
-  expect(toasts().map((t) => [t.kind, t.message])).toEqual([["info", WHY]]);
+function toldWhyAndUntouched(roots: string[], writes: PageDto[], name = "Reading list", why = WHY) {
+  expect(toasts().map((t) => [t.kind, t.message])).toEqual([["info", why]]);
   expect(toasts()[0].sticky).toBeFalsy(); // not red, not sticky
   expect(page(name).roots).toEqual(roots);
   expect(writes).toEqual([]);
@@ -113,7 +113,7 @@ describe("a refused move above the page properties says why (GH #210 F1, D-20261
   it("Tab on the block right under the properties (GH #638, the same refusal)", async () => {
     const { h, writes } = await headerPage();
     expect(indentBlock("o1", 0)).toBeUndefined();
-    toldWhyAndUntouched([h, "o1", "o2"], writes);
+    toldWhyAndUntouched([h, "o1", "o2"], writes, "Reading list", "A block can't be indented under the page properties");
     expect(doc.byId[h].children).toEqual([]);
   });
 
@@ -121,7 +121,7 @@ describe("a refused move above the page properties says why (GH #210 F1, D-20261
     const { h, writes } = await headerPage();
     selectBlock("o1");
     indentSelection();
-    toldWhyAndUntouched([h, "o1", "o2"], writes);
+    toldWhyAndUntouched([h, "o1", "o2"], writes, "Reading list", "A block can't be indented under the page properties");
     expect(doc.byId[h].children).toEqual([]);
   });
 
