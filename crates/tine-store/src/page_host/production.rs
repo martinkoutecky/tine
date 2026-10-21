@@ -294,7 +294,9 @@ fn chain<'a>(graph: &'a Path, dir: &'a Path) -> impl Iterator<Item = &'a Path> {
 /// alone is not enough (a recreated directory can reuse it), nor is mtime
 /// (`rsync -a`, `cp -a`, `tar x` set it back); setting it back moves ctime,
 /// which no tool can set. Only mtime must be settled: a later entry change
-/// moves it off its settled value, and ctime need only catch the restore.
+/// moves it off its settled value, and ctime need only catch the restore
+/// (missed only if it lands in the same kernel clock tick, a few ms, as the
+/// directory's previous change).
 type ChainId = (u64, u64, i64, i64, i64, i64);
 
 /// How recent a modification time may be and still witness anything: a change

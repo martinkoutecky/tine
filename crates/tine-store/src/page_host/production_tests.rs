@@ -2259,7 +2259,7 @@ fn gh685_unreadable_os_ancestor_keeps_drafts_on() {
 
 /// Backdate every trash ancestor's modification time past `SETTLED`, each to
 /// a distinct time so a later entry change always moves it.
-#[cfg(feature = "test-faults")]
+#[cfg(all(feature = "test-faults", unix))] // the witness is Unix-only; Windows cannot open a directory as a file
 fn settle(f: &Fixture) {
     use std::sync::atomic::{AtomicU64, Ordering};
     static AGE: AtomicU64 = AtomicU64::new(3_600);
@@ -2274,7 +2274,7 @@ fn settle(f: &Fixture) {
 /// deletion has synced every trash ancestor durably in this incarnation, later
 /// deletions sync only the trash directory. A failed chain sync, a recreated
 /// chain directory and a relaunch each sync the whole chain again.
-#[cfg(feature = "test-faults")]
+#[cfg(all(feature = "test-faults", unix))]
 #[test]
 fn trash_ancestors_are_synced_once_per_incarnation() {
     use crate::directory_durability::{take_synced_directories, SYNC_ERROR};
@@ -2318,7 +2318,9 @@ fn trash_ancestors_are_synced_once_per_incarnation() {
     assert_eq!(f.host.fs.trash_sync("b.md", "p2"), Ok(Witness::Durable));
     assert_eq!(take_synced_directories(), vec![f.trash.clone()]);
     // A tool that sets an ancestor's time back (`rsync -a`, `cp -a`) moves its
-    // status-change time.
+    // status-change time (on the kernel's coarse clock: wait out one tick so
+    // the restore does not share the last change's).
+    std::thread::sleep(std::time::Duration::from_millis(20));
     let parent = fs::File::open(&whole[1]).unwrap();
     parent
         .set_modified(parent.metadata().unwrap().modified().unwrap())
