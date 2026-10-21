@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- **On a long page, pressing Backspace to merge a block into a tall block (one with an image) no longer leaves the caret scrolled out of view above the window, or throws the view up by most of a screen**: Enter, Backspace, Delete, Tab, Shift+Tab and a multi-block paste now scroll only as far as showing the caret needs, and not at all while it is already visible, instead of leaving the scroll to the webview's own focus rule (Windows centred the field; Linux did not scroll), and the caret stays below any pinned parent rows (GH #745).
+- **On a long page with images, pressing Enter, Backspace or another structural key no longer throws the view back down or loses the block you were editing (most visible on Windows)**: the edit briefly re-lays out the blocks around it, and the editor no longer lets the webview scroll to that interim position; the view now moves only as far as showing the caret needs, and not at all while it is already visible, below any pinned parent rows. Not new in 0.8 (GH #745).
 
 ## [0.8.0-beta.7] - 2026-10-21
 
