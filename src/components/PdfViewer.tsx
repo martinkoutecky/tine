@@ -26,6 +26,7 @@ import { createPdfHighlightState } from "./pdfHighlightState";
 import { pdfTextSelection, type PdfTextSelection } from "./pdfSelection";
 import { createPdfFind } from "./pdfFind";
 import { createPdfTiles, PDF_TILE_PIXEL_BUDGET } from "./pdfTiles";
+import { pdfProbe } from "./pdfProbe";
 import { COLOR_RGB, COLOR_RGBA, type PdfTheme } from "./pdfViewerPalette";
 export { PDF_FIND_TEXT_CACHE_BYTES, PDF_FIND_PAGE_TEXT_BYTES, PDF_FIND_MATCH_CAP } from "./pdfFind";
 import {
@@ -487,6 +488,7 @@ export function PdfViewer(props: {
     const nextPixels = canvasSize.width * canvasSize.height;
     makeRoomForCanvas(n, nextPixels);
     const dpr = canvasSize.ratio;
+    pdfProbe({ type: "render-start", page: n, scale: s, ratio: dpr, pixels: nextPixels });
     canvas.width = canvasSize.width;
     canvas.height = canvasSize.height;
     // Reserve immediately, before pdf.js's async render, so concurrent visible
@@ -505,6 +507,7 @@ export function PdfViewer(props: {
     try {
       await task.promise;
     } catch (err) {
+      pdfProbe({ type: "render-abort", page: n, scale: s });
       if (tasks[n] === task) delete tasks[n];
       if (renderGeneration[n] !== generation || layoutGeneration !== layout) return;
       if ((err as { name?: string } | undefined)?.name === "RenderingCancelledException") return;
@@ -512,7 +515,11 @@ export function PdfViewer(props: {
       return;
     }
     if (tasks[n] === task) delete tasks[n];
-    if (renderGeneration[n] !== generation || layoutGeneration !== layout || scale() !== s) return;
+    if (renderGeneration[n] !== generation || layoutGeneration !== layout || scale() !== s) {
+      pdfProbe({ type: "render-abort", page: n, scale: s });
+      return;
+    }
+    pdfProbe({ type: "render-end", page: n, scale: s, ratio: dpr });
 
     // Canvas is crisp now — the page is usable. Rebuild the (expensive) text
     // layer off the hot path so it doesn't make every zoom step janky.
@@ -658,6 +665,7 @@ export function PdfViewer(props: {
     delete tasks[n];
     const canvas = pageEls[n]?.querySelector("canvas") as HTMLCanvasElement | null;
     if (canvas) {
+      pdfProbe({ type: "free", page: n });
       // WebKit may defer freeing a detached canvas's backing store. Resizing to
       // zero releases it synchronously before the DOM node is removed.
       canvas.width = 0;
@@ -716,6 +724,7 @@ export function PdfViewer(props: {
     const generation = (textGeneration[n] = (textGeneration[n] ?? 0) + 1);
     const layout = layoutGeneration;
     const container = textLayers[n];
+    pdfProbe({ type: "text-start", page: n, scale: atScale });
     const buildCurrent = () => !disposed && layoutGeneration === layout && textGeneration[n] === generation
       && renderedScale[n] === atScale && textLayers[n] === container;
     let page: pdfjs.PDFPageProxy;
@@ -735,6 +744,7 @@ export function PdfViewer(props: {
         await existing.update({ viewport });
         if (!buildCurrent()) return;
         textScale[n] = atScale;
+        pdfProbe({ type: "text-end", page: n, scale: atScale, update: true });
         return;
       } catch (err) {
         if (!buildCurrent()) return;
@@ -766,6 +776,7 @@ export function PdfViewer(props: {
     if (!buildCurrent()) return;
     textLayerObjs[n] = layer;
     textScale[n] = atScale;
+    pdfProbe({ type: "text-end", page: n, scale: atScale, update: false });
   }
 
   function clearTransform(n: number) {
@@ -830,6 +841,7 @@ export function PdfViewer(props: {
         ? (scrollRef.scrollTop - element.offsetTop) / element.offsetHeight : 0;
     }
     zoomSettling = true;
+    pdfProbe({ type: "zoom-input", page: 0, scale: s });
     pdfTiles.reset();
     for (const n of visible) sizeWrapper(n, s);
     applyZoomTransform();
@@ -840,6 +852,7 @@ export function PdfViewer(props: {
   function settleZoom() {
     if (!pdfDoc) return;
     const s = scale();
+    pdfProbe({ type: "zoom-settle", page: 0, scale: s });
     for (let n = 1; n <= pdfDoc.numPages; n++) sizeWrapper(n, s);
     if (zoomAnchorPage !== null) {
       const anchor = zoomAnchorPage;
