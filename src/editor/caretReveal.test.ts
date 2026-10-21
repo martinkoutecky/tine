@@ -18,10 +18,16 @@ beforeEach(() => {
 afterEach(() => { document.body.innerHTML = ""; vi.unstubAllGlobals(); });
 
 /** A 500px-tall scroller at viewport y=100, an editor whose top is `editorTop` px below the scroller top. */
-function fixture(editorTop: number, pins = 0) {
+function fixture(editorTop: number, pins = 0, pinsShown = true) {
   const scroller = document.createElement("div");
   let host: HTMLElement = scroller;
-  for (let i = 0; i < pins; i++) { const p = document.createElement("div"); p.setAttribute("data-sticky-parent", ""); host.append(p); host = p; }
+  for (let i = 0; i < pins; i++) {
+    const p = document.createElement("div"); p.setAttribute("data-sticky-parent", "");
+    const row = document.createElement("div"); row.className = "block-main";
+    // A pinned ancestor's own row is scrolled out above the view (top 100); an unpinned one is on screen.
+    row.getBoundingClientRect = () => ({ bottom: pinsShown ? 60 : 400 } as DOMRect);
+    p.append(row); host.append(p); host = p;
+  }
   const block = document.createElement("div"); block.className = "ls-block";
   const editor = document.createElement("textarea");
   block.append(editor); host.append(block); document.body.append(scroller);
@@ -55,6 +61,11 @@ it("keeps the caret row below the sticky parent pins", () => {
   revealCaret(f.editor, f.scroller);
   expect(f.scroller.scrollTop).toBe(1000 + (10 - (60 + 8)));
 });
+it("ignores pins whose ancestor row is still on screen", () => {
+  const f = fixture(10, 2, false);
+  expect(revealCaret(f.editor, f.scroller)).toBe(false); // caret row at 10 is inside 8..492
+  expect(f.scroller.scrollTop).toBe(1000);
+});
 it("measures the caret row inside the editor, not its top", () => {
   row = { top: 400, bottom: 420 };
   const f = fixture(-300); // editor top is above the view but the caret row (y 100) is visible
@@ -71,33 +82,51 @@ it("does nothing without layout, without focus, or for a foreign scroller", () =
   expect(revealCaret(f.editor, document.createElement("div"))).toBe(false);
   expect(f.scroller.scrollTop).toBe(1000);
 });
-it("settles on the next frames when the layout moves the caret away after the first reveal", () => {
-  const f = fixture(200);
-  revealCaretSettled(f.editor, f.scroller, 2);
+/** Run queued animation frames one at a time. */
+const step = (n = 1) => { for (let i = 0; i < n; i++) frames.shift()?.(0); };
+
+it("reveals once, after the layout has stopped moving, and not at mount", () => {
+  const f = fixture(-477);
+  revealCaretSettled(f.editor, f.scroller);
+  expect(f.scroller.scrollTop).toBe(1000); // nothing synchronously
+  step(2); // signature unchanged for 2 frames
+  expect(f.scroller.scrollTop).toBe(1000 - 477 - 8);
+  expect(frames.length).toBe(0);
+});
+it("waits while the layout is still moving and reveals the settled position, not the interim one", () => {
+  const f = fixture(-6000); // interim layout: editor far above the view
+  revealCaretSettled(f.editor, f.scroller);
+  step(1);
+  f.setTop(200); // the windows settle: the caret is visible after all
+  step(1);
   expect(f.scroller.scrollTop).toBe(1000);
-  f.setTop(-100); // e.g. an image above resolved its size
-  frames.shift()!(0);
-  expect(f.scroller.scrollTop).toBe(1000 - 100 - 8);
+  step(3);
+  expect(f.scroller.scrollTop).toBe(1000); // visible and stable: never moved
+  expect(frames.length).toBe(0);
+});
+it("reveals after the frame cap even if the layout never settles", () => {
+  const f = fixture(-100);
+  revealCaretSettled(f.editor, f.scroller, 2, 5);
+  for (let i = 0; i < 5; i++) { f.setTop(-100 - i); step(1); }
+  expect(f.scroller.scrollTop).not.toBe(1000);
+  expect(frames.length).toBe(0);
 });
 it.each(["wheel", "pointerdown", "touchstart", "keydown"])("yields to a %s from the user", (type) => {
-  const f = fixture(200);
-  revealCaretSettled(f.editor, f.scroller, 2);
-  f.setTop(-100);
+  const f = fixture(-100);
+  revealCaretSettled(f.editor, f.scroller);
   f.scroller.dispatchEvent(new Event(type));
-  frames.shift()?.(0);
+  step(4);
   expect(f.scroller.scrollTop).toBe(1000);
 });
 it("stops when the editor loses focus and when cancelled", () => {
-  const f = fixture(200);
-  revealCaretSettled(f.editor, f.scroller, 2);
-  f.setTop(-100);
+  const f = fixture(-100);
+  revealCaretSettled(f.editor, f.scroller);
   f.editor.blur();
-  frames.shift()?.(0);
+  step(4);
   expect(f.scroller.scrollTop).toBe(1000);
-  const g = fixture(200);
-  const cancel = revealCaretSettled(g.editor, g.scroller, 2);
-  g.setTop(-100);
+  const g = fixture(-100);
+  const cancel = revealCaretSettled(g.editor, g.scroller);
   cancel();
-  frames.shift()?.(0);
+  step(4);
   expect(g.scroller.scrollTop).toBe(1000);
 });

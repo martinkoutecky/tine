@@ -123,9 +123,8 @@ import {
   caretAtLastRow,
   caretColumnOnVisualRow,
   caretOffsetOnLastRow,
-  textareaCaretLeft,
 } from "../editor/caretRows";
-import { revealCaretSettled } from "../editor/caretReveal";
+import { revealCaretColumn, revealCaretSettled } from "../editor/caretReveal";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
 import { QUERY_MACRO_SCAFFOLD } from "../editor/queryMacro";
@@ -1883,51 +1882,26 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   createEffect(() => { textareaValue(); if (ref) autosize(); });
   onCleanup(() => autosizeRaf?.());
   createEffect(() => { codeWrapping(); if (ref && codeEditing()) autosize(); });
-  // A `wrap="off"` editor (a code card) mounts with its whole value assigned,
-  // which parks the selection at the end; focusing reveals that end and the
-  // later setSelectionRange does not scroll back, so a long line opened the
-  // editor on blank space hundreds of columns past the code (GH #489). Put the
-  // horizontal view where the caret is; one mirror measure, and only for an
-  // editor that can scroll horizontally at all, never an ordinary block.
-  const revealCaretColumn = (offset: number) => {
-    if (!ref || ref.scrollWidth <= ref.clientWidth) return;
-    const x = textareaCaretLeft(ref, offset);
-    if (x === null) return;
-    const margin = 24;
-    if (x < ref.scrollLeft + margin) ref.scrollLeft = Math.max(0, x - margin);
-    else if (x > ref.scrollLeft + ref.clientWidth - margin) ref.scrollLeft = x - ref.clientWidth + margin;
-  };
-
   const focusNow = () => {
-    placeCaretNow();
-    cancelReveal?.();
-    cancelReveal = revealCaretSettled(ref, nearestScrollableY(ref));
-  };
-  let cancelReveal: (() => void) | undefined;
-  onCleanup(() => cancelReveal?.());
-  const placeCaretNow = () => {
     const historySelection = takeHistoryEditorSelectionFor(props.id, surfaceKey);
     const want = takeCaretFor(props.id);
     const rawCaret = historySelection && !codeBodyProjection(editorValue(), pageFmt()) ? historySelection.start
       : typeof want === "number" ? want : null;
     if (rawCaret !== null) codeView.enter(rawCaret, historySelection?.end ?? rawCaret);
     ref.value = codeShown()?.body ?? (historySelection ? editorValue() : ref.value);
-    // GH #745: focus() would scroll the field into view by the engine's own rule
-    // (Chromium centres it, WebKit leaves it where it is). `revealCaretSettled`
-    // owns that: no move while the caret row is visible, else the least move.
-    ref.focus({ preventScroll: true });
+    ref.focus({ preventScroll: true }); // the engine's own focus scroll differs; revealCaretSettled (onMount) owns it (GH #745)
     const v = ref.value;
     if (historySelection) {
       const offset = codeView.mixed() ? codeShown()!.open.length : 0;
       const end = Math.min(historySelection.end - offset, v.length);
       const start = Math.min(historySelection.start - offset, end);
       ref.setSelectionRange(start, end);
-      revealCaretColumn(start);
+      revealCaretColumn(ref, start);
       return;
     }
     if (want !== null && typeof want === "object" && "start" in want) {
       ref.setSelectionRange(want.start, want.end, want.direction);
-      revealCaretColumn(want.direction === "backward" ? want.start : want.end);
+      revealCaretColumn(ref, want.direction === "backward" ? want.start : want.end);
       return;
     }
     let offset: number;
@@ -1958,7 +1932,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
     }
     const o = Math.min(offset, v.length);
     ref.setSelectionRange(o, o);
-    revealCaretColumn(o);
+    revealCaretColumn(ref, o);
   };
   onMount(() => {
     const unregisterHistoryTarget = registerHistoryEditorTarget({
@@ -1996,6 +1970,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       });
     }
     resizeNow();
+    onCleanup(revealCaretSettled(ref, nearestScrollableY(ref)));
     // A split can change the editor's wrapping width after this mount-time
     // measurement. Observe width only so the height write in `resizeNow` cannot
     // feed an observer loop; `autosize` keeps repeated layout changes to one
