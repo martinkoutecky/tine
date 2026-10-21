@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { QuickSwitcher } from "./QuickSwitcher";
-import { closeSwitcher, openSwitcher, rightSidebar, setRecentPages, setRightSidebar, setRightSidebarOpen } from "../ui";
+import { closeSwitcher, openCommandPalette, openSwitcher, rightSidebar, setRecentPages, setRightSidebar, setRightSidebarOpen } from "../ui";
 import { pageInventoryRev } from "../graphSession";
 import { toasts } from "../toasts";
 import { activeId, closeTab, route, tabRoute, tabs } from "../router";
@@ -12,6 +12,7 @@ import { resetStore } from "../document";
 import { loadSingle } from "../document/workingSet";
 import type { PageRead } from "../types";
 import { bindTestHost, submittedPages } from "../document/host/wiring.test.support";
+import { setActiveLocale } from "../i18n";
 
 afterEach(() => {
   closeSwitcher();
@@ -25,6 +26,22 @@ afterEach(() => {
 });
 
 describe("QuickSwitcher search syntax help", () => {
+  it("finds command palette rows by their shown Chinese label and English original (GH #107)", async () => {
+    await setActiveLocale("zh-CN");
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    try {
+      openCommandPalette();
+      const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+      for (const query of ["搜索", "Search"]) {
+        input.value = query;
+        input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+        await vi.waitFor(() => expect([...root.querySelectorAll(".switcher-row")]
+          .some(row => row.textContent?.includes("打开搜索标签页"))).toBe(true));
+      }
+    } finally { dispose(); await setActiveLocale("en"); }
+  });
   it("GH #151 shows Pinyin page hits and refetches when the device setting turns off", async () => {
     setPinyinMatchingEnabled(true);
     const search = vi.spyOn(backend(), "runGraphSearch").mockImplementation(async (...args) => ({

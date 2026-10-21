@@ -8,12 +8,15 @@ import { loadSingle } from "../document/workingSet";
 import { doc } from "../document/model";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
+import { setActiveLocale } from "../i18n";
+import { ADVANCED_BLOCK_COMMANDS } from "../editor/autocomplete";
 
 beforeAll(async () => {
   await initParser();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await setActiveLocale("en");
   resetStore();
   document.body.innerHTML = "";
 });
@@ -55,6 +58,20 @@ function choose(label: string) {
 }
 
 describe("< advanced-section command autocomplete", () => {
+  it("finds Quote from its Chinese label and inserts the original Org section (GH #107)", async () => {
+    await setActiveLocale("zh-CN");
+    loadSingle(page("<引用"));
+    startEditing("advanced", 3);
+    const { root, dispose } = mount(() => <Block id="advanced" />);
+    try {
+      inputAt(root.querySelector("textarea.block-editor")!, "<引用");
+      const quote = ADVANCED_BLOCK_COMMANDS.find(command => command.matchLabel === "Quote")!;
+      await vi.waitFor(() => expect([...document.querySelectorAll(".autocomplete .ac-label")]
+        .map(el => el.textContent)).toContain(quote.label));
+      choose(quote.label);
+      await vi.waitFor(() => expect(doc.byId.advanced.raw).toBe(quote.insert));
+    } finally { dispose(); }
+  });
   it("filters Quote/Query, inserts an Org BEGIN/END section at the middle caret, and preserves a second section", async () => {
     loadSingle(page("<qu"));
     startEditing("advanced", 3);

@@ -57,6 +57,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Chinese command input keeps the `/` and `<` pickers open and finds their localized labels (GH #107). Settings search now shows the matching text for hidden keywords, aliases and English labels too, including `父` for block embed breadcrumbs (GH #706).
 - Tab on a block directly below the page properties now explains that a block cannot be indented under them; moving blocks above the properties keeps its existing explanation (GH #210).
 - Settings → Journals now shows the same unsupported journal date-pattern notes as today's journal, beside Journal date format, and updates them when the setting changes (GH #317).
 

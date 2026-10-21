@@ -32,6 +32,33 @@ it("matches translated and original English vocabulary after a language change",
 const text = (value: string | Msg) => typeof value === "string" ? value : render(value);
 const labelsFor = (query: string) => rankedSettingMatches(SETTING_SEARCH, query).map(entry => text(entry.label));
 
+it("explains matches outside the visible label, including keyword and alias hits (GH #706)", async () => {
+  await setActiveLocale("zh-CN");
+  const embed = SETTING_SEARCH.find(entry => text(entry.label) === "块嵌入面包屑")!;
+  expect(settingMatches(embed, "父")).toBe(true);
+  expect(matchedDescription(embed, "父")).toContain("父");
+  const language = SETTING_SEARCH.find(entry => text(entry.label) === "语言")!;
+  expect(matchedDescription(language, "Language")).toContain("Language");
+  expect(matchedDescription(language, "Chinese")).toContain("Chinese");
+  expect(matchedDescription({ tab: "graph", label: "Alpha", description: "Elsewhere", keywords: "hidden zebra" }, "zebra")).toBe("hidden zebra");
+  expect(matchedDescription({ tab: "graph", label: "Alpha", description: "Elsewhere", aliases: ["quux"] }, "quux")).toBe("quux");
+});
+
+it("explains every hidden query term even when matches are far apart in one source (GH #706)", async () => {
+  await setActiveLocale("zh-CN");
+  const entry = { tab: "graph" as const, label: "Alpha", description: `父${"中".repeat(200)}末`, keywords: "hidden zebra", aliases: ["quux"] };
+  const query = "alpha 父 末 zebra quux";
+  expect(settingMatches(entry, query)).toBe(true);
+  const evidence = matchedDescription(entry, query)!;
+  for (const term of ["父", "末", "zebra", "quux"]) expect(evidence).toContain(term);
+  // A long word must also remain visible in full so the result can highlight it.
+  const word = "z".repeat(130);
+  expect(matchedDescription({ ...entry, description: word }, word)).toContain(word);
+  const unicode = { ...entry, description: `${"İ".repeat(60)} ${"😀".repeat(60)} zebra` };
+  expect(matchedDescription(unicode, "zebra")).toContain("zebra");
+  expect(matchedDescription(entry, "父")).not.toMatch(/<\/?[a-z]+>/);
+});
+
 it("a one-character query matches shown-language names and descriptions, not hidden English (GH #706)", async () => {
   await setActiveLocale("zh-CN");
   // 图谱 and 拼写检查语言 contain 发 in their descriptions: beta.5 dropped them (4 -> 2).
