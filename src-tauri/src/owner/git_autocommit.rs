@@ -453,7 +453,11 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
                 // Streamed: an asset is never held in memory whole.
                 let mut file = std::fs::File::open(&full).map_err(io)?;
                 let mut writer = repo.repo.blob_writer(None).map_err(failed)?;
-                let size = std::io::copy(&mut file, &mut writer).map_err(io)?;
+                let size =
+                    copy_unless_exiting(&mut file, &mut writer).map_err(|e| match e.kind() {
+                        std::io::ErrorKind::Interrupted => Unusable::Quitting,
+                        _ => io(e),
+                    })?;
                 let id = writer.commit().map_err(failed)?;
                 let old_mode = index.get_path(Path::new(path), 0).map(|e| e.mode);
                 index
@@ -463,6 +467,33 @@ fn stage(repo: &Repo, prefix: &str, index: &mut git2::Index) -> Result<(), Unusa
         }
     }
     Ok(())
+}
+
+/// Copy `from` into `into` in 1 MiB chunks, stopping with `Interrupted` once
+/// the app is exiting: a single large asset must not keep `index.lock` held
+/// past the exit flush (review round 2, N2).
+fn copy_unless_exiting(
+    from: &mut impl std::io::Read,
+    into: &mut impl std::io::Write,
+) -> std::io::Result<u64> {
+    let mut buffer = vec![0u8; 1 << 20];
+    let mut total = 0u64;
+    loop {
+        if EXITING.load(Ordering::Acquire) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "Tine is quitting",
+            ));
+        }
+        let n = match from.read(&mut buffer) {
+            Ok(0) => return Ok(total),
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        into.write_all(&buffer[..n])?;
+        total += n as u64;
+    }
 }
 
 fn entry_for(
