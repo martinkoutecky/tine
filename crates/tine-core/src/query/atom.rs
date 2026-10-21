@@ -246,23 +246,7 @@ pub fn property_atoms(
     // Step 3 — refs, plus comma segments for a comma-configured key. Skipped
     // entirely for a step-1 key (A1).
     if !suppressed {
-        // Too deep for the bounded door (I-22) ⇒ no ref or comma atoms.
-        let nodes =
-            crate::render::parse_inline_bounded(trimmed, format.lsdoc_name()).unwrap_or_default();
-        let mut refs: Vec<String> = Vec::new();
-        for node in &nodes {
-            ref_from_inline(node, &mut refs);
-        }
-        let mut segments: Vec<String> = Vec::new();
-        if separated_by_commas(&key_norm, config) {
-            let mut plains: Vec<String> = Vec::new();
-            plain_segments(&nodes, &mut plains);
-            for plain in &plains {
-                for segment in sep_by_comma(plain) {
-                    segments.push(segment.to_string());
-                }
-            }
-        }
+        let (refs, segments) = refs_and_segments(&key_norm, trimmed, format, config);
         for text in refs {
             push_atom(&mut atoms, &mut seen, text, AtomOrigin::Ref, config);
         }
@@ -283,6 +267,92 @@ pub fn property_atoms(
         config,
     );
     atoms
+}
+
+/// The page refs of one property value, and for a comma-configured key its
+/// comma-split plain segments, both in text order and not yet de-duplicated: OG
+/// `parse-property-refs` (`text.cljs:157-163`). The caller has already ruled out
+/// a step-1 key and a quoted value. Too deep for the bounded door (I-22) means
+/// no refs and no segments.
+fn refs_and_segments(
+    key_norm: &str,
+    trimmed: &str,
+    format: AtomFormat,
+    config: &ParseConfig,
+) -> (Vec<String>, Vec<String>) {
+    let nodes =
+        crate::render::parse_inline_bounded(trimmed, format.lsdoc_name()).unwrap_or_default();
+    let mut refs: Vec<String> = Vec::new();
+    for node in &nodes {
+        ref_from_inline(node, &mut refs);
+    }
+    let mut segments: Vec<String> = Vec::new();
+    if separated_by_commas(key_norm, config) {
+        let mut plains: Vec<String> = Vec::new();
+        plain_segments(&nodes, &mut plains);
+        for plain in &plains {
+            for segment in sep_by_comma(plain) {
+                segments.push(segment.to_string());
+            }
+        }
+    }
+    (refs, segments)
+}
+
+/// Member-bytes budget of [`property_value_completions`]' spelling pass.
+const COMPLETION_SPELLING_BUDGET: usize = 1 << 22;
+
+/// The strings OG's property-value autocomplete offers for ONE stored value:
+/// `get-property-values` / `property-value-for-refs-and-text`
+/// (`src/main/frontend/db/model.cljs:1407-1443`, OG 0.10.9). A value whose
+/// reference set (page refs, plus comma segments for a comma-configured key)
+/// holds two or more distinct strings is offered as those members, each spelled
+/// `[[x]]` if the text contains that, else `#x` if the text contains that, else
+/// bare `x`. Every other value (no ref, one ref, quoted, ref parsing
+/// suppressed, number, boolean, plain text with commas) is offered whole.
+/// Blank values offer nothing. The caller trims, de-duplicates and sorts across
+/// the graph. Cost O(value bytes); no I/O.
+pub fn property_value_completions(
+    key: &str,
+    value: &str,
+    format: AtomFormat,
+    config: &ParseConfig,
+) -> Vec<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let key_norm = property_key_norm(key);
+    if reference_parsing_suppressed(&key_norm, config) || wrapped_by_quotes(trimmed) {
+        return vec![trimmed.to_string()];
+    }
+    let (refs, segments) = refs_and_segments(&key_norm, trimmed, format, config);
+    // OG's reference set: exact-string distinct (no case folding).
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut members: Vec<String> = Vec::new();
+    for member in refs.into_iter().chain(segments) {
+        if seen.insert(member.clone()) {
+            members.push(member);
+        }
+    }
+    // OG spells each member by substring search over the whole text, O(members x
+    // text). Tine bounds that work (I-22): a pathological value past the budget
+    // is offered whole, as a plain value is.
+    if members.len() < 2 || members.len().saturating_mul(value.len()) > COMPLETION_SPELLING_BUDGET {
+        return vec![trimmed.to_string()];
+    }
+    members
+        .into_iter()
+        .map(|member| {
+            if value.contains(&format!("[[{member}]]")) {
+                format!("[[{member}]]")
+            } else if value.contains(&format!("#{member}")) {
+                format!("#{member}")
+            } else {
+                member
+            }
+        })
+        .collect()
 }
 
 fn push_atom(
@@ -455,6 +525,97 @@ mod tests {
             "I-22: admitted flat atoms must not scan all earlier atoms"
         );
         assert_eq!(md("tags", &"same,".repeat(20_000), &config()).len(), 1);
+    }
+
+    fn completions(key: &str, value: &str, config: &ParseConfig) -> Vec<String> {
+        property_value_completions(key, value, AtomFormat::Markdown, config)
+    }
+
+    #[test]
+    fn gh737_completions_follow_og_property_value_for_refs_and_text() {
+        // OG db/model.cljs:1407-1443 and its test model_test.cljs:182-206.
+        let config = config();
+        // Two or more refs: each member, spelled as the text spells it.
+        assert_eq!(
+            completions("tags", "[[a]], [[b]]", &config),
+            ["[[a]]", "[[b]]"]
+        );
+        assert_eq!(
+            completions("k", "[[a]] and [[b]]", &config),
+            ["[[a]]", "[[b]]"]
+        );
+        assert_eq!(
+            completions("type", "#Feature, #Command", &config),
+            ["#Feature", "#Command"]
+        );
+        assert_eq!(completions("k", "[[a]] #b", &config), ["[[a]]", "#b"]);
+        assert_eq!(
+            completions("k", "#[[two words]] [[c]]", &config),
+            ["[[two words]]", "[[c]]"]
+        );
+        // A comma-configured key adds its bare plain segments (bare unless the
+        // text spells them as a tag).
+        assert_eq!(completions("tags", "a, b", &config), ["a", "b"]);
+        assert_eq!(
+            completions("tags", "a, #b", &config),
+            ["#b", "a"],
+            "refs first, then plain segments"
+        );
+        assert_eq!(
+            completions("tags", "#ab, a", &config),
+            ["#ab", "#a"],
+            "OG substring quirk"
+        );
+        // One ref, plain text (commas included), numbers, booleans, URLs: whole.
+        assert_eq!(completions("type", "[[Class]]", &config), ["[[Class]]"]);
+        assert_eq!(completions("k", "foo [[a]]", &config), ["foo [[a]]"]);
+        assert_eq!(
+            completions("k", "plain, with commas", &config),
+            ["plain, with commas"]
+        );
+        assert_eq!(completions("k", "12", &config), ["12"]);
+        assert_eq!(completions("public", "true", &config), ["true"]);
+        assert_eq!(
+            completions("type", "https://schema.org/Class", &config),
+            ["https://schema.org/Class"]
+        );
+        // Quoted values and reference-suppressed keys: whole.
+        assert_eq!(
+            completions("k", "\"[[a]], [[b]]\"", &config),
+            ["\"[[a]], [[b]]\""]
+        );
+        assert_eq!(
+            completions("title", "[[a]], [[b]]", &config),
+            ["[[a]], [[b]]"]
+        );
+        // The same ref twice is one member (exact-string distinct): whole text.
+        assert_eq!(completions("k", "[[a]] [[a]]", &config), ["[[a]] [[a]]"]);
+        // Distinct only by case: two members in OG (no folding).
+        assert_eq!(completions("k", "[[a]] [[A]]", &config), ["[[a]]", "[[A]]"]);
+        // Blank offers nothing.
+        assert!(completions("k", "  ", &config).is_empty());
+        // Config-separated key splits plain segments; others do not.
+        let mut commas = config.clone();
+        commas.separated_by_commas = vec!["authors".into()];
+        assert_eq!(completions("authors", "Ann, Bob", &commas), ["Ann", "Bob"]);
+        assert_eq!(completions("authors", "Ann, Bob", &config), ["Ann, Bob"]);
+        // Org values use the Org inline grammar for the same rule.
+        assert_eq!(
+            property_value_completions("tags", "[[a]], [[b]]", AtomFormat::Org, &config),
+            ["[[a]]", "[[b]]"]
+        );
+    }
+
+    #[test]
+    fn gh737_completions_stay_linear_for_a_pathological_value() {
+        let value = (0..20_000)
+            .map(|i| format!("[[p{i:05}]]"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let start = std::time::Instant::now();
+        let out = completions("tags", &value, &config());
+        assert!(start.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(out, [value]);
     }
 
     fn texts(atoms: &[Atom]) -> Vec<String> {

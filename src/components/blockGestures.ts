@@ -20,6 +20,7 @@ import { msg } from "../i18n";
 import { pushToast } from "../toasts";
 import { endEdit, startEditing } from "../editorController";
 import { dropSelection, setDragSelectionSuppressed } from "../dragSelectionGuard";
+import { EDGE_ZONE_PX, PRESS_ZONE_PX, scrollHome, startEdgeAutoscroll, type EdgeAutoscroll } from "../edgeAutoscroll";
 import { codeFences } from "../editor/fences";
 import { codeBodyProjection } from "../editor/codeFence";
 import { blockDropPosition, type BlockDropPosition } from "../editor/blockDrag";
@@ -48,7 +49,25 @@ export function beginDrag(id: string, e: MouseEvent) {
   // The drag's own window: listeners and hit tests follow the pointer's document.
   const doc = documentOf(e);
   let capturedIds: string[] | null = null;
+  const home = scrollHome(e.target);
+  // Edge autoscroll (GH #731): the pointer-driven drag gets no native DnD scroll.
+  let autoscroll: EdgeAutoscroll | null = null;
   dragMoved = false;
+  // The drop indicator under a hit point: the pointer's, or the one the
+  // autoscroll reports after it scrolled the content under a still pointer.
+  const track = (x: number, y: number) => {
+    const el = (doc.elementFromPoint(x, y) as HTMLElement | null)?.closest(".ls-block") as HTMLElement | null;
+    const tid = el?.dataset.blockId;
+    if (tid) {
+      const main = el!.querySelector(".block-main")!.getBoundingClientRect();
+      setDropInd({
+        id: tid,
+        position: blockDropPosition(x, y, el!.getBoundingClientRect(), main),
+      });
+    } else {
+      setDropInd(null);
+    }
+  };
   const onMove = (ev: MouseEvent) => {
     if (!dragMoved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
     if (!dragMoved) {
@@ -62,26 +81,23 @@ export function beginDrag(id: string, e: MouseEvent) {
       // selection drag from the bullet and paints every block the pointer
       // crosses blue (GH #424, macOS; Chromium does not do this).
       setDragSelectionSuppressed(true, doc);
+      autoscroll = startEdgeAutoscroll(doc, (x, y) => {
+        dropSelection(doc);
+        track(x, y);
+      }, home);
     }
     // WebKit can re-anchor a selection mid-drag; the class alone is not enough.
     dropSelection(doc);
-    const el = (doc.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest(
-      ".ls-block"
-    ) as HTMLElement | null;
-    const tid = el?.dataset.blockId;
-    if (tid) {
-      const main = el!.querySelector(".block-main")!.getBoundingClientRect();
-      setDropInd({
-        id: tid,
-        position: blockDropPosition(ev.clientX, ev.clientY, el!.getBoundingClientRect(), main),
-      });
-    } else {
-      setDropInd(null);
-    }
+    // Past the window with no scroller to push on, keep the raw pointer: a drop
+    // outside the window still cancels, as with OG's native drag.
+    const hit = autoscroll?.update(ev.clientX, ev.clientY);
+    if (hit?.edge) track(hit.x, hit.y);
+    else track(ev.clientX, ev.clientY);
   };
   const onUp = (ev: MouseEvent) => {
     doc.removeEventListener("mousemove", onMove);
     doc.removeEventListener("mouseup", onUp);
+    autoscroll?.stop();
     setDragSelectionSuppressed(false);
     const ind = dropInd();
     if (bindingCurrent(binding) && dragMoved && ind && docNode(ind.id)) {
@@ -166,6 +182,7 @@ export function beginEditGesture(
   owner: string | null,
   outlineScope: OutlineScope | null,
 ): void {
+  const home = scrollHome(e.target); // before the press re-renders its target
   clearSelection(); // a plain gesture replaces any active block selection (shift-click returns before this)
   const g: EditGesture = {
     blockId,
@@ -184,11 +201,13 @@ export function beginEditGesture(
   startEditing(g.blockId, g.offset, g.owner);
   // The gesture's own window: listeners and hit tests follow the pointer's document.
   const doc = documentOf(e);
-  const onMove = (ev: MouseEvent) => {
-    const moved =
-      Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
-    if (!moved) return;
-    const over = blockIdAtPoint(doc, ev.clientX, ev.clientY);
+  // Edge autoscroll (GH #731): this press was preventDefault-ed, so there is no
+  // native selection to scroll the page. `step` runs at the pointer's hit
+  // point, or at the one the autoscroll reports after it scrolled the content
+  // under a still pointer.
+  let autoscroll: EdgeAutoscroll | null = null;
+  const step = (px: number, py: number) => {
+    const over = blockIdAtPoint(doc, px, py);
     if (g.escalated) {
       if (over) extendSelectionTo(over, g.outlineScope);
       return;
@@ -206,8 +225,8 @@ export function beginEditGesture(
         const points = g.caretPoints;
         if (points?.length) {
           const rect = active.getBoundingClientRect();
-          const x = ev.clientX - rect.left + active.scrollLeft;
-          const y = ev.clientY - rect.top + active.scrollTop;
+          const x = px - rect.left + active.scrollLeft;
+          const y = py - rect.top + active.scrollTop;
           const lineHeight = parseFloat(getComputedStyle(active).lineHeight) || 26;
           let best = 0;
           let bestScore = Infinity;
@@ -239,9 +258,20 @@ export function beginEditGesture(
       extendSelectionTo(over, g.outlineScope);
     }
   };
+  const onMove = (ev: MouseEvent) => {
+    const moved =
+      Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
+    if (!moved) return;
+    autoscroll ??= startEdgeAutoscroll(doc, step, home);
+    // A press that may still be a click or an in-block selection only scrolls
+    // when pushed against the edge; once it is a block selection, the full zone.
+    const hit = autoscroll.update(ev.clientX, ev.clientY, undefined, g.escalated ? EDGE_ZONE_PX : PRESS_ZONE_PX);
+    step(hit.x, hit.y);
+  };
   const onUp = (ev: MouseEvent) => {
     doc.removeEventListener("mousemove", onMove, true);
     doc.removeEventListener("mouseup", onUp, true);
+    autoscroll?.stop();
     if (g.escalated) return; // block selection stands
   };
   doc.addEventListener("mousemove", onMove, true);

@@ -273,6 +273,12 @@
       "nonRequirements":["Exact pixels, certification beyond Linux WebKitGTK, or changing source Move Up/Down semantics."],
       "stability":"burn-in"
     },
+    "scripts/e2e-gh731-drag-autoscroll.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"Holding the mouse at the bottom edge while drag-selecting blocks on a long page, or while dragging a block by its bullet, scrolls the page so blocks beyond the first screen end up selected or receive the move; the saved file contains exactly the moved block, once, and nothing else changes, and the scrolling stops when the button is released (GH #731).","blocking":true}],
+      "acceptableVariations":["Scroll speed, the size of the edge zone, which block the drop lands next to and its position (sibling or child), and save latency may vary while the pane scrolls under the held pointer and the outcome is beyond the first screen."],
+      "nonRequirements":["Pointer beyond the window edge (a WebDriver pointer cannot leave the display), touch drags, the right sidebar or split panes (component-tested), WebView2/WKWebView behaviour, or exact pixel positions."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-gh729-page-template.mjs": {
       "contracts": [{"class":"core-operation","userOutcome":"A page whose property header carries template:: is listed by the slash menu (/template and by name) and inserts its header block with the template property stripped and <% today %> expanded, leaving the source page unchanged (discussion 729).","blocking":true}],
       "acceptableVariations":["Menu order, focus, styling and save latency may vary while the listing and the saved copy are right."],

@@ -125,6 +125,7 @@ import {
   caretColumnOnVisualRow,
   caretOffsetOnLastRow,
   textareaCaretLeft,
+  textareaCaretLineRect,
 } from "../editor/caretRows";
 import { splitProps, BUILTIN_HIDE, SHEET_CELL_HIDE, HIDE_ALL, caretOnPropertyLine, isPropertiesOnly, multilineExitTrim } from "../editor/properties";
 import { propertyEditorSession } from "../editor/propertySession";
@@ -790,26 +791,36 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
   // it off. We anchor it to the textarea's viewport rect and recompute while it's
   // open (the editor grows as you type) and on scroll/resize.
   const [acRect, setAcRect] = createSignal<{ left: number; top: number; bottom: number } | null>(null);
+  // The popup hangs against the CARET'S line (OG's caret-aware placement), not the
+  // bottom of a tall editor: a page-properties block with many rows would
+  // otherwise open its list below the last row, often off screen (GH #737). With
+  // no layout (jsdom) it falls back to the editor's own box.
   const updateAcRect = () => {
     if (ref) {
       const r = ref.getBoundingClientRect();
-      setAcRect({ left: r.left, top: r.top, bottom: r.bottom });
+      const line = textareaCaretLineRect(ref, ref.selectionStart);
+      setAcRect({ left: r.left, top: line?.top ?? r.top, bottom: line?.bottom ?? r.bottom });
     }
   };
   createEffect(() => {
+    ac(); // each trigger change (every keystroke) moves the caret line
     if (acVisible()) updateAcRect(); // re-anchor on open / each keystroke
   });
   // Flip the popup above the line when there isn't room below (near the viewport
-  // bottom), so it stays fully visible — matches OG's caret-aware placement.
+  // bottom), and keep it inside the viewport's right edge, so it stays fully
+  // visible - matches OG's caret-aware placement.
   const acStyle = (): Record<string, string> => {
     const r = acRect();
     if (!r) return {};
-    const viewportHeight = viewportOf(ref).height;
-    const below = viewportHeight - r.bottom;
+    const viewport = viewportOf(ref);
+    const below = viewport.height - r.bottom;
     const openUp = below < 300 && r.top > below;
+    // Popup width is content-sized (min 240px); measure the mounted one.
+    const width = acListRef?.offsetWidth || 240;
+    const left = Math.max(8, Math.min(r.left, viewport.width - width - 8));
     return openUp
-      ? { left: `${r.left}px`, bottom: `${viewportHeight - r.top + 2}px` }
-      : { left: `${r.left}px`, top: `${r.bottom + 2}px` };
+      ? { left: `${left}px`, bottom: `${viewport.height - r.top + 2}px` }
+      : { left: `${left}px`, top: `${r.bottom + 2}px` };
   };
   onMount(() => {
     const reanchor = () => { if (ac()) updateAcRect(); };
@@ -1533,6 +1544,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
         ref.setSelectionRange(result.caret, result.caret);
         ref.focus();
         autosize();
+        updateAcRect(); // the value popup stays open: re-anchor on the settled caret
       });
       return;
     }
@@ -3387,7 +3399,7 @@ export function Editor(props: { id: string; propertySession?: ReturnType<typeof 
       </Show>
       <Show when={acVisible() && acRect()}>
         <EditorAutocomplete items={acItems()} index={acIndex()} style={acStyle()}
-          listRef={(element) => { acListRef = element; }} select={selectAc}
+          listRef={(element) => { acListRef = element; queueMicrotask(updateAcRect); }} select={selectAc}
           blockState={acBlockState()} retry={() => void updateAutocomplete()} />
       </Show>
     </div>
