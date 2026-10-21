@@ -35,10 +35,10 @@ afterEach(() => {
 });
 
 let seq = 0;
-function mountPage(raw: string, editing: boolean) {
+function mountPage(raw: string, editing: boolean, format: "md" | "org" = "md") {
   const name = `Clock${++seq}`;
   const block: BlockDto = { id: `clock-${seq}`, raw, collapsed: false, children: [] };
-  const page: PageDto = { name, kind: "page", title: name, pre_block: null, blocks: [block], format: "md" };
+  const page: PageDto = { name, kind: "page", title: name, pre_block: null, blocks: [block], format };
   loadSingle(page);
   if (editing) startEditing(block.id, 0);
   const root = document.createElement("div");
@@ -148,6 +148,17 @@ describe("typing DOING keeps the caret on the task line (GH #741)", () => {
       expect(textarea!.value).toBe(raw);
       expect(textarea!.selectionStart).toBe("DOING test".length);
       expect(textarea!.selectionEnd).toBe("DOING test".length);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("the same in an Org page", () => {
+    const { textarea, blockId, dispose } = mountPage("", true, "org");
+    try {
+      for (const ch of "DOING test") typeChar(textarea!, ch);
+      expect(doc.byId[blockId].raw).toMatch(/^DOING test\n:LOGBOOK:\nCLOCK: \[[^\]]+\]\n:END:$/);
+      expect(textarea!.selectionStart).toBe("DOING test".length);
     } finally {
       dispose();
     }
