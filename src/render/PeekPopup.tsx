@@ -16,9 +16,14 @@ const POPUP_OFFSET = 6;
 const POPUP_FALLBACK_WIDTH = 600;
 const POPUP_FALLBACK_HEIGHT = 320;
 /** OG 0.10.9 caps every hover preview at `:max-height 600` (components/block.cljs
- * page-preview-trigger and the block-ref tippy) and scrolls inside it. GH #735:
- * the inline cap must never exceed this, or a long preview fills the window. */
+ * page-preview-trigger and the block-ref tippy) and scrolls inside it. GH #735,
+ * D-20261021-FA3 (deliberate OG difference): the cap is the larger of that and
+ * half the window, so a tall (4K) window gets a bigger preview, and never more
+ * than the window. */
 export const PEEK_MAX_HEIGHT = 600;
+export function peekMaxHeight(viewportHeight: number): number {
+  return Math.max(0, Math.min(Math.max(PEEK_MAX_HEIGHT, viewportHeight / 2), viewportHeight - POPUP_MARGIN * 2));
+}
 const MAX_PEEK_BLOCK_DEPTH = 64;
 const MAX_PEEK_BLOCKS = 100;
 const MAX_PEEK_COUNT = 2_000;
@@ -124,7 +129,7 @@ export function PeekPopup(props: {
       popupEl?.offsetWidth || POPUP_FALLBACK_WIDTH,
       Math.max(0, viewportWidth - POPUP_MARGIN * 2),
     );
-    const maxHeight = Math.max(0, Math.min(PEEK_MAX_HEIGHT, viewportHeight - POPUP_MARGIN * 2));
+    const maxHeight = peekMaxHeight(viewportHeight);
     const height = Math.min(popupEl?.offsetHeight || POPUP_FALLBACK_HEIGHT, maxHeight);
     const maxLeft = Math.max(POPUP_MARGIN, viewportWidth - width - POPUP_MARGIN);
     const left = Math.min(Math.max(rect.left, POPUP_MARGIN), maxLeft);

@@ -164,7 +164,7 @@ describe("GH #735: hover popup size and delay match Logseq", () => {
       expect(popup()).toBeNull();
     } finally { dispose(); }
   });
-  it.each([2000, 1400, 900])("stays at Logseq's 600px cap in a %ipx-tall window", async (innerHeight) => {
+  it.each([[2160, 1080], [2000, 1000], [1400, 700], [1100, 600], [900, 600], [500, 484]])("caps at max(600px, half the window) in a %ipx-tall window (D-20261021-FA3)", async (innerHeight, cap) => {
     const old = window.innerHeight;
     Object.defineProperty(window, "innerHeight", { configurable: true, value: innerHeight });
     const { link, dispose } = await arm("see [[Probe]]");
@@ -172,7 +172,7 @@ describe("GH #735: hover popup size and delay match Logseq", () => {
       enter(link);
       await advance(OPEN_MS);
       expect(await waitFor(() => !!popup())).toBe(true);
-      expect(parseFloat(popup()!.style.maxHeight)).toBe(600);
+      expect(parseFloat(popup()!.style.maxHeight)).toBe(cap);
     } finally { dispose(); Object.defineProperty(window, "innerHeight", { configurable: true, value: old }); }
   });
   it("re-places itself when its content settles to a different height", async () => {
