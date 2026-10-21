@@ -5141,6 +5141,7 @@ pub(crate) fn atomic_write_with_check(
         || {
             #[cfg(feature = "test-faults")]
             crate::cost_counters::fsync();
+            crate::cost_counters::probe_file_sync();
         },
         || {
             #[cfg(feature = "test-faults")]

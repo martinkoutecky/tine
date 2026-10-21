@@ -314,6 +314,7 @@ fn temp(path: &Path, bytes: &[u8]) -> io::Result<PreparedWrite> {
         || {
             #[cfg(feature = "test-faults")]
             crate::cost_counters::fsync();
+            crate::cost_counters::probe_file_sync();
         },
     )
 }
@@ -600,6 +601,10 @@ impl HostIo for ProductionIo {
 
     fn custody_write(&mut self, name: &str, bytes: &[u8]) -> IoResult<()> {
         self.before(super::io::Phase::CustodyWrite)?;
+        // PROBE ONLY (probe/s2-windows-timing): marker off.
+        if crate::cost_counters::PROBE_NO_MARKER.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(());
+        }
         let dir = self.custody().map_err(failure)?;
         temp(&dir.join(name), bytes)
             .and_then(|prepared| prepared.publish(true))
@@ -613,6 +618,10 @@ impl HostIo for ProductionIo {
 
     fn custody_retire(&mut self, name: &str) -> IoResult<()> {
         self.before(super::io::Phase::CustodyRetire)?;
+        // PROBE ONLY (probe/s2-windows-timing): marker off.
+        if crate::cost_counters::PROBE_NO_MARKER.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(());
+        }
         let dir = self.drafts.join(CUSTODY);
         remove_present(&dir.join(name)).map_err(failure)?;
         #[cfg(feature = "test-faults")]

@@ -1,5 +1,5 @@
 //! Test-only accounting for the waited save and print paths.
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static TRANSACTION_RECORD_PROBES: AtomicU64 = AtomicU64::new(0);
 static READDIR: AtomicU64 = AtomicU64::new(0);
@@ -349,6 +349,20 @@ pub(crate) fn corpus() {
 }
 pub(crate) fn fsync() {
     FSYNCS.fetch_add(1, Ordering::Relaxed);
+}
+
+// PROBE ONLY (branch probe/s2-windows-timing, never merged): switches and a
+// file-sync counter for the S2 Windows timing probe.
+/// When set, `ProductionIo::custody_write`/`custody_retire` do nothing: no
+/// `.tcm` marker is written, synced or removed.
+pub static PROBE_NO_MARKER: AtomicBool = AtomicBool::new(false);
+/// When set, a multi-page rename takes the pre-W1 path: one store
+/// transaction under a reservation (`commit_rename`).
+pub static PROBE_TX_RENAME: AtomicBool = AtomicBool::new(false);
+/// File syncs (`sync_all` of a regular file) among `fsyncs`.
+pub static PROBE_FILE_SYNCS: AtomicU64 = AtomicU64::new(0);
+pub(crate) fn probe_file_sync() {
+    PROBE_FILE_SYNCS.fetch_add(1, Ordering::Relaxed);
 }
 pub(crate) fn wrote(bytes: usize) {
     BYTES_WRITTEN.fetch_add(bytes as u64, Ordering::Relaxed);

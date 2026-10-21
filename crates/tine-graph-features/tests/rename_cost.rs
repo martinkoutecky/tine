@@ -571,3 +571,237 @@ fn namespace_rename_cost_scale_probe() {
         store.close();
     }
 }
+
+// ---------------------------------------------------------------------------
+// PROBE ONLY (branch probe/s2-windows-timing, never merged): S2 Windows
+// timing of host page operations with the trash-custody marker on and off,
+// and the namespace rename on the pre-W1 transaction path.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ProbeOp {
+    Delete,
+    Namespace,
+    NamespaceTx,
+    Single,
+}
+
+const PROBE_CHILDREN: usize = 20;
+
+struct ProbeSample {
+    total_ms: f64,
+    call_ms: f64,
+    fsyncs: u64,
+    file_syncs: u64,
+    files_written: u64,
+}
+
+fn probe_wait_quiescent(host: &tine_store::PageHost, what: &str) {
+    let started = std::time::Instant::now();
+    while !host.quiescent_for_tests() {
+        assert!(
+            started.elapsed().as_secs() < 120,
+            "{what}: host never settled"
+        );
+        std::thread::sleep(Duration::from_micros(250));
+    }
+}
+
+fn probe_one(op: ProbeOp, marker: bool) -> ProbeSample {
+    use std::sync::atomic::Ordering::Relaxed;
+    let temp = tempfile::Builder::new()
+        .prefix("s2-timing-")
+        .tempdir()
+        .unwrap();
+    let root = temp.path().join("graph");
+    // An existing trash chain, as in any graph that has deleted a page once:
+    // the first deletion's uncounted chain creation is not the steady state.
+    fs::create_dir_all(root.join("logseq/.tine-trash/pages")).unwrap();
+    fs::create_dir_all(root.join("pages")).unwrap();
+    fs::create_dir_all(root.join("journals")).unwrap();
+    match op {
+        ProbeOp::Delete => {
+            fs::write(root.join("pages/Gone.md"), "- gone\n").unwrap();
+            fs::write(root.join("pages/Keep.md"), "- keep\n").unwrap();
+        }
+        ProbeOp::Namespace | ProbeOp::NamespaceTx => {
+            fs::write(root.join("pages/Ns.md"), "- ns\n").unwrap();
+            for i in 0..PROBE_CHILDREN {
+                fs::write(
+                    root.join(format!("pages/Ns%2Fc{i:03}.md")),
+                    format!("- child {i}\n"),
+                )
+                .unwrap();
+            }
+            fs::write(root.join("pages/Ref.md"), "- links [[Ns/c000]]\n").unwrap();
+        }
+        ProbeOp::Single => {
+            fs::write(root.join("pages/Target.md"), "- the target\n").unwrap();
+            fs::write(root.join("pages/Ref.md"), "- links [[Target]]\n").unwrap();
+        }
+    }
+    let store = std::sync::Arc::new(Store::open(&root, Default::default()).unwrap().0);
+    store.whole_graph().unwrap();
+    let host = tine_store::PageHost::start_for_tests(&store, &temp.path().join("app")).unwrap();
+    probe_wait_quiescent(&host, "launch");
+    let session = serde_json::to_value(host.window_reloaded()).unwrap()["session"]
+        .as_u64()
+        .unwrap();
+    probe_wait_quiescent(&host, "reload");
+    cost_counters::PROBE_NO_MARKER.store(!marker, Relaxed);
+    cost_counters::PROBE_TX_RENAME.store(op == ProbeOp::NamespaceTx, Relaxed);
+    cost_counters::reset();
+    cost_counters::PROBE_FILE_SYNCS.store(0, Relaxed);
+    let started = std::time::Instant::now();
+    match op {
+        ProbeOp::Delete => {
+            pages::delete_page_expected(
+                &store,
+                &host,
+                session,
+                "Gone",
+                tine_core::model::PageKind::Page,
+                None,
+            )
+            .unwrap();
+        }
+        ProbeOp::Namespace | ProbeOp::NamespaceTx => {
+            pages::rename_page_expected(&store, &host, "Ns", "Space", None).unwrap();
+        }
+        ProbeOp::Single => {
+            pages::rename_page_expected(&store, &host, "Target", "Renamed", None).unwrap();
+        }
+    }
+    let call = started.elapsed();
+    probe_wait_quiescent(&host, "operation");
+    let total = started.elapsed();
+    let counts = cost_counters::snapshot();
+    let file_syncs = cost_counters::PROBE_FILE_SYNCS.load(Relaxed);
+    cost_counters::PROBE_NO_MARKER.store(false, Relaxed);
+    cost_counters::PROBE_TX_RENAME.store(false, Relaxed);
+    // The operation did what it says.
+    match op {
+        ProbeOp::Delete => assert!(!root.join("pages/Gone.md").exists()),
+        ProbeOp::Namespace | ProbeOp::NamespaceTx => {
+            assert!(!root.join("pages/Ns.md").exists());
+            for i in 0..PROBE_CHILDREN {
+                assert!(!root.join(format!("pages/Ns%2Fc{i:03}.md")).exists());
+                assert_eq!(
+                    fs::read_to_string(root.join(format!("pages/Space%2Fc{i:03}.md"))).unwrap(),
+                    format!("- child {i}\n")
+                );
+            }
+            assert_eq!(
+                fs::read_to_string(root.join("pages/Ref.md")).unwrap(),
+                "- links [[Space/c000]]\n"
+            );
+        }
+        ProbeOp::Single => {
+            assert!(!root.join("pages/Target.md").exists());
+            assert_eq!(
+                fs::read_to_string(root.join("pages/Ref.md")).unwrap(),
+                "- links [[Renamed]]\n"
+            );
+        }
+    }
+    let markers: Vec<_> = walk_files(&temp.path().join("app"))
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "tcm"))
+        .collect();
+    assert!(markers.is_empty(), "markers left: {markers:?}");
+    drop(host);
+    store.close();
+    ProbeSample {
+        total_ms: total.as_secs_f64() * 1000.0,
+        call_ms: call.as_secs_f64() * 1000.0,
+        fsyncs: counts.fsyncs,
+        file_syncs,
+        files_written: counts.files_written,
+    }
+}
+
+#[test]
+#[ignore = "S2 timing probe: cargo test --release -p tine-graph-features --test integration rename_cost::probe_s2_windows_timing -- --ignored --exact --nocapture"]
+fn probe_s2_windows_timing() {
+    let _integration_guard = crate::integration_lock();
+    let _case = CASE_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let warmup: usize = std::env::var("S2_PROBE_WARMUP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+    let runs: usize = std::env::var("S2_PROBE_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(21);
+    let configs = [
+        (ProbeOp::Delete, true),
+        (ProbeOp::Delete, false),
+        (ProbeOp::Single, true),
+        (ProbeOp::Single, false),
+        (ProbeOp::Namespace, true),
+        (ProbeOp::Namespace, false),
+        (ProbeOp::NamespaceTx, true),
+    ];
+    // Timer granularity of the quiescence poll on this platform.
+    let mut sleeps: Vec<f64> = (0..50)
+        .map(|_| {
+            let t = std::time::Instant::now();
+            std::thread::sleep(Duration::from_micros(250));
+            t.elapsed().as_secs_f64() * 1000.0
+        })
+        .collect();
+    sleeps.sort_by(f64::total_cmp);
+    eprintln!(
+        "S2T|meta|os={}|temp={}|poll_sleep_250us_median_ms={:.3}|warmup={warmup}|runs={runs}|children={PROBE_CHILDREN}",
+        std::env::consts::OS,
+        std::env::temp_dir().display(),
+        sleeps[sleeps.len() / 2]
+    );
+    let mut samples: Vec<Vec<ProbeSample>> = configs.iter().map(|_| Vec::new()).collect();
+    for iteration in 0..warmup + runs {
+        // Rotate the order each iteration so no configuration always runs
+        // first or right after another.
+        for k in 0..configs.len() {
+            let index = (k + iteration) % configs.len();
+            let (op, marker) = configs[index];
+            let sample = probe_one(op, marker);
+            eprintln!(
+                "S2T|raw|{op:?}|marker={}|iter={iteration}|total_ms={:.3}|call_ms={:.3}|fsyncs={}|file_syncs={}|files={}",
+                if marker { "on" } else { "off" },
+                sample.total_ms,
+                sample.call_ms,
+                sample.fsyncs,
+                sample.file_syncs,
+                sample.files_written
+            );
+            if iteration >= warmup {
+                samples[index].push(sample);
+            }
+        }
+    }
+    let rank = |sorted: &[f64], q: f64| {
+        let n = sorted.len();
+        sorted[((q * n as f64).ceil() as usize).clamp(1, n) - 1]
+    };
+    for ((op, marker), list) in configs.iter().zip(&samples) {
+        let mut total: Vec<f64> = list.iter().map(|s| s.total_ms).collect();
+        let mut call: Vec<f64> = list.iter().map(|s| s.call_ms).collect();
+        total.sort_by(f64::total_cmp);
+        call.sort_by(f64::total_cmp);
+        let fsyncs: std::collections::BTreeSet<u64> = list.iter().map(|s| s.fsyncs).collect();
+        let files: std::collections::BTreeSet<u64> = list.iter().map(|s| s.file_syncs).collect();
+        let written: std::collections::BTreeSet<u64> =
+            list.iter().map(|s| s.files_written).collect();
+        eprintln!(
+            "S2T|summary|{op:?}|marker={}|n={}|median_ms={:.3}|p90_ms={:.3}|min_ms={:.3}|max_ms={:.3}|call_median_ms={:.3}|call_p90_ms={:.3}|fsyncs={fsyncs:?}|file_syncs={files:?}|files_written={written:?}",
+            if *marker { "on" } else { "off" },
+            total.len(),
+            rank(&total, 0.5),
+            rank(&total, 0.9),
+            total[0],
+            total[total.len() - 1],
+            rank(&call, 0.5),
+            rank(&call, 0.9),
+        );
+    }
+}

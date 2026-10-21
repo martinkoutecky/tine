@@ -476,7 +476,39 @@ fn rename_page_after_inventory(
         // S2, DESIGN §3.1, §3.5), planned again until the host applies it:
         // flush first, except an interrupted title completion, which refuses
         // unsaved input as today. `config.edn`'s home page is a post step.
+        if tine_store::cost_counters::PROBE_TX_RENAME.load(std::sync::atomic::Ordering::Relaxed) {
+            return probe_tx_rename(store, host, old, first, &plan, unsaved_paths);
+        }
         multi_rename(store, host, old, first, &plan, unsaved_paths)
+    })
+}
+
+/// PROBE ONLY (probe/s2-windows-timing, never merged): the pre-W1 path of a
+/// multi-page rename, as at a2a24f2c6: a retained writer (STEP3 §7) of every
+/// page the plan writes, one store transaction under the reservation.
+fn probe_tx_rename(
+    store: &Store,
+    host: &PageHost,
+    old: &str,
+    first: RenamePlan,
+    plan: &dyn Fn() -> io::Result<RenamePlan>,
+    unsaved_paths: &[String],
+) -> io::Result<Option<RenameReport>> {
+    let input = first.input();
+    let last = std::cell::Cell::new(None);
+    let discover = || {
+        let mut plan = plan()?;
+        let pages = plan.pages(store)?;
+        last.set(Some(plan));
+        Ok(pages)
+    };
+    let refused = |page: &str| unsaved_error(&first.graph, page);
+    crate::retained::reserved(host, input, discover, refused, |_| {
+        let plan = last.take().expect("planned under the reservation");
+        if plan.single(store)?.is_some() || plan.input() != input {
+            return Ok(None);
+        }
+        commit_rename(store, old, plan, unsaved_paths)
     })
 }
 
