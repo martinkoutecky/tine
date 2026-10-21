@@ -629,8 +629,10 @@ pub(crate) fn repack(repo: &Repository) -> Result<usize, String> {
         .to_string();
     let idx = pack_dir.join(format!("pack-{name}.idx"));
     for file in [pack_dir.join(format!("pack-{name}.pack")), idx.clone()] {
-        std::fs::File::open(&file)
-            .and_then(|f| f.sync_all())
+        let pack_file =
+            std::fs::File::open(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+        pack_file
+            .sync_all()
             .map_err(|e| format!("{}: {e}", file.display()))?;
     }
     sync_dir(&pack_dir)?;
@@ -663,16 +665,9 @@ fn remove_object(file: &Path) -> std::io::Result<()> {
     std::fs::remove_file(file)
 }
 
-#[cfg(unix)]
 fn sync_dir(dir: &Path) -> Result<(), String> {
-    std::fs::File::open(dir)
-        .and_then(|f| f.sync_all())
+    tine_store::directory_durability::sync_directory_entry(dir)
         .map_err(|e| format!("{}: {e}", dir.display()))
-}
-
-#[cfg(not(unix))]
-fn sync_dir(_dir: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 /// The object ids a version-2 SHA-1 pack index lists.
