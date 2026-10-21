@@ -27,11 +27,18 @@ pub(crate) async fn restore_backup(
     let restore_app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let base = backup_base_for_root(&restore_app, &source.root).ok_or("no app-data dir")?;
-        restore_hosted(&slot.host, consumed_last_id, || {
-            restore_from_backup_source(&id, &base, &slot.store, source, |source| {
-                do_backup_source(&restore_app, &slot.store, source.clone(), "pre-restore")
-            })
-        })
+        let root = slot.root_key.clone();
+        crate::git_settings::around(
+            &root,
+            || format!("Restore backup {id}"),
+            || {
+                restore_hosted(&slot.host, consumed_last_id, || {
+                    restore_from_backup_source(&id, &base, &slot.store, source, |source| {
+                        do_backup_source(&restore_app, &slot.store, source.clone(), "pre-restore")
+                    })
+                })
+            },
+        )
     })
     .await
     .map_err(|error| error.to_string())?

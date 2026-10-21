@@ -36,7 +36,15 @@ may tag, publish, comment, and close issues.
    not permission to weaken the budget. Also run `npm run bench:startup` against
    the immutable v0.7.2 native binary, retain its timing JSON and early-frame
    sequence, and inspect those frames for new blank, intermediate, or corrupt
-   paints before shipping.
+   paints before shipping. Then run the PDF viewer gate on the same idle Linux
+   machine (Xvfb, tauri-driver, WebKitWebDriver, xdotool; about 20 minutes, no
+   builds meanwhile):
+   `node scripts/perf-pdf/gate.mjs --base <base binary> --candidate <candidate binary> --out <evidence dir>`.
+   The base is the newest published release, stable or Beta, that carries the
+   PDF probe (D-20261021-PV4). Retain `report.md`, `report.json` and `raw/`.
+   Exit 1 (a regression beyond the measured run-to-run spread) is a
+   stop/consult decision; exit 4 means the base has no probe, so pick a newer
+   base. See `docs/pdf-perf-harness.md`.
 9. Push the frozen exact candidate, manually dispatch `ci.yml` with
    `scope=full`, and require all four full jobs to succeed on that SHA. Record
    the Actions URL and confirm it with `scripts/check-ci-evidence.mjs`. PR or

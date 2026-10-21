@@ -1514,6 +1514,12 @@ export function mockBackend(extraPages: PageDto[] = conflictDemoBodies().map((bl
     async editCustomCss(): Promise<void> {
       // no OS editor in the browser mock
     },
+    async gitAutocommitStatus() {
+      return { available: false };
+    },
+    async setGitAutocommit(): Promise<never> {
+      throw new Error("git is not available in the browser mock");
+    },
     async getBackupKeep(): Promise<number> {
       return 12;
     },

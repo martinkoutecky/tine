@@ -42,7 +42,7 @@ import type {
   QueryPublicationPlan,
   PublicationReceipt,
 } from "./types";
-import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, GraphAccessInspection, TrayStatus } from "./backendTypes";
+import type { GraphFolderPickResult, PreparedGraphFolder, ClipboardFileList, MediaCaptureResult, KnownGraph, InstalledPluginRecord, PluginRegistryCacheLoad, LoadGraphResult, GraphAccessInspection, TrayStatus, GitAutocommitStatus, GitPolicy } from "./backendTypes";
 import type { EditKinds } from "./editKind";
 import type { SheetExport, SheetInput, SheetScope } from "./sheet/staticExport";
 import type { NativeTineLinks } from "./nativeTineLinks";
@@ -608,6 +608,10 @@ export interface Backend {
    *  through the store's audited create when missing, never rewriting an
    *  existing one, then open it in the system editor. */
   editCustomCss(): Promise<void>;
+  /** Settings → Graph → Git (ADR 0078): the bound graph's autocommit status. */
+  gitAutocommitStatus(): Promise<GitAutocommitStatus>;
+  /** Set this device's autocommit policy for the bound graph; answers the new status. */
+  setGitAutocommit(policy: GitPolicy, intervalMinutes: number): Promise<GitAutocommitStatus>;
   /** How many launch snapshots to keep. */
   getBackupKeep(): Promise<number>;
   setBackupKeep(keep: number): Promise<void>;

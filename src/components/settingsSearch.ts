@@ -118,6 +118,7 @@ export const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "graph", label: msg("settings-graph-folder-label"), description: msg("settings-graph-folder-search-description"), aliases: ["open graph folder"] },
   { tab: "graph", label: msg("settings-search-home-page"), description: msg("settings-search-home-start-startup-page") },
   { tab: "graph", label: msg("graph-publish-publish"), description: msg("graph-publish-choose-a-destination-outside-the-graph-the-export"), keywords: msg("graph-publish-export-name") },
+  { tab: "graph", label: msg("git-settings-label"), description: msg("git-settings-hint"), aliases: ["git", "autocommit", "version control"] },
   { tab: "graph", label: msg("query-export-limit-setting-query-export-size-limit"), description: msg("query-export-limit-setting-default-1-gi-b-copied-assets-must-fit") },
   { tab: "plugins", label: msg("settings-ui-plugins"), description: msg("plugins-open-settings") },
   { tab: "diagnostics", label: msg("settings-search-help-diagnostics"), description: msg("settings-search-diagnostic-report-crash-unclean-exit-save-slow") },

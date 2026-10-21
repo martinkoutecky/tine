@@ -32,6 +32,7 @@ mod experiment_config_seed;
 mod file_lock;
 mod flight;
 mod flight_store;
+mod git_settings;
 mod graph;
 mod graph_verification;
 #[cfg(test)]
@@ -1241,7 +1242,9 @@ pub fn run() {
             defender::add_defender_exclusion,
             close_graph_window,
             tine_open_devtools,
-            tray::tray_apply
+            tray::tray_apply,
+            git_settings::git_autocommit_status,
+            git_settings::set_git_autocommit
         ])
         .build(context)
         .expect("error while building tauri application")
@@ -1257,6 +1260,8 @@ pub fn run() {
                 // Queued Concord base-ledger updates get one bounded drain
                 // (`EXIT_DRAIN_BUDGET`); the ledger is never a save authority.
                 concord_ledger::drain_all_for_exit(&app.state::<AppState>());
+                // Git graphs get one bounded autocommit (ADR 0078, G9).
+                git_settings::exiting();
                 // `App::run` never returns, so the orderly end of a run is
                 // here: clear the unclean-exit marker (master d9763603).
                 flight::mark_clean_shutdown();

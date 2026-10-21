@@ -77,6 +77,12 @@
       "nonRequirements":["Exact pixels, a specific generated workspace ID, or native certification outside Linux WebKitGTK."],
       "stability":"burn-in"
     },
+    "scripts/e2e-git-autocommit.mjs": {
+      "contracts": [{"class":"stateful-ux","userOutcome":"In a graph that is a git repository, Settings → Graph names the branch and turns on Commit automatically; renaming a page then commits a pending edit made by another program as \"Tine: autosave\" and the rename as its own commit, leaving the work tree clean.","blocking":true}],
+      "acceptableVariations":["Commit timing and Settings layout may vary while both commits land in this order with these subjects."],
+      "nonRequirements":["Interval-driven commits (covered by Rust tests), push or pull, or native certification outside Linux WebKitGTK."],
+      "stability":"burn-in"
+    },
     "scripts/e2e-sw-r2-polish2.mjs": {
       "contracts": [{"class":"stateful-ux","userOutcome":"Settings highlights matching English and Chinese labels; Diagnostics retains real reporting, clear and rescan without the parser comparison runner.","blocking":true}],
       "acceptableVariations":["Typography, matching counts and diagnostic report content may vary while matches are highlighted and the remaining tools work."],

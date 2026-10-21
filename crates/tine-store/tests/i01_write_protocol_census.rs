@@ -121,6 +121,10 @@ fn every_content_mutation_has_a_reviewed_owner() {
         "src-tauri/src/state.rs",
         "src-tauri/src/watcher.rs",
         "src-tauri/src/device_io.rs",
+        // Git autocommit and CLI run commits (ADR 0078): `.git` only, never
+        // the work tree (review F7).
+        "src-tauri/src/owner/git_run.rs",
+        "src-tauri/src/owner/git_autocommit.rs",
     ];
     let mut found = BTreeSet::new();
     for rel in files {
@@ -249,6 +253,28 @@ fn every_content_mutation_has_a_reviewed_owner() {
         ("crates/tine-graph-features/src/pages.rs", "host_rename"),
         ("src-tauri/src/device_io.rs", "atomic_write"),
         ("src-tauri/src/device_io.rs", "atomic_write_new"),
+        // Git (ADR 0078): every path is under `.git`, never the work tree.
+        // The index follows git's own protocol: `index.lock` taken with
+        // create_new (held = another git command's, never touched), a private
+        // copy `tine-index-<uuid>.tmp` beside it, the new index written into
+        // the lock, fsynced and renamed over `index`. Crash matrix: before the
+        // rename the old index stands and a stale `index.lock` blocks git
+        // until removed (Settings names it after 30 min); copies left by a
+        // crash are removed by the next lock holder only
+        // (`a_crash_left_index_copy_is_removed_only_under_the_lock`,
+        // `a_missing_index_refuses_instead_of_committing_deletions`).
+        ("src-tauri/src/owner/git_run.rs", "acquire"),
+        ("src-tauri/src/owner/git_run.rs", "install"),
+        ("src-tauri/src/owner/git_run.rs", "drop"),
+        ("src-tauri/src/owner/git_run.rs", "remove_stale_copies"),
+        // Repack (git's `repack -d` + `prune-packed`): a loose object is
+        // deleted only once the new pack holding it, its idx and the pack
+        // directory are fsynced; then empty fan-out directories go. Crash
+        // matrix: a crash leaves loose duplicates of packed objects, which
+        // the next repack packs again and deletes
+        // (`repack_deletes_only_packed_loose_objects`).
+        ("src-tauri/src/owner/git_autocommit.rs", "repack"),
+        ("src-tauri/src/owner/git_autocommit.rs", "remove_object"),
     ]
     .into_iter()
     .collect();
