@@ -11,11 +11,15 @@ permissions:
 
 jobs:
   timing:
-    name: S2 timing / ${{ matrix.os }}
+    name: S2 timing / ${{ matrix.os }} / defender ${{ matrix.defender }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - { os: windows-latest, defender: image }
+          - { os: windows-latest, defender: "on" }
+          - { os: ubuntu-latest, defender: none }
+          - { os: macos-latest, defender: none }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
@@ -48,6 +52,18 @@ jobs:
           { echo "TMPDIR=${TMPDIR:-unset}"; df -h "$TMPDIR" /; diskutil info / ; sysctl -n machdep.cpu.brand_string hw.ncpu; } 2>&1 | tee disk-info.txt
       - name: Build the probe (release)
         run: cargo test --release -p tine-graph-features --test integration --no-run
+      # Shipped-Windows Defender defaults (real-time on, no C:/D: exclusions),
+      # after the build so only the measurement runs under it (GH #623 scripts).
+      - name: Defender ON
+        if: matrix.defender == 'on'
+        shell: pwsh
+        run: |
+          . ./.github/scripts/defender.ps1
+          Enable-DefenderForBench
+          Start-Sleep -Seconds 60
+          Show-DefenderProof 'ON' | Out-File -Append disk-info.txt
+          Get-MpComputerStatus | Format-List AMRunningMode,RealTimeProtectionEnabled,OnAccessProtectionEnabled | Out-String | Tee-Object -Append -FilePath disk-info.txt
+          (Get-MpPreference).ExclusionPath | Out-String | Tee-Object -Append -FilePath disk-info.txt
       - name: S2 timing probe
         shell: bash
         run: |
@@ -56,7 +72,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: s2-timing-${{ matrix.os }}-attempt${{ github.run_attempt }}
+          name: s2-timing-${{ matrix.os }}-defender-${{ matrix.defender }}-attempt${{ github.run_attempt }}
           path: |
             timing.txt
             disk-info.txt
