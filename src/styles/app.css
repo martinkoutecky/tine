@@ -6913,6 +6913,14 @@ img.emoji {
 .references-header > button { margin-left: 0; }
 .references-header > button:first-of-type { margin-left: auto; }
 
+.hierarchy-toggle {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
 .reference-export-toggle {
   width: 26px;
   height: 26px;

@@ -1,6 +1,8 @@
 import { PageIcon } from "./PageIcon";
 import { t } from "../i18n";
-import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, type JSX } from "solid-js";
+import { ReferenceDisclosure } from "./ReferenceDisclosure";
+import { sectionOverride, setSectionOverride } from "../referenceSectionState";
 import { pageIdentityKey } from "../pageIdentity";
 import { pageIcon } from "../pageIconBatch";
 import { openPage, openPageInNewTab } from "../router";
@@ -278,10 +280,21 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
   // pure CPU scan over the shared page-name inventory (src/pages.ts): recomputes
   // on nav, but with zero IPC and no whole-graph deserialize per nav.
   const rows = createMemo(() => namespaceHierarchyRows(allPageNames(), props.name));
+  const [collapsed, setCollapsed] = createSignal(false);
+  createEffect(() => setCollapsed(sectionOverride("hierarchy", props.name) ?? false));
+  const toggle = () => {
+    const next = !collapsed();
+    setSectionOverride("hierarchy", props.name, next);
+    setCollapsed(next);
+  };
   return (
     <Show when={rows().length > 0}>
       <div class="page-hierarchy">
-        <div class="references-header">{t("namespace-hierarchy")}</div>
+        <button type="button" class="references-header hierarchy-toggle" aria-expanded={!collapsed()} onClick={toggle}>
+          <ReferenceDisclosure collapsed={collapsed()} />
+          {t("namespace-hierarchy")}
+        </button>
+        <Show when={!collapsed()}>
         <ul class="ns-hierarchy">
           <For each={rows()}>
             {(segs) => (
@@ -313,6 +326,7 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
             )}
           </For>
         </ul>
+        </Show>
       </div>
     </Show>
   );

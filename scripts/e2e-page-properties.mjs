@@ -53,6 +53,9 @@ const simple = "A:: XX\r\nB:: XX\r\nC:: XX\r\n";
 const deletion = "alias:: Delete Me\ncustom/key:: transient\n\n- Body survives\n";
 fs.writeFileSync(`${GRAPH}/pages/Property detailed.md`, detailed);
 fs.writeFileSync(`${GRAPH}/pages/Property simple.md`, simple);
+const filterPage = "filters:: {}\nowner:: Reader\n\n- Body\n";
+fs.writeFileSync(`${GRAPH}/pages/Property filters.md`, filterPage);
+fs.writeFileSync(`${GRAPH}/pages/Property filters___Child.md`, "- Child body\n");
 fs.writeFileSync(`${GRAPH}/pages/Property deletion.md`, deletion);
 // GH #210: a table block whose view is set before its title is typed, first on a
 // page with no page properties.
@@ -381,6 +384,26 @@ try {
   // not a named-page `.page-title`; waiting for the latter prevented navigation
   // from ever exercising the routed page-properties journey on WebView2.
   await browser.$(".ls-block, .journal-title, .page-title").waitForExist({ timeout: 20_000 });
+  // GH #730/#738: the page header hides filters, raw editing retains it,
+  // and the Hierarchy title supports native keyboard disclosure.
+  await openPageByName(browser, "Property filters", { entry: process.platform === "win32" ? "button" : "shortcut" });
+  const filterKeys = await browser.$$(".page-properties .prop-key").map(async el => el.getText());
+  if (JSON.stringify(filterKeys) !== JSON.stringify(["owner"])) throw new Error(`unexpected filter page keys: ${JSON.stringify(filterKeys)}`);
+  await browser.$(".page-properties .prop-row").click();
+  const filterEditor = await browser.$(".page-blocks textarea.block-editor");
+  await filterEditor.waitForExist({ timeout: 5_000 });
+  if (!(await filterEditor.getValue()).includes("filters:: {}")) throw new Error("raw header editor lost filters");
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  const hierarchyTitle = await browser.$(".page-hierarchy button[aria-expanded]");
+  await hierarchyTitle.waitForExist({ timeout: 5_000 });
+  if (await hierarchyTitle.getAttribute("aria-expanded") !== "true") throw new Error("Hierarchy did not start expanded");
+  await hierarchyTitle.click();
+  if ((await browser.$$(".page-hierarchy .ns-hier-row")).length) throw new Error("Hierarchy did not fold");
+  await browser.keys("Enter");
+  await browser.$(".page-hierarchy .ns-hier-row").waitForExist({ timeout: 5_000 });
+  await browser.keys(" ");
+  if ((await browser.$$(".page-hierarchy .ns-hier-row")).length) throw new Error("Space did not fold Hierarchy");
+  if (fs.readFileSync(`${GRAPH}/pages/Property filters.md`, "utf8") !== filterPage) throw new Error("display/edit entry changed filter page bytes");
   await openPageByName(browser, "Property detailed", { entry: process.platform === "win32" ? "button" : "shortcut" });
   await exerciseNativeFormTabTraversal("Test Record, Alternate");
   const customRow = await browser.execute(() => {

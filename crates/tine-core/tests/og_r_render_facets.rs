@@ -17,7 +17,16 @@ fn built_in_keys_tine_and_table_settings_are_hidden() {
     ] {
         assert!(is_render_hidden_prop(key, &[]), "{key}");
     }
-    for key in ["logseq.custom", "status", "tags", "alias", "public"] {
+    // OG util/property.cljs hides filters only for the pre-block, not blocks.
+    for key in [
+        "logseq.custom",
+        "status",
+        "tags",
+        "alias",
+        "public",
+        "filters",
+        "FILTERS",
+    ] {
         assert!(!is_render_hidden_prop(key, &[]), "{key}");
     }
 }

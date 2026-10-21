@@ -356,7 +356,10 @@ async function completeJournalFeed(owner: JournalsFeedOwner, generation: number,
 // as the alias group rows above (AliasGroupHeader). `tine.icon` and the OG-compatible `icon` stay editable here as well as decorating the
 // title (OG's editable-built-in-properties lists `icon`). Hide internal tag-table metadata.
 // `tine/exports` is the exports page marker (docs/contracts/export-definitions.md), not something to edit.
-const PAGE_PROPS_HIDDEN = new Set(["alias", "tine.tag-table", "tine/exports"]);
+// OG util/property.cljs hidden-editable-page-properties: filters is edit-only
+// in the pre-block, but remains visible on ordinary blocks. Keep this separate
+// from the block-chip and editor policies (icon is intentionally editable here).
+const PAGE_PROPS_HIDDEN = new Set(["alias", "filters", "tine.tag-table", "tine/exports"]);
 const TAG_TABLE_PROP = "tine.tag-table";
 
 function paneContextFromContext() {

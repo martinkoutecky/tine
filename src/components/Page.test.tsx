@@ -1892,6 +1892,48 @@ describe("page route loading", () => {
 });
 
 describe("page properties", () => {
+  it.each(["md", "org"] as const)("GH #730: %s pre-block filters follow live updates without changing the source", async (format) => {
+    const preBlock = format === "md" ? "FILTERS:: {}\nowner:: Reader" : "#+FILTERS: {}\n#+owner: Reader";
+    const dto: PageDto = { name: "Filter preamble", title: "Filter preamble", kind: "page", format,
+      pre_block: preBlock, blocks: [{ id: "body", raw: "Body", collapsed: false, children: [] }] };
+    setDoc({ byId: { body: node("body", "Body", dto.name) },
+      pages: [{ ...page(dto.name, "page", ["body"], preBlock), format }], feed: [dto.name], loaded: true });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      const keys = () => [...root.querySelectorAll(".page-properties .prop-key")].map(el => el.textContent);
+      expect(keys()).toEqual(["owner"]);
+      const updated = format === "md" ? "filters:: {:tag true}\nowner:: Updated" : "#+filters: {:tag true}\n#+owner: Updated";
+      setDoc("pages", 0, "preBlock", updated);
+      expect(keys()).toEqual(["owner"]);
+      expect(root.querySelector(".page-properties")?.textContent).toContain("Updated");
+      expect(doc.pages[0].preBlock).toBe(updated);
+      setDoc("pages", 0, "preBlock", format === "md" ? "filters:: {}" : "#+filters: {}");
+      expect(root.querySelector(".page-properties")).toBeNull();
+    } finally { dispose(); }
+  });
+  it.each(["{:tag true}", "{}", ""])("GH #730: hides page filters %j while retaining raw editing", async (value) => {
+    const propsId = "11111111-1111-4111-8111-111111111111";
+    const raw = `filters:: ${value}\nowner:: Reader`;
+    const dto = { name: "Filtered", kind: "page" as const, title: "Filtered", pre_block: null,
+      blocks: [{ id: propsId, raw, collapsed: false, children: [] },
+        { id: "body", raw: "Body\nfilters:: ordinary", properties: [["filters", "ordinary"]] as [string, string][], collapsed: false, children: [] }] };
+    setDoc({ byId: { [propsId]: node(propsId, raw, dto.name), body: node("body", dto.blocks[1].raw, dto.name) },
+      pages: [page(dto.name, "page", [propsId, "body"])], feed: [dto.name], loaded: true });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(unpinned(dto));
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      expect([...root.querySelectorAll(".page-properties .prop-key")].map(el => el.textContent)).toEqual(["owner"]);
+      (root.querySelector(".page-properties .prop-row") as HTMLElement).click();
+      await tick();
+      expect(root.querySelector("textarea")?.value).toContain(`filters:: ${value}`);
+      expect(doc.byId[propsId].raw).toBe(raw);
+    } finally { dispose(); }
+  });
   it.each(["icon", "tine.icon"])("GH #346: keeps %s:: visible in the properties list and editable beside the title icon", async (key) => {
     const propsId = "11111111-1111-4111-8111-111111111111";
     const dto = { name: "Flag", kind: "page" as const, title: "Flag", pre_block: null,

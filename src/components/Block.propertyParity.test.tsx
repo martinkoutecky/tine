@@ -12,6 +12,18 @@ import { resetTabsToJournals, route } from "../router";
 beforeAll(initParser);
 afterEach(() => { resetStore(); setGraphMeta(null); resetTabsToJournals(); document.body.replaceChildren(); vi.restoreAllMocks(); });
 const raw = "what-is-this:: property before block content 1\nwhat-is-this:: property before block content 2\nclass:: test before\nblock properties test\nwhat-is-this:: property after block content 1\nwhat-is-this:: property after block content 2\nclass:: test after";
+it.each(["md", "org"] as const)("GH #730: filters remains visible on an ordinary %s block", (format) => {
+  const raw = format === "md" ? "Body\nfilters:: ordinary" : "Body\n:PROPERTIES:\n:filters: ordinary\n:END:";
+  loadSingle({ name: "Block filters", title: "Block filters", kind: "page", format, pre_block: null,
+    blocks: [{ id: "block-filters", raw, properties: [["filters", "ordinary"]], children: [], collapsed: false }] });
+  const host = document.createElement("div"); document.body.append(host);
+  const dispose = render(() => <Block id="block-filters" />, host);
+  try {
+    expect(host.querySelector(".prop-key")?.textContent).toBe("filters");
+    expect(host.querySelector(".prop-value")?.textContent).toBe("ordinary");
+    expect(doc.byId["block-filters"].raw).toBe(raw);
+  } finally { dispose(); }
+});
 it("renders OG property rows and key navigation without changing raw content", async () => {
   setDoc({ loaded: true, feed: [], pages: [{ name: "Property parity", title: "Property parity", kind: "page", preBlock: null,
     roots: ["property-parity"], format: "md", readOnly: false, guide: false }],

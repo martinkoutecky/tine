@@ -1,7 +1,7 @@
 /** Session-only section and group disclosure state for reference panels.
  * Reads and writes cost O(1) per page; reset on graph switch so identical page
  * names in different graphs cannot share a choice. */
-export type ReferenceSection = "linked" | "unlinked";
+export type ReferenceSection = "linked" | "unlinked" | "hierarchy";
 const sections = new Map<string, boolean>();
 const groups = new Map<string, Set<string>>();
 const key = (section: ReferenceSection, page: string) => `${section}\0${page}`;
