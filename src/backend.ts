@@ -511,7 +511,7 @@ class TauriBackend implements Backend {
     return this.call<void>("set_preferred_format", { format });
   }
   setJournalTitleFormat(format: string) {
-    return this.call<void>("set_journal_title_format", { format });
+    return this.call<string[]>("set_journal_title_format", { format });
   }
   setDefaultJournalTemplate(name: string | null) {
     return this.call<void>("set_default_journal_template", { name });

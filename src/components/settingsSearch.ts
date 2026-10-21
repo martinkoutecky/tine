@@ -165,32 +165,53 @@ export function settingMatches(entry: SettingSearchEntry, query: string): boolea
   return terms.every((term) => (isShortTerm(term) ? shown : haystack).includes(term));
 }
 
-/** The description to show under a result whose name does not match: the
- * shown-language text when it holds a query word, else the English original.
- * Undefined when the name matches, so name hits stay one line (GH #706: a
- * description match looked unrelated while the description was hidden). */
+/** Explain query words absent from the visible label, including hits in hidden
+ * keywords, aliases and English originals. Ranking still uses nameMatches;
+ * that group includes hidden text and cannot decide whether evidence is needed. */
 export function matchedDescription(entry: SettingSearchEntry, query: string): string | undefined {
-  const terms = queryTerms(query);
-  if (!terms.length || nameMatches(entry, terms)) return undefined;
-  const shown = typeof entry.description === "string" ? entry.description : richPlain(render(entry.description));
-  const english = typeof entry.description === "string" ? entry.description : richPlain(renderEnglish(entry.description));
-  for (const [text, short] of [[shown, true], [english, false]] as const) {
-    const hits = terms.filter((term) => short || !isShortTerm(term)).map((term) => text.toLowerCase().indexOf(term)).filter((at) => at >= 0);
-    if (hits.length) return excerpt(text, Math.min(...hits));
+  let missing = queryTerms(query).filter(term => !shownTextsOf(entry.label).includes(term));
+  if (!missing.length) return undefined;
+  const plain = (value: string | Msg, english = false) => typeof value === "string" ? value : richPlain(english ? renderEnglish(value) : render(value));
+  const sources = [
+    ...[entry.description, entry.keywords].flatMap(value => value === undefined ? [] : [{ text: plain(value), shown: true }]),
+    ...[entry.label, entry.description, entry.keywords, ...(entry.aliases ?? [])].flatMap(value => value === undefined ? [] : [{ text: plain(value, true), shown: false }]),
+  ];
+  const snippets: string[] = [];
+  for (const { text, shown } of sources) {
+    // One-character terms must obey settingMatches' shown-language rule.
+    // One source can need several excerpts when its matching words are far apart.
+    while (true) {
+      const hits = missing.filter(term => shown || !isShortTerm(term))
+        .map(term => ({ term, at: text.toLowerCase().indexOf(term) })).filter(hit => hit.at >= 0)
+        .sort((a, b) => a.at - b.at);
+      if (!hits.length) break;
+      const snippet = excerpt(text, hits[0].at, hits[0].term.length);
+      snippets.push(snippet);
+      missing = missing.filter(term => !snippet.toLowerCase().includes(term));
+    }
+    if (!missing.length) break;
   }
-  return undefined;
+  return snippets.length ? snippets.join(" · ") : undefined;
 }
 
 /** About one line of `text` around position `at`, with an ellipsis where cut, so a
  * long description shows its match instead of its opening sentences. */
-function excerpt(text: string, at: number): string {
+function excerpt(text: string, at: number, matchLength: number): string {
   const chars = [...text];
-  const index = [...text.slice(0, at)].length;
+  // Search offsets refer to lowercased UTF-16 text; map them back before slicing
+  // visible code points (lowercasing can expand a character, e.g. İ).
+  let index = 0, matchEnd = 0, foldedOffset = 0;
+  for (const char of chars) {
+    if (foldedOffset <= at) index = matchEnd;
+    if (foldedOffset >= at + matchLength) break;
+    foldedOffset += char.toLowerCase().length;
+    matchEnd++;
+  }
   let start = Math.max(0, index - 40);
   // Start at a word boundary when the text has one before the match (Latin text; CJK has none).
   const space = chars.slice(start, index).findIndex((char) => /\s/.test(char));
   if (start > 0 && space >= 0) start += space + 1;
-  const end = Math.min(chars.length, start + 120);
+  const end = Math.min(chars.length, Math.max(start + 120, matchEnd));
   return `${start > 0 ? "…" : ""}${chars.slice(start, end).join("").trim()}${end < chars.length ? "…" : ""}`;
 }
 

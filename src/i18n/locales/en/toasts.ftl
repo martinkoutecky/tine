@@ -214,6 +214,7 @@ moves-outline-is-too-deep-to-move = Outline is too deep to move
 
 # Shown when a move, drop, paste or indent would put a block above (or under) a page's properties (GH #210).
 kernel-page-properties-stay-at-the-top-of-the-page = Page properties stay at the top of the page
+kernel-block-cant-be-indented-under-page-properties = A block can't be indented under the page properties
 
 paste-pasted-outline-is-too-deep = Pasted outline is too deep
 

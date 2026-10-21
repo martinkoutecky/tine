@@ -212,10 +212,10 @@ export function indentBlock(id: string, caretOffset: number | EditorSelection, e
   if (!blockWritable(id)) return;
   const pageName = doc.byId[id].page;
   // The kernel refuses the first sibling, a page-header parent (GH #638) and
-  // the outline cap; only the cap is reported to the caller.
+  // the outline cap; header and cap refusals explain why.
   const change = outlineChange({ verb: "indent", keys: [id] }, [pageName]);
   if ("refused" in change) {
-    noteOutlineRefusal(change.refused);
+    noteOutlineRefusal(change.refused, "indent");
     return change.refused === "depth_cap" ? false : undefined;
   }
   pushUndo("indent", [pageName]);

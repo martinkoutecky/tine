@@ -166,11 +166,13 @@ export function outlineChange(verb: OutlineVerb, pageNames: readonly string[]): 
  *  header (GH #210 F1, D-20261019-H210F2): a move, drop, paste or indent that
  *  would leave the page properties anywhere but first on their page is refused
  *  with a plain info toast, never silently. Every entry path that can hit
- *  `header_root` calls this, so they all speak with one voice. The toast is
+ *  `header_root` calls this; indent supplies its verb for a specific explanation. The toast is
  *  unique while it shows (key repeat on Alt+Shift+Up shows it once). A refusal
  *  is not a write: the document is untouched. */
-export function noteOutlineRefusal(refused: OutlineRefusal): void {
-  if (refused === "header_root") pushToastUnique(msg("kernel-page-properties-stay-at-the-top-of-the-page"), "info");
+export function noteOutlineRefusal(refused: OutlineRefusal, verb?: OutlineVerb["verb"]): void {
+  if (refused === "header_root") pushToastUnique(msg(verb === "indent"
+    ? "kernel-block-cant-be-indented-under-page-properties"
+    : "kernel-page-properties-stay-at-the-top-of-the-page"), "info");
 }
 
 /** The pages a change edits, for undo snapshots and conflict checks. */

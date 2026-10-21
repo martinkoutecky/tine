@@ -293,7 +293,7 @@ export interface Backend {
   /** Persist the journal display-title format to config.edn
    *  `:journal/page-title-format` (e.g. "MMM do, yyyy"). Display-only — does not
    *  rename journal files (`:journal/file-name-format` is separate). */
-  setJournalTitleFormat(format: string, kinds: EditKinds): Promise<void>;
+  setJournalTitleFormat(format: string, kinds: EditKinds): Promise<string[]>;
   /** Set (or clear, with null) the new-journal default template in config.edn
    *  `:default-templates {:journals "Name"}`. */
   setDefaultJournalTemplate(name: string | null): Promise<void>;

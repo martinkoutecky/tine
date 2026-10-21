@@ -53,6 +53,10 @@ const simple = "A:: XX\r\nB:: XX\r\nC:: XX\r\n";
 const deletion = "alias:: Delete Me\ncustom/key:: transient\n\n- Body survives\n";
 fs.writeFileSync(`${GRAPH}/pages/Property detailed.md`, detailed);
 fs.writeFileSync(`${GRAPH}/pages/Property simple.md`, simple);
+const filterPage = "filters:: {}\nowner:: Reader\n\n- Body\n";
+fs.writeFileSync(`${GRAPH}/pages/Property filters.md`, filterPage);
+// The graph uses the legacy file-name format ({} config), so the namespace comes from title::.
+fs.writeFileSync(`${GRAPH}/pages/Property filters child.md`, "title:: Property filters/Child\n\n- Child body\n");
 fs.writeFileSync(`${GRAPH}/pages/Property deletion.md`, deletion);
 // GH #210: a table block whose view is set before its title is typed, first on a
 // page with no page properties.
@@ -381,6 +385,26 @@ try {
   // not a named-page `.page-title`; waiting for the latter prevented navigation
   // from ever exercising the routed page-properties journey on WebView2.
   await browser.$(".ls-block, .journal-title, .page-title").waitForExist({ timeout: 20_000 });
+  // GH #730/#738: the page header hides filters, raw editing retains it,
+  // and the Hierarchy title supports native keyboard disclosure.
+  await openPageByName(browser, "Property filters", { entry: process.platform === "win32" ? "button" : "shortcut" });
+  const filterKeys = await browser.$$(".page-properties .prop-key").map(async el => el.getText());
+  if (JSON.stringify(filterKeys) !== JSON.stringify(["owner"])) throw new Error(`unexpected filter page keys: ${JSON.stringify(filterKeys)}`);
+  await browser.$(".page-properties .prop-row").click();
+  const filterEditor = await browser.$(".page-blocks textarea.block-editor");
+  await filterEditor.waitForExist({ timeout: 5_000 });
+  if (!(await filterEditor.getValue()).includes("filters:: {}")) throw new Error("raw header editor lost filters");
+  await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
+  const hierarchyTitle = await browser.$(".page-hierarchy button[aria-expanded]");
+  await hierarchyTitle.waitForExist({ timeout: 5_000 });
+  if (await hierarchyTitle.getAttribute("aria-expanded") !== "true") throw new Error("Hierarchy did not start expanded");
+  await hierarchyTitle.click();
+  if ((await browser.$$(".page-hierarchy .ns-hier-row")).length) throw new Error("Hierarchy did not fold");
+  await browser.keys("Enter");
+  await browser.$(".page-hierarchy .ns-hier-row").waitForExist({ timeout: 5_000 });
+  await browser.keys(" ");
+  if ((await browser.$$(".page-hierarchy .ns-hier-row")).length) throw new Error("Space did not fold Hierarchy");
+  if (fs.readFileSync(`${GRAPH}/pages/Property filters.md`, "utf8") !== filterPage) throw new Error("display/edit entry changed filter page bytes");
   await openPageByName(browser, "Property detailed", { entry: process.platform === "win32" ? "button" : "shortcut" });
   await exerciseNativeFormTabTraversal("Test Record, Alternate");
   const customRow = await browser.execute(() => {
@@ -698,6 +722,11 @@ try {
   }
   const moveProps = (await browser.$$(".page-properties .prop-row")).length;
   if (moveProps !== 2) throw new Error(`the page properties are no longer the page header after the refused move (${moveProps} rows)`);
+  await nativeTab();
+  await browser.waitUntil(async () => browser.execute(() => [...document.querySelectorAll(".toast-info .toast-msg")]
+    .some(node => node.textContent === "A block can't be indented under the page properties")), {
+    timeout: 5_000, timeoutMsg: "Tab under page properties did not explain the indent refusal",
+  });
   await browser.keys(["Control", "End"]);
   await browser.keys(" edited");
   await browser.execute(() => document.querySelector(".page-blocks textarea.block-editor")?.blur());
@@ -709,7 +738,39 @@ try {
   if (moveSaved !== "tags:: reading\nicon:: 📚\n\n- First block edited\n- Second block\n") {
     throw new Error(`the refused move above the page properties changed the page: ${JSON.stringify(moveSaved)}`);
   }
-  console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, and real-app reopen are canonical`);
+  // GH #317: notes are available even when a sections page replaces config queries.
+  fs.writeFileSync(`${GRAPH}/pages/Journal sections.md`, "tine/journal-sections:: true\n\n- My sections\n");
+  fs.writeFileSync(`${GRAPH}/logseq/config.edn`, '{:journal/page-title-format "yyyy-ww" :journal/file-name-format "yyyy_MM_dd"}\n');
+  await browser.$('button[title^="Settings"]').click();
+  await browser.$(".settings-modal").waitForExist({ timeout: 5_000 });
+  await browser.execute(() => [...document.querySelectorAll(".settings-nav-item")].find(n => n.textContent?.trim() === "Journals")?.click());
+  const notes = () => browser.execute(() => [...document.querySelectorAll(".settings-modal .config-diagnostic")].map(n => n.textContent));
+  await browser.waitUntil(async () => (await notes()).some(n => n.includes(":journal/page-title-format") && n.includes("ww")), {
+    timeout: 15_000, timeoutMsg: "Settings did not show the backend journal pattern note",
+  });
+  await browser.waitUntil(() => browser.execute(() => [...document.querySelectorAll(".settings-hint")]
+    .some(n => n.textContent?.includes("Today's sections are defined"))), { timeout: 15_000 });
+  await browser.execute(() => {
+    const select = [...document.querySelectorAll(".settings-modal select")].find(s => s.value === "yyyy-ww");
+    if (!select) throw new Error("missing journal title format picker");
+    select.value = "yyyy-MM-dd";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await waitForFileText(`${GRAPH}/logseq/config.edn`, text => text.includes('"yyyy-MM-dd"'), { timeoutMs: 10_000 });
+  await browser.waitUntil(async () => (await notes()).length === 0, { timeout: 10_000, timeoutMsg: "Settings kept the old note after choosing a supported format" });
+  fs.writeFileSync(`${GRAPH}/logseq/config.edn`, '{:journal/page-title-format "yyyy-MM-dd" :journal/file-name-format "yyyy_ww"}\n');
+  await browser.waitUntil(async () => (await notes()).some(n => n.includes(":journal/file-name-format") && n.includes("ww")), {
+    timeout: 15_000, timeoutMsg: "Settings did not update the file format note after an external config edit",
+  });
+  console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, real-app reopen, distinct Tab refusal, and live Settings journal pattern notes`);
+} catch (error) {
+  const artifacts = process.env.E2E_ARTIFACT_DIR || TMP;
+  try { await browser?.saveScreenshot(path.join(artifacts, "page-properties-failure.png")); } catch {}
+  try {
+    const body = await browser?.execute(() => document.body.innerText);
+    fs.writeFileSync(path.join(artifacts, "page-properties-failure.txt"), `${error}\n\n${body ?? "No webview body available"}\n`);
+  } catch {}
+  throw error;
 } finally {
   try { await browser?.deleteSession(); } catch {}
   if (process.platform === "win32") {

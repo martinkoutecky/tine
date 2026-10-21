@@ -895,6 +895,9 @@ function JournalsTab(props: { search: string }): JSX.Element {
         }
       >
         <DateFormatSelect />
+        <For each={graphMeta()?.journal_config_diagnostics ?? []}>
+          {(message) => <div class="config-diagnostic" role="status">{t("journal-config-diagnostic", { message })}</div>}
+        </For>
       </Field>
 
       <Field
